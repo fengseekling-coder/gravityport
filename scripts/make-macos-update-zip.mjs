@@ -7,21 +7,22 @@ import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresPlatformSigning } from "../lib/release-distribution.mjs";
+import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
 import { verifyMacosReleaseApp } from "./verify-macos-release.mjs";
 
 export const MOSA_MAC_UPDATE_ARCH = "arm64";
 
-export function macosUpdateArtifactName(version, arch = MOSA_MAC_UPDATE_ARCH) {
+export function macosUpdateArtifactName(version, arch = MOSA_MAC_UPDATE_ARCH, product = resolveReleaseProduct()) {
   const cleanVersion = String(version || "").trim();
   const cleanArch = String(arch || "").trim();
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(cleanVersion)) throw new Error("Invalid macOS update version.");
   if (cleanArch !== MOSA_MAC_UPDATE_ARCH) throw new Error(`Unsupported macOS update architecture: ${cleanArch}.`);
-  return `MOSA-darwin-${cleanArch}-${cleanVersion}.zip`;
+  return releaseProductNames(product).macosUpdateZipName(cleanVersion, cleanArch);
 }
 
-export function macosUpdateArtifactPath({ rootDir, outDir = "out", version, arch = MOSA_MAC_UPDATE_ARCH } = {}) {
+export function macosUpdateArtifactPath({ rootDir, outDir = "out", version, arch = MOSA_MAC_UPDATE_ARCH, product = resolveReleaseProduct() } = {}) {
   if (!rootDir) throw new Error("rootDir is required.");
-  return resolve(rootDir, outDir, "make", "update", "darwin", arch, macosUpdateArtifactName(version, arch));
+  return resolve(rootDir, outDir, "make", "update", "darwin", arch, macosUpdateArtifactName(version, arch, product));
 }
 
 export async function makeMacosUpdateZip({
@@ -30,13 +31,15 @@ export async function makeMacosUpdateZip({
   arch = MOSA_MAC_UPDATE_ARCH,
   distribution = desktopDistributionFromEnvironment(process.env),
   env = process.env,
+  product = resolveReleaseProduct(env),
   runner = runCommand,
 } = {}) {
+  const names = releaseProductNames(product);
   const packageJson = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8"));
   const version = String(packageJson.version || "").trim();
-  const artifactName = macosUpdateArtifactName(version, arch);
-  const appPath = resolve(rootDir, outDir, `MOSA-darwin-${arch}`, "MOSA.app");
-  await access(join(appPath, "Contents", "MacOS", "MOSA")).catch(() => {
+  const artifactName = macosUpdateArtifactName(version, arch, product);
+  const appPath = resolve(rootDir, outDir, `${product}-darwin-${arch}`, names.macAppBundleName);
+  await access(join(appPath, "Contents", "MacOS", names.macExecutableName)).catch(() => {
     throw new Error(`Packaged macOS app not found: ${appPath}. Run desktop:package first.`);
   });
   const normalizedDistribution = normalizeDesktopDistribution(distribution);
@@ -44,7 +47,7 @@ export async function makeMacosUpdateZip({
     await verifyMacosReleaseApp({ appPath, env, runner, staple: false, distribution: normalizedDistribution });
   }
 
-  const output = macosUpdateArtifactPath({ rootDir, outDir, version, arch });
+  const output = macosUpdateArtifactPath({ rootDir, outDir, version, arch, product });
   await mkdir(dirname(output), { recursive: true });
   await rm(output, { force: true });
   await runner("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, output]);

@@ -36,7 +36,7 @@ test("update manifest keeps only bounded release metadata", () => {
     macArtifact: null,
     windowsArtifact: null,
   });
-  assert.equal(MOSA_UPDATE_FEED_URL, "https://mosa.azhuilab.com/releases/latest.json");
+  assert.equal(MOSA_UPDATE_FEED_URL, "https://mosa.azhuilab.com/releases/gravityport/latest.json");
   assert.equal(MOSA_DOWNLOAD_PAGE_URL, "https://mosa.azhuilab.com/");
 });
 

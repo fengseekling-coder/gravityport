@@ -5,6 +5,7 @@ import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresPlatformSigning } from "../lib/release-distribution.mjs";
+import { resolveReleaseProductNames } from "./release-product.mjs";
 
 export const MOSA_RELEASE_BUNDLE_ID = "com.azhuilab.mosa";
 
@@ -128,7 +129,8 @@ function cliOption(argv, name) {
 async function main() {
   if (process.platform !== "darwin") throw new Error("macOS release verification must run on macOS.");
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-  const appPath = cliOption(process.argv.slice(2), "app") || resolve(root, process.env.MOSA_FORGE_OUT_DIR || "out", "MOSA-darwin-arm64", "MOSA.app");
+  const names = resolveReleaseProductNames();
+  const appPath = cliOption(process.argv.slice(2), "app") || resolve(root, process.env.MOSA_FORGE_OUT_DIR || "out", names.macosPackageDirName, names.macAppBundleName);
   const result = await verifyMacosReleaseApp({ appPath, staple: process.argv.includes("--staple") });
   console.log(`[MOSA] macOS ${result.distribution} app verified: ${result.bundleId}${result.teamId ? `; team ${result.teamId}` : ""}`);
 }

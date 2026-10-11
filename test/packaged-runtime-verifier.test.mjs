@@ -85,7 +85,7 @@ test("packaged runtime verifier applies the same native gate to Windows packages
   assert.equal(result.nativeBinaries.length, 3);
 });
 
-test("packaged runtime verifier rejects optional visual runtime bundled into MOSA.app", async (t) => {
+test("packaged runtime verifier rejects optional visual runtime bundled into the packaged app", async (t) => {
   const projectRoot = await mkdtemp(join(tmpdir(), "mosa-package-verifier-visual-bundle-"));
   deferTestPathRemoval(projectRoot, { recursive: true, force: true });
   const runtimeRoot = join(projectRoot, "runtime");
@@ -106,7 +106,7 @@ test("packaged runtime verifier rejects optional visual runtime bundled into MOS
   });
   await assert.rejects(
     verifyPackagedRuntime({ projectRoot, platform: "darwin", arch: "arm64" }),
-    /Optional visual runtime must stay out of MOSA\.app/,
+    /Optional visual runtime must stay out of GravityPort\.app/,
   );
 });
 

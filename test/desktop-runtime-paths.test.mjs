@@ -10,8 +10,14 @@ test("desktop runtime paths resolve macOS executables without leaking into Windo
     electronExecutablePath({ rootDir, platform: "darwin" }),
     join(process.cwd(), rootDir, "node_modules", "electron", "dist", "Electron.app", "Contents", "MacOS", "Electron"),
   );
+  // The default release product is GravityPort; the MOSA transition build is
+  // reachable under the same switch.
   assert.equal(
     packagedExecutablePath({ rootDir, platform: "darwin", arch: "arm64" }),
+    join(process.cwd(), rootDir, "out", "GravityPort-darwin-arm64", "GravityPort.app", "Contents", "MacOS", "GravityPort"),
+  );
+  assert.equal(
+    packagedExecutablePath({ rootDir, platform: "darwin", arch: "arm64", product: "MOSA" }),
     join(process.cwd(), rootDir, "out", "MOSA-darwin-arm64", "MOSA.app", "Contents", "MacOS", "MOSA"),
   );
 });
@@ -23,6 +29,10 @@ test("desktop runtime paths resolve Windows x64 executables", () => {
   );
   assert.equal(
     packagedExecutablePath({ rootDir, platform: "win32", arch: "x64" }),
+    join(process.cwd(), rootDir, "out", "GravityPort-win32-x64", "GravityPort.exe"),
+  );
+  assert.equal(
+    packagedExecutablePath({ rootDir, platform: "win32", arch: "x64", product: "MOSA" }),
     join(process.cwd(), rootDir, "out", "MOSA-win32-x64", "MOSA.exe"),
   );
 });

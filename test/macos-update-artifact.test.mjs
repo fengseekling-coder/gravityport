@@ -12,8 +12,10 @@ import {
 import { removeTestPath } from "./test-cleanup.mjs";
 
 test("macOS update artifact naming is version-bound and release-feed compatible", () => {
-  assert.equal(macosUpdateArtifactName("0.3.0"), "MOSA-darwin-arm64-0.3.0.zip");
-  assert.equal(macosUpdateArtifactName("0.3.0-rc.2"), "MOSA-darwin-arm64-0.3.0-rc.2.zip");
+  // The legacy MOSA transition build keeps the historical artifact names.
+  assert.equal(macosUpdateArtifactName("0.3.0", "arm64", "MOSA"), "MOSA-darwin-arm64-0.3.0.zip");
+  assert.equal(macosUpdateArtifactName("0.3.0-rc.2", "arm64", "MOSA"), "MOSA-darwin-arm64-0.3.0-rc.2.zip");
+  assert.equal(macosUpdateArtifactName("0.3.0"), "GravityPort-darwin-arm64-0.3.0.zip");
   assert.throws(() => macosUpdateArtifactName("latest"), /Invalid/);
   assert.throws(() => macosUpdateArtifactName("0.3.0", "x64"), /Unsupported/);
 });
@@ -27,13 +29,14 @@ test("macOS update ZIP builder emits exact size, SHA-256, and manifest patch", a
     await writeFile(join(appPath, "Contents", "MacOS", "MOSA"), "binary");
     const result = await makeMacosUpdateZip({
       rootDir: root,
+      product: "MOSA",
       runner: async (_command, args) => {
         const output = args.at(-1);
         await writeFile(output, "fake-zip-content");
       },
     });
     assert.equal(result.artifactName, "MOSA-darwin-arm64-0.3.0.zip");
-    assert.equal(result.artifactPath, macosUpdateArtifactPath({ rootDir: root, version: "0.3.0" }));
+    assert.equal(result.artifactPath, macosUpdateArtifactPath({ rootDir: root, version: "0.3.0", product: "MOSA" }));
     assert.equal((await stat(result.artifactPath)).size, result.size);
     assert.match(result.sha256, /^[0-9a-f]{64}$/);
     assert.deepEqual(result.release_manifest_patch.platforms.macos, {
