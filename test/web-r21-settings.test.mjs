@@ -125,23 +125,25 @@ test("category switching keeps the roving-tabindex keyboard contract", async () 
   assert.match(app, /restoreSettingsFocus\(previousFocus\);/);
 });
 
-test("A5 settings geometry: 720-wide card capped at 540, 240px sidebar, 36px tabs and rows at 72px", async () => {
+test("A5 settings geometry: fixed 720x464 card, 240px sidebar, 36px tabs and rows at 72px", async () => {
   const css = await readWebCss();
   const card = lastBlock(css, ".mosa-v2 .settings-modal-card");
   assert.match(card, /display: grid;/);
   assert.match(card, /grid-template-columns: 240px minmax\(0, 1fr\);/);
-  // 任务 109：宽固定 720、最高 540；高度不写死（随内容收放），行轨道
-  // minmax(0,1fr) 把上限传导给右栏，内容超高只有 .settings-modal-body 滚动。
+  // 任务 121（用户 10-11 定）：弹窗固定为「常规与外观」页的大小 720×464，切分页
+  // 不再变矮；行轨道 minmax(0,1fr) 把高度传导给右栏，内容超出只有
+  // .settings-modal-body 滚动；窗口矮时跟着窗口收。
   assert.match(card, /width: min\(720px, 100%\);/);
-  assert.match(card, /max-height: min\(540px, calc\(100dvh - 48px\)\);/);
+  assert.match(card, /(^|\n)\s{2}height: min\(464px, calc\(100dvh - 48px\)\);/);
+  assert.match(card, /max-height: min\(464px, calc\(100dvh - 48px\)\);/);
   assert.match(card, /grid-template-rows: minmax\(0, 1fr\);/);
-  assert.doesNotMatch(card, /(^|\n)\s{2}height: min\(/);
+  assert.doesNotMatch(card, /540px/);
   assert.doesNotMatch(card, /max-height: none;/);
-  // 顶边固定（用户 10-10 定）：卡片不再垂直居中，顶边钉在 540 高卡片居中时的位置，
-  // 切分页只向下伸缩；≤839 的单栏布局同样固定顶边，只是遮罩内边距换成 16。
+  // 高度固定后卡片垂直居中：上边距按 464 算，窗口矮到放不下时归零。≤839 的单栏
+  // 布局不在这次范围，高度仍随内容、顶边仍按原来的位置固定。
   assert.match(card, /align-self: start;/);
-  assert.match(card, /margin-top: max\(0px, calc\(\(100dvh - 48px - 540px\) \/ 2\)\);/);
-  assert.match(css, /@media \(max-width: 839px\) \{[\s\S]*?\.mosa-v2 \.settings-modal-card \{[^}]*margin-top: max\(0px, calc\(\(100dvh - 32px - 540px\) \/ 2\)\);/);
+  assert.match(card, /margin-top: max\(0px, calc\(\(100dvh - 48px - 464px\) \/ 2\)\);/);
+  assert.match(css, /@media \(max-width: 839px\) \{[\s\S]*?\.mosa-v2 \.settings-modal-card \{[^}]*height: auto;[^}]*margin-top: max\(0px, calc\(\(100dvh - 32px - 540px\) \/ 2\)\);/);
   assert.doesNotMatch(css, /\.mosa-v2 \.settings-modal-card \{[^}]*align-self: center;/);
   // 全文件不再有 960/728 写死值（不再生效的旧规则一并清掉）。
   assert.doesNotMatch(css, /\.mosa-v2 \.settings-modal-card \{[^}]*960/);

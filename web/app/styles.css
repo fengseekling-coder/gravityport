@@ -1570,8 +1570,8 @@ html[lang^="zh"] .mosa-v2 .settings-trigger .settings-trigger-label { letter-spa
   display: flex;
   flex-direction: column;
   width: min(720px, 100%);
-  max-height: min(540px, calc(100vh - 48px));
-  max-height: min(540px, calc(100dvh - 48px));
+  max-height: min(464px, calc(100vh - 48px));
+  max-height: min(464px, calc(100dvh - 48px));
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / .78);
   border-radius: var(--radius-lg);
@@ -2947,7 +2947,7 @@ html[lang^="zh"] .mosa-v2 .settings-trigger .settings-trigger-label { letter-spa
    任务 81（GravityPort A5）按设计稿重排：弹窗 960×728 圆角 32、左栏 240 白底、
    右栏 720 灰底、导航 36 高、行 72 高带通栏分隔线、主题卡 186×90、分段按钮
    128×32、素材库路径框 320×32 内嵌打开按钮；页内不再渲染重复的页标题/说明。
-   任务 109：弹窗外框改 720 宽、高随内容最高 540（见下方卡片规则）。
+   任务 109：弹窗外框改 720 宽；任务 121：高度固定 464（见下方卡片规则）。
    结构类名见 app.mjs renderSettingsMenu：.settings-modal-sidebar / -brand /
    -nav（role="tablist"）/ .settings-nav-tab / -foot / .settings-local-first /
    .settings-modal-main / .settings-page / .settings-group。
@@ -2956,20 +2956,21 @@ html[lang^="zh"] .mosa-v2 .settings-trigger .settings-trigger-label { letter-spa
 .mosa-v2 .settings-modal-card {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
-  /* 任务 109（规范表 v1 + 用户 10-09 补充决定）：宽固定 720，高度随内容、
-     最高 540。行轨道 minmax(0,1fr) 把上限传导给两栏：内容超高时只有右侧
-     .settings-modal-body 滚动，左栏导航与标题栏不动；内容不满时卡片随内容
-     收短（height 不再写死）。 */
+  /* 用户 10-11 定：弹窗固定为「常规与外观」页的大小 720×464，切到内容少的
+     分页（存储、模型、关于）也不变矮。行轨道 minmax(0,1fr) 把高度传导给两栏：
+     内容超出时只有右侧 .settings-modal-body 滚动，左栏导航与标题栏不动；
+     窗口矮到放不下 464 时卡片跟着窗口收。 */
   grid-template-rows: minmax(0, 1fr);
   width: min(720px, 100%);
-  max-height: min(540px, calc(100vh - 48px));
-  max-height: min(540px, calc(100dvh - 48px));
-  /* 顶边固定（用户 10-10 定）：各分页高度不同，垂直居中会让左侧分页列表随切页上下跳。
-     顶边钉在「540 高的卡片居中时」的位置，卡片只向下伸缩；48 是遮罩上下内边距之和，
-     窗口矮到放不下 540 时上边距归零。 */
+  height: min(464px, calc(100vh - 48px));
+  height: min(464px, calc(100dvh - 48px));
+  max-height: min(464px, calc(100vh - 48px));
+  max-height: min(464px, calc(100dvh - 48px));
+  /* 高度固定后卡片垂直居中：上边距 =（视口 - 遮罩上下内边距 48 - 464）的一半，
+     窗口矮到放不下时归零。 */
   align-self: start;
-  margin-top: max(0px, calc((100vh - 48px - 540px) / 2));
-  margin-top: max(0px, calc((100dvh - 48px - 540px) / 2));
+  margin-top: max(0px, calc((100vh - 48px - 464px) / 2));
+  margin-top: max(0px, calc((100dvh - 48px - 464px) / 2));
   border-radius: var(--radius-lg);
 }
 .mosa-v2 .settings-modal-sidebar {

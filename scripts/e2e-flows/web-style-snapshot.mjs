@@ -148,12 +148,15 @@ const KEY_KINDS = {
   "toast.font": "font",
   "toast.iconSide": "px",
   "toast.iconInset": "px",
-  // 设置弹窗（任务 109：宽 720、高随内容最高 540——cardHeight 是「常规与外观」
-  // 页的实际高度，aboutCardHeight 是「关于」页的，两页不同证明高度不写死）。
+  // 设置弹窗（任务 121：固定 720×464——cardHeight 是「常规与外观」页的高度，
+  // aboutCardHeight 是「关于」页的，两页相同证明切分页时弹窗不再变矮）。
   "settings.cardWidth": "px",
   "settings.cardMaxHeight": "px",
   "settings.cardHeight": "px",
   "settings.aboutCardHeight": "px",
+  "settings.minPageCardHeight": "px",
+  "settings.maxPageCardHeight": "px",
+  "settings.maxBodyOverflow": "px",
   "settings.cardRadius": "px",
   "settings.sidebarWidth": "px",
   "settings.navTabHeight": "px",
@@ -541,12 +544,28 @@ function measurementSource({ plainAssetId, emptyAssetId }) {
     const settingsTabActive = styleOf(pick('#settingsMenu [data-settings-page="general"]'));
     R['settings.navTabActiveBackground'] = settingsTabActive.backgroundColor;
     R['settings.navTabActiveColor'] = settingsTabActive.color;
-    // 任务 109：切到「关于」页再量卡片高度——两页高度不同 = 高度随内容，
-    // 不再写死（max-height 键另证 540 上限生效）。
+    // 任务 121：切到「关于」页再量卡片高度——和「常规与外观」页相同 = 弹窗
+    // 高度固定，内容少的分页不变矮。
     click('#settingsMenu [data-settings-page="about"]');
     await waitFor(() => pick('#settingsMenu [data-settings-panel="about"]').hidden === false, 'about page shown for its card height');
     await waitStable(() => [Math.round(rectOf(settingsCard).height * 2)], 'settings modal about page');
     R['settings.aboutCardHeight'] = rectOf(settingsCard).height;
+    // 任务 121：逐个分页量一遍——每页的卡片高度都一样（min = max），并且右侧内容区
+    // 在默认状态下都放得下（溢出量 0），固定高度不会把哪一页挤出滚动条。
+    const settingsPageHeights = [];
+    let settingsBodyOverflow = 0;
+    for (const tab of [...document.querySelectorAll('#settingsMenu [data-settings-page]')]) {
+      const pageId = tab.dataset.settingsPage;
+      tab.click();
+      await waitFor(() => pick('#settingsMenu [data-settings-panel="' + pageId + '"]').hidden === false, 'settings page ' + pageId + ' shown');
+      await waitStable(() => [Math.round(rectOf(settingsCard).height * 2)], 'settings modal ' + pageId + ' page');
+      settingsPageHeights.push(rectOf(settingsCard).height);
+      const body = pick('#settingsMenu .settings-modal-body');
+      settingsBodyOverflow = Math.max(settingsBodyOverflow, body.scrollHeight - body.clientHeight);
+    }
+    R['settings.minPageCardHeight'] = Math.min(...settingsPageHeights);
+    R['settings.maxPageCardHeight'] = Math.max(...settingsPageHeights);
+    R['settings.maxBodyOverflow'] = settingsBodyOverflow;
     click('#settingsMenu [data-settings-page="general"]');
     await waitFor(() => pick('#settingsMenu [data-settings-panel="general"]').hidden === false, 'general page restored');
     click('#settingsMenu [data-card-info-opt="show"]');
