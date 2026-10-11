@@ -413,7 +413,7 @@ async function reportConversationTurnsOnce(payload = {}) {
     }),
     cache: "no-cache",
   }, 3_000);
-  if (!response.ok) throw new Error(`MOSA turn-binding report failed (${response.status})`);
+  if (!response.ok) throw new Error(`GravityPort turn-binding report failed (${response.status})`);
   await response.arrayBuffer().catch(() => {});
   reportedTurnBindingSummaries.set(conversationId, summary);
   return { reported: true, status: response.status };
@@ -657,7 +657,7 @@ void reportCaptureQueueStatus();
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") return false;
   if (!senderAllowedForMessage(message, sender)) {
-    sendResponse({ ok: false, error: "MOSA rejected a message from an unsupported sender." });
+    sendResponse({ ok: false, error: "GravityPort rejected a message from an unsupported sender." });
     return false;
   }
 
@@ -1186,7 +1186,7 @@ async function fetchMediaAsBase64(url, {
       const declaredLength = Number(response.headers.get("content-length") || 0);
       if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
         response.body?.cancel?.().catch?.(() => {});
-        throw new Error(`${label === "video" ? "Video" : "Image"} exceeds MOSA capture size limit.`);
+        throw new Error(`${label === "video" ? "Video" : "Image"} exceeds GravityPort capture size limit.`);
       }
       const blob = await response.blob();
       if (!blob || blob.size < 100) {
@@ -1194,7 +1194,7 @@ async function fetchMediaAsBase64(url, {
         continue;
       }
       if (blob.size > maxBytes) {
-        throw new Error(`${label === "video" ? "Video" : "Image"} exceeds MOSA capture size limit.`);
+        throw new Error(`${label === "video" ? "Video" : "Image"} exceeds GravityPort capture size limit.`);
       }
       const mimeType = blob.type || guessMime(url, mediaKind) || (mediaKind === "video" ? "video/mp4" : "image/png");
       const buffer = await blob.arrayBuffer();
@@ -1319,9 +1319,9 @@ async function upgradeMetadataToMosa(payload = {}) {
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    throw ingestResponseError(`MOSA returned non-JSON (${response.status}): ${text.slice(0, 180)}`, response.status);
+    throw ingestResponseError(`GravityPort returned non-JSON (${response.status}): ${text.slice(0, 180)}`, response.status);
   }
-  if (!response.ok) throw ingestResponseError(data.error || `MOSA metadata upgrade failed (${response.status})`, response.status);
+  if (!response.ok) throw ingestResponseError(data.error || `GravityPort metadata upgrade failed (${response.status})`, response.status);
   return data;
 }
 
@@ -1332,7 +1332,7 @@ async function uploadConnection() {
   if (!token) throw new Error("Web Capture Token 未配置。");
   if (!await ensureMosaAvailable(baseUrl)) {
     const repaired = await repairPairing().catch(() => null);
-    if (!repaired) throw mosaUnavailableError(`无法连接 MOSA (${baseUrl})。请确认 MOSA App 正在运行。`);
+    if (!repaired) throw mosaUnavailableError(`无法连接 GravityPort (${baseUrl})。请确认 GravityPort App 正在运行。`);
     baseUrl = repaired.baseUrl;
     token = repaired.token;
   }
@@ -1357,7 +1357,7 @@ async function beginVideoUpload(payload, totalBytes, totalChunks, connection = n
     body: JSON.stringify({ metadata, totalBytes, totalChunks }),
   }, 30_000);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.uploadId) throw new Error(data.error || `MOSA upload begin failed (${response.status})`);
+  if (!response.ok || !data.uploadId) throw new Error(data.error || `GravityPort upload begin failed (${response.status})`);
   return { baseUrl, token, uploadId: data.uploadId };
 }
 
@@ -1382,7 +1382,7 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
       const declaredLength = Number(response.headers.get("content-length") || 0);
       if (Number.isFinite(declaredLength) && declaredLength > MAX_VIDEO_BYTES) {
         response.body?.cancel?.().catch?.(() => {});
-        throw new Error("Video exceeds MOSA capture size limit.");
+        throw new Error("Video exceeds GravityPort capture size limit.");
       }
       if (!response.body?.getReader) throw new Error("Remote video response is not streamable.");
       const mimeType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim()
@@ -1403,7 +1403,7 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
         for (let offset = 0; offset < value.byteLength; offset += 3 * 1024 * 1024) {
           const chunk = value.subarray(offset, Math.min(value.byteLength, offset + 3 * 1024 * 1024));
           if (transfer.receivedBytes + chunk.byteLength > MAX_VIDEO_BYTES) {
-            throw new Error("Video exceeds MOSA capture size limit.");
+            throw new Error("Video exceeds GravityPort capture size limit.");
           }
           await appendVideoUploadChunk(transfer, transfer.nextIndex, chunk);
           transfer.receivedBytes += chunk.byteLength;
@@ -1433,7 +1433,7 @@ async function appendVideoUploadChunk(transfer, index, chunkBytes) {
   }, 30_000);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `MOSA upload chunk failed (${response.status})`);
+    throw new Error(data.error || `GravityPort upload chunk failed (${response.status})`);
   }
 }
 
@@ -1444,7 +1444,7 @@ async function commitVideoUpload(transfer) {
     body: JSON.stringify({ uploadId: transfer.uploadId }),
   }, 90_000);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `MOSA upload commit failed (${response.status})`);
+  if (!response.ok) throw new Error(data.error || `GravityPort upload commit failed (${response.status})`);
   return data;
 }
 
@@ -1461,7 +1461,7 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
   const settings = await getSettings();
   let baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
   let token = String(settings.mosaToken || "").trim();
-  if (!token) throw new Error("Web Capture Token 未配置。请在扩展选项中填写与 MOSA 服务相同的随机 Token。");
+  if (!token) throw new Error("Web Capture Token 未配置。请在扩展选项中填写与 GravityPort 服务相同的随机 Token。");
 
   const mediaKind = payload.mediaKind === "video" ? "video" : "image";
   let mediaBase64 = mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
@@ -1477,7 +1477,7 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
   if (!mediaBase64 && !mediaBinaryParts && mediaUrl) {
     if (!await ensureMosaAvailable(baseUrl)) {
       const repaired = await repairPairing().catch(() => null);
-      if (!repaired) throw mosaUnavailableError(`无法连接 MOSA (${baseUrl})。请确认 MOSA App 正在运行。`);
+      if (!repaired) throw mosaUnavailableError(`无法连接 GravityPort (${baseUrl})。请确认 GravityPort App 正在运行。`);
       baseUrl = repaired.baseUrl;
       token = repaired.token;
     }
@@ -1520,7 +1520,7 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
     const repaired = await repairPairing().catch(() => null);
     if (!repaired) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw mosaUnavailableError(`无法连接 MOSA (${baseUrl})：${msg}。请确认 MOSA App 正在运行。`);
+      throw mosaUnavailableError(`无法连接 GravityPort (${baseUrl})：${msg}。请确认 GravityPort App 正在运行。`);
     }
     baseUrl = repaired.baseUrl;
     token = repaired.token;
@@ -1528,7 +1528,7 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
       response = await requestIngest();
     } catch (retryError) {
       const msg = retryError instanceof Error ? retryError.message : String(retryError);
-      throw mosaUnavailableError(`无法连接 MOSA (${baseUrl})：${msg}。请确认 MOSA App 正在运行。`);
+      throw mosaUnavailableError(`无法连接 GravityPort (${baseUrl})：${msg}。请确认 GravityPort App 正在运行。`);
     }
   }
 
@@ -1563,10 +1563,10 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    throw ingestResponseError(`MOSA returned non-JSON (${response.status}): ${text.slice(0, 180)}`, response.status);
+    throw ingestResponseError(`GravityPort returned non-JSON (${response.status}): ${text.slice(0, 180)}`, response.status);
   }
   if (!response.ok) {
-    throw ingestResponseError(data.error || `MOSA ingest failed (${response.status})`, response.status);
+    throw ingestResponseError(data.error || `GravityPort ingest failed (${response.status})`, response.status);
   }
   return data;
 }
@@ -1576,10 +1576,10 @@ function normalizeBaseUrl(value) {
   try {
     url = new URL(String(value || ""));
   } catch {
-    throw new Error("MOSA 地址无效。");
+    throw new Error("GravityPort 地址无效。");
   }
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname) || url.username || url.password) {
-    throw new Error("MOSA 地址必须是 http://127.0.0.1:端口 或 http://localhost:端口。");
+    throw new Error("GravityPort 地址必须是 http://127.0.0.1:端口 或 http://localhost:端口。");
   }
   return url.origin;
 }
@@ -1631,7 +1631,7 @@ async function refreshContextMenus() {
   await chrome.contextMenus.removeAll();
   chrome.contextMenus.create({
     id: "mosa-save-image",
-    title: "保存图片到 MOSA",
+    title: "保存图片到 GravityPort",
     contexts: ["image"],
     documentUrlPatterns: [
       "https://chatgpt.com/*",
@@ -1644,7 +1644,7 @@ async function refreshContextMenus() {
   });
   chrome.contextMenus.create({
     id: "mosa-save-video",
-    title: "保存视频到 MOSA",
+    title: "保存视频到 GravityPort",
     contexts: ["video"],
     documentUrlPatterns: [
       "https://labs.google/*",

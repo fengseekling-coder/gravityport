@@ -233,7 +233,7 @@ test("requests on an existing connection receive 503 while runtime ownership dra
   await ended;
   await stopped;
   assert.match(response, /^HTTP\/1\.1 503/);
-  assert.match(response, /MOSA runtime is shutting down/);
+  assert.match(response, /GravityPort runtime is shutting down/);
 });
 
 test("an explicit runtime libraryDir keeps detected legacy JSON assets in place", async (t) => {

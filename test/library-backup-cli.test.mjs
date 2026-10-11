@@ -20,10 +20,10 @@ function runCli(args) {
 test("mosa CLI advertises explicit backup, verification, restore, and visual-model verification commands", () => {
   const result = runCli(["help"]);
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /mosa backup \[--library <path>\] --to <backup-dir>/);
-  assert.match(result.stdout, /mosa backup-verify --from <backup-dir>/);
-  assert.match(result.stdout, /mosa restore --from <backup-dir> --to <empty-library-dir>/);
-  assert.match(result.stdout, /mosa visual-model-verify --from <model-pack-dir>/);
+  assert.match(result.stdout, /gravityport backup \[--library <path>\] --to <backup-dir>/);
+  assert.match(result.stdout, /gravityport backup-verify --from <backup-dir>/);
+  assert.match(result.stdout, /gravityport restore --from <backup-dir> --to <empty-library-dir>/);
+  assert.match(result.stdout, /gravityport visual-model-verify --from <model-pack-dir>/);
 });
 
 test("backup and restore never infer destructive destination paths", () => {
@@ -64,7 +64,7 @@ test("verify and thumbnails refuse to materialize a library in an empty or missi
   const missing = join(root, "never-created");
   const verifyMissing = runCli(["verify", "--library", missing]);
   assert.notEqual(verifyMissing.status, 0);
-  assert.equal(JSON.parse(verifyMissing.stdout).error.includes("is not a MOSA SQLite library"), true, verifyMissing.stdout);
+  assert.equal(JSON.parse(verifyMissing.stdout).error.includes("is not a GravityPort SQLite library"), true, verifyMissing.stdout);
   assert.equal(existsSync(missing), false, "a missing library directory is not created");
 
   const empty = join(root, "empty");
@@ -73,7 +73,7 @@ test("verify and thumbnails refuse to materialize a library in an empty or missi
   assert.notEqual(verifyEmpty.status, 0);
   const emptyReport = JSON.parse(verifyEmpty.stdout);
   assert.equal(emptyReport.ok, false);
-  assert.equal(emptyReport.error.includes("is not a MOSA SQLite library"), true, verifyEmpty.stdout);
+  assert.equal(emptyReport.error.includes("is not a GravityPort SQLite library"), true, verifyEmpty.stdout);
   assert.equal(existsSync(join(empty, "mosa.db")), false, "verify must not create mosa.db in an empty directory");
 
   const legacy = join(root, "legacy");
@@ -86,6 +86,6 @@ test("verify and thumbnails refuse to materialize a library in an empty or missi
 
   const thumbnails = runCli(["thumbnails", "repair", "--library", empty]);
   assert.notEqual(thumbnails.status, 0);
-  assert.match(`${thumbnails.stdout}${thumbnails.stderr}`, /is not a MOSA/);
+  assert.match(`${thumbnails.stdout}${thumbnails.stderr}`, /is not a GravityPort/);
   assert.equal(existsSync(join(empty, "mosa.db")), false, "thumbnails must not create mosa.db in an empty directory");
 });

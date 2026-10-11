@@ -12,6 +12,7 @@ import {
   C2PA_SIGNING_MODES,
   C2PA_TRAINED_ALGORITHMIC_MEDIA,
   exportContentCredential,
+  inspectContentCredential,
   sanitizedC2paEnvironment,
 } from "../lib/c2pa-export.mjs";
 import { buildAssetProvenanceBundle, MOSA_C2PA_ASSERTION_LABEL } from "../lib/provenance-bundle.mjs";
@@ -47,7 +48,8 @@ test("C2PA manifest records AI source type and embeds the MOSA provenance assert
     productVersion: "0.2.1",
     title: "/private/library/asset-1.jpg",
   });
-  assert.equal(manifest.claim_generator, "MOSA/0.2.1");
+  assert.equal(manifest.claim_generator, "GravityPort/0.2.1");
+  assert.deepEqual(manifest.claim_generator_info, [{ name: "GravityPort", version: "0.2.1" }]);
   assert.equal(manifest.title, "asset-1.jpg");
   assert.equal(manifest.assertions[0].label, "c2pa.actions.v2");
   assert.equal(manifest.assertions[0].data.actions[0].action, "c2pa.created");
@@ -338,4 +340,36 @@ test("asset-level C2PA export fails closed when the asset has no managed media",
     exportAssetContentCredential({ store, assetId: "asset-2", outputPath: join(root, "out.jpg") }),
     (error) => error?.code === "C2PA_ASSET_MEDIA_MISSING",
   );
+});
+
+test("content credentials written under the legacy MOSA claim generator still pass the existing inspection flow", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-c2pa-legacy-name-"));
+  const assetPath = join(root, "legacy.jpg");
+  await writeFile(assetPath, "legacy-bytes");
+  try {
+    const inspection = await inspectContentCredential({
+      assetPath,
+      c2paToolPath: "/fake/c2patool",
+      toolRunner: async () => ({
+        stdout: JSON.stringify({
+          active_manifest: "urn:c2pa:legacy-mosa",
+          manifests: {
+            "urn:c2pa:legacy-mosa": {
+              claim_generator: "MOSA/0.2.1",
+              claim_generator_info: [{ name: "MOSA", version: "0.2.1" }],
+              assertions: [
+                { label: MOSA_C2PA_ASSERTION_LABEL, data: { schema: "mosa.provenance.bundle/1" } },
+              ],
+            },
+          },
+        }),
+        stderr: "",
+      }),
+    });
+    assert.equal(inspection.hasActiveManifest, true);
+    assert.equal(inspection.hasMosaAssertion, true);
+    assert.ok(inspection.assertionLabels.includes(MOSA_C2PA_ASSERTION_LABEL));
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
 });
