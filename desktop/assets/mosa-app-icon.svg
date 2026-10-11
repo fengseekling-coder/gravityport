@@ -1,38 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="mosaGradient" x1="235" y1="310" x2="790" y2="730" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#19C4F7"/>
-      <stop offset="0.34" stop-color="#3478F6"/>
-      <stop offset="0.66" stop-color="#6757F4"/>
-      <stop offset="1" stop-color="#B529F4"/>
-    </linearGradient>
-
-    <filter id="tileShadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="20" stdDeviation="24" flood-color="#151A2E" flood-opacity="0.15"/>
-    </filter>
-  </defs>
-
-  <rect
-    x="88"
-    y="88"
-    width="848"
-    height="848"
-    rx="208"
-    fill="#FFFFFF"
-    filter="url(#tileShadow)"/>
-
-  <path
-    d="M 300 704
-       L 300 388
-       C 300 342 350 319 384 352
-       L 484 452
-       C 500 468 524 468 540 452
-       L 640 352
-       C 674 319 724 342 724 388
-       L 724 704"
-    fill="none"
-    stroke="url(#mosaGradient)"
-    stroke-width="140"
-    stroke-linecap="round"
-    stroke-linejoin="round"/>
+  <!-- GravityPort app icon, light tile (brand guidelines v0.3, appicon-light). -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#FCFBF8"/>
+  <g transform="translate(228.18 228.18) scale(4.73)">
+    <path
+      d="M6.22 55.13C6.22 55.13 34.84 59.29 60 59.29C79.44 59.29 86.96 54.1 92.08 51.78A9.03 9.03 0 1 1 92.08 68.22C86.96 65.9 79.44 60.71 60 60.71C34.84 60.71 6.22 64.87 6.22 64.87A54 54 0 1 0 6.22 55.13Z"
+      fill="#111111"/>
+    <circle cx="95.81" cy="60" r="7.88" fill="#C9A45C"/>
+  </g>
 </svg>
