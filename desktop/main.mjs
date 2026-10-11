@@ -13,6 +13,7 @@ import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPT
 import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
+import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
 import { mosaClientTokenFingerprint, resolveAllowedFolderPath } from "../lib/server-security.js";
 import { isUrlLikePath } from "../lib/path-safety.mjs";
 import { copyLibraryForRelocation, validateRelocationTarget } from "../lib/library-relocation.mjs";
@@ -196,6 +197,25 @@ if (!guard.ok) {
   process.exitCode = 1;
   throw new Error(`ISOLATION_GUARD_REJECTED: ${guard.field} ${guard.reason}`);
 }
+
+// ---- Rename notice: the one-time「MOSA 现已更名为 GravityPort」dialog decision ----
+// Runs at the earliest point where a userData write is safe: AFTER the isolation
+// guard above (a rejected run must not write anywhere) and BEFORE the
+// ensureInstallationId() call below, which mints anonymous-usage.json on a fresh
+// install — that file's existence is the old-user signal the decision reads, so
+// it must still be absent here on a first launch. The legacy library directory
+// is only consulted when userData sits at the production default: QA and test
+// instances run with a moved userData (see isolationContext) and pass "" so the
+// decision never looks at the real home directory, or every dev test run would
+// pop the notice.
+const renameNoticeLegacyLibraryDir = desktopDataDir === productionDefaultUserData
+  ? legacyDefaultLibraryDir(homeDir)
+  : "";
+let renameNotice = evaluateRenameNoticeState({
+  userDataDir: desktopDataDir,
+  legacyLibraryDir: renameNoticeLegacyLibraryDir,
+  log: (line) => console.info(`[MOSA] ${line}`),
+});
 
 // The user-center identity is minted on every launch, before any window
 // exists and outside every packaged/QA/telemetry gate: it is local-only
@@ -669,6 +689,26 @@ function registerIPC() {
     return { userId: desktopUserId };
   });
 
+  // 任务 116：老用户「已更名」提示。状态在启动最早期已判定（见 renameNotice），
+  // 这里只读快照；确认写 acknowledged 并同步内存快照，写失败只记日志（下次
+  // 启动还会弹，符合「没确认就算未读」）。
+  ipcMain.handle("rename-notice-state", async (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+      return { shouldShow: false, state: renameNotice.state, persisted: renameNotice.persisted };
+    }
+    return { ...renameNotice };
+  });
+
+  ipcMain.handle("acknowledge-rename-notice", async (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+    acknowledgeRenameNotice({
+      userDataDir: desktopDataDir,
+      log: (line) => console.warn(`[MOSA] ${line}`),
+    });
+    renameNotice = { shouldShow: false, state: "acknowledged", persisted: true };
+    return true;
+  });
+
   ipcMain.handle("visual-model-state", async (event, refresh = false) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
       return { mode: "mosa-local", state: "unavailable", installed: false, enabled: false };
@@ -681,7 +721,7 @@ function registerIPC() {
       return { mode: "mosa-local", state: "unavailable", installed: false, enabled: false };
     }
     if (service && service.mode !== "owned") {
-      throw new Error("Local visual settings cannot change while MOSA Desktop is attached to an external runtime. Close that runtime and reopen MOSA.");
+      throw new Error("Local visual settings cannot change while GravityPort Desktop is attached to an external runtime. Close that runtime and reopen GravityPort.");
     }
     await visualModelManager.setEnabled(enabled === true);
     const state = await visualModelStateSnapshot({ refreshLocal: true });
@@ -694,14 +734,14 @@ function registerIPC() {
       return { ok: false, reason: "unavailable" };
     }
     if (service && service.mode !== "owned") {
-      throw new Error("Visual Pack installation requires the runtime owned by MOSA Desktop. Close the external MOSA runtime and reopen the app.");
+      throw new Error("Visual Pack installation requires the runtime owned by GravityPort Desktop. Close the external GravityPort runtime and reopen the app.");
     }
     if (visualPackInstallPromise) return visualPackInstallPromise;
     visualPackInstallController = new AbortController();
     visualPackInstallPromise = (async () => {
       try {
         const distribution = await visualPackDistributionState({ forceRelease: true });
-        if (!distribution.release) throw new Error("No compatible MOSA Visual Pack is currently published for this platform.");
+        if (!distribution.release) throw new Error("No compatible GravityPort Visual Pack is currently published for this platform.");
         publishVisualPackProgress({ phase: "preparing", receivedBytes: 0, totalBytes: distribution.release.total_size, percent: 0 });
         const installed = await installVisualPack({
           userDataDir: desktopDataDir,
@@ -737,7 +777,7 @@ function registerIPC() {
   ipcMain.handle("visual-pack-remove", async (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
     if (service && service.mode !== "owned") {
-      throw new Error("Visual Pack removal requires the runtime owned by MOSA Desktop. Close the external MOSA runtime and reopen the app.");
+      throw new Error("Visual Pack removal requires the runtime owned by GravityPort Desktop. Close the external GravityPort runtime and reopen the app.");
     }
     if (visualPackInstallPromise) return { ok: false, reason: "busy" };
     const current = await visualModelManager.state({ refresh: true });
@@ -745,7 +785,7 @@ function registerIPC() {
     if (!activeId) return { ok: true, removed: 0 };
     const confirmation = await dialog.showMessageBox(mainWindow, {
       type: "warning",
-      title: "MOSA",
+      title: "GravityPort",
       message: currentLocale === "en" ? "Remove the local Visual Pack?" : "删除本地视觉能力包？",
       detail: currentLocale === "en"
         ? "This removes the optional model, runtime, and derived visual index. Your original assets and Prompt/provenance data are not changed."
@@ -944,7 +984,7 @@ function registerIPC() {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
     const controller = process.platform === "darwin" ? macosUpdateDownloadController : windowsUpdateDownloadController;
     if (!controller || controller.signal.aborted) return { ok: false };
-    controller.abort(new Error("MOSA update download cancelled by the user."));
+    controller.abort(new Error("GravityPort update download cancelled by the user."));
     return { ok: true };
   });
 
@@ -969,7 +1009,7 @@ function registerIPC() {
     if (service?.mode !== "owned") return { ok: false, reason: "attached" };
 
     const selection = await dialog.showOpenDialog(mainWindow, {
-      title: currentLocale === "en" ? "Choose a new MOSA library location" : "选择新的 MOSA 素材库位置",
+      title: currentLocale === "en" ? "Choose a new GravityPort library location" : "选择新的 GravityPort 素材库位置",
       buttonLabel: currentLocale === "en" ? "Choose" : "选择",
       properties: ["openDirectory", "createDirectory"],
     });
@@ -981,13 +1021,13 @@ function registerIPC() {
 
     const confirmation = await dialog.showMessageBox(mainWindow, {
       type: "question",
-      title: currentLocale === "en" ? "Move MOSA Library" : "移动 MOSA 素材库",
+      title: currentLocale === "en" ? "Move GravityPort Library" : "移动 GravityPort 素材库",
       message: currentLocale === "en"
         ? "Move the current library to the selected folder?"
         : "将当前素材库移动到所选文件夹？",
       detail: currentLocale === "en"
-        ? "MOSA will close its local library service, copy all assets and metadata, then restart. The original is removed only after the copy succeeds."
-        : "MOSA 会先关闭本地素材库服务，完整复制素材与元数据，然后自动重启。复制成功前不会删除原素材库。",
+        ? "GravityPort will close its local library service, copy all assets and metadata, then restart. The original is removed only after the copy succeeds."
+        : "GravityPort 会先关闭本地素材库服务，完整复制素材与元数据，然后自动重启。复制成功前不会删除原素材库。",
       buttons: currentLocale === "en" ? ["Cancel", "Move and Restart"] : ["取消", "移动并重启"],
       defaultId: 1,
       cancelId: 0,
@@ -1202,9 +1242,9 @@ async function createMainWindow() {
     if (rendererRecoveryAttempts > 2) {
       void dialog.showMessageBox(mainWindow, {
         type: "error",
-        title: "MOSA",
-        message: "MOSA's interface stopped unexpectedly and could not recover automatically.",
-        buttons: ["Restart MOSA", "Close"],
+        title: "GravityPort",
+        message: "GravityPort's interface stopped unexpectedly and could not recover automatically.",
+        buttons: ["Restart GravityPort", "Close"],
         defaultId: 0,
         cancelId: 1,
       }).then(({ response }) => {
@@ -1332,7 +1372,7 @@ async function ensureDesktopService() {
     });
     if (shuttingDown) {
       if (nextService.mode === "owned") await nextService.stop().catch(() => {});
-      throw new Error("MOSA startup was cancelled during shutdown.");
+      throw new Error("GravityPort startup was cancelled during shutdown.");
     }
     service = nextService;
     await releaseDesktopStartupHandoff();
@@ -1435,7 +1475,7 @@ function startBridgeNotificationPoll(runtimePort) {
         const delta = totalImported - lastImportedCount;
         const body = getNotificationTextForAssetsImported(delta, currentLocale);
         if (Notification.isSupported()) {
-          new Notification({ title: "MOSA", body, silent: true }).show();
+          new Notification({ title: "GravityPort", body, silent: true }).show();
         }
       }
       lastImportedCount = totalImported;

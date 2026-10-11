@@ -87,18 +87,49 @@ test("12-15. result semantics — backdrop can only cancel", async () => {
   assert.doesNotMatch(backdrop, /closeConfirmDialog\(true\)/, "backdrop can never confirm");
 });
 
-// 16-18. Default focus lands on Cancel; Tab/Shift+Tab cycle between the two buttons.
+// 16-18. Default focus lands on Cancel (two-button mode) or the confirm button
+// (single-button notice mode, 任务 116); Tab/Shift+Tab cycle between the buttons.
 test("16-18. default focus on Cancel with a two-stop Tab cycle", async () => {
   const app = await readApp();
   const confirmDialog = await readConfirmDialog();
   const request = functionSlice(confirmDialog, "requestConfirmation");
   const trap = functionSlice(confirmDialog, "trapConfirmDialogFocus");
-  assert.match(request, /requestAnimationFrame\(\(\) => \{ if \(confirmDialogState\.pending\) els\.confirmDialogCancel\?\.focus\(\); \}\);/,
-    "opening focuses Cancel — destructive actions never default-focus the confirm button");
+  assert.match(request, /requestAnimationFrame\(\(\) => \{ if \(confirmDialogState\.pending\) \(confirmDialogState\.hideCancel \? els\.confirmDialogConfirm : els\.confirmDialogCancel\)\?\.focus\(\); \}\);/,
+    "two-button mode still opens focused on Cancel (destructive actions never default-focus the confirm button); single-button notice mode opens focused on the confirm button");
   assert.match(trap, /const focusable = \[els\.confirmDialogCancel, els\.confirmDialogConfirm\]/, "the trap cycles exactly the two dialog buttons");
   assert.match(trap, /event\.shiftKey \? \(current <= 0 \? focusable\.length - 1 : current - 1\) : \(current === focusable\.length - 1 \? 0 : current \+ 1\)/,
     "Tab wraps forward and Shift+Tab wraps backward");
   assert.match(trap, /event\.preventDefault\(\);\s*\n\s*focusable\[next\]\.focus\(\);/, "focus never escapes to the page background");
+});
+
+// 任务 116：单按钮提示弹窗（老用户「已更名」提示）。取消按钮整颗隐藏（hidden
+// 属性 + 一条 display:none 规则）、无「不再提醒」行、打开焦点在确认按钮；关闭后取消按钮
+// 恢复显示、焦点恢复走既有路径，普通确认框行为与以前完全一致。
+test("116. single-button notice mode hides Cancel and focuses Confirm; ordinary dialogs restore both", async () => {
+  const app = await readApp();
+  const confirmDialog = await readConfirmDialog();
+  const request = functionSlice(confirmDialog, "requestConfirmation");
+  const close = functionSlice(confirmDialog, "closeConfirmDialog");
+  const trap = functionSlice(confirmDialog, "trapConfirmDialogFocus");
+  assert.match(request, /hideCancel = false \} = \{\}/, "hideCancel is an optional switch on the single confirmation API");
+  assert.match(request, /els\.confirmDialogCancel\.hidden = hideCancel === true;/, "the cancel button is hidden with the hidden attribute");
+  // The button classes set display themselves, so the attribute alone would leave
+  // the button on screen; this rule is what actually removes it.
+  const styles = await readFile(new URL("../web/app/styles.css", import.meta.url), "utf8");
+  assert.match(styles, /^\.confirm-dialog-actions \[hidden\] \{ display: none; \}$/m, "a hidden dialog button is really not rendered");
+  assert.match(request, /confirmDialogState\.hideCancel = hideCancel === true;/, "the mode rides on the shared dialog state, not a second dialog");
+  assert.match(close, /if \(els\.confirmDialogCancel\) els\.confirmDialogCancel\.hidden = false;/, "closing restores the cancel button for every later dialog");
+  assert.match(close, /confirmDialogState\.hideCancel = false;/, "the mode is reset on close");
+  assert.match(trap, /filter\(\(button\) => button && !button\.disabled && !button\.hidden\)/, "the Tab cycle skips the hidden cancel button");
+  // 业务接线：改名提示只问一次、单按钮、主按钮 tone、不传 dontAskAgainKey；
+  // 占用预检保证「没弹出来」不算已读。
+  const notice = functionSlice(app, "maybeShowRenameNotice");
+  assert.match(notice, /if \(notice\?\.shouldShow !== true\) return;/, "the renderer asks the desktop shell once and only shows a pending notice");
+  assert.match(notice, /if \(confirmDialogState\.pending \|\| !els\.confirmDialog\) return;/, "a busy dialog surface means the notice did not show — not read, ask again next launch");
+  assert.match(notice, /tone: "warning",/, "the notice button is the primary tone, not danger");
+  assert.match(notice, /hideCancel: true,/);
+  assert.doesNotMatch(notice, /dontAskAgainKey/, "the notice never offers the dont-ask row");
+  assert.match(app, /void maybeShowRenameNotice\(\);/, "wired after the first screen renders");
 });
 
 // 19-21. Escape is consumed at the head of the priority chain and never leaks.

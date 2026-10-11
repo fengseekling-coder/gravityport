@@ -1,6 +1,6 @@
 /**
  * Desktop notification internationalization module.
- * Exports pure functions for the desktop notifications MOSA actually emits.
+ * Exports pure functions for the desktop notifications GravityPort actually emits.
  * Desktop menu labels are resolved separately so native role items can follow
  * the renderer's app locale without changing the notification API.
  * Supports {count} placeholder for dynamically-counted messages.
@@ -10,14 +10,14 @@
 const translations = {
   zh: {
     assetsImported: "{count} 个新素材已导入",
-    updateAvailableTitle: "MOSA {version} 可更新",
-    updateAvailableBody: "新版本已发布，点击打开 MOSA 查看更新。",
+    updateAvailableTitle: "GravityPort {version} 可更新",
+    updateAvailableBody: "新版本已发布，点击打开 GravityPort 查看更新。",
   },
   en: {
     assetsImported: "{count} new assets imported",
     assetsImportedSingular: "1 new asset imported",
-    updateAvailableTitle: "MOSA {version} is available",
-    updateAvailableBody: "A new version is available. Click to open MOSA and review the update.",
+    updateAvailableTitle: "GravityPort {version} is available",
+    updateAvailableBody: "A new version is available. Click to open GravityPort and review the update.",
   },
 };
 
@@ -28,12 +28,12 @@ const desktopTranslations = {
     menuView: "视图",
     menuSearch: "搜索",
     menuWindow: "窗口",
-    menuAbout: "关于 MOSA",
+    menuAbout: "关于 GravityPort",
     menuServices: "服务",
-    menuHide: "隐藏 MOSA",
+    menuHide: "隐藏 GravityPort",
     menuHideOthers: "隐藏其他",
     menuShowAll: "显示全部",
-    menuQuit: "退出 MOSA",
+    menuQuit: "退出 GravityPort",
     menuClose: "关闭",
     menuUndo: "撤销",
     menuRedo: "重做",
@@ -50,7 +50,7 @@ const desktopTranslations = {
     menuMinimize: "最小化",
     menuZoom: "缩放",
     menuBringAllToFront: "将全部置于最前",
-    startupErrorTitle: "MOSA 无法启动",
+    startupErrorTitle: "GravityPort 无法启动",
   },
   en: {
     menuFile: "File",
@@ -58,12 +58,12 @@ const desktopTranslations = {
     menuView: "View",
     menuSearch: "Search",
     menuWindow: "Window",
-    menuAbout: "About MOSA",
+    menuAbout: "About GravityPort",
     menuServices: "Services",
-    menuHide: "Hide MOSA",
+    menuHide: "Hide GravityPort",
     menuHideOthers: "Hide Others",
     menuShowAll: "Show All",
-    menuQuit: "Quit MOSA",
+    menuQuit: "Quit GravityPort",
     menuClose: "Close",
     menuUndo: "Undo",
     menuRedo: "Redo",
@@ -80,7 +80,7 @@ const desktopTranslations = {
     menuMinimize: "Minimize",
     menuZoom: "Zoom",
     menuBringAllToFront: "Bring All to Front",
-    startupErrorTitle: "MOSA could not start",
+    startupErrorTitle: "GravityPort could not start",
   },
 };
 

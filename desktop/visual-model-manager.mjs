@@ -98,7 +98,7 @@ export function createVisualModelManager({
     async setEnabled(enabled) {
       const current = await refresh();
       if (enabled && !current.active_pack) {
-        const error = new Error("Install a verified MOSA visual model pack before enabling local visual search.");
+        const error = new Error("Install a verified GravityPort visual model pack before enabling local visual search.");
         error.code = "VISUAL_MODEL_NOT_INSTALLED";
         throw error;
       }
@@ -116,7 +116,7 @@ export function createVisualModelManager({
       const current = await refresh();
       const selected = current.packs.find((pack) => pack.id === String(id || "") && pack.revision === String(revision || ""));
       if (!selected) {
-        const error = new Error("Requested MOSA visual model pack is not installed or failed verification.");
+        const error = new Error("Requested GravityPort visual model pack is not installed or failed verification.");
         error.code = "VISUAL_MODEL_PACK_NOT_FOUND";
         throw error;
       }

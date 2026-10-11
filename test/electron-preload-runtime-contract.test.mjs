@@ -17,11 +17,13 @@ const electronPath = process.platform === "darwin"
     ? resolve(root, "node_modules", "electron", "dist", "electron.exe")
     : resolve(root, "node_modules", "electron", "dist", "electron");
 const EXPECTED_API_KEYS = [
+  "acknowledgeRenameNotice",
   "cancelUpdateDownload",
   "cancelVisualPackInstall",
   "changeLibraryLocation",
   "checkForUpdates",
   "downloadAndInstallUpdate",
+  "getRenameNoticeState",
   "getUserProfile",
   "getVisualModelState",
   "installVisualPack",
@@ -85,13 +87,19 @@ test("preload path, module format, security settings, and API surface are stable
   // accept no URL from the renderer; the main process owns the fixed website.
   // 任务 96（A6）：第 18 条批准通道 set-window-full-screen（大图页全屏与窗口
   // 系统全屏双向同步）；window-full-screen-change 是 ipcRenderer.on 单向广播，
-  // 不在 invoke 计数内。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 18, "only the eighteen approved invoke channels remain");
+  // 不在 invoke 计数内。任务 116：第 19/20 条 rename-notice-state /
+  // acknowledge-rename-notice（老用户「已更名」提示）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 20, "only the twenty approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
   assert.match(preload, /startNativeDrag: \(paths\) => ipcRenderer\.invoke\("start-native-file-drag", paths\)/);
   assert.match(preload, /getUserProfile: \(\) => ipcRenderer\.invoke\("user-profile"\)/);
+  // 任务 116：老用户「已更名」提示的取状态/确认通道。
+  assert.match(preload, /getRenameNoticeState: \(\) => ipcRenderer\.invoke\("rename-notice-state"\)/);
+  assert.match(preload, /acknowledgeRenameNotice: \(\) => ipcRenderer\.invoke\("acknowledge-rename-notice"\)/);
+  assert.match(main, /ipcMain\.handle\("rename-notice-state"/);
+  assert.match(main, /ipcMain\.handle\("acknowledge-rename-notice"/);
   assert.match(preload, /writeClipboardImage: \(path\) => ipcRenderer\.invoke\("write-clipboard-image", path\)/);
   assert.match(preload, /writeClipboardText: \(text\) => ipcRenderer\.invoke\("write-clipboard-text", text\)/);
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);

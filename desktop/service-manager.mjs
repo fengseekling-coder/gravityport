@@ -31,8 +31,8 @@ export class MosaServiceBuildMismatchError extends MosaServiceConflictError {
     const runningVersion = normalizedIdentityValue(details?.productVersion);
     const expectedVersion = normalizedIdentityValue(expectedIdentity?.productVersion);
     const runningLabel = runningVersion === "unknown" ? "another build" : `v${runningVersion}`;
-    const expectedLabel = expectedVersion === "unknown" ? "This MOSA build" : `MOSA v${expectedVersion}`;
-    super(`${expectedLabel} found ${runningLabel} of the local MOSA service using the same library. Quit the previous MOSA instance and reopen this version.`);
+    const expectedLabel = expectedVersion === "unknown" ? "This GravityPort build" : `GravityPort v${expectedVersion}`;
+    super(`${expectedLabel} found ${runningLabel} of the local GravityPort service using the same library. Quit the previous GravityPort instance and reopen this version.`);
     this.name = "MosaServiceBuildMismatchError";
     this.code = "MOSA_SERVICE_BUILD_MISMATCH";
     this.service = Object.freeze({ ...details });
@@ -50,7 +50,7 @@ export class MosaServiceBuildMismatchError extends MosaServiceConflictError {
 
 export class MosaServiceLibraryMismatchError extends MosaServiceConflictError {
   constructor({ port, expectedLibraryDir, actualLibraryDir }) {
-    super(`Port ${port} is already serving a different MOSA library. Quit the other MOSA instance before opening this library.`);
+    super(`Port ${port} is already serving a different GravityPort library. Quit the other GravityPort instance before opening this library.`);
     this.name = "MosaServiceLibraryMismatchError";
     this.code = "MOSA_SERVICE_LIBRARY_MISMATCH";
     this.port = port;
@@ -105,7 +105,7 @@ export async function startMosaService(options = {}) {
   }
 
   const discoveryPorts = Array.isArray(options.discoveryPorts) && options.discoveryPorts.length
-    ? options.discoveryPorts.map((candidate) => normalizeMosaPort(candidate, { label: "MOSA discovery port" }))
+    ? options.discoveryPorts.map((candidate) => normalizeMosaPort(candidate, { label: "GravityPort discovery port" }))
     : DEFAULT_MOSA_DISCOVERY_PORTS;
   const candidatePorts = options.allowPortFallback
     ? [...new Set([port, ...discoveryPorts])]
@@ -255,7 +255,7 @@ export async function startMosaService(options = {}) {
   }
 
   if (lastConflict) throw lastConflict;
-  throw new MosaServiceConflictError("No MOSA desktop discovery port is available.");
+  throw new MosaServiceConflictError("No GravityPort desktop discovery port is available.");
 }
 
 export async function probeMosaService(options = {}) {
@@ -280,10 +280,10 @@ export async function probeMosaService(options = {}) {
     } else if (response.status === 404) {
       health = await probeLegacyMosaIdentity({ url, fetchImpl, signal: controller.signal });
     } else {
-      return conflict(`Port ${port} is occupied by a service that is not a healthy MOSA runtime.`, null, { retryable: true });
+      return conflict(`Port ${port} is occupied by a service that is not a healthy GravityPort runtime.`, null, { retryable: true });
     }
     if (health?.product !== "mosa" || typeof health.libraryDir !== "string") {
-      return conflict(`Port ${port} is occupied by a service that is not MOSA.`);
+      return conflict(`Port ${port} is occupied by a service that is not GravityPort.`);
     }
     // Compare canonicalized paths so a symlinked alias of the running
     // library still matches (same semantics as the isolation guard).
@@ -314,8 +314,8 @@ export async function probeMosaService(options = {}) {
   } catch (error) {
     if (isConnectionRefused(error)) return { state: "unavailable" };
     const reason = error?.name === "AbortError"
-      ? `Port ${port} did not respond before the MOSA probe timed out.`
-      : `Port ${port} is occupied but could not be verified as MOSA.`;
+      ? `Port ${port} did not respond before the GravityPort probe timed out.`
+      : `Port ${port} is occupied but could not be verified as GravityPort.`;
     return conflict(reason, error, { retryable: true });
   } finally {
     clearTimeout(timer);

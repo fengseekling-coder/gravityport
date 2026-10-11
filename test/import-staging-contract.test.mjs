@@ -246,11 +246,13 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
   const preload = await readFile(join(root, "desktop", "preload.cjs"), "utf8");
   const exposed = [...preload.matchAll(/^\s{2}(\w+):/gm)].map((match) => match[1]).sort();
   assert.deepEqual(exposed, [
+    "acknowledgeRenameNotice",
     "cancelUpdateDownload",
     "cancelVisualPackInstall",
     "changeLibraryLocation",
     "checkForUpdates",
     "downloadAndInstallUpdate",
+    "getRenameNoticeState",
     "getUserProfile",
     "getVisualModelState",
     "installVisualPack",
