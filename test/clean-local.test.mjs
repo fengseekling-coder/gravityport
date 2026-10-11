@@ -32,6 +32,8 @@ async function makeFixture(t) {
   await write(join(root, "out", "make", "rc.9", "MOSA.dmg"), "installer");
   await write(join(root, "out", "MOSA-darwin-arm64", "MOSA.app", "Contents", "Info.plist"));
   await write(join(root, "out", "MOSA-win32-x64", "MOSA.exe"));
+  await write(join(root, "out", "GravityPort-darwin-arm64", "GravityPort.app", "Contents", "Info.plist"));
+  await write(join(root, "out", "GravityPort-win32-x64", "GravityPort.exe"));
   await write(join(root, "out", "store", "extension.zip"));
   await write(join(outside, "sentinel.txt"), "keep me");
   return { root, outside };
@@ -57,12 +59,14 @@ test("clean:local never deletes the packaged macOS app", async (t) => {
   const { root } = await makeFixture(t);
   await cleanLocal({ root });
   assert.equal(existsSync(join(root, "out", "MOSA-darwin-arm64", "MOSA.app", "Contents", "Info.plist")), true);
+  assert.equal(existsSync(join(root, "out", "GravityPort-darwin-arm64", "GravityPort.app", "Contents", "Info.plist")), true);
 });
 
 test("clean:local never deletes the packaged Windows app", async (t) => {
   const { root } = await makeFixture(t);
   await cleanLocal({ root });
   assert.equal(existsSync(join(root, "out", "MOSA-win32-x64", "MOSA.exe")), true);
+  assert.equal(existsSync(join(root, "out", "GravityPort-win32-x64", "GravityPort.exe")), true);
 });
 
 test("clean:local never deletes out/store", async (t) => {
@@ -73,7 +77,7 @@ test("clean:local never deletes out/store", async (t) => {
 
 test("release artifact paths are rejected even when requested explicitly", async (t) => {
   const { root } = await makeFixture(t);
-  for (const requested of ["out", "out/make", "out/store", "out/MOSA-darwin-arm64", "out/MOSA-win32-x64", "out/make/rc.9", "out/unknown-dir"]) {
+  for (const requested of ["out", "out/make", "out/store", "out/MOSA-darwin-arm64", "out/MOSA-win32-x64", "out/GravityPort-darwin-arm64", "out/GravityPort-win32-x64", "out/make/rc.9", "out/unknown-dir"]) {
     const verdict = resolveCleanTarget(root, requested);
     assert.ok(verdict.reason, `expected rejection for ${requested}`);
     assert.equal(verdict.path, undefined);
@@ -176,5 +180,12 @@ test("repeated runs are idempotent", async (t) => {
 
 test("declared target set matches the documented allowlist", () => {
   assert.deepEqual([...DEFAULT_TARGETS].sort(), [".nyc_output", "coverage", "out/inspect", "out/qa", "out/tmp"]);
-  assert.deepEqual(PRESERVED_RELEASE_PATHS, ["out/make", "out/MOSA-darwin-arm64", "out/MOSA-win32-x64", "out/store"]);
+  assert.deepEqual([...PRESERVED_RELEASE_PATHS], [
+    "out/make",
+    "out/MOSA-darwin-arm64",
+    "out/MOSA-win32-x64",
+    "out/GravityPort-darwin-arm64",
+    "out/GravityPort-win32-x64",
+    "out/store",
+  ]);
 });

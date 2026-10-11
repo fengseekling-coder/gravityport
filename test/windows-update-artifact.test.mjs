@@ -13,13 +13,15 @@ import {
 import { removeTestPath } from "./test-cleanup.mjs";
 
 test("Windows update artifact naming is version-bound and release-feed compatible", () => {
-  assert.equal(windowsUpdateArtifactName("0.3.0"), "MOSA-win32-x64-0.3.0.zip");
-  assert.equal(windowsUpdateArtifactName("0.3.0-rc.2"), "MOSA-win32-x64-0.3.0-rc.2.zip");
+  // The legacy MOSA transition build keeps the historical artifact names.
+  assert.equal(windowsUpdateArtifactName("0.3.0", "x64", "MOSA"), "MOSA-win32-x64-0.3.0.zip");
+  assert.equal(windowsUpdateArtifactName("0.3.0-rc.2", "x64", "MOSA"), "MOSA-win32-x64-0.3.0-rc.2.zip");
+  assert.equal(windowsUpdateArtifactName("0.3.0"), "GravityPort-win32-x64-0.3.0.zip");
   assert.throws(() => windowsUpdateArtifactName("latest"), /Invalid/);
   assert.throws(() => windowsUpdateArtifactName("0.3.0", "arm64"), /Unsupported/);
 });
 
-test("Windows update ZIP commands preserve the MOSA-win32-x64 root directory", () => {
+test("Windows update ZIP commands preserve the product root directory", () => {
   const packageDir = "/tmp/build/MOSA-win32-x64";
   const output = "/tmp/build/out.zip";
   const posix = windowsUpdateZipCommand({ packageDir, output, platform: "darwin" });
@@ -62,9 +64,9 @@ test("Windows update ZIP builder emits exact metadata and rejects flat layout", 
       throw new Error(`unexpected command: ${command}`);
     };
 
-    const result = await makeWindowsUpdateZip({ rootDir: root, platform: "darwin", runner });
+    const result = await makeWindowsUpdateZip({ rootDir: root, platform: "darwin", product: "MOSA", runner });
     assert.equal(result.artifactName, "MOSA-win32-x64-0.3.0.zip");
-    assert.equal(result.artifactPath, windowsUpdateArtifactPath({ rootDir: root, version: "0.3.0" }));
+    assert.equal(result.artifactPath, windowsUpdateArtifactPath({ rootDir: root, version: "0.3.0", product: "MOSA" }));
     assert.equal((await stat(result.artifactPath)).size, result.size);
     assert.match(result.sha256, /^[0-9a-f]{64}$/);
     assert.deepEqual(result.release_manifest_patch.platforms.windows, {
@@ -77,7 +79,7 @@ test("Windows update ZIP builder emits exact metadata and rejects flat layout", 
 
     flat = true;
     await assert.rejects(
-      makeWindowsUpdateZip({ rootDir: root, platform: "darwin", runner }),
+      makeWindowsUpdateZip({ rootDir: root, platform: "darwin", product: "MOSA", runner }),
       /missing MOSA-win32-x64\/MOSA\.exe/,
     );
   } finally {

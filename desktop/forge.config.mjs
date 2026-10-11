@@ -3,6 +3,7 @@ import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-nati
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { desktopDistributionFromEnvironment, requiresPlatformSigning } from "../lib/release-distribution.mjs";
+import { resolveReleaseProduct } from "../scripts/release-product.mjs";
 import {
   desktopIconBasePath,
   desktopIconOutputDir,
@@ -169,7 +170,7 @@ export function windowsReleasePackagingConfig(env = process.env) {
     windowsSign: {
       continueOnError: false,
       hashes: ["sha256"],
-      description: "MOSA",
+      description: resolveReleaseProduct(env),
       website: "https://mosa.azhuilab.com/",
       ...(certificateFile ? { certificateFile } : {}),
       ...(certificatePassword ? { certificatePassword } : {}),
@@ -268,7 +269,7 @@ export function createForgeConfig({ target = activeTarget, env = process.env } =
   // generated packages elsewhere without changing the release layout.
   outDir,
   packagerConfig: {
-    name: "MOSA",
+    name: resolveReleaseProduct(env),
     icon,
     ...(target.platform === "darwin" ? { appBundleId: "com.azhuilab.mosa" } : {}),
     ...macPackaging,

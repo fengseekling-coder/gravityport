@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveReleaseProductNames } from "./release-product.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -79,7 +80,8 @@ export async function verifyWindowsReleasePackage({
 
 async function main() {
   if (process.platform !== "win32") throw new Error("Windows release verification must run on Windows.");
-  const packageDir = resolve(rootDir, process.env.MOSA_FORGE_OUT_DIR || "out", "MOSA-win32-x64");
+  const names = resolveReleaseProductNames();
+  const packageDir = resolve(rootDir, process.env.MOSA_FORGE_OUT_DIR || "out", names.windowsPackageDirName);
   const result = await verifyWindowsReleasePackage({ packageDir });
   console.log(`[MOSA] Windows release signatures verified: ${result.files} executable/native files.`);
 }
