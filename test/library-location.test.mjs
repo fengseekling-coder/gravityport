@@ -328,7 +328,7 @@ describe("canonical library comparison across symlinks", () => {
       }),
     });
     assert.equal(conflicting.state, "conflict");
-    assert.match(conflicting.error?.message || "", /different MOSA library/);
+    assert.match(conflicting.error?.message || "", /different GravityPort library/);
   });
 
   it("supervisor probe attaches through a symlink and still reports different-library", async (t) => {

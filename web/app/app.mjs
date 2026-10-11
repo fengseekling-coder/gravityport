@@ -1306,6 +1306,9 @@ async function init() {
     applyGalleryCardSize(galleryTargetCardWidth);
     syncGallerySizeGroupVisibility();
     renderGrid();
+    // 任务 116：老用户「已更名」提示——第一屏渲染完问一次桌面壳，要弹就用唯一
+    // 确认弹窗的单按钮形态（详见 maybeShowRenameNotice）。
+    void maybeShowRenameNotice();
     // Desktop V2 starts with the Inspector as the third column. Calling the
     // existing state transition before data loading prevents a visible
     // two-column -> three-column jump during startup; an explicit close action
@@ -1355,6 +1358,35 @@ async function init() {
       setStatus(t("statusUnavailable"), "error");
     }
   }
+
+// 任务 116：老用户「已更名」提示（MOSA is now GravityPort）。桌面壳在启动最早期
+// 已判定（userData 里的 rename-notice.json），这里只在第一屏渲染完问一次状态。
+// - 浏览器直开（无 electronAPI）不弹、不报错。
+// - 弹之前同步预检占用：预检与 requestConfirmation 的占用守卫之间没有 await，
+//   确认此刻真的会弹出；没弹出来（已有确认框开着）不算已读，下次启动再弹。
+// - 单按钮模式：不传 dontAskAgainKey（无「不再提醒」行）、tone 非 danger（主按钮
+//   样式）、hideCancel 隐藏取消按钮、焦点落「知道了」。
+// - 点按钮、按 Esc、点遮罩关闭都算已读，调确认接口。
+async function maybeShowRenameNotice() {
+  if (!window.electronAPI?.getRenameNoticeState || !window.electronAPI?.acknowledgeRenameNotice) return;
+  try {
+    const notice = await window.electronAPI.getRenameNoticeState();
+    if (notice?.shouldShow !== true) return;
+    if (confirmDialogState.pending || !els.confirmDialog) return;
+    // 走到 await 说明弹窗确实打开了（占用时上面已同步预检拦截）；true=点了按钮，
+    // false=Esc/遮罩关闭——三种关闭方式都算已读。
+    await requestConfirmation({
+      title: t("renameNoticeTitle"),
+      description: t("renameNoticeBody"),
+      confirmLabel: t("renameNoticeConfirm"),
+      tone: "warning",
+      hideCancel: true,
+    });
+    void window.electronAPI.acknowledgeRenameNotice();
+  } catch {
+    // 桌面壳不在或不支持该通道时静默跳过。
+  }
+}
 
 async function loadProductVersion() {
   const data = await apiFetch("/api/health");

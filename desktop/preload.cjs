@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   startNativeDrag: (paths) => ipcRenderer.invoke("start-native-file-drag", paths),
   setLocale: (locale) => ipcRenderer.invoke("set-locale", locale),
   getUserProfile: () => ipcRenderer.invoke("user-profile"),
+  // 任务 116：老用户「已更名」提示——取启动早期判定结果、确认已读。
+  getRenameNoticeState: () => ipcRenderer.invoke("rename-notice-state"),
+  acknowledgeRenameNotice: () => ipcRenderer.invoke("acknowledge-rename-notice"),
   getVisualModelState: (refresh = false) => ipcRenderer.invoke("visual-model-state", refresh === true),
   setVisualModelEnabled: (enabled) => ipcRenderer.invoke("visual-model-set-enabled", enabled === true),
   installVisualPack: () => ipcRenderer.invoke("visual-pack-install"),

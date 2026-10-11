@@ -17,7 +17,7 @@ const DESKTOP_TEXT = {
   menuView: { zh: "视图", en: "View" },
   menuSearch: { zh: "搜索", en: "Search" },
   menuWindow: { zh: "窗口", en: "Window" },
-  startupErrorTitle: { zh: "MOSA 无法启动", en: "MOSA could not start" },
+  startupErrorTitle: { zh: "GravityPort 无法启动", en: "GravityPort could not start" },
 };
 
 function sliceBetween(source, startMarker, endMarker) {
@@ -50,12 +50,12 @@ test("desktop notifications keep localized import and update copy", () => {
   assert.equal(getNotificationTextForAssetsImported(12, "en"), "12 new assets imported");
   assert.equal(getNotificationTextForAssetsImported(3, "ja"), "3 个新素材已导入");
   assert.deepEqual(getUpdateNotificationText("0.3.0", "zh"), {
-    title: "MOSA v0.3.0 可更新",
-    body: "新版本已发布，点击打开 MOSA 查看更新。",
+    title: "GravityPort v0.3.0 可更新",
+    body: "新版本已发布，点击打开 GravityPort 查看更新。",
   });
   assert.deepEqual(getUpdateNotificationText("v0.3.0", "en"), {
-    title: "MOSA v0.3.0 is available",
-    body: "A new version is available. Click to open MOSA and review the update.",
+    title: "GravityPort v0.3.0 is available",
+    body: "A new version is available. Click to open GravityPort and review the update.",
   });
   assert.equal("getNotificationText" in desktopI18n, false, "removed updater helper is not kept as dead API");
 });
@@ -129,11 +129,13 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   const preload = await read("desktop/preload.cjs");
   const exposedKeys = [...preload.matchAll(/^\s{2}(\w+):/gm)].map((match) => match[1]).sort();
   assert.deepEqual(exposedKeys, [
+    "acknowledgeRenameNotice",
     "cancelUpdateDownload",
     "cancelVisualPackInstall",
     "changeLibraryLocation",
     "checkForUpdates",
     "downloadAndInstallUpdate",
+    "getRenameNoticeState",
     "getUserProfile",
     "getVisualModelState",
     "installVisualPack",
@@ -152,8 +154,9 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "writeClipboardImage",
     "writeClipboardText",
   ]);
-  // 任务 96（A6）：第 18 条批准通道 set-window-full-screen（大图页全屏与窗口系统全屏同步）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 18, "preload keeps the approved invoke channels");
+  // 任务 96（A6）：第 18 条批准通道 set-window-full-screen。任务 116：第 19/20 条
+  // rename-notice-state / acknowledge-rename-notice（老用户「已更名」提示）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 20, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");
   // R1 isolation fix (2026-08-09, approved scope) added qa:web/qa:electron/

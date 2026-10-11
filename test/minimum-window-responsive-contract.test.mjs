@@ -78,7 +78,8 @@ test("10-11. 退役 Finder IPC 保持移除且其余 Desktop IPC 不变", async 
   }
   // 更新检查、下载安装都不接受 renderer 提供的 URL；其余能力仍保持封闭。
   // 任务 96（A6）：第 18 条批准通道 set-window-full-screen（大图页全屏与窗口系统全屏同步）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 18, "no invoke channel beyond the currently approved narrow requests, including the Visual Pack lifecycle");
+  // 任务 116：第 19/20 条 rename-notice-state / acknowledge-rename-notice（老用户「已更名」提示）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 20, "no invoke channel beyond the currently approved narrow requests, including the Visual Pack lifecycle");
 });
 
 test("12-14. 960 下 Sidebar 批准收敛规则与搜索可达", async () => {

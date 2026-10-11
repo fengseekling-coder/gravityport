@@ -47,7 +47,7 @@ export async function loadOrCreateWebCaptureToken(userDataDir) {
 
 export async function loadOrCreateMosaClientToken(userDataDir) {
   const root = String(userDataDir || "").trim();
-  if (!root) throw new Error("Desktop userData directory is required for the MOSA client token.");
+  if (!root) throw new Error("Desktop userData directory is required for the GravityPort client token.");
 
   await mkdir(root, { recursive: true });
   const tokenPath = join(root, CLIENT_TOKEN_FILE_NAME);

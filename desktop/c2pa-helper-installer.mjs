@@ -25,7 +25,7 @@ const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 
 export function parseC2paHelperReleaseManifest(input, { platform = process.platform, arch = process.arch } = {}) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) throw installerError("RELEASE_INVALID", "Invalid MOSA release manifest.");
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw installerError("RELEASE_INVALID", "Invalid GravityPort release manifest.");
   const target = c2paHelperTarget(platform, arch);
   if (!target) return null;
   const raw = input.helperPacks?.c2patool?.[target];
@@ -86,7 +86,7 @@ export async function checkForC2paHelperRelease({
     });
     if (!response?.ok) throw installerError("FETCH_FAILED", `C2PA helper release check returned HTTP ${response?.status || 0}.`);
     const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > RELEASE_MANIFEST_MAX_BYTES) throw installerError("RELEASE_INVALID", "MOSA release manifest is too large.");
+    if (Buffer.byteLength(text, "utf8") > RELEASE_MANIFEST_MAX_BYTES) throw installerError("RELEASE_INVALID", "GravityPort release manifest is too large.");
     const document = JSON.parse(text);
     verifyReleaseManifestSignature(document, releaseManifestTrust);
     return { supported: true, release: parseC2paHelperReleaseManifest(document, { platform, arch }) };

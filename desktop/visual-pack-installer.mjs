@@ -31,7 +31,7 @@ export function visualPackTarget(platform = process.platform, arch = process.arc
 }
 
 export function parseVisualPackReleaseManifest(input, { platform = process.platform, arch = process.arch } = {}) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) throw visualPackError("RELEASE_INVALID", "Invalid MOSA release manifest.");
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw visualPackError("RELEASE_INVALID", "Invalid GravityPort release manifest.");
   const target = visualPackTarget(platform, arch);
   if (!target) return null;
   const raw = input.visualPacks?.[target];
@@ -88,7 +88,7 @@ export async function checkForVisualPackRelease({
     });
     if (!response?.ok) throw visualPackError("FETCH_FAILED", `Visual Pack release check returned HTTP ${response?.status || 0}.`);
     const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > RELEASE_MANIFEST_MAX_BYTES) throw visualPackError("RELEASE_INVALID", "MOSA release manifest is too large.");
+    if (Buffer.byteLength(text, "utf8") > RELEASE_MANIFEST_MAX_BYTES) throw visualPackError("RELEASE_INVALID", "GravityPort release manifest is too large.");
     const document = JSON.parse(text);
     if (releaseManifestTrust) verifyReleaseManifestSignature(document, releaseManifestTrust);
     return { supported: true, release: parseVisualPackReleaseManifest(document, { platform, arch }) };

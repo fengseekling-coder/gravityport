@@ -112,7 +112,7 @@ export function createApiClient(deps) {
       if (payload.code) error.code = payload.code;
       throw error;
     }
-    throw new Error("MOSA request failed after authentication refresh.");
+    throw new Error("GravityPort request failed after authentication refresh.");
   }
 
   async function loadProjects() {

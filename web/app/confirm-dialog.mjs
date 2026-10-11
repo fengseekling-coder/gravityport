@@ -3,6 +3,10 @@
 // 生命周期、焦点恢复策略与原先完全一致；confirmDialogState 随闭包迁移并原样暴露。
 // 任务 94（A4f）：requestConfirmation 可选 dontAskAgainKey——传入才显示「不再提醒」
 // 勾选框，只有点「是」且勾选时写入该键（"off"）；否/Esc/遮罩一律不记，每次打开都未勾选。
+// 任务 116：requestConfirmation 可选 hideCancel——单按钮提示弹窗（老用户「已更名」
+// 提示）用，取消按钮整颗隐藏（hidden 属性；按钮类自带 display，靠 styles.css 里
+// .confirm-dialog-actions [hidden] 那条规则才真正不显示），打开焦点落确认按钮；
+// 关闭时由 closeConfirmDialog 统一恢复 hidden=false，普通确认框行为与以前完全一致。
 
 import { safeStorageSet } from "./utils.mjs";
 
@@ -10,11 +14,11 @@ export function createConfirmDialog({ els, state, t, closePanel }) {
   // ===== Confirm Dialog（Phase 5B / F-15） =====
   // 全应用唯一 ConfirmDialog。业务只传文案、tone 与可选的显式焦点返回目标；
   // 不持久化到 state/localStorage/素材数据，不建确认队列或第二套 Modal Manager。
-  const confirmDialogState = { pending: false, resolve: null, returnFocus: null, triggerElement: null, dontAskAgainKey: null };
+  const confirmDialogState = { pending: false, resolve: null, returnFocus: null, triggerElement: null, dontAskAgainKey: null, hideCancel: false };
 
   // 单 pending 策略：已有确认显示时，新请求直接返回 false——不排队、第二个请求不覆盖
   // 第一个 resolver，两个不同业务绝不共享同一确认结果（重复快速点击不叠加第二个 Modal）。
-  function requestConfirmation({ title = "", description = "", confirmLabel = "", cancelLabel = "", tone = "danger", returnFocus = null, dontAskAgainKey = "" } = {}) {
+  function requestConfirmation({ title = "", description = "", confirmLabel = "", cancelLabel = "", tone = "danger", returnFocus = null, dontAskAgainKey = "", hideCancel = false } = {}) {
     if (confirmDialogState.pending || !els.confirmDialog) return Promise.resolve(false);
     // 打开前保存当前焦点元素，并关闭 Settings，避免两个 modal surface 叠加。
     confirmDialogState.triggerElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -28,7 +32,12 @@ export function createConfirmDialog({ els, state, t, closePanel }) {
       els.confirmDialogConfirm.classList.toggle("btn-danger", tone === "danger");
       els.confirmDialogConfirm.classList.toggle("btn-primary", tone !== "danger");
     }
-    if (els.confirmDialogCancel) els.confirmDialogCancel.textContent = cancelLabel || t("cancel");
+    if (els.confirmDialogCancel) {
+      els.confirmDialogCancel.textContent = cancelLabel || t("cancel");
+      // 单按钮提示模式：取消按钮用 hidden 整颗拿掉（无障碍与 Tab 都跳过）。
+      els.confirmDialogCancel.hidden = hideCancel === true;
+    }
+    confirmDialogState.hideCancel = hideCancel === true;
     if (els.confirmDialogCard) els.confirmDialogCard.dataset.tone = tone === "danger" ? "danger" : "warning";
     // 「不再提醒」行只对传入 dontAskAgainKey 的调用出现，且每次打开都是未勾选。
     confirmDialogState.dontAskAgainKey = typeof dontAskAgainKey === "string" && dontAskAgainKey ? dontAskAgainKey : null;
@@ -45,8 +54,9 @@ export function createConfirmDialog({ els, state, t, closePanel }) {
     els.confirmDialog.setAttribute("aria-hidden", "false");
     return new Promise((resolve) => {
       confirmDialogState.resolve = resolve;
-      // 默认焦点落 Cancel——破坏性操作不得默认聚焦确认按钮；焦点不落容器或 body。
-      requestAnimationFrame(() => { if (confirmDialogState.pending) els.confirmDialogCancel?.focus(); });
+      // 默认焦点：双按钮落 Cancel——破坏性操作不得默认聚焦确认按钮；单按钮提示
+      // 模式只有确认按钮可点，焦点落「知道了」。焦点不落容器或 body。
+      requestAnimationFrame(() => { if (confirmDialogState.pending) (confirmDialogState.hideCancel ? els.confirmDialogConfirm : els.confirmDialogCancel)?.focus(); });
     });
   }
 
@@ -79,7 +89,8 @@ export function createConfirmDialog({ els, state, t, closePanel }) {
     els.confirmDialog?.classList.remove("open");
     els.confirmDialog?.setAttribute("aria-hidden", "true");
     els.appShell?.removeAttribute("inert");
-    // 清理临时文案与 tone，单一 Dialog 壳回到静态空壳（勾选行同样复位为隐藏未勾选）。
+    // 清理临时文案与 tone，单一 Dialog 壳回到静态空壳（勾选行同样复位为隐藏未勾选；
+    // 单按钮模式隐藏过的取消按钮恢复显示，下一次普通确认框与以前完全一样）。
     if (els.confirmDialogTitle) els.confirmDialogTitle.textContent = "";
     if (els.confirmDialogDescription) els.confirmDialogDescription.textContent = "";
     if (els.confirmDialogConfirm) {
@@ -87,6 +98,8 @@ export function createConfirmDialog({ els, state, t, closePanel }) {
       els.confirmDialogConfirm.classList.remove("btn-danger");
       els.confirmDialogConfirm.classList.add("btn-primary");
     }
+    if (els.confirmDialogCancel) els.confirmDialogCancel.hidden = false;
+    confirmDialogState.hideCancel = false;
     delete els.confirmDialogCard?.dataset.tone;
     if (els.confirmDialogDontAsk) {
       els.confirmDialogDontAsk.hidden = true;
@@ -133,9 +146,9 @@ export function createConfirmDialog({ els, state, t, closePanel }) {
       return;
     }
     if (event.key !== "Tab") return;
-    // Tab 在 Cancel/Confirm 之间正/反向循环；Enter/Space 保持聚焦原生按钮的默认行为，
-    // 无全局 Enter 自动确认。
-    const focusable = [els.confirmDialogCancel, els.confirmDialogConfirm].filter((button) => button && !button.disabled);
+    // Tab 在 Cancel/Confirm 之间正/反向循环（单按钮模式下 hidden 的取消按钮不在
+    // 循环内）；Enter/Space 保持聚焦原生按钮的默认行为，无全局 Enter 自动确认。
+    const focusable = [els.confirmDialogCancel, els.confirmDialogConfirm].filter((button) => button && !button.disabled && !button.hidden);
     if (!focusable.length) return;
     const current = focusable.indexOf(document.activeElement);
     const next = event.shiftKey ? (current <= 0 ? focusable.length - 1 : current - 1) : (current === focusable.length - 1 ? 0 : current + 1);
