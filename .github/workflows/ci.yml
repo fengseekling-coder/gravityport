@@ -37,7 +37,7 @@ jobs:
           MOSA_ELECTRON_PRELOAD_SMOKE: "1"
       - run: npm run test:e2e
       - run: npm run desktop:package
-      - run: codesign --verify --deep --strict --verbose=2 out/MOSA-darwin-arm64/MOSA.app
+      - run: codesign --verify --deep --strict --verbose=2 out/GravityPort-darwin-arm64/GravityPort.app
       - run: npm run qa:packaged:smoke
 
   desktop-windows:

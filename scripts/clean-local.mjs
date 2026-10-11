@@ -14,6 +14,7 @@
 import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { RELEASE_PRODUCTS, releaseProductNames } from "./release-product.mjs";
 
 export const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -26,12 +27,16 @@ export const TEMP_NAMESPACES = ["out/tmp", "out/qa", "out/inspect"];
 export const DEFAULT_TARGETS = [...REGENERABLE_ROOTS, ...TEMP_NAMESPACES];
 
 // Shown in every report; the allowlist above is what actually keeps them safe.
-export const PRESERVED_RELEASE_PATHS = [
+// Every release product's packaged output directories are deliberate artifacts
+// and stay unreachable by cleanup.
+export const PRESERVED_RELEASE_PATHS = Object.freeze([
   "out/make",
-  "out/MOSA-darwin-arm64",
-  "out/MOSA-win32-x64",
+  ...RELEASE_PRODUCTS.flatMap((product) => [
+    `out/${releaseProductNames(product).macosPackageDirName}`,
+    `out/${releaseProductNames(product).windowsPackageDirName}`,
+  ]),
   "out/store",
-];
+]);
 
 // Accepts a requested delete target only when it is an explicitly declared
 // regenerable path. Returns { path, reason } for rejections.
