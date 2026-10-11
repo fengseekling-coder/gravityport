@@ -167,8 +167,8 @@ test("desktop icon source generates valid macOS and Windows icon containers", as
   deferTestPathRemoval(outputDir, { recursive: true, force: true });
 
   const source = await readFile(DESKTOP_ICON_SOURCE_PATH, "utf8");
-  assert.match(source, /linearGradient id="mosaGradient"/);
-  assert.match(source, /stroke-linecap="round"/);
+  assert.match(source, /<rect x="100" y="100" width="824" height="824" rx="185" fill="#FCFBF8"\/>/);
+  assert.match(source, /<circle cx="95\.81" cy="60" r="7\.88" fill="#C9A45C"\/>/);
 
   const paths = await generateDesktopIcons({ outputDir });
   const [icns, ico, png] = await Promise.all([
