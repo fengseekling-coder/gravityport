@@ -333,5 +333,10 @@ test("out-of-scope files stay locked and the Phase 1C card contract is stable", 
   assert.match(css, /\.mosa-v2 \.card-action-btn::before \{[\s\S]*?content: none;/);
   assert.match(css, /\.mosa-v2 \.card-action-btn svg \{ width: 16px; height: 16px; \}/);
   assert.match(css, /\.mosa-v2 \.card-favorite \{ color: rgb\(255 255 255 \/ \.62\); background: transparent; \}/);
-  assert.match(css, /\.mosa-v2 \.card-favorite\.is-fav \{ color: var\(--color-danger\); background: transparent; \}/);
+  // 任务 124：已收藏统一用收藏色（检视器里的星也是它），不再用危险色；星形带一圈
+  // 深色底衬（只用既有 token），白底图上也看得见。
+  assert.match(css, /\.mosa-v2 \.card-favorite\.is-fav \{ color: var\(--color-favorite\); background: transparent; \}/);
+  assert.match(css, /\.mosa-v2 \.card-favorite\.is-fav:hover \{ color: var\(--color-favorite\); background: transparent; opacity: \.82; \}/);
+  assert.doesNotMatch(css, /\.card-favorite[^{}]*\{[^{}]*var\(--color-danger\)/, "the favorite star never uses the danger colour");
+  assert.match(css, /\.mosa-v2 \.card-favorite svg \{ filter: drop-shadow\(0 0 1px var\(--color-media-surface\)\) drop-shadow\(0 1px 2px var\(--color-scrim\)\); \}/);
 });

@@ -126,6 +126,16 @@ test("prompt and instruction boxes grow with content, cap at 120px, and scroll",
   assert.match(light, /border-color: transparent;/);
   assert.match(light, /background: #f3f3f5;/);
   assert.match(light, /color: #4a4a50;/);
+  // 任务 124：两个框都是人写的文字——都用界面字体（指令框此前一直继承 .prompt-box 的
+  // 等宽字体），都保留原文的换行和分段。全文件里这两个选择器没有别处再改这两项。
+  for (const selector of [".mosa-v2 .detail .detail-prompt-box", ".mosa-v2 .detail .detail-instruction-box"]) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const declaring = [...css.matchAll(new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`, "g"))].map((match) => match[1]);
+    const fonts = declaring.flatMap((body) => [...body.matchAll(/font-family: ([^;]+);/g)].map((match) => match[1]));
+    const spaces = declaring.flatMap((body) => [...body.matchAll(/white-space: ([^;]+);/g)].map((match) => match[1]));
+    assert.deepEqual(fonts, ["var(--font-family-ui)"], `${selector} uses the UI font`);
+    assert.deepEqual(spaces, ["pre-wrap"], `${selector} keeps line breaks`);
+  }
 });
 
 test("palette swatches are 24×12 with the 4px radius and 2px gaps", async () => {

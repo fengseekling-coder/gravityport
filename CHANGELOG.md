@@ -4,6 +4,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ## Unreleased
 
+- Inspector text and favorites are consistent again: the User instruction box now uses the interface font like the Prompt box (it had been left in a monospace font), both boxes keep the line breaks and paragraphs of the original text instead of running everything into one block, and a favorited star on a gallery card is now the same yellow as the star in the Inspector (it used to be red) with a soft dark edge so the star stays visible on white images.
 - The Settings dialog now keeps one fixed size (720×464, the size of the General & Appearance page) on every page instead of shrinking on pages with less content; it still shrinks with the window when the window is too short.
 - Fixed the gallery breaking when the first images arrive from outside while the app is open on an empty library: the "library is empty" placeholder stayed on screen with the new cards appended behind it, and the whole batch was squeezed into a single ~30px-wide row instead of the normal masonry grid. The empty placeholder (and, defensively, the loading skeleton and error states) now hands the gallery over to a full re-render the moment live-pushed cards land, so the first batch from the capture plugin or an external writer lays out like any other view.
 - The app has a new icon: the GravityPort mark on a light tile replaces the previous gradient icon on macOS and Windows.
