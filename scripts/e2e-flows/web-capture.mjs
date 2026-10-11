@@ -712,6 +712,11 @@ function liveCaptureSource(config) {
 
     await waitFor(() => gallerySettled(), 'initial gallery settles', 20000);
     const initialCardCount = rootCardIds().length;
+    // 任务 122：这条流程从空库起步——推送的卡片加入前，网格必须正处于
+    // 「素材库还是空的」空态；推送之后空态必须让位（增量提交曾把卡片追加在
+    // 空态后面，:has 的 flex 规则把卡片压扁）。
+    await waitFor(() => document.querySelector('#assetGrid > .gallery-empty-state')?.dataset.emptyKind === 'library-empty',
+      'library-empty state on screen before the capture', 10000);
 
     // The bridge routes are locale-sensitive in the UI only: pin the real
     // settings entry to Chinese so label assertions are deterministic.
@@ -793,6 +798,9 @@ function liveCaptureSource(config) {
     // No reload, no navigation: the card must arrive through the library push.
     await waitFor(() => document.querySelector(cardSelector(assetId)), 'captured card appears without reload (library push)', 30000);
     await waitFor(() => gallerySettled(), 'gallery settles after the pushed card', 15000);
+    // 任务 122：第一张推送卡片落位后空状态必须已经让位给真实卡片网格。
+    await waitFor(() => !document.querySelector('#assetGrid > .gallery-empty-state'),
+      'library empty state removed by the first pushed card', 10000);
     const card = document.querySelector(cardSelector(assetId));
     const cardTitle = card?.querySelector('.asset-card-title')?.textContent || '';
     const cardMetaSpans = [...(card?.querySelectorAll('.asset-card-meta span') || [])].map((node) => node.textContent);

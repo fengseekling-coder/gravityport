@@ -4430,14 +4430,20 @@ function insertGalleryPaginationBoundary(grid) {
   else grid.insertAdjacentHTML("beforeend", galleryPaginationMarkup());
 }
 
-function reconcileAssetCards(entries) {
-  const grid = els.assetGrid;
-  if (!grid) return { changedCards: [], replacedFocusedCard: false, structureChanged: false };
-  const galleryChild = (element) => element.classList.contains("asset-card")
+// 画廊网格只允许这四类子元素；其余（空状态/骨架/错误态）出现即说明网格
+// 不处于卡片模式。reconcileAssetCards 与 commitIncrementalGalleryChanges 的
+// 占位守卫共用同一个判定，两处口径永不漂移。
+function galleryChildElement(element) {
+  return element.classList.contains("asset-card")
     || element.classList.contains("asset-load-more")
     || element.classList.contains("infinite-scroll-sentinel")
     || element.classList.contains("gallery-virtual-extent");
-  if ([...grid.children].some((element) => !galleryChild(element))) {
+}
+
+function reconcileAssetCards(entries) {
+  const grid = els.assetGrid;
+  if (!grid) return { changedCards: [], replacedFocusedCard: false, structureChanged: false };
+  if ([...grid.children].some((element) => !galleryChildElement(element))) {
     releaseGalleryObservers(grid);
     grid.replaceChildren();
   }
@@ -4731,6 +4737,24 @@ function commitIncrementalGalleryChanges(outcome) {
   const grid = els.assetGrid;
   const { updatedIds = [], removedIds = [], insertedIds = [], repositionIds = [] } = outcome || {};
   if (!grid || (!updatedIds.length && !removedIds.length && !insertedIds.length && !repositionIds.length)) return;
+  // 增量提交的前提是网格已处于「卡片模式」。空库开着页面时首批外部进图走的是
+  // 这条增量路径（空态渲染时 galleryStatus 已是 ready），网格里还挂着
+  // .gallery-empty-state：按 id 插入只会把卡片追加在空状态后面，而
+  // :has(.gallery-empty-state) 的 flex 规则会把整批卡片压成一横排。骨架/错误
+  // 两态到不了这里（reconciliation 的 galleryStatus 守卫拦截）。此时整帧交给
+  // renderGrid 全量重渲染——reconcileAssetCards 开头会清掉非卡片子元素，
+  // masonry、列数与选中态同步都走常规管线，不需要任何事后补救。
+  // 反方向同理：外部把最后一张图也删掉以后列表空了，增量路径只会摘卡片、
+  // 不会画空状态，网格会变成一片空白——同样整帧交给 renderGrid 去画对应的空态。
+  if (!state.assets.length || [...grid.children].some((element) => !galleryChildElement(element))) {
+    renderGrid();
+    updateViewTitle();
+    if (state.viewMode === "asset") {
+      assetViewer.markGalleryDirty();
+      updateAssetViewNav();
+    }
+    return;
+  }
   const assetsById = new Map(state.assets.map((asset) => [asset.id, asset]));
   const changedIds = new Set();
 
