@@ -30,7 +30,7 @@ interface MediaPromptCall { toolName: string; prompt: string; contextUserPrompt:
 
 export function createGrokMediaBridge(options: { store?: Store; sessionsDir?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; signal?: AbortSignal; } = {}): Bridge {
   const store = options.store;
-  if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Grok media bridge requires a MOSA store.");
+  if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Grok media bridge requires a GravityPort store.");
   const { grokSessionsDir: sessionsDir } = resolveSourceLocations({
     env: process.env,
     overrides: { grokSessionsDir: options.sessionsDir },

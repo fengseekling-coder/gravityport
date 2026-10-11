@@ -22,7 +22,7 @@ interface Lease {
 
 export async function acquireMosaRuntimeLock(options: { libraryDir?: string; lockFileName?: string } = {}): Promise<Lease> {
   const libraryDir = options.libraryDir ? resolve(options.libraryDir) : null;
-  if (!libraryDir) throw new Error("MOSA runtime lock requires a library directory.");
+  if (!libraryDir) throw new Error("GravityPort runtime lock requires a library directory.");
   const lockPath = resolve(libraryDir, options.lockFileName || LOCK_FILE_NAME);
   await mkdir(dirname(lockPath), { recursive: true });
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -57,7 +57,7 @@ export async function acquireMosaRuntimeLock(options: { libraryDir?: string; loc
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
       const owner = await readLockOwner(lockPath);
-      if (!owner) throw new Error(`MOSA runtime lock at ${lockPath} is incomplete or malformed. Stop the existing MOSA runtime or remove the stale lock after confirming no runtime is active.`);
+      if (!owner) throw new Error(`GravityPort runtime lock at ${lockPath} is incomplete or malformed. Stop the existing GravityPort runtime or remove the stale lock after confirming no runtime is active.`);
       if (await lockOwnerIsActive(owner)) throw activeRuntimeError(lockPath, owner);
       const retiredPath = `${lockPath}.stale-${randomUUID()}`;
       try {
@@ -71,7 +71,7 @@ export async function acquireMosaRuntimeLock(options: { libraryDir?: string; loc
   }
   const owner = await readLockOwner(lockPath);
   if (owner && await lockOwnerIsActive(owner)) throw activeRuntimeError(lockPath, owner);
-  throw new Error(`Could not acquire the MOSA runtime lock at ${lockPath}.`);
+  throw new Error(`Could not acquire the GravityPort runtime lock at ${lockPath}.`);
 }
 
 async function readLockOwner(lockPath: string): Promise<LockOwner | null> {

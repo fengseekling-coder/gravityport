@@ -9,7 +9,7 @@ export function normalizeMosaClientToken(value: unknown): string {
   const token = String(value || "").trim();
   if (!token) return "";
   if (!CLIENT_TOKEN_PATTERN.test(token)) {
-    throw new Error("MOSA client token must be a 32-byte-or-stronger base64url secret.");
+    throw new Error("GravityPort client token must be a 32-byte-or-stronger base64url secret.");
   }
   return token;
 }

@@ -683,7 +683,7 @@
     return false;
   }
 
-  const CONTEXT_LOST_MESSAGE = "MOSA 扩展已更新或重载，本页脚本已失联：请按 Cmd+Shift+R 硬刷新本页恢复捕获";
+  const CONTEXT_LOST_MESSAGE = "GravityPort 扩展已更新或重载，本页脚本已失联：请按 Cmd+Shift+R 硬刷新本页恢复捕获";
 
   function extensionAlive() {
     try {
@@ -732,7 +732,7 @@
         throw new Error(chrome.runtime.lastError.message);
       }
       if (response === undefined) {
-        throw new Error("扩展后台无响应：请到 chrome://extensions 刷新 MOSA 扩展，再 Cmd+Shift+R 刷新本页");
+        throw new Error("扩展后台无响应：请到 chrome://extensions 刷新 GravityPort 扩展，再 Cmd+Shift+R 刷新本页");
       }
       return response;
     } catch (error) {
@@ -742,7 +742,7 @@
         throw new Error(CONTEXT_LOST_MESSAGE);
       }
       if (/Receiving end does not exist|Could not establish connection/i.test(msg)) {
-        throw new Error("扩展后台未连接：请在 chrome://extensions 打开 MOSA 并点刷新，再硬刷新本页");
+        throw new Error("扩展后台未连接：请在 chrome://extensions 打开 GravityPort 并点刷新，再硬刷新本页");
       }
       throw error instanceof Error ? error : new Error(msg);
     }
@@ -1870,13 +1870,13 @@
 
       if (result.status === "imported") {
         const label = resolved.prompt ? resolved.promptStatus : "no-caption";
-        showToast(`MOSA 入库 ✓ ${label}`);
+        showToast(`GravityPort 入库 ✓ ${label}`);
         setStatus(`已入库 · ${label} · 共${savedKeys.size}`);
       } else if (result.upgraded) {
-        showToast("MOSA 已升级提示词");
+        showToast("GravityPort 已升级提示词");
         setStatus(`提示词已升级 · 共${savedKeys.size}`);
       } else if (!silentSkip) {
-        showToast("MOSA 已存在相同图片");
+        showToast("GravityPort 已存在相同图片");
         setStatus(`已存在 · 共${savedKeys.size}`);
       } else {
         setStatus(`已同步(跳过) · 共${savedKeys.size}`);
@@ -2077,7 +2077,7 @@
       autoCapture = !autoCapture;
       await chrome.storage?.local?.set?.({ autoCapture });
       setStatus(autoCapture ? "自动入库已开启" : "自动入库已关闭");
-      showToast(autoCapture ? "MOSA 自动入库已开启" : "MOSA 自动入库已关闭");
+      showToast(autoCapture ? "GravityPort 自动入库已开启" : "GravityPort 自动入库已关闭");
       if (autoCapture) scheduleScan(true);
       renderControlPanel();
       return;
@@ -2112,7 +2112,7 @@
         state: pageState(),
       }, null, 2);
       await navigator.clipboard?.writeText?.(diagnostics);
-      showToast("MOSA 捕获诊断已复制");
+      showToast("GravityPort 捕获诊断已复制");
     }
   }
 
@@ -2129,18 +2129,18 @@
     const panel = document.createElement("section");
     panel.id = "mosa-capture-panel";
     panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", "MOSA Capture 控制台");
+    panel.setAttribute("aria-label", "GravityPort Capture 控制台");
     panel.setAttribute("aria-modal", "false");
     panel.innerHTML = `
       <header class="mosa-panel-header" data-drag-handle>
         <div class="mosa-panel-brand">
           <span class="mosa-panel-logo" aria-hidden="true">M</span>
           <span>
-            <strong>MOSA Capture</strong>
+            <strong>GravityPort Capture</strong>
             <small>ChatGPT Web Capture</small>
           </span>
         </div>
-        <button type="button" class="mosa-panel-icon-button" data-action="close" aria-label="关闭 MOSA 控制台">
+        <button type="button" class="mosa-panel-icon-button" data-action="close" aria-label="关闭 GravityPort 控制台">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </header>

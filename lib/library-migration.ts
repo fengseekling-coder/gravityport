@@ -112,7 +112,7 @@ function describeMissingSqliteLibrary(root: string, presence: "present" | "legac
   if (presence === "legacy") {
     return `"${root}" holds a legacy JSON library; run \`mosa migrate\` before running this command against it.`;
   }
-  return `"${root}" is not a MOSA SQLite library (no mosa.db); nothing was created or modified.`;
+  return `"${root}" is not a GravityPort SQLite library (no mosa.db); nothing was created or modified.`;
 }
 
 async function sqliteLibraryPresence(root: string): Promise<"present" | "legacy" | "absent"> {

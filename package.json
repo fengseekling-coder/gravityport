@@ -12,6 +12,7 @@
     "node": ">=22.0.0"
   },
   "bin": {
+    "gravityport": "bin/mosa.mjs",
     "mosa": "bin/mosa.mjs"
   },
   "scripts": {

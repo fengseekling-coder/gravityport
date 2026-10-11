@@ -22,10 +22,10 @@ function normalizeBaseUrl(value) {
   try {
     url = new URL(String(value || ""));
   } catch {
-    throw new Error("MOSA 地址无效。");
+    throw new Error("GravityPort 地址无效。");
   }
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname) || url.username || url.password) {
-    throw new Error("MOSA 地址必须是 http://127.0.0.1:端口 或 http://localhost:端口。");
+    throw new Error("GravityPort 地址必须是 http://127.0.0.1:端口 或 http://localhost:端口。");
   }
   return url.origin;
 }
@@ -62,7 +62,7 @@ async function load() {
 document.getElementById("save").addEventListener("click", async () => {
   const token = tokenEl.value.trim();
   if (token === LEGACY_DEV_TOKEN) {
-    setStatus("旧开发 Token 已失效。请填写与当前 MOSA 服务一致的新随机 Token。", "error");
+    setStatus("旧开发 Token 已失效。请填写与当前 GravityPort 服务一致的新随机 Token。", "error");
     return;
   }
   let baseUrl;
@@ -148,12 +148,12 @@ async function diagnoseMosaConnection(baseUrl) {
   try {
     health = await fetchWithTimeout(`${baseUrl}/api/health`, { cache: "no-cache" }, 3000);
   } catch {
-    return `未检测到 MOSA 服务：${baseUrl} 无法访问。请确认 MOSA App 正在运行。`;
+    return `未检测到 GravityPort 服务：${baseUrl} 无法访问。请确认 GravityPort App 正在运行。`;
   }
   let identity = null;
   try { identity = await health.json(); } catch { /* non-JSON responder */ }
   if (!health.ok || identity?.product !== "mosa") {
-    return `${baseUrl} 上运行的不是 MOSA（HTTP ${health.status}）。请检查地址与端口。`;
+    return `${baseUrl} 上运行的不是 GravityPort（HTTP ${health.status}）。请检查地址与端口。`;
   }
   const version = String(identity?.productVersion || "").trim();
   try {
@@ -164,14 +164,14 @@ async function diagnoseMosaConnection(baseUrl) {
       cache: "no-cache",
     }, 3000);
     if (pair.status === 403) {
-      return `MOSA 正在运行${version ? `（${version}）` : ""}，但拒绝配对本扩展（ID ${chrome.runtime.id} 不在信任列表）。请升级 MOSA App 后重试。`;
+      return `GravityPort 正在运行${version ? `（${version}）` : ""}，但拒绝配对本扩展（ID ${chrome.runtime.id} 不在信任列表）。请升级 GravityPort App 后重试。`;
     }
     if (pair.ok) {
-      return `MOSA 正在运行${version ? `（${version}）` : ""}，配对接口可用。请再点一次“测试连接”完成配对。`;
+      return `GravityPort 正在运行${version ? `（${version}）` : ""}，配对接口可用。请再点一次“测试连接”完成配对。`;
     }
-    return `MOSA 正在运行${version ? `（${version}）` : ""}，但配对返回 HTTP ${pair.status}。`;
+    return `GravityPort 正在运行${version ? `（${version}）` : ""}，但配对返回 HTTP ${pair.status}。`;
   } catch {
-    return `MOSA 正在运行${version ? `（${version}）` : ""}，但配对请求失败。`;
+    return `GravityPort 正在运行${version ? `（${version}）` : ""}，但配对请求失败。`;
   }
 }
 
@@ -198,12 +198,12 @@ document.getElementById("test").addEventListener("click", async () => {
       tokenEl.value = token;
       baseUrlEl.value = baseUrl;
     } catch {
-      setStatus(await diagnoseMosaConnection(baseUrl).catch(() => "未发现正在运行的 MOSA。请先打开 MOSA App。"), "error");
+      setStatus(await diagnoseMosaConnection(baseUrl).catch(() => "未发现正在运行的 GravityPort。请先打开 GravityPort App。"), "error");
       return;
     }
   }
   if (token === LEGACY_DEV_TOKEN) {
-    setStatus("旧开发 Token 已失效。请填写与当前 MOSA 服务一致的新随机 Token。", "error");
+    setStatus("旧开发 Token 已失效。请填写与当前 GravityPort 服务一致的新随机 Token。", "error");
     return;
   }
   try {
@@ -223,7 +223,7 @@ document.getElementById("test").addEventListener("click", async () => {
       return;
     }
     if (response.status === 401 && data.code === "WEB_CAPTURE_UNAUTHORIZED") {
-      setStatus("Token 不匹配。请填写当前 MOSA 服务配置的 Token。", "error");
+      setStatus("Token 不匹配。请填写当前 GravityPort 服务配置的 Token。", "error");
       return;
     }
     if (response.status === 403) {

@@ -83,7 +83,7 @@ export async function createLibraryBackup(options: {
       managerDir: resolve(options.managerDir || process.cwd()),
       libraryDir: destinationDir,
     });
-    if (verification.ok !== true) throw new Error("Backup snapshot failed MOSA library verification.");
+    if (verification.ok !== true) throw new Error("Backup snapshot failed GravityPort library verification.");
 
     const files = await describeBackupFiles(destinationDir);
     // Run the exact read-only audit that `backup-verify` will run later, before
@@ -251,7 +251,7 @@ export async function restoreLibraryBackup(options: {
       managerDir: resolve(options.managerDir || process.cwd()),
       libraryDir: destinationDir,
     });
-    if (verification.ok !== true) throw new Error("Restored library failed MOSA verification.");
+    if (verification.ok !== true) throw new Error("Restored library failed GravityPort verification.");
     return { libraryDir: destinationDir, files: verified.files, bytes: verified.bytes, verification };
   } catch (error) {
     await rm(stagingDir, { recursive: true, force: true }).catch(() => {});

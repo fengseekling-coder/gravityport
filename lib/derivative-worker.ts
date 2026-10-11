@@ -65,7 +65,7 @@ async function createProcessorTransport(): Promise<ProcessorTransport> {
     const { utilityProcess } = await import("electron");
     const child = utilityProcess.fork(DERIVATIVE_PROCESSOR_PATH, [], {
       stdio: "ignore",
-      serviceName: "MOSA Image Processor",
+      serviceName: "GravityPort Image Processor",
     });
     return {
       get pid() { return child.pid || null; },

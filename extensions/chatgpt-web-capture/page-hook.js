@@ -721,7 +721,7 @@
             conversationId,
             messageId: messageId.slice(0, 8),
             generationId: generationId.slice(0, 8),
-            version: "0.15.28",
+            version: "0.15.29",
             control: finished.control === true,
             firstAt: finished.snapshot.firstAt,
             lastAt: finished.snapshot.lastAt,

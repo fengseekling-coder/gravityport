@@ -28,7 +28,7 @@ export function createCowartProjectRegistry(options: { registryPath?: string; ma
   function addProject(input: { projectDir?: string } = {}): Promise<{ project: ProjectEntry; created: boolean }> {
     return mutate(async () => {
       const projectDir = await normalizeProjectDir(input.projectDir);
-      if (managerDir && projectDir === managerDir) throw new Error("MOSA already uses its dedicated Cowart canvas.");
+      if (managerDir && projectDir === managerDir) throw new Error("GravityPort already uses its dedicated Cowart canvas.");
       const registry = await readRegistry();
       const projects = normalizeProjects(registry);
       const existing = projects.find((p) => p.projectDir === projectDir);

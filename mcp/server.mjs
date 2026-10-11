@@ -74,7 +74,7 @@ const TOOL_GENERATION_LINEAGE = "generation_lineage";
 
 const EXTERNAL_VERIFICATION_SCHEMA = {
   enum: ["user_confirmed", "observed", "inferred"],
-  description: "Evidence level for this externally supplied record. provider_verified is reserved for trusted MOSA provider integrations.",
+  description: "Evidence level for this externally supplied record. provider_verified is reserved for trusted GravityPort provider integrations.",
 };
 
 const REFERENCE_SCHEMA = {
@@ -134,7 +134,7 @@ function toolDefinitions() {
   return [
     {
       name: TOOL_ASSET_CREATE,
-      description: "Copy a generated image into the MOSA library and save prompt recipe metadata. Codex's <CODEX_HOME>/generated_images task folders are supported and recorded as the source; CODEX_HOME defaults to the user's .codex directory.",
+      description: "Copy a generated image into the GravityPort library and save prompt recipe metadata. Codex's <CODEX_HOME>/generated_images task folders are supported and recorded as the source; CODEX_HOME defaults to the user's .codex directory.",
       inputSchema: {
         type: "object",
         properties: {
@@ -164,7 +164,7 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_LIST,
-      description: "List saved MOSA assets for a project, optionally filtered by search text.",
+      description: "List saved GravityPort assets for a project, optionally filtered by search text.",
       inputSchema: {
         type: "object",
         properties: { projectId: { type: "string" }, query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 250 }, cursor: { type: "string" } },
@@ -173,7 +173,7 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_SEARCH,
-      description: "Search MOSA visual memory using lexical search, optional local visual retrieval, and explicit creation-time bounds. Visual mode reuses the matching local MOSA runtime and degrades to lexical/time search if visual inference is unavailable.",
+      description: "Search GravityPort visual memory using lexical search, optional local visual retrieval, and explicit creation-time bounds. Visual mode reuses the matching local GravityPort runtime and degrades to lexical/time search if visual inference is unavailable.",
       inputSchema: {
         type: "object",
         properties: {
@@ -200,7 +200,7 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_PROVENANCE_EXPORT,
-      description: "Export a portable MOSA provenance bundle plus an unsigned C2PA assertion payload. This does not create a signed Content Credential; a C2PA signer must bind and sign the assertion separately.",
+      description: "Export a portable GravityPort provenance bundle plus an unsigned C2PA assertion payload. This does not create a signed Content Credential; a C2PA signer must bind and sign the assertion separately.",
       inputSchema: {
         type: "object",
         properties: {
@@ -214,7 +214,7 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_ARCHIVE,
-      description: "Soft-delete an asset from active MOSA results while preserving its provenance and original file.",
+      description: "Soft-delete an asset from active GravityPort results while preserving its provenance and original file.",
       inputSchema: {
         type: "object",
         properties: { projectId: { type: "string" }, assetId: { type: "string" } },
@@ -328,14 +328,14 @@ function toolDefinitions() {
     },
     {
       name: TOOL_GENERATION_RECORD,
-      description: "Record one generation occurrence independently from the deduplicated output asset. Use this when an agent knows that a specific generation produced a saved MOSA asset.",
+      description: "Record one generation occurrence independently from the deduplicated output asset. Use this when an agent knows that a specific generation produced a saved GravityPort asset.",
       inputSchema: {
         type: "object",
         properties: {
           projectId: { type: "string" },
-          outputAssetId: { type: "string", description: "Existing MOSA asset produced by this generation." },
+          outputAssetId: { type: "string", description: "Existing GravityPort asset produced by this generation." },
           provider: { type: "string" },
-          captureContextId: { type: "string", description: "MOSA/local observation context. This is not a provider generation-call ID." },
+          captureContextId: { type: "string", description: "GravityPort/local observation context. This is not a provider generation-call ID." },
           providerToolCallId: { type: "string", description: "Provider/runtime tool-call identifier when observed." },
           providerGenerationCallId: { type: "string", description: "Provider generation-call identifier only when actually supplied by the provider integration." },
           providerResponseId: { type: "string" },
@@ -620,8 +620,8 @@ async function handleRequest(message) {
     sendResult(id, {
       protocolVersion: params?.protocolVersion || "2025-11-25",
       capabilities: { tools: {} },
-      serverInfo: { name: "MOSA MCP", version: MCP_SERVER_VERSION },
-      instructions: "Save generated images with the effective prompt, distinct user prompt when available, negative constraints, reference hashes, and generation provenance. MOSA records immutable recipe snapshots automatically. Use generation_record for each distinct generation occurrence, even when its output asset was deduplicated; use generation_relation_record only for evidence-backed parent relationships, and generation_lineage to read the resulting graph. provider_verified is reserved for trusted MOSA provider integrations and cannot be asserted by ordinary MCP callers. Use asset_version_create only for explicit asset-version workflows."
+      serverInfo: { name: "GravityPort MCP", version: MCP_SERVER_VERSION },
+      instructions: "Save generated images with the effective prompt, distinct user prompt when available, negative constraints, reference hashes, and generation provenance. GravityPort records immutable recipe snapshots automatically. Use generation_record for each distinct generation occurrence, even when its output asset was deduplicated; use generation_relation_record only for evidence-backed parent relationships, and generation_lineage to read the resulting graph. provider_verified is reserved for trusted GravityPort provider integrations and cannot be asserted by ordinary MCP callers. Use asset_version_create only for explicit asset-version workflows."
     });
     return;
   }

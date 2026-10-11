@@ -177,7 +177,7 @@ test("Generation HTTP API records events, explicit relations, and lineage withou
   });
   assert.equal(reserved.status, 400);
   assert.deepEqual(await reserved.json(), {
-    error: "provider_verified is reserved for trusted MOSA provider integrations.",
+    error: "provider_verified is reserved for trusted GravityPort provider integrations.",
     code: "GENERATION_PROVIDER_VERIFICATION_RESERVED",
   });
 });

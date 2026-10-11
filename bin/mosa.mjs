@@ -32,7 +32,7 @@ if (!command || command === "--help" || command === "help") {
 } else if (command === "thumbnails") {
   await runThumbnails(args);
 } else {
-  console.error(`Unknown MOSA command: ${command}`);
+  console.error(`Unknown GravityPort command: ${command}`);
   printHelp();
   process.exitCode = 1;
 }
@@ -178,16 +178,18 @@ function requiredValue(flag, value) {
 }
 
 function printHelp() {
-  console.log(`MOSA local library commands
+  console.log(`GravityPort local library commands
 
-  mosa migrate [--library <path>] [--from <legacy-assets>] [--dry-run] [--resume]
-  mosa verify [--library <path>]
-  mosa backup [--library <path>] --to <backup-dir>
-  mosa backup-verify --from <backup-dir>
-  mosa restore --from <backup-dir> --to <empty-library-dir>
-  mosa visual-model-verify --from <model-pack-dir>
-  mosa thumbnails <rebuild|repair> [--library <path>]
+  gravityport migrate [--library <path>] [--from <legacy-assets>] [--dry-run] [--resume]
+  gravityport verify [--library <path>]
+  gravityport backup [--library <path>] --to <backup-dir>
+  gravityport backup-verify --from <backup-dir>
+  gravityport restore --from <backup-dir> --to <empty-library-dir>
+  gravityport visual-model-verify --from <model-pack-dir>
+  gravityport thumbnails <rebuild|repair> [--library <path>]
     rebuild  regenerate every eligible asset's derivatives from the original, present or not
     repair   enqueue only assets with missing derivative metadata or derivative files missing on disk
+
+The mosa command still works as an alias of gravityport.
 `);
 }

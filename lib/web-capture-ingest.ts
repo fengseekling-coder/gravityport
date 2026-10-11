@@ -116,7 +116,7 @@ export async function cleanupWebCaptureTemp(tempRoot: string, { ttlMs = DEFAULT_
 
 export function createWebCaptureIngest(options: { store?: Store; libraryDir?: string; tempRoot?: string; projectId?: string; token?: string; allowedOrigins?: string[]; onLibraryChange?: (projectId: string, result: IngestResult) => void | Promise<void>; } = {}): WebCaptureIngest {
   const store = options.store as Store;
-  if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Web capture ingest requires a MOSA store.");
+  if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Web capture ingest requires a GravityPort store.");
   const libraryDir = resolve(options.libraryDir || store.libraryDir || store.assetsRoot!);
   const tempRoot = resolve(options.tempRoot || join(libraryDir, ".web-capture-tmp"));
   const referenceStore = createReferenceAttachmentStore(libraryDir);
