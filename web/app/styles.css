@@ -1306,10 +1306,13 @@ html[lang^="zh"] .mosa-v2 .settings-trigger .settings-trigger-label { letter-spa
 }
 .mosa-v2 .card-action-btn svg { width: 16px; height: 16px; }
 .mosa-v2 .card-favorite { color: rgb(255 255 255 / .62); background: transparent; }
-.mosa-v2 .card-favorite.is-fav { color: var(--color-danger); background: transparent; }
+/* 任务 124：已收藏统一用收藏色（检视器里的星也是它；此前卡片上用的是危险色红色）。
+   星形加一圈深色底衬，白底图上也看得见；只用既有 token，不引入新色值。 */
+.mosa-v2 .card-favorite svg { filter: drop-shadow(0 0 1px var(--color-media-surface)) drop-shadow(0 1px 2px var(--color-scrim)); }
+.mosa-v2 .card-favorite.is-fav { color: var(--color-favorite); background: transparent; }
 @media (hover: hover) and (pointer: fine) {
   .mosa-v2 .card-favorite:not(.is-fav):hover { color: rgb(255 255 255 / .88); background: transparent; opacity: 1; }
-  .mosa-v2 .card-favorite.is-fav:hover { color: var(--color-danger); background: transparent; opacity: .82; }
+  .mosa-v2 .card-favorite.is-fav:hover { color: var(--color-favorite); background: transparent; opacity: .82; }
 }
 .mosa-v2 .gallery-skeleton { grid-template-columns: repeat(var(--gallery-columns), minmax(0, 1fr)); gap: var(--gallery-gap); padding: 0; }.mosa-v2 .asset-skeleton { border-radius: var(--radius-md); background: linear-gradient(100deg, var(--app-search) 30%, var(--app-search-focus) 45%, var(--app-search) 60%); }.mosa-v2 .gallery-empty-state, .mosa-v2 .error-state { color: var(--color-text-tertiary); }.mosa-v2 .empty-state-actions .btn-primary { background: #2424ff; }
 .mosa-v2 .settings-menu { border: 1px solid rgb(255 255 255 / .68); border-radius: var(--radius-lg); background: rgb(from var(--app-menu) r g b / .92); box-shadow: 0 18px 42px -10px rgb(0 0 0 / .16); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); }
@@ -1397,13 +1400,15 @@ html[lang^="zh"] .mosa-v2 .settings-trigger .settings-trigger-label { letter-spa
 .mosa-v2 .detail .detail-prompt-head .section-head-copy:disabled { opacity: .4; cursor: default; }
 /* V2 Prompt section: content stays readable and the panel grows with it. */
 .mosa-v2 .detail .detail-prompt-section { box-sizing: border-box; display: flex; min-height: 224px; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); }
-.mosa-v2 .detail .detail-prompt-box { box-sizing: border-box; display: block; max-height: 112px; flex: 0 1 auto; overflow-y: auto; overflow-x: hidden; padding: var(--sp-2) var(--sp-3); border: 1px solid rgb(60 60 67 / .16); border-radius: var(--radius-lg); background: rgb(248 248 250 / .88); font-family: var(--font-family-ui); font-size: var(--text-sm); line-height: var(--text-sm-lh); overflow-wrap: anywhere; white-space: normal; }
+.mosa-v2 .detail .detail-prompt-box { box-sizing: border-box; display: block; max-height: 112px; flex: 0 1 auto; overflow-y: auto; overflow-x: hidden; padding: var(--sp-2) var(--sp-3); border: 1px solid rgb(60 60 67 / .16); border-radius: var(--radius-lg); background: rgb(248 248 250 / .88); font-family: var(--font-family-ui); font-size: var(--text-sm); line-height: var(--text-sm-lh); overflow-wrap: anywhere; white-space: pre-wrap; }
 .mosa-v2 .detail .detail-prompt-box .empty-copy { color: var(--color-text-tertiary); }
 .mosa-v2 .detail .detail-prompt-subhead { display: flex; height: 18px; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: var(--sp-2); overflow: hidden; }
 .mosa-v2 .detail .detail-prompt-subhead h4 { flex: 0 0 auto; margin: 0; color: var(--color-text-primary); font-size: var(--text-md); font-weight: var(--weight-semibold); line-height: var(--text-md-lh); }
 .mosa-v2 .detail .detail-copy-sub { display: inline-grid; min-width: 18px; min-height: 18px; flex: 0 0 18px; padding: 0; place-items: center; border: 0; border-radius: var(--radius-xs); color: #6e6e73; background: transparent; cursor: pointer; }
 .mosa-v2 .detail .detail-copy-sub:disabled { opacity: .4; cursor: default; }
-.mosa-v2 .detail .detail-instruction-box { max-height: 76px; flex: 0 1 auto; overflow-y: auto; overflow-x: hidden; padding: var(--sp-2) var(--sp-3); border: 1px solid rgb(60 60 67 / .16); border-radius: var(--radius-lg); background: rgb(248 248 250 / .88); font-size: var(--text-sm); line-height: var(--text-sm-lh); overflow-wrap: anywhere; white-space: normal; }
+/* 任务 124：用户指令是人写的话，和提示词框一样用界面字体（此前漏改，一直继承
+   .prompt-box 的等宽字体）；两个框都保留原文的换行和分段。 */
+.mosa-v2 .detail .detail-instruction-box { max-height: 76px; flex: 0 1 auto; overflow-y: auto; overflow-x: hidden; padding: var(--sp-2) var(--sp-3); border: 1px solid rgb(60 60 67 / .16); border-radius: var(--radius-lg); background: rgb(248 248 250 / .88); font-family: var(--font-family-ui); font-size: var(--text-sm); line-height: var(--text-sm-lh); overflow-wrap: anywhere; white-space: pre-wrap; }
 .mosa-v2 .detail .detail-reference-row { display: flex; height: 36px; flex: 0 0 36px; align-items: center; justify-content: space-between; gap: var(--sp-2); overflow: hidden; padding: 0 var(--sp-3); border: 0; border-radius: var(--radius-md); background: rgb(242 242 247 / .76); font-size: var(--text-sm); font-weight: var(--weight-medium); line-height: var(--text-sm-lh); }
 .mosa-v2 .detail .detail-reference-label { display: flex; min-width: 0; align-items: center; gap: var(--sp-1); overflow: hidden; color: #6e6e73; }
 .mosa-v2 .detail .detail-reference-value { flex: 0 0 auto; color: #8e8e93; }
