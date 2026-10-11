@@ -8,21 +8,21 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { desktopDistributionFromEnvironment, normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
+import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
 
 export const MOSA_WINDOWS_UPDATE_ARCH = "x64";
-export const MOSA_WINDOWS_UPDATE_ROOT = "MOSA-win32-x64";
 
-export function windowsUpdateArtifactName(version, arch = MOSA_WINDOWS_UPDATE_ARCH) {
+export function windowsUpdateArtifactName(version, arch = MOSA_WINDOWS_UPDATE_ARCH, product = resolveReleaseProduct()) {
   const cleanVersion = String(version || "").trim();
   const cleanArch = String(arch || "").trim();
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(cleanVersion)) throw new Error("Invalid Windows update version.");
   if (cleanArch !== MOSA_WINDOWS_UPDATE_ARCH) throw new Error(`Unsupported Windows update architecture: ${cleanArch}.`);
-  return `MOSA-win32-${cleanArch}-${cleanVersion}.zip`;
+  return releaseProductNames(product).windowsUpdateZipName(cleanVersion, cleanArch);
 }
 
-export function windowsUpdateArtifactPath({ rootDir, outDir = "out", version, arch = MOSA_WINDOWS_UPDATE_ARCH } = {}) {
+export function windowsUpdateArtifactPath({ rootDir, outDir = "out", version, arch = MOSA_WINDOWS_UPDATE_ARCH, product = resolveReleaseProduct() } = {}) {
   if (!rootDir) throw new Error("rootDir is required.");
-  return resolve(rootDir, outDir, "make", "zip", "win32", arch, windowsUpdateArtifactName(version, arch));
+  return resolve(rootDir, outDir, "make", "zip", "win32", arch, windowsUpdateArtifactName(version, arch, product));
 }
 
 export function windowsUpdateZipCommand({ packageDir, output, platform = process.platform } = {}) {
@@ -74,22 +74,25 @@ export async function makeWindowsUpdateZip({
   arch = MOSA_WINDOWS_UPDATE_ARCH,
   distribution = desktopDistributionFromEnvironment(process.env),
   platform = process.platform,
+  env = process.env,
+  product = resolveReleaseProduct(env),
   runner = runCommand,
 } = {}) {
+  const names = releaseProductNames(product);
   const packageJson = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8"));
   const version = String(packageJson.version || "").trim();
-  const artifactName = windowsUpdateArtifactName(version, arch);
-  const packageDir = resolve(rootDir, outDir, MOSA_WINDOWS_UPDATE_ROOT);
-  await access(join(packageDir, "MOSA.exe")).catch(() => {
+  const artifactName = windowsUpdateArtifactName(version, arch, product);
+  const packageDir = resolve(rootDir, outDir, names.windowsPackageDirName);
+  await access(join(packageDir, names.windowsExecutableName)).catch(() => {
     throw new Error(`Packaged Windows app not found: ${packageDir}. Run desktop:package:windows first.`);
   });
 
-  const output = windowsUpdateArtifactPath({ rootDir, outDir, version, arch });
+  const output = windowsUpdateArtifactPath({ rootDir, outDir, version, arch, product });
   await mkdir(dirname(output), { recursive: true });
   await rm(output, { force: true });
   const zipCommand = windowsUpdateZipCommand({ packageDir, output, platform });
   await runner(zipCommand.command, zipCommand.args, zipCommand.options);
-  await verifyWindowsUpdateZipLayout({ output, platform, runner });
+  await verifyWindowsUpdateZipLayout({ output, platform, runner, product });
 
   const metadata = await fileMetadata(output);
   const normalizedDistribution = normalizeDesktopDistribution(distribution);
@@ -116,8 +119,9 @@ export async function makeWindowsUpdateZip({
   };
 }
 
-export async function verifyWindowsUpdateZipLayout({ output, platform = process.platform, runner = runCommand } = {}) {
-  const expected = `${MOSA_WINDOWS_UPDATE_ROOT}/MOSA.exe`;
+export async function verifyWindowsUpdateZipLayout({ output, platform = process.platform, runner = runCommand, product = resolveReleaseProduct() } = {}) {
+  const names = releaseProductNames(product);
+  const expected = `${names.windowsPackageDirName}/${names.windowsExecutableName}`;
   if (platform === "win32") {
     const script = [
       "$ErrorActionPreference = 'Stop'",

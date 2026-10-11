@@ -41,7 +41,7 @@ interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconc
 
 export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; signal?: AbortSignal; } = {}): Bridge {
   const store = options.store;
-  if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Codex image bridge requires a MOSA store.");
+  if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Codex image bridge requires a GravityPort store.");
   const imagesDir = resolve(options.imagesDir || store.codexImagesDir);
   const { codexSessionsDir: sessionsDir } = resolveSourceLocations({
     overrides: { codexSessionsDir: options.sessionsDir },

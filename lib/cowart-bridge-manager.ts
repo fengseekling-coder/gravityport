@@ -15,7 +15,7 @@ export interface CowartBridgeManager { start(): Promise<ManagerStatus>; stop(): 
 export function createCowartBridgeManager(options: { store?: ManagerStore; registry?: Registry; managerDir?: string; canvasDir?: string } = {}): CowartBridgeManager {
   const store: ManagerStore | undefined = options.store;
   const registry: Registry | undefined = options.registry;
-  if (!store || typeof store.createAsset !== "function") throw new Error("Cowart bridge manager requires a MOSA store.");
+  if (!store || typeof store.createAsset !== "function") throw new Error("Cowart bridge manager requires a GravityPort store.");
   if (!registry || typeof registry.list !== "function") throw new Error("Cowart bridge manager requires a project registry.");
   const primarySource: RegistryEntry = { id: "mosa", projectDir: resolve(options.managerDir || store.managerDir), canvasDir: resolve(options.canvasDir || store.cowartCanvasDir), managed: true, addedAt: null };
   const bridges = new Map<string, Bridge>();

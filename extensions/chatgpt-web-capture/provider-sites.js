@@ -137,7 +137,7 @@
     if (scanInterval) clearInterval(scanInterval);
     scanInterval = null;
     clearAllPromptRetries();
-    showToast("MOSA 扩展已更新，请刷新此网页恢复自动收录。", true, 0);
+    showToast("GravityPort 扩展已更新，请刷新此网页恢复自动收录。", true, 0);
   }
 
   function isAllowedImageHost(hostname) {
@@ -781,7 +781,7 @@
     if (!response.ok) throw new Error(`Image download failed (${response.status})`);
     const blob = await response.blob();
     if (!blob || blob.size < 100) throw new Error("Downloaded image empty/too small");
-    if (blob.size > MAX_LOCAL_IMAGE_BYTES) throw new Error("Image exceeds MOSA capture size limit.");
+    if (blob.size > MAX_LOCAL_IMAGE_BYTES) throw new Error("Image exceeds GravityPort capture size limit.");
     return {
       mimeType: blob.type || mimeTypeForUrl(source.url),
       imageBase64: arrayBufferToBase64(await blob.arrayBuffer()),
@@ -844,7 +844,7 @@
 
   async function sendCapture(provider, source, media, { captureMode = "automatic", mediaKind = "image", trustMediaMetrics = true } = {}) {
     return withCaptureSlot(async () => {
-      if (!extensionAlive()) return { response: { ok: false, error: "MOSA extension is unavailable." }, hasPrompt: false };
+      if (!extensionAlive()) return { response: { ok: false, error: "GravityPort extension is unavailable." }, hasPrompt: false };
       const capturePageUrl = location.href;
       const video = mediaKind === "video";
       const providerPrompt = visiblePromptForProvider(provider, media);
@@ -1122,7 +1122,7 @@
     sendCapture(provider, source, media, { captureMode: "manual", mediaKind: videoRequest ? "video" : "image" })
       .then(({ response }) => {
         const finalResponse = response || { ok: true };
-        showToast(finalResponse.ok ? "已保存到 MOSA" : (finalResponse.error || "保存失败"), !finalResponse.ok);
+        showToast(finalResponse.ok ? "已保存到 GravityPort" : (finalResponse.error || "保存失败"), !finalResponse.ok);
         sendResponse(finalResponse);
       })
       .catch((error) => {

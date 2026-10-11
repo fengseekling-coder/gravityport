@@ -6,14 +6,16 @@ import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { resolveDesktopPackagingTarget } from "../desktop/forge.config.mjs";
+import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const NATIVE_BINARY_PATTERN = /\.(?:node|dylib|dll)$/iu;
 
-function packageResourcesDir({ outDir, target }) {
-  const packageDir = join(outDir, `MOSA-${target.platform}-${target.arch}`);
+function packageResourcesDir({ outDir, target, product = resolveReleaseProduct() }) {
+  const names = releaseProductNames(product);
+  const packageDir = join(outDir, `${names.product}-${target.platform}-${target.arch}`);
   if (target.platform === "darwin") {
-    return join(packageDir, "MOSA.app", "Contents", "Resources");
+    return join(packageDir, names.macAppBundleName, "Contents", "Resources");
   }
   if (target.platform === "win32") {
     return join(packageDir, "resources");
@@ -54,10 +56,11 @@ export function packagedAsarPath({
   outDir = process.env.MOSA_FORGE_OUT_DIR || "out",
   platform,
   arch,
+  product = resolveReleaseProduct(),
 } = {}) {
   const target = resolveDesktopPackagingTarget({ platform, arch, env: {}, argv: [] });
   const outputRoot = resolve(projectRoot, outDir);
-  return join(packageResourcesDir({ outDir: outputRoot, target }), "app.asar");
+  return join(packageResourcesDir({ outDir: outputRoot, target, product }), "app.asar");
 }
 
 export async function verifyPackagedRuntime({
@@ -65,9 +68,10 @@ export async function verifyPackagedRuntime({
   outDir = process.env.MOSA_FORGE_OUT_DIR || "out",
   platform,
   arch,
+  product = resolveReleaseProduct(),
 } = {}) {
   const target = resolveDesktopPackagingTarget({ platform, arch, env: {}, argv: [] });
-  const asarPath = packagedAsarPath({ projectRoot, outDir, platform: target.platform, arch: target.arch });
+  const asarPath = packagedAsarPath({ projectRoot, outDir, platform: target.platform, arch: target.arch, product });
   await access(asarPath).catch(() => {
     throw new Error(`Packaged ASAR not found: ${asarPath}`);
   });
@@ -118,11 +122,11 @@ export async function verifyPackagedRuntime({
   ];
   const bundledVisualRuntime = files.find(({ path }) => forbiddenVisualRuntimePrefixes.some((prefix) => path.startsWith(prefix)));
   if (bundledVisualRuntime) {
-    throw new Error(`Optional visual runtime must stay out of MOSA.app: ${bundledVisualRuntime.path}`);
+    throw new Error(`Optional visual runtime must stay out of ${releaseProductNames(product).macAppBundleName}: ${bundledVisualRuntime.path}`);
   }
   const unpackedOnnxDir = join(unpackedRoot, "node_modules", "onnxruntime-node");
   const unpackedOnnx = await stat(unpackedOnnxDir).catch(() => null);
-  if (unpackedOnnx) throw new Error("Optional ONNX Runtime must stay out of MOSA.app unpacked resources.");
+  if (unpackedOnnx) throw new Error(`Optional ONNX Runtime must stay out of ${releaseProductNames(product).macAppBundleName} unpacked resources.`);
 
   const sourceIdentity = JSON.parse(await readFile(resolve(projectRoot, "web", "app", "build-identity.json"), "utf8"));
   const packagedIdentity = parseJsonBuffer(extractFile(asarPath, join("web", "app", "build-identity.json")), "packaged build identity");

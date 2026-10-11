@@ -39,9 +39,11 @@ test("desktop packaging accepts Node 22 and rejects other major versions", () =>
   assert.throws(() => assertDesktopPackagingNode("24.16.0"), /current runtime is v24\.16\.0/);
 });
 
-test("packages MOSA with ASAR and unpacked native dependencies", () => {
+test("packages the default product with ASAR and unpacked native dependencies", () => {
   assert.equal(forgeConfig.outDir, "out");
-  assert.equal(forgeConfig.packagerConfig.name, "MOSA");
+  assert.equal(forgeConfig.packagerConfig.name, "GravityPort");
+  // The legacy MOSA transition build comes from the same config under the switch.
+  assert.equal(createForgeConfig({ env: { MOSA_RELEASE_PRODUCT: "MOSA" } }).packagerConfig.name, "MOSA");
   assert.equal(forgeConfig.packagerConfig.icon, desktopIconBasePath({ outDir: "out" }));
   assert.equal(forgeConfig.packagerConfig.appBundleId, "com.azhuilab.mosa");
   const sign = forgeConfig.packagerConfig.osxSign;
@@ -69,9 +71,10 @@ test("packages MOSA with ASAR and unpacked native dependencies", () => {
 
 test("macOS distribution keeps a stable app identity and deterministic DMG path", () => {
   assert.equal(MOSA_MAC_BUNDLE_ID, "com.azhuilab.mosa");
-  assert.equal(macDmgArtifactName("0.2.1-rc.4"), "MOSA-darwin-arm64-0.2.1-rc.4.dmg");
+  // Legacy MOSA transition build keeps the historical names under the switch.
+  assert.equal(macDmgArtifactName("0.2.1-rc.4", "arm64", "MOSA"), "MOSA-darwin-arm64-0.2.1-rc.4.dmg");
   assert.equal(
-    macDmgOutputPath({ rootDir: "/repo", version: "0.2.1-rc.4" }),
+    macDmgOutputPath({ rootDir: "/repo", version: "0.2.1-rc.4", product: "MOSA" }),
     resolve("/repo", "out", "make", "dmg", "darwin", "arm64", "MOSA-darwin-arm64-0.2.1-rc.4.dmg"),
   );
   assert.equal(assertMacAppMetadata({
@@ -79,13 +82,33 @@ test("macOS distribution keeps a stable app identity and deterministic DMG path"
     bundleName: "MOSA",
     executable: "MOSA",
     version: "0.2.1-rc.4",
-  }, "0.2.1-rc.4"), true);
+  }, "0.2.1-rc.4", "MOSA"), true);
   assert.throws(() => assertMacAppMetadata({
     bundleId: "com.example.mosa-copy",
     bundleName: "MOSA",
     executable: "MOSA",
     version: "0.2.1-rc.4",
-  }, "0.2.1-rc.4"), /Unexpected macOS bundle identifier/);
+  }, "0.2.1-rc.4", "MOSA"), /Unexpected macOS bundle identifier/);
+  // The default GravityPort build validates against the renamed metadata.
+  assert.equal(macDmgArtifactName("0.2.1-rc.4"), "GravityPort-darwin-arm64-0.2.1-rc.4.dmg");
+  assert.equal(assertMacAppMetadata({
+    bundleId: "com.azhuilab.mosa",
+    bundleName: "GravityPort",
+    executable: "GravityPort",
+    version: "0.2.1-rc.4",
+  }, "0.2.1-rc.4"), true);
+  assert.throws(() => assertMacAppMetadata({
+    bundleId: "com.azhuilab.mosa",
+    bundleName: "GravityPort",
+    executable: "MOSA",
+    version: "0.2.1-rc.4",
+  }, "0.2.1-rc.4"), /Unexpected macOS executable name/);
+  assert.throws(() => assertMacAppMetadata({
+    bundleId: "com.azhuilab.mosa",
+    bundleName: "MOSA",
+    executable: "MOSA",
+    version: "0.2.1-rc.4",
+  }, "0.2.1-rc.4"), /Unexpected macOS bundle name/);
 });
 
 test("macOS release DMG credentials fail closed", () => {
@@ -167,8 +190,8 @@ test("desktop icon source generates valid macOS and Windows icon containers", as
   deferTestPathRemoval(outputDir, { recursive: true, force: true });
 
   const source = await readFile(DESKTOP_ICON_SOURCE_PATH, "utf8");
-  assert.match(source, /linearGradient id="mosaGradient"/);
-  assert.match(source, /stroke-linecap="round"/);
+  assert.match(source, /<rect x="100" y="100" width="824" height="824" rx="185" fill="#FCFBF8"\/>/);
+  assert.match(source, /<circle cx="95\.81" cy="60" r="7\.88" fill="#C9A45C"\/>/);
 
   const paths = await generateDesktopIcons({ outputDir });
   const [icns, ico, png] = await Promise.all([

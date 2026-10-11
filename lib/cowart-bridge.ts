@@ -18,7 +18,7 @@ interface CanvasSnapshot { store?: Record<string, CanvasStoreRecord>; }
 
 export function createCowartAssetBridge(options: { store?: Store; canvasDir?: string; projectId?: string; cowartProjectDir?: string | null; sourceId?: string | null; debounceMs?: number; pollIntervalMs?: number; } = {}): Bridge {
   const store = options.store as Store;
-  if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Cowart bridge requires a MOSA store.");
+  if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Cowart bridge requires a GravityPort store.");
   const canvasDir = resolve(options.canvasDir || store.cowartCanvasDir);
   const projectId = options.projectId || DEFAULT_PROJECT_ID;
   const cowartProjectDir = options.cowartProjectDir ? resolve(options.cowartProjectDir) : null;

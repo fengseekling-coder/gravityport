@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresPlatformSigning } from "../lib/release-distribution.mjs";
+import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
 import { verifyMacosReleaseApp } from "./verify-macos-release.mjs";
 
-export const MOSA_MAC_APP_NAME = "MOSA";
 export const MOSA_MAC_BUNDLE_ID = "com.azhuilab.mosa";
 export const MOSA_MAC_ARCH = "arm64";
 
@@ -16,29 +16,30 @@ function nonEmpty(value) {
   return String(value || "").trim();
 }
 
-export function macDmgArtifactName(version, arch = MOSA_MAC_ARCH) {
+export function macDmgArtifactName(version, arch = MOSA_MAC_ARCH, product = resolveReleaseProduct()) {
   const cleanVersion = nonEmpty(version);
   const cleanArch = nonEmpty(arch);
   if (!cleanVersion) throw new Error("macOS DMG version is required.");
   if (!/^[0-9A-Za-z._+-]+$/.test(cleanVersion)) throw new Error(`Invalid macOS DMG version: ${cleanVersion}`);
   if (!/^[0-9A-Za-z_-]+$/.test(cleanArch)) throw new Error(`Invalid macOS DMG architecture: ${cleanArch}`);
-  return `${MOSA_MAC_APP_NAME}-darwin-${cleanArch}-${cleanVersion}.dmg`;
+  return releaseProductNames(product).macosDmgName(cleanVersion, cleanArch);
 }
 
-export function macDmgOutputPath({ rootDir, outDir = "out", version, arch = MOSA_MAC_ARCH } = {}) {
+export function macDmgOutputPath({ rootDir, outDir = "out", version, arch = MOSA_MAC_ARCH, product = resolveReleaseProduct() } = {}) {
   if (!rootDir) throw new Error("rootDir is required.");
-  return resolve(rootDir, outDir, "make", "dmg", "darwin", arch, macDmgArtifactName(version, arch));
+  return resolve(rootDir, outDir, "make", "dmg", "darwin", arch, macDmgArtifactName(version, arch, product));
 }
 
-export function assertMacAppMetadata({ bundleId, bundleName, executable, version }, expectedVersion) {
+export function assertMacAppMetadata({ bundleId, bundleName, executable, version }, expectedVersion, product = resolveReleaseProduct()) {
+  const names = releaseProductNames(product);
   if (bundleId !== MOSA_MAC_BUNDLE_ID) {
     throw new Error(`Unexpected macOS bundle identifier: ${bundleId || "(missing)"}. Expected ${MOSA_MAC_BUNDLE_ID}.`);
   }
-  if (bundleName !== MOSA_MAC_APP_NAME) {
-    throw new Error(`Unexpected macOS bundle name: ${bundleName || "(missing)"}. Expected ${MOSA_MAC_APP_NAME}.`);
+  if (bundleName !== names.macExecutableName) {
+    throw new Error(`Unexpected macOS bundle name: ${bundleName || "(missing)"}. Expected ${names.macExecutableName}.`);
   }
-  if (executable !== MOSA_MAC_APP_NAME) {
-    throw new Error(`Unexpected macOS executable name: ${executable || "(missing)"}. Expected ${MOSA_MAC_APP_NAME}.`);
+  if (executable !== names.macExecutableName) {
+    throw new Error(`Unexpected macOS executable name: ${executable || "(missing)"}. Expected ${names.macExecutableName}.`);
   }
   if (version !== expectedVersion) {
     throw new Error(`Unexpected macOS app version: ${version || "(missing)"}. Expected ${expectedVersion}.`);
@@ -106,14 +107,15 @@ async function readMacAppMetadata(appPath, runner) {
   return { bundleId, bundleName, executable, version };
 }
 
-async function verifyMountedDmg({ mountPath, expectedVersion, runner }) {
-  const mountedApp = join(mountPath, `${MOSA_MAC_APP_NAME}.app`);
+async function verifyMountedDmg({ mountPath, expectedVersion, runner, product }) {
+  const names = releaseProductNames(product);
+  const mountedApp = join(mountPath, names.macAppBundleName);
   const applicationsLink = join(mountPath, "Applications");
   await access(mountedApp);
   const link = await lstat(applicationsLink);
   if (!link.isSymbolicLink()) throw new Error("macOS DMG is missing the Applications symlink.");
   const metadata = await readMacAppMetadata(mountedApp, runner);
-  assertMacAppMetadata(metadata, expectedVersion);
+  assertMacAppMetadata(metadata, expectedVersion, product);
 }
 
 async function signAndNotarizeDmg({ dmgPath, credentials, runner }) {
@@ -141,21 +143,23 @@ export async function makeMacosDmg({
   distribution = desktopDistributionFromEnvironment(process.env),
   platform = process.platform,
   env = process.env,
+  product = resolveReleaseProduct(env),
   runner = runCommand,
 } = {}) {
   if (platform !== "darwin") throw new Error("macOS DMG creation must run on macOS.");
   if (arch !== MOSA_MAC_ARCH) throw new Error(`Unsupported MOSA macOS DMG architecture: ${arch}.`);
+  const names = releaseProductNames(product);
 
   const packageJson = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8"));
   const version = nonEmpty(packageJson.version);
   if (!version) throw new Error("package.json version is required for macOS DMG creation.");
 
-  const appPath = resolve(rootDir, outDir, `${MOSA_MAC_APP_NAME}-darwin-${arch}`, `${MOSA_MAC_APP_NAME}.app`);
+  const appPath = resolve(rootDir, outDir, names.macosPackageDirName, names.macAppBundleName);
   await access(appPath).catch(() => {
     throw new Error(`Packaged macOS app not found: ${appPath}. Run the macOS package step first.`);
   });
   const metadata = await readMacAppMetadata(appPath, runner);
-  assertMacAppMetadata(metadata, version);
+  assertMacAppMetadata(metadata, version, product);
 
   const normalizedDistribution = normalizeDesktopDistribution(distribution);
   const production = requiresPlatformSigning(normalizedDistribution);
@@ -165,7 +169,7 @@ export async function makeMacosDmg({
   }
   if (production) credentials = macDmgReleaseCredentials(env);
 
-  const dmgPath = macDmgOutputPath({ rootDir, outDir, version, arch });
+  const dmgPath = macDmgOutputPath({ rootDir, outDir, version, arch, product });
   await mkdir(dirname(dmgPath), { recursive: true });
   await rm(dmgPath, { force: true });
 
@@ -176,12 +180,12 @@ export async function makeMacosDmg({
   try {
     await mkdir(stagingPath, { recursive: true });
     await mkdir(mountPath, { recursive: true });
-    await runner("/usr/bin/ditto", [appPath, join(stagingPath, `${MOSA_MAC_APP_NAME}.app`)]);
+    await runner("/usr/bin/ditto", [appPath, join(stagingPath, names.macAppBundleName)]);
     await symlink("/Applications", join(stagingPath, "Applications"));
 
     await runner("/usr/bin/hdiutil", [
       "create",
-      "-volname", MOSA_MAC_APP_NAME,
+      "-volname", names.product,
       "-srcfolder", stagingPath,
       "-fs", "HFS+",
       "-format", "UDZO",
@@ -197,7 +201,7 @@ export async function makeMacosDmg({
       dmgPath,
     ]);
     mounted = true;
-    await verifyMountedDmg({ mountPath, expectedVersion: version, runner });
+    await verifyMountedDmg({ mountPath, expectedVersion: version, runner, product });
     await runner("/usr/bin/hdiutil", ["detach", mountPath]);
     mounted = false;
 

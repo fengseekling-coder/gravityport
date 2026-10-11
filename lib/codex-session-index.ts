@@ -156,13 +156,13 @@ export function createCodexSessionIndex({ sessionsDir }: { sessionsDir: string }
       const buffer = Buffer.alloc(event.lineLength);
       const read = await handle.read(buffer, 0, event.lineLength, event.lineStart);
       if (read.bytesRead !== event.lineLength) {
-        throw sessionIndexError("CODEX_SESSION_EVENT_CHANGED", "Codex session changed while MOSA was reading an image-generation result.");
+        throw sessionIndexError("CODEX_SESSION_EVENT_CHANGED", "Codex session changed while GravityPort was reading an image-generation result.");
       }
       const parsed = JSON.parse(buffer.toString("utf8")) as Record<string, unknown>;
       const payload = extractImageEventPayload(parsed);
       if (!payload) return "";
       if (event.callId && payload.callId && event.callId !== payload.callId) {
-        throw sessionIndexError("CODEX_SESSION_EVENT_CHANGED", "Codex image-generation event identity changed while MOSA was reading it.");
+        throw sessionIndexError("CODEX_SESSION_EVENT_CHANGED", "Codex image-generation event identity changed while GravityPort was reading it.");
       }
       const item = imageEventObject(parsed);
       return typeof item?.result === "string" ? item.result.trim() : "";
