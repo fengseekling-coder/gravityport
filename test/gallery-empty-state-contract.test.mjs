@@ -295,3 +295,49 @@ test("44. Phase 1–4C neighbouring contracts and anchors stay intact", async ()
   assert.match(viewer, /state\.libraryReturnSnapshot = \{/);
   assert.match(inspector, /function detailMoreSectionMarkup\(asset\)/);
 });
+
+test("45. incremental commits never append cards behind a mounted empty state (task 122)", async () => {
+  const app = await readApp();
+
+  // The shared gallery-child predicate, evaluated behaviorally: only the four
+  // legitimate gallery surfaces count as card mode.
+  const predicateSource = sliceBetween(app, "function galleryChildElement(element)", "\nfunction reconcileAssetCards");
+  const galleryChildElement = new Function(`${predicateSource}\nreturn galleryChildElement;`)();
+  const withClasses = (...classes) => ({ classList: { contains: (name) => classes.includes(name) } });
+  assert.equal(galleryChildElement(withClasses("asset-card")), true);
+  assert.equal(galleryChildElement(withClasses("asset-load-more")), true);
+  assert.equal(galleryChildElement(withClasses("infinite-scroll-sentinel")), true);
+  assert.equal(galleryChildElement(withClasses("gallery-virtual-extent")), true);
+  assert.equal(galleryChildElement(withClasses("gallery-empty-state")), false);
+  assert.equal(galleryChildElement(withClasses("gallery-skeleton")), false);
+  assert.equal(galleryChildElement(withClasses("error-state")), false);
+
+  // commitIncrementalGalleryChanges must hand the whole frame to renderGrid
+  // while a non-card surface is mounted. Appending cards behind the empty
+  // state keeps `.grid:has(.gallery-empty-state) { display: flex }` alive and
+  // squeezes the whole batch into one narrow row (task 122 repro: 24 cards at
+  // ~30px). The guard has to run before the id-keyed DOM surgery, and the
+  // placeholder cleanup in reconcileAssetCards shares the same predicate.
+  const commit = sliceBetween(app, "function commitIncrementalGalleryChanges", "\n// Viewer（大图查看模式）");
+  assert.match(commit, /some\(\(element\) => !galleryChildElement\(element\)\)/, "the incremental commit checks for non-card surfaces");
+  const guardAt = commit.indexOf("!galleryChildElement(element)");
+  const renderGridAt = commit.indexOf("renderGrid();", guardAt);
+  const surgeryAt = commit.indexOf("const assetsById");
+  assert.ok(renderGridAt > -1, "the guard delegates to renderGrid");
+  // The mirror case takes the same exit: once the last asset is removed from
+  // outside, the id surgery would only detach cards and leave a blank grid, so
+  // an empty list also hands the frame to renderGrid (which paints the empty state).
+  assert.match(commit, /if \(!state\.assets\.length \|\| \[\.\.\.grid\.children\]\.some\(\(element\) => !galleryChildElement\(element\)\)\) \{\s*\n\s*renderGrid\(\);/,
+    "an emptied list is rendered by renderGrid, not by the incremental commit");
+  assert.ok(renderGridAt < surgeryAt, "the guard must run before the incremental id surgery");
+  assert.equal([...app.matchAll(/!galleryChildElement\(element\)/g)].length, 2,
+    "reconcileAssetCards and commitIncrementalGalleryChanges share the predicate; no third copy");
+
+  // Skeleton/error surfaces cannot reach the incremental commit at all: the
+  // reconciler only reconciles the active view while galleryStatus is "ready".
+  // During loading the in-flight loadAssets renders the fresh result; during
+  // error the delta is skipped and the retry button reloads.
+  const reconciliation = await readFile(resolve(root, "web/app/library-reconciliation.mjs"), "utf8");
+  assert.match(reconciliation, /if \(state\.galleryStatus === "ready"\) targets\.push\(\{ kind: "active", request: requestAtStart \}\);/,
+    "only the ready state takes the incremental commit path (skeleton/error immunity)");
+});
