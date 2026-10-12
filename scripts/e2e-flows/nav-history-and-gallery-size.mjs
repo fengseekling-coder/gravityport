@@ -119,7 +119,7 @@ function assertSessionOne(facts, expect) {
   }
   if (sh.exitedByBack !== true || sh.forwardEnabledAtRoot !== true) problems.push("the back button must exit the stack and light forward at the root");
   if (sh.forwardReentered !== true) problems.push("forward must re-enter the same stack from the root record");
-  if (sh.keyboardUsed === true && (sh.forwardEnabledAfterKeyboardExit !== true || sh.keyboardReentered !== true)) {
+  if (sh.keyboardUsed !== true || sh.forwardEnabledAfterKeyboardExit !== true || sh.keyboardReentered !== true) {
     problems.push("⌘[ must exit like the back button and ⌘] must re-enter like forward");
   }
   if (sh.forwardGrayAfterSidebarNav !== true) problems.push("a fresh sidebar navigation must truncate the stack record (forward gray)");
@@ -376,9 +376,15 @@ function sessionOneSource(expect) {
     sh.coverId = createdNode.dataset.id;
     await waitFor(() => gallerySettled() && multiSelected().length === 0, 'stack created, selection cleared');
     // 2) 记录根位置滚动与卡片顺序，滚到非零偏移（退出后必须原样恢复）。
-    const rootOrderBefore = rootCardIds();
+    //    enterStack 快照的是双击那一刻的 scrollTop，而 openStackDblclick 的
+    //    scrollIntoView 会滚动 #assetGrid。返工 1：必须先把节点摆进视口、再保存
+    //    滚动落点——此前先保存后 scrollIntoView，保存值被自己的滚动动作作废
+    //    （实测 104→34），退出按快照值恢复被误判为「滚动丢失」。
     const maxScroll = gridEl().scrollHeight - gridEl().clientHeight;
     gridEl().scrollTop = Math.min(160, maxScroll);
+    const nodeForScrollSave = await waitFor(() => { const el = stackNodeEl(); return el?.isConnected ? el : null; }, 'stack node visible before scroll save', 20000);
+    nodeForScrollSave.scrollIntoView({ block: 'center' });
+    const rootOrderBefore = rootCardIds();
     const savedScrollTop = gridEl().scrollTop;
     sh.rootScrollTopSaved = savedScrollTop;
     // 3) 双击进堆叠：后退亮（=退出）、前进灰。
@@ -399,14 +405,20 @@ function sessionOneSource(expect) {
     click('#navHistoryForward');
     await waitFor(() => inStackNow() && gallerySettled() && rootCardIds().length === 2, 'forward re-entered the same stack');
     sh.forwardReentered = true;
-    // 6) ⌘[ 退出 / ⌘] 再进（macOS 才派发）：快捷键与按钮完全同一套行为。
-    if (/Mac/i.test(navigator.platform)) {
+    // 6) 快捷键退出 / 再进，与按钮完全同一套行为（规则 15）：macOS 是 ⌘[ / ⌘]，
+    //    其他平台是 Alt+← / Alt+→。返工 1：此前这一段只在 macOS 派发，Windows 上
+    //    整段跳过，走到第 7 步时人还在堆叠里——堆叠里点侧栏是堆叠内筛选（既定
+    //    行为），于是第 7 步等不到根位置的来源窗口。两个平台都必须走完这一段。
+    {
+      const isMacPlatform = /Mac/i.test(navigator.platform);
+      const backKey = isMacPlatform ? { key: '[', metaKey: true } : { key: 'ArrowLeft', altKey: true };
+      const forwardKey = isMacPlatform ? { key: ']', metaKey: true } : { key: 'ArrowRight', altKey: true };
       sh.keyboardUsed = true;
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: '[', metaKey: true, bubbles: true, cancelable: true }));
-      await waitFor(() => !inStackNow() && gallerySettled(), '⌘[ exits the stack');
+      document.dispatchEvent(new KeyboardEvent('keydown', { ...backKey, bubbles: true, cancelable: true }));
+      await waitFor(() => !inStackNow() && gallerySettled(), 'keyboard back exits the stack');
       sh.forwardEnabledAfterKeyboardExit = !fwdBtn().disabled;
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: ']', metaKey: true, bubbles: true, cancelable: true }));
-      await waitFor(() => inStackNow() && gallerySettled() && rootCardIds().length === 2, '⌘] re-enters the stack');
+      document.dispatchEvent(new KeyboardEvent('keydown', { ...forwardKey, bubbles: true, cancelable: true }));
+      await waitFor(() => inStackNow() && gallerySettled() && rootCardIds().length === 2, 'keyboard forward re-enters the stack');
       sh.keyboardReentered = true;
       click('#navHistoryBack');
       await waitFor(() => !inStackNow() && gallerySettled(), 'back-button exit after the keyboard round trip');
