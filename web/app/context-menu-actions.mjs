@@ -492,7 +492,8 @@ export function createContextMenuActions({ state, els, t, apiClient, showToast, 
   }
 
   // 解散：确认 + DELETE + 计数 toast + 增量刷新只有这一份。堆叠内部空白处
-  // 通过 onDissolved 接 exitStack 退回素材库。
+  // 通过 onDissolved 接 exitMissingStack 退回素材库（堆叠已不存在，历史登记
+  // 按「丢失堆叠记录」处理，任务 123）。
   async function confirmAndDissolveStack({ stackId, stackCount = 0, onDissolved } = {}) {
     const confirmed = await requestConfirmation({
       title: t("dissolveStackTitle"),
@@ -1181,7 +1182,9 @@ export function createContextMenuActions({ state, els, t, apiClient, showToast, 
             action: () => confirmAndDissolveStack({
               stackId,
               stackCount: Math.max(0, Number(state.activeStackSummary?.count || state.assets.length || 0)),
-              onDissolved: () => assetStacks?.exitStack?.(),
+              // 任务 123：解散后的退出是「堆叠已不存在」——光标退回根位置并丢掉
+              // 堆叠记录，前进按钮保持灰；与普通退出（返回素材库）的登记区分开。
+              onDissolved: () => assetStacks?.exitMissingStack?.(),
             }),
           },
         ],

@@ -105,3 +105,63 @@ test("custom smaller limit and clear() behave", () => {
   assert.equal(history.canBack(), false);
   assert.equal(history.canForward(), false);
 });
+
+// 任务 123：堆叠因解散/成员移空/已不存在而退出时，光标退回根位置后必须丢掉
+// 那条堆叠记录——前进按钮不能再指向一个已经不存在的堆叠。
+test("dropForward discards every entry after the cursor and leaves the cursor entry", () => {
+  const history = createNavigationHistory();
+  history.push(snap("a"));
+  history.push({ ...snap("a"), stackId: "s1" });
+  history.back();
+  assert.equal(history.canForward(), true);
+  history.dropForward();
+  assert.equal(history.canForward(), false, "the stack record must be gone after dropForward");
+  assert.equal(history.size, 1, "the root record stays");
+  assert.equal(history.current().query, "a");
+  // 空历史与光标在末尾时 dropForward 必须是安全空操作。
+  createNavigationHistory().dropForward();
+  history.dropForward();
+  assert.equal(history.size, 1);
+});
+
+test("dropForward at a middle position drops only the forward trail", () => {
+  const history = createNavigationHistory();
+  history.push(snap("a"));
+  history.push(snap("b"));
+  history.push({ ...snap("b"), stackId: "s2" });
+  history.back(); // 光标在 b
+  history.dropForward();
+  assert.equal(history.size, 2);
+  assert.equal(history.canBack(), true, "older records behind the cursor stay");
+  assert.equal(history.peekBack().query, "a");
+  assert.equal(history.canForward(), false);
+});
+
+// 任务 123：堆叠记录永远紧跟在它的根位置记录后面（enterStack 成功后在根位置
+// 记录上 push 一条带 stackId 的记录）。记满 50 条时 push 丢的是最旧的头，
+// 「根位置 → 堆叠」这对相邻关系必须原样保留。
+test("a stack record pushed right after its root stays adjacent, including when the limit is full", () => {
+  const stackSnap = (label, stackId) => ({ ...snap(label), stackId });
+  // 未记满：根位置记录之后 push 堆叠记录，堆叠的 peekBack 就是它的根位置。
+  const fresh = createNavigationHistory();
+  fresh.push(snap("root"));
+  fresh.push(stackSnap("root", "s1"));
+  assert.equal(fresh.size, 2);
+  assert.equal(fresh.current().stackId, "s1");
+  assert.equal(fresh.peekBack().stackId || "", "", "the record behind a stack record is its root position");
+  assert.equal(fresh.peekBack().query, "root");
+
+  // 已记满：先填满 50 条，再 push 根位置（挤出最旧一条），再 push 堆叠记录。
+  const full = createNavigationHistory();
+  for (let index = 0; index < NAVIGATION_HISTORY_LIMIT; index += 1) full.push(snap(`p${index}`));
+  full.push(snap("root"));
+  full.push(stackSnap("root", "s9"));
+  assert.equal(full.size, NAVIGATION_HISTORY_LIMIT, "the limit still holds after the stack push");
+  assert.equal(full.current().stackId, "s9");
+  assert.equal(full.peekBack().query, "root", "the stack record is still preceded by its own root record");
+  // 堆叠记录退回根位置后前进可再进；dropForward 后前进关闭。
+  assert.equal(full.back().query, "root");
+  assert.equal(full.canForward(), true);
+  full.dropForward();
+  assert.equal(full.canForward(), false);
+});

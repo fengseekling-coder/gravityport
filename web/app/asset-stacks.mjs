@@ -50,6 +50,9 @@ export function createAssetStackController({
   closeDetailSurface,
   nativeAssetDrag,
   t,
+  recordStackEntry,
+  registerStackExit,
+  syncNavHistoryButtons,
 }) {
   let pointer = null;
   let ghost = null;
@@ -155,7 +158,10 @@ export function createAssetStackController({
 
   function syncChrome() {
     const inside = Boolean(state.activeStackId);
-    if (els.stackBack) els.stackBack.hidden = !inside;
+    // 任务 123：在 <body> 上暴露「在不在堆叠里」，窄屏样式（露出后退=退出）
+    // 与 e2e 都用它判断。唯一写点：进/出/放弃堆叠上下文都经 syncChrome。
+    if (inside) document.body.setAttribute("data-in-stack", "true");
+    else document.body.removeAttribute("data-in-stack");
     if (els.sortSelect) els.sortSelect.closest(".sort-control")?.toggleAttribute("hidden", inside);
     renderQuickFilters();
     updateViewTitle();
@@ -163,7 +169,10 @@ export function createAssetStackController({
 
   function setMutationBusy(busy) {
     mutationInFlight = Boolean(busy);
-    if (els.stackBack) els.stackBack.disabled = mutationInFlight;
+    // 任务 123：堆叠返回按钮删除后，「操作进行中禁用堆叠退出」的规矩搬到后退
+    // 按钮上；可用性统一由 syncNavHistoryButtons 判定（堆叠里看 busy，根位置
+    // 看历史光标），这里不再直写 disabled。
+    if (typeof syncNavHistoryButtons === "function") syncNavHistoryButtons();
     if (!mutationInFlight) {
       gallerySelection.syncRenderedSelection({ prune: false });
     }
@@ -182,7 +191,9 @@ export function createAssetStackController({
     }
   }
 
-  async function enterStack(stackId, initialSummary = null) {
+  // recordHistory=false 供「前进=重进历史里的堆叠」使用：那条记录已在历史里，
+  // 成功后由调用方前移光标，不再新增（任务 123 规则 11）。
+  async function enterStack(stackId, initialSummary = null, { recordHistory = true } = {}) {
     if (!stackId || state.activeStackId) return false;
     // 导航进入堆叠不是用户手动关闭检视器（54-5）。
     if (typeof closeDetailSurface === "function" && !await closeDetailSurface({ navigation: true })) return false;
@@ -233,6 +244,9 @@ export function createAssetStackController({
     syncChrome();
     const loaded = await loadAssets({ preserveScroll: false });
     if (!loaded) return false;
+    // 任务 123 规则 1：成功进入堆叠记一条「当前根位置 + 这个堆叠」；确认被
+    // 取消或加载失败走到上面 return false，都不记。
+    if (recordHistory && typeof recordStackEntry === "function") recordStackEntry(stackId);
     syncChrome();
     els.assetGrid?.focus({ preventScroll: true });
     return true;
@@ -264,10 +278,26 @@ export function createAssetStackController({
     return true;
   }
 
+  // 任务 123：所有退出入口（后退按钮、⌘[、Esc、右键菜单、堆叠消失）共用
+  // 这一处实现，历史光标登记只写在这里，不接在某个按钮上。
+  // 保留 `async function exitStack() {` 字面签名：gallery-observer-release
+  // 契约测试以它为切片锚点。
   async function exitStack() {
+    return runStackExit({ stackMissing: false });
+  }
+
+  // 堆叠已不存在的退出（解散、成员移空、active-stack-missing）：光标退回根
+  // 位置后丢弃堆叠记录，前进按钮保持灰（任务 123 规则 9）。
+  async function exitMissingStack() {
+    return runStackExit({ stackMissing: true });
+  }
+
+  async function runStackExit({ stackMissing = false } = {}) {
     if (!state.activeStackId) return false;
-    // 导航退出堆叠不是用户手动关闭检视器（54-5）。
+    // 导航退出堆叠不是用户手动关闭检视器（54-5）。确认被取消时这里直接返回，
+    // 历史光标不动（先 peek、确认通过再消费，任务 123 规则 4）。
     if (typeof closeDetailSurface === "function" && !await closeDetailSurface({ navigation: true })) return false;
+    const exitedStackId = state.activeStackId;
     const snapshot = state.stackReturnSnapshot || {};
     state.activeStackId = "";
     state.activeStackSummary = null;
@@ -286,6 +316,9 @@ export function createAssetStackController({
     if (typeof renderTypeFilters === "function") renderTypeFilters();
     if (typeof renderCategoryFilter === "function") renderCategoryFilter();
     syncChrome();
+    // 任务 123 规则 8/9：所有退出入口的唯一历史登记点。确认（closeDetailSurface）
+    // 已在上面通过，这里才消费光标；确认被取消的路径到不了这里。
+    if (typeof registerStackExit === "function") registerStackExit({ stackId: exitedStackId, stackMissing });
     let loaded = await restoreRootFromSnapshot(snapshot);
     if (!loaded) {
       // 快照缺失或已 degraded（journal gap 等）：全量恢复是最后手段。
@@ -382,7 +415,8 @@ export function createAssetStackController({
           assetIds: [...(result.assetIds || ids)],
         }]);
         showToast?.(t("stackDissolved"), "success");
-        await exitStack();
+        // 解散后的退出：堆叠已不存在，历史里的堆叠记录要一并丢掉（任务 123 规则 9）。
+        await exitMissingStack();
         return true;
       }
       // Stack 视图内：受影响成员行就地 reconcile（移除的成员从视图消失，
@@ -705,10 +739,11 @@ export function createAssetStackController({
     window.addEventListener("pointerup", endPointer);
     window.addEventListener("pointercancel", (event) => endPointer(event, { canceled: true }));
     window.addEventListener("blur", () => { cancelPointerGesture(); });
-    els.stackBack?.addEventListener("click", () => { void exitStack(); });
+    // 任务 123：堆叠返回按钮已删除——退出堆叠统一走后退按钮 / ⌘[ / Esc / 右键
+    // 菜单，全部经 exitStack 登记历史。堆叠因不存在而消失时丢掉堆叠记录。
     window.addEventListener("mosa:active-stack-missing", (event) => {
       if (!state.activeStackId || event.detail?.stackId !== state.activeStackId) return;
-      void exitStack();
+      void exitMissingStack();
     });
     window.addEventListener("mosa:open-stack", (event) => {
       if (state.activeStackId || !event.detail?.stackId) return;
@@ -721,6 +756,7 @@ export function createAssetStackController({
     bind,
     enterStack,
     exitStack,
+    exitMissingStack,
     createStackFromSelection,
     removeSelectedFromStack,
     abandonStackContext,

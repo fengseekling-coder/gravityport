@@ -100,8 +100,8 @@ test("--gallery-columns drives the v2 grid and skeleton; width-based bands are g
   assert.doesNotMatch(css, /@media \(max-width: 900px\) \{ \.mosa-v2 \.grid/);
   // ≤767px 档固定 2 列不变（行内变量改不了它）。
   assert.match(css, /@media \(max-width: 767px\) \{[\s\S]*?\.mosa-v2 \.grid, \.mosa-v2 \.gallery-skeleton \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
-  // 窄档只隐藏前进/后退与滑杆；#stackBack 不在窄屏隐藏名单（r21-shell 有
-  // 窄档块不含 #stackBack 的独立断言）。
+  // 窄档只隐藏前进/后退与滑杆；任务 123 后页面里没有堆叠返回按钮，堆叠里的
+  // 窄屏退出由 r21-shell 的「堆叠里露出后退键」断言锁。
   assert.match(css, /@media \(max-width: 767px\) \{[\s\S]*?\.mosa-v2 \.topbar-nav-group \.nav-history-button, \.mosa-v2 \.topbar-size-group \{ display: none; \}/);
   // JS 侧：列数写进 #assetGrid 行内；画廊宽度变化（ResizeObserver）、检视器
   // 开关、滑杆变化都会重算；列数变化后走 scheduleMasonryLayout 重排。
@@ -208,8 +208,10 @@ test("nav history i18n keys exist in both locales; slider buttons are named", as
 
 test("nav history wiring: snapshots, restore through applyFilterChange, shortcuts, stack guard", async () => {
   const app = await readApp();
-  // 快照内容：scope + facets 拷贝 + mediaKind + 搜索词（分类在 facets 里）。
-  assert.match(app, /function captureNavigationSnapshot\(\) \{\n  return \{\n    scope: state\.scope,\n    facets: \{ \.\.\.state\.facets \},\n    mediaKind: state\.mediaKind,\n    query: state\.query,\n  \};\n\}/);
+  // 快照内容：scope + facets 拷贝 + mediaKind + 搜索词（分类在 facets 里）；
+  // 任务 123：堆叠也算位置的一部分（stackId），「根位置」与「同一根位置+堆叠」
+  // 是两条记录。
+  assert.match(app, /function captureNavigationSnapshot\(\) \{\n  return \{\n    scope: state\.scope,\n    facets: \{ \.\.\.state\.facets \},\n    mediaKind: state\.mediaKind,\n    query: state\.query,\n    stackId: state\.activeStackId \|\| "",\n  \};\n\}/);
   // 恢复：同步搜索框 → 走现有 applyFilterChange 流程 → 不产生新记录。
   const restore = app.slice(app.indexOf("function restoreNavigationSnapshot"), app.indexOf("async function navigateGalleryHistory"));
   assert.match(restore, /if \(els\.searchInput\) els\.searchInput\.value = state\.query;/);
@@ -225,8 +227,14 @@ test("nav history wiring: snapshots, restore through applyFilterChange, shortcut
   assert.equal(app.split("recordNavigationPosition();").length - 1 >= 6, true, "every approved navigation site records once");
   const sortHandler = app.slice(app.indexOf('els.sortSelect?.addEventListener("change"'), app.indexOf('els.detailPanel?.addEventListener("click"'));
   assert.doesNotMatch(sortHandler, /recordNavigationPosition/, "sort changes are not browse positions");
-  // 堆叠内禁用：按钮 disabled + 方向函数早退。
-  assert.match(app, /if \(state\.activeStackId\) return false;\n  const entry = direction < 0 \? navHistory\.peekBack/);
+  // 任务 123：堆叠里后退=退出堆叠（经 exitStack 恢复根快照并统一登记光标，
+  // 不走 restoreNavigationSnapshot 重新加载），前进在堆叠里不可用。
+  assert.match(app, /if \(state\.activeStackId\) \{\n    \/\/ 堆叠里只有后退有意义（前进按钮此时是灰的）。\n    if \(direction >= 0\) return false;\n    \/\/ [^\n]*\n    if \(assetStacks\.isBusy\(\)\) return false;\n    return Boolean\(await assetStacks\.exitStack\(\)\);\n  \}/,
+    "in a stack the shortcut obeys the same busy rule as the disabled back button");
+  // 前进重进堆叠前必须确认根画廊没有请求在途：galleryStatus 启动后不再回到
+  // "loading"，重载只体现在 #assetGrid 的 aria-busy 上。
+  assert.match(app, /function isRootGalleryLoading\(\) \{\n  return state\.galleryStatus === "loading" \|\| els\.assetGrid\?\.getAttribute\("aria-busy"\) === "true";\n\}/);
+  assert.match(app, /if \(direction > 0 && entry\.stackId\) \{[\s\S]{0,200}?if \(isRootGalleryLoading\(\) \|\| assetStacks\.isBusy\(\)\) return false;/);
   assert.match(app, /const inStack = Boolean\(state\.activeStackId\);/);
   // 快捷键：macOS ⌘[ / ⌘]，其他平台 Alt+← / Alt+→。
   assert.match(app, /function resolveNavHistoryShortcut\(event\)/);

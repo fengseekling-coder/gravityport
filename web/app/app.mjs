@@ -325,7 +325,6 @@ Object.assign(els, {
   // GravityPort A4c（任务 90）：右上「删除 / 全屏」；适合窗口沿用 #assetZoomFit。
   assetViewDelete: document.querySelector("#assetViewDelete"),
   assetViewFullscreen: document.querySelector("#assetViewFullscreen"),
-  stackBack: document.querySelector("#stackBack"),
   emptyTrashBtn: document.querySelector("#emptyTrashBtn"),
   assetZoomValue: document.querySelector("#assetZoomValue"),
   assetViewNav: document.querySelector("#assetViewNav"),
@@ -489,6 +488,30 @@ const assetStacks = createAssetStackController({
   closeDetailSurface,
   nativeAssetDrag,
   t,
+  // 任务 123：进出堆叠的历史登记（进=push 根位置+stackId，退=消费/丢弃光标）
+  // 与后退按钮可用性同步都由 app 层供给，堆叠控制器不直接持有历史模块。
+  recordStackEntry: (stackId) => {
+    navHistory.push({ ...captureNavigationSnapshot(), stackId });
+    syncNavHistoryButtons();
+  },
+  registerStackExit: ({ stackId, stackMissing }) => {
+    const current = navHistory.current();
+    // 「前进再进已消失堆叠」的失败：光标本就停在根位置记录上，只需丢掉它
+    // 前面那条堆叠记录（规则 13）。
+    if (stackMissing && !current?.stackId && navHistory.peekForward()?.stackId === stackId) {
+      navHistory.dropForward();
+      syncNavHistoryButtons();
+      return;
+    }
+    // 正常退出：当前记录就是这个堆叠时，光标退回根位置；堆叠已不存在的退出
+    // 再丢掉光标之后的堆叠记录（规则 3/8/9）。
+    if (current?.stackId === stackId) {
+      navHistory.back();
+      if (stackMissing) navHistory.dropForward();
+      syncNavHistoryButtons();
+    }
+  },
+  syncNavHistoryButtons,
 });
 
 // ===== Dark mode =====
@@ -2309,12 +2332,16 @@ async function authorizeNavigationIntent(intent) {
 // 模块截断前进记录。只存内存，上限 50，不写本地存储。
 const navHistory = createNavigationHistory();
 
+// 任务 123：堆叠也算位置的一部分——「根位置」和「同一根位置 + 堆叠」是两条
+// 不同的记录。根位置记录的 stackId 恒为空串（recordNavigationPosition 在堆叠
+// 里早退，不会产生带 stackId 的根记录）。
 function captureNavigationSnapshot() {
   return {
     scope: state.scope,
     facets: { ...state.facets },
     mediaKind: state.mediaKind,
     query: state.query,
+    stackId: state.activeStackId || "",
   };
 }
 
@@ -2323,10 +2350,13 @@ function navigationSnapshotsEqual(a, b) {
   return a.scope === b.scope
     && a.mediaKind === b.mediaKind
     && a.query === b.query
+    && (a.stackId || "") === (b.stackId || "")
     && FACET_KEYS.every((key) => (a.facets?.[key] || "") === (b.facets?.[key] || ""));
 }
 
-// 堆叠内部不是画廊浏览位置：进出堆叠走 #stackBack，历史按钮在堆叠里禁用。
+// 堆叠内部不是画廊浏览位置：筛选/搜索在堆叠内不记历史；进出堆叠的登记在
+// asset-stacks（enterStack 成功 push「根位置+堆叠」、exitStack 消费/丢弃光标）。
+// 后退/前进按钮在堆叠里的语义：后退=退出堆叠、前进保持灰（任务 123）。
 function recordNavigationPosition() {
   if (state.activeStackId) return;
   const snapshot = captureNavigationSnapshot();
@@ -2337,7 +2367,13 @@ function recordNavigationPosition() {
 
 function syncNavHistoryButtons() {
   const inStack = Boolean(state.activeStackId);
-  if (els.navHistoryBack) els.navHistoryBack.disabled = inStack || !navHistory.canBack();
+  // 任务 123：堆叠里后退=退出堆叠（只在有堆叠操作进行中禁用），前进保持灰；
+  // 根位置照旧由历史光标决定。
+  if (els.navHistoryBack) {
+    els.navHistoryBack.disabled = inStack
+      ? Boolean(assetStacks?.isBusy?.())
+      : !navHistory.canBack();
+  }
   if (els.navHistoryForward) els.navHistoryForward.disabled = inStack || !navHistory.canForward();
 }
 
@@ -2355,12 +2391,43 @@ function restoreNavigationSnapshot(entry) {
   applyFilterChange();
 }
 
+// 根画廊是否有请求在途。galleryStatus 只在启动首屏是 "loading"；之后的重载
+// （切范围、后退/前进恢复）只体现在 #assetGrid 的 aria-busy 上，两个都要看。
+function isRootGalleryLoading() {
+  return state.galleryStatus === "loading" || els.assetGrid?.getAttribute("aria-busy") === "true";
+}
+
 // 先 peek 再过未保存编辑确认（authorizeNavigationIntent），确认通过才消费光标：
 // 取消确认时光标不能已经移动。
+// 任务 123：堆叠里后退=退出堆叠（走 exitStack，恢复根画廊快照、不重新加载，
+// 光标由 exitStack 统一登记）；根位置的下一条是堆叠记录时，前进=用 enterStack
+// 重进那个堆叠，成功后光标前进一格、不新增记录。
 async function navigateGalleryHistory(direction) {
-  if (state.activeStackId) return false;
+  if (state.activeStackId) {
+    // 堆叠里只有后退有意义（前进按钮此时是灰的）。
+    if (direction >= 0) return false;
+    // 堆叠操作进行中后退按钮是禁用的，⌘[ 和按钮同一套规矩，不退出。
+    if (assetStacks.isBusy()) return false;
+    return Boolean(await assetStacks.exitStack());
+  }
   const entry = direction < 0 ? navHistory.peekBack() : navHistory.peekForward();
   if (!entry) return false;
+  if (direction > 0 && entry.stackId) {
+    // 根画廊还在加载、或有堆叠操作进行中时不响应：不能拿着没加载完的根列表
+    // 进堆叠，否则退出时恢复的根窗口是错的。
+    if (isRootGalleryLoading() || assetStacks.isBusy()) return false;
+    const stackIntent = beginNavigationIntent();
+    if (!await authorizeNavigationIntent(stackIntent)) return false;
+    if (state.viewMode === "asset") returnToLibrary();
+    // 堆叠已不存在时 enterStack 加载失败并触发 active-stack-missing →
+    // exitMissingStack 丢掉这条记录、前进按钮变灰（规则 13），这里不再重复登记。
+    // recordHistory:false——这条堆叠记录就是正要前移的那条，不新增（规则 11）。
+    const entered = await assetStacks.enterStack(entry.stackId, null, { recordHistory: false });
+    if (!entered) return false;
+    navHistory.forward();
+    syncNavHistoryButtons();
+    return true;
+  }
   const intent = beginNavigationIntent();
   if (!await authorizeNavigationIntent(intent)) return false;
   if (direction < 0) navHistory.back();

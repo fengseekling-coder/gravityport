@@ -10,14 +10,19 @@
 //   6) 在中间位置点「全部素材」发起新导航 → 前进链被截断（前进按钮 disabled）；
 //   7) 滑杆（关检视器后）：拖到 120 / 400 / 200，列数随目标宽反向变化、行内
 //      --gallery-columns 与实际轨道数一致、首行铺满无空洞、卡片互不重叠，
-//      值持久化进 mosa.gallery-card-size。
+//      值持久化进 mosa.gallery-card-size；
+//   8) 任务 123：堆叠返回并入后退/前进——双击进堆叠（后退亮、前进灰）→ 后退
+//      退出（滚动位置与卡片顺序原样恢复、前进亮）→ 前进重进同一堆叠 → ⌘[ 退
+//      出/⌘] 再进 → 侧栏新导航截掉堆叠记录（前进灰）→ 再进后 Esc 退出（前进
+//      亮）→ 窄屏（640px）堆叠里只露后退、退出后两个都隐藏 → 解散堆叠退出
+//      （堆叠记录丢弃、前进保持灰）。
 // Session two（同一 server 重新加载）：滑杆值从本地存储恢复；关掉默认打开的
 // 检视器后（与 session one 末态相同的布局状态），列数与刷新前一致。
 
 import { PAGE_HELPERS } from "./_page-helpers.mjs";
 
 export const name = "nav-history-and-gallery-size";
-export const description = "back/forward over sidebar scopes restores ranges and galleries (restore records nothing, middle-position nav truncates forward); thumbnail slider drives --gallery-columns both ways with overlap-free layout and reload persistence";
+export const description = "back/forward over sidebar scopes restores ranges and galleries (restore records nothing, middle-position nav truncates forward); thumbnail slider drives --gallery-columns both ways with overlap-free layout and reload persistence; stacks ride the same back/forward (enter records, exit consumes, dissolve drops) incl. narrow-viewport reveal";
 
 const GROUP_NAME = "navhistory-group";
 const IMAGE_COUNT = 12;
@@ -107,6 +112,22 @@ function assertSessionOne(facts, expect) {
     if (facts.keyboardForwardEnabled !== true) problems.push("⌘[ (one step back from the middle) must leave forward enabled");
   }
   if (facts.forwardDisabledAfterFreshNav !== true || facts.backEnabledAfterFreshNav !== true) problems.push("a fresh navigation at a middle position must truncate the forward chain");
+  // 任务 123：堆叠返回并入后退/前进。
+  const sh = facts.stackHistory || {};
+  if (sh.entered !== true || sh.backEnabledInStack !== true || sh.forwardDisabledInStack !== true) {
+    problems.push(`in a stack: back enabled, forward disabled: ${JSON.stringify(sh)}`);
+  }
+  if (sh.exitedByBack !== true || sh.forwardEnabledAtRoot !== true) problems.push("the back button must exit the stack and light forward at the root");
+  if (sh.forwardReentered !== true) problems.push("forward must re-enter the same stack from the root record");
+  if (sh.keyboardUsed === true && (sh.forwardEnabledAfterKeyboardExit !== true || sh.keyboardReentered !== true)) {
+    problems.push("⌘[ must exit like the back button and ⌘] must re-enter like forward");
+  }
+  if (sh.forwardGrayAfterSidebarNav !== true) problems.push("a fresh sidebar navigation must truncate the stack record (forward gray)");
+  if (sh.escExited !== true || sh.forwardEnabledAfterEscExit !== true) problems.push("an Esc exit must light forward exactly like the button exit");
+  const narrow = sh.narrow || {};
+  if (narrow.inStackBackVisible !== true || narrow.inStackForwardHidden !== true) problems.push("narrow viewport: in a stack only the back button may show (visible + enabled)");
+  if (narrow.exitedByBack !== true || narrow.bothHiddenAfterExit !== true) problems.push("narrow viewport: both history buttons must hide after leaving the stack");
+  if (sh.dissolveExited !== true || sh.forwardGrayAfterDissolve !== true) problems.push("a dissolve exit must drop the stack record (forward gray)");
   if (problems.length) throw new Error(`nav history facts wrong: ${problems.join("; ")}`);
   if (!Array.isArray(facts.sliderSteps) || facts.sliderSteps.length !== 3) throw new Error(`slider steps missing: ${JSON.stringify(facts.sliderSteps)}`);
   const [at120, at400, at200] = facts.sliderSteps;
@@ -317,6 +338,126 @@ function sessionOneSource(expect) {
     const lastStep = await applySlider(200, 'default');
     facts.finalColumns = lastStep.columns;
     facts.storedSize = localStorage.getItem('mosa.gallery-card-size') || '';
+
+    // ===== 任务 123：堆叠返回并入后退/前进（进堆叠 = 一步浏览历史）=====
+    // 前置：滑杆段结束在「全部素材」根位置，检视器关闭，前进为灰。堆叠成员
+    // 选两张 codex-generated（步骤 7 的来源筛选下节点仍可见）。
+    const stackMenu = { stackSelected: '堆叠所选', dissolveStack: '解散堆叠' };
+    const sh = {};
+    facts.stackHistory = sh;
+    const inStackNow = () => document.body.getAttribute('data-in-stack') === 'true';
+    const backBtn = () => document.querySelector('#navHistoryBack');
+    const fwdBtn = () => document.querySelector('#navHistoryForward');
+    const gridEl = () => document.querySelector('#assetGrid');
+    const stackNodeEl = () => document.querySelector('#assetGrid > .asset-card.is-stack');
+    const multiSelected = () => [...document.querySelectorAll('.asset-card.multi-selected')].map((card) => card.dataset.id).sort();
+    const ctrlClickCard = (assetId) => {
+      const target = document.querySelector(cardSelector(assetId) + ' .asset-card-select');
+      if (!target) throw new Error('Missing card select for ' + assetId);
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true, metaKey: true }));
+    };
+    const openStackDblclick = async (label) => {
+      const node = await waitFor(() => { const el = stackNodeEl(); return el?.isConnected ? el : null; }, 'stack node visible (' + label + ')', 20000);
+      node.scrollIntoView({ block: 'center' });
+      node.querySelector('.asset-card-select').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 }));
+    };
+    // 1) 建堆：两张成员 → 右键「堆叠所选」。
+    await waitFor(() => Boolean(document.querySelector(cardSelector('navh-img-01')))
+      && Boolean(document.querySelector(cardSelector('navh-img-03'))), 'stack members visible');
+    ctrlClickCard('navh-img-01');
+    await waitFor(() => JSON.stringify(multiSelected()) === JSON.stringify(['navh-img-01']), 'first member selected');
+    ctrlClickCard('navh-img-03');
+    await waitFor(() => JSON.stringify(multiSelected()) === JSON.stringify(['navh-img-01', 'navh-img-03']), 'both members selected');
+    const stackMenuItem = await openContextMenu(cardSelector('navh-img-01'), stackMenu.stackSelected);
+    stackMenuItem.click();
+    const createdNode = await waitFor(() => stackNodeEl(), 'stack node appears');
+    sh.stackId = createdNode.dataset.stackId;
+    // 封面 = 画廊顺序里第一个被选中的成员（不一定是右键的那张），后续断言用它。
+    sh.coverId = createdNode.dataset.id;
+    await waitFor(() => gallerySettled() && multiSelected().length === 0, 'stack created, selection cleared');
+    // 2) 记录根位置滚动与卡片顺序，滚到非零偏移（退出后必须原样恢复）。
+    const rootOrderBefore = rootCardIds();
+    const maxScroll = gridEl().scrollHeight - gridEl().clientHeight;
+    gridEl().scrollTop = Math.min(160, maxScroll);
+    const savedScrollTop = gridEl().scrollTop;
+    sh.rootScrollTopSaved = savedScrollTop;
+    // 3) 双击进堆叠：后退亮（=退出）、前进灰。
+    await openStackDblclick('first enter');
+    await waitFor(() => inStackNow() && gallerySettled() && rootCardIds().length === 2
+      && rootCardIds().includes('navh-img-01') && rootCardIds().includes('navh-img-03'), 'entered the stack');
+    sh.entered = true;
+    sh.backEnabledInStack = Boolean(backBtn()) && !backBtn().disabled;
+    sh.forwardDisabledInStack = Boolean(fwdBtn()) && fwdBtn().disabled;
+    // 4) 点后退=退出堆叠：根画廊滚动位置与卡片顺序原样恢复，前进亮。
+    click('#navHistoryBack');
+    await waitFor(() => !inStackNow() && gallerySettled(), 'exited via the back button');
+    await waitFor(() => Math.abs(gridEl().scrollTop - savedScrollTop) <= 2, 'root scroll restored after back exit', 20000);
+    await waitFor(() => JSON.stringify(rootCardIds()) === JSON.stringify(rootOrderBefore), 'root card order unchanged after back exit');
+    sh.exitedByBack = true;
+    sh.forwardEnabledAtRoot = !fwdBtn().disabled;
+    // 5) 点前进=用历史记录重进同一个堆叠（不新增记录）。
+    click('#navHistoryForward');
+    await waitFor(() => inStackNow() && gallerySettled() && rootCardIds().length === 2, 'forward re-entered the same stack');
+    sh.forwardReentered = true;
+    // 6) ⌘[ 退出 / ⌘] 再进（macOS 才派发）：快捷键与按钮完全同一套行为。
+    if (/Mac/i.test(navigator.platform)) {
+      sh.keyboardUsed = true;
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '[', metaKey: true, bubbles: true, cancelable: true }));
+      await waitFor(() => !inStackNow() && gallerySettled(), '⌘[ exits the stack');
+      sh.forwardEnabledAfterKeyboardExit = !fwdBtn().disabled;
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: ']', metaKey: true, bubbles: true, cancelable: true }));
+      await waitFor(() => inStackNow() && gallerySettled() && rootCardIds().length === 2, '⌘] re-enters the stack');
+      sh.keyboardReentered = true;
+      click('#navHistoryBack');
+      await waitFor(() => !inStackNow() && gallerySettled(), 'back-button exit after the keyboard round trip');
+    }
+    // 7) 根位置点侧栏别的项：新记录截掉堆叠记录，前进变灰。点动态侧栏项之前
+    //    先等它渲染出来（loadStats 与首屏并行）。
+    const codexNavItem = () => document.querySelector('#sidebarGroupList .nav-item[data-filter="source"][data-value="codex-generated"]');
+    await waitFor(() => Boolean(codexNavItem()), 'sidebar source item rendered');
+    click('#sidebarGroupList .nav-item[data-filter="source"][data-value="codex-generated"]');
+    // 后置条件必须真的等来源窗口生效（codex 6 张成员、2 张在堆叠里 = 5 张卡，
+    // 且侧栏项激活）——否则「全部素材」窗口同样包含封面卡，等待会提前通过。
+    await waitFor(() => gallerySettled() && !inStackNow()
+      && codexNavItem()?.classList.contains('active')
+      && rootCardIds().length === 5, 'codex source window loaded');
+    sh.forwardGrayAfterSidebarNav = fwdBtn().disabled;
+    // 8) 再进堆叠，Esc 退出：与按钮退出同一历史结果（前进亮）。
+    await openStackDblclick('enter for Esc probe');
+    await waitFor(() => inStackNow() && gallerySettled() && rootCardIds().length === 2, 'entered stack for Esc probe');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await waitFor(() => !inStackNow() && gallerySettled(), 'Esc exits the stack');
+    sh.escExited = true;
+    sh.forwardEnabledAfterEscExit = !fwdBtn().disabled;
+    // 9) 窄屏（≤767px）：堆叠里只露后退（可见可点），前进不可见；退出后两个
+    //    都隐藏。live resize 由驱动器的 __MOSA_E2E_RESIZE__ 通道执行。
+    console.log('__MOSA_E2E_RESIZE__ 640x900');
+    await waitFor(() => window.innerWidth === 640, 'narrow viewport applied', 30000);
+    await waitFor(() => gallerySettled() && Boolean(stackNodeEl()), 'gallery settled at narrow width');
+    await openStackDblclick('narrow enter');
+    await waitFor(() => inStackNow() && gallerySettled() && rootCardIds().length === 2, 'entered stack at narrow width');
+    sh.narrow = {
+      inStackBackVisible: getComputedStyle(backBtn()).display !== 'none' && !backBtn().disabled,
+      inStackForwardHidden: getComputedStyle(fwdBtn()).display === 'none',
+    };
+    click('#navHistoryBack');
+    await waitFor(() => !inStackNow() && gallerySettled(), 'back button exits the stack at narrow width');
+    sh.narrow.exitedByBack = true;
+    sh.narrow.bothHiddenAfterExit = getComputedStyle(backBtn()).display === 'none' && getComputedStyle(fwdBtn()).display === 'none';
+    console.log('__MOSA_E2E_RESIZE__ 1440x800');
+    await waitFor(() => window.innerWidth === 1440, 'wide viewport restored', 30000);
+    await waitFor(() => gallerySettled() && Boolean(stackNodeEl()), 'gallery settled back at wide width');
+    // 10) 解散堆叠（堆叠内空白右键 + 确认）：退出后堆叠记录被丢弃，前进保持灰。
+    await openStackDblclick('enter for dissolve');
+    await waitFor(() => inStackNow() && gallerySettled() && rootCardIds().length === 2, 'entered stack for dissolve');
+    const dissolveItem = await openContextMenu('#assetGrid', stackMenu.dissolveStack);
+    dissolveItem.click();
+    await answerConfirmDialog({ confirm: true });
+    await waitFor(() => !inStackNow() && gallerySettled()
+      && rootCardIds().includes('navh-img-01') && rootCardIds().includes('navh-img-03'), 'dissolve exits to the root');
+    sh.dissolveExited = true;
+    sh.forwardGrayAfterDissolve = fwdBtn().disabled;
+
     facts.rendererErrors = rendererErrors.length;
     assert(facts.rendererErrors === 0, 'no renderer errors');
     return facts;

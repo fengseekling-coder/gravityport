@@ -292,7 +292,7 @@ function sessionBSource(config) {
   await waitFor(() => document.querySelector(stackSelector), 'stack node before opening');
   const openItem = await openContextMenu(stackSelector + ' .asset-card-select', '打开堆叠');
   openItem.click();
-  await waitFor(() => !document.querySelector('#stackBack')?.hidden && gallerySettled(), 'entered stack view');
+  await waitFor(() => document.body.getAttribute('data-in-stack') === 'true' && gallerySettled(), 'entered stack view');
   const titleInsideBefore = await waitFor(() => {
     const title = viewTitleText();
     return title.includes(config.stackName) && title.includes('· 2 项') ? title : '';
@@ -306,7 +306,7 @@ function sessionBSource(config) {
     const title = viewTitleText();
     return title.includes(config.stackName) && title.includes('· 3 项') ? title : '';
   }, 'stack title count bumped to 3 after import');
-  click('#stackBack');
+  click('#navHistoryBack');
   await waitFor(() => gallerySettled() && rootCardIds().length === 21, 'back at the root view');
   const badgeAfter = await waitFor(() => {
     const value = document.querySelector(stackSelector + ' .asset-stack-count')?.textContent || '';
@@ -350,10 +350,10 @@ function sessionCSource(config) {
 
   const openItem = await openContextMenu(stackSelector + ' .asset-card-select', '打开堆叠');
   openItem.click();
-  await waitFor(() => !document.querySelector('#stackBack')?.hidden && gallerySettled(), 'entered stack view after restart');
+  await waitFor(() => document.body.getAttribute('data-in-stack') === 'true' && gallerySettled(), 'entered stack view after restart');
   await waitFor(() => gallerySettled() && rootCardIds().length === 3, 'stack still holds 3 members');
   const stackMembersAfterRestart = rootCardIds();
-  click('#stackBack');
+  click('#navHistoryBack');
   await waitFor(() => gallerySettled() && rootCardIds().length === 21, 'back at root after the stack check');
 
   // 2) mixed formats, run last on purpose (see the module header + assertSessionC)

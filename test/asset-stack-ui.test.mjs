@@ -214,7 +214,14 @@ test("visual stack behavior is wired into the shared web renderer", async () => 
     "right-clicking outside the current selection first makes that card the selection");
   assert.match(contextBindings, /selectionCount: selectedIds\.size/);
 
-  assert.match(html, /id="stackBack"/);
+  // 任务 123：#stackBack 已删除——导航组里只有后退/前进两个按钮，「在不在
+  // 堆叠里」由 body[data-in-stack] 表达（窄屏样式与 e2e 的判断依据）。
+  assert.doesNotMatch(html, /id="stackBack"/);
+  assert.doesNotMatch(css, /\.stack-back/);
+  assert.match(stackController, /data-in-stack/,
+    "the stack controller owns the body[data-in-stack] marker through syncChrome");
+  assert.match(stackController, /async function exitMissingStack\(\)/,
+    "exiting a vanished stack (dissolved / members emptied / missing) has its own entry");
   // 底部批量栏已移除：堆叠/移出堆叠走右键菜单，由 actions 路由回控制器。
   assert.doesNotMatch(html, /id="selectionStack"|id="selectionRemoveFromStack"/);
   assert.match(contextActions, /label: t\("stackSelected"\)[\s\S]{0,400}?action: async \(\) => \{\s*await assetStacks\?\.createStackFromSelection\?\.\(\);/,
@@ -225,8 +232,8 @@ test("visual stack behavior is wired into the shared web renderer", async () => 
     "the stack-interior empty-grid menu exits through the shared exit pipeline");
   assert.match(contextActions, /onRenamed: \(nextName\) => \{/,
     "in-stack rename refreshes the active stack summary and chrome after the shared dialog succeeds");
-  assert.match(contextActions, /onDissolved: \(\) => assetStacks\?\.exitStack\?\.\(\)/,
-    "in-stack dissolve reuses the shared confirmation and then exits through the shared pipeline");
+  assert.match(contextActions, /onDissolved: \(\) => assetStacks\?\.exitMissingStack\?\.\(\)/,
+    "in-stack dissolve reuses the shared confirmation and then exits as a vanished stack (任务 123)");
   assert.match(html, /id="stackRenameModal"/,
     "stack rename reuses the shared modal-overlay/modal-card shell");
   assert.match(html, /id="stackRenameInput"/);

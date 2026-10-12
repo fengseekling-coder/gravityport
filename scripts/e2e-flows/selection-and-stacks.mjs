@@ -455,7 +455,7 @@ export async function run(ctx) {
       try {
         await waitFor(() => document.querySelector(stackNodeSelector(config.stackId)), 'Stack node before opening');
         await rightClickChoose(stackNodeSelector(config.stackId) + ' .asset-card-select', [MENU.openStack]);
-        await waitFor(() => !document.querySelector('#stackBack')?.hidden && gallerySettled(), 'entered stack view');
+        await waitFor(() => document.body.getAttribute('data-in-stack') === 'true' && gallerySettled(), 'entered stack view');
         const memberIdsInside = rootCardIds();
         const viewTitleInside = document.querySelector('#viewTitle')?.textContent || '';
         // 任务单：进堆叠多选成员 -> 右键“移出堆叠”（S4+S5 一起移出，剩 S2+S3）。
@@ -474,7 +474,7 @@ export async function run(ctx) {
         }, 'stack title member count after removal');
         const removeToast = allToastTexts().find((text) => text.includes('已从堆叠移出')) || '';
         T28.snapshots.beforeBack = t28GalleryState();
-        click('#stackBack');
+        click('#navHistoryBack');
         try {
           await waitFor(() => gallerySettled() && rootCardIds().length === 5
             && document.querySelector(cardSelector(config.s4))
@@ -569,7 +569,7 @@ export async function run(ctx) {
       const titleAfterRestart = stackNodeTitle(config.stackId);
       const countAfterRestart = stackNodeCount(config.stackId);
       await rightClickChoose(stackNodeSelector(config.stackId) + ' .asset-card-select', [MENU.openStack]);
-      await waitFor(() => !document.querySelector('#stackBack')?.hidden && gallerySettled(), 'entered stack after restart');
+      await waitFor(() => document.body.getAttribute('data-in-stack') === 'true' && gallerySettled(), 'entered stack after restart');
       const memberIdsAfterRestart = rootCardIds();
       const viewTitleAfterRestart = document.querySelector('#viewTitle')?.textContent || '';
       // 任务单：堆叠内部空白处右键 -> “解散堆叠”（确认框照旧），解散后直接

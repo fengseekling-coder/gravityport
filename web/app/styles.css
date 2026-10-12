@@ -312,7 +312,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
    primary 前一道细分隔线（Border Token）标出唯一主操作，无卡片容器/阴影/渐变。 */
 .topbar-context { display: flex; min-width: 0; flex: 1 1 auto; align-items: baseline; }
 /* GravityPort A3（任务 70）：左侧后退/前进按钮组（样式沿用 .toolbar-icon，
-   28×28 / 16px 图标），按钮间距 4px；#stackBack 显示时排在前进按钮右边。 */
+   28×28 / 16px 图标），按钮间距 4px；任务 123 起堆叠返回按钮删除，导航组里
+   只有这两个按钮，进堆叠算一步历史，后退即退出。 */
 .topbar-nav-group { display: flex; flex: 0 0 auto; align-items: center; gap: var(--sp-1); }
 /* GravityPort A3（任务 70 返工 1，设计稿还原）：滑杆组居中 = 窗口中线（检视器
    开关都一样，app.mjs 写行内 left）；放不下时退让到左右两组之间的空白居中，
@@ -473,9 +474,6 @@ body.asset-stack-dragging { cursor: grabbing; user-select: none; }
 .marquee-selection-box { position: fixed; z-index: var(--z-popover); border: 1px solid var(--color-accent); border-radius: var(--radius-xs); background: color-mix(in srgb, var(--color-accent) 14%, transparent); pointer-events: none; }
 body.marquee-selecting { cursor: crosshair; user-select: none; }
 body.marquee-selecting .grid { cursor: crosshair; }
-.stack-back { display: inline-grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; padding: 0; border: 0; border-radius: var(--radius-md); color: var(--color-text-secondary); background: transparent; cursor: pointer; }
-.stack-back:hover { color: var(--color-text-primary); background: var(--app-hover); }
-.stack-back[hidden] { display: none; }
 /* 骨架屏：父网格为 1px 行高，子元素必须声明行跨度 */
 .gallery-skeleton { display: grid; grid-column: 1 / -1; grid-row: span 620; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: start; column-gap: var(--gallery-gap, var(--sp-3)); row-gap: var(--gallery-gap, var(--sp-3)); }
 @media (max-width: 1400px) { .gallery-skeleton { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
@@ -1435,8 +1433,7 @@ html[lang^="zh"] .mosa-v2 .settings-trigger .settings-trigger-label { letter-spa
 .mosa-v2 .detail [data-inspector-section="more"] { order: 7; }
 /* GravityPort A3：范围标题（#viewTitle）恒为视觉隐藏——元素与内容保留，
    读屏仍能读到当前范围；隐藏由 index.html 里的 .visually-hidden 类承担
-   （堆叠返回按钮 #stackBack 已移入左侧 .topbar-nav-group，原 :has 解除隐藏
-   的例外规则随之删除）。 */
+   （任务 123 删除堆叠返回按钮后，原 :has 解除隐藏的例外规则不再有对象）。 */
 /* V2 Gallery's neutral zero-result recovery state. */
 .mosa-v2 .grid:has(.gallery-empty-state) { display: flex; }
 .mosa-v2 .gallery-empty-state { min-height: 0; flex: 1; gap: 0; padding: 0 var(--sp-6) var(--sp-6); }
@@ -1821,9 +1818,10 @@ html[lang^="zh"] .mosa-v2 .settings-trigger .settings-trigger-label { letter-spa
     padding: var(--sp-3) var(--sp-4);
   }
   /* GravityPort A3（任务 70 返工）：窄档只隐藏前进/后退（.nav-history-button）
-     与缩略图滑杆；同在 .topbar-nav-group 里的 #stackBack 不在隐藏名单，进堆叠
-     后照常可见可点。 */
+     与缩略图滑杆。任务 123：堆叠返回按钮已删除，窄屏进堆叠时露出后退按钮
+     （它就是退出堆叠的按钮），前进仍隐藏；不在堆叠里两个都照旧隐藏。 */
   .mosa-v2 .topbar-nav-group .nav-history-button, .mosa-v2 .topbar-size-group { display: none; }
+  body[data-in-stack="true"].mosa-v2 .topbar-nav-group #navHistoryBack { display: inline-grid; }
   .mosa-v2 .topbar-context, .mosa-v2 .topbar-actions, .mosa-v2 .topbar-work-group { box-sizing: border-box; width: 100%; }
   .mosa-v2 .topbar-context { flex: 0 0 auto; padding-left: 52px; }
   .mosa-v2 .topbar-actions { display: block; }

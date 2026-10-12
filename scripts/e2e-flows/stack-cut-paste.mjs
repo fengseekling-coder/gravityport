@@ -59,7 +59,7 @@ const CUT_PASTE_HELPERS = String.raw`
   }
   const enterStackViaMenu = async (stackId) => {
     await rightClickChoose(stackNodeSelector(stackId) + ' .asset-card-select', MENU.openStack);
-    await waitFor(() => !document.querySelector('#stackBack')?.hidden && gallerySettled(), 'entered stack ' + stackId.slice(0, 12));
+    await waitFor(() => document.body.getAttribute('data-in-stack') === 'true' && gallerySettled(), 'entered stack ' + stackId.slice(0, 12));
   };
 `;
 
@@ -119,12 +119,12 @@ export async function run(ctx) {
       await sleep(80);
       await waitFor(() => isCut(config.a1), 'a1 dimmed after cut');
       // 回外层再进 A：剪切状态活着，回来看到的这张仍然是淡的。
-      click('#stackBack');
-      await waitFor(() => document.querySelector('#stackBack')?.hidden && gallerySettled() && rootCardIds().length === 2, 'back to root');
+      click('#navHistoryBack');
+      await waitFor(() => !document.body.hasAttribute('data-in-stack') && gallerySettled() && rootCardIds().length === 2, 'back to root');
       await enterStackViaMenu(config.stackAId);
       await waitFor(() => rootCardIds().length === 3 && isCut(config.a1), 'a1 still dimmed after re-entering A');
-      click('#stackBack');
-      await waitFor(() => document.querySelector('#stackBack')?.hidden && gallerySettled() && rootCardIds().length === 2, 'back to root for paste');
+      click('#navHistoryBack');
+      await waitFor(() => !document.body.hasAttribute('data-in-stack') && gallerySettled() && rootCardIds().length === 2, 'back to root for paste');
       const bName = stackTitle(config.stackBId);
       const bCountBefore = stackCount(config.stackBId);
       const aCountBefore = stackCount(config.stackAId);
@@ -155,8 +155,8 @@ export async function run(ctx) {
       await waitFor(() => selectedCardIds().length === 2, 'b1+b2 selected');
       pressCutShortcut();
       await waitFor(() => isCut(config.b1) && isCut(config.b2), 'b1+b2 dimmed after ⌘X');
-      click('#stackBack');
-      await waitFor(() => document.querySelector('#stackBack')?.hidden && gallerySettled() && rootCardIds().length === 2, 'back to 所有素材');
+      click('#navHistoryBack');
+      await waitFor(() => !document.body.hasAttribute('data-in-stack') && gallerySettled() && rootCardIds().length === 2, 'back to 所有素材');
       pressPasteShortcut();
       await waitFor(() => allToastTexts().some((text) => text.includes('已移出堆叠 2 张')
         && text.includes('原堆叠只剩一张，已解散')), 'moved-out toast with dissolve note');

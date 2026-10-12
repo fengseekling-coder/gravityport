@@ -137,7 +137,7 @@ function pageSource(config) {
     await waitFor(() => Boolean(stackNode()), 'stack node visible');
     stackNode().querySelector('.asset-card-select')
       .dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 }));
-    await waitFor(() => !document.querySelector('#stackBack')?.hidden && gallerySettled(), 'entered stack view');
+    await waitFor(() => document.body.getAttribute('data-in-stack') === 'true' && gallerySettled(), 'entered stack view');
     facts.enteredStack = true;
 
     // ===== 堆叠内：换分类（concept 把成员筛掉）=====
@@ -146,8 +146,8 @@ function pageSource(config) {
     facts.stackCardsAfterCategoryFilter = rootCardIds().length;
 
     // ===== 返回退出堆叠：控件恢复快照态（54-3） =====
-    click('#stackBack');
-    await waitFor(() => document.querySelector('#stackBack')?.hidden === true && gallerySettled(), 'exited stack view');
+    click('#navHistoryBack');
+    await waitFor(() => !document.body.hasAttribute('data-in-stack') && gallerySettled(), 'exited stack view');
     // exitStack 的 rAF 收尾（滚动/选中恢复 + 焦点回落到封面卡）在隐藏窗口里被
     // 节流：不等它落地就点卡会被迟到的恢复覆盖（实测）。焦点回到卡片或
     // 画格即代表 rAF 已执行。
@@ -178,7 +178,7 @@ function pageSource(config) {
     await waitFor(() => Boolean(stackNode()), 'stack node visible again');
     stackNode().querySelector('.asset-card-select')
       .dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 }));
-    await waitFor(() => !document.querySelector('#stackBack')?.hidden && gallerySettled(), 'entered stack with inspector open');
+    await waitFor(() => document.body.getAttribute('data-in-stack') === 'true' && gallerySettled(), 'entered stack with inspector open');
     facts.enteredStackWithInspectorOpen = true;
     const memberCard = document.querySelector(cardSelector(config.memberId) + ' .asset-card-select');
     assert(Boolean(memberCard), 'stack member card visible inside stack');
@@ -187,18 +187,18 @@ function pageSource(config) {
     facts.stackMemberInspectorAutoOpened = true;
 
     // ===== 再退出，回到根视图做重建循环 =====
-    click('#stackBack');
-    await waitFor(() => document.querySelector('#stackBack')?.hidden === true && gallerySettled() && rootCardIds().length === 3, 'back at root for rebuild loop');
+    click('#navHistoryBack');
+    await waitFor(() => !document.body.hasAttribute('data-in-stack') && gallerySettled() && rootCardIds().length === 3, 'back at root for rebuild loop');
     facts.backAtRootAfterFinalExit = true;
 
     // ===== 快速返回：堆叠内改筛选的请求还没返回就退出，画廊不能卡在加载中 =====
     await waitFor(() => Boolean(stackNode()), 'stack node visible for quick exit');
     stackNode().querySelector('.asset-card-select')
       .dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 }));
-    await waitFor(() => !document.querySelector('#stackBack')?.hidden && gallerySettled(), 'entered stack for quick exit');
+    await waitFor(() => document.body.getAttribute('data-in-stack') === 'true' && gallerySettled(), 'entered stack for quick exit');
     setValue('#categorySelect', config.stackCategory);
-    click('#stackBack');
-    await waitFor(() => document.querySelector('#stackBack')?.hidden === true && gallerySettled() && rootCardIds().length === 3, 'quick exit with an in-flight stack request settles');
+    click('#navHistoryBack');
+    await waitFor(() => !document.body.hasAttribute('data-in-stack') && gallerySettled() && rootCardIds().length === 3, 'quick exit with an in-flight stack request settles');
     facts.quickExitSettled = true;
 
     // ===== 任务 95：退出堆叠的选中恢复不得放进延迟帧改写 selectedId =====
@@ -214,9 +214,9 @@ function pageSource(config) {
     const flushStackedRafs = () => { for (const callback of stackedRafs.splice(0)) callback(Date.now()); };
     stackNode().querySelector('.asset-card-select')
       .dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 }));
-    await waitFor(() => !document.querySelector('#stackBack')?.hidden && gallerySettled(), 'entered stack for delayed-frame probe');
-    click('#stackBack');
-    await waitFor(() => document.querySelector('#stackBack')?.hidden === true && gallerySettled() && rootCardIds().length === 3, 'exited stack for delayed-frame probe');
+    await waitFor(() => document.body.getAttribute('data-in-stack') === 'true' && gallerySettled(), 'entered stack for delayed-frame probe');
+    click('#navHistoryBack');
+    await waitFor(() => !document.body.hasAttribute('data-in-stack') && gallerySettled() && rootCardIds().length === 3, 'exited stack for delayed-frame probe');
     setValue('#searchInput', config.missTerm);
     await sleep(90);
     flushStackedRafs();

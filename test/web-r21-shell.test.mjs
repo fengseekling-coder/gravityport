@@ -109,8 +109,8 @@ test("R21 topbar: nav history buttons, size slider, sort control and search box"
   assert.match(css, /\.topbar-size-slider::-\webkit-slider-thumb \{ -webkit-appearance: none; appearance: none; width: 24px; height: 12px; margin-top: calc\(var\(--sp-1\) \* -1\); border-radius: var\(--radius-sm\); background: var\(--color-accent\); \}/);
   // 窄档（≤767px）只隐藏前进/后退与滑杆（任务 70 返工：不再整组隐藏）。
   assert.match(css, /@media \(max-width: 767px\) \{[\s\S]*?\.mosa-v2 \.topbar-nav-group \.nav-history-button, \.mosa-v2 \.topbar-size-group \{ display: none; \}/);
-  // 窄屏规则不得隐藏 #stackBack：进堆叠后返回按钮窄屏可见可点（剥掉注释
-  // 只看规则，注释里提到 #stackBack 不算）。
+  // 窄屏规则不得出现堆叠返回按钮：任务 123 后它在页面里已不存在，窄屏「在
+  // 堆叠里」的退出按钮是露出的后退键（剥掉注释只看规则）。
   const narrowAt = css.indexOf("@media (max-width: 767px)");
   assert.ok(narrowAt > -1, "the narrow-screen media query must exist");
   let narrowDepth = 0;
@@ -123,7 +123,11 @@ test("R21 topbar: nav history buttons, size slider, sort control and search box"
     }
   }
   const narrowRules = css.slice(narrowAt, narrowEnd).replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.doesNotMatch(narrowRules, /#stackBack/, "the narrow-screen rules must not hide #stackBack");
+  assert.doesNotMatch(narrowRules, /#stackBack/, "the narrow-screen rules must not reference the deleted stack-back button");
+  // 任务 123：窄屏在堆叠里（body[data-in-stack]）只露出后退按钮（=退出堆叠），
+  // 前进仍隐藏；不在堆叠里两个都照旧隐藏。
+  assert.match(narrowRules, /body\[data-in-stack="true"\]\.mosa-v2 \.topbar-nav-group #navHistoryBack \{ display: inline-grid; \}/,
+    "in a stack the narrow viewport must reveal the back button (it exits the stack)");
   // 排序框：约 96 宽、高 32（既有规则）、左内边距 12、浅色底 #f4f4f5。
   assert.match(css, /\.mosa-v2 \.sort-control select \{ min-width: 88px; padding: 0 var\(--sp-6\) 0 var\(--sp-3\); \}/);
   assert.match(css, /\.mosa-v2 \.toolbar-filter, \.mosa-v2 \.toolbar-icon, \.mosa-v2 \.sort-control select \{ height: 32px;/);

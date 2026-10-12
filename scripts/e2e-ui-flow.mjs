@@ -366,7 +366,7 @@ export function createStackUiFlowSource() {
   const rootCountAfterStack = document.querySelectorAll('#assetGrid > .asset-card').length;
   doubleClick(stackCard.querySelector('.asset-card-select'));
   await waitFor(
-    () => !document.querySelector('#stackBack')?.hidden
+    () => document.body.getAttribute('data-in-stack') === 'true'
       && document.querySelector('#assetGrid')?.getAttribute('aria-busy') === 'false'
       && document.querySelectorAll('#assetGrid > .asset-card').length === 2,
     'Stack interior',
@@ -392,7 +392,7 @@ export function createStackUiFlowSource() {
     'manual reorder and cover change',
   );
   const newCoverId = document.querySelector('#assetGrid > .asset-card')?.dataset.id;
-  document.querySelector('#stackBack').click();
+  document.querySelector('#navHistoryBack').click();
   const returnedStack = await waitFor(
     () => document.querySelector('#assetGrid > .asset-card[data-stack-id="' + CSS.escape(stackId) + '"]'),
     'returned Stack node',

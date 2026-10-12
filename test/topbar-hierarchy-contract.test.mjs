@@ -63,8 +63,9 @@ test("1. topbar has context and actions regions; the type filters stay removed",
   assert.equal(actions.includes('id="assetCount"'), false, "the topbar no longer renders library statistics");
 });
 
-// 1b. GravityPort A3 三段结构：左=后退/前进（+ 堆叠返回），中=居中缩略图滑杆，
-// 右=既有 actions。#stackBack 显示条件不变（hidden 属性），位于前进按钮右边。
+// 1b. GravityPort A3 三段结构：左=后退/前进，中=居中缩略图滑杆，右=既有 actions。
+// 任务 123：堆叠返回按钮删除——进堆叠算一步浏览历史，导航组里只有后退、前进
+// 两个按钮；「在不在堆叠里」由 body[data-in-stack] 表达，不再有独立按钮。
 test("1b. nav history group and centered size group flank the actions", async () => {
   const topbar = topbarBlock(await readHtml());
   const context = /<div class="topbar-context">([\s\S]*?)<\/div>\s*<div class="topbar-size-group"/.exec(topbar);
@@ -72,11 +73,13 @@ test("1b. nav history group and centered size group flank the actions", async ()
   const navGroup = context[1];
   const backAt = navGroup.indexOf('id="navHistoryBack"');
   const forwardAt = navGroup.indexOf('id="navHistoryForward"');
-  const stackBackAt = navGroup.indexOf('id="stackBack"');
-  assert.ok(backAt > -1 && forwardAt > backAt && stackBackAt > forwardAt, "order must be back → forward → stackBack");
+  assert.ok(backAt > -1 && forwardAt > backAt, "order must be back → forward");
   assert.match(navGroup, /id="navHistoryBack"[^>]*disabled/, "back starts disabled");
   assert.match(navGroup, /id="navHistoryForward"[^>]*disabled/, "forward starts disabled");
-  assert.match(navGroup, /id="stackBack"[^>]*hidden/, "#stackBack keeps its hidden-by-default condition");
+  assert.equal(navGroup.split("<button").length - 1, 2, "the nav group holds exactly back and forward (任务 123)");
+  assert.doesNotMatch(navGroup, /id="stackBack"/, "the stack-back button must stay deleted");
+  const html = await readHtml();
+  assert.doesNotMatch(html, /id="stackBack"/, "no stack-back button may remain anywhere in the page");
   const sizeAt = topbar.indexOf('class="topbar-size-group"');
   assert.ok(sizeAt > topbar.indexOf('class="topbar-context"') && sizeAt < topbar.indexOf('class="topbar-actions"'), "size group sits between context and actions");
   assert.match(topbar, /id="topbarSizeGroup"[^>]*hidden/, "the size group starts hidden until JS measures the overlap");

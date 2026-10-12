@@ -4,7 +4,9 @@
 //   - push 记一条新位置；在中间位置 push 时丢掉它之后的全部前进记录；
 //   - back / forward 只移动光标并返回目标快照，恢复本身不产生新记录；
 //   - peekBack / peekForward 供「先过未保存编辑确认、再消费光标」的调用方
-//     （确认被取消时光标不能已经移动）。
+//     （确认被取消时光标不能已经移动）；
+//   - dropForward 丢掉光标之后的全部前进记录（不动光标）：堆叠因解散/成员
+//     移空/已不存在而退出时，那条堆叠记录不能留给前进按钮。
 
 export const NAVIGATION_HISTORY_LIMIT = 50;
 
@@ -44,6 +46,9 @@ export function createNavigationHistory({ limit = NAVIGATION_HISTORY_LIMIT } = {
     },
     canForward() {
       return index >= 0 && index < entries.length - 1;
+    },
+    dropForward() {
+      if (index >= 0 && index < entries.length - 1) entries.length = index + 1;
     },
     clear() {
       entries.length = 0;
