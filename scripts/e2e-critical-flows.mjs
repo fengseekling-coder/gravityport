@@ -285,6 +285,7 @@ function assertTrashRoundResult(result, mode) {
   const problems = [];
   if (mode === "exercise") {
     if (result.cancelTrashKeptAsset !== true) problems.push("cancelled trash removed the asset");
+    if (result.skipConfirmPersisted !== true) problems.push("不再提醒 did not persist");
     if (result.moveToTrashWorked !== true) problems.push("single move-to-trash");
     if (result.trashDropBlockedTrashView !== true) problems.push("drop/paste import not blocked in Trash view");
     if (result.allViewDropImported !== true) problems.push("drop import must work again outside Trash");

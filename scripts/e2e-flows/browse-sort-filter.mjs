@@ -21,7 +21,7 @@ export async function run(ctx) {
     const result = await ctx.runInPage(server, browseSource());
     if (result.searchCount !== 3 || result.imageCount !== 3 || result.videoCount === -1
       || result.newestFirstNames.length !== 3 || result.nameSortChanged !== true
-      || result.columnReflection !== true) {
+      || result.columnReflection !== true || result.tagPersisted !== true) {
       throw new Error(`browse-sort-filter result: ${JSON.stringify({ names, ...result })}`);
     }
     return { names, ...result };
@@ -86,6 +86,24 @@ function browseSource() {
     await waitFor(() => settled() && cardLabels()[0] !== newestFirstNames[0], 'name sort reorders');
     const nameSortChanged = cardLabels()[0].includes('alpha');
 
+    // Tags: the inspector tag editor PATCHes the real tag set.
+    document.querySelector('.asset-card').click();
+    await waitFor(() => document.querySelector(".add-tag"), 'add-tag button');
+    document.querySelector('.add-tag').click();
+    const tagInput = await waitFor(() => document.querySelector('.tag-editor input') || null, 'tag editor input');
+    const tagSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    tagSetter.call(tagInput, 'e2e-tag');
+    tagInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await waitFor(() => {
+      const save = document.querySelector('.tag-editor button[type="submit"]');
+      if (save) save.click();
+      return !document.querySelector('.tag-editor');
+    }, 'tag editor closes after save');
+    await waitFor(() => Array.from(document.querySelectorAll('.tags button')).some((b) => b.textContent.trim() === 'e2e-tag'),
+      'the new tag renders in the inspector');
+    const tagPersisted = await fetch('/api/assets?project=default&limit=50').then((r) => r.json())
+      .then((data) => (data.assets || []).some((a) => (a.tags || []).includes('e2e-tag')));
+
     // Column control reflows the grid template.
     document.querySelector('.column-trigger').click();
     const two = await waitFor(() => Array.from(document.querySelectorAll('.column-popover button'))
@@ -94,7 +112,7 @@ function browseSource() {
     await waitFor(() => document.querySelector('.asset-grid')?.style.gridTemplateColumns.startsWith('repeat(2'), 'grid reflects 2 columns');
     const columnReflection = document.querySelector('.asset-grid')?.style.gridTemplateColumns.startsWith('repeat(2');
 
-    return { searchCount, imageCount, videoCount, newestFirstNames, nameSortChanged, columnReflection };
+    return { searchCount, imageCount, videoCount, newestFirstNames, nameSortChanged, columnReflection, tagPersisted };
   })()
   `;
 }

@@ -138,6 +138,9 @@ export async function requestJson<T>(path: string, {
       headers,
       body: body ? JSON.stringify(body) : undefined,
       credentials: "same-origin",
+      // A live library view must never read a cached navigation/history page:
+      // the asset list changes under the user's feet.
+      cache: "no-store",
       signal,
     })
     const raw = await result.text()
@@ -215,6 +218,11 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     source,
     references: Array.isArray(refs) ? refs as MosaReference[] : [],
   }
+}
+
+export async function fetchProjects(signal?: AbortSignal): Promise<string[]> {
+  const data = await requestJson<{ projects?: unknown }>(`/api/projects`, { signal })
+  return asStringArray(data?.projects)
 }
 
 export async function fetchNavigation(project: string, signal?: AbortSignal): Promise<MosaNavigation> {
@@ -334,6 +342,11 @@ export async function setAssetsGroup(project: string, ids: string[], group: stri
   await batchAction(project, "group", ids, { group })
 }
 
+export async function setAssetsFavorite(project: string, ids: string[], favorite: boolean) {
+  if (!ids.length) return
+  await batchAction(project, "favorite", ids, { favorite })
+}
+
 export async function restoreAsset(project: string, id: string) {
   const result = await requestJson<{ asset?: JsonValue }>(`/api/assets/${e(project)}/${e(id)}/restore`, { method: "POST" })
   return normalizeAsset(result.asset || {}, project)
@@ -384,6 +397,93 @@ export async function importAssetsBatch(project: string, items: { imagePath: str
     ...(item.error ? { error: item.error } : {}),
   }))
   return { imported: Number(result.imported || 0), failed: Number(result.failed || 0), results }
+}
+
+export type MosaVersionRow = MosaAsset & {
+  version_index: number
+  version_depth: number
+  version_change?: string
+}
+
+export type MosaVersionHistory = {
+  root_asset_id: string
+  selected_asset_id: string
+  versions: MosaVersionRow[]
+}
+
+export type MosaGenerationEvent = {
+  id: string
+  output_asset_id?: string
+  provider?: string
+  model?: string
+  turn_index?: number | null
+  user_prompt?: string
+  effective_prompt?: string
+  created_at?: string
+  [key: string]: unknown
+}
+
+export type MosaGenerationHistory = {
+  events: MosaGenerationEvent[]
+  context_events?: MosaGenerationEvent[]
+  output_assets?: MosaAsset[]
+}
+
+export async function fetchAssetVersions(project: string, id: string, signal?: AbortSignal): Promise<MosaVersionHistory | null> {
+  try {
+    const data = await requestJson<{ history?: JsonValue }>(`/api/assets/${e(project)}/${e(id)}/versions`, { signal })
+    const history = (data.history || {}) as JsonValue
+    const versions = Array.isArray(history.versions) ? history.versions as JsonValue[] : []
+    return {
+      root_asset_id: String(history.root_asset_id || ""),
+      selected_asset_id: String(history.selected_asset_id || ""),
+      versions: versions.map(row => ({
+        ...normalizeAsset(row, project),
+        version_index: Number((row as JsonValue).version_index ?? 0),
+        version_depth: Number((row as JsonValue).version_depth ?? 0),
+        version_change: (row as JsonValue).version_change ? String((row as JsonValue).version_change) : undefined,
+      })),
+    }
+  } catch (error) {
+    // Stores without the capability answer 501; a version-less library is a
+    // normal state, so the caller renders no section instead of an error.
+    if ((error as Error & { code?: string }).code === "ASSET_VERSION_HISTORY_UNAVAILABLE") return null
+    if (String((error as Error).message).includes("501")) return null
+    throw error
+  }
+}
+
+export async function fetchAssetGenerationHistory(project: string, id: string, signal?: AbortSignal): Promise<MosaGenerationHistory | null> {
+  try {
+    const data = await requestJson<{ history?: JsonValue }>(`/api/assets/${e(project)}/${e(id)}/generation-history`, { signal })
+    const history = (data.history || {}) as JsonValue
+    const events = Array.isArray(history.events) ? history.events as JsonValue[] : []
+    const contextEvents = Array.isArray(history.context_events) ? history.context_events as JsonValue[] : []
+    const outputAssets = Array.isArray(history.output_assets) ? history.output_assets as JsonValue[] : []
+    return {
+      events: events.map(row => normalizeGenerationEvent(row)),
+      context_events: contextEvents.map(row => normalizeGenerationEvent(row)),
+      output_assets: outputAssets.map(row => normalizeAsset(row, project)),
+    }
+  } catch (error) {
+    if (String((error as Error).message).includes("501")) return null
+    if ((error as Error & { code?: string }).code === "GENERATION_HISTORY_UNAVAILABLE") return null
+    if (String((error as Error).message).includes("404")) return null
+    throw error
+  }
+}
+
+function normalizeGenerationEvent(row: JsonValue): MosaGenerationEvent {
+  return {
+    id: String(row.id || ""),
+    output_asset_id: row.output_asset_id ? String(row.output_asset_id) : undefined,
+    provider: row.provider ? String(row.provider) : undefined,
+    model: row.model ? String(row.model) : undefined,
+    turn_index: row.turn_index == null ? null : Number(row.turn_index),
+    user_prompt: row.user_prompt ? String(row.user_prompt) : undefined,
+    effective_prompt: row.effective_prompt ? String(row.effective_prompt) : undefined,
+    created_at: row.created_at ? String(row.created_at) : undefined,
+  }
 }
 
 export async function openLibraryFolder(path: string, revealFile = false) {

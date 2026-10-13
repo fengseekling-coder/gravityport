@@ -94,6 +94,8 @@ const english: Record<string, string> = {
   "恢复素材": "Restore asset", "构建": "Build", "正式版": "Production",
   "取消收藏": "Remove from Favorites", "复制失败": "Copy failed", "存储类型": "Storage type",
   "构建信息": "Build info", "素材": "assets",
+  "项目": "Project", "编辑": "Edit", "编辑提示词": "Edit prompt",
+  "生成记录": "Generation history", "轮次": "Round",
 }
 
 export function translate(text: string, language: Language): string {

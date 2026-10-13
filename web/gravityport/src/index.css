@@ -3105,3 +3105,51 @@ video.viewer-image {
   fill: currentColor;
   stroke: none;
 }
+
+/* Real MOSA capabilities built from the design tokens: project switcher in
+   the sidebar, prompt editor in the inspector, and the marquee selection. */
+.app .sidebar-project {
+  padding: 2px 12px 4px;
+}
+
+.app .sidebar-project .toolbar-select {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.app .field-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app .prompt-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.app .detail-editor {
+  width: 100%;
+  min-height: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.app .prompt-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.app .marquee-rect {
+  position: fixed;
+  border: 1px solid var(--ui-accent);
+  pointer-events: none;
+  z-index: 5;
+}

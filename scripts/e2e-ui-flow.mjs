@@ -388,6 +388,18 @@ export function createTrashUiFlowSource(config) {
     await waitFor(() => !document.querySelector('[role="alertdialog"]'), 'delete confirm closes');
     await sleep(200);
     const cancelTrashKeptAsset = rootCards() === before && Number(navSmallText('回收站')) === 0;
+    // 「不再提醒」persists like a preference (old confirm-trash-dont-ask contract).
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'confirm reopens for dont-ask');
+    const dontAsk = document.querySelector('[role="alertdialog"] input[type="checkbox"]');
+    if (!dontAsk) throw new Error('missing 不再提醒 checkbox');
+    dontAsk.click();
+    await sleep(150);
+    const skipConfirmPersisted = localStorage.getItem('gravityport.skip-trash-confirm') === '1';
+    dontAsk.click(); // un-check: later rounds keep using the confirm dialog
+    await sleep(150);
+    clickLabel('取消', '.delete-modal');
+    await waitFor(() => !document.querySelector('[role="alertdialog"]'), 'confirm closes after dont-ask probe');
 
     // 2) Context menu -> 移至回收站 -> confirm.
     await contextMenuOn(plainCard(), '移至回收站').then((item) => item.click());
@@ -419,6 +431,7 @@ export function createTrashUiFlowSource(config) {
     return {
       mode: config.mode,
       cancelTrashKeptAsset,
+      skipConfirmPersisted,
       moveToTrashWorked,
       trashDropBlockedTrashView,
       allViewDropImported,

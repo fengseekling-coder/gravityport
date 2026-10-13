@@ -7,10 +7,11 @@ import { translate, type Language } from "./i18n"
 import { desktopAPI } from "./desktop"
 import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus,
+  fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
   toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, restoreAsset, setAssetsGroup,
   createGroup, moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
   mosaMutationHeaders, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
-  type MosaVisualStatus, type AssetQuery,
+  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent,
 } from "./mosa-api"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
@@ -22,8 +23,11 @@ function loadPreferences() {
       appearance: ["跟随系统", "浅色", "深色"].includes(value.appearance) ? value.appearance : "跟随系统",
       cardInfo: value.cardInfo === true,
       language: value.language === "en" ? "en" as const : "zh" as const,
+      skipTrashConfirm: localStorage.getItem("gravityport.skip-trash-confirm") === "1",
     }
-  } catch { return { appearance: "跟随系统", cardInfo: false, language: "zh" as const } }
+  } catch {
+    return { appearance: "跟随系统", cardInfo: false, language: "zh" as const, skipTrashConfirm: false }
+  }
 }
 
 function humanSize(bytes: number | null): string {
@@ -52,6 +56,15 @@ function smartGroupLabel(name: string): string {
 
 const GALLERY_PAGE_SIZE = 100
 
+type NavSnapshot = {
+  active: string
+  stackId: string
+  stackName: string
+  query: string
+  sortOrder: string
+  assetType: string
+}
+
 export default function App() {
   const [assets, setAssets] = useState<MosaAsset[]>([])
   const [navigation, setNavigation] = useState<MosaNavigation | null>(null)
@@ -66,7 +79,14 @@ export default function App() {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [pageTotal, setPageTotal] = useState<number | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [project] = useState("default")
+  const [project, setProject] = useState("default")
+  const [projects, setProjects] = useState<string[]>([])
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  const [navHistory, setNavHistory] = useState<{ stack: NavSnapshot[]; index: number }>(() => ({
+    stack: [{ active: "所有素材", stackId: "", stackName: "", query: "", sortOrder: "newest", assetType: "all" }],
+    index: 0,
+  }))
   const [assetType, setAssetType] = useState("all")
   const [sortOrder, setSortOrder] = useState("newest")
   const [active, setActive] = useState("所有素材")
@@ -108,9 +128,18 @@ export default function App() {
   const [columns, setColumns] = useState(5)
   const [toast, setToast] = useState("")
   const [expandedSections, setExpandedSections] = useState([true, true])
-  const [skipConfirm, setSkipConfirm] = useState(false)
+  const [skipConfirm, setSkipConfirm] = useState(preferences.skipTrashConfirm)
+  // 「不再提醒」persists across sessions like the preference it is.
+  useEffect(() => {
+    try { localStorage.setItem("gravityport.skip-trash-confirm", skipConfirm ? "1" : "0") } catch { /* session-only */ }
+  }, [skipConfirm])
+  const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
+  const [generations, setGenerations] = useState<MosaGenerationEvent[] | null>(null)
+  const [editingPrompt, setEditingPrompt] = useState(false)
+  const [promptDraft, setPromptDraft] = useState("")
   const appRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const assetsRef = useRef<MosaAsset[]>([])
   const cutIdsRef = useRef<string[]>([])
   const [systemDark, setSystemDark] = useState(false)
   useEffect(() => {
@@ -136,8 +165,13 @@ export default function App() {
     ...(source ? { source } : {}), ...(group ? { group } : {}), ...(stackId ? { stackId } : {}),
     ...(cursor ? { cursor } : {}),
   })
+  const pendingViewerReloadRef = useRef(false)
   useEffect(() => {
     const controller = new AbortController()
+    // The viewer is a modal surface: background churn (derivative completions
+    // arriving over SSE) must not collapse its loaded window or move the
+    // selection under the user. One refresh is queued for when it closes.
+    if (preview) { pendingViewerReloadRef.current = true; controller.abort(); return }
     setLoading(true)
     setLoadError("")
     fetchAssetPage(buildQuery(), { signal: controller.signal })
@@ -153,9 +187,17 @@ export default function App() {
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, active, debouncedQuery, sortOrder, assetType, stackId, refreshKey])
+  useEffect(() => {
+    if (preview || !pendingViewerReloadRef.current) return
+    pendingViewerReloadRef.current = false
+    refreshNavigation()
+  }, [preview])
   const refreshNavigation = () => setRefreshKey(value => value + 1)
   useEffect(() => {
     const controller = new AbortController()
+    fetchProjects(controller.signal).then(list => {
+      if (!controller.signal.aborted) setProjects(list)
+    }).catch(() => {})
     fetchNavigation(project, controller.signal).then(data => {
       if (!controller.signal.aborted) setNavigation(data)
     }).catch(() => {})
@@ -228,9 +270,28 @@ export default function App() {
     fetchAsset(project, selected, controller.signal).then(full => {
       if (!controller.signal.aborted) setAssets(old => old.map(item => item.id === full.id ? full : item))
     }).catch(() => {})
+    setVersions(null)
+    setGenerations(null)
+    fetchAssetVersions(project, selected, controller.signal).then(history => {
+      if (!controller.signal.aborted) setVersions(history && history.versions.length > 1 ? history.versions : null)
+    }).catch(() => {})
+    fetchAssetGenerationHistory(project, selected, controller.signal).then(history => {
+      if (!controller.signal.aborted) setGenerations(history && history.events.length ? history.events : null)
+    }).catch(() => {})
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, selected])
+  // E2E hook: the driver's diagnostics read the current selection.
+  useEffect(() => {
+    (window as unknown as { __mosaSelectedId?: string }).__mosaSelectedId = selected ?? ""
+  }, [selected])
+  const selectHistoryAsset = (id: string) => {
+    if (!id || id === selected) return
+    fetchAsset(project, id).then(full => {
+      setAssets(old => old.some(item => item.id === full.id) ? old.map(item => item.id === full.id ? full : item) : [...old, full])
+      setSelected(id)
+    }).catch(error => notify(errorMessage(error)))
+  }
   // Keep two visual states honest while the model pack installs on desktop.
   useEffect(() => {
     const api = desktopAPI()
@@ -240,6 +301,7 @@ export default function App() {
       setModelProgress(Number.isFinite(percent) ? percent : null)
     })
   }, [])
+  assetsRef.current = assets
   const asset = assets.find((a) => a.id === selected) || assets[0]
   const currentTags = asset ? asset.tags : []
   const visible = assets
@@ -250,19 +312,22 @@ export default function App() {
       return () => clearTimeout(timer)
     }
   }, [toast])
-  const loadMore = async () => {
-    if (!nextCursor || loadingMore || loading) return
+  const fetchNextPage = async (): Promise<MosaAsset[] | null> => {
+    if (!nextCursor || loadingMore || loading) return null
     setLoadingMore(true)
     try {
       const page = await fetchAssetPage(buildQuery(nextCursor), { cursor: nextCursor })
-      setAssets(old => {
-        const seen = new Set(old.map(item => item.id))
-        return [...old, ...page.assets.filter(item => !seen.has(item.id))]
-      })
+      // Compute outside setState: the updater runs at render time, long after
+      // the viewer needs the merged list to step across the boundary.
+      const seen = new Set(assetsRef.current.map(item => item.id))
+      const merged = [...assetsRef.current, ...page.assets.filter(item => !seen.has(item.id))]
+      setAssets(merged)
       setNextCursor(page.nextCursor)
-    } catch (error) { notify(errorMessage(error)) }
+      return merged
+    } catch (error) { notify(errorMessage(error)); return null }
     finally { setLoadingMore(false) }
   }
+  const loadMore = () => { void fetchNextPage() }
   useEffect(() => {
     const node = sentinelRef.current
     if (!node || !nextCursor) return
@@ -273,19 +338,140 @@ export default function App() {
     return () => observer.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextCursor, loadingMore, loading])
+  // Project switching is a transaction: everything project-scoped reloads
+  // through the project-keyed effects, and view-scoped state resets first.
+  const switchProject = (next: string) => {
+    if (!next || next === project) return
+    setNavHistory({ stack: [{ active: "所有素材", stackId: "", stackName: "", query: "", sortOrder, assetType }], index: 0 })
+    setStackId(""); setStackName(""); setActive("所有素材")
+    setQuery(""); setDebouncedQuery(""); setSelected(""); setSelectedIds([])
+    setVersions(null); setGenerations(null)
+    setProject(next)
+  }
   const exitStack = () => {
     if (!stackId) return false
-    setStackId("")
-    setStackName("")
+    goTo({ stackId: "", stackName: "" })
     return true
   }
+  // ── navigation history ──
+  // goTo records the TARGET snapshot (deduped) and applies it, so the current
+  // state at each stack position is what back/forward restores.
+  const goTo = (partial: Partial<NavSnapshot>) => {
+    setNavHistory(old => {
+      const stack = old.stack.slice(0, old.index + 1)
+      const next: NavSnapshot = { active, stackId, stackName, query: debouncedQuery, sortOrder, assetType, ...partial }
+      if (stack[old.index] && JSON.stringify(stack[old.index]) === JSON.stringify(next)) return old
+      stack.push(next)
+      return { stack, index: stack.length - 1 }
+    })
+    if (partial.stackId !== undefined) { setStackId(partial.stackId); setStackName(partial.stackName ?? "") }
+    if (partial.active !== undefined) setActive(partial.active)
+    if (partial.query !== undefined) { setQuery(partial.query); setDebouncedQuery(partial.query) }
+    if (partial.sortOrder !== undefined) setSortOrder(partial.sortOrder)
+    if (partial.assetType !== undefined) setAssetType(partial.assetType)
+    setPreview(false)
+  }
+  const navigateHistory = (direction: -1 | 1) => {
+    const next = navHistory.index + direction
+    if (next < 0) {
+      // The design's back arrow also resets a filtered workspace at the
+      // history's edge.
+      goTo({ active: "所有素材", stackId: "", stackName: "", query: "" })
+      return
+    }
+    if (next >= navHistory.stack.length) {
+      notify("已是最新浏览位置")
+      return
+    }
+    const snap = navHistory.stack[next]
+    setSelectedIds([])
+    setNavHistory(old => ({ ...old, index: next }))
+    setStackId(snap.stackId); setStackName(snap.stackName)
+    setActive(snap.active); setQuery(snap.query); setDebouncedQuery(snap.query)
+    setSortOrder(snap.sortOrder); setAssetType(snap.assetType)
+    setPreview(false)
+  }
+  // A settled search commit records its own entry; applying a history entry
+  // reproduces its snapshot verbatim, so the dedupe keeps the stack clean.
+  useEffect(() => {
+    goTo({ query: debouncedQuery })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQuery])
+
+  // ── multi-selection ──
+  const anchorIndexRef = useRef<number>(-1)
+  const clearSelection = () => setSelectedIds([])
+  const selectCard = (id: string, event: React.MouseEvent) => {
+    const index = assets.findIndex(a => a.id === id)
+    if (event.shiftKey && anchorIndexRef.current >= 0) {
+      const [from, to] = [Math.min(anchorIndexRef.current, index), Math.max(anchorIndexRef.current, index)]
+      const range = assets.slice(from, to + 1).filter(a => !a.stack).map(a => a.id)
+      setSelectedIds(range)
+      return
+    }
+    if (event.metaKey || event.ctrlKey) {
+      setSelectedIds(old => old.includes(id) ? old.filter(x => x !== id) : [...old, id])
+      anchorIndexRef.current = index
+      return
+    }
+    anchorIndexRef.current = index
+    setSelectedIds([])
+    setSelected(id)
+    setDetail(true)
+  }
+  const selectAllLoaded = () => {
+    const ids = assets.filter(a => !a.stack).map(a => a.id)
+    setSelectedIds(ids)
+    if (!ids.includes(selected) && ids.length) setSelected(ids[0])
+  }
+  // Marquee selection: pointer drag across the grid background selects every
+  // plain card whose box intersects the rubber band.
+  const marqueeRef = useRef<{ x0: number; y0: number } | null>(null)
+  const onGridPointerDown = (event: React.PointerEvent) => {
+    if (event.button !== 0 || preview || settings || (event.target as HTMLElement).closest(".asset-card")) return
+    marqueeRef.current = { x0: event.clientX, y0: event.clientY }
+    setMarquee({ x0: event.clientX, y0: event.clientY, x1: event.clientX, y1: event.clientY })
+    const move = (e: PointerEvent) => {
+      const start = marqueeRef.current
+      if (!start) return
+      setMarquee({ x0: start.x0, y0: start.y0, x1: e.clientX, y1: e.clientY })
+      const rect = { left: Math.min(start.x0, e.clientX), right: Math.max(start.x0, e.clientX), top: Math.min(start.y0, e.clientY), bottom: Math.max(start.y0, e.clientY) }
+      const hits = Array.from(document.querySelectorAll<HTMLElement>(".asset-card"))
+        .filter(node => !node.querySelector(".stack-mark"))
+        .filter(node => {
+          const box = node.getBoundingClientRect()
+          return box.left < rect.right && box.right > rect.left && box.top < rect.bottom && box.bottom > rect.top
+        })
+        .map(node => node.dataset.assetId)
+        .filter((id): id is string => Boolean(id))
+      setSelectedIds([...new Set(hits)])
+    }
+    const up = () => {
+      marqueeRef.current = null
+      setMarquee(null)
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+    }
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", up)
+  }
+  // Batch helpers: every action in the context menu applies to the whole
+  // selection once more than one card is marked.
+  const batchIds = selectedIds.length > 1 ? selectedIds : asset ? [asset.id] : []
+  const clearSelectionAndReload = () => { clearSelection(); refreshNavigation() }
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         else if (settings) setSettings(false)
-        else setPreview(false)
+        else if (preview) setPreview(false)
+        else if (selectedIds.length || selected) { setSelectedIds([]); setSelected("") }
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
+        e.preventDefault()
+        selectAllLoaded()
+        return
       }
       if (
         (e.key === "Delete" || e.key === "Backspace") &&
@@ -314,7 +500,7 @@ export default function App() {
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, deleting, menu, assets.length, asset, stackId, active, language])
+  }, [settings, deleting, menu, assets, asset, stackId, active, language, selectedIds])
   // Local file import: drag onto the workspace or paste image files. Every file
   // goes through the server's staging endpoint, so rejected types surface as
   // real errors instead of silent drops.
@@ -362,10 +548,20 @@ export default function App() {
     return () => window.removeEventListener("paste", paste)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importing, library, active])
-  const navigateAsset = (direction: number) => {
+  const navigateAsset = async (direction: number) => {
     if (!visible.length) return
     const index = visible.findIndex(a => a.id === selected)
-    setSelected(visible[(index + direction + visible.length) % visible.length].id)
+    const nextIndex = index + direction
+    if (nextIndex >= visible.length && nextCursor) {
+      // Cross the pagination boundary: the viewer pulls the next page and
+      // steps straight into it.
+      const merged = await fetchNextPage()
+      if (merged && merged.length > visible.length) {
+        setSelected(merged[visible.length].id)
+      }
+      return
+    }
+    setSelected(visible[(nextIndex + visible.length) % visible.length].id)
   }
   const toggleFavorite = async () => {
     if (!asset) return
@@ -377,12 +573,15 @@ export default function App() {
   }
   const remove = async () => {
     if (!asset) return
+    const ids = selectedIds.length > 1 ? selectedIds : [asset.id]
     try {
-      await moveAssetsToTrash(asset.project_id, [asset.id])
+      await moveAssetsToTrash(asset.project_id, ids)
       setDeleting(false)
       setPreview(false)
-      setAssets(old => old.filter(a => a.id !== asset.id))
-      setSelected(old => old === asset.id ? "" : old)
+      const trashed = new Set(ids)
+      setAssets(old => old.filter(a => !trashed.has(a.id)))
+      setSelectedIds([])
+      setSelected(old => trashed.has(old) ? "" : old)
       notify("素材已移至回收站")
       refreshNavigation()
     } catch (error) { notify(errorMessage(error)) }
@@ -549,6 +748,17 @@ export default function App() {
     ? (asset.image_path || asset.image_url || "").split(/[\\/]/).pop() || ""
     : ""
   const relatedAssets = assets.filter(a => a.id !== (asset?.id || "")).slice(0, expandedRelated ? 6 : 2)
+  const savePrompt = () => {
+    if (!asset) return
+    const next = promptDraft.trim()
+    if (next === asset.prompt) { setEditingPrompt(false); return }
+    updateAssetMetadata(asset.project_id, asset.id, { prompt: next }).then(updated => {
+      setAssets(old => old.map(a => a.id === updated.id ? updated : a))
+      setEditingPrompt(false)
+      notify("已保存")
+    }).catch(error => notify(errorMessage(error)))
+  }
+  const timeLabel = (value?: string) => (value ? value.slice(0, 10) : "")
 
   return (
     <div
@@ -565,6 +775,16 @@ export default function App() {
           </div>
           <strong>GravityPort</strong>
         </div>
+        {projects.length > 1 && (
+          <div className="sidebar-project">
+            <ToolbarSelect
+              label={tr("项目")}
+              value={project}
+              onChange={switchProject}
+              options={projects.map(p => ({ value: p, label: p }))}
+            />
+          </div>
+        )}
         <nav className="main-nav" aria-label={tr("素材库")}>
           {["所有素材", "Pinterest", "待整理", "收藏", "回收站"].map(
             (label, i) => (
@@ -575,10 +795,8 @@ export default function App() {
                 aria-current={active === label ? "page" : undefined}
                 className={`nav-row ${active === label ? "selected" : ""}`}
                 onClick={() => {
-                  setStackId("")
-                  setStackName("")
-                  setActive(label)
-                  setPreview(false)
+                  goTo({ active: label, stackId: "", stackName: "" })
+                  setSelectedIds([])
                 }}
               >
                 {i === 1 ? <span className="brand-icon" aria-hidden="true" /> : <Icon
@@ -634,7 +852,7 @@ export default function App() {
                 title={tr(g.name)}
                 aria-label={tr(g.name)}
                 aria-current={active === g.id ? "page" : undefined}
-                onClick={() => { setStackId(""); setStackName(""); setActive(g.id); setPreview(false) }}
+                onClick={() => { goTo({ active: g.id, stackId: "", stackName: "" }); setSelectedIds([]) }}
                 onDragOver={event => {
                   if (g.id.startsWith("group:") && !preview && !settings) event.preventDefault()
                 }}
@@ -678,12 +896,12 @@ export default function App() {
                 {tr("返回")}</button>
             ) : (
               <>
-                <button aria-label={tr("后退")} onClick={() => { if (!exitStack()) setActive("所有素材") }}>
+                <button aria-label={tr("后退")} onClick={() => navigateHistory(-1)}>
                   <Icon name="left" />
                 </button>
                 <button
                   aria-label={tr("前进")}
-                  onClick={() => notify("已是最新浏览位置")}
+                  onClick={() => navigateHistory(1)}
                 >
                   <Icon name="right" />
                 </button>
@@ -729,24 +947,24 @@ export default function App() {
             style={{
               gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
             }}
+            onPointerDown={onGridPointerDown}
           >
             {visible.map((a) => (
               <button
                 key={a.id}
+                data-asset-id={a.id}
                 aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
                 className={`asset-card ${
-                  selected === a.id && !settings ? "asset-selected" : ""
+                  (selected === a.id || selectedIds.includes(a.id)) && !settings ? "asset-selected" : ""
                 }`}
                 style={{ aspectRatio: `${a.width} / ${a.height}` }}
-                onClick={() => {
+                onClick={(event) => {
                   if (a.stack) {
-                    setStackId(a.stack.id)
-                    setStackName(a.stack.name || a.name)
+                    goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
                     setSelected("")
                     return
                   }
-                  setSelected(a.id)
-                  setDetail(true)
+                  selectCard(a.id, event)
                 }}
                 onDoubleClick={() => {
                   if (a.stack) return
@@ -881,21 +1099,44 @@ export default function App() {
               <span>
                 {tr("提示词")}<small>{tr("原始信息")}</small>
               </span>
-              <button
-                aria-label={tr("复制提示词")}
-                onClick={async () => {
-                  if (!asset.prompt) { notify(tr("无提示词记录")); return }
-                  try { await writeText(asset.prompt); notify("提示词已复制") }
-                  catch { notify(String(tr("复制失败"))) }
-                }}
-              >
-                <Icon name="copy" size={16} />
-              </button>
+              <span className="field-actions">
+                {!editingPrompt && <button className="section-action" onClick={() => { setPromptDraft(asset.prompt); setEditingPrompt(true) }}>{tr("编辑")}</button>}
+                <button
+                  aria-label={tr("复制提示词")}
+                  onClick={async () => {
+                    if (!asset.prompt) { notify(tr("无提示词记录")); return }
+                    try { await writeText(asset.prompt); notify("提示词已复制") }
+                    catch { notify(String(tr("复制失败"))) }
+                  }}
+                >
+                  <Icon name="copy" size={16} />
+                </button>
+              </span>
             </div>
-            <div className={`detail-reading ${expandedPrompt ? "expanded" : ""}`}>
-              <p id="asset-prompt">{asset.prompt || tr("无提示词记录")}</p>
-              <button className="reading-toggle" aria-expanded={expandedPrompt} aria-controls="asset-prompt" onClick={() => setExpandedPrompt(!expandedPrompt)}>{expandedPrompt ? tr("收起") : tr("展开提示词")}<Icon name={expandedPrompt ? "minus" : "down"} size={12} /></button>
-            </div>
+            {editingPrompt ? (
+              <div className="prompt-editor">
+                <textarea
+                  className="detail-editor"
+                  aria-label={tr("编辑提示词")}
+                  value={promptDraft}
+                  autoFocus
+                  rows={6}
+                  onChange={e => setPromptDraft(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Escape") { e.stopPropagation(); setEditingPrompt(false) }
+                  }}
+                />
+                <div className="prompt-editor-actions">
+                  <button className="neutral-button" onClick={() => { setEditingPrompt(false); setPromptDraft("") }}>{tr("取消")}</button>
+                  <button className="primary-button" onClick={savePrompt} disabled={!promptDraft.trim() && !asset.prompt}>{tr("保存")}</button>
+                </div>
+              </div>
+            ) : (
+              <div className={`detail-reading ${expandedPrompt ? "expanded" : ""}`}>
+                <p id="asset-prompt">{asset.prompt || tr("无提示词记录")}</p>
+                <button className="reading-toggle" aria-expanded={expandedPrompt} aria-controls="asset-prompt" onClick={() => setExpandedPrompt(!expandedPrompt)}>{expandedPrompt ? tr("收起") : tr("展开提示词")}<Icon name={expandedPrompt ? "minus" : "down"} size={12} /></button>
+              </div>
+            )}
           </section>
           {asset.introduction && <section className="detail-section">
             <div className="field-heading">
@@ -927,6 +1168,54 @@ export default function App() {
                   <img className="reference-image" src={url} alt="" loading="lazy" />
                 </button>
               })}
+            </div>
+          </section>}
+          {versions && versions.length > 1 && <section className="detail-section">
+            <div className="field-heading">
+              <span>{tr("版本")}</span>
+              <span className="settings-badge">{versions.length}</span>
+            </div>
+            <div className="version-list" aria-label={tr("版本")}>
+              {versions.map(v => (
+                <button
+                  className="related"
+                  key={v.id}
+                  onClick={() => selectHistoryAsset(v.id)}
+                >
+                  {v.id === selected ? <Icon name="check" size={12} /> : <i />}
+                  <span>
+                    {tr("版本")} {v.version_index}
+                    <small>
+                      {v.version_change || ""} {v.format || "—"} · {v.width} × {v.height} · {timeLabel(v.created_at)}
+                    </small>
+                  </span>
+                  <Icon name="right" size={11} />
+                </button>
+              ))}
+            </div>
+          </section>}
+          {generations && generations.length > 0 && <section className="detail-section">
+            <div className="field-heading">
+              <span>{tr("生成记录")}</span>
+              <span className="settings-badge">{generations.length}</span>
+            </div>
+            <div className="version-list" aria-label={tr("生成记录")}>
+              {generations.slice(0, expandedRelated ? 8 : 3).map((event, index) => (
+                <button
+                  className="related"
+                  key={event.id || index}
+                  onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}
+                >
+                  <i />
+                  <span>
+                    {(event.effective_prompt || event.user_prompt || tr("无提示词记录")).slice(0, 60)}
+                    <small>
+                      {timeLabel(event.created_at)}{event.provider ? ` · ${event.provider}` : ""}{event.model ? ` · ${event.model}` : ""}{event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}
+                    </small>
+                  </span>
+                  <Icon name="right" size={11} />
+                </button>
+              ))}
             </div>
           </section>}
           {relatedAssets.length > 0 && <section className="detail-section">
@@ -1158,21 +1447,35 @@ export default function App() {
               key={label}
               onClick={() => {
                 setMenu(null)
+                const batch = batchIds.length > 1
+                const batchIdsAll = [...batchIds]
                 if (i === 0) setPreview(true)
                 else if (i === 1) showInLibrary()
                 else if (i === 2) copyImage()
                 else if (i === 3) {
-                  cutIdsRef.current = [asset.id]
+                  cutIdsRef.current = batchIdsAll
                   notify("已剪切")
                 } else if (i === 4) {
                   if (!asset.prompt) { notify(tr("无提示词记录")); return }
                   writeText(asset.prompt).then(() => notify(`${tr("复制提示词")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
                 } else if (i === 5) {
                   writeText(asset.image_path || asset.image_url).then(() => notify(`${tr("复制路径")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
-                } else if (i === 6) toggleFavorite()
-                else if (i === 7) addToActiveGroup()
-                else if (i === 8) assignGroup("")
-                else if (i === 9) exportAsset()
+                } else if (i === 6) {
+                  if (batch) {
+                    setAssetsFavorite(asset.project_id, batchIdsAll, !asset.favorite)
+                      .then(() => { setSelectedIds([]); refreshNavigation() })
+                      .catch(error => notify(errorMessage(error)))
+                  } else toggleFavorite()
+                } else if (i === 7) {
+                  if (!group) { notify(tr("请先在左侧选择或新建分组")); return }
+                  setAssetsGroup(asset.project_id, batchIdsAll, group)
+                    .then(() => { setSelectedIds([]); notify("已添加到分组"); refreshNavigation() })
+                    .catch(error => notify(errorMessage(error)))
+                } else if (i === 8) {
+                  setAssetsGroup(asset.project_id, batchIdsAll, "")
+                    .then(() => { setSelectedIds([]); notify("已从分组移除"); refreshNavigation() })
+                    .catch(error => notify(errorMessage(error)))
+                } else if (i === 9) exportAsset()
                 else if (active === "回收站") restore()
                 else requestDelete()
               }}
@@ -1211,6 +1514,18 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+      {marquee && (
+        <div
+          className="marquee-rect"
+          aria-hidden="true"
+          style={{
+            left: Math.min(marquee.x0, marquee.x1),
+            top: Math.min(marquee.y0, marquee.y1),
+            width: Math.abs(marquee.x1 - marquee.x0),
+            height: Math.abs(marquee.y1 - marquee.y0),
+          }}
+        />
       )}
       {toast && !preview && (
         <div className="toast" role="status" aria-live="polite">
