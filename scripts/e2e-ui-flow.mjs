@@ -41,6 +41,20 @@ const HELPERS = `
       openMenu: document.querySelector('.context-menu')?.textContent?.trim().slice(0, 120) || '',
       loading: Boolean(document.querySelector(".empty-state[role='status']")),
       serverCounts: JSON.stringify(window.__serverCounts || []),
+      serverTruth: await (async () => {
+        // Live server truth at timeout time: which stacks exist with how many
+        // members, and how the current view's page annotates them.
+        try {
+          const page = await api('/api/assets?project=default&limit=250');
+          const listing = (page.assets || []).map((asset) => ({
+            id: String(asset.id || '').slice(-10),
+            stack: asset.stack ? { id: String(asset.stack.id || '').slice(-8), count: asset.stack.count } : null,
+          }));
+          return JSON.stringify(listing.slice(0, 8));
+        } catch (error) {
+          return 'probe-failed: ' + String(error?.message || error).slice(0, 120);
+        }
+      })(),
       loadedAssets: document.querySelector('.asset-grid')?.getAttribute('data-loaded-assets') || '?',
       scroll: (() => {
         const grid = document.querySelector('.asset-grid');
