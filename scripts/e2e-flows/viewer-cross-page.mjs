@@ -43,7 +43,7 @@ function crossPageSource() {
       }
       throw new Error('Timed out waiting for ' + label + ' | cards=' + document.querySelectorAll('.asset-card').length
         + ' | nav=' + JSON.stringify(window.__navDebug || null) + ' | title=' + viewerTitle()
-        + ' | selected=' + (window.__mosaSelectedId || '').slice(0, 30)
+        + ' | selected=' + (document.querySelector('.asset-card.asset-selected')?.getAttribute('data-asset-id') || '').slice(0, 30)
         + ' | titleHtml=' + (document.querySelector('.viewer-title')?.outerHTML || 'none').slice(0, 220)
         + ' | imgSrc=' + (document.querySelector('img.viewer-image')?.getAttribute('src') || 'none').slice(0, 80)
         + ' | nav2=' + JSON.stringify(window.__navDebug2 || null));
@@ -58,8 +58,7 @@ function crossPageSource() {
     lastCard.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     await waitFor(() => document.querySelector('img.viewer-image')?.complete === true, 'viewer opens on the page edge');
     const initialTitle = viewerTitle();
-    window.__openSnap = { title: initialTitle, selected: (window.__mosaSelectedId || '').slice(0, 30) };
-    const openedFor = window.__mosaSelectedId || '';
+    const openedFor = document.querySelector('.asset-card.asset-selected')?.getAttribute('data-asset-id') || '';
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     await waitFor(() => viewerTitle() === '101 / 110', 'the viewer crosses into the next page');

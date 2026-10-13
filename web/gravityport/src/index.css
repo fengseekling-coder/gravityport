@@ -170,6 +170,11 @@ img.black-image {
   object-fit: cover;
 }.asset-card:hover .black-image {
   background: #090909;
+}.asset-card-virtual-placeholder {
+  background: transparent;
+  pointer-events: none;
+}.gallery-window-spacer {
+  pointer-events: none;
 }.asset-selected .black-image {
   inset: 2px;
 }.favorite-mark {

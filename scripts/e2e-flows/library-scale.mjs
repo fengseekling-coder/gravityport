@@ -47,14 +47,14 @@ function scaleSource() {
       }
       const grid = document.querySelector('.asset-grid');
       const scroll = grid ? { top: Math.round(grid.scrollTop), sh: grid.scrollHeight, ch: grid.clientHeight } : null;
+      const loading = Boolean(document.querySelector(".empty-state[role='status']"));
       throw new Error('Timed out waiting for ' + label + ' | cards=' + document.querySelectorAll('.asset-card').length
         + ' | scroll=' + JSON.stringify(scroll)
         + ' | observerFired=' + (window.__observerFired || 0)
-        + ' | cursor=' + String(window.__mosaNextCursor).slice(0, 16)
-        + ' | busy=' + String(window.__mosaBusy)
+        + ' | loading=' + String(loading)
         + ' | toast=' + (document.querySelector('.toast')?.textContent || '')
-        + ' | page2=' + await fetch('/api/assets?project=default&limit=100&sort=newest&cursor=' + encodeURIComponent(window.__mosaNextCursor || ''))
-          .then((r) => r.json()).then((d) => (d.assets || []).length + ':' + (d.page?.nextCursor ? 'more' : 'end')).catch((e) => String(e)));
+        + ' | serverTotal=' + await fetch('/api/assets?project=default&limit=1')
+          .then((r) => r.json()).then((d) => (d.page && d.page.total) ?? '?').catch((e) => String(e)));
 
     }
     const cardCount = () => document.querySelectorAll('.asset-card').length;

@@ -44,7 +44,7 @@ function versionHistorySource(config) {
         if (value) { stable += 1; if (stable >= 2) return value; } else stable = 0;
         await sleep(100);
       }
-      const genProbe = await fetch('/api/assets/default/' + (window.__mosaSelectedId || '') + '/generation-history')
+      const genProbe = await fetch('/api/assets/default/' + config.parentId + '/generation-history')
         .then((r) => r.json()).catch((e) => String(e));
       throw new Error('Timed out waiting for ' + label + ' | cards=' + document.querySelectorAll('.asset-card').length
         + ' | toast=' + (document.querySelector('.toast')?.textContent || '')
@@ -72,13 +72,22 @@ function versionHistorySource(config) {
       '生成记录 shows the generation prompt');
     const generationRowShown = document.body.innerHTML.includes('e2e generation prompt marker');
 
-    // Switching versions selects the child through the real API.
-    const childRow = Array.from(document.querySelectorAll('.version-list[aria-label="版本"] .related'))
+    // Switching versions selects the child through the real API. The selected
+    // row leads with the check icon (svg); unselected rows lead with a bare
+    // marker <i> (the trailing chevron svg exists on every row).
+    const listRows = () => Array.from(document.querySelectorAll('.version-list[aria-label="版本"] .related'));
+    const childRow = listRows()
       .find((row) => (row.querySelector('span')?.childNodes[0]?.textContent || '').trim() === '版本 2');
-    (childRow || document.querySelectorAll('.version-list[aria-label="版本"] .related')[1]).click();
-    await waitFor(() => (window.__mosaSelectedId || '') === config.childId && document.querySelectorAll('.version-list[aria-label="版本"] .related').length >= 2,
+    (childRow || listRows()[1]).click();
+    const childSelected = () => {
+      const rows = listRows();
+      return rows.length >= 2
+        && rows[1]?.firstElementChild?.tagName === 'svg'
+        && rows[0]?.firstElementChild?.tagName !== 'svg';
+    };
+    await waitFor(() => childSelected() && document.querySelectorAll('.version-list[aria-label="版本"] .related').length >= 2,
       'the child version renders in the inspector');
-    const switchedToChild = (window.__mosaSelectedId || '') === config.childId;
+    const switchedToChild = childSelected();
 
     // Prompt editor: 编辑 -> textarea -> 保存 PATCHes and persists.
     const editButton = Array.from(document.querySelectorAll('.details .section-action'))

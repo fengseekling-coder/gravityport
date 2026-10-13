@@ -1,10 +1,17 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import Icon from "./Icon"
 import ToolbarSelect from "./ToolbarSelect"
 import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
 import { translate, type Language } from "./i18n"
 import { desktopAPI } from "./desktop"
+import { logicalSelection, replaceSelection, toggleModifierSelection } from "./selection"
+import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
+import { isEditableTarget } from "./keyboard"
+import {
+  buildGalleryRowModel, gallerySpacerHeights, locateGalleryWindow, rowsIntersecting,
+  type GalleryRowModel, type GalleryRowRange,
+} from "./gallery-window"
 import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
@@ -55,6 +62,15 @@ function smartGroupLabel(name: string): string {
 }
 
 const GALLERY_PAGE_SIZE = 100
+// Virtualization thresholds mirror the gallery QA budgets: below this many
+// loaded assets every card mounts; above it only the viewport window stays in
+// the DOM (real cards in the hydrate zone, same-geometry placeholders in the
+// warm zone) and top/bottom spacers preserve the scroll extent.
+const GALLERY_MOUNT_ALL_THRESHOLD = 320
+const GALLERY_WINDOW_WARMUP_PX = 1200
+const GALLERY_HYDRATE_WARMUP_PX = 400
+const GALLERY_MAX_MOUNTED_CARDS = 380
+const GALLERY_MAX_HYDRATED_CARDS = 320
 
 type NavSnapshot = {
   active: string
@@ -135,8 +151,12 @@ export default function App() {
   }, [skipConfirm])
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
   const [generations, setGenerations] = useState<MosaGenerationEvent[] | null>(null)
-  const [editingPrompt, setEditingPrompt] = useState(false)
-  const [promptDraft, setPromptDraft] = useState("")
+  // The prompt draft is bound to one concrete asset; it never outlives the
+  // asset (or project) it was opened for.
+  const [promptEdit, setPromptEdit] = useState<PromptEditTarget & { draft: string } | null>(null)
+  const [savingPromptId, setSavingPromptId] = useState<string | null>(null)
+  // Gallery windowing: which rows stay mounted and which hydrate real cards.
+  const [galleryWindow, setGalleryWindow] = useState<{ mount: GalleryRowRange; hydrate: GalleryRowRange } | null>(null)
   const appRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -151,6 +171,9 @@ export default function App() {
     setAddingTag(false)
     setTagDraft("")
     setTagError("")
+    // A draft belongs to the asset it was opened for: selecting another asset
+    // discards it instead of letting it drain into the new selection.
+    setPromptEdit(null)
   }, [selected])
   // Search input is debounced so each keystroke does not hit the store; the
   // request sequence guard below still owns stale-response protection.
@@ -168,6 +191,10 @@ export default function App() {
     ...(cursor ? { cursor } : {}),
   })
   const pendingViewerReloadRef = useRef(false)
+  // Project-switch transaction: the last project whose gallery actually
+  // loaded, plus the view snapshot to restore when a later switch fails.
+  const lastGoodProjectRef = useRef(project)
+  const projectRevertRef = useRef<(() => void) | null>(null)
   useEffect(() => {
     const controller = new AbortController()
     // The viewer is a modal surface: background churn (derivative completions
@@ -204,8 +231,16 @@ export default function App() {
         setNextCursor(page.nextCursor)
         setPageTotal(page.total)
         setSelected(old => old && collected.some(a => a.id === old) ? old : collected[0]?.id || "")
+        lastGoodProjectRef.current = project
       } catch (error) {
-        if (!controller.signal.aborted) setLoadError(errorMessage(error))
+        if (controller.signal.aborted) return
+        // A failed load for a freshly switched-to project is a failed switch:
+        // restore the last project that actually loaded, with its view state.
+        if (project !== lastGoodProjectRef.current) {
+          revertProjectSwitch()
+          return
+        }
+        setLoadError(errorMessage(error))
       } finally {
         if (!controller.signal.aborted) setLoading(false)
       }
@@ -308,14 +343,6 @@ export default function App() {
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, selected])
-  // E2E hooks: the driver's diagnostics read the pagination/selection state.
-  useEffect(() => {
-    const hooks = window as unknown as { __mosaSelectedId?: string; __mosaNextCursor?: string | null; __mosaBusy?: boolean; __mosaStackId?: string }
-    hooks.__mosaSelectedId = selected ?? ""
-    hooks.__mosaNextCursor = nextCursor
-    hooks.__mosaBusy = loading || loadingMore
-    hooks.__mosaStackId = stackId
-  }, [selected, nextCursor, loading, loadingMore, stackId])
   const selectHistoryAsset = (id: string) => {
     if (!id || id === selected) return
     fetchAsset(project, id).then(full => {
@@ -343,8 +370,13 @@ export default function App() {
       return () => clearTimeout(timer)
     }
   }, [toast])
+  // The in-flight lock lives in a ref: the render-state flag is stale inside
+  // same-tick re-entrancy (scroll listener + IntersectionObserver firing
+  // together), which used to send duplicate page requests with one cursor.
+  const loadingMoreRef = useRef(false)
   const fetchNextPage = async (): Promise<MosaAsset[] | null> => {
-    if (!nextCursor || loadingMore || loading) return null
+    if (!nextCursor || loadingMoreRef.current || loading) return null
+    loadingMoreRef.current = true
     setLoadingMore(true)
     try {
       const page = await fetchAssetPage(buildQuery(nextCursor), { cursor: nextCursor })
@@ -356,7 +388,10 @@ export default function App() {
       setNextCursor(page.nextCursor)
       return merged
     } catch (error) { notify(errorMessage(error)); return null }
-    finally { setLoadingMore(false) }
+    finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+    }
   }
   const loadMore = () => { void fetchNextPage() }
   useEffect(() => {
@@ -371,10 +406,12 @@ export default function App() {
   }, [nextCursor, loadingMore, loading])
   // The grid is its own scroll container; a scroll-position check makes
   // pagination deterministic even where IntersectionObserver timing is not.
+  // The same handler re-derives the mounted gallery window.
   useEffect(() => {
     const grid = gridRef.current
     if (!grid || !nextCursor) return
     const onScroll = () => {
+      updateGalleryWindowRef.current()
       if (grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 400) void loadMore()
     }
     grid.addEventListener("scroll", onScroll, { passive: true })
@@ -382,14 +419,123 @@ export default function App() {
     return () => grid.removeEventListener("scroll", onScroll)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextCursor, loadingMore, loading])
+  // ── gallery windowing ──
+  // Above the mount-all threshold only rows near the viewport stay in the DOM:
+  // real cards in the hydrate zone, same-geometry placeholders in the warm
+  // zone, and top/bottom spacers keep the scroll extent exact.
+  const windowingActive = assets.length > GALLERY_MOUNT_ALL_THRESHOLD
+  const rowModelRef = useRef<{ key: string; model: GalleryRowModel } | null>(null)
+  const updateGalleryWindowRef = useRef<() => void>(() => {})
+  const galleryRowModel = (): GalleryRowModel | null => {
+    const grid = gridRef.current
+    if (!grid || !windowingActive) return null
+    const styles = getComputedStyle(grid)
+    const tracks = styles.gridTemplateColumns.split(/\s+/).map(value => Number.parseFloat(value)).filter(Number.isFinite)
+    const colWidth = tracks[0] || 0
+    if (!(colWidth > 0)) return null
+    const gap = Number.parseFloat(styles.rowGap) || 0
+    const signature = `${assets.length}|${columns}|${Math.round(colWidth)}|${Math.round(assets.reduce((sum, a) => sum + a.width * a.height, 0))}`
+    if (rowModelRef.current?.key === signature) return rowModelRef.current.model
+    const model = buildGalleryRowModel(assets.map(a => a.height / a.width), columns, colWidth, gap)
+    rowModelRef.current = { key: signature, model }
+    return model
+  }
+  const updateGalleryWindow = () => {
+    const grid = gridRef.current
+    if (!grid) return
+    if (!windowingActive) {
+      rowModelRef.current = null
+      setGalleryWindow(old => old === null ? old : null)
+      return
+    }
+    const model = galleryRowModel()
+    if (!model) return
+    const mount = locateGalleryWindow(
+      model, grid.scrollTop, grid.clientHeight, GALLERY_WINDOW_WARMUP_PX,
+      Math.max(1, Math.floor(GALLERY_MAX_MOUNTED_CARDS / model.columns)),
+    )
+    const hydrate = mount
+      ? locateGalleryWindow(
+          model, grid.scrollTop, grid.clientHeight, GALLERY_HYDRATE_WARMUP_PX,
+          Math.max(1, Math.floor(GALLERY_MAX_HYDRATED_CARDS / model.columns)),
+        ) ?? mount
+      : null
+    if (!mount || !hydrate) return
+    setGalleryWindow(old => (
+      old && old.mount.startRow === mount.startRow && old.mount.endRow === mount.endRow
+        && old.hydrate.startRow === hydrate.startRow && old.hydrate.endRow === hydrate.endRow
+        ? old : { mount, hydrate }
+    ))
+  }
+  updateGalleryWindowRef.current = updateGalleryWindow
+  useLayoutEffect(() => {
+    updateGalleryWindow()
+    // preview toggles remount the grid, so the window must be re-derived for
+    // the fresh (top-of-gallery) scroll position.
+  }, [assets, columns, windowingActive, preview])
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => updateGalleryWindowRef.current())
+    observer.observe(grid)
+    return () => observer.disconnect()
+  }, [])
+  // The window must follow the scroll position even after pagination is done
+  // (nextCursor exhausted): a gallery-wide jump otherwise lands the viewport
+  // on nothing but spacer rows.
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
+    const onScroll = () => updateGalleryWindowRef.current()
+    grid.addEventListener("scroll", onScroll, { passive: true })
+    return () => grid.removeEventListener("scroll", onScroll)
+  }, [preview])
   // Project switching is a transaction: everything project-scoped reloads
-  // through the project-keyed effects, and view-scoped state resets first.
+  // through the project-keyed effects, view-scoped state resets first, and a
+  // failed load for the new project restores the previous project verbatim.
+  const revertProjectSwitch = () => {
+    const revert = projectRevertRef.current
+    projectRevertRef.current = null
+    if (!revert) {
+      setLoadError(tr("项目切换失败"))
+      return
+    }
+    revert()
+    notify("项目切换失败，已恢复原项目")
+  }
   const switchProject = (next: string) => {
     if (!next || next === project) return
+    // Only a switch away from a project that actually loaded replaces the
+    // restorable snapshot; bailing out of a project that never loaded keeps
+    // the older snapshot so rapid switching still restores the last good view.
+    if (project === lastGoodProjectRef.current) {
+      const snapshot = {
+        project, navHistory, stackId, stackName, active, query, debouncedQuery,
+        sortOrder, assetType, selected, selectedIds, preview,
+      }
+      projectRevertRef.current = () => {
+        setNavHistory(snapshot.navHistory)
+        setStackId(snapshot.stackId); setStackName(snapshot.stackName)
+        setActive(snapshot.active); setQuery(snapshot.query); setDebouncedQuery(snapshot.debouncedQuery)
+        setSortOrder(snapshot.sortOrder); setAssetType(snapshot.assetType)
+        applySelection(snapshot.selectedIds, snapshot.selected)
+        setPreview(snapshot.preview)
+        setLoadError("")
+        setProject(snapshot.project)
+      }
+    }
     setNavHistory({ stack: [{ active: "所有素材", stackId: "", stackName: "", query: "", sortOrder, assetType }], index: 0 })
     setStackId(""); setStackName(""); setActive("所有素材")
-    setQuery(""); setDebouncedQuery(""); setSelected(""); setSelectedIds([])
+    setQuery(""); setDebouncedQuery("")
+    applySelection([], "")
     setVersions(null); setGenerations(null)
+    setPromptEdit(null)
+    // Old-project rows must never linger under the new project, not even
+    // while the new project's first page is still in flight.
+    setAssets([]); setNextCursor(null)
+    setLoadError("")
+    pendingViewerReloadRef.current = false
+    setPreview(false)
     setProject(next)
   }
   const exitStack = () => {
@@ -428,7 +574,7 @@ export default function App() {
       return
     }
     const snap = navHistory.stack[next]
-    setSelectedIds([])
+    applySelection([], selectionRef.current.selected)
     setNavHistory(old => ({ ...old, index: next }))
     setStackId(snap.stackId); setStackName(snap.stackName)
     setActive(snap.active); setQuery(snap.query); setDebouncedQuery(snap.query)
@@ -444,29 +590,37 @@ export default function App() {
 
   // ── multi-selection ──
   const anchorIndexRef = useRef<number>(-1)
+  // Mirror of the current selection so consecutive same-tick interactions
+  // (rapid ctrl-clicks) compose instead of reading stale render state.
+  const selectionRef = useRef({ selectedIds: [] as string[], selected: "" })
+  selectionRef.current = { selectedIds, selected }
+  const applySelection = (nextIds: string[], nextSelected: string) => {
+    selectionRef.current = { selectedIds: nextIds, selected: nextSelected }
+    setSelectedIds(nextIds)
+    setSelected(nextSelected)
+  }
   const clearSelection = () => setSelectedIds([])
   const selectCard = (id: string, event: React.MouseEvent) => {
     const index = assets.findIndex(a => a.id === id)
     if (event.shiftKey && anchorIndexRef.current >= 0) {
       const [from, to] = [Math.min(anchorIndexRef.current, index), Math.max(anchorIndexRef.current, index)]
       const range = assets.slice(from, to + 1).filter(a => !a.stack).map(a => a.id)
-      setSelectedIds(range)
+      applySelection(range, replaceSelection(range, selectionRef.current.selected))
       return
     }
     if (event.metaKey || event.ctrlKey) {
-      setSelectedIds(old => old.includes(id) ? old.filter(x => x !== id) : [...old, id])
+      const toggled = toggleModifierSelection(selectionRef.current.selectedIds, selectionRef.current.selected, id)
+      applySelection(toggled.selectedIds, toggled.selected)
       anchorIndexRef.current = index
       return
     }
     anchorIndexRef.current = index
-    setSelectedIds([])
-    setSelected(id)
+    applySelection([], id)
     setDetail(true)
   }
   const selectAllLoaded = () => {
     const ids = assets.filter(a => !a.stack).map(a => a.id)
-    setSelectedIds(ids)
-    if (!ids.includes(selected) && ids.length) setSelected(ids[0])
+    applySelection(ids, replaceSelection(ids, selectionRef.current.selected))
   }
   // Marquee selection: pointer drag across the grid background selects every
   // plain card whose box intersects the rubber band.
@@ -480,7 +634,7 @@ export default function App() {
       if (!start) return
       setMarquee({ x0: start.x0, y0: start.y0, x1: e.clientX, y1: e.clientY })
       const rect = { left: Math.min(start.x0, e.clientX), right: Math.max(start.x0, e.clientX), top: Math.min(start.y0, e.clientY), bottom: Math.max(start.y0, e.clientY) }
-      const hits = Array.from(document.querySelectorAll<HTMLElement>(".asset-card"))
+      const hits = Array.from(document.querySelectorAll<HTMLElement>(".asset-card:not(.asset-card-virtual-placeholder)"))
         .filter(node => !node.querySelector(".stack-mark"))
         .filter(node => {
           const box = node.getBoundingClientRect()
@@ -488,7 +642,8 @@ export default function App() {
         })
         .map(node => node.dataset.assetId)
         .filter((id): id is string => Boolean(id))
-      setSelectedIds([...new Set(hits)])
+      const unique = [...new Set(hits)]
+      applySelection(unique, replaceSelection(unique, selectionRef.current.selected))
     }
     const up = () => {
       marqueeRef.current = null
@@ -501,7 +656,9 @@ export default function App() {
   }
   // Batch helpers: every action in the context menu applies to the whole
   // selection once more than one card is marked.
-  const batchIds = selectedIds.length > 1 ? selectedIds : asset ? [asset.id] : []
+  const selectionIds = logicalSelection(selectedIds, selected)
+  const selectionSet = new Set(selectionIds)
+  const batchIds = selectionIds
   const clearSelectionAndReload = () => { clearSelection(); refreshNavigation() }
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -510,8 +667,12 @@ export default function App() {
         else if (menu) setMenu(null)
         else if (settings) setSettings(false)
         else if (preview) setPreview(false)
-        else if (selectedIds.length || selected) { setSelectedIds([]); setSelected("") }
+        else if (selectedIds.length || selected) applySelection([], "")
       }
+      // Text surfaces own select-all, delete, cut and paste: Backspace in the
+      // prompt editor, ⌘A in the search field and typing anywhere must never
+      // trigger a gallery shortcut.
+      if (isEditableTarget(e.target)) return
       if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
         e.preventDefault()
         selectAllLoaded()
@@ -519,37 +680,29 @@ export default function App() {
       }
       if (
         (e.key === "Delete" || e.key === "Backspace") &&
-        !(e.target instanceof HTMLInputElement) &&
         !settings && !deleting && assets.length > 0 && active !== "回收站"
       )
         setDeleting(true)
-      const inField = e.target instanceof HTMLElement
-        && (e.target.isContentEditable || e.target.closest("input, textarea, select"))
-      if (inField) return
-      const pasteLog = (window as unknown as { __mosaPasteLog?: string[] }).__mosaPasteLog ??= []
-      if ((e.metaKey || e.ctrlKey) && (e.key === "x" || e.key === "X") && asset) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "x" || e.key === "X") && selectionIds.length) {
         e.preventDefault()
-        cutIdsRef.current = [asset.id]
-        pasteLog.push(`cut:${asset.id.slice(0, 8)}`)
+        cutIdsRef.current = [...selectionIds]
         notify("已剪切")
       }
       if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
-        pasteLog.push(`v:${cutIdsRef.current.length}@${stackId ? stackId.slice(0, 8) : "none"}`)
         if (!cutIdsRef.current.length) return
         e.preventDefault()
-        if (!stackId) { pasteLog.push("no-stack"); notify("粘贴需要在堆叠中进行"); return }
+        if (!stackId) { notify("粘贴需要在堆叠中进行"); return }
         const ids = [...new Set(cutIdsRef.current)]
         cutIdsRef.current = []
-        pasteLog.push(`send:${ids.length}->${stackId.slice(0, 8)}`)
         moveAssetsToStack(project, ids, stackId)
-          .then(() => { pasteLog.push("ok"); notify("已粘贴到堆叠"); refreshNavigation() })
-          .catch(error => { pasteLog.push(`err:${errorMessage(error).slice(0, 60)}`); notify(errorMessage(error)) })
+          .then(() => { notify("已粘贴到堆叠"); refreshNavigation() })
+          .catch(error => notify(errorMessage(error)))
       }
     }
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, deleting, menu, assets, asset, stackId, active, language, selectedIds])
+  }, [settings, deleting, menu, assets, asset, stackId, active, language, selectedIds, selected, selectionIds])
   // Local file import: drag onto the workspace or paste image files. Every file
   // goes through the server's staging endpoint, so rejected types surface as
   // real errors instead of silent drops.
@@ -621,16 +774,15 @@ export default function App() {
     } catch (error) { notify(errorMessage(error)) }
   }
   const remove = async () => {
-    if (!asset) return
-    const ids = selectedIds.length > 1 ? selectedIds : [asset.id]
+    const ids = selectionIds
+    if (!ids.length) return
     try {
-      await moveAssetsToTrash(asset.project_id, ids)
+      await moveAssetsToTrash(asset?.project_id ?? project, ids)
       setDeleting(false)
       setPreview(false)
       const trashed = new Set(ids)
       setAssets(old => old.filter(a => !trashed.has(a.id)))
-      setSelectedIds([])
-      setSelected(old => trashed.has(old) ? "" : old)
+      applySelection([], trashed.has(selectionRef.current.selected) ? "" : selectionRef.current.selected)
       notify("素材已移至回收站")
       refreshNavigation()
     } catch (error) { notify(errorMessage(error)) }
@@ -797,15 +949,27 @@ export default function App() {
     ? (asset.image_path || asset.image_url || "").split(/[\\/]/).pop() || ""
     : ""
   const relatedAssets = assets.filter(a => a.id !== (asset?.id || "")).slice(0, expandedRelated ? 6 : 2)
-  const savePrompt = () => {
+  const startPromptEdit = () => {
     if (!asset) return
-    const next = promptDraft.trim()
-    if (next === asset.prompt) { setEditingPrompt(false); return }
-    updateAssetMetadata(asset.project_id, asset.id, { prompt: next }).then(updated => {
+    setPromptEdit({ project: asset.project_id, assetId: asset.id, draft: asset.prompt || "" })
+  }
+  const savePrompt = () => {
+    const target = promptEdit
+    if (!target || savingPromptId === target.assetId) return
+    // The write goes to the bound asset only; if that asset is no longer the
+    // one on screen the editor is already gone and there is nothing to save.
+    const current = resolvePromptSaveTarget(target, assetsRef.current)
+    if (!current) { setPromptEdit(null); return }
+    const next = target.draft.trim()
+    if (next === current.prompt) { setPromptEdit(null); return }
+    setSavingPromptId(target.assetId)
+    updateAssetMetadata(target.project, target.assetId, { prompt: next }).then(updated => {
       setAssets(old => old.map(a => a.id === updated.id ? updated : a))
-      setEditingPrompt(false)
+      setPromptEdit(old => old && old.assetId === target.assetId && old.project === target.project ? null : old)
       notify("已保存")
-    }).catch(error => notify(errorMessage(error)))
+    }).catch(error => notify(errorMessage(error))).finally(() => {
+      setSavingPromptId(old => old === target.assetId ? null : old)
+    })
   }
   const timeLabel = (value?: string) => (value ? value.slice(0, 10) : "")
 
@@ -997,52 +1161,127 @@ export default function App() {
             style={{
               gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
             }}
+            data-loaded-assets={assets.length}
             onPointerDown={onGridPointerDown}
           >
-            {visible.map((a) => (
-              <button
-                key={a.id}
-                data-asset-id={a.id}
-                aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
-                className={`asset-card ${
-                  (selected === a.id || selectedIds.includes(a.id)) && !settings ? "asset-selected" : ""
-                }`}
-                style={{ aspectRatio: `${a.width} / ${a.height}` }}
-                onClick={(event) => {
-                  if (a.stack) {
-                    goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
-                    setSelected("")
-                    return
-                  }
-                  selectCard(a.id, event)
-                }}
-                onDoubleClick={() => {
-                  if (a.stack) return
-                  setSelected(a.id)
-                  setPreview(true)
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  if (a.stack) return
-                  setSelected(a.id)
-                  setMenu({ x: e.clientX, y: e.clientY })
-                }}
-              >
-                {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} alt="" loading="lazy" /> : <div className="black-image" />}
-                {a.stack && (
-                  <span className="stack-mark">
-                    <Icon name="layers" size={12} />
-                    {a.stack.count}
-                  </span>
-                )}
-                {a.favorite && (
-                  <span className="favorite-mark">
-                    <Icon name="heart" size={12} />
-                  </span>
-                )}
-                {cardInfo && <span className="card-name">{a.stack ? a.stack.name || a.name : a.name}</span>}
-              </button>
-            ))}
+            {(() => {
+              const model = windowingActive ? rowModelRef.current?.model ?? null : null
+              const win = windowingActive && model ? galleryWindow : null
+              if (!model || !win) {
+                return assets.map((a) => (
+                  <button
+                    key={a.id}
+                    data-asset-id={a.id}
+                    aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
+                    className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""}`}
+                    style={{ aspectRatio: `${a.width} / ${a.height}` }}
+                    onClick={(event) => {
+                      if (a.stack) {
+                        goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
+                        setSelected("")
+                        return
+                      }
+                      selectCard(a.id, event)
+                    }}
+                    onDoubleClick={() => {
+                      if (a.stack) return
+                      setSelected(a.id)
+                      setPreview(true)
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      if (a.stack) return
+                      // Right-clicking outside the multi-selection re-targets the
+                      // context menu to the clicked card; inside it, the whole
+                      // selection stays the action target.
+                      if (!selectedIds.includes(a.id)) applySelection([], a.id)
+                      else setSelected(a.id)
+                      setMenu({ x: e.clientX, y: e.clientY })
+                    }}
+                  >
+                    {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} alt="" loading="lazy" /> : <div className="black-image" />}
+                    {a.stack && (
+                      <span className="stack-mark">
+                        <Icon name="layers" size={12} />
+                        {a.stack.count}
+                      </span>
+                    )}
+                    {a.favorite && (
+                      <span className="favorite-mark">
+                        <Icon name="heart" size={12} />
+                      </span>
+                    )}
+                    {cardInfo && <span className="card-name">{a.stack ? a.stack.name || a.name : a.name}</span>}
+                  </button>
+                ))
+              }
+              const items = assets.slice(win.mount.startRow * model.columns, (win.mount.endRow + 1) * model.columns)
+              const hydratedIds = new Set(assets
+                .slice(win.hydrate.startRow * model.columns, (win.hydrate.endRow + 1) * model.columns)
+                .map(a => a.id))
+              const spacers = gallerySpacerHeights(model, win.mount.startRow, win.mount.endRow)
+              const card = (a: MosaAsset) => (
+                <button
+                  key={a.id}
+                  data-asset-id={a.id}
+                  aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
+                  className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""}`}
+                  style={{ aspectRatio: `${a.width} / ${a.height}` }}
+                  onClick={(event) => {
+                    if (a.stack) {
+                      goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
+                      setSelected("")
+                      return
+                    }
+                    selectCard(a.id, event)
+                  }}
+                  onDoubleClick={() => {
+                    if (a.stack) return
+                    setSelected(a.id)
+                    setPreview(true)
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    if (a.stack) return
+                    // Right-clicking outside the multi-selection re-targets the
+                    // context menu to the clicked card; inside it, the whole
+                    // selection stays the action target.
+                    if (!selectedIds.includes(a.id)) applySelection([], a.id)
+                    else setSelected(a.id)
+                    setMenu({ x: e.clientX, y: e.clientY })
+                    }}
+                >
+                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} alt="" loading="lazy" /> : <div className="black-image" />}
+                  {a.stack && (
+                    <span className="stack-mark">
+                      <Icon name="layers" size={12} />
+                      {a.stack.count}
+                    </span>
+                  )}
+                  {a.favorite && (
+                    <span className="favorite-mark">
+                      <Icon name="heart" size={12} />
+                    </span>
+                  )}
+                  {cardInfo && <span className="card-name">{a.stack ? a.stack.name || a.name : a.name}</span>}
+                </button>
+              )
+              return <>
+                {spacers.top > 0 && <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: spacers.top }} aria-hidden="true" />}
+                {items.map((a) => hydratedIds.has(a.id)
+                  ? card(a)
+                  : (
+                    <div
+                      key={a.id}
+                      className="asset-card asset-card-virtual-placeholder"
+                      data-asset-id={a.id}
+                      aria-hidden="true"
+                      style={{ aspectRatio: `${a.width} / ${a.height}` }}
+                    />
+                  ))}
+                {spacers.bottom > 0 && <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: spacers.bottom }} aria-hidden="true" />}
+              </>
+            })()}
             {loading && <div className="empty-state" role="status">{tr("加载中")}</div>}
             {!loading && loadError && <div className="empty-state" role="alert"><Icon name="info" size={30} /><p>{loadError}</p><button onClick={refreshNavigation}>{tr("重试")}</button></div>}
             {!loading && !loadError && visible.length === 0 && (
@@ -1150,7 +1389,7 @@ export default function App() {
                 {tr("提示词")}<small>{tr("原始信息")}</small>
               </span>
               <span className="field-actions">
-                {!editingPrompt && <button className="section-action" onClick={() => { setPromptDraft(asset.prompt); setEditingPrompt(true) }}>{tr("编辑")}</button>}
+                {!promptEditorActive(promptEdit, project, asset?.id) && <button className="section-action" onClick={startPromptEdit}>{tr("编辑")}</button>}
                 <button
                   aria-label={tr("复制提示词")}
                   onClick={async () => {
@@ -1163,22 +1402,26 @@ export default function App() {
                 </button>
               </span>
             </div>
-            {editingPrompt ? (
+            {promptEditorActive(promptEdit, project, asset?.id) && promptEdit ? (
               <div className="prompt-editor">
                 <textarea
                   className="detail-editor"
                   aria-label={tr("编辑提示词")}
-                  value={promptDraft}
+                  value={promptEdit.draft}
                   autoFocus
                   rows={6}
-                  onChange={e => setPromptDraft(e.target.value)}
+                  onChange={e => setPromptEdit(old => old ? { ...old, draft: e.target.value } : old)}
                   onKeyDown={e => {
-                    if (e.key === "Escape") { e.stopPropagation(); setEditingPrompt(false) }
+                    if (e.key === "Escape") { e.stopPropagation(); setPromptEdit(null) }
                   }}
                 />
                 <div className="prompt-editor-actions">
-                  <button className="neutral-button" onClick={() => { setEditingPrompt(false); setPromptDraft("") }}>{tr("取消")}</button>
-                  <button className="primary-button" onClick={savePrompt} disabled={!promptDraft.trim() && !asset.prompt}>{tr("保存")}</button>
+                  <button className="neutral-button" onClick={() => setPromptEdit(null)}>{tr("取消")}</button>
+                  <button
+                    className="primary-button"
+                    onClick={savePrompt}
+                    disabled={(!promptEdit.draft.trim() && !asset.prompt) || savingPromptId === promptEdit.assetId}
+                  >{tr("保存")}</button>
                 </div>
               </div>
             ) : (

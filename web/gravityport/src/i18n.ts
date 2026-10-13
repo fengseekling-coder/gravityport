@@ -95,6 +95,7 @@ const english: Record<string, string> = {
   "取消收藏": "Remove from Favorites", "复制失败": "Copy failed", "存储类型": "Storage type",
   "构建信息": "Build info", "素材": "assets",
   "项目": "Project", "编辑": "Edit", "编辑提示词": "Edit prompt",
+  "项目切换失败": "Project switch failed", "项目切换失败，已恢复原项目": "Project switch failed. The previous project was restored.",
   "生成记录": "Generation history", "轮次": "Round",
 }
 

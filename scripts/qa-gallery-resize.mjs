@@ -9,8 +9,17 @@ import Database from "better-sqlite3";
 import sharp from "sharp";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 
-// Real Chromium layout, real gallery virtualization, isolated synthetic assets.
-// MOSA_RESIZE_QA_EXECUTABLE also exercises an installed/packaged application.
+// Real Chromium layout against the GravityPort React gallery, isolated
+// synthetic assets. MOSA_RESIZE_QA_EXECUTABLE also exercises an installed/
+// packaged application.
+//
+// Geometry contract under resize (unchanged from the previous gallery):
+// equal implicit tracks, equal card widths, no overlapping cards in a
+// column, aspect ratios preserved, decoded images in the viewport, no
+// unhydrated placeholder visible, no horizontal overflow. The expected
+// column counts follow the React design's responsive bands
+// (web/gravityport/src/index.css): user column setting above 720px
+// (default 5), 3 columns at ≤720px, 2 columns at ≤480px.
 const root = resolve(import.meta.dirname, "..");
 const scratch = await mkdtemp(join(tmpdir(), "mosa-resize-qa-"));
 const libraryDir = join(scratch, "library");
@@ -144,51 +153,57 @@ async function evaluate(expression) {
 async function snapshot(label) {
   await wait(600);
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (await evaluate("[...document.querySelectorAll('#assetGrid img.thumb')].some(img => img.naturalWidth > 0)")) break;
+    if (await evaluate("[...document.querySelectorAll('.asset-grid img.black-image')].some(img => img.naturalWidth > 0)")) break;
     await wait(100);
   }
   const metrics = await evaluate(`(() => {
-    const grid = document.querySelector('#assetGrid');
+    const grid = document.querySelector('.asset-grid');
     const bounds = grid.getBoundingClientRect();
     const tracks = getComputedStyle(grid).gridTemplateColumns.split(/\\s+/).map(Number.parseFloat);
-    const cards = [...grid.querySelectorAll(':scope > .asset-card')];
+    const cards = [...grid.querySelectorAll(':scope > .asset-card:not(.asset-card-virtual-placeholder)')];
     const visible = cards.filter(card => {
       const rect = card.getBoundingClientRect();
-      // On mobile the grid can exceed the viewport. Offscreen content-visibility
-      // boxes are estimates, not painted cards; measure the actual visible area.
+      // On mobile the grid can exceed the viewport. Offscreen content boxes
+      // are estimates, not painted cards; measure the actual visible area.
       return rect.bottom > Math.max(0, bounds.top) && rect.top < Math.min(innerHeight, bounds.bottom);
     });
-    const media = visible.flatMap(card => [...card.querySelectorAll('img.thumb')]).filter(img => img.naturalWidth > 0);
-    const aspectErrors = media.map(img => {
-      const rect = img.getBoundingClientRect();
-      // Responsive srcset density/thumbnail rounding can change naturalWidth;
-      // the original dimensions are the renderer's explicit aspect contract.
-      return Math.abs(rect.height - rect.width * Number(img.getAttribute('height')) / Number(img.getAttribute('width')));
-    });
-    const rects = visible.filter(card => !card.classList.contains('asset-card-virtual-placeholder')).map(card => {
+    const media = visible.flatMap(card => [...card.querySelectorAll('img.black-image')]).filter(img => img.naturalWidth > 0);
+    const aspectErrors = visible.map(card => {
       const rect = card.getBoundingClientRect();
-      return { column: Number(card.style.gridColumnStart), top: rect.top, bottom: rect.bottom, width: rect.width };
+      // The card carries its media's aspect ratio as an inline contract
+      // ("width / height"); the rendered box must honor it.
+      const ratio = String(card.style.aspectRatio || '').split('/').map(Number.parseFloat);
+      if (!(ratio[0] > 0) || !(ratio[1] > 0)) return 0;
+      return Math.abs(rect.height - rect.width * ratio[1] / ratio[0]);
+    });
+    // The React grid uses implicit auto-placement, so same-column cards share
+    // a left edge; vertical overlap inside a column is a layout defect.
+    const columnOf = (card) => Math.round(card.getBoundingClientRect().left);
+    const rects = visible.map(card => {
+      const rect = card.getBoundingClientRect();
+      return { column: columnOf(card), top: rect.top, bottom: rect.bottom, width: rect.width };
     });
     let overlaps = 0;
     for (const rect of rects) if (rects.some(other => other !== rect && other.column === rect.column && other.top > rect.top && other.top < rect.bottom - 1)) overlaps++;
+    const placeholders = [...grid.querySelectorAll(':scope > .asset-card-virtual-placeholder')];
     return { width: innerWidth, loaded: Number(grid.dataset.loadedAssets || 0), tracks,
       visible: visible.length, images: media.length, overlaps, maxAspectError: Math.max(0, ...aspectErrors),
       widthSpread: rects.length ? Math.max(...rects.map(r => r.width)) - Math.min(...rects.map(r => r.width)) : null,
-      maxColumn: Math.max(0, ...cards.map(card => Number(card.style.gridColumnStart) || 0)),
       overflow: grid.scrollWidth - grid.clientWidth,
-      visiblePlaceholders: visible.filter(card => card.classList.contains('asset-card-virtual-placeholder')).length };
+      visiblePlaceholders: placeholders.filter(card => { const rect = card.getBoundingClientRect(); return rect.bottom > Math.max(0, bounds.top) && rect.top < Math.min(innerHeight, bounds.bottom); }).length };
   })()`);
   result.cases.push({ label, ...metrics });
   console.log(JSON.stringify({ label, ...metrics }));
   if (metrics.overlaps) console.log(await evaluate(`(() => {
-    const cards = [...document.querySelectorAll('#assetGrid > .asset-card')].map(card => ({ id: card.dataset.id, column: card.style.gridColumnStart, row: card.style.gridRowStart, span: card.style.gridRowEnd, top: card.getBoundingClientRect().top, bottom: card.getBoundingClientRect().bottom, html: card.querySelector('img')?.outerHTML }));
-    return cards.filter(card => cards.some(other => other.column === card.column && other.top > card.top && other.top < card.bottom - 1)).slice(0, 4);
+    const cards = [...document.querySelectorAll('.asset-grid > .asset-card')].map(card => ({ id: card.dataset.assetId, left: card.getBoundingClientRect().left, top: card.getBoundingClientRect().top, bottom: card.getBoundingClientRect().bottom, html: card.querySelector('img')?.outerHTML }));
+    return cards.filter(card => cards.some(other => other !== card && other.left === card.left && other.top > card.top && other.top < card.bottom - 1)).slice(0, 4);
   })()`));
-  if (!metrics.images) console.log(await evaluate("[...document.querySelectorAll('#assetGrid .asset-card-select')].slice(0,2).map(node=>node.outerHTML)"));
-  const expected = metrics.width >= 1280 ? 5 : metrics.width >= 768 ? 3 : 2;
+  if (!metrics.images) console.log(await evaluate("[...document.querySelectorAll('.asset-grid > .asset-card')].slice(0,2).map(node=>node.outerHTML)"));
+  // React design bands: ≤480px → 2 columns, ≤720px → 3, otherwise the user
+  // column setting (default 5).
+  const expected = metrics.width <= 480 ? 2 : metrics.width <= 720 ? 3 : 5;
   assert.equal(metrics.tracks.length, expected, `${label}: implicit columns`);
   assert.ok(Math.max(...metrics.tracks) - Math.min(...metrics.tracks) <= 1, `${label}: unequal tracks`);
-  assert.ok(metrics.maxColumn <= expected, `${label}: stale column placement`);
   assert.ok(metrics.widthSpread !== null && metrics.widthSpread <= 1, `${label}: unequal card widths`);
   assert.ok(metrics.images > 0, `${label}: no visible decoded images`);
   assert.ok(metrics.maxAspectError < 1.1, `${label}: image aspect ratio changed`);
@@ -201,30 +216,31 @@ try {
   await seed();
   client = await connect();
   for (let attempt = 0; attempt < 150; attempt += 1) {
-    if (await evaluate("document.querySelectorAll('#assetGrid > .asset-card').length > 5")) break;
+    if (await evaluate("document.querySelectorAll('.asset-grid > .asset-card').length > 5")) break;
     await wait(100);
   }
   for (const width of [1512, 1400, 1280, 1279, 1052, 960, 1279, 1280, 1512]) {
     await resizeWindow(width);
     await snapshot(`native-${width}`);
   }
-  // The native App has a 960px minimum; the shared web gallery has a 2-column band.
-  for (const width of [767, 640, 768, 1279, 1280]) {
+  // The native App enforces its own minimum width; smaller viewports are
+  // driven through device-metrics emulation, including the 3/2-column bands.
+  for (const width of [767, 640, 500, 400, 480, 768, 1279, 1280]) {
     await client.send("Emulation.setDeviceMetricsOverride", { width, height: 720, deviceScaleFactor: 1, mobile: false });
     await snapshot(`web-${width}`);
   }
   await client.send("Emulation.clearDeviceMetricsOverride");
   for (let step = 0; step < 60; step += 1) {
-    const loaded = await evaluate("(()=>{const grid=document.querySelector('#assetGrid');grid.scrollTop=grid.scrollHeight;return Number(grid.dataset.loadedAssets||0)})()");
+    const loaded = await evaluate("(()=>{const grid=document.querySelector('.asset-grid');grid.scrollTop=grid.scrollHeight;grid.dispatchEvent(new Event('scroll'));return Number(grid.dataset.loadedAssets||0)})()");
     if (loaded === 300) break;
     await wait(100);
   }
-  assert.equal(await evaluate("Number(document.querySelector('#assetGrid').dataset.loadedAssets)"), 300);
+  assert.equal(await evaluate("Number(document.querySelector('.asset-grid').dataset.loadedAssets)"), 300);
   for (const width of [1512, 1052, 960, 1512]) {
     await resizeWindow(width);
     await snapshot(`scrolled-${width}`);
   }
-  await evaluate("document.querySelector('#assetGrid').scrollTop = 0");
+  await evaluate("document.querySelector('.asset-grid').scrollTop = 0");
   for (const width of [1279, 1280, 960, 1512, 1052, 1512]) {
     await resizeWindow(width);
   }

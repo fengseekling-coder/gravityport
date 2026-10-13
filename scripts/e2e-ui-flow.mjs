@@ -41,8 +41,11 @@ const HELPERS = `
       openMenu: document.querySelector('.context-menu')?.textContent?.trim().slice(0, 120) || '',
       loading: Boolean(document.querySelector(".empty-state[role='status']")),
       serverCounts: JSON.stringify(window.__serverCounts || []),
-      paste: JSON.stringify((window.__mosaPasteLog || []).slice(-40)),
-      busy: String(window.__mosaBusy),
+      loadedAssets: document.querySelector('.asset-grid')?.getAttribute('data-loaded-assets') || '?',
+      scroll: (() => {
+        const grid = document.querySelector('.asset-grid');
+        return grid ? Math.round(grid.scrollTop) + '/' + grid.scrollHeight : 'no-grid';
+      })(),
       token: (sessionStorage.getItem('mosa.client-token') ? 'present' : 'missing'),
       rendererErrors: rendererErrors.slice(0, 3),
     };
