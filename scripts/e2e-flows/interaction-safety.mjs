@@ -208,7 +208,10 @@ function interactionSafetySource(config) {
     // cards into the seeded stack. Escape first so the batch-favorite cleanup
     // cannot race the selection this segment builds.
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    await waitFor(() => rings().length === 0, 'selection cleared before the cut round');
+    // Clearing never shows a multi-ring again; the refresh the batch favorite
+    // triggered may legally re-land the design's implicit single ring on the
+    // first card, so the gate is "no batch selection left", not "zero rings".
+    await waitFor(() => rings().length <= 1, 'selection cleared before the cut round');
     clickCard(cardA(), { ctrlKey: true });
     await waitFor(() => rings().length === 1, 'one ring after modifier click');
     clickCard(cardB(), { ctrlKey: true });
