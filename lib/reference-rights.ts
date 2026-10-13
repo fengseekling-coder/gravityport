@@ -1,8 +1,3 @@
-export const REFERENCE_USES = Object.freeze([
-  "identity", "subject", "world", "space", "composition",
-  "lighting", "wardrobe", "color", "style", "prop",
-]);
-
 export const COPYRIGHT_STATES = Object.freeze(["unknown", "owned", "licensed", "third-party"]);
 export const PORTRAIT_CONSENT_STATES = Object.freeze(["unknown", "granted", "not-required", "denied"]);
 export const REDISTRIBUTION_STATES = Object.freeze(["unknown", "allowed", "forbidden"]);

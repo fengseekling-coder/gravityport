@@ -22,7 +22,7 @@ const libraryDir = join(temp, "library");
 const userData = join(temp, "user-data");
 await mkdir(libraryDir, { recursive: true });
 await mkdir(userData, { recursive: true });
-const expectedIdentity = JSON.parse(await readFile(resolve(rootDir, "web", "app", "build-identity.json"), "utf8"));
+const expectedIdentity = JSON.parse(await readFile(resolve(rootDir, "web", "gravityport", "dist", "build-identity.json"), "utf8"));
 let activeLaunch = null;
 
 try {
@@ -189,7 +189,7 @@ async function waitForRenderer(expectedOrigin, cdpPort, childProcess) {
       const result = await evaluate(socket, `({
         href: location.href,
         readyState: document.readyState,
-        appShell: Boolean(document.querySelector('#appShell')),
+        appShell: Boolean(document.querySelector('.app')),
         preload: Boolean(window.electronAPI && typeof window.electronAPI.writeClipboardText === 'function'),
         clientToken: String(window.sessionStorage?.getItem?.('mosa.client-token') || '')
       })`);

@@ -121,7 +121,7 @@ test("permanent delete of a non-trashed asset is a 409 conflict, not a server er
   await mkdir(sourcesDir, { recursive: true });
   const sourcePath = join(sourcesDir, "live.png");
   await writePng(sourcePath);
-  const runtime = await startMosaRuntime({ port: 0, projectRoot: join(root, "project"), managerDir: repositoryRoot, appDir: join(repositoryRoot, "web", "app"), libraryDir, assetsRoot: join(libraryDir, "assets"), generatedImagesDir: sourcesDir, codexImagesDir: join(root, "codex-images"), codexSessionsDir: join(root, "codex-sessions"), grokSessionsDir: join(root, "grok-sessions"), cowartCanvasDir: join(root, "cowart-canvas"), cowartRegistryPath: join(root, "state", "cowart-projects.json") });
+  const runtime = await startMosaRuntime({ port: 0, projectRoot: join(root, "project"), managerDir: repositoryRoot, appDir: join(repositoryRoot, "web", "gravityport", "dist"), libraryDir, assetsRoot: join(libraryDir, "assets"), generatedImagesDir: sourcesDir, codexImagesDir: join(root, "codex-images"), codexSessionsDir: join(root, "codex-sessions"), grokSessionsDir: join(root, "grok-sessions"), cowartCanvasDir: join(root, "cowart-canvas"), cowartRegistryPath: join(root, "state", "cowart-projects.json") });
   t.after(() => runtime.stop());
   const create = await fetch(`${runtime.url}/api/assets/create`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: "default", assetId: "live-asset", imagePath: sourcePath, prompt: "live" }) });
   assert.equal(create.status, 200);

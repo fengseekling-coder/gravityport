@@ -16,12 +16,14 @@
     "mosa": "bin/mosa.mjs"
   },
   "scripts": {
+    "preprepare": "node scripts/install-gravityport-deps.mjs",
     "prepare": "npm run build",
+    "build:ui": "node scripts/build-gravityport-ui.mjs",
     "prestart": "npm run build",
     "start": "node server.mjs",
     "premcp": "npm run build",
     "mcp": "node mcp/server.mjs",
-    "build": "tsc && node scripts/write-build-identity.mjs",
+    "build": "node scripts/build-gravityport-ui.mjs && tsc && node scripts/write-build-identity.mjs",
     "pretest": "npm run build",
     "test": "node --import ./test/clean-test-env.mjs --test \"test/*.test.mjs\"",
     "pretest:e2e": "npm run build",

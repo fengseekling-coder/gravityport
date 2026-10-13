@@ -61,7 +61,7 @@ const desktopPlatform = desktopPlatformAdapter();
 const appRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // Desktop shell serves the shared web UI (same directory as the browser).
 const expectedServiceIdentity = Object.freeze({
-  ...getBuildIdentity(join(appRoot, "web", "app")),
+  ...getBuildIdentity(join(appRoot, "web", "gravityport", "dist")),
   serviceProtocolVersion: MOSA_SERVICE_PROTOCOL_VERSION,
 });
 // `desktopDataDir` is the *actual* userData after Chromium applied the QA
@@ -1360,7 +1360,7 @@ async function ensureDesktopService() {
           settings: await visualModelManager.runtimeConfig(),
         },
         // Desktop serves the same web UI as the browser
-        appDir: join(appRoot, "web", "app"),
+        appDir: join(appRoot, "web", "gravityport", "dist"),
         assetsRoot: join(libraryDir, "assets"),
         generatedImagesDir: join(libraryDir, "imports"),
         webCaptureToken,

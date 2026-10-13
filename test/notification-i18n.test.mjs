@@ -58,11 +58,11 @@ test("main.mjs no longer registers an open-folder IPC handler", async () => {
   assert.doesNotMatch(source, /shell\.openPath/);
   // The renderer's /api/open-folder HTTP route (validated server-side) is the
   // only remaining folder-opening path; the desktop IPC shortcut is gone.
-  const appSource = await readFile(resolve(repositoryRoot, "web/app/app.mjs"), "utf8");
+  const appSource = await readFile(resolve(repositoryRoot, "web/gravityport/src/App.tsx"), "utf8");
   assert.doesNotMatch(appSource, /electronAPI\?\.openFolder|electronAPI\.openFolder/);
 });
 
-test("app.mjs syncs the resolved locale to the main process", async () => {
-  const appSource = await readFile(resolve(repositoryRoot, "web/app/app.mjs"), "utf8");
-  assert.match(appSource, /window\.electronAPI\?\.setLocale\?\.\(state\.locale\)/);
+test("the React shell syncs the resolved locale to the main process", async () => {
+  const appSource = await readFile(resolve(repositoryRoot, "web/gravityport/src/App.tsx"), "utf8");
+  assert.match(appSource, /desktopAPI\(\)\?\.setLocale\?\.\(language === "en" \? "en" : "zh"\)/);
 });

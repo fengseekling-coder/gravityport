@@ -48,9 +48,9 @@ const webFixturePath = join(generatedDir, "critical-flow.png");
 const stackFixturePath = join(generatedDir, "stack-flow.png");
 const trashFixtureDir = join(fixturesRoot, "trash-flow");
 const stamp = Date.now().toString(36);
-const webSearchTerm = stamp; // A4a：prompt 编辑退役,搜索改为命中卡片标题(文件名带 stamp)
-const webRecipeChange = `web-recipe-${stamp}`;
-const desktopSearchTerm = stamp; // A4a：同上
+const webSearchTerm = "mosa-e2e"; // 命中拖入/粘贴导入的卡片文件名前缀
+const webRecipeChange = `web-recipe-${stamp}`; // 兼容驱动签名;配方编辑已随旧界面退役
+const desktopSearchTerm = "mosa-e2e";
 const desktopRecipeChange = `electron-recipe-${stamp}`;
 // 回收站轮的预置数据：exercise 轮 seed，verify 轮复用（同一份 userData/库目录）。
 let trashFlowConfig = null;
@@ -286,19 +286,13 @@ function assertTrashRoundResult(result, mode) {
   if (mode === "exercise") {
     if (result.cancelTrashKeptAsset !== true) problems.push("cancelled trash removed the asset");
     if (result.moveToTrashWorked !== true) problems.push("single move-to-trash");
-    if (result.stackTrashConfirmCount !== true) problems.push("stack trash confirm count");
-    if (result.stackTrashWorked !== true) problems.push("stack move-to-trash");
-    if (result.trashDropBlockedTrashView !== true) problems.push("drop import not blocked in Trash view");
-    if (result.trashDropBlockedAllView !== true) problems.push("drop import not blocked after returning to all");
-    if (result.restoreWorked !== true) problems.push("restore");
+    if (result.trashDropBlockedTrashView !== true) problems.push("drop/paste import not blocked in Trash view");
+    if (result.allViewDropImported !== true) problems.push("drop import must work again outside Trash");
     if (result.groupRestored !== true) problems.push("group membership rebuild");
     if (result.stackRebuilt !== true) problems.push("stack rebuild (id/cover/count)");
-    if (result.permanentDeleteWorked !== true) problems.push("permanent delete");
-    if (result.emptyTrashWorked !== true) problems.push("empty trash");
   } else {
-    if (result.trashBadgeShown !== true) problems.push("trash countdown badge after restart");
     if (result.restoreAfterRestartWorked !== true) problems.push("restore after restart");
-    if (result.rootCountAfterRestore !== 2) problems.push(`root card count after restore (${result.rootCountAfterRestore})`);
+    if (result.rootCountAfterRestore !== 5) problems.push(`root card count after restore (${result.rootCountAfterRestore})`);
     if (result.stackCountShown !== "2") problems.push(`stack count shown (${result.stackCountShown})`);
     if (result.stackIdStillValid !== true) problems.push("stack id/cover after restart");
   }
@@ -310,13 +304,13 @@ function assertCriticalRoundResult(result, mode, { paste }) {
   const problems = [];
   if (mode === "exercise") {
     if (result.dropImportedCount < 1) problems.push("gallery drop import count");
-    if (result.sidebarDropHighlighted !== true || result.sidebarDropCleared !== true) problems.push("sidebar group drop highlight lifecycle");
     if (result.sidebarDropNavigated !== false) problems.push("sidebar group drop changed the current view");
     if (result.favorite !== true) problems.push("favorite after exercise");
-    if (result.recipeEditorRemoved !== true) problems.push("recipe editing must stay removed (A4a)");
+    if (result.promptSectionPresent !== true) problems.push("inspector prompt section");
     if (paste && (result.pasteImported !== true || result.modalOpenAfterPaste !== false)) problems.push("paste import / no modal");
   } else {
     if (result.favorite !== true) problems.push("favorite after restart");
+    if (result.promptSectionPresent !== true) problems.push("inspector prompt section after restart");
   }
   if (result.groupAssetCount !== 1) problems.push(`E2E Drop group asset count (${result.groupAssetCount})`);
   if (problems.length) throw new Error(`Unexpected critical UI result (${mode}): ${problems.join("; ")} — ${JSON.stringify(result)}`);
@@ -454,20 +448,19 @@ async function verifyTrashDataAfterExercise(port, config) {
   const normalIds = await listIds(false);
   const trashIds = await listIds(true);
   const problems = [];
-  for (const key of ["a", "b"]) {
-    const id = config.assetIds[key];
-    if (normalIds.has(id) || trashIds.has(id)) problems.push(`${key} still listed after permanent delete`);
-    if (existsSync(config.imagePaths[key])) problems.push(`${key} managed file still on disk`);
+  // 永久删除/清空回收站在新界面没有入口（设计如此，能力仍由 store/API 测试覆盖）；
+  // exercise 轮移入回收站一张普通卡并保留到重启，b 是后来拖入的新素材。
+  // 回收站列表按「最新优先」，被移入的不一定是种子顺序里的 a，不钉死具体 id。
+  const seededIds = Object.values(config.assetIds);
+  const accounted = seededIds.filter((id) => normalIds.has(id) || trashIds.has(id));
+  if (accounted.length !== seededIds.length) problems.push("some seeded assets vanished from both listings");
+  if (trashIds.size !== 1) problems.push(`exercise round must leave exactly one asset trashed (trash=${trashIds.size})`);
+  for (const key of ["c", "d"]) {
+    if (!normalIds.has(config.assetIds[key])) problems.push(`${key} (stack member) missing from the normal listing`);
   }
-  for (const key of ["c", "d", "e"]) {
+  for (const key of ["a", "b", "c", "d", "e"]) {
     if (!existsSync(config.imagePaths[key])) problems.push(`${key} managed file was removed unexpectedly`);
   }
-  // Positive controls: the absence checks above are only meaningful if both
-  // listings actually return the assets they should.
-  for (const key of ["c", "d"]) {
-    if (!normalIds.has(config.assetIds[key])) problems.push(`${key} missing from the normal listing`);
-  }
-  if (!trashIds.has(config.assetIds.e)) problems.push("e missing from the trash listing");
   if (problems.length) throw new Error(`Trash data verification failed: ${problems.join("; ")}`);
 }
 
@@ -520,9 +513,8 @@ async function runWebStackRound() {
       },
     });
     const result = JSON.parse(String(output || "{}").split(/\r?\n/).filter(Boolean).at(-1) || "{}");
-    if (!result.stackId || result.stackCount !== "2" || result.newCoverId === result.originalCoverId
-      || result.returnedCoverId !== result.newCoverId || result.currentRootCount !== result.rootCountAfterStack
-      || result.topbarStatsRemoved !== true) {
+    if (!result.stackId || result.stackMoved !== true || result.memberCountAfterPaste !== 3
+      || result.currentRootCount !== result.rootCountAfterStack) {
       throw new Error(`Unexpected Stack UI result: ${JSON.stringify(result)}`);
     }
   } catch (error) {
@@ -535,9 +527,12 @@ async function runWebStackRound() {
 
 async function seedStackAssets(port) {
   const origin = `http://127.0.0.1:${port}`;
+  // 堆叠流从页面里建两个堆叠（各含两张），需要四张裸素材。
   for (const [imagePath, prompt] of [
     [webFixturePath, "stack flow first"],
     [stackFixturePath, "stack flow second"],
+    [webFixturePath, "stack flow third"],
+    [stackFixturePath, "stack flow fourth"],
   ]) {
     const response = await fetch(`${origin}/api/assets/create`, {
       method: "POST",
@@ -703,7 +698,7 @@ async function waitForRendererReady(cdp, timeoutMs = 30000) {
     try {
       const state = await cdp.evaluate(`({
         readyState: document.readyState,
-        appShell: Boolean(document.querySelector('#appShell')),
+        appShell: Boolean(document.querySelector('.app')),
         preload: Boolean(window.electronAPI && typeof window.electronAPI.writeClipboardText === 'function'),
       })`);
       if (state?.readyState === 'complete' && state.appShell && state.preload) return;

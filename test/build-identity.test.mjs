@@ -23,7 +23,7 @@ function runtimeOptions(root, overrides = {}) {
     projectRoot: root,
     managerDir: repositoryRoot,
     cowartProjectDir: join(root, "desktop-data"),
-    appDir: join(repositoryRoot, "web", "app"),
+    appDir: join(repositoryRoot, "web", "gravityport", "dist"),
     libraryDir,
     assetsRoot: join(libraryDir, "assets"),
     generatedImagesDir: join(root, "generated-images"),
@@ -120,8 +120,8 @@ test("computeRuntimeFingerprint changes when runtime code changes", async () => 
   assert.notEqual(computeRuntimeFingerprint(root), first);
 });
 
-test("the repository web/app/ directory has a build-identity.json with valid fields", async () => {
-  const appDir = join(repositoryRoot, "web", "app");
+test("the repository web/gravityport/dist/ directory has a build-identity.json with valid fields", async () => {
+  const appDir = join(repositoryRoot, "web", "gravityport", "dist");
   resetBuildIdentityCache();
   const identity = getBuildIdentity(appDir);
   assert.ok(identity.productVersion !== "unknown", "productVersion should be set by the build step");
@@ -133,13 +133,13 @@ test("the repository web/app/ directory has a build-identity.json with valid fie
   resetBuildIdentityCache();
 });
 
-test("build identity exists only under web/app/, never at the repository root or the retired desktop UI copy", async () => {
+test("build identity exists only under web/gravityport/dist/, never at the repository root or the retired desktop UI copy", async () => {
   await assert.rejects(
     readFile(join(repositoryRoot, "build-identity.json"), "utf8"),
     (error) => error?.code === "ENOENT",
     "repository-root build-identity.json is a stale generated-file location and must stay absent",
   );
-  await readFile(join(repositoryRoot, "web", "app", "build-identity.json"), "utf8");
+  await readFile(join(repositoryRoot, "web", "gravityport", "dist", "build-identity.json"), "utf8");
   // The desktop UI copy was removed; its build identity must not come back.
   const desktopDir = join(repositoryRoot, "desktop");
   await assert.rejects(
@@ -150,7 +150,7 @@ test("build identity exists only under web/app/, never at the repository root or
 });
 
 test("uiFingerprint in build-identity.json matches the actual browser-delivered app shell", async () => {
-  const appDir = join(repositoryRoot, "web", "app");
+  const appDir = join(repositoryRoot, "web", "gravityport", "dist");
   resetBuildIdentityCache();
   const identity = getBuildIdentity(appDir);
   const computed = computeUiFingerprint(appDir);
@@ -160,7 +160,7 @@ test("uiFingerprint in build-identity.json matches the actual browser-delivered 
 });
 
 test("runtimeFingerprint in build-identity.json matches the actual local runtime code", async () => {
-  const appDir = join(repositoryRoot, "web", "app");
+  const appDir = join(repositoryRoot, "web", "gravityport", "dist");
   resetBuildIdentityCache();
   const identity = getBuildIdentity(appDir);
   assert.equal(identity.runtimeFingerprint, computeRuntimeFingerprint(repositoryRoot));
@@ -184,9 +184,9 @@ test("/api/health returns product, protocol, MCP, Git, UI, and runtime build ide
   assert.equal(typeof health.uiFingerprint, "string");
   assert.equal(typeof health.runtimeFingerprint, "string");
 
-  // Verify against the actual build-identity.json in web/app/
+  // Verify against the actual build-identity.json in web/gravityport/dist/
   resetBuildIdentityCache();
-  const identity = getBuildIdentity(join(repositoryRoot, "web", "app"));
+  const identity = getBuildIdentity(join(repositoryRoot, "web", "gravityport", "dist"));
   assert.equal(health.productVersion, identity.productVersion);
   assert.equal(health.gitSha, identity.gitSha);
   assert.equal(health.uiFingerprint, identity.uiFingerprint);
@@ -230,36 +230,48 @@ test("runtime health keeps the identity snapshot captured at process start", asy
   assert.equal(health.runtimeFingerprint, initialIdentity.runtimeFingerprint);
 });
 
-test("static resources served by the runtime match the source files in app/", async (t) => {
+test("static resources served by the runtime match the built GravityPort bundle", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-static-check-"));
   deferTestPathRemoval(root, { recursive: true, force: true });
   const service = await startMosaRuntime(runtimeOptions(root));
   t.after(() => service.stop());
 
-  for (const file of ["index.html", "styles.css", "app.mjs"]) {
-    const response = await fetch(`${service.url}/${file}`);
-    assert.equal(response.status, 200, `${file} should be served`);
-    const served = await response.text();
-    const source = await readFile(join(repositoryRoot, "web", "app", file), "utf-8");
-    assert.equal(served, source, `${file} served by the runtime must match the source file`);
+  const distDir = join(repositoryRoot, "web", "gravityport", "dist");
+  const shell = await fetch(`${service.url}/`);
+  assert.equal(shell.status, 200, "index.html should be served at the root");
+  const servedShell = await shell.text();
+  assert.equal(servedShell, await readFile(join(distDir, "index.html"), "utf-8"),
+    "the served shell must match the built dist/index.html");
+  // Every hashed bundle the shell references must be served byte-identical.
+  const bundlePaths = [...servedShell.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((match) => match[1]);
+  assert.ok(bundlePaths.length >= 2, "the built shell must reference hashed js/css bundles");
+  for (const bundlePath of bundlePaths) {
+    const response = await fetch(`${service.url}${bundlePath}`);
+    assert.equal(response.status, 200, `${bundlePath} should be served`);
+    const served = Buffer.from(await response.arrayBuffer());
+    const source = await readFile(join(distDir, bundlePath.replace(/^\//, "")));
+    assert.ok(served.equals(source), `${bundlePath} served by the runtime must match the built file`);
   }
 });
 
 test("index.html does not use hardcoded ?v=NN query parameters for cache busting", async () => {
-  const indexHtml = await readFile(join(repositoryRoot, "web", "app", "index.html"), "utf-8");
+  const indexHtml = await readFile(join(repositoryRoot, "web", "gravityport", "dist", "index.html"), "utf-8");
   assert.doesNotMatch(indexHtml, /\?v=\d+["'\s>]/,
     "index.html must not rely on manual ?v=NN query strings; uiFingerprint is the source of truth");
 });
 
-test("the forge packaging config includes web/app/ resources, the shared UI directory", async () => {
+test("the forge packaging config includes the built web/gravityport/dist/ resources", async () => {
   const forgeConfig = (await import("../desktop/forge.config.mjs")).default;
   const patterns = forgeConfig.packagerConfig.ignore;
-  // web/app/ is the single UI surface for browser and Electron; it stays at
-  // web/app/ inside the package (verify-packaged-runtime reads
-  // web/app/build-identity.json from the asar).
-  assert.ok(!patterns.some((p) => p.test("/web/app/index.html")));
-  assert.ok(!patterns.some((p) => p.test("/web/app/build-identity.json")));
-  assert.ok(!patterns.some((p) => p.test("/web/app/app.mjs")));
+  // The built GravityPort bundle is the single UI surface for browser and
+  // Electron; verify-packaged-runtime reads web/gravityport/dist/build-identity.json
+  // from the asar. The UI sources and node_modules next to it must ship.
+  for (const kept of ["/web/gravityport/dist/index.html", "/web/gravityport/dist/build-identity.json", "/web/gravityport/dist/assets/index.js"]) {
+    assert.ok(!patterns.some((p) => p.test(kept)), `${kept} must be packaged`);
+  }
+  for (const dropped of ["/web/gravityport/src/App.tsx", "/web/gravityport/node_modules/react/index.js", "/web/app/index.html"]) {
+    assert.ok(patterns.some((p) => p.test(dropped)), `${dropped} must not be packaged`);
+  }
 });
 
 test("desktop main.mjs derives the app root from its own module location, not app.getAppPath() or cwd", async () => {
@@ -270,9 +282,9 @@ test("desktop main.mjs derives the app root from its own module location, not ap
   // projectRoot、managerDir 使用同一个应用根。
   assert.ok(source.includes("projectRoot: appRoot"), "projectRoot must use appRoot");
   assert.ok(source.includes("managerDir: appRoot"), "managerDir must use appRoot");
-  // Desktop serves the shared web UI: appDir points at web/app in both dev
-  // and packaged runtimes.
-  assert.ok(source.includes('appDir: join(appRoot, "web", "app")'), "appDir must be appRoot/web/app");
+  // Desktop serves the shared web UI: appDir points at the built
+  // web/gravityport/dist in both dev and packaged runtimes.
+  assert.ok(source.includes('appDir: join(appRoot, "web", "gravityport", "dist")'), "appDir must be appRoot/web/gravityport/dist");
   // 不再通过 app.getAppPath() 拼出 appDir，也不依赖 process.cwd()。
   assert.ok(!source.includes("app.getAppPath()"), "must not use app.getAppPath()");
   assert.ok(!source.includes("process.cwd()"), "must not use process.cwd()");
@@ -288,12 +300,13 @@ test("desktop main.mjs derives the app root from its own module location, not ap
   assert.ok(source.includes('webContents.on("will-redirect", blockForeignNavigation)'), "must keep redirect blocking");
 });
 
-test("early return prevents desktop integration in non-Electron browsers", async () => {
-  const appSource = await readFile(join(repositoryRoot, "web", "app", "app.mjs"), "utf-8");
-  // The bindDesktopIntegration function must bail out when electronAPI is absent.
-  assert.match(appSource, /if \(!api\) return/);
-  // After the guard, event listeners are registered only when api is available.
-  assert.match(appSource, /bindDesktopIntegration/);
+test("desktop capability bridge reports unavailable outside Electron", async () => {
+  const bridgeSource = await readFile(join(repositoryRoot, "web", "gravityport", "src", "desktop.ts"), "utf-8");
+  // The bridge accessor must return null when window.electronAPI is absent
+  // so the UI falls back to its web behavior instead of guessing.
+  assert.match(bridgeSource, /typeof window === "undefined"/);
+  assert.match(bridgeSource, /window\.electronAPI/);
+  assert.match(bridgeSource, /return api && typeof api === "object" \? api : null/);
 });
 
 // Helper to register cleanup for temp dirs created outside of test scope.

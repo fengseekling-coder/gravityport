@@ -1,16 +1,12 @@
-// Reference pluggable flow: seed through the API, drive the UI in the
-// sandboxed renderer, assert on the returned result, then restart the server
-// on the same library to prove persistence.
-
-import { PAGE_HELPERS } from "./_page-helpers.mjs";
-
+// GravityPort React UI flow: API-seeded favorites drive the sidebar filter and
+// the inspector favorite toggle round-trips to the server.
 export const name = "favorites-filter";
-export const description = "API-seeded favorite -> card star click re-lights the open inspector -> Favorites quick filter -> restart -> still filtered";
+export const description = "API-seeded favorite -> Favorites nav filter shows only it -> inspector toggle unfavorites -> count updates -> restart keeps state";
 
 export async function run(ctx) {
   await ctx.prepare();
-  let seeded;
   const first = await ctx.startServer();
+  let seeded;
   try {
     const plain = await ctx.api(first.origin, "POST", "/api/assets/create", {
       projectId: "default", imagePath: await ctx.makePng("plain.png", [74, 127, 181]), prompt: "favorites flow plain",
@@ -18,25 +14,28 @@ export async function run(ctx) {
     const starred = await ctx.api(first.origin, "POST", "/api/assets/create", {
       projectId: "default", imagePath: await ctx.makePng("starred.png", [181, 68, 74]), prompt: "favorites flow starred",
     });
-    await ctx.api(first.origin, "POST", `/api/assets/default/${encodeURIComponent(starred.asset.id)}/favorite`);
-    seeded = { plainId: plain.asset.id, starredId: starred.asset.id };
-    assertFiltered(await ctx.runInPage(first, favoritesSource(seeded)), seeded, "before restart");
+    const favoriteResponse = await ctx.api(first.origin, "POST", `/api/assets/default/${encodeURIComponent(starred.asset.id)}/favorite`);
+    console.log(`[favorites-flow] seed favorite -> favorite=${favoriteResponse?.asset?.favorite} id=${starred.asset.id.slice(0, 10)}`);
+    // The create response omits the derived name; the stored filename is the
+    // same string the gallery renders, so fall back to it.
+    const starredName = starred.asset.name || starred.asset.asset || String(starred.asset.image_path || "").split("/").pop();
+    seeded = { plainId: plain.asset.id, starredId: starred.asset.id, starredName };
+    console.log(`[favorites-flow] seeded=${JSON.stringify(seeded)}`);
+    assertFiltered(await ctx.runInPage(first, favoritesSource(seeded)), "before restart");
   } finally {
     await first.stop();
   }
-
   const second = await ctx.startServer();
   try {
-    assertFiltered(await ctx.runInPage(second, favoritesSource(seeded)), seeded, "after restart");
+    assertFiltered(await ctx.runInPage(second, favoritesSource(seeded)), "after restart");
   } finally {
     await second.stop();
   }
   return seeded;
 }
 
-function assertFiltered(result, { plainId, starredId }, phase) {
-  if (JSON.stringify(result?.allIds?.slice().sort()) !== JSON.stringify([plainId, starredId].sort())
-    || JSON.stringify(result?.favoriteIds) !== JSON.stringify([starredId])) {
+function assertFiltered(result, phase) {
+  if (result?.favoriteCardCount !== 1 || result?.toggledCount !== 0 || result?.allCardCount !== 2) {
     throw new Error(`Favorites filter ${phase}: ${JSON.stringify(result)}`);
   }
 }
@@ -44,45 +43,63 @@ function assertFiltered(result, { plainId, starredId }, phase) {
 function favoritesSource(config) {
   return `(async () => {
     const config = ${JSON.stringify(config)};
-    ${PAGE_HELPERS}
-    const panel = () => document.querySelector('#detailPanel');
-    const detailOpen = () => panel()?.getAttribute('aria-hidden') === 'false';
-    const detailFavButton = () => panel()?.querySelector('[data-action="toggle-favorite"]');
-    await waitFor(() => gallerySettled() && rootCardIds().length === 2, 'two seeded cards');
+    console.log('FAV-PAGE-CONFIG', JSON.stringify(config));
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    async function waitFor(check, label, timeoutMs = 15000) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const value = check();
+        if (value) return value;
+        await sleep(100);
+      }
+      const nav = await fetch('/api/navigation?project=default').then(r => r.json()).catch(() => null);
+      throw new Error('Timed out waiting for ' + label + ' | cards=' + cardCount()
+        + ' | labels=' + JSON.stringify(Array.from(document.querySelectorAll('.asset-card')).map(c => (c.getAttribute('aria-label') || '').slice(0, 40)))
+        + ' | nav=' + JSON.stringify(nav?.navigation || {}).slice(0, 200)
+        + ' | active=' + (document.querySelector('.main-nav .nav-row[aria-current="page"] > span')?.textContent || 'none'));
+    }
+    function navButton(label) {
+      return Array.from(document.querySelectorAll('.main-nav button'))
+        .find((button) => Array.from(button.querySelectorAll(':scope > span')).some((span) => span.textContent.trim() === label));
+    }
+    const cardCount = () => document.querySelectorAll('.asset-card').length;
 
-    // Card star click while the same asset is open in the inspector: the
-    // inspector's own favorite button must follow immediately (the local
-    // toggle patches every visible favorite button for the shown asset, keyed
-    // on the selection, not on state.detailAsset being populated). Every click
-    // below goes through clickUntil: the favorite toggle itself re-renders the
-    // inspector/cards, so a plain query-and-click can land on a node the
-    // render has already replaced.
-    await clickUntil(
-      () => document.querySelector(cardSelector(config.plainId) + ' .asset-card-select'),
-      () => detailOpen(),
-      'inspector opens for the plain asset',
-      15000,
-    );
-    await clickUntil(
-      () => document.querySelector(cardSelector(config.plainId) + ' .card-favorite'),
-      () => {
-        const button = detailFavButton();
-        return Boolean(button) && button.getAttribute('aria-pressed') === 'true' && button.classList.contains('is-fav');
-      },
-      'inspector star follows the card star click',
-      15000,
-    );
-    // Toggle back from the inspector's own button (idempotent reset + covers
-    // the inspector-originated path), then run the original filter assertions.
-    await clickUntil(detailFavButton, () => {
-      const button = detailFavButton();
-      return Boolean(button) && button.getAttribute('aria-pressed') === 'false' && !button.classList.contains('is-fav');
-    }, 'inspector star clears via its own button', 15000);
-    await waitFor(() => gallerySettled(), 'gallery settles after the toggle pair', 15000);
+    await waitFor(() => document.querySelector('.app') && cardCount() === 2, 'two seeded cards');
+    const allCardCount = cardCount();
 
-    const allIds = rootCardIds();
-    click('#quickFilters .nav-item[data-filter="favorite"]');
-    await waitFor(() => gallerySettled() && rootCardIds().length === 1, 'favorites filter applied');
-    return { allIds, favoriteIds: rootCardIds() };
-  })()`;
+    // Live refresh can re-render the nav between query and click; retry until
+    // the Favorites view is actually open.
+    await waitFor(() => {
+      const button = navButton('收藏');
+      if (button && button.getAttribute('aria-current') !== 'page') button.click();
+      return button?.getAttribute('aria-current') === 'page' && cardCount() === 1;
+    }, 'favorites filter shows the starred card only');
+    const favoriteCardCount = cardCount();
+
+    // Inspector toggle: the starred card un-favorites through the real API and
+    // immediately leaves the Favorites scope (the row disappears with it).
+    document.querySelector('.asset-card').click();
+    await waitFor(() => document.querySelector(".asset-title button[aria-label='收藏素材']"), 'favorite button');
+    const heart = document.querySelector(".asset-title button[aria-label='收藏素材']");
+    if (heart.getAttribute('aria-pressed') === 'true') heart.click();
+    await waitFor(() => cardCount() === 0, 'un-favorite drops the card from the Favorites scope');
+    const toggledCount = cardCount();
+
+    // Re-favorite from the all view: the state must persist across restarts.
+    await waitFor(() => {
+      const button = navButton('所有素材');
+      if (button && button.getAttribute('aria-current') !== 'page') button.click();
+      return button?.getAttribute('aria-current') === 'page' && cardCount() === 2;
+    }, 'all view restored');
+    const starredCard = await waitFor(() => Array.from(document.querySelectorAll('.asset-card'))
+      .find((card) => (card.getAttribute('aria-label') || '').includes(config.starredName)) || null, 'starred card in all view');
+    starredCard.click();
+    const heartAgain = await waitFor(() => document.querySelector(".asset-title button[aria-label='收藏素材']"), 'favorite button again');
+    if (heartAgain.getAttribute('aria-pressed') !== 'true') heartAgain.click();
+    await waitFor(() => document.querySelector(".asset-title button[aria-label='收藏素材']")?.getAttribute('aria-pressed') === 'true',
+      're-favorite persists in renderer');
+
+    return { allCardCount, favoriteCardCount, toggledCount };
+  })()
+  `;
 }

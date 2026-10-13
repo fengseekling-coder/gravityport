@@ -37,7 +37,7 @@ function runtimeOptions(root) {
     projectRoot: root,
     managerDir: repositoryRoot,
     cowartProjectDir: join(root, "desktop-data"),
-    appDir: join(repositoryRoot, "web", "app"),
+    appDir: join(repositoryRoot, "web", "gravityport", "dist"),
     assetsRoot: join(libraryDir, "assets"),
     generatedImagesDir: join(root, "generated-images"),
     codexImagesDir: join(root, "codex-images"),
@@ -235,7 +235,7 @@ describe("environment-only server startup isolation", () => {
     assert.equal(library.libraryDir, health.libraryDir);
     assert.equal(library.path, join(resolve(libraryDir), "assets", "default"));
     assert.equal(assets.assets.length, 3, "isolated server API should contain exactly three fixtures");
-    assert.match(await page.text(), /app\.js/, "isolated server should serve the UI shell");
+    assert.match(await page.text(), /assets\/index-[^"]+\.js/, "isolated server should serve the built UI shell");
 
     assert.deepEqual(
       await snapshotDirectory(join(repositoryRoot, "assets", "default")),
@@ -307,7 +307,7 @@ describe("environment-only server startup isolation", () => {
 
     // Page served successfully
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /app\.js/, "fresh server startup must serve UI shell");
+    assert.match(await page.text(), /assets\/index-[^"]+\.js/, "fresh server startup must serve the built UI shell");
 
     // Verify canonical assets/default was NOT mutated (no writes on pure read)
     const managerAssetsAfter = await snapshotDirectory(join(repositoryRoot, "assets", "default"));

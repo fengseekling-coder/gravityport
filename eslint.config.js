@@ -1,8 +1,9 @@
 export default [
   {
-    // lib/*.js is tsc output rebuilt by npm lifecycle scripts (see .gitignore);
-    // linting generated bundles flags emitted code, not authored code.
-    ignores: ["node_modules/", "coverage/", "out/", "desktop/out/", "assets/", "production/", "canvas/", "outputs/", "lib/*.js", "lib/*.js.map", "lib/*.d.ts", "!lib/sqlite-asset-store.d.ts"],
+    // lib/*.js and web/gravityport/dist are build outputs rebuilt by npm
+    // lifecycle scripts (see .gitignore); linting generated bundles flags
+    // emitted code, not authored code.
+    ignores: ["node_modules/", "**/node_modules/", "coverage/", "out/", "desktop/out/", "assets/", "production/", "canvas/", "outputs/", "web/gravityport/dist/", "lib/*.js", "lib/*.js.map", "lib/*.d.ts", "!lib/sqlite-asset-store.d.ts"],
   },
   {
     files: ["**/*.{js,mjs}"],
