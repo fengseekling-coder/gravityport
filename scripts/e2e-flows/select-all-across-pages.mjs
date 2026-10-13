@@ -1,9 +1,10 @@
 // GravityPort React UI flow: ⌘A/Ctrl+A selects the WHOLE filtered result
 // across pages (not only the loaded window), can be cancelled mid-flight,
-// and the resulting selection drives a real server-side batch action on a
-// 340-asset (windowed) gallery.
+// announces truncation honestly when the 200-page cap cuts an oversized
+// result, and the resulting selection drives a real server-side batch action
+// on a 340-asset (windowed) gallery.
 export const name = "select-all-across-pages";
-export const description = "340 assets -> mid-flight Escape cancels select-all -> ⌘A fetches all pages -> every mounted card selected -> batch trash moves exactly 340 server-side";
+export const description = "340 assets -> mid-flight Escape cancels select-all -> ⌘A fetches all pages -> a synthetic endless result stops at the 200-page cap and says so -> every mounted card selected -> batch trash moves exactly 340 server-side";
 
 const TOTAL = 340;
 const PAGE_SIZE = 100;
@@ -24,7 +25,8 @@ export async function run(ctx) {
       created += batch;
     }
     const result = await ctx.runInPage(server, selectAllSource(), { windowSize: [1440, 940] });
-    if (result?.cancelKeptEmpty !== true || result?.allSelected !== true || result?.batchTrashMoved !== TOTAL) {
+    if (result?.cancelKeptEmpty !== true || result?.capTruncationAnnounced !== true
+      || result?.allSelected !== true || result?.batchTrashMoved !== TOTAL) {
       throw new Error(`select-all-across-pages result: ${JSON.stringify(result)}`);
     }
     // Server-side truth: the batch action hit exactly the full result.
@@ -102,6 +104,35 @@ function selectAllSource() {
       && loadedCount() === ${PAGE_SIZE};
     await sleep(400);
 
+    // ── 2b) The 200-page cap: an oversized result must announce truncation ──
+    // Synthetic pages with an endless cursor — the select-all loop only reads
+    // ids from the responses, so no real assets are needed. 200 pages × 250
+    // is the cap; the commit may claim the first 50000, never a select-all.
+    const origFetch = window.__origFetch || window.fetch.bind(window);
+    let synthPage = 0;
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : String(input.url || '');
+      if (!url.includes('limit=250')) return origFetch(input, init);
+      synthPage += 1;
+      const assets = Array.from({ length: 250 }, (_, i) => ({
+        id: 'synthetic-' + synthPage + '-' + i, width: 32, height: 24,
+      }));
+      return new Response(JSON.stringify({
+        assets, page: { nextCursor: 'synthetic-cursor-' + synthPage, total: 999999 }, revision: 'synthetic',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    pressSelectAll();
+    await waitFor(() => (document.querySelector('.toast')?.textContent || '').trim() === '结果过大，已选前 50000 项',
+      'the page cap announces a truncated selection instead of a completed select-all');
+    window.fetch = window.__origFetch;
+    const capTruncationAnnounced = true;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await waitFor(() => selectedCount() <= 1, 'the synthetic selection clears');
+    pressSelectAll();
+    await waitFor(() => (document.querySelector('.toast')?.textContent || '').trim() === '已选 ${TOTAL} 项',
+      'the real select-all re-runs after the cap');
+    await sleep(400);
+
     // ── 3) The cross-page selection drives a real batch trash ──
     mountedCards()[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 600, clientY: 400 }));
     await waitFor(() => document.querySelector('.context-menu'), 'context menu on the selection');
@@ -115,7 +146,7 @@ function selectAllSource() {
     confirm.click();
     await waitFor(() => navSmall('回收站') === String(${TOTAL}), 'batch trash count reaches the server');
 
-    return { cancelKeptEmpty, allSelected, batchTrashMoved: Number(navSmall('回收站')),
+    return { cancelKeptEmpty, capTruncationAnnounced, allSelected, batchTrashMoved: Number(navSmall('回收站')),
       selectedAnnounced: (document.querySelector('.toast')?.textContent || '').trim() };
   })()
   `;

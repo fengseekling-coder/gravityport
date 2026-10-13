@@ -122,7 +122,7 @@ describe("fetchAssetPage query mapping", () => {
 });
 
 describe("batch mutations", () => {
-  it("surfaces a partial trash failure instead of reporting success", async () => {
+  it("surfaces a partial trash failure as counts, never as a full success", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => ({
       ok: true,
@@ -136,10 +136,46 @@ describe("batch mutations", () => {
       }),
     });
     try {
-      await assert.rejects(
-        () => adapterModule.moveAssetsToTrash("default", ["a", "b"]),
-        /asset is pinned/,
-      );
+      const outcome = await adapterModule.moveAssetsToTrash("default", ["a", "b"]);
+      assert.deepEqual(outcome, {
+        total: 2,
+        succeeded: 1,
+        failed: 1,
+        failedIds: ["b"],
+        firstError: "asset is pinned",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("keeps a failed chunk from masking the others and never invents confirmations", async () => {
+    const originalFetch = globalThis.fetch;
+    const bodies = [];
+    globalThis.fetch = async (input, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body.assetIds);
+      if (body.assetIds.length === 1000) {
+        // First chunk lands; second chunk dies at the transport level.
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            results: body.assetIds.map((id) => ({ id, trashed: true })),
+          }),
+        };
+      }
+      throw new Error("socket hung up");
+    };
+    try {
+      const ids = Array.from({ length: 1001 }, (_, index) => `id-${index}`);
+      const outcome = await adapterModule.moveAssetsToTrash("default", ids);
+      assert.equal(bodies.length, 2, "the selection was submitted in chunks");
+      assert.deepEqual(bodies[0].length, 1000);
+      assert.deepEqual(bodies[1], ["id-1000"]);
+      assert.equal(outcome.succeeded, 1000);
+      assert.deepEqual(outcome.failedIds, ["id-1000"]);
+      assert.equal(outcome.firstError, "socket hung up");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -152,6 +188,8 @@ describe("batch mutations", () => {
     try {
       await adapterModule.moveAssetsToTrash("default", []);
       await adapterModule.setAssetsGroup("default", [], "g");
+      await adapterModule.setAssetsFavorite("default", [], true);
+      await adapterModule.moveAssetsToStack("default", [], "st-1");
       assert.equal(called, 0);
     } finally {
       globalThis.fetch = originalFetch;

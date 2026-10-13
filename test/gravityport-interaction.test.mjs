@@ -243,4 +243,31 @@ describe("gallery window geometry", () => {
     assert.notEqual(signatureOf(base, 5), signatureOf(base, 4));
     assert.notEqual(signatureOf(base, 5, 200), signatureOf(base, 5, 210));
   });
+
+  it("keeps [3,1,2,1] and [2,3,1,1] apart — the pair the weighted checksum folded into one number", () => {
+    // Σ(i+1)·r = 15000 for BOTH rows, so the old positional checksum served
+    // the second layout's cache hit from the first one's row model.
+    const left = [3, 1, 2, 1];
+    const right = [2, 3, 1, 1];
+    assert.notEqual(
+      galleryModelSignature(left, 2, 200),
+      galleryModelSignature(right, 2, 200),
+      "a cache hit across these two arrays silently served the wrong row heights",
+    );
+    // With the key distinct, the rebuild must produce the real geometry of
+    // each layout: in two columns the tall card leads row 0 either way, but
+    // the trailing pair differs — so do the row heights and scroll extent.
+    const modelLeft = buildGalleryRowModel(left, 2, 200, 4);
+    const modelRight = buildGalleryRowModel(right, 2, 200, 4);
+    assert.deepEqual(modelLeft.rowHeight, [600, 400]);
+    assert.deepEqual(modelRight.rowHeight, [600, 200]);
+    assert.deepEqual(modelLeft.rowOffset, [0, 604, 1008]);
+    assert.deepEqual(modelRight.rowOffset, [0, 604, 808]);
+    assert.notEqual(modelLeft.totalHeight, modelRight.totalHeight);
+    // ...and the spacers of the same window follow the rebuilt model.
+    const spacersLeft = gallerySpacerHeights(modelLeft, 0, 0);
+    const spacersRight = gallerySpacerHeights(modelRight, 0, 0);
+    assert.deepEqual(spacersLeft, { top: 0, bottom: 400 });
+    assert.deepEqual(spacersRight, { top: 0, bottom: 200 });
+  });
 });

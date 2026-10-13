@@ -304,6 +304,7 @@ export default function App() {
       controller.abort()
       paginationAbortRef.current?.abort()
       selectAllAbortRef.current?.abort()
+      historySelectAbortRef.current?.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, active, debouncedQuery, sortOrder, assetType, stackId, refreshKey])
@@ -411,12 +412,30 @@ export default function App() {
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, selected])
+  // History/round switching: an in-flight response is invalidated by a newer
+  // history click, any selection takeover, or a view change — the load
+  // effect's cleanup aborts it so a late response can neither append its
+  // asset to, nor move the selection of, a view it no longer belongs to.
+  const historySelectAbortRef = useRef<AbortController | null>(null)
+  const historyIntentRef = useRef(0)
   const selectHistoryAsset = (id: string) => {
     if (!id || id === selected) return
-    fetchAsset(project, id).then(full => {
+    const requestViewKey = viewKeyRef.current
+    const requestIntent = historyIntentRef.current + 1
+    historyIntentRef.current = requestIntent
+    const requestRevision = selectionRevisionRef.current
+    historySelectAbortRef.current?.abort()
+    const controller = new AbortController()
+    historySelectAbortRef.current = controller
+    fetchAsset(project, id, controller.signal).then(full => {
+      if (controller.signal.aborted || viewKeyRef.current !== requestViewKey
+        || historyIntentRef.current !== requestIntent
+        || selectionRevisionRef.current !== requestRevision) return
       setAssets(old => old.some(item => item.id === full.id) ? old.map(item => item.id === full.id ? mergeAssetDetail(item, full) : item) : [...old, full])
       setSelected(id)
-    }).catch(error => notify(errorMessage(error)))
+    }).catch(error => {
+      if (!controller.signal.aborted) notify(errorMessage(error))
+    })
   }
   // Keep two visual states honest while the model pack installs on desktop.
   useEffect(() => {
@@ -511,7 +530,7 @@ export default function App() {
   const updateGalleryWindowRef = useRef<() => void>(() => {})
   const galleryRowModel = (): GalleryRowModel | null => {
     const grid = gridRef.current
-    if (!grid || !windowingActive) return null
+    if (!grid) return null
     const styles = getComputedStyle(grid)
     const tracks = styles.gridTemplateColumns.split(/\s+/).map(value => Number.parseFloat(value)).filter(Number.isFinite)
     const colWidth = tracks[0] || 0
@@ -527,13 +546,24 @@ export default function App() {
   const updateGalleryWindow = () => {
     const grid = gridRef.current
     if (!grid) return
-    if (!windowingActive) {
-      rowModelRef.current = null
-      setGalleryWindow(old => old === null ? old : null)
-      return
-    }
     const model = galleryRowModel()
     if (!model) return
+    // Below the mount-all threshold every row stays mounted; the model still
+    // drives the render, so cards of a mixed-ratio row all get the row's
+    // exact height instead of leaving holes under shorter media.
+    if (!windowingActive || model.rowHeight.length === 0) {
+      if (model.rowHeight.length === 0) {
+        setGalleryWindow(old => old === null ? old : null)
+        return
+      }
+      const full = { startRow: 0, endRow: model.rowHeight.length - 1 }
+      setGalleryWindow(old => (
+        old && old.model === model
+          && old.mount.startRow === full.startRow && old.mount.endRow === full.endRow
+          ? old : { model, mount: full, hydrate: full }
+      ))
+      return
+    }
     // A content-shrinking change (narrower window, a smaller loaded window)
     // leaves the browser's scrollTop beyond the new content end until the
     // spacers shrink — deriving there finds no rows and would leave a dead
@@ -749,6 +779,10 @@ export default function App() {
       const collected: string[] = []
       const seen = new Set<string>()
       let cursor: string | undefined
+      // The page cap bounds the fetch. When the loop exits with pages still
+      // outstanding, the commit below must announce a truncated selection —
+      // never a completed select-all of a result it did not see.
+      let morePages = false
       let guard = 0
       while (guard < 200) {
         guard += 1
@@ -763,14 +797,17 @@ export default function App() {
           collected.push(item.id)
         }
         setToast(`${tr("正在全选")} ${collected.length}${page.total ? ` / ${page.total}` : "…"}`)
-        if (!page.nextCursor) break
+        morePages = Boolean(page.nextCursor)
+        if (!morePages) break
         cursor = page.nextCursor
       }
       if (controller.signal.aborted || viewKeyRef.current !== requestViewKey
         || selectionRevisionRef.current !== startRevision) return
       if (collected.length) {
         applySelection(collected, replaceSelection(collected, selectionRef.current.selected))
-        setToast(tr("已选 N 项").replace("N", String(collected.length)))
+        setToast((morePages
+          ? tr("结果过大，已选前 N 项")
+          : tr("已选 N 项")).replace("N", String(collected.length)))
       }
     } catch (error) {
       if (!controller.signal.aborted) notify(errorMessage(error))
@@ -853,7 +890,13 @@ export default function App() {
         const ids = [...new Set(cutIdsRef.current)]
         cutIdsRef.current = []
         moveAssetsToStack(project, ids, stackId)
-          .then(() => { notify("已粘贴到堆叠"); refreshNavigation() })
+          .then(outcome => {
+            if (!outcome.succeeded) { notify(outcome.firstError || tr("粘贴失败")); return }
+            notify(outcome.failed
+              ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+              : tr("已粘贴到堆叠"))
+            refreshNavigation()
+          })
           .catch(error => notify(errorMessage(error)))
       }
     }
@@ -885,7 +928,12 @@ export default function App() {
       const result = await importAssetsBatch(project, items)
       const createdIds = result.results.filter(item => item.ok !== false && typeof item.id === "string").map(item => item.id as string)
       if (groupName && createdIds.length) {
-        try { await setAssetsGroup(project, createdIds, groupName) } catch (error) { notify(errorMessage(error)) }
+        try {
+          const outcome = await setAssetsGroup(project, createdIds, groupName)
+          if (outcome.failed) {
+            notify(tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+          }
+        } catch (error) { notify(errorMessage(error)) }
       }
       if (result.failed) notify("部分素材导入失败")
       else notify("导入完成")
@@ -938,13 +986,21 @@ export default function App() {
     const ids = selectionIds
     if (!ids.length) return
     try {
-      await moveAssetsToTrash(asset?.project_id ?? project, ids)
+      const outcome = await moveAssetsToTrash(asset?.project_id ?? project, ids)
       setDeleting(false)
       setPreview(false)
-      const trashed = new Set(ids)
+      if (!outcome.succeeded) {
+        notify(outcome.firstError || tr("素材未能移至回收站"))
+        return
+      }
+      // Only rows the server confirmed leave the grid; a partial chunk
+      // failure keeps the rest selectable and says so.
+      const trashed = new Set(ids.filter(id => !outcome.failedIds.includes(id)))
       setAssets(old => old.filter(a => !trashed.has(a.id)))
       applySelection([], trashed.has(selectionRef.current.selected) ? "" : selectionRef.current.selected)
-      notify("素材已移至回收站")
+      notify(outcome.failed
+        ? tr("已移至回收站 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+        : tr("素材已移至回收站"))
       refreshNavigation()
     } catch (error) { notify(errorMessage(error)) }
   }
@@ -966,7 +1022,8 @@ export default function App() {
   const assignGroup = (name: string) => {
     if (!asset) return
     setAssetsGroup(asset.project_id, [asset.id], name)
-      .then(() => {
+      .then(outcome => {
+        if (!outcome.succeeded) { notify(outcome.firstError || tr(name ? "添加分组失败" : "移除分组失败")); return }
         setAssets(old => old.map(a => a.id === asset.id ? { ...a, group: name } : a))
         notify(name ? "已添加到分组" : "已从分组移除")
         refreshNavigation()
@@ -1331,7 +1388,7 @@ export default function App() {
             onPointerDown={onGridPointerDown}
           >
             {(() => {
-              const model = windowingActive ? galleryWindow?.model ?? null : null
+              const model = galleryWindow?.model ?? null
               const win = model ? galleryWindow : null
               if (!model || !win) {
                 return assets.map((a) => (
@@ -1386,13 +1443,17 @@ export default function App() {
                 .slice(win.hydrate.startRow * model.columns, (win.hydrate.endRow + 1) * model.columns)
                 .map(a => a.id))
               const spacers = gallerySpacerHeights(model, win.mount.startRow, win.mount.endRow)
-              const card = (a: MosaAsset) => (
+              // Every card of a row gets the row's exact height (the tallest
+              // ratio): shorter media fills its row instead of leaving holes.
+              const rowHeightOf = (globalIndex: number) =>
+                model.rowHeight[Math.floor(globalIndex / model.columns)]
+              const card = (a: MosaAsset, globalIndex: number) => (
                 <button
                   key={a.id}
                   data-asset-id={a.id}
                   aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
                   className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""}`}
-                  style={{ aspectRatio: `${a.width} / ${a.height}` }}
+                  style={{ height: rowHeightOf(globalIndex) }}
                   onClick={(event) => {
                     if (a.stack) {
                       goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
@@ -1434,15 +1495,15 @@ export default function App() {
               )
               return <>
                 {spacers.top > 0 && <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: spacers.top }} aria-hidden="true" />}
-                {items.map((a) => hydratedIds.has(a.id)
-                  ? card(a)
+                {items.map((a, localIndex) => hydratedIds.has(a.id)
+                  ? card(a, win.mount.startRow * model.columns + localIndex)
                   : (
                     <div
                       key={a.id}
                       className="asset-card asset-card-virtual-placeholder"
                       data-asset-id={a.id}
                       aria-hidden="true"
-                      style={{ aspectRatio: `${a.width} / ${a.height}` }}
+                      style={{ height: rowHeightOf(win.mount.startRow * model.columns + localIndex) }}
                     />
                   ))}
                 {spacers.bottom > 0 && <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: spacers.bottom }} aria-hidden="true" />}
@@ -1641,7 +1702,9 @@ export default function App() {
                   key={v.id}
                   onClick={() => selectHistoryAsset(v.id)}
                 >
-                  {v.id === selected ? <Icon name="check" size={12} /> : <i />}
+                  {v.id === selected
+                    ? <Icon name="check" size={12} />
+                    : <i>{v.thumbnail_url ? <img src={v.thumbnail_url} alt="" loading="lazy" /> : null}</i>}
                   <span>
                     {tr("版本")} {v.version_index}
                     <small>
@@ -1688,7 +1751,7 @@ export default function App() {
                 key={relatedAsset.id}
                 onClick={() => setSelected(relatedAsset.id)}
               >
-                <i />
+                <i>{relatedAsset.thumbnail_url ? <img src={relatedAsset.thumbnail_url} alt="" loading="lazy" /> : null}</i>
                 <span>
                   {relatedAsset.name}
                   <small>
@@ -1922,17 +1985,38 @@ export default function App() {
                 } else if (i === 6) {
                   if (batch) {
                     setAssetsFavorite(asset.project_id, batchIdsAll, !asset.favorite)
-                      .then(() => { setSelectedIds([]); refreshNavigation() })
+                      .then(outcome => {
+                        if (!outcome.succeeded) { notify(outcome.firstError || tr("收藏失败")); return }
+                        setSelectedIds([])
+                        if (outcome.failed) {
+                          notify(tr("已收藏 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+                        }
+                        refreshNavigation()
+                      })
                       .catch(error => notify(errorMessage(error)))
                   } else toggleFavorite()
                 } else if (i === 7) {
                   if (!group) { notify(tr("请先在左侧选择或新建分组")); return }
                   setAssetsGroup(asset.project_id, batchIdsAll, group)
-                    .then(() => { setSelectedIds([]); notify("已添加到分组"); refreshNavigation() })
+                    .then(outcome => {
+                      if (!outcome.succeeded) { notify(outcome.firstError || tr("添加分组失败")); return }
+                      setSelectedIds([])
+                      notify(outcome.failed
+                        ? tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+                        : tr("已添加到分组"))
+                      refreshNavigation()
+                    })
                     .catch(error => notify(errorMessage(error)))
                 } else if (i === 8) {
                   setAssetsGroup(asset.project_id, batchIdsAll, "")
-                    .then(() => { setSelectedIds([]); notify("已从分组移除"); refreshNavigation() })
+                    .then(outcome => {
+                      if (!outcome.succeeded) { notify(outcome.firstError || tr("移除分组失败")); return }
+                      setSelectedIds([])
+                      notify(outcome.failed
+                        ? tr("已从分组移除 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+                        : tr("已从分组移除"))
+                      refreshNavigation()
+                    })
                     .catch(error => notify(errorMessage(error)))
                 } else if (i === 9) exportAsset()
                 else if (active === "回收站") restore()

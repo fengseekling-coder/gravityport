@@ -152,6 +152,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  align-items: stretch;
 }.asset-card {
   position: relative;
   padding: 0;
@@ -1112,6 +1113,12 @@ img.black-image {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-small);
+}.related i img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
 }.related > span {
   font-size: 8px;
   line-height: var(--space-3);

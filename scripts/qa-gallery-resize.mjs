@@ -72,9 +72,31 @@ async function seed() {
     const columns = Object.keys(templates[0]);
     const insert = database.prepare(`INSERT INTO assets (${columns.join(",")}) VALUES (${columns.map((key) => `@${key}`).join(",")})`);
     const updatePaths = database.prepare("UPDATE assets SET thumbnail_path = ?, medium_path = ?, preview_path = ? WHERE id = ?");
+    // Deterministic order for the sort-reorder stage: every asset carries its
+    // own sort_name and a created_at that advances with the index, so
+    // newest-first is always resize-359 and name-first is always resize-0 —
+    // copied template rows would otherwise tie on both and make the first
+    // card whatever the tie-break happened to pick.
+    const stamp = (index) => new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString();
+    const epoch = (index) => Date.UTC(2026, 0, 1, 0, index);
+    const retime = database.prepare("UPDATE assets SET sort_name = ?, created_at = ?, updated_at = ? WHERE id = ?");
+    const setEpoch = columns.includes("created_at_epoch")
+      ? database.prepare("UPDATE assets SET created_at_epoch = ? WHERE id = ?")
+      : null;
     database.transaction(() => {
       for (let index = 6; index < 360; index += 1) {
-        insert.run({ ...templates[index % templates.length], id: `resize-${index}`, asset: `resize-${index}.png` });
+        const template = templates[index % templates.length];
+        insert.run({
+          ...template,
+          id: `resize-${index}`, asset: `resize-${index}.png`,
+          sort_name: `resize-${String(index).padStart(3, "0")}`,
+          created_at: stamp(index), updated_at: stamp(index),
+          ...(columns.includes("created_at_epoch") ? { created_at_epoch: epoch(index) } : {}),
+        });
+      }
+      for (let index = 0; index < 6; index += 1) {
+        retime.run(`resize-${String(index).padStart(3, "0")}`, stamp(index), stamp(index), `resize-${index}`);
+        if (setEpoch) setEpoch.run(epoch(index), `resize-${index}`);
       }
       for (let index = 0; index < 360; index += 1) {
         updatePaths.run(...[store.thumbnailsDir(), store.mediumsDir(), store.previewsDir()].map((directory) => join(directory, `resize-${index}.webp`)), `resize-${index}`);
@@ -191,13 +213,16 @@ async function snapshot(label) {
       return rect.bottom > Math.max(0, bounds.top) && rect.top < Math.min(innerHeight, bounds.bottom);
     });
     const media = visible.flatMap(card => [...card.querySelectorAll('img.black-image')]).filter(img => img.naturalWidth > 0);
-    const aspectErrors = visible.map(card => {
+    // Cards stretch to fill their row: a shorter media must not leave a hole
+    // under itself, so every card in a row shares the row's height (the
+    // tallest media's aspect-derived height).
+    const rowErrors = visible.map(card => {
       const rect = card.getBoundingClientRect();
-      // The card carries its media's aspect ratio as an inline contract
-      // ("width / height"); the rendered box must honor it.
-      const ratio = String(card.style.aspectRatio || '').split('/').map(Number.parseFloat);
-      if (!(ratio[0] > 0) || !(ratio[1] > 0)) return 0;
-      return Math.abs(rect.height - rect.width * ratio[1] / ratio[0]);
+      const peers = visible.filter(other => other !== card
+        && Math.abs(other.getBoundingClientRect().top - rect.top) < 4);
+      if (!peers.length) return 0;
+      const rowHeight = Math.max(rect.height, ...peers.map(other => other.getBoundingClientRect().height));
+      return Math.abs(rowHeight - rect.height);
     });
     // The React grid uses implicit auto-placement, so same-column cards share
     // a left edge; vertical overlap inside a column is a layout defect.
@@ -210,7 +235,7 @@ async function snapshot(label) {
     for (const rect of rects) if (rects.some(other => other !== rect && other.column === rect.column && other.top > rect.top && other.top < rect.bottom - 1)) overlaps++;
     const placeholders = [...grid.querySelectorAll(':scope > .asset-card-virtual-placeholder')];
     return { width: innerWidth, loaded: Number(grid.dataset.loadedAssets || 0), tracks,
-      visible: visible.length, images: media.length, overlaps, maxAspectError: Math.max(0, ...aspectErrors),
+      visible: visible.length, images: media.length, overlaps, maxAspectError: Math.max(0, ...rowErrors),
       widthSpread: rects.length ? Math.max(...rects.map(r => r.width)) - Math.min(...rects.map(r => r.width)) : null,
       overflow: grid.scrollWidth - grid.clientWidth,
       visiblePlaceholders: placeholders.filter(card => { const rect = card.getBoundingClientRect(); return rect.bottom > Math.max(0, bounds.top) && rect.top < Math.min(innerHeight, bounds.bottom); }).length };
@@ -229,7 +254,7 @@ async function snapshot(label) {
   assert.ok(Math.max(...metrics.tracks) - Math.min(...metrics.tracks) <= 1, `${label}: unequal tracks`);
   assert.ok(metrics.widthSpread !== null && metrics.widthSpread <= 1, `${label}: unequal card widths`);
   assert.ok(metrics.images > 0, `${label}: no visible decoded images`);
-  assert.ok(metrics.maxAspectError < 1.1, `${label}: image aspect ratio changed`);
+  assert.ok(metrics.maxAspectError < 1.1, `${label}: a shorter card leaves a hole under the row height`);
   assert.equal(metrics.overlaps, 0, `${label}: cards overlap`);
   assert.equal(metrics.visiblePlaceholders, 0, `${label}: unhydrated visible cards`);
   assert.ok(metrics.overflow <= 1, `${label}: horizontal overflow`);
@@ -270,7 +295,16 @@ try {
   await snapshot("rapid-resize-return-top");
 
   // ── Mixed-ratio reorder: switching the sort rebuilds the row model for the
-  // same assets in a different order (cache-signature regression). ──
+  // same assets in a different order (cache-signature regression). The seed
+  // pins both endpoints: newest-first is resize-359, name-first is resize-0. ──
+  await evaluate("document.querySelector('.asset-grid').scrollTop = 0");
+  let firstNewest = "";
+  for (let step = 0; step < 50; step += 1) {
+    firstNewest = await evaluate("document.querySelector('.asset-grid > .asset-card')?.dataset.assetId || ''");
+    if (firstNewest === "resize-359") break;
+    await wait(100);
+  }
+  assert.equal(firstNewest, "resize-359", "newest-first must land on the latest seeded asset");
   await clickSelectOption("排序", "名称排序");
   for (let step = 0; step < 60; step += 1) {
     const loaded = await evaluate("(()=>{const grid=document.querySelector('.asset-grid');grid.scrollTop=grid.scrollHeight;grid.dispatchEvent(new Event('scroll'));return Number(grid.dataset.loadedAssets||0)})()");
@@ -278,8 +312,14 @@ try {
     await wait(100);
   }
   assert.equal(await evaluate("Number(document.querySelector('.asset-grid').dataset.loadedAssets)"), 360);
-  const firstAfterSort = await evaluate("document.querySelector('.asset-grid > .asset-card')?.dataset.assetId || ''");
-  assert.notEqual(firstAfterSort, "resize-0", "name sort must actually reorder the mixed-ratio set");
+  await evaluate("document.querySelector('.asset-grid').scrollTop = 0");
+  let firstAfterSort = "";
+  for (let step = 0; step < 50; step += 1) {
+    firstAfterSort = await evaluate("document.querySelector('.asset-grid > .asset-card')?.dataset.assetId || ''");
+    if (firstAfterSort === "resize-0") break;
+    await wait(100);
+  }
+  assert.equal(firstAfterSort, "resize-0", "name sort must land on the smallest sort_name");
   await snapshot("sorted-name-windowed");
 
   // ── Preview -> resize: the preview unmounts the grid; after closing it the

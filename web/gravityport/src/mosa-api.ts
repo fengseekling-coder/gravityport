@@ -330,30 +330,87 @@ export async function updateAssetMetadata(project: string, id: string, patch: { 
 
 type BatchResult = { id: string; ok?: boolean; error?: string }
 
-async function batchAction(project: string, action: "favorite" | "trash" | "group", assetIds: string[], extra: JsonValue = {}): Promise<BatchResult[]> {
-  const result = await requestJson<{ results?: BatchResult[]; partial?: boolean }>("/api/assets/batch", {
-    method: "POST",
-    body: { action, projectId: project, assetIds, ...extra },
-  })
-  const results = Array.isArray(result.results) ? result.results : []
-  const failure = results.find(item => item.ok === false)
-  if (failure) throw new Error(failure.error || "Some assets could not be updated")
-  return results
+/** What the server actually confirmed for a batch action. Callers must speak
+ * in these counts — a partial failure is never allowed to look like success. */
+export type BatchOutcome = {
+  total: number
+  succeeded: number
+  failed: number
+  /** Ids without a server confirmation; local state may only drop the rest. */
+  failedIds: string[]
+  firstError: string
 }
 
-export async function moveAssetsToTrash(project: string, ids: string[]) {
-  if (!ids.length) return
-  await batchAction(project, "trash", ids)
+const emptyOutcome = (total: number): BatchOutcome =>
+  ({ total, succeeded: 0, failed: 0, failedIds: [], firstError: "" })
+
+// One /api/assets/batch request caps at 1000 ids (the server answers 413
+// ASSET_BATCH_TOO_LARGE above that) and /api/asset-stacks/move at 2000, so
+// cross-page select-alls are submitted in sequential chunks.
+const BATCH_CHUNK_SIZE = 1000
+const STACK_MOVE_CHUNK_SIZE = 2000
+
+function failureMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
 }
 
-export async function setAssetsGroup(project: string, ids: string[], group: string) {
-  if (!ids.length) return
-  await batchAction(project, "group", ids, { group })
+async function runBatchAction(project: string, action: "favorite" | "trash" | "group", assetIds: string[], extra: JsonValue = {}): Promise<BatchOutcome> {
+  const ids = [...new Set(assetIds)]
+  if (!ids.length) return emptyOutcome(0)
+  const failedIds = new Set<string>()
+  let firstError = ""
+  // Every chunk is attempted: a failed chunk never masks the others, and the
+  // counts only grow by rows the server confirmed — never by assumption.
+  for (let offset = 0; offset < ids.length; offset += BATCH_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + BATCH_CHUNK_SIZE)
+    try {
+      const result = await requestJson<{ results?: BatchResult[] }>("/api/assets/batch", {
+        method: "POST",
+        body: { action, projectId: project, assetIds: chunk, ...extra },
+      })
+      const results = Array.isArray(result.results) ? result.results : []
+      const confirmed = new Set<string>()
+      for (const item of results) {
+        if (typeof item?.id !== "string") continue
+        confirmed.add(item.id)
+        if (item.ok === false) {
+          failedIds.add(item.id)
+          if (!firstError) firstError = item.error || "Some assets could not be updated"
+        }
+      }
+      // Rows the response stayed silent about were not confirmed either.
+      for (const id of chunk) {
+        if (!confirmed.has(id) && !failedIds.has(id)) {
+          failedIds.add(id)
+          if (!firstError) firstError = "Some assets could not be updated"
+        }
+      }
+    } catch (error) {
+      const message = failureMessage(error)
+      for (const id of chunk) failedIds.add(id)
+      if (!firstError) firstError = message
+    }
+  }
+  return {
+    total: ids.length,
+    succeeded: ids.length - failedIds.size,
+    failed: failedIds.size,
+    failedIds: [...failedIds],
+    firstError,
+  }
 }
 
-export async function setAssetsFavorite(project: string, ids: string[], favorite: boolean) {
-  if (!ids.length) return
-  await batchAction(project, "favorite", ids, { favorite })
+export async function moveAssetsToTrash(project: string, ids: string[]): Promise<BatchOutcome> {
+  return runBatchAction(project, "trash", ids)
+}
+
+export async function setAssetsGroup(project: string, ids: string[], group: string): Promise<BatchOutcome> {
+  return runBatchAction(project, "group", ids, { group })
+}
+
+export async function setAssetsFavorite(project: string, ids: string[], favorite: boolean): Promise<BatchOutcome> {
+  return runBatchAction(project, "favorite", ids, { favorite })
 }
 
 export async function restoreAsset(project: string, id: string) {
@@ -367,10 +424,32 @@ export async function createGroup(project: string, name: string) {
   })
 }
 
-export async function moveAssetsToStack(project: string, assetIds: string[], targetStackId: string | null) {
-  return requestJson<JsonValue>("/api/asset-stacks/move", {
-    method: "POST", body: { project, assetIds, targetStackId },
-  })
+export async function moveAssetsToStack(project: string, assetIds: string[], targetStackId: string | null): Promise<BatchOutcome> {
+  const ids = [...new Set(assetIds)]
+  if (!ids.length) return emptyOutcome(0)
+  const failedIds = new Set<string>()
+  let firstError = ""
+  // Same discipline as the asset batch: sequential chunks at the server's
+  // per-request cap, each attempted, nothing reported that was not confirmed.
+  for (let offset = 0; offset < ids.length; offset += STACK_MOVE_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + STACK_MOVE_CHUNK_SIZE)
+    try {
+      await requestJson<JsonValue>("/api/asset-stacks/move", {
+        method: "POST", body: { project, assetIds: chunk, targetStackId },
+      })
+    } catch (error) {
+      const message = failureMessage(error)
+      for (const id of chunk) failedIds.add(id)
+      if (!firstError) firstError = message
+    }
+  }
+  return {
+    total: ids.length,
+    succeeded: ids.length - failedIds.size,
+    failed: failedIds.size,
+    failedIds: [...failedIds],
+    firstError,
+  }
 }
 
 /** Mutation headers for callers that must stream a raw body (import staging). */

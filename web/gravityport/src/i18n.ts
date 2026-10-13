@@ -98,6 +98,13 @@ const english: Record<string, string> = {
   "项目切换失败": "Project switch failed", "项目切换失败，已恢复原项目": "Project switch failed. The previous project was restored.",
   "生成记录": "Generation history", "轮次": "Round",
   "正在全选": "Selecting all", "已选 N 项": "N selected",
+  "结果过大，已选前 N 项": "Result too large — selected the first N",
+  "素材未能移至回收站": "Assets could not be moved to Trash",
+  "已移至回收站 X 项，Y 项失败": "Moved X to Trash, Y failed",
+  "收藏失败": "Favorite failed", "已收藏 X 项，Y 项失败": "Favorited X, Y failed",
+  "添加分组失败": "Adding to group failed", "已加入分组 X 项，Y 项失败": "Added X to group, Y failed",
+  "移除分组失败": "Removing from group failed", "已从分组移除 X 项，Y 项失败": "Removed X from group, Y failed",
+  "粘贴失败": "Paste failed", "已粘贴 X 项，Y 项失败": "Pasted X, Y failed",
 }
 
 export function translate(text: string, language: Language): string {
