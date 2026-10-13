@@ -140,6 +140,7 @@ export default function App() {
   const appRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const assetsRef = useRef<MosaAsset[]>([])
+  const viewKeyRef = useRef("")
   const cutIdsRef = useRef<string[]>([])
   const [systemDark, setSystemDark] = useState(false)
   useEffect(() => {
@@ -172,18 +173,43 @@ export default function App() {
     // arriving over SSE) must not collapse its loaded window or move the
     // selection under the user. One refresh is queued for when it closes.
     if (preview) { pendingViewerReloadRef.current = true; controller.abort(); return }
+    // A same-view refresh (SSE churn while previews render) must re-fetch the
+    // WHOLE loaded window: collapsing back to the first page would throw away
+    // the user's scrolled pages every time a preview lands.
+    const viewKey = JSON.stringify([project, active, debouncedQuery, sortOrder, assetType, stackId])
+    const windowRefresh = viewKeyRef.current === viewKey && assetsRef.current.length > GALLERY_PAGE_SIZE
+    viewKeyRef.current = viewKey
     setLoading(true)
     setLoadError("")
-    fetchAssetPage(buildQuery(), { signal: controller.signal })
-      .then(page => {
+    const run = async () => {
+      try {
+        let page = await fetchAssetPage(buildQuery(), { signal: controller.signal })
+        let collected = page.assets
+        if (windowRefresh) {
+          const target = Math.max(assetsRef.current.length, GALLERY_PAGE_SIZE)
+          let cursor: string | undefined = page.nextCursor ?? undefined
+          let guard = 0
+          while (page.nextCursor && collected.length < target && guard < 30) {
+            guard += 1
+            page = await fetchAssetPage(buildQuery(cursor), { cursor, signal: controller.signal })
+            const seen = new Set(collected.map(item => item.id))
+            collected = [...collected, ...page.assets.filter(item => !seen.has(item.id))]
+            if (!page.nextCursor) break
+            cursor = page.nextCursor
+          }
+        }
         if (controller.signal.aborted) return
-        setAssets(page.assets)
+        setAssets(collected)
         setNextCursor(page.nextCursor)
         setPageTotal(page.total)
-        setSelected(old => old && page.assets.some(a => a.id === old) ? old : page.assets[0]?.id || "")
-      })
-      .catch(error => { if (!controller.signal.aborted) setLoadError(String(error?.message || error)) })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+        setSelected(old => old && collected.some(a => a.id === old) ? old : collected[0]?.id || "")
+      } catch (error) {
+        if (!controller.signal.aborted) setLoadError(errorMessage(error))
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
+    }
+    void run()
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, active, debouncedQuery, sortOrder, assetType, stackId, refreshKey])
