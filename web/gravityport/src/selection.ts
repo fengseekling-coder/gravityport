@@ -33,3 +33,21 @@ export function toggleModifierSelection(
 export function replaceSelection(selectedIds: string[], selected: string): string {
   return selectedIds.includes(selected) ? selected : selectedIds[0] ?? ""
 }
+
+/** Same-view refresh (pagination / SSE window reload): keep only the selection
+ * entries still present in the freshly loaded view. Selections pointing at
+ * assets that left the view are dropped instead of lurking as hidden batch
+ * targets; `changed` lets the caller skip state updates when nothing moved. */
+export function pruneSelection(
+  selectedIds: string[],
+  selected: string,
+  isValid: (id: string) => boolean,
+): { selectedIds: string[]; selected: string; changed: boolean } {
+  const nextIds = selectedIds.filter(isValid)
+  const nextSelected = isValid(selected) ? selected : ""
+  return {
+    selectedIds: nextIds,
+    selected: nextSelected,
+    changed: nextIds.length !== selectedIds.length || nextSelected !== selected,
+  }
+}

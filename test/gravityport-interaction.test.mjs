@@ -83,6 +83,40 @@ describe("selection unity", () => {
   });
 });
 
+describe("selection pruning on same-view refresh", () => {
+  let pruneSelection;
+  before(() => { ({ pruneSelection } = modules.selection); });
+
+  it("keeps entries that are still visible in the refreshed view", () => {
+    const valid = (id) => id === "a" || id === "c";
+    const pruned = pruneSelection(["a", "b", "c"], "a", valid);
+    assert.deepEqual(pruned.selectedIds, ["a", "c"]);
+    assert.equal(pruned.selected, "a");
+    assert.equal(pruned.changed, true);
+  });
+
+  it("drops the inspector target when its asset left the view", () => {
+    const pruned = pruneSelection(["a"], "gone", (id) => id === "a");
+    assert.deepEqual(pruned.selectedIds, ["a"]);
+    assert.equal(pruned.selected, "", "the caller re-lands the inspector on a visible card");
+    assert.equal(pruned.changed, true);
+  });
+
+  it("reports no change when every entry survived", () => {
+    const pruned = pruneSelection(["a", "b"], "b", () => true);
+    assert.deepEqual(pruned.selectedIds, ["a", "b"]);
+    assert.equal(pruned.selected, "b");
+    assert.equal(pruned.changed, false);
+  });
+
+  it("handles an empty selection", () => {
+    const pruned = pruneSelection([], "", () => false);
+    assert.deepEqual(pruned.selectedIds, []);
+    assert.equal(pruned.selected, "");
+    assert.equal(pruned.changed, false);
+  });
+});
+
 describe("keyboard edit-surface guard", () => {
   let isEditableTarget;
   before(() => { ({ isEditableTarget } = modules.keyboard); });
@@ -149,8 +183,8 @@ describe("prompt draft binding", () => {
 });
 
 describe("gallery window geometry", () => {
-  let buildGalleryRowModel, rowsIntersecting, locateGalleryWindow, gallerySpacerHeights;
-  before(() => { ({ buildGalleryRowModel, rowsIntersecting, locateGalleryWindow, gallerySpacerHeights } = modules.galleryWindow); });
+  let buildGalleryRowModel, rowsIntersecting, locateGalleryWindow, gallerySpacerHeights, galleryModelSignature;
+  before(() => { ({ buildGalleryRowModel, rowsIntersecting, locateGalleryWindow, gallerySpacerHeights, galleryModelSignature } = modules.galleryWindow); });
 
   it("sizes rows by the tallest ratio and accumulates offsets with the gap", () => {
     const model = buildGalleryRowModel([1, 1, 1, 1, 1, 1], 2, 100, 10);
@@ -193,5 +227,20 @@ describe("gallery window geometry", () => {
     const extent = spacers.top + model.gap + windowContent + model.gap + spacers.bottom;
     assert.equal(extent, model.totalHeight);
     assert.deepEqual(gallerySpacerHeights(model, 0, model.rowHeight.length - 1), { top: 0, bottom: 0 });
+  });
+
+  it("cache signature reacts to reorder and ratio changes a plain sum would miss", () => {
+    const signatureOf = (ratios, columns = 5, colWidth = 200) => galleryModelSignature(ratios, columns, colWidth);
+    const base = [1, 2, 0.5, 1.5];
+    assert.equal(signatureOf([...base]), signatureOf([...base]), "identical ratios keep the cache");
+    // Same multiset, swapped order: a plain sum sees no difference, the
+    // positional checksum must.
+    assert.notEqual(signatureOf(base), signatureOf([2, 1, 0.5, 1.5]), "swap changes the signature");
+    assert.notEqual(signatureOf(base), signatureOf([0.5, 2, 1, 1.5]), "rotation changes the signature");
+    // A single ratio change with an equal total (above the 1/1000 rounding).
+    assert.notEqual(signatureOf([1, 1, 1, 1]), signatureOf([1, 1, 1, 1.02]));
+    // Column count and column width are part of the key.
+    assert.notEqual(signatureOf(base, 5), signatureOf(base, 4));
+    assert.notEqual(signatureOf(base, 5, 200), signatureOf(base, 5, 210));
   });
 });

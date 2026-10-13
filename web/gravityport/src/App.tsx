@@ -5,11 +5,11 @@ import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
 import { translate, type Language } from "./i18n"
 import { desktopAPI } from "./desktop"
-import { logicalSelection, replaceSelection, toggleModifierSelection } from "./selection"
+import { logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import {
-  buildGalleryRowModel, gallerySpacerHeights, locateGalleryWindow, rowsIntersecting,
+  buildGalleryRowModel, galleryModelSignature, gallerySpacerHeights, locateGalleryWindow,
   type GalleryRowModel, type GalleryRowRange,
 } from "./gallery-window"
 import {
@@ -156,12 +156,23 @@ export default function App() {
   const [promptEdit, setPromptEdit] = useState<PromptEditTarget & { draft: string } | null>(null)
   const [savingPromptId, setSavingPromptId] = useState<string | null>(null)
   // Gallery windowing: which rows stay mounted and which hydrate real cards.
-  const [galleryWindow, setGalleryWindow] = useState<{ mount: GalleryRowRange; hydrate: GalleryRowRange } | null>(null)
+  // The row model rides in the state so a pure geometry change (window
+  // resized, same row range) still re-renders the spacers with the new pixel
+  // heights — range equality alone would leave the DOM at the old geometry.
+  const [galleryWindow, setGalleryWindow] = useState<{
+    model: GalleryRowModel; mount: GalleryRowRange; hydrate: GalleryRowRange;
+  } | null>(null)
   const appRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const assetsRef = useRef<MosaAsset[]>([])
   const viewKeyRef = useRef("")
+  // The view identity the current selection was made in (same key as the
+  // load effect's viewKey); a mismatch resets the selection.
+  const selectionViewKeyRef = useRef("")
+  // One-shot inspection target ("show in library") that survives the
+  // selection reset of the view change it causes.
+  const pendingInspectRef = useRef("")
   const cutIdsRef = useRef<string[]>([])
   const [systemDark, setSystemDark] = useState(false)
   useEffect(() => {
@@ -195,6 +206,14 @@ export default function App() {
   // loaded, plus the view snapshot to restore when a later switch fails.
   const lastGoodProjectRef = useRef(project)
   const projectRevertRef = useRef<(() => void) | null>(null)
+  const projectRevertKeyRef = useRef("")
+  // In-flight background work that a view change invalidates. The load
+  // effect's cleanup aborts all of them, so a stale response can never land.
+  const paginationAbortRef = useRef<AbortController | null>(null)
+  const selectAllAbortRef = useRef<AbortController | null>(null)
+  // Bumped on every committed gallery (re)load; pagination compares it so a
+  // window that reloaded under an in-flight page discards that page.
+  const loadGenerationRef = useRef(0)
   useEffect(() => {
     const controller = new AbortController()
     // The viewer is a modal surface: background churn (derivative completions
@@ -207,6 +226,19 @@ export default function App() {
     const viewKey = JSON.stringify([project, active, debouncedQuery, sortOrder, assetType, stackId])
     const windowRefresh = viewKeyRef.current === viewKey && assetsRef.current.length > GALLERY_PAGE_SIZE
     viewKeyRef.current = viewKey
+    // Selection is bound to the view it was made in. A project, search,
+    // filter, sort or stack change resets it here — before anything loads —
+    // so Delete/favorite/group can never reach assets that the current view
+    // no longer shows. Pagination and same-view refreshes keep the entries
+    // that are still visible (pruned after the fetch below). A pending
+    // explicit inspection ("show in library") survives the reset once.
+    if (selectionViewKeyRef.current !== viewKey) {
+      selectionViewKeyRef.current = viewKey
+      const preserve = pendingInspectRef.current
+      pendingInspectRef.current = ""
+      applySelection([], preserve)
+      anchorIndexRef.current = -1
+    }
     setLoading(true)
     setLoadError("")
     const run = async () => {
@@ -227,10 +259,32 @@ export default function App() {
           }
         }
         if (controller.signal.aborted) return
+        // Cross-page selections outrun the loaded window, so only ids the
+        // PREVIOUS window contained can be re-judged against the fresh one:
+        // a member that left the view is dropped, off-page members are kept
+        // (no information about them changed).
+        const previousIds = new Set(assetsRef.current.map(item => item.id))
         setAssets(collected)
         setNextCursor(page.nextCursor)
         setPageTotal(page.total)
-        setSelected(old => old && collected.some(a => a.id === old) ? old : collected[0]?.id || "")
+        loadGenerationRef.current += 1
+        // Keep only the selection entries the fresh view still contains; the
+        // inspector re-lands on a member of the surviving selection, or —
+        // when the view change emptied it — on the view's first card, the
+        // design's implicit single selection.
+        const validIds = new Set(collected.map(item => item.id))
+        const kept = selectionRef.current
+        const pruned = pruneSelection(
+          kept.selectedIds,
+          kept.selected,
+          id => validIds.has(id) || !previousIds.has(id),
+        )
+        if (pruned.changed || (!pruned.selectedIds.length && !pruned.selected)) {
+          const fallback = pruned.selected
+            || (pruned.selectedIds.length ? pruned.selectedIds[0] : collected[0]?.id)
+            || ""
+          applySelection(pruned.selectedIds, fallback)
+        }
         lastGoodProjectRef.current = project
       } catch (error) {
         if (controller.signal.aborted) return
@@ -246,7 +300,11 @@ export default function App() {
       }
     }
     void run()
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      paginationAbortRef.current?.abort()
+      selectAllAbortRef.current?.abort()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, active, debouncedQuery, sortOrder, assetType, stackId, refreshKey])
   useEffect(() => {
@@ -255,8 +313,18 @@ export default function App() {
     refreshNavigation()
   }, [preview])
   const refreshNavigation = () => setRefreshKey(value => value + 1)
+  const lastMetaProjectRef = useRef("")
   useEffect(() => {
     const controller = new AbortController()
+    // Project-scoped metadata is dropped the moment the project changes —
+    // before any request is issued. If a fetch then fails or is slow, the UI
+    // shows empty counters and no library path, never the previous project's.
+    if (lastMetaProjectRef.current !== project) {
+      lastMetaProjectRef.current = project
+      setNavigation(null)
+      setLibrary(null)
+      setVisual(null)
+    }
     fetchProjects(controller.signal).then(list => {
       if (!controller.signal.aborted) setProjects(list)
     }).catch(() => {})
@@ -376,10 +444,22 @@ export default function App() {
   const loadingMoreRef = useRef(false)
   const fetchNextPage = async (): Promise<MosaAsset[] | null> => {
     if (!nextCursor || loadingMoreRef.current || loading) return null
+    // The request is pinned to the view it was issued for: a project, search,
+    // filter or sort change (or a same-view window reload) aborts it outright
+    // and the post-await checks discard anything that still slipped through,
+    // so a late page can never merge into — or move the cursor of — a view it
+    // no longer belongs to.
+    const requestViewKey = viewKeyRef.current
+    const requestGeneration = loadGenerationRef.current
+    const requestCursor = nextCursor
+    const controller = new AbortController()
+    paginationAbortRef.current = controller
     loadingMoreRef.current = true
     setLoadingMore(true)
     try {
-      const page = await fetchAssetPage(buildQuery(nextCursor), { cursor: nextCursor })
+      const page = await fetchAssetPage(buildQuery(requestCursor), { cursor: requestCursor, signal: controller.signal })
+      if (controller.signal.aborted || viewKeyRef.current !== requestViewKey
+        || loadGenerationRef.current !== requestGeneration) return null
       // Compute outside setState: the updater runs at render time, long after
       // the viewer needs the merged list to step across the boundary.
       const seen = new Set(assetsRef.current.map(item => item.id))
@@ -387,7 +467,10 @@ export default function App() {
       setAssets(merged)
       setNextCursor(page.nextCursor)
       return merged
-    } catch (error) { notify(errorMessage(error)); return null }
+    } catch (error) {
+      if (!controller.signal.aborted) notify(errorMessage(error))
+      return null
+    }
     finally {
       loadingMoreRef.current = false
       setLoadingMore(false)
@@ -434,9 +517,10 @@ export default function App() {
     const colWidth = tracks[0] || 0
     if (!(colWidth > 0)) return null
     const gap = Number.parseFloat(styles.rowGap) || 0
-    const signature = `${assets.length}|${columns}|${Math.round(colWidth)}|${Math.round(assets.reduce((sum, a) => sum + a.width * a.height, 0))}`
+    const ratios = assets.map(a => a.height / a.width)
+    const signature = galleryModelSignature(ratios, columns, colWidth)
     if (rowModelRef.current?.key === signature) return rowModelRef.current.model
-    const model = buildGalleryRowModel(assets.map(a => a.height / a.width), columns, colWidth, gap)
+    const model = buildGalleryRowModel(ratios, columns, colWidth, gap)
     rowModelRef.current = { key: signature, model }
     return model
   }
@@ -450,21 +534,29 @@ export default function App() {
     }
     const model = galleryRowModel()
     if (!model) return
+    // A content-shrinking change (narrower window, a smaller loaded window)
+    // leaves the browser's scrollTop beyond the new content end until the
+    // spacers shrink — deriving there finds no rows and would leave a dead
+    // window of placeholders. Derive for the clamped position the browser is
+    // about to land on instead.
+    const maxScroll = Math.max(0, model.totalHeight - grid.clientHeight)
+    const scrollTop = Math.min(grid.scrollTop, maxScroll)
     const mount = locateGalleryWindow(
-      model, grid.scrollTop, grid.clientHeight, GALLERY_WINDOW_WARMUP_PX,
+      model, scrollTop, grid.clientHeight, GALLERY_WINDOW_WARMUP_PX,
       Math.max(1, Math.floor(GALLERY_MAX_MOUNTED_CARDS / model.columns)),
     )
     const hydrate = mount
       ? locateGalleryWindow(
-          model, grid.scrollTop, grid.clientHeight, GALLERY_HYDRATE_WARMUP_PX,
+          model, scrollTop, grid.clientHeight, GALLERY_HYDRATE_WARMUP_PX,
           Math.max(1, Math.floor(GALLERY_MAX_HYDRATED_CARDS / model.columns)),
         ) ?? mount
       : null
     if (!mount || !hydrate) return
     setGalleryWindow(old => (
-      old && old.mount.startRow === mount.startRow && old.mount.endRow === mount.endRow
+      old && old.model === model
+        && old.mount.startRow === mount.startRow && old.mount.endRow === mount.endRow
         && old.hydrate.startRow === hydrate.startRow && old.hydrate.endRow === hydrate.endRow
-        ? old : { mount, hydrate }
+        ? old : { model, mount, hydrate }
     ))
   }
   updateGalleryWindowRef.current = updateGalleryWindow
@@ -473,13 +565,16 @@ export default function App() {
     // preview toggles remount the grid, so the window must be re-derived for
     // the fresh (top-of-gallery) scroll position.
   }, [assets, columns, windowingActive, preview])
+  // The observer is bound to the grid element, which remounts when the
+  // preview opens/closes: re-run the binding on every preview toggle or the
+  // fresh grid keeps no size observer and window updates go blind.
   useEffect(() => {
     const grid = gridRef.current
     if (!grid || typeof ResizeObserver === "undefined") return
     const observer = new ResizeObserver(() => updateGalleryWindowRef.current())
     observer.observe(grid)
     return () => observer.disconnect()
-  }, [])
+  }, [preview])
   // The window must follow the scroll position even after pagination is done
   // (nextCursor exhausted): a gallery-wide jump otherwise lands the viewport
   // on nothing but spacer rows.
@@ -500,6 +595,11 @@ export default function App() {
       setLoadError(tr("项目切换失败"))
       return
     }
+    // The restored view is the SAME view that was interrupted: prime the
+    // view keys so the reload treats it as a same-view refresh and keeps the
+    // snapshot's selection instead of resetting it.
+    viewKeyRef.current = projectRevertKeyRef.current
+    selectionViewKeyRef.current = projectRevertKeyRef.current
     revert()
     notify("项目切换失败，已恢复原项目")
   }
@@ -513,6 +613,10 @@ export default function App() {
         project, navHistory, stackId, stackName, active, query, debouncedQuery,
         sortOrder, assetType, selected, selectedIds, preview,
       }
+      projectRevertKeyRef.current = JSON.stringify([
+        snapshot.project, snapshot.active, snapshot.debouncedQuery,
+        snapshot.sortOrder, snapshot.assetType, snapshot.stackId,
+      ])
       projectRevertRef.current = () => {
         setNavHistory(snapshot.navHistory)
         setStackId(snapshot.stackId); setStackName(snapshot.stackName)
@@ -591,15 +695,19 @@ export default function App() {
   // ── multi-selection ──
   const anchorIndexRef = useRef<number>(-1)
   // Mirror of the current selection so consecutive same-tick interactions
-  // (rapid ctrl-clicks) compose instead of reading stale render state.
+  // (rapid ctrl-clicks) compose instead of reading stale render state. The
+  // revision counter rises on every commit; long-running selection work
+  // (cross-page select-all) compares it to detect a user taking over.
   const selectionRef = useRef({ selectedIds: [] as string[], selected: "" })
+  const selectionRevisionRef = useRef(0)
   selectionRef.current = { selectedIds, selected }
   const applySelection = (nextIds: string[], nextSelected: string) => {
+    selectionRevisionRef.current += 1
     selectionRef.current = { selectedIds: nextIds, selected: nextSelected }
     setSelectedIds(nextIds)
     setSelected(nextSelected)
   }
-  const clearSelection = () => setSelectedIds([])
+  const clearSelection = () => applySelection([], selectionRef.current.selected)
   const selectCard = (id: string, event: React.MouseEvent) => {
     const index = assets.findIndex(a => a.id === id)
     if (event.shiftKey && anchorIndexRef.current >= 0) {
@@ -621,6 +729,55 @@ export default function App() {
   const selectAllLoaded = () => {
     const ids = assets.filter(a => !a.stack).map(a => a.id)
     applySelection(ids, replaceSelection(ids, selectionRef.current.selected))
+  }
+  // Cross-page select-all: when the view still has unloaded pages, the whole
+  // filtered result is fetched (250 per page, like the previous gallery) and
+  // selected in one commit. Any selection change, view change or Escape
+  // cancels it mid-flight; when everything is already loaded it reduces to
+  // the synchronous path above.
+  const selectAllInFlightRef = useRef(false)
+  const selectAllAcrossPages = async () => {
+    if (selectAllInFlightRef.current || loading) return
+    if (!nextCursor) { selectAllLoaded(); return }
+    const requestViewKey = viewKeyRef.current
+    const startRevision = selectionRevisionRef.current
+    const controller = new AbortController()
+    selectAllAbortRef.current = controller
+    selectAllInFlightRef.current = true
+    setToast(tr("正在全选"))
+    try {
+      const collected: string[] = []
+      const seen = new Set<string>()
+      let cursor: string | undefined
+      let guard = 0
+      while (guard < 200) {
+        guard += 1
+        const page = await fetchAssetPage(buildQuery(cursor), {
+          cursor, limit: 250, includeTotal: !cursor, signal: controller.signal,
+        })
+        if (controller.signal.aborted || viewKeyRef.current !== requestViewKey
+          || selectionRevisionRef.current !== startRevision) return
+        for (const item of page.assets) {
+          if (item.stack || seen.has(item.id)) continue
+          seen.add(item.id)
+          collected.push(item.id)
+        }
+        setToast(`${tr("正在全选")} ${collected.length}${page.total ? ` / ${page.total}` : "…"}`)
+        if (!page.nextCursor) break
+        cursor = page.nextCursor
+      }
+      if (controller.signal.aborted || viewKeyRef.current !== requestViewKey
+        || selectionRevisionRef.current !== startRevision) return
+      if (collected.length) {
+        applySelection(collected, replaceSelection(collected, selectionRef.current.selected))
+        setToast(tr("已选 N 项").replace("N", String(collected.length)))
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) notify(errorMessage(error))
+    } finally {
+      if (selectAllAbortRef.current === controller) selectAllAbortRef.current = null
+      selectAllInFlightRef.current = false
+    }
   }
   // Marquee selection: pointer drag across the grid background selects every
   // plain card whose box intersects the rubber band.
@@ -663,6 +820,7 @@ export default function App() {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        selectAllAbortRef.current?.abort()
         if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         else if (settings) setSettings(false)
@@ -675,12 +833,12 @@ export default function App() {
       if (isEditableTarget(e.target)) return
       if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
         e.preventDefault()
-        selectAllLoaded()
+        void selectAllAcrossPages()
         return
       }
       if (
         (e.key === "Delete" || e.key === "Backspace") &&
-        !settings && !deleting && assets.length > 0 && active !== "回收站"
+        !settings && !deleting && selectionIds.length > 0 && active !== "回收站"
       )
         setDeleting(true)
       if ((e.metaKey || e.ctrlKey) && (e.key === "x" || e.key === "X") && selectionIds.length) {
@@ -774,6 +932,9 @@ export default function App() {
     } catch (error) { notify(errorMessage(error)) }
   }
   const remove = async () => {
+    // The selection is bound to the current view (reset on view change,
+    // pruned on same-view refresh), so it is a legitimate batch target even
+    // when it spans pages that are not loaded into the grid.
     const ids = selectionIds
     if (!ids.length) return
     try {
@@ -860,7 +1021,12 @@ export default function App() {
     setQuery("")
     setDebouncedQuery("")
     setActive("所有素材")
-    if (asset) setSelected(asset.id)
+    if (asset) {
+      // The filter reset is a view change, which resets the selection; hand
+      // the target through so the inspector still lands on this asset.
+      pendingInspectRef.current = asset.id
+      applySelection([], asset.id)
+    }
   }
   const addToActiveGroup = () => {
     if (!asset) return
@@ -1165,8 +1331,8 @@ export default function App() {
             onPointerDown={onGridPointerDown}
           >
             {(() => {
-              const model = windowingActive ? rowModelRef.current?.model ?? null : null
-              const win = windowingActive && model ? galleryWindow : null
+              const model = windowingActive ? galleryWindow?.model ?? null : null
+              const win = model ? galleryWindow : null
               if (!model || !win) {
                 return assets.map((a) => (
                   <button

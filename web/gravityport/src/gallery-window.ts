@@ -18,6 +18,22 @@ export type GalleryRowModel = {
   gap: number
 }
 
+/** Cache key for a built row model. Every input the geometry depends on is
+ * folded in: asset count, column count, column width, and a positional
+ * checksum over the ratios — a plain sum would miss two assets swapping
+ * places or a single ratio changing while the total stays equal. */
+export function galleryModelSignature(
+  ratios: number[],
+  columns: number,
+  colWidth: number,
+): string {
+  let checksum = 0
+  for (let index = 0; index < ratios.length; index += 1) {
+    checksum += (index + 1) * Math.round(ratios[index] * 1000)
+  }
+  return `${ratios.length}|${columns}|${Math.round(colWidth)}|${checksum}`
+}
+
 export function buildGalleryRowModel(
   heightRatios: number[],
   columns: number,

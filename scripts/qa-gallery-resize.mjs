@@ -63,7 +63,9 @@ async function seed() {
     database.prepare("DELETE FROM derivative_jobs").run();
     const templates = database.prepare("SELECT * FROM assets ORDER BY id").all();
     const previews = await Promise.all(templates.map((item) => sharp(item.original_path).webp({ lossless: true }).toBuffer()));
-    for (let index = 0; index < 300; index += 1) {
+    // 360 assets: past the React gallery's mount-all threshold (320), so the
+    // windowed DOM (placeholders + spacers) is what every snapshot measures.
+    for (let index = 0; index < 360; index += 1) {
       await Promise.all([store.thumbnailsDir(), store.mediumsDir(), store.previewsDir()].map((directory) =>
         writeFile(join(directory, `resize-${index}.webp`), previews[index % templates.length])));
     }
@@ -71,10 +73,10 @@ async function seed() {
     const insert = database.prepare(`INSERT INTO assets (${columns.join(",")}) VALUES (${columns.map((key) => `@${key}`).join(",")})`);
     const updatePaths = database.prepare("UPDATE assets SET thumbnail_path = ?, medium_path = ?, preview_path = ? WHERE id = ?");
     database.transaction(() => {
-      for (let index = 6; index < 300; index += 1) {
+      for (let index = 6; index < 360; index += 1) {
         insert.run({ ...templates[index % templates.length], id: `resize-${index}`, asset: `resize-${index}.png` });
       }
-      for (let index = 0; index < 300; index += 1) {
+      for (let index = 0; index < 360; index += 1) {
         updatePaths.run(...[store.thumbnailsDir(), store.mediumsDir(), store.previewsDir()].map((directory) => join(directory, `resize-${index}.webp`)), `resize-${index}`);
       }
     })();
@@ -142,6 +144,27 @@ async function resizeWindow(width) {
     `process.getBuiltinModule('module').createRequire(${JSON.stringify(join(root, "package.json"))})('electron').BrowserWindow.getAllWindows()[0].setSize(${width}, 780)`,
   });
   assert.ok(!response.exceptionDetails, response.exceptionDetails?.exception?.description);
+}
+
+async function clickSelectOption(label, optionText) {
+  const opened = await evaluate(`(() => {
+    const trigger = document.querySelector('.toolbar-select[aria-label="' + ${JSON.stringify(label)} + '"]');
+    if (!trigger) return false;
+    trigger.click();
+    return true;
+  })()`);
+  assert.ok(opened, `toolbar select ${label} found`);
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await evaluate(`(() => {
+      const option = [...document.querySelectorAll('.toolbar-select-menu [role="option"]')]
+        .find((node) => node.textContent.trim() === ${JSON.stringify(optionText)});
+      if (!option) return false;
+      option.click();
+      return true;
+    })()`)) return;
+    await wait(100);
+  }
+  throw new Error(`option ${optionText} not found in ${label}`);
 }
 
 async function evaluate(expression) {
@@ -232,10 +255,10 @@ try {
   await client.send("Emulation.clearDeviceMetricsOverride");
   for (let step = 0; step < 60; step += 1) {
     const loaded = await evaluate("(()=>{const grid=document.querySelector('.asset-grid');grid.scrollTop=grid.scrollHeight;grid.dispatchEvent(new Event('scroll'));return Number(grid.dataset.loadedAssets||0)})()");
-    if (loaded === 300) break;
+    if (loaded === 360) break;
     await wait(100);
   }
-  assert.equal(await evaluate("Number(document.querySelector('.asset-grid').dataset.loadedAssets)"), 300);
+  assert.equal(await evaluate("Number(document.querySelector('.asset-grid').dataset.loadedAssets)"), 360);
   for (const width of [1512, 1052, 960, 1512]) {
     await resizeWindow(width);
     await snapshot(`scrolled-${width}`);
@@ -245,6 +268,43 @@ try {
     await resizeWindow(width);
   }
   await snapshot("rapid-resize-return-top");
+
+  // ── Mixed-ratio reorder: switching the sort rebuilds the row model for the
+  // same assets in a different order (cache-signature regression). ──
+  await clickSelectOption("排序", "名称排序");
+  for (let step = 0; step < 60; step += 1) {
+    const loaded = await evaluate("(()=>{const grid=document.querySelector('.asset-grid');grid.scrollTop=grid.scrollHeight;grid.dispatchEvent(new Event('scroll'));return Number(grid.dataset.loadedAssets||0)})()");
+    if (loaded === 360) break;
+    await wait(100);
+  }
+  assert.equal(await evaluate("Number(document.querySelector('.asset-grid').dataset.loadedAssets)"), 360);
+  const firstAfterSort = await evaluate("document.querySelector('.asset-grid > .asset-card')?.dataset.assetId || ''");
+  assert.notEqual(firstAfterSort, "resize-0", "name sort must actually reorder the mixed-ratio set");
+  await snapshot("sorted-name-windowed");
+
+  // ── Preview -> resize: the preview unmounts the grid; after closing it the
+  // size observer must be re-bound, or these resizes go unobserved and the
+  // windowed DOM drifts out of the viewport. ──
+  await evaluate("(()=>{const card=document.querySelector('.asset-grid > .asset-card:not(.asset-card-virtual-placeholder)');card.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));return true})()");
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await evaluate("Boolean(document.querySelector('img.viewer-image') || document.querySelector('.viewer-stage'))")) break;
+    await wait(100);
+  }
+  assert.ok(await evaluate("Boolean(document.querySelector('.workspace.preview-open'))"), "preview opened");
+  await resizeWindow(1052);
+  await resizeWindow(1400);
+  await wait(400);
+  await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await evaluate("!document.querySelector('.workspace.preview-open') && document.querySelectorAll('.asset-grid > .asset-card').length > 0")) break;
+    await wait(100);
+  }
+  await resizeWindow(960);
+  await snapshot("after-preview-close-960");
+  await resizeWindow(1512);
+  await snapshot("after-preview-close-1512");
+  await resizeWindow(1280);
+  await snapshot("after-preview-close-1280");
   result.status = "PASS";
 } catch (error) {
   result.status = "FAIL";

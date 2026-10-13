@@ -97,6 +97,7 @@ const english: Record<string, string> = {
   "项目": "Project", "编辑": "Edit", "编辑提示词": "Edit prompt",
   "项目切换失败": "Project switch failed", "项目切换失败，已恢复原项目": "Project switch failed. The previous project was restored.",
   "生成记录": "Generation history", "轮次": "Round",
+  "正在全选": "Selecting all", "已选 N 项": "N selected",
 }
 
 export function translate(text: string, language: Language): string {
