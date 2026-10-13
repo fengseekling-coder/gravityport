@@ -485,17 +485,20 @@ export default function App() {
       const inField = e.target instanceof HTMLElement
         && (e.target.isContentEditable || e.target.closest("input, textarea, select"))
       if (inField) return
+      const pasteLog = (window as unknown as { __mosaPasteLog?: string[] }).__mosaPasteLog ??= []
       if ((e.metaKey || e.ctrlKey) && (e.key === "x" || e.key === "X") && asset) {
         e.preventDefault()
         cutIdsRef.current = [asset.id]
+        pasteLog.push(`cut:${asset.id.slice(0, 8)}`)
         notify("已剪切")
       }
-      if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V") && cutIdsRef.current.length) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
+        pasteLog.push(`v:${cutIdsRef.current.length}@${stackId ? stackId.slice(0, 8) : "none"}`)
+        if (!cutIdsRef.current.length) return
         e.preventDefault()
-        if (!stackId) { notify("粘贴需要在堆叠中进行"); return }
+        if (!stackId) { pasteLog.push("no-stack"); notify("粘贴需要在堆叠中进行"); return }
         const ids = [...new Set(cutIdsRef.current)]
         cutIdsRef.current = []
-        const pasteLog = (window as unknown as { __mosaPasteLog?: string[] }).__mosaPasteLog ??= []
         pasteLog.push(`send:${ids.length}->${stackId.slice(0, 8)}`)
         moveAssetsToStack(project, ids, stackId)
           .then(() => { pasteLog.push("ok"); notify("已粘贴到堆叠"); refreshNavigation() })
