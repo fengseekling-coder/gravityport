@@ -220,6 +220,15 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
   }
 }
 
+/** The detail endpoints (single GET, PATCH, favorite) answer with the raw asset
+ * row and carry no stack-cover annotation; merging such a detail over a grid
+ * row must keep the gallery page's node annotation, or the inspected stack
+ * silently loses its badge in the grid. */
+export function mergeAssetDetail(previous: MosaAsset | undefined, full: MosaAsset): MosaAsset {
+  if (!previous?.stack || full.stack) return full
+  return { ...full, stack: previous.stack }
+}
+
 export async function fetchProjects(signal?: AbortSignal): Promise<string[]> {
   const data = await requestJson<{ projects?: unknown }>(`/api/projects`, { signal })
   return asStringArray(data?.projects)

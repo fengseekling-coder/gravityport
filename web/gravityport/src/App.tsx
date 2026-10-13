@@ -17,7 +17,7 @@ import {
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
   toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, restoreAsset, setAssetsGroup,
   createGroup, moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
-  mosaMutationHeaders, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
+  mosaMutationHeaders, mergeAssetDetail, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
   type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent,
 } from "./mosa-api"
 
@@ -398,7 +398,7 @@ export default function App() {
     if (!selected) return
     const controller = new AbortController()
     fetchAsset(project, selected, controller.signal).then(full => {
-      if (!controller.signal.aborted) setAssets(old => old.map(item => item.id === full.id ? full : item))
+      if (!controller.signal.aborted) setAssets(old => old.map(item => item.id === full.id ? mergeAssetDetail(item, full) : item))
     }).catch(() => {})
     setVersions(null)
     setGenerations(null)
@@ -414,7 +414,7 @@ export default function App() {
   const selectHistoryAsset = (id: string) => {
     if (!id || id === selected) return
     fetchAsset(project, id).then(full => {
-      setAssets(old => old.some(item => item.id === full.id) ? old.map(item => item.id === full.id ? full : item) : [...old, full])
+      setAssets(old => old.some(item => item.id === full.id) ? old.map(item => item.id === full.id ? mergeAssetDetail(item, full) : item) : [...old, full])
       setSelected(id)
     }).catch(error => notify(errorMessage(error)))
   }
@@ -927,7 +927,7 @@ export default function App() {
     if (!asset) return
     try {
       const updated = await toggleAssetFavorite(asset.project_id, asset.id)
-      setAssets(old => old.map(a => a.id === updated.id ? updated : a))
+      setAssets(old => old.map(a => a.id === updated.id ? mergeAssetDetail(a, updated) : a))
       refreshNavigation()
     } catch (error) { notify(errorMessage(error)) }
   }
@@ -1130,7 +1130,7 @@ export default function App() {
     if (next === current.prompt) { setPromptEdit(null); return }
     setSavingPromptId(target.assetId)
     updateAssetMetadata(target.project, target.assetId, { prompt: next }).then(updated => {
-      setAssets(old => old.map(a => a.id === updated.id ? updated : a))
+      setAssets(old => old.map(a => a.id === updated.id ? mergeAssetDetail(a, updated) : a))
       setPromptEdit(old => old && old.assetId === target.assetId && old.project === target.project ? null : old)
       notify("已保存")
     }).catch(error => notify(errorMessage(error))).finally(() => {
@@ -1517,7 +1517,7 @@ export default function App() {
               if (!tag) { setTagError("请输入标签名称"); return }
               if (currentTags.some(existing => existing.toLocaleLowerCase() === tag.toLocaleLowerCase())) { setTagError("标签已存在"); return }
               updateAssetMetadata(asset.project_id, asset.id, { tags: [...currentTags, tag] }).then(updated => {
-                setAssets(old => old.map(a => a.id === updated.id ? updated : a))
+                setAssets(old => old.map(a => a.id === updated.id ? mergeAssetDetail(a, updated) : a))
               }).catch(error => notify(errorMessage(error)))
               setExpandedTags(true)
               setTagDraft("")

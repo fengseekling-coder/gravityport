@@ -42,15 +42,21 @@ const HELPERS = `
       loading: Boolean(document.querySelector(".empty-state[role='status']")),
       serverCounts: JSON.stringify(window.__serverCounts || []),
       serverTruth: await (async () => {
-        // Live server truth at timeout time: which stacks exist with how many
-        // members, and how the current view's page annotates them.
+        // Live server truth at timeout time: how the GALLERY view (the exact
+        // contract the app renders) sees the assets right now, next to the
+        // raw listing.
         try {
-          const page = await api('/api/assets?project=default&limit=250');
-          const listing = (page.assets || []).map((asset) => ({
+          const gallery = await api('/api/assets?project=default&limit=250&view=gallery');
+          const rows = (gallery.assets || []).map((asset) => ({
             id: String(asset.id || '').slice(-10),
-            stack: asset.stack ? { id: String(asset.stack.id || '').slice(-8), count: asset.stack.count } : null,
+            stack: asset.stack ? { count: asset.stack.count, name: String(asset.stack.name || '').slice(0, 12) } : null,
           }));
-          return JSON.stringify(listing.slice(0, 8));
+          const dom = Array.from(document.querySelectorAll('.asset-card')).map((card) => ({
+            id: String(card.dataset.assetId || '').slice(-10),
+            mark: Boolean(card.querySelector('.stack-mark')),
+            selected: card.classList.contains('asset-selected'),
+          }));
+          return JSON.stringify({ gallery: rows.slice(0, 8), dom: dom.slice(0, 8) });
         } catch (error) {
           return 'probe-failed: ' + String(error?.message || error).slice(0, 120);
         }
