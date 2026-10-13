@@ -40,7 +40,6 @@ const HELPERS = `
       confirmOpen: Boolean(document.querySelector('[role="alertdialog"]')),
       openMenu: document.querySelector('.context-menu')?.textContent?.trim().slice(0, 120) || '',
       loading: Boolean(document.querySelector(".empty-state[role='status']")),
-      pasteLog: window.__pasteLog || '',
       serverCounts: JSON.stringify(window.__serverCounts || []),
       token: (sessionStorage.getItem('mosa.client-token') ? 'present' : 'missing'),
       rendererErrors: rendererErrors.slice(0, 3),
@@ -318,29 +317,15 @@ export function createStackUiFlowSource() {
   }, 'stack B card at the root');
   stackBRow.click();
   await waitFor(() => settled() && cardCount() === 2, 'stack B interior');
-  // The paste handler arms per-render; dispatch and re-dispatch until the
-  // member actually lands (toast or count growth confirms it). Immediate toast
-  // probes after every dispatch keep the failure diagnosable.
-  let memberCountAfterPaste = 0;
-  const pasteLog = [];
-  const pasteDeadline = Date.now() + 12000;
-  while (Date.now() < pasteDeadline) {
-    for (const target of [window, document]) {
-      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
-      await sleep(150);
-      pasteLog.push((target === window ? 'win:' : 'doc:') + (document.querySelector('.toast')?.textContent || 'toast-empty'));
-    }
-    if ((document.querySelector('.toast')?.textContent || '').includes('已粘贴到堆叠')) { pasteLog.push('toast-hit'); break; }
-    if (cardCount() === 3) { pasteLog.push('count-hit'); break; }
-    await sleep(400);
+  // Dispatch ⌘V until the member actually lands; the card count (never a
+  // promise) is the only success signal, so slow CI machines cannot pass
+  // vacuously while the move request is still in flight.
+  const pasteDeadline = Date.now() + 20000;
+  while (Date.now() < pasteDeadline && cardCount() !== 3) {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
+    await sleep(600);
   }
-  await waitFor(async () => {
-    try {
-      const serverNow = await api('/api/assets?project=default&limit=250');
-      window.__serverCounts = serverNow.assets.filter((a) => a.stack).map((a) => [a.stack.id.slice(-6), a.stack.count]).concat([["plain", serverNow.assets.filter((a) => !a.stack).length]]);
-    } catch { window.__serverCounts = 'fetch-failed'; }
-    return settled() && cardCount() === 3;
-  }, 'paste moved the cut member into stack B');
+  await waitFor(() => settled() && cardCount() === 3, 'paste moved the cut member into stack B');
   memberCountAfterPaste = cardCount();
 
   document.querySelector('.toolbar-left button').click();
