@@ -49,7 +49,9 @@ function scaleSource() {
       const scroll = grid ? { top: Math.round(grid.scrollTop), sh: grid.scrollHeight, ch: grid.clientHeight } : null;
       throw new Error('Timed out waiting for ' + label + ' | cards=' + document.querySelectorAll('.asset-card').length
         + ' | scroll=' + JSON.stringify(scroll)
-        + ' | observerFired=' + (window.__observerFired || 0));
+        + ' | observerFired=' + (window.__observerFired || 0)
+        + ' | cursor=' + String(window.__mosaNextCursor).slice(0, 16)
+        + ' | busy=' + String(window.__mosaBusy));
     }
     const cardCount = () => document.querySelectorAll('.asset-card').length;
     async function scrollToMore() {

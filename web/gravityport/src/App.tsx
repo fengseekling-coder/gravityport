@@ -281,10 +281,13 @@ export default function App() {
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, selected])
-  // E2E hook: the driver's diagnostics read the current selection.
+  // E2E hooks: the driver's diagnostics read the pagination/selection state.
   useEffect(() => {
-    (window as unknown as { __mosaSelectedId?: string }).__mosaSelectedId = selected ?? ""
-  }, [selected])
+    const hooks = window as unknown as { __mosaSelectedId?: string; __mosaNextCursor?: string | null; __mosaBusy?: boolean }
+    hooks.__mosaSelectedId = selected ?? ""
+    hooks.__mosaNextCursor = nextCursor
+    hooks.__mosaBusy = loading || loadingMore
+  }, [selected, nextCursor, loading, loadingMore])
   const selectHistoryAsset = (id: string) => {
     if (!id || id === selected) return
     fetchAsset(project, id).then(full => {
@@ -492,9 +495,11 @@ export default function App() {
         if (!stackId) { notify("粘贴需要在堆叠中进行"); return }
         const ids = [...new Set(cutIdsRef.current)]
         cutIdsRef.current = []
+        const pasteLog = (window as unknown as { __mosaPasteLog?: string[] }).__mosaPasteLog ??= []
+        pasteLog.push(`send:${ids.length}->${stackId.slice(0, 8)}`)
         moveAssetsToStack(project, ids, stackId)
-          .then(() => { notify("已粘贴到堆叠"); refreshNavigation() })
-          .catch(error => notify(errorMessage(error)))
+          .then(() => { pasteLog.push("ok"); notify("已粘贴到堆叠"); refreshNavigation() })
+          .catch(error => { pasteLog.push(`err:${errorMessage(error).slice(0, 60)}`); notify(errorMessage(error)) })
       }
     }
     window.addEventListener("keydown", key)
