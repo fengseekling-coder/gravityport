@@ -139,6 +139,7 @@ export default function App() {
   const [promptDraft, setPromptDraft] = useState("")
   const appRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
   const assetsRef = useRef<MosaAsset[]>([])
   const viewKeyRef = useRef("")
   const cutIdsRef = useRef<string[]>([])
@@ -366,6 +367,19 @@ export default function App() {
     }, { rootMargin: "600px 0px" })
     observer.observe(node)
     return () => observer.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextCursor, loadingMore, loading])
+  // The grid is its own scroll container; a scroll-position check makes
+  // pagination deterministic even where IntersectionObserver timing is not.
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid || !nextCursor) return
+    const onScroll = () => {
+      if (grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 400) void loadMore()
+    }
+    grid.addEventListener("scroll", onScroll, { passive: true })
+    onScroll()
+    return () => grid.removeEventListener("scroll", onScroll)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextCursor, loadingMore, loading])
   // Project switching is a transaction: everything project-scoped reloads
@@ -978,6 +992,7 @@ export default function App() {
           <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} onNavigate={navigateAsset} onContextMenu={(x, y) => setMenu({ x, y })} message={toast} />
         ) : (
           <div
+            ref={gridRef}
             className="asset-grid"
             style={{
               gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
