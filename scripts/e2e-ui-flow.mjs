@@ -297,10 +297,14 @@ export function createStackUiFlowSource() {
     return cards.length >= 2 ? cards : null;
   }, 'two collapsed stack cards');
   const rootCountAfterStacks = cardCount();
-  const stackACard = stackCards.find((card) => !card.textContent.includes(String(stackB.stack?.count))) || stackCards[0];
+  // A collapsed node's data-asset-id is its COVER asset id — the only
+  // reliable way to tell same-sized stacks apart.
+  const nodeFor = (memberIds) => waitFor(() => Array.from(document.querySelectorAll('.asset-card'))
+    .filter((card) => card.querySelector('.stack-mark'))
+    .find((card) => memberIds.includes(card.dataset.assetId)) || null, 'stack node for given members');
+  const stackACard = await nodeFor([ids[0], ids[1]]);
 
   // Enter stack A: the toolbar gains the stack title and the two members show.
-  const coverASrc = stackACard.querySelector('img')?.getAttribute('src') || '';
   stackACard.click();
   await waitFor(() => settled() && cardCount() === 2 && !document.querySelector('.asset-card .stack-mark'),
     'stack A interior (members, not nodes)');
@@ -315,10 +319,7 @@ export function createStackUiFlowSource() {
     && document.querySelectorAll('.asset-card .stack-mark').length === 2, 'back at the root gallery');
   // The other stack: unnamed stacks share an identical label, so tell them
   // apart by their cover thumbnails.
-  const stackBRow = await waitFor(() => {
-    const cards = Array.from(document.querySelectorAll('.asset-card')).filter((card) => card.querySelector('.stack-mark'));
-    return cards.find((card) => (card.querySelector('img')?.getAttribute('src') || '') !== coverASrc) || null;
-  }, 'stack B card at the root');
+  const stackBRow = await nodeFor([ids[2], ids[3]]);
   stackBRow.click();
   await waitFor(() => settled() && cardCount() === 2 && !document.querySelector('.asset-card .stack-mark'),
     'stack B interior (members, not nodes)');
