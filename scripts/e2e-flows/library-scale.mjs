@@ -54,7 +54,8 @@ function scaleSource() {
         + ' | busy=' + String(window.__mosaBusy)
         + ' | toast=' + (document.querySelector('.toast')?.textContent || '')
         + ' | page2=' + await fetch('/api/assets?project=default&limit=100&sort=newest&cursor=' + encodeURIComponent(window.__mosaNextCursor || ''))
-          .then((r) => r.json()).then((d) => (d.assets || []).length + ':' + (d.page?.nextCursor ? 'more' : 'end')).catch((e) => String(e));
+          .then((r) => r.json()).then((d) => (d.assets || []).length + ':' + (d.page?.nextCursor ? 'more' : 'end')).catch((e) => String(e)));
+
     }
     const cardCount = () => document.querySelectorAll('.asset-card').length;
     async function scrollToMore() {
