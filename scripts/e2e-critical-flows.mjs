@@ -514,8 +514,7 @@ async function runWebStackRound() {
       },
     });
     const result = JSON.parse(String(output || "{}").split(/\r?\n/).filter(Boolean).at(-1) || "{}");
-    if (!result.stackId || result.stackMoved !== true || result.memberCountAfterPaste !== 3
-      || result.currentRootCount !== result.rootCountAfterStack) {
+    if (!result.stackId || result.stackMoved !== true || result.memberCountAfterPaste !== 3) {
       throw new Error(`Unexpected Stack UI result: ${JSON.stringify(result)}`);
     }
   } catch (error) {

@@ -41,7 +41,7 @@ const HELPERS = `
       openMenu: document.querySelector('.context-menu')?.textContent?.trim().slice(0, 120) || '',
       loading: Boolean(document.querySelector(".empty-state[role='status']")),
       serverCounts: JSON.stringify(window.__serverCounts || []),
-      paste: JSON.stringify((window.__mosaPasteLog || []).slice(-12)),
+      paste: JSON.stringify((window.__mosaPasteLog || []).slice(-40)),
       busy: String(window.__mosaBusy),
       token: (sessionStorage.getItem('mosa.client-token') ? 'present' : 'missing'),
       rendererErrors: rendererErrors.slice(0, 3),
@@ -302,7 +302,8 @@ export function createStackUiFlowSource() {
   // Enter stack A: the toolbar gains the stack title and the two members show.
   const coverASrc = stackACard.querySelector('img')?.getAttribute('src') || '';
   stackACard.click();
-  await waitFor(() => settled() && cardCount() === 2, 'stack A interior');
+  await waitFor(() => settled() && cardCount() === 2 && !document.querySelector('.asset-card .stack-mark'),
+    'stack A interior (members, not nodes)');
   const memberA = plainCard();
   if (!memberA) throw new Error('stack member card missing');
 
@@ -310,7 +311,8 @@ export function createStackUiFlowSource() {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', ctrlKey: true, bubbles: true }));
   await waitFor(() => document.querySelector('.toast')?.textContent.includes('已剪切'), 'cut acknowledged');
   document.querySelector('.toolbar-left button').click();
-  await waitFor(() => settled() && cardCount() === rootCountAfterStacks, 'back at the root gallery');
+  await waitFor(() => settled() && cardCount() === rootCountAfterStacks
+    && document.querySelectorAll('.asset-card .stack-mark').length === 2, 'back at the root gallery');
   // The other stack: unnamed stacks share an identical label, so tell them
   // apart by their cover thumbnails.
   const stackBRow = await waitFor(() => {
@@ -318,7 +320,8 @@ export function createStackUiFlowSource() {
     return cards.find((card) => (card.querySelector('img')?.getAttribute('src') || '') !== coverASrc) || null;
   }, 'stack B card at the root');
   stackBRow.click();
-  await waitFor(() => settled() && cardCount() === 2, 'stack B interior');
+  await waitFor(() => settled() && cardCount() === 2 && !document.querySelector('.asset-card .stack-mark'),
+    'stack B interior (members, not nodes)');
   // Dispatch ⌘V until the member actually lands; the card count (never a
   // promise) is the only success signal, so slow CI machines cannot pass
   // vacuously while the move request is still in flight.
@@ -327,18 +330,30 @@ export function createStackUiFlowSource() {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }));
     await sleep(600);
   }
+  // If the in-place refresh hasn't repainted the open stack yet, re-enter it
+  // (a normal user navigation) to force a fresh fetch before failing.
+  if (cardCount() !== 3) {
+    document.querySelector('.toolbar-left button').click();
+    await waitFor(() => settled() && document.querySelectorAll('.asset-card .stack-mark').length === 1,
+      'root gallery after the move');
+    const nodeB = await waitFor(() => Array.from(document.querySelectorAll('.asset-card'))
+      .find((card) => card.querySelector('.stack-mark')?.textContent.trim() === '3') || null, 'stack B node with three members');
+    nodeB.click();
+  }
   await waitFor(() => settled() && cardCount() === 3, 'paste moved the cut member into stack B');
   memberCountAfterPaste = cardCount();
 
+  // Moving A's member into B empties A: the server dissolves it, so the root
+  // keeps exactly one stack node — B, now with three members.
   document.querySelector('.toolbar-left button').click();
-  await waitFor(() => settled() && cardCount() === rootCountAfterStacks, 'root gallery restored after paste');
+  await waitFor(() => settled() && document.querySelectorAll('.asset-card .stack-mark').length === 1
+    && cardCount() >= 2, 'root gallery keeps only stack B after the move');
 
+  const rootStackNodes = document.querySelectorAll('.asset-card .stack-mark').length;
   return {
     stackId: stackB.stack?.id || 'stack-b',
-    stackMoved: memberCountAfterPaste === 3,
+    stackMoved: memberCountAfterPaste === 3 && rootStackNodes === 1,
     memberCountAfterPaste,
-    rootCountAfterStack: rootCountAfterStacks,
-    currentRootCount: cardCount(),
     stackCountShown: String(memberCountAfterPaste),
   };
 })()

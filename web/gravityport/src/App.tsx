@@ -283,11 +283,12 @@ export default function App() {
   }, [project, selected])
   // E2E hooks: the driver's diagnostics read the pagination/selection state.
   useEffect(() => {
-    const hooks = window as unknown as { __mosaSelectedId?: string; __mosaNextCursor?: string | null; __mosaBusy?: boolean }
+    const hooks = window as unknown as { __mosaSelectedId?: string; __mosaNextCursor?: string | null; __mosaBusy?: boolean; __mosaStackId?: string }
     hooks.__mosaSelectedId = selected ?? ""
     hooks.__mosaNextCursor = nextCursor
     hooks.__mosaBusy = loading || loadingMore
-  }, [selected, nextCursor, loading, loadingMore])
+    hooks.__mosaStackId = stackId
+  }, [selected, nextCursor, loading, loadingMore, stackId])
   const selectHistoryAsset = (id: string) => {
     if (!id || id === selected) return
     fetchAsset(project, id).then(full => {
