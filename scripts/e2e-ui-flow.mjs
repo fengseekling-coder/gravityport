@@ -41,7 +41,7 @@ const HELPERS = `
       openMenu: document.querySelector('.context-menu')?.textContent?.trim().slice(0, 120) || '',
       loading: Boolean(document.querySelector(".empty-state[role='status']")),
       serverCounts: JSON.stringify(window.__serverCounts || []),
-      paste: JSON.stringify((window.__mosaPasteLog || []).slice(-6)),
+      paste: JSON.stringify((window.__mosaPasteLog || []).slice(-12)),
       busy: String(window.__mosaBusy),
       token: (sessionStorage.getItem('mosa.client-token') ? 'present' : 'missing'),
       rendererErrors: rendererErrors.slice(0, 3),
