@@ -91,7 +91,7 @@ type NavSnapshot = {
 }
 
 export default function App() {
-  // macOS already draws native traffic lights with titleBarStyle=hiddenInset;
+  // macOS already draws the native window buttons with titleBarStyle=hiddenInset;
   // Windows also owns its native caption buttons. Only the browser mockup
   // needs the decorative circles from the original GravityPort design.
   const desktop = desktopAPI()
@@ -1368,7 +1368,6 @@ export default function App() {
     >
       <aside className="sidebar">
         <div className="brandbar">
-          {!desktop && <div className="traffic" aria-hidden="true"><i /><i /><i /></div>}
           <strong>GravityPort</strong>
         </div>
         {projects.length > 1 && (
