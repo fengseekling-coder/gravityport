@@ -125,6 +125,16 @@ function extensionPageSender(sender) {
   return String(sender.url || "").startsWith(`chrome-extension://${chrome.runtime.id}/`);
 }
 
+// DEV-ONLY(128): remove before release. The options page is declared with
+// open_in_tab, so its messages always carry sender.tab and never pass
+// extensionPageSender(); the dev panel routes accept the extension's own
+// options page in a tab instead.
+function devRawOptionsPageSender(sender) {
+  if (!sender || sender.id !== chrome.runtime.id) return false;
+  if (Number(sender.frameId ?? 0) !== 0) return false;
+  return String(sender.url || "").startsWith(`chrome-extension://${chrome.runtime.id}/options.html`);
+}
+
 function pageSenderContext(sender) {
   if (!sender || sender.id !== chrome.runtime.id || !sender.tab) return null;
   if (Number(sender.frameId ?? 0) !== 0) return null;
@@ -145,16 +155,18 @@ function senderAllowedForMessage(message, sender) {
   if (message?.type === "mosa.getSettings") {
     return extensionPageSender(sender) || Boolean(pageSenderContext(sender));
   }
+  // DEV-ONLY(128): remove before release (the three dev panel routes; they
+  // come from the options page, which has no provider page context).
+  if (["mosa.devRawDiagnostics.stats", "mosa.devRawDiagnostics.exportPage", "mosa.devRawDiagnostics.clear"].includes(message?.type)) {
+    return devRawOptionsPageSender(sender);
+  }
   const context = pageSenderContext(sender);
   if (!context) return false;
   if (message.type === "mosa.fetchImage") return context.provider === "chatgpt";
   if (message.type === "mosa.reportSessionTitle") return context.provider === "chatgpt";
   if (message.type === "mosa.reportConversationTurns") return context.provider === "chatgpt";
-  // DEV-ONLY(128): remove before release (the four dev raw diagnostics routes).
+  // DEV-ONLY(128): remove before release (records come from the ChatGPT tab).
   if (message.type === "mosa.devRawDiagnostics.record") return context.provider === "chatgpt";
-  if (message.type === "mosa.devRawDiagnostics.stats") return extensionPageSender(sender);
-  if (message.type === "mosa.devRawDiagnostics.exportPage") return extensionPageSender(sender);
-  if (message.type === "mosa.devRawDiagnostics.clear") return extensionPageSender(sender);
   if (message.type === "mosa.probeFlowMedia") return context.provider === "flow";
   if (["mosa.beginVideoTransfer", "mosa.videoTransferChunk", "mosa.commitVideoTransfer", "mosa.abortVideoTransfer"].includes(message.type)) {
     return context.provider === "flow" || context.provider === "google-ai-studio";
