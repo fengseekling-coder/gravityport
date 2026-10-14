@@ -95,7 +95,7 @@ const english: Record<string, string> = {
   "已在桌面端打开存储位置": "Opened the storage location on your desktop",
   "请在桌面版中修改素材库位置": "Library location can be changed in the desktop app.",
   "版本": "Version", "开发版": "Development build",
-  "已是最新版本": "You're up to date", "发现新版本": "New version available",
+  "发现新版本": "New version available",
   "网页版请访问官网获取最新版本": "For the web app, get the latest version from our website.",
   // app-lifecycle: version consistency check
   "界面与本地服务版本不一致。请退出旧版 GravityPort 后重新打开当前版本。": "Interface version does not match local service. Please quit the old GravityPort and open the current version again.",

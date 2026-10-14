@@ -3,11 +3,9 @@
 // the three conditions are met (version consistency, first asset page, SSE open),
 // and that the main process writes the update-ready file to the staging area.
 //
-// The reverse assertion is verified by the companion unit-test approach: the
-// reportRendererReady call is made conditional on a ref, so omitting it (e.g.
-// commenting out the call) causes the e2e to timeout waiting for the file.
 import { createServer } from "node:http";
 import { readFile, mkdir, rm } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
@@ -27,7 +25,7 @@ export async function run(ctx) {
 
   // The update-ready file must live under <userDataDir>/updates/macos so the
   // main process accepts it (macos-updater.mjs: resolveMacosUpdateReadyFile).
-  const stagingRoot = join(ctx.userDataDir, "updates", "macos");
+  const stagingRoot = join(realpathSync(ctx.userDataDir), "updates", "macos");
   const updateReadyFile = join(stagingRoot, "gravityport-update-ready.json");
 
   await mkdir(stagingRoot, { recursive: true });

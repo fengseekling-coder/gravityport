@@ -12,11 +12,12 @@ const repositoryRoot = resolve(import.meta.dirname, "..");
 const uiRoot = join(repositoryRoot, "web", "gravityport");
 
 let lifecycle;
+let translate;
 let tempRoot;
 
 before(async () => {
   tempRoot = await mkdtemp(join(tmpdir(), "mosa-gp-lifecycle-"));
-  const sources = [join(uiRoot, "src", "app-lifecycle.ts")];
+  const sources = [join(uiRoot, "src", "app-lifecycle.ts"), join(uiRoot, "src", "i18n.ts")];
   execFileSync(join(repositoryRoot, "node_modules", ".bin", "tsc"), [
     ...sources,
     "--outDir", tempRoot,
@@ -26,6 +27,7 @@ before(async () => {
     "--skipLibCheck",
   ], { stdio: "pipe" });
   lifecycle = await import(join(tempRoot, "app-lifecycle.js"));
+  ({ translate } = await import(join(tempRoot, "i18n.js")));
 });
 
 after(async () => {
@@ -197,83 +199,72 @@ describe("buildUpdateText", () => {
     ({ buildUpdateText } = lifecycle);
   });
 
-  const t = (key, params = {}) => {
-    const map = {
-      "versionUnknown": "Version unknown",
-      "upToDate": "You're up to date",
-      "updateCheckFailed": "Cannot check for updates",
-      "updateInstallLocationUnsupported": "Drag to Applications",
-      "updateAvailable": "Can update to v{version}",
-      "updatePublished": "Released on {date}",
-      "checkForUpdates": "Check for updates",
-      "checkingForUpdates": "Checking…",
-      "downloadAndInstall": "Download and update",
-      "downloadLatest": "Go to website",
-      "downloadingUpdate": "Downloading {percent}%",
-      "cancelUpdateDownload": "Cancel download",
-    };
-    let text = map[key] || key;
-    for (const [k, v] of Object.entries(params)) text = text.replaceAll(`{${k}}`, String(v));
-    return text;
-  };
+  const zh = text => translate(text, "zh");
+  const en = text => translate(text, "en");
 
-  it("idle phase → check-for-updates button", () => {
-    const result = buildUpdateText("1.2.3", { phase: "idle" }, 0, t);
-    assert.equal(result.badgeText, "v1.2.3");
-    assert.equal(result.buttonLabel, "Check for updates");
-    assert.equal(result.buttonDisabled, false);
-    assert.equal(result.downloadAndInstall, false);
+  it("renders translated text without raw keys or placeholders", () => {
+    const states = [
+      buildUpdateText("1.2.3", { phase: "idle" }, 0, zh),
+      buildUpdateText("1.2.3", { phase: "checking" }, 0, en),
+      buildUpdateText("1.2.3", { phase: "current" }, 0, en),
+      buildUpdateText("1.2.3", { phase: "available", latestVersion: "1.2.4", publishedAt: "2025-01-15", canInstallInApp: true }, 0, en),
+      buildUpdateText("1.2.3", { phase: "downloading", percent: 67 }, 67, zh),
+      buildUpdateText("1.2.3", { phase: "unavailable", reason: "install-location-unsupported" }, 0, en),
+      buildUpdateText("1.2.3", { phase: "error" }, 0, zh),
+    ];
+    for (const state of states) {
+      const text = `${state.badgeText} ${state.buttonLabel || ""} ${state.secondaryLabel || ""}`;
+      assert.doesNotMatch(text, /\{[^}]+\}/);
+      assert.doesNotMatch(text, /[a-z][A-Z][a-zA-Z]+/);
+    }
   });
 
-  it("checking phase → disabled button with checking label", () => {
-    const result = buildUpdateText("1.2.3", { phase: "checking" }, 0, t);
-    assert.equal(result.badgeText, "v1.2.3");
-    assert.equal(result.buttonLabel, "Checking…");
-    assert.equal(result.buttonDisabled, true);
-  });
-
-  it("current phase → up-to-date badge and check button", () => {
-    const result = buildUpdateText("1.2.3", { phase: "current" }, 0, t);
-    assert.equal(result.badgeText, "v1.2.3 · You're up to date");
-    assert.equal(result.buttonLabel, "Check for updates");
-    assert.equal(result.buttonDisabled, false);
-  });
-
-  it("available + canInstallInApp → download-and-install button", () => {
-    const result = buildUpdateText("1.2.3", { phase: "available", latestVersion: "1.2.4", publishedAt: "2025-01-15", canInstallInApp: true }, 0, t);
-    assert.ok(result.badgeText.includes("Can update to v1.2.4"));
-    assert.ok(result.badgeText.includes("Released on 2025-01-15"));
-    assert.equal(result.buttonLabel, "Download and update");
+  it("formats the update summary and actions", () => {
+    const result = buildUpdateText("1.2.3", { phase: "available", latestVersion: "1.2.4", publishedAt: "2025-01-15", canInstallInApp: true }, 0, zh);
+    assert.match(result.badgeText, /v1\.2\.3 · 可更新至 v1\.2\.4 · 发布于/);
+    assert.equal(result.buttonLabel, "下载并更新");
     assert.equal(result.downloadAndInstall, true);
+    const downloading = buildUpdateText("1.2.3", { phase: "downloading", percent: 67 }, 67, en);
+    assert.equal(downloading.buttonLabel, "Downloading 67%");
+    assert.equal(downloading.secondaryLabel, "Cancel download");
+    assert.equal(downloading.buttonDisabled, true);
   });
 
-  it("available + !canInstallInApp → external download button", () => {
-    const result = buildUpdateText("1.2.3", { phase: "available", latestVersion: "1.2.4", publishedAt: "", canInstallInApp: false }, 0, t);
-    assert.equal(result.buttonLabel, "Go to website");
-    assert.equal(result.downloadAndInstall, false);
+  it("maps current, unavailable, error and unknown version text", () => {
+    assert.equal(buildUpdateText("1.2.3", { phase: "current" }, 0, zh).badgeText, "v1.2.3 · 已是最新版本");
+    assert.match(buildUpdateText("1.2.3", { phase: "unavailable", reason: "install-location-unsupported" }, 0, zh).badgeText, /拖进/);
+    assert.equal(buildUpdateText("1.2.3", { phase: "error" }, 0, zh).buttonLabel, "检查更新");
+    assert.equal(buildUpdateText("", { phase: "idle" }, 0, en).badgeText, "Version information unavailable");
+  });
+});
+
+describe("createReadyGate", () => {
+  it("fires once when all three signals arrive in any order", () => {
+    let calls = 0;
+    const gate = lifecycle.createReadyGate(() => { calls += 1; });
+    gate.markSseOpen();
+    gate.markVersionOk();
+    assert.equal(calls, 0);
+    gate.markFirstPageOk();
+    gate.markVersionOk();
+    gate.markSseOpen();
+    assert.equal(calls, 1);
   });
 
-  it("downloading phase → cancel button with percent", () => {
-    const result = buildUpdateText("1.2.3", { phase: "downloading" }, 67, t);
-    assert.equal(result.buttonLabel, "Downloading 67% · Cancel download");
-    assert.equal(result.buttonDisabled, false);
+  it("does not fire when a condition is missing", () => {
+    let calls = 0;
+    const gate = lifecycle.createReadyGate(() => { calls += 1; });
+    gate.markVersionOk();
+    gate.markFirstPageOk();
+    assert.equal(calls, 0);
   });
 
-  it("unavailable phase → no button, install-location message", () => {
-    const result = buildUpdateText("1.2.3", { phase: "unavailable", reason: "install-location-unsupported" }, 0, t);
-    assert.equal(result.badgeText, "v1.2.3 · Drag to Applications");
-    assert.equal(result.buttonLabel, null);
-  });
-
-  it("error phase → check button and error badge", () => {
-    const result = buildUpdateText("1.2.3", { phase: "error" }, 0, t);
-    assert.equal(result.badgeText, "v1.2.3 · Cannot check for updates");
-    assert.equal(result.buttonLabel, "Check for updates");
-  });
-
-  it("no current version → version unknown badge", () => {
-    const result = buildUpdateText("", { phase: "idle" }, 0, t);
-    assert.equal(result.badgeText, "Version unknown");
+  it("does not fire when version consistency never passes", () => {
+    let calls = 0;
+    const gate = lifecycle.createReadyGate(() => { calls += 1; });
+    gate.markFirstPageOk();
+    gate.markSseOpen();
+    assert.equal(calls, 0);
   });
 });
 

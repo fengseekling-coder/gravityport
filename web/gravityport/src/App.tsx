@@ -16,6 +16,8 @@ import {
 } from "./gallery-window"
 import {
   checkVersionConsistency,
+  createReadyGate,
+  fill,
   mapUpdateResult,
   buildUpdateText,
   shouldAutoCheckForUpdates,
@@ -182,7 +184,6 @@ export default function App() {
   }, [skipConfirm])
   // Update check state machine (app-lifecycle).
   const [updateState, setUpdateState] = useState<UpdateUiState>({ phase: "idle" })
-  const [updateDownloadPercent, setUpdateDownloadPercent] = useState(0)
   // Rename notice (task 116): shown once at first-screen render.
   const [renameNoticeOpen, setRenameNoticeOpen] = useState(false)
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
@@ -235,31 +236,25 @@ export default function App() {
   // selection reset of the view change it causes.
   const pendingInspectRef = useRef("")
   const cutIdsRef = useRef<string[]>([])
-  // Renderer-ready guard: once true, reportRendererReady() is called exactly once.
-  const rendererReadyFiredRef = useRef(false)
-  // Track when the first successful asset page has loaded.
-  const firstPageLoadedRef = useRef(false)
-  // Track when the SSE stream has actually connected (open event fired).
-  const sseConnectedRef = useRef(false)
-  // reportRendererReady: fires once when all three conditions are met
-  // (version-consistency passed, first page loaded, SSE open).
-  // Re-runs when loading state changes (transitions from true to false)
-  // so the new interval captures the updated ref values in its closure.
-  useEffect(() => {
-    // Polling because the three conditions resolve asynchronously and
-    // in no guaranteed order; the guard ensures we only call once.
-    const interval = setInterval(() => {
-      if (rendererReadyFiredRef.current) { clearInterval(interval); return }
-      if (loadError) { clearInterval(interval); return }
-      if (!firstPageLoadedRef.current) return
-      if (!sseConnectedRef.current) return
-      rendererReadyFiredRef.current = true
-      clearInterval(interval)
-      desktopAPI()?.reportRendererReady?.().catch(() => {})
-    }, 200)
-    return () => clearInterval(interval)
-  // Re-run when loading transitions to false so the new interval has fresh closures.
-  }, [loading])
+  const readyGateRef = useRef<ReturnType<typeof createReadyGate> | null>(null)
+  if (!readyGateRef.current) {
+    readyGateRef.current = createReadyGate(() => {
+      void desktopAPI()?.reportRendererReady?.()
+    })
+  }
+  const versionOkRef = useRef(false)
+  const firstPageOkRef = useRef(false)
+  const sseOpenRef = useRef(false)
+  const deletingRef = useRef(deleting)
+  const settingsRef = useRef(settings)
+  const renameNoticeRef = useRef(renameNoticeOpen)
+  deletingRef.current = deleting
+  settingsRef.current = settings
+  renameNoticeRef.current = renameNoticeOpen
+  const dismissRenameNotice = () => {
+    setRenameNoticeOpen(false)
+    void desktopAPI()?.acknowledgeRenameNotice?.()
+  }
 
   const [systemDark, setSystemDark] = useState(false)
   useEffect(() => {
@@ -398,6 +393,10 @@ export default function App() {
           applySelection(pruned.selectedIds, fallback)
         }
         lastGoodProjectRef.current = project
+        if (!firstPageOkRef.current) {
+          firstPageOkRef.current = true
+          readyGateRef.current?.markFirstPageOk()
+        }
       } catch (error) {
         if (controller.signal.aborted) return
         // A failed load for a freshly switched-to project is a failed switch:
@@ -408,10 +407,7 @@ export default function App() {
         }
         setLoadError(errorMessage(error))
       } finally {
-        if (!controller.signal.aborted) {
-          firstPageLoadedRef.current = true
-          setLoading(false)
-        }
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
     void run()
@@ -467,7 +463,9 @@ export default function App() {
     let timer: ReturnType<typeof setTimeout> | null = null
     const stream = new EventSource(`/api/library-events?project=${encodeURIComponent(project)}`)
     stream.addEventListener("open", () => {
-      sseConnectedRef.current = true
+      if (sseOpenRef.current) return
+      sseOpenRef.current = true
+      readyGateRef.current?.markSseOpen()
     })
     stream.addEventListener("library-changed", () => {
       if (timer) clearTimeout(timer)
@@ -494,6 +492,10 @@ export default function App() {
         setLoadError(tr("界面与本地服务版本不一致。请退出旧版 GravityPort 后重新打开当前版本。"))
         return
       }
+      if (!versionOkRef.current) {
+        versionOkRef.current = true
+        readyGateRef.current?.markVersionOk()
+      }
     })()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -506,7 +508,7 @@ export default function App() {
     api.checkForUpdates(false).then(result => {
       recordUpdateCheck((key, value) => localStorage.setItem(key, value))
       if (result?.updateAvailable) {
-        notify(tr("发现新版本 v{version}", { version: String(result.latestVersion ?? "").replace(/^v/i, "") }))
+        notify(fill(tr("发现新版本 v{version}"), { version: String(result.latestVersion ?? "").replace(/^v/i, "") }))
       }
     }).catch(() => {})
   }, [])
@@ -516,7 +518,9 @@ export default function App() {
     if (!api?.onUpdateDownloadProgress) return
     return api.onUpdateDownloadProgress(progress => {
       const pct = Number(progress?.percent)
-      setUpdateDownloadPercent(Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0)
+      setUpdateState(current => current.phase === "downloading"
+        ? { phase: "downloading", percent: Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0 }
+        : current)
     })
   }, [])
   // Task 116 — Rename notice: fire once at first-screen render after the initial
@@ -532,8 +536,8 @@ export default function App() {
     const api = desktopAPI()
     api?.getRenameNoticeState?.().then(notice => {
       if (notice?.shouldShow !== true) return
-      // Guard: don't open if another alertdialog (deleting) or dialog (settings) is already showing.
-      if (deleting || settings) return
+      // Guard against dialogs that opened while the async state request was pending.
+      if (deletingRef.current || settingsRef.current || renameNoticeRef.current) return
       setRenameNoticeOpen(true)
     }).catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1124,11 +1128,11 @@ export default function App() {
       if (e.key === "Escape") {
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
-        if (deleting) setDeleting(false)
+        if (renameNoticeOpen) dismissRenameNotice()
+        else if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         else if (settings) setSettings(false)
         else if (preview) setPreview(false)
-        else if (renameNoticeOpen) setRenameNoticeOpen(false)
         else if (selectedIds.length || selected) applySelection([], "")
       }
       // Text surfaces own select-all, delete, cut and paste: Backspace in the
@@ -1388,7 +1392,7 @@ export default function App() {
       if (state.phase === "current") {
         notify(tr("已是最新版本"))
       } else if (state.phase === "available") {
-        notify(tr("发现新版本 v{version}", { version: state.latestVersion }))
+        notify(fill(tr("发现新版本 v{version}"), { version: state.latestVersion }))
       } else if (state.phase === "unavailable") {
         notify(tr("请先把 App 拖进『应用程序』文件夹再更新"))
       } else if (state.phase === "error") {
@@ -1403,19 +1407,22 @@ export default function App() {
     const api = desktopAPI()
     if (!api?.downloadAndInstallUpdate) return
     if (updateState.phase === "downloading") return
-    setUpdateState({ phase: "downloading" })
-    setUpdateDownloadPercent(0)
+    if (updateState.phase !== "available") return
+    setUpdateState({ phase: "downloading", percent: 0, latestVersion: updateState.latestVersion, publishedAt: updateState.publishedAt, canInstallInApp: updateState.canInstallInApp })
     try {
       await api.downloadAndInstallUpdate()
     } catch (error) {
-      setUpdateState({ phase: "available" })
+      setUpdateState(current => current.phase === "downloading"
+        ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false }
+        : current)
       notify(tr("更新失败，请稍后重试"))
     }
   }
   const cancelUpdateDownload = () => {
     desktopAPI()?.cancelUpdateDownload?.()
-    setUpdateState({ phase: "available" })
-    setUpdateDownloadPercent(0)
+    setUpdateState(current => current.phase === "downloading"
+      ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false }
+      : current)
   }
   const openDownloadPage = () => {
     desktopAPI()?.openDownloadPage?.().then(result => {
@@ -2440,7 +2447,7 @@ export default function App() {
                         const text = buildUpdateText(
                           health?.productVersion || "",
                           updateState,
-                          updateDownloadPercent,
+                          updateState.phase === "downloading" ? updateState.percent : 0,
                           tr,
                         )
                         return <span className="settings-badge" title={text.badgeText}>{text.badgeText}</span>
@@ -2450,12 +2457,18 @@ export default function App() {
                       const text = buildUpdateText(
                         health?.productVersion || "",
                         updateState,
-                        updateDownloadPercent,
+                        updateState.phase === "downloading" ? updateState.percent : 0,
                         tr,
                       )
                       if (text.buttonLabel === null) return null
-                      if (text.downloadAndInstall) {
-                        return <button className="neutral-button about-update" onClick={downloadAndInstallUpdate} disabled={updateState.phase === "downloading"}>{text.buttonLabel}</button>
+                                      if (text.downloadAndInstall) {
+                        return <button className="neutral-button about-update" onClick={downloadAndInstallUpdate} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
+                      }
+                      if (text.secondaryLabel) {
+                        return <div className="about-update-actions">
+                          <button className="neutral-button about-update" onClick={() => undefined} disabled>{text.buttonLabel}</button>
+                          <button className="neutral-button about-update" onClick={cancelUpdateDownload}>{text.secondaryLabel}</button>
+                        </div>
                       }
                       if (updateState.phase === "available" && !text.downloadAndInstall) {
                         return <button className="neutral-button about-update" onClick={openDownloadPage}>{text.buttonLabel}</button>
@@ -2600,7 +2613,7 @@ export default function App() {
         </div>
       )}
       {renameNoticeOpen && (
-        <div className="modal-layer" onClick={(e) => { if (e.target === e.currentTarget) { setRenameNoticeOpen(false); desktopAPI()?.acknowledgeRenameNotice?.().catch(() => {}) } }}>
+        <div className="modal-layer" onClick={(e) => { if (e.target === e.currentTarget) dismissRenameNotice() }}>
           <div className="delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="rename-notice-title">
             <div className="delete-icon">
               <Icon name="info" size={26} />
@@ -2610,10 +2623,7 @@ export default function App() {
             <div className="delete-actions">
               <button
                 className="primary-button"
-                onClick={() => {
-                  setRenameNoticeOpen(false)
-                  desktopAPI()?.acknowledgeRenameNotice?.().catch(() => {})
-                }}
+                onClick={dismissRenameNotice}
               >
                 {tr("知道了")}
               </button>
