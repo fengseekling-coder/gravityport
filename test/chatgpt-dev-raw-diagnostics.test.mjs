@@ -812,7 +812,7 @@ test("disabling the switch drops buffers and pending rounds immediately", async 
 });
 
 test("options page: the diagnostics panel only exists behind options.html#dev", () => {
-  assert.equal(manifest.version, "0.15.30");
+  assert.equal(manifest.version, "0.15.31");
   assert.ok(manifest.permissions.includes("unlimitedStorage"));
   assert.ok(backgroundSource.includes("chrome.runtime.getManifest().version"),
     "the background stamps stored records with the extension version");
@@ -862,4 +862,29 @@ test("rounds: frames from a brand-new chat (no conversation id in the URL yet) a
   assert.deepEqual([...records[0].models], ["gpt-6-thinking"], "models come from this round's frames only");
   const times = records[0].frames.map((frame) => frame.t);
   assert.deepEqual([...times], [...times].sort((a, b) => a - b), "merged frames stay in time order");
+});
+
+test("background: the dev panel routes accept the options page opened in a tab, and nothing else", () => {
+  const start = backgroundSource.indexOf("function extensionPageSender(");
+  const gateStart = backgroundSource.indexOf("function senderAllowedForMessage(");
+  const gateEnd = backgroundSource.indexOf("\n}\n", gateStart) + 3;
+  assert.ok(start >= 0 && gateStart > start && gateEnd > gateStart);
+  const sandbox = {
+    chrome: { runtime: { id: "extid" } },
+    providerForPageUrl: (url) => (String(url).startsWith("https://chatgpt.com/") ? "chatgpt" : ""),
+    Number,
+    String,
+    Boolean,
+  };
+  vm.runInNewContext(`${backgroundSource.slice(start, gateEnd)}\nthis.gate = senderAllowedForMessage;`, sandbox);
+  const options = { id: "extid", frameId: 0, url: "chrome-extension://extid/options.html#dev", tab: { id: 7 } };
+  const chatgptTab = { id: "extid", frameId: 0, url: "https://chatgpt.com/c/abc", tab: { id: 8, url: "https://chatgpt.com/c/abc" } };
+  for (const type of ["mosa.devRawDiagnostics.stats", "mosa.devRawDiagnostics.exportPage", "mosa.devRawDiagnostics.clear"]) {
+    assert.equal(sandbox.gate({ type }, options), true, `${type} from the options tab`);
+    assert.equal(sandbox.gate({ type }, chatgptTab), false, `${type} from a ChatGPT page`);
+    assert.equal(sandbox.gate({ type }, { ...options, id: "other" }), false, `${type} from another extension`);
+    assert.equal(sandbox.gate({ type }, { ...options, frameId: 2 }), false, `${type} from a subframe`);
+  }
+  assert.equal(sandbox.gate({ type: "mosa.devRawDiagnostics.record" }, chatgptTab), true);
+  assert.equal(sandbox.gate({ type: "mosa.devRawDiagnostics.record" }, options), false);
 });
