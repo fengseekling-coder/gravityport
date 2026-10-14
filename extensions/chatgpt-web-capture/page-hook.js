@@ -6,46 +6,85 @@
   if (window.__mosaPageHookInstalled) return;
   window.__mosaPageHookInstalled = true;
   let captureEnabled = false;
-  // Capture diagnostics: optional structural log of every traffic fragment
-  // observed while a prompt-less capture is being collected. Disabled by
-  // default; switched on through options.html. The recorder only stores paths,
-  // types, lengths, and a small allowlist of primitive values, so the module
-  // can never leak conversation text into chrome.storage.local.
-  const captureDiagnostics = (window.MosaCaptureDiagnostics && window.MosaCaptureDiagnostics.__mosaInstalled)
-    ? window.MosaCaptureDiagnostics
+  // DEV-ONLY(128): remove before release (the whole dev raw diagnostics block).
+  // Optional raw-traffic recorder for prompt-less captures. Disabled by
+  // default, switched on through the hidden options-page #dev panel; every
+  // call site below is wrapped so a failure here can never touch capture.
+  // (globalThis and window are the same object in a real MAIN world; the
+  // module registers itself on globalThis.)
+  const devRaw = (globalThis.MosaDevRawDiagnostics && globalThis.MosaDevRawDiagnostics.__installed)
+    ? globalThis.MosaDevRawDiagnostics
     : null;
-  const DIAGNOSTIC_FINALIZE_DELAY_MS = 30_000;
-  const DIAGNOSTIC_PRE_WINDOW_MS = 5_000;
-  // recordSseLine / recordWsFrame / recordHttpResponse accept any string; the
-  // helper collapses failures to a single null path so this guard never throws.
-  function diagnosticsRecordFrame(conversationId, summary) {
+  if (devRaw) devRaw.onRecord = (record) => post("dev-raw-diagnostic", record);
+  function devRawEnabled() {
     try {
-      if (!captureDiagnostics || !captureDiagnostics.isEnabled()) return;
-      captureDiagnostics.recordFrame(conversationId, summary);
+      return Boolean(devRaw && devRaw.isEnabled());
+    } catch {
+      return false;
+    }
+  }
+  // One conversation per tab in practice; conversationIdFromLocation() keeps
+  // frames with the conversation the user has open. A brand-new chat has no
+  // /c/<id> in the URL until the server assigns one mid-stream, so those
+  // frames go to the recorder's unrouted bucket and are merged back in when
+  // the round closes.
+  function devRawConversationKey() {
+    return conversationIdFromLocation() || (devRaw && devRaw.UNROUTED_KEY) || "";
+  }
+  function devRawRecordSseLine(method, url, line) {
+    if (!devRawEnabled()) return;
+    try {
+      devRaw.recordSseLine(devRawConversationKey(), { method, path: devRawPathOf(url) }, line);
     } catch {
       // diagnostics must never affect page hooks
     }
   }
-  function diagnosticsSummarizeSse(line) {
+  function devRawRecordSocket(direction, data) {
+    if (!devRawEnabled()) return;
     try {
-      return captureDiagnostics ? captureDiagnostics.summarizeSseLine(line) : null;
+      devRaw.recordSocketMessage(devRawConversationKey(), direction, data);
     } catch {
-      return null;
+      // diagnostics must never affect page hooks
     }
   }
-  function diagnosticsSummarizeWs(text) {
+  function devRawRecordHttp(method, url, status, contentType, bodyText) {
+    if (!devRawEnabled()) return;
     try {
-      return captureDiagnostics ? captureDiagnostics.summarizeWsFrame(text) : null;
+      devRaw.recordHttpExchange(devRawConversationKey(), { method, url, status, contentType, bodyText });
     } catch {
-      return null;
+      // diagnostics must never affect page hooks
     }
   }
-  function diagnosticsSummarizeHttp(url, contentType, parsed) {
+  function devRawPathOf(value) {
     try {
-      return captureDiagnostics ? captureDiagnostics.summarizeHttpResponse(url, contentType, parsed) : null;
+      return new URL(String(value || ""), location.origin).pathname;
     } catch {
-      return null;
+      return String(value || "");
     }
+  }
+  function devRawIsBackendApiUrl(value) {
+    try {
+      const url = new URL(String(value || ""), location.origin);
+      return (url.hostname === "chatgpt.com" || url.hostname === "chat.openai.com")
+        && url.pathname.startsWith("/backend-api/");
+    } catch {
+      return false;
+    }
+  }
+  function devRawRequestMethodOf(args) {
+    const first = args[0];
+    if (first && typeof first === "object" && typeof first.method === "string") return first.method;
+    const init = args[1];
+    if (init && typeof init.method === "string") return init.method;
+    return "GET";
+  }
+  // Binary or streamed responses are recorded without their body; the SSE
+  // lines and the image metadata carry what matters.
+  function devRawBodyTextFor(contentType, text) {
+    const type = String(contentType || "").toLowerCase();
+    if (!text) return "";
+    if (/^(?:image\/|video\/|audio\/|font\/)/.test(type) || type.includes("octet-stream") || type.includes("event-stream")) return "";
+    return text;
   }
   // Threat model: injected page scripts that run after document_start must
   // neither learn the bridge identity nor forge capture events. Publishing a
@@ -70,13 +109,14 @@
       post("capture-state", { enabled: captureEnabled });
       return;
     }
-    if (data.type === "set-diagnostics-enabled") {
-      // Diagnostics recording is opt-in from the options page and is set
+    if (data.type === "set-dev-raw-diagnostics-enabled") {
+      // DEV-ONLY(128): remove before release. The dev diagnostics recorder is
+      // opt-in from the hidden options-page #dev panel and is set
       // independently of captureEnabled. Auto-capture being on or off must
-      // never flip the diagnostics switch — the recorder only ever sees
-      // structural summaries, never the raw payload.
+      // never flip this switch; enabling or disabling it clears the in-memory
+      // buffer immediately.
       const diagnosticsEnabled = data.payload?.enabled === true;
-      if (captureDiagnostics) captureDiagnostics.setEnabled(diagnosticsEnabled);
+      if (devRaw) devRaw.setEnabled(diagnosticsEnabled);
       return;
     }
     if (data.type === "refresh-current-conversation") refreshCurrentConversation().catch(() => {});
@@ -687,75 +727,33 @@
     });
     post("generation-meta", payload);
     if (url && payload.isGeneration) post("auto-image", payload);
-    scheduleCaptureDiagnostic(payload);
-  }
-  // Capture diagnostics trigger: every emitted (prompt, image) pair is tagged
-  // so the recorder can snapshot the traffic that surrounded it 30 seconds
-  // later. markCapture(...) is idempotent per (conversation, message, asset);
-  // scheduleFinalizeAndReport keeps the snapshot job off the harvest path.
-  function scheduleCaptureDiagnostic(payload) {
-    if (!captureDiagnostics || !captureDiagnostics.isEnabled() || !payload) return;
-    const conversationId = String(payload.conversationId || "");
-    const messageId = String(payload.messageId || "");
-    const assetId = String(payload.assetId || "");
-    const generationId = String(payload.generationId || payload.providerGenerationCallId || "");
-    if (!conversationId && !messageId && !assetId) return;
-    const captureKey = `${conversationId}:${messageId}:${assetId}`;
-    const hasPrompt = Boolean(payload.prompt) || payload.promptStatus === "generation-tool-prompt"
-      || payload.promptStatus === "visible-caption";
-    // markCapture() always registers the capture. finalizeCapture() is the
-    // single point that decides whether a record is actually written, and
-    // it is responsible for the 1/10 control sampling — we no longer short
-    // circuit here based on hasPrompt.
-    captureDiagnostics.markCapture(captureKey, conversationId, messageId, hasPrompt, generationId);
-    setTimeout(() => {
+    // DEV-ONLY(128): remove before release. Feed the dev raw diagnostics
+    // round tracker; the recorder decides per round whether a record is kept.
+    if (devRawEnabled()) {
       try {
-        const finished = captureDiagnostics.finalizeCapture(conversationId, captureKey);
-        if (!finished) return;
-        if (finished.snapshot) {
-          // Run the storage-bound scrubber one last time before the record
-          // crosses into the content script. If anything in the buffer
-          // slipped past the page-world sanitizers we drop the whole record
-          // and tick the reject counter.
-          const scrubbed = captureDiagnostics.sanitizeRecordForStorage({
-            conversationId,
-            messageId: messageId.slice(0, 8),
-            generationId: generationId.slice(0, 8),
-            version: "0.15.29",
-            control: finished.control === true,
-            firstAt: finished.snapshot.firstAt,
-            lastAt: finished.snapshot.lastAt,
-            models: finished.snapshot.models,
-            frames: finished.snapshot.frames,
-          });
-          if (scrubbed === "leak") {
-            // surface the reject count in the background for the options UI
-            post("capture-diagnostic-rejected", { captureKey });
-            return;
-          }
-          post("capture-diagnostic", {
-            captureKey,
-            record: scrubbed,
-            promptStatus: payload.promptStatus,
-            control: scrubbed.control === true,
-            frameCount: scrubbed.frames.length,
-          });
-        }
+        devRaw.noteImage({
+          conversationId: payload.conversationId,
+          assistantMessageId: payload.messageId,
+          fileId: payload.assetId,
+          generationId: payload.providerGenerationCallId,
+          promptStatus: payload.promptStatus,
+          promptLength: typeof payload.prompt === "string" ? payload.prompt.length : 0,
+          model: payload.model,
+        });
       } catch {
-        // diagnostics must never throw into the capture path
+        // diagnostics must never affect page hooks
       }
-    }, DIAGNOSTIC_FINALIZE_DELAY_MS);
+    }
   }
-
-  function parseDiagnosticJson(value) {
-    if (typeof value !== "string" || value.length < 2 || value.length > 32_000_000) return null;
-    const trimmed = value.trim();
-    if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
-    try { return JSON.parse(trimmed); } catch { return null; }
-  }
-
   function emitMessageBindings(node, inherited) {
     const message = node.message && typeof node.message === "object" ? node.message : node;
+    // DEV-ONLY(128): remove before release. Remember the visible user message
+    // of this conversation so the dev diagnostics rounds can open their
+    // window 5 seconds before it was sent.
+    if (devRawEnabled() && String(message?.author?.role || "").toLowerCase() === "user"
+      && typeof message?.id === "string" && message.id) {
+      try { devRaw.noteUserMessage(contextForNode(node, inherited).conversationId, message.id); } catch { /* ignore */ }
+    }
     rememberImageToolCall(message);
     const context = contextForNode(node, inherited);
     const prompts = new Map();
@@ -1480,7 +1478,7 @@
     }
   }
 
-  function createSseStreamHarvester(via) {
+  function createSseStreamHarvester(via, requestMeta = null) {
     // Per-stream reconstruction state; concurrent streams never share it.
     const state = {
       currentMessage: null,
@@ -1691,12 +1689,6 @@
       const payload = line.slice(5).trim();
       if (!payload) return;
       state.sawDataLine = true;
-      // Diagnostics recorder wants the structure, not the text. Summarize in
-      // the page world here, then continue with the normal SSE handling.
-      const summary = diagnosticsSummarizeSse(line);
-      if (summary) {
-        diagnosticsRecordFrame(state.conversationId || conversationIdFromLocation(), summary);
-      }
       if (payload === "[DONE]") {
         // The page aborts the request right after this marker; bind whatever
         // the stream has rebuilt so far.
@@ -1709,6 +1701,9 @@
     function processEventBlock(block) {
       for (const line of String(block || "").split("\n")) {
         const trimmed = line.trim();
+        // DEV-ONLY(128): remove before release. Every raw SSE line of this
+        // stream (event: and data: alike) lands in the dev buffer, masked.
+        if (line) devRawRecordSseLine(requestMeta?.method, requestMeta?.url, line);
         // event: / id: / retry: lines and comments carry no payload. Old
         // (non-delta) streams put one complete object per data line; handling
         // each data line on its own keeps them working unchanged.
@@ -1761,7 +1756,7 @@
     return { push, end, abort };
   }
 
-  async function harvestResponseStream(response, via) {
+  async function harvestResponseStream(response, via, requestMeta = null) {
     const reader = response?.body?.getReader?.();
     if (!reader) {
       // No streaming body in this environment: keep the buffered path.
@@ -1772,7 +1767,7 @@
       }
       return;
     }
-    const stream = createSseStreamHarvester(via);
+    const stream = createSseStreamHarvester(via, requestMeta);
     const decoder = typeof TextDecoder === "function" ? new TextDecoder("utf-8") : null;
     try {
       for (;;) {
@@ -1919,6 +1914,30 @@
     if (typeof OriginalResponseBlob === "function") {
       Response.prototype.blob = function mosaResponseBlob(...args) {
         const promise = OriginalResponseBlob.apply(this, args);
+        // DEV-ONLY(128): remove before release. While the dev recorder is
+        // on, read the generated image's container metadata (no pixels) off
+        // the estuary blob, asynchronously, so the page gets its Blob
+        // unchanged and without waiting.
+        if (devRawEnabled()) {
+          try {
+            const devProxy = chatGptImageProxyInfo(this?.url);
+            if (devProxy && /^file[-_]/i.test(devProxy.assetId)) {
+              promise.then((devBlob) => {
+                try {
+                  const devType = String(devBlob?.type || this?.headers?.get?.("content-type") || "");
+                  if (!devType || /^image\//i.test(devType.split(";", 1)[0])) {
+                    devRaw.noteImageBlob(devProxy.conversationId, devProxy.assetId, devBlob);
+                  }
+                } catch {
+                  // metadata reading must never surface here
+                }
+                return devBlob;
+              }).catch(() => {});
+            }
+          } catch {
+            // diagnostics never break the page's Blob
+          }
+        }
         if (!isCaptureEnabled()) return promise;
         try {
           const assetId = estuaryFileIdFromUrl(this?.url);
@@ -2223,6 +2242,29 @@
 
   window.fetch = async function mosaFetch(...args) {
     const response = await originalFetch.apply(this, args);
+    // DEV-ONLY(128): remove before release. Record every backend-api
+    // exchange the page itself makes while the dev recorder is on, with the
+    // raw response body (2 MiB cap, headers never recorded). Runs before the
+    // capture gate so the recorder also works with auto-capture off.
+    if (devRawEnabled()) {
+      try {
+        const devUrl = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
+        if (devRawIsBackendApiUrl(devUrl)) {
+          const devMethod = devRawRequestMethodOf(args);
+          const devContentType = String(response?.headers?.get?.("content-type") || "");
+          const devStatus = Number(response?.status) || 0;
+          if (devContentType.includes("event-stream")) {
+            devRawRecordHttp(devMethod, devUrl, devStatus, devContentType, "");
+          } else if (typeof response?.clone === "function") {
+            response.clone().text().then((devText) => {
+              devRawRecordHttp(devMethod, devUrl, devStatus, devContentType, devRawBodyTextFor(devContentType, devText));
+            }).catch(() => {});
+          }
+        }
+      } catch {
+        // diagnostics never throws into the harness
+      }
+    }
     if (!isCaptureEnabled()) return response;
     try {
       const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
@@ -2237,48 +2279,19 @@
           if (isSseStream && clone.body && typeof clone.body.getReader === "function") {
             // Streamed reply: parse while it arrives so the page aborting the
             // finished request keeps every binding already delivered.
-            // Diagnostics gets its own clone because the SSE stream is consumed
-            // by harvestResponseStream and cannot be reread.
-            try { response.clone().text().then((text) => {
-              try {
-                const parsed = parseDiagnosticJson(text);
-                if (parsed) {
-                  const summary = diagnosticsSummarizeHttp(url, contentType, parsed);
-                  if (summary) diagnosticsRecordFrame(conversationIdFromLocation(), { source: "http", ...summary });
-                }
-              } catch {
-                // diagnostics never throws into the harness
-              }
-            }).catch(() => {}); } catch {
-              // diagnostics never throws into the harness
-            }
-            harvestResponseStream(clone, "fetch-sse").catch(() => {});
+            harvestResponseStream(clone, "fetch-sse", {
+              method: devRawRequestMethodOf(args),
+              url,
+            }).catch(() => {});
           } else if (/json/.test(contentType) && /\/backend-api\/(?:f\/)?conversations?\//i.test(String(url))) {
-            // Read once: the JSON body feeds the diagnostics recorder and the
-            // existing harness path, so cloning again would lose the body.
             clone.json()
               .then((payload) => {
-                try {
-                  const summary = diagnosticsSummarizeHttp(url, contentType, payload);
-                  if (summary) diagnosticsRecordFrame(conversationIdFromLocation(), { source: "http", ...summary });
-                } catch {
-                  // diagnostics never throws into the harness
-                }
                 walkObject(payload, { conversationId: conversationIdFromLocation() });
                 if (isCurrentConversationItemUrl(url)) reportConversationTurnBindings(payload);
               })
               .catch(() => {});
           } else {
             clone.text().then((text) => {
-              try {
-                const parsed = parseDiagnosticJson(text);
-                if (parsed) {
-                  const summary = diagnosticsSummarizeHttp(url, contentType, parsed);
-                  if (summary) diagnosticsRecordFrame(conversationIdFromLocation(), { source: "http", ...summary });
-                }
-              } catch {
-                // diagnostics never throws into the harness
-              }
               harvest(text, "fetch");
             }).catch(() => {});
           }
@@ -2294,10 +2307,37 @@
   const originalSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function mosaOpen(method, url, ...rest) {
     this.__mosaUrl = url;
+    // DEV-ONLY(128): remove before release (dev http recording needs it).
+    this.__mosaMethod = method;
     return originalOpen.call(this, method, url, ...rest);
   };
   XMLHttpRequest.prototype.send = function mosaSend(...args) {
     this.addEventListener("load", function onLoad() {
+      // DEV-ONLY(128): remove before release. Record every backend-api XHR
+      // exchange while the dev recorder is on, capture gate or not.
+      if (devRawEnabled()) {
+        try {
+          const devUrl = String(this.__mosaUrl || "");
+          if (devRawIsBackendApiUrl(devUrl)) {
+            const devContentType = String(this.getResponseHeader?.("content-type") || "");
+            const responseType = String(this.responseType || "").toLowerCase();
+            const devText = responseType === "" || responseType === "text"
+              ? (this.responseText || "")
+              : responseType === "json" && this.response
+                ? JSON.stringify(this.response)
+                : "";
+            devRawRecordHttp(
+              String(this.__mosaMethod || "GET"),
+              devUrl,
+              Number(this.status) || 0,
+              devContentType,
+              devRawBodyTextFor(devContentType, devText),
+            );
+          }
+        } catch {
+          // diagnostics must never affect the XHR path
+        }
+      }
       if (!isCaptureEnabled()) return;
       try {
         const url = String(this.__mosaUrl || "");
@@ -2311,18 +2351,7 @@
               : responseType === "json" && this.response
                 ? JSON.stringify(this.response)
                 : "";
-            if (text) {
-              try {
-                const parsed = parseDiagnosticJson(text);
-                if (parsed) {
-                  const summary = diagnosticsSummarizeHttp(url, contentType, parsed);
-                  if (summary) diagnosticsRecordFrame(conversationIdFromLocation(), { source: "http", ...summary });
-                }
-              } catch {
-                // diagnostics must never affect the XHR path
-              }
-              harvest(text, "xhr");
-            }
+            if (text) harvest(text, "xhr");
             if (isCurrentConversationItemUrl(url)) reportConversationTurnBindingsFromText(text);
           }
         }
@@ -2365,13 +2394,6 @@
 
   function harvestSocketText(text) {
     if (!text || typeof text !== "string") return;
-    // Diagnostics recorder wants every frame's structure, not just the
-    // image-bearing ones the harvester cares about. Summarize in the page
-    // world here so raw bytes never reach the recorder.
-    const summary = diagnosticsSummarizeWs(text);
-    if (summary) {
-      diagnosticsRecordFrame(conversationIdFromLocation(), { source: "ws", ...summary });
-    }
     // Token-by-token deltas dominate the stream. Parse only image-bearing frames.
     if (WS_INTEREST.test(text) || hasConversationMessageShape(text)) harvest(text, "websocket");
     // Skip anything that is not a JSON envelope carrying a base64 body, so a
@@ -2421,6 +2443,21 @@
             });
           } catch {
             // A socket that rejects listeners still works for the page.
+          }
+          // DEV-ONLY(128): remove before release. Record incoming and
+          // outgoing socket payloads verbatim (masked) while the dev
+          // recorder is on.
+          try {
+            this.addEventListener("message", (event) => {
+              devRawRecordSocket("ws-in", event?.data);
+            });
+            const devOriginalSend = this.send;
+            this.send = (...sendArgs) => {
+              devRawRecordSocket("ws-out", sendArgs[0]);
+              return devOriginalSend.apply(this, sendArgs);
+            };
+          } catch {
+            // Diagnostics hooks never break the page's socket.
           }
         }
       }

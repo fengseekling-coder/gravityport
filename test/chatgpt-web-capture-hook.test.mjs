@@ -4,7 +4,6 @@ import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import vm from "node:vm";
 
-const hookSource = await readFile(new URL("../extensions/chatgpt-web-capture/page-hook.js", import.meta.url), "utf8");
 const manifest = JSON.parse(await readFile(new URL("../extensions/chatgpt-web-capture/manifest.json", import.meta.url), "utf8"));
 const backgroundSource = await readFile(new URL("../extensions/chatgpt-web-capture/background.js", import.meta.url), "utf8");
 const contentSource = await readFile(new URL("../extensions/chatgpt-web-capture/content.js", import.meta.url), "utf8");
@@ -15,240 +14,12 @@ const optionsHtml = await readFile(new URL("../extensions/chatgpt-web-capture/op
 const providerPolicySource = await readFile(new URL("../extensions/chatgpt-web-capture/provider-policy.js", import.meta.url), "utf8");
 const providerSource = await readFile(new URL("../extensions/chatgpt-web-capture/provider-sites.js", import.meta.url), "utf8");
 
-// Minimal MessageChannel stand-in: two entangled ports. Messages are
-// delivered synchronously while a listener is attached and queue otherwise,
-// which mirrors how the real content script behaves once it has adopted the
-// port without making every existing harness test await a task boundary.
-class MockMessagePort {
-  constructor() {
-    this._peer = null;
-    this._pending = [];
-    this._listeners = [];
-    this._onmessage = null;
-  }
-
-  _entangle(peer) {
-    this._peer = peer;
-  }
-
-  postMessage(data) {
-    assert.ok(this._peer, "mock port must be entangled before postMessage");
-    this._peer._deliver({ data });
-  }
-
-  _deliver(event) {
-    if (!this._listeners.length && !this._onmessage) {
-      this._pending.push(event);
-      return;
-    }
-    for (const listener of [...this._listeners]) listener(event);
-    if (this._onmessage) this._onmessage(event);
-  }
-
-  addEventListener(type, listener) {
-    if (type !== "message") return;
-    this._listeners.push(listener);
-    this._flushPending();
-  }
-
-  get onmessage() {
-    return this._onmessage;
-  }
-
-  set onmessage(handler) {
-    this._onmessage = handler;
-    this._flushPending();
-  }
-
-  start() {
-    this._flushPending();
-  }
-
-  _flushPending() {
-    if (!this._listeners.length && !this._onmessage) return;
-    while (this._pending.length) this._deliver(this._pending.shift());
-  }
-}
-
-class MockMessageChannel {
-  constructor() {
-    this.port1 = new MockMessagePort();
-    this.port2 = new MockMessagePort();
-    this.port1._entangle(this.port2);
-    this.port2._entangle(this.port1);
-  }
-}
-
-function createHookHarness(payload, conversationId = "conversation-test", options = {}) {
-  const events = [];
-  const requestedUrls = [];
-  const requestedInits = [];
-  const createdObjectUrls = [];
-  const windowMessages = [];
-  const hookPortOffers = [];
-  const windowMessageListeners = [];
-  const consoleDebugs = [];
-  let contentPort = null;
-  const documentElement = { dataset: {} };
-  // The blob-asset hooks need the page's Blob, Response and URL.createObjectURL.
-  class HookBlob {
-    constructor(parts = [], opts = {}) {
-      this.size = (parts || []).reduce((sum, part) => sum + (typeof part === "string" ? part.length : 0), 0);
-      this.type = opts?.type || "";
-    }
-  }
-  class HookResponse {
-    constructor(body, init = {}) {
-      this.url = String(init?.url || "");
-      this.__mosaBody = body;
-    }
-
-    async blob() {
-      return new HookBlob([this.__mosaBody], { type: "image/png" });
-    }
-  }
-  class HookURL extends URL {
-    static createObjectURL(obj) {
-      const blobUrl = `blob:https://chatgpt.com/mosa-hook-${createdObjectUrls.length}-test`;
-      createdObjectUrls.push({ blobUrl, blob: obj });
-      return blobUrl;
-    }
-
-    static revokeObjectURL() {}
-  }
-  function adoptContentPort(port) {
-    contentPort = port;
-    port.addEventListener("message", (portEvent) => {
-      events.push(portEvent.data);
-    });
-    // content.js confirms the first port immediately; tests can suppress the
-    // ack to exercise the hook's port-request fallback.
-    if (options.ack !== false) {
-      port.postMessage({ source: "mosa-chatgpt-capture", type: "hook-port-ack" });
-    }
-  }
-  const window = {
-    fetch: async (url, init) => {
-      requestedUrls.push(String(url));
-      requestedInits.push(init || null);
-      if (typeof options.respond === "function") {
-        const override = options.respond(String(url), init);
-        if (override) return override;
-      }
-      return {
-        ok: true,
-        clone: () => ({ text: async () => JSON.stringify(payload) }),
-        text: async () => JSON.stringify(payload),
-      };
-    },
-    addEventListener: (type, listener) => {
-      if (type === "message") windowMessageListeners.push(listener);
-    },
-    postMessage: (event, targetOrigin, transfer) => {
-      windowMessages.push({ event, targetOrigin, transfer });
-      if (
-        event?.source === "mosa-chatgpt-capture"
-        && event?.type === "hook-port"
-        && transfer?.[0] instanceof MockMessagePort
-      ) {
-        hookPortOffers.push(event);
-        adoptContentPort(transfer[0]);
-      }
-    },
-    WebSocket: class MockWebSocket {
-      constructor(url) {
-        this.url = url;
-        this.messageListeners = [];
-      }
-
-      addEventListener(type, listener) {
-        if (type === "message") this.messageListeners.push(listener);
-      }
-
-      emit(data) {
-        for (const listener of this.messageListeners) listener({ data });
-      }
-    },
-  };
-  function MockXHR() {}
-  MockXHR.prototype.open = () => {};
-  MockXHR.prototype.send = () => {};
-  MockXHR.prototype.setRequestHeader = () => {};
-
-  vm.runInNewContext(hookSource, {
-    Date,
-    JSON,
-    Object,
-    Set,
-    String,
-    console: { debug: (...args) => consoleDebugs.push(args.map((value) => String(value)).join(" ")) },
-    URL: HookURL,
-    Blob: HookBlob,
-    Response: HookResponse,
-    XMLHttpRequest: MockXHR,
-    MessageChannel: MockMessageChannel,
-    // Base64 and UTF-8 decoding are page APIs the hook needs for socket frames.
-    atob: globalThis.atob,
-    TextDecoder: globalThis.TextDecoder,
-    Uint8Array: globalThis.Uint8Array,
-    ArrayBuffer: globalThis.ArrayBuffer,
-    document: { documentElement, addEventListener: () => {} },
-    location: { origin: "https://chatgpt.com", pathname: `/c/${conversationId}` },
-    window,
-  }, { filename: "page-hook.js" });
-
-  if (options.captureEnabled !== false && contentPort) {
-    contentPort.postMessage({
-      source: "mosa-chatgpt-capture",
-      type: "set-capture-enabled",
-      payload: { enabled: true },
-    });
-  }
-
-  return {
-    events,
-    requestedUrls,
-    requestedInits,
-    createdObjectUrls,
-    windowMessages,
-    hookPortOffers,
-    consoleDebugs,
-    documentElement,
-    blobClass: HookBlob,
-    responseClass: HookResponse,
-    urlClass: HookURL,
-    dispatchWindowMessage(data, eventOverrides = {}) {
-      for (const listener of [...windowMessageListeners]) {
-        listener({ source: window, data, ...eventOverrides });
-      }
-    },
-    async sendToPageHook(data) {
-      assert.ok(contentPort, "page hook should have handed a port to the content script");
-      contentPort.postMessage(data);
-      await setImmediate();
-    },
-    async harvest(init, url = "https://chatgpt.com/backend-api/conversation/test") {
-      await window.fetch(url, init);
-      await setImmediate();
-    },
-    async socketFrame(data) {
-      const socket = new window.WebSocket("wss://chatgpt.com/client/hubs/conversations");
-      socket.emit(data);
-      await setImmediate();
-      await setImmediate();
-    },
-    async refreshCurrentConversation() {
-      assert.ok(contentPort, "page hook should listen for refresh requests");
-      contentPort.postMessage({ source: "mosa-chatgpt-capture", type: "refresh-current-conversation" });
-      await setImmediate();
-      await setImmediate();
-    },
-  };
-}
-
-function generationEvents(harness) {
-  return harness.events.filter((event) => event.type === "generation-meta" && event.payload?.prompt);
-}
+import {
+  createHookHarness,
+  generationEvents,
+  hookSource,
+  MockMessagePort,
+} from "./helpers/page-hook-harness.mjs";
 
 function createGenerationRegistryHarness({ imageLookupKeys } = {}) {
   const sandbox = {};
@@ -269,13 +40,13 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
   const hook = manifest.content_scripts.find((entry) => entry.js?.includes("page-hook.js"));
   assert.equal(hook?.run_at, "document_start");
   assert.equal(hook?.world, "MAIN");
-  // capture-diagnostics.js must run before page-hook.js so the hook can call
-  // into MosaCaptureDiagnostics on the very first SSE/WS frame.
-  assert.deepEqual(hook?.js, ["capture-diagnostics.js", "page-hook.js"]);
+  // dev-raw-diagnostics.js must run before page-hook.js so the hook finds
+  // MosaDevRawDiagnostics on the very first SSE/WS frame.
+  assert.deepEqual(hook?.js, ["dev-raw-diagnostics.js", "page-hook.js"]);
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.29");
+  assert.equal(manifest.version, "0.15.30");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -474,7 +245,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.29");
+  assert.equal(manifest.version, "0.15.30");
   // Storage keys and the pairing product identifier stay "mosa" so old
   // extensions keep working with the renamed App and vice versa.
   assert.match(backgroundSource, /if \(identity\?\.product !== "mosa"\) continue;/);
@@ -519,7 +290,7 @@ test("surfaces MOSA's own ingest error when pairing repair keeps the same connec
 });
 
 test("defaults capture off and keeps Chrome permissions minimal", () => {
-  assert.deepEqual(manifest.permissions, ["storage", "contextMenus", "alarms"]);
+  assert.deepEqual(manifest.permissions, ["storage", "contextMenus", "alarms", "unlimitedStorage"]);
   assert.equal(manifest.permissions.includes("activeTab"), false);
   assert.match(backgroundSource, /autoCapture:\s*false/);
   assert.match(optionsSource, /autoCapture:\s*false/);
@@ -2072,7 +1843,7 @@ test("binds prompt and asset when one image call splits them across nested reque
 });
 
 test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.29");
+  assert.equal(manifest.version, "0.15.30");
   assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
   assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
   assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);
@@ -2773,7 +2544,7 @@ function loadSettingsHarness({ response, responseError, localValue = true } = {}
       return response;
     },
     syncPageHookCaptureEnabled: () => {},
-    syncPageHookDiagnostics: () => {},
+    syncPageHookDevRawDiagnostics: () => {},
   };
   vm.runInNewContext(`
     let autoCapture = false;

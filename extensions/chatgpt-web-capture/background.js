@@ -1,11 +1,21 @@
 import "./provider-policy.js";
-import { scrubRecord as scrubDiagnosticRecord } from "./diagnostics-storage.js";
+// DEV-ONLY(128): remove before release (the whole dev raw diagnostics block).
+import {
+  createIdbStore,
+  removeLegacyCaptureDiagnosticsKeys,
+  devRawJsonlLine,
+} from "./dev-raw-diagnostics-store.js";
+
+const devRawDiagnosticsStore = createIdbStore();
+// Startup cleanup: the pre-0.15.30 structure-only diagnostics storage keys
+// are dead weight; remove them once per service-worker start.
+removeLegacyCaptureDiagnosticsKeys(chrome.storage.local).catch(() => {});
 
 const DEFAULTS = {
   mosaBaseUrl: "http://127.0.0.1:43517",
   mosaToken: "",
   autoCapture: false,
-  captureDiagnostics: false,
+  devRawDiagnostics: false,
 };
 const DISCOVERY_PORTS = [43517, 43518, 43519, 43520, 43521];
 const STORAGE_KEYS = ["mosaBaseUrl", "mosaToken", "autoCapture"];
@@ -17,9 +27,6 @@ const CAPTURE_QUEUE_MAX_ATTEMPTS = 3;
 const CAPTURE_MEDIA_DB = "mosa-web-capture-media-v1";
 const CAPTURE_MEDIA_STORE = "media";
 const LEGACY_DEV_TOKEN = "mosa-web-capture-dev";
-const DIAGNOSTIC_STORAGE_KEY = "mosaCaptureDiagnosticsV1";
-const DIAGNOSTIC_MAX_RECORDS = 50;
-const DIAGNOSTIC_MAX_RECORD_BYTES = 200_000;
 const WEB_IMAGE_PROVIDERS = new Set(["chatgpt", "gemini", "flow", "google-ai-studio"]);
 const WEB_VIDEO_PROVIDERS = new Set(["flow", "google-ai-studio"]);
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -143,10 +150,11 @@ function senderAllowedForMessage(message, sender) {
   if (message.type === "mosa.fetchImage") return context.provider === "chatgpt";
   if (message.type === "mosa.reportSessionTitle") return context.provider === "chatgpt";
   if (message.type === "mosa.reportConversationTurns") return context.provider === "chatgpt";
-  if (message.type === "mosa.recordDiagnostic") return context.provider === "chatgpt";
-  if (message.type === "mosa.exportDiagnostics") return extensionPageSender(sender);
-  if (message.type === "mosa.clearDiagnostics") return extensionPageSender(sender);
-  if (message.type === "mosa.diagnosticsCount") return extensionPageSender(sender);
+  // DEV-ONLY(128): remove before release (the four dev raw diagnostics routes).
+  if (message.type === "mosa.devRawDiagnostics.record") return context.provider === "chatgpt";
+  if (message.type === "mosa.devRawDiagnostics.stats") return extensionPageSender(sender);
+  if (message.type === "mosa.devRawDiagnostics.exportPage") return extensionPageSender(sender);
+  if (message.type === "mosa.devRawDiagnostics.clear") return extensionPageSender(sender);
   if (message.type === "mosa.probeFlowMedia") return context.provider === "flow";
   if (["mosa.beginVideoTransfer", "mosa.videoTransferChunk", "mosa.commitVideoTransfer", "mosa.abortVideoTransfer"].includes(message.type)) {
     return context.provider === "flow" || context.provider === "google-ai-studio";
@@ -687,43 +695,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "mosa.recordDiagnostic") {
-    // Defense-in-depth: the page hook ran the record through the same
-    // allow-list already, but a tampered message could still try to slip
-    // text through. Drop anything that fails the re-check and bump the
-    // user-visible reject counter; capture itself is never blocked.
-    const scrub = scrubDiagnosticRecord(message.payload);
-    if (scrub === "leak") {
-      bumpDiagnosticRejects(1).catch(() => {});
-      sendResponse({ ok: true, rejected: true, count: 0 });
+  // DEV-ONLY(128): remove before release (the whole dev raw diagnostics block).
+  if (message.type === "mosa.devRawDiagnostics.record") {
+    // Records come from the paired ChatGPT tab only (checked above). Stamp
+    // the extension version and arrival time, store, and evict; capture
+    // itself is never blocked on this.
+    const record = message.payload && typeof message.payload === "object" ? message.payload : null;
+    if (!record) {
+      sendResponse({ ok: false, error: "empty dev raw diagnostics record" });
       return true;
     }
-    if (scrub.rejects) {
-      bumpDiagnosticRejects(scrub.rejects).catch(() => {});
+    if (typeof record.version !== "string" || !record.version) {
+      record.version = chrome.runtime.getManifest().version;
     }
-    appendDiagnosticRecord(scrub.record)
-      .then((result) => sendResponse({ ok: true, ...result }))
+    if (typeof record.recordedAt !== "string" || !record.recordedAt) {
+      record.recordedAt = new Date().toISOString();
+    }
+    devRawDiagnosticsStore.addRecord(record)
+      .then((result) => sendResponse({ ok: true, id: result.id, count: result.count }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
 
-  if (message.type === "mosa.exportDiagnostics") {
-    exportDiagnosticRecords()
-      .then((result) => sendResponse({ ok: true, ...result }))
+  if (message.type === "mosa.devRawDiagnostics.stats") {
+    devRawDiagnosticsStore.statsRecords()
+      .then((stats) => sendResponse({ ok: true, stats }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
 
-  if (message.type === "mosa.clearDiagnostics") {
-    clearDiagnosticRecords()
-      .then((result) => sendResponse({ ok: true, ...result }))
+  if (message.type === "mosa.devRawDiagnostics.exportPage") {
+    const afterId = Number(message.afterId) || 0;
+    const limit = Math.min(Math.max(Number(message.limit) || 10, 1), 50);
+    devRawDiagnosticsStore.listRecords({ afterId, limit })
+      .then((page) => sendResponse({
+        ok: true,
+        lines: page.records.map((record) => devRawJsonlLine(record)),
+        nextAfterId: page.nextAfterId,
+        hasMore: page.hasMore,
+      }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
 
-  if (message.type === "mosa.diagnosticsCount") {
-    Promise.all([readDiagnosticRecords(), readDiagnosticRejects()])
-      .then(([records, rejected]) => sendResponse({ ok: true, count: records.length, rejected }))
+  if (message.type === "mosa.devRawDiagnostics.clear") {
+    devRawDiagnosticsStore.clearRecords()
+      .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
@@ -849,31 +866,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // DEV-ONLY(128): remove before release (the devRawDiagnostics branch).
   function isChatGptPageSender(sender) {
-  // Content scripts on chatgpt.com need the captureDiagnostics flag to enable
-  // the page-hook diagnostic mode. Provider pages (gemini/flow) never observe
-  // the flag, so we filter by sender URL.
-  try {
-    const url = new URL(sender?.url || sender?.tab?.url || "");
-    const host = url.hostname.toLowerCase();
-    return host === "chatgpt.com" || host === "chat.openai.com" || host.endsWith(".chatgpt.com") || host.endsWith(".openai.com");
-  } catch {
-    return false;
+    // Content scripts on chatgpt.com need the devRawDiagnostics flag to enable
+    // the page-hook dev diagnostics mode. Provider pages (gemini/flow) never
+    // observe the flag, so we filter by sender URL.
+    try {
+      const url = new URL(sender?.url || sender?.tab?.url || "");
+      const host = url.hostname.toLowerCase();
+      return host === "chatgpt.com" || host === "chat.openai.com" || host.endsWith(".chatgpt.com") || host.endsWith(".openai.com");
+    } catch {
+      return false;
+    }
   }
-}
 
-if (message.type === "mosa.getSettings") {
+  if (message.type === "mosa.getSettings") {
     // Extension pages manage every field. Content scripts on provider pages
     // only read autoCapture, so the mosaToken and base URL never leave the
     // background for a page origin. The chatgpt-web-capture content script
-    // additionally needs the captureDiagnostics toggle, which is harmless on
+    // additionally needs the devRawDiagnostics toggle, which is harmless on
     // ChatGPT (settings storage is local) and never reaches provider tabs.
     getSettings()
       .then((settings) => sendResponse({
         ok: true,
         settings: extensionPageSender(sender)
           ? settings
-          : { autoCapture: settings.autoCapture, captureDiagnostics: isChatGptPageSender(sender) ? Boolean(settings.captureDiagnostics) : false, },
+          : { autoCapture: settings.autoCapture, devRawDiagnostics: isChatGptPageSender(sender) ? Boolean(settings.devRawDiagnostics) : false },
       }))
       .catch((error) => sendResponse({
         ok: false,
@@ -1052,88 +1070,6 @@ function migrateSettingsToLocal() {
 function normalizeStoredToken(value) {
   const token = String(value || "").trim();
   return token === LEGACY_DEV_TOKEN ? "" : token;
-}
-
-function byteLengthOf(value) {
-  if (typeof TextEncoder === "function") return new TextEncoder().encode(String(value ?? "")).byteLength;
-  return String(value ?? "").length;
-}
-
-const DIAGNOSTIC_REJECTS_KEY = "mosaCaptureDiagnosticsRejects";
-
-async function readDiagnosticRejects() {
-  const stored = await chrome.storage.local.get({ [DIAGNOSTIC_REJECTS_KEY]: 0 });
-  return Number(stored[DIAGNOSTIC_REJECTS_KEY]) || 0;
-}
-
-async function bumpDiagnosticRejects(extra) {
-  if (!extra) return;
-  const current = await readDiagnosticRejects();
-  await chrome.storage.local.set({ [DIAGNOSTIC_REJECTS_KEY]: current + extra });
-}
-
-async function readDiagnosticRecords() {
-  const stored = await chrome.storage.local.get({ [DIAGNOSTIC_STORAGE_KEY]: [] });
-  return Array.isArray(stored[DIAGNOSTIC_STORAGE_KEY]) ? stored[DIAGNOSTIC_STORAGE_KEY] : [];
-}
-
-async function writeDiagnosticRecords(records) {
-  await chrome.storage.local.set({ [DIAGNOSTIC_STORAGE_KEY]: records.slice(-DIAGNOSTIC_MAX_RECORDS) });
-}
-
-async function appendDiagnosticRecord(record) {
-  if (!record || typeof record !== "object") return { ok: false, reason: "empty" };
-  let result = { ok: true, count: 0, truncated: false };
-  await new Promise(async (resolve) => {
-    let resolved = false;
-    const finish = (value) => {
-      if (resolved) return;
-      resolved = true;
-      resolve(value);
-    };
-    try {
-      const existing = await readDiagnosticRecords();
-      // Defensive: an oversized record keeps the metadata and the first
-      // hundred frames so the user can still tell which capture triggered
-      // it; the rest of the frames fall off to fit the per-record budget.
-      let next = { ...record, recordedAt: Number(record.recordedAt) || Date.now() };
-      let bytes = byteLengthOf(JSON.stringify(next));
-      if (bytes > DIAGNOSTIC_MAX_RECORD_BYTES) {
-        const frames = Array.isArray(next.frames) ? next.frames.slice(0, 100) : [];
-        next = { ...next, truncated: true, frames };
-        bytes = byteLengthOf(JSON.stringify(next));
-        result.truncated = true;
-      }
-      const merged = [...existing, next].slice(-DIAGNOSTIC_MAX_RECORDS);
-      await writeDiagnosticRecords(merged);
-      result.count = merged.length;
-      finish();
-    } catch (error) {
-      result = { ok: false, reason: error instanceof Error ? error.message : String(error) };
-      finish();
-    }
-  });
-  return result;
-}
-
-async function clearDiagnosticRecords() {
-  await chrome.storage.local.set({ [DIAGNOSTIC_STORAGE_KEY]: [] });
-  return { ok: true, count: 0 };
-}
-
-async function exportDiagnosticRecords() {
-  const existing = await readDiagnosticRecords();
-  // Mirror the options page's date-stamped filename: YYYY-MM-DD-HHMM.
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16);
-  return {
-    ok: true,
-    filename: `mosa-capture-diagnostics-${stamp}.json`,
-    payload: {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      records: existing,
-    },
-  };
 }
 
 async function fetchImageAsBase64(url, { publicImage = false } = {}) {
