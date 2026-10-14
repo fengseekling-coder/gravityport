@@ -2,20 +2,25 @@ const DEFAULTS = {
   mosaBaseUrl: "http://127.0.0.1:43517",
   mosaToken: "",
   autoCapture: false,
-  captureDiagnostics: false,
+  devRawDiagnostics: false,
 };
-const DIAGNOSTIC_DEFAULT_DESCRIPTION = "默认关闭。开启后仅在插件拿到图但没有拿到 Prompt 时，把这一轮看到的流量结构（字段路径、长度、模型名）记录到本机用于排查。";
 const LEGACY_DEV_TOKEN = "mosa-web-capture-dev";
 
 const statusEl = document.getElementById("status");
 const baseUrlEl = document.getElementById("mosaBaseUrl");
 const tokenEl = document.getElementById("mosaToken");
 const autoCaptureEl = document.getElementById("autoCapture");
-const diagnosticsEnabledEl = document.getElementById("diagnosticsEnabled");
-const diagnosticsCountEl = document.getElementById("diagnosticsCount");
-const diagnosticsStatusEl = document.getElementById("diagnosticsStatus");
-const diagnosticsExportEl = document.getElementById("diagnosticsExport");
-const diagnosticsClearEl = document.getElementById("diagnosticsClear");
+// DEV-ONLY(128): remove before release (the whole #dev diagnostics block).
+const devPanelEl = document.getElementById("devDiagnostics");
+const devRawEnabledEl = document.getElementById("devRawDiagnostics");
+const devRawStatsEl = document.getElementById("devRawStats");
+const devRawStatusEl = document.getElementById("devRawStatus");
+const devRawExportAllEl = document.getElementById("devRawExportAll");
+const devRawExportRecentEl = document.getElementById("devRawExportRecent");
+const devRawClearEl = document.getElementById("devRawClear");
+// The panel exists in the markup but stays hidden unless the page was opened
+// with options.html#dev — normal users never see a diagnostics UI.
+const devPanelVisible = window.location.hash === "#dev";
 
 function normalizeBaseUrl(value) {
   let url;
@@ -47,14 +52,14 @@ async function load() {
     baseUrlEl.value = settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl;
     tokenEl.value = settings.mosaToken || "";
     autoCaptureEl.checked = settings.autoCapture !== false;
-    diagnosticsEnabledEl.checked = settings.captureDiagnostics === true;
-    await refreshDiagnosticsCount();
+    devRawEnabledEl.checked = settings.devRawDiagnostics === true;
+    if (devPanelVisible) await refreshDevRawStats();
   } catch (error) {
     const settings = await chrome.storage.local.get(DEFAULTS).catch(() => DEFAULTS);
     baseUrlEl.value = settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl;
     tokenEl.value = settings.mosaToken || "";
     autoCaptureEl.checked = settings.autoCapture !== false;
-    diagnosticsEnabledEl.checked = settings.captureDiagnostics === true;
+    devRawEnabledEl.checked = settings.devRawDiagnostics === true;
     setStatus(`设置读取失败：${error instanceof Error ? error.message : String(error)}`, "error");
   }
 }
@@ -76,68 +81,114 @@ document.getElementById("save").addEventListener("click", async () => {
     mosaBaseUrl: baseUrl,
     mosaToken: token,
     autoCapture: autoCaptureEl.checked,
-    captureDiagnostics: diagnosticsEnabledEl.checked === true,
+    devRawDiagnostics: devRawEnabledEl.checked === true,
   });
   setStatus("已保存。请刷新支持的网页使内容脚本生效。", "success");
 });
 
-function setDiagnosticsStatus(message, kind = "") {
-  diagnosticsStatusEl.textContent = message;
-  diagnosticsStatusEl.style.color = kind === "error" ? "var(--mosa-error)" : "var(--mosa-success)";
+// DEV-ONLY(128): remove before release (the whole #dev diagnostics block).
+function setDevRawStatus(message, kind = "") {
+  devRawStatusEl.textContent = message;
+  devRawStatusEl.style.color = kind === "error" ? "var(--mosa-error)" : "var(--mosa-success)";
 }
 
-async function refreshDiagnosticsCount() {
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
+async function refreshDevRawStats() {
   try {
-    const response = await chrome.runtime.sendMessage({ type: "mosa.diagnosticsCount" });
-    const count = response?.ok ? Number(response.count) || 0 : 0;
-    diagnosticsCountEl.textContent = `当前已记录 ${count} / 50 条`;
-    diagnosticsExportEl.disabled = count === 0;
+    const response = await chrome.runtime.sendMessage({ type: "mosa.devRawDiagnostics.stats" });
+    if (!response?.ok) throw new Error(response?.error || "统计读取失败");
+    const stats = response.stats || {};
+    devRawStatsEl.textContent = "已存 "
+      + `${stats.count || 0} 轮 · 其中没提示词 ${stats.missingPromptCount || 0} 轮 · 对照 ${stats.controlCount || 0} 轮 · 占用 ${formatBytes(stats.bytes)}`;
   } catch {
-    diagnosticsCountEl.textContent = "当前已记录 (读取失败)";
-    diagnosticsExportEl.disabled = true;
+    devRawStatsEl.textContent = "统计读取失败";
   }
 }
 
-diagnosticsEnabledEl.addEventListener("change", async () => {
-  await chrome.storage.local.set({ captureDiagnostics: diagnosticsEnabledEl.checked === true });
-  setDiagnosticsStatus(diagnosticsEnabledEl.checked
-    ? "诊断记录已开启。下次发现没有提示词的出图时会自动收集。"
-    : "诊断记录已关闭。现有记录仍保留，可手动清空。");
-  refreshDiagnosticsCount();
+devRawEnabledEl.addEventListener("change", async () => {
+  await chrome.storage.local.set({ devRawDiagnostics: devRawEnabledEl.checked === true });
+  setDevRawStatus(devRawEnabledEl.checked
+    ? "开发者诊断已开启。下次 ChatGPT 出图没拿到提示词时会按轮记录原始数据。"
+    : "开发者诊断已关闭。缓冲与本机数据立即清空。");
+  refreshDevRawStats();
 });
 
-diagnosticsExportEl.addEventListener("click", async () => {
-  setDiagnosticsStatus("导出中…");
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "mosa.exportDiagnostics" });
+async function exportDevRawRecords(onlyNewest) {
+  // Page through the store so a large history never becomes one giant
+  // message; each page of JSON Lines is appended to the download Blob as a
+  // separate part instead of one JSON.stringify of everything. "最近 20 轮"
+  // starts paging right before the newest record ids instead of reading the
+  // whole store.
+  let afterId = 0;
+  if (typeof onlyNewest === "number") {
+    const statsResponse = await chrome.runtime.sendMessage({ type: "mosa.devRawDiagnostics.stats" });
+    if (!statsResponse?.ok) throw new Error(statsResponse?.error || "导出失败");
+    afterId = Math.max(0, (Number(statsResponse.stats?.maxId) || 0) - onlyNewest);
+  }
+  const parts = [];
+  for (let page = 0; page < 1000; page += 1) {
+    const response = await chrome.runtime.sendMessage({
+      type: "mosa.devRawDiagnostics.exportPage",
+      afterId,
+      limit: 10,
+    });
     if (!response?.ok) throw new Error(response?.error || "导出失败");
-    const blob = new Blob([JSON.stringify(response.payload, null, 2)], { type: "application/json" });
-    const downloadUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    link.download = response.filename || "mosa-capture-diagnostics.json";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
-    setDiagnosticsStatus(`已导出：${link.download}`);
-  } catch (error) {
-    setDiagnosticsStatus(error instanceof Error ? error.message : String(error), "error");
+    for (const line of response.lines || []) parts.push(`${line}\n`);
+    if (!response.hasMore) break;
+    afterId = response.nextAfterId;
   }
-});
+  if (!parts.length) throw new Error("没有可导出的记录。");
+  const stamp = (() => {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+  })();
+  const blob = new Blob(parts, { type: "application/x-ndjson" });
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = `mosa-raw-diagnostics-${stamp}.jsonl`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+  return link.download;
+}
 
-diagnosticsClearEl.addEventListener("click", async () => {
-  if (!window.confirm("确认清空所有诊断记录？此操作不可撤销。")) return;
-  setDiagnosticsStatus("清空中…");
+async function handleDevRawExport(limit) {
+  setDevRawStatus("导出中…");
   try {
-    const response = await chrome.runtime.sendMessage({ type: "mosa.clearDiagnostics" });
-    if (!response?.ok) throw new Error(response?.error || "清空失败");
-    setDiagnosticsStatus("已清空。");
+    const filename = await exportDevRawRecords(limit);
+    setDevRawStatus(`已导出：${filename}`);
   } catch (error) {
-    setDiagnosticsStatus(error instanceof Error ? error.message : String(error), "error");
+    setDevRawStatus(error instanceof Error ? error.message : String(error), "error");
   }
-  refreshDiagnosticsCount();
-});
+  refreshDevRawStats();
+}
+
+if (devPanelVisible) {
+  devPanelEl.hidden = false;
+  devRawExportAllEl.addEventListener("click", () => handleDevRawExport(null));
+  devRawExportRecentEl.addEventListener("click", () => handleDevRawExport(20));
+  devRawClearEl.addEventListener("click", async () => {
+    if (!window.confirm("确认清空全部开发者诊断记录？此操作不可撤销。")) return;
+    setDevRawStatus("清空中…");
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "mosa.devRawDiagnostics.clear" });
+      if (!response?.ok) throw new Error(response?.error || "清空失败");
+      setDevRawStatus("已清空。");
+    } catch (error) {
+      setDevRawStatus(error instanceof Error ? error.message : String(error), "error");
+    }
+    refreshDevRawStats();
+  });
+}
 
 // "未发现正在运行的 MOSA" lumps three very different failures together: the
 // service is down, another app owns the port, or MOSA is running but refuses

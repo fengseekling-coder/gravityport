@@ -2366,7 +2366,7 @@
         autoCapture = response.settings.autoCapture !== false;
         pageHookCaptureAck = null;
         syncPageHookCaptureEnabled();
-        syncPageHookDiagnostics(response.settings);
+        syncPageHookDevRawDiagnostics(response.settings);
         return;
       }
     } catch {
@@ -2376,10 +2376,10 @@
     // The background owns defaults and migration. A temporary messaging failure
     // must never overwrite an explicit local "off" preference.
     try {
-      const stored = await chrome.storage?.local?.get?.({ autoCapture, captureDiagnostics: false });
+      const stored = await chrome.storage?.local?.get?.({ autoCapture, devRawDiagnostics: false });
       if (stored) {
         autoCapture = stored.autoCapture !== false;
-        syncPageHookDiagnostics({ captureDiagnostics: stored.captureDiagnostics === true });
+        syncPageHookDevRawDiagnostics({ devRawDiagnostics: stored.devRawDiagnostics === true });
       }
     } catch {
       // Keep the in-memory value when both settings paths are unavailable.
@@ -2388,9 +2388,10 @@
     syncPageHookCaptureEnabled();
   }
 
-  function syncPageHookDiagnostics(settings) {
-    const enabled = settings?.captureDiagnostics === true;
-    postToPageHook("set-diagnostics-enabled", { enabled });
+  // DEV-ONLY(128): remove before release (the whole dev raw diagnostics block).
+  function syncPageHookDevRawDiagnostics(settings) {
+    const enabled = settings?.devRawDiagnostics === true;
+    postToPageHook("set-dev-raw-diagnostics-enabled", { enabled });
   }
 
   function handlePageHookEvent(data) {
@@ -2429,17 +2430,14 @@
       return;
     }
 
-    // One record per prompt-less capture. The hook reduced the record to
-    // safe fields before sending it; the content script forwards it to the
-    // background for retention only. The page hook never blocks on this.
-    if (data.type === "capture-diagnostic" && data.payload) {
+    // DEV-ONLY(128): remove before release. One record per completed dev
+    // diagnostics round; the page hook already masked it. The content script
+    // only forwards it to the background store and never blocks on this.
+    if (data.type === "dev-raw-diagnostic" && data.payload) {
       if (extensionAlive()) {
         Promise.resolve(runtimeSend({
-          type: "mosa.recordDiagnostic",
-          payload: {
-            ...data.payload,
-            recordedAtIso: new Date().toISOString(),
-          },
+          type: "mosa.devRawDiagnostics.record",
+          payload: data.payload,
         })).catch(() => {});
       }
       return;
@@ -2668,6 +2666,11 @@
   }, 5000);
 
   chrome.storage?.onChanged?.addListener((changes, area) => {
+    // DEV-ONLY(128): remove before release. Flip the dev recorder without a
+    // page reload when the hidden panel toggles it.
+    if (area === "local" && changes.devRawDiagnostics) {
+      syncPageHookDevRawDiagnostics({ devRawDiagnostics: changes.devRawDiagnostics.newValue === true });
+    }
     if (area !== "local" || !changes.autoCapture) return;
     autoCapture = changes.autoCapture.newValue !== false;
     if (autoCapture) {
