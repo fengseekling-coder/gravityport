@@ -80,6 +80,19 @@ describe("resolveReferences", () => {
     assert.equal(result, null);
   });
 
+  it("ignores a history that belongs to another asset in the same project", () => {
+    const asset = { id: "b1", project_id: "default", source: { type: "web-chatgpt" }, references: [] };
+    const otherHistory = {
+      asset_id: "a1",
+      project_id: "default",
+      active_snapshot_id: "snap1",
+      snapshots: [{ snapshot_id: "snap1", references: [{ role: "other-asset-ref" }] }],
+    };
+    assert.equal(inspectorInfoModule.resolveReferences(asset, otherHistory, []), null);
+    const local = { ...asset, source: { type: "local-file" } };
+    assert.deepEqual(inspectorInfoModule.resolveReferences(local, otherHistory, []), { items: [], total: 0 });
+  });
+
   it("returns empty array when recipeHistory is null and asset has no references", () => {
     const asset = {
       id: "a1",

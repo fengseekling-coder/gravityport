@@ -51,32 +51,28 @@ export function resolveReferences(
   recipeHistory: MosaRecipeHistory | null | undefined,
   libraryAssets: MosaAsset[]
 ): ResolvedReferences {
-  // Check if recipeHistory belongs to this asset
-  const historyMatches = recipeHistory && 
-    (asset.id === (recipeHistory as MosaRecipeHistory & { asset_id?: string }).asset_id ||
-     asset.project_id === (recipeHistory as MosaRecipeHistory & { project_id?: string }).project_id)
-  
-  let references: MosaReference[] | null = null
+  // The server stamps the history with its owner. A history left over from the
+  // previously selected asset (same project, other id) counts as not fetched yet,
+  // so callers must pass null only for a fetch that answered for this asset.
+  const owned = recipeHistory as (MosaRecipeHistory & { asset_id?: string; project_id?: string }) | null | undefined
+  const fetched = owned === null
+    || (owned !== undefined && owned.asset_id === asset.id && owned.project_id === asset.project_id)
 
-  if (historyMatches && recipeHistory?.snapshots?.length) {
+  let references: MosaReference[]
+
+  if (fetched && owned?.snapshots?.length) {
     // Use active snapshot or last one
-    const activeId = recipeHistory.active_snapshot_id || recipeHistory.snapshots[recipeHistory.snapshots.length - 1]?.snapshot_id
-    const snapshot = recipeHistory.snapshots.find(s => s.snapshot_id === activeId) || recipeHistory.snapshots[recipeHistory.snapshots.length - 1]
-    references = snapshot?.references || []
-  } else if (recipeHistory !== undefined) {
-    // recipeHistory has been fetched (could be null or no snapshots)
-    references = asset.references || []
+    const snapshots = owned.snapshots
+    const snapshot = snapshots.find(s => s.snapshot_id === owned.active_snapshot_id) || snapshots[snapshots.length - 1]
+    references = Array.isArray(snapshot?.references) ? snapshot.references : []
   } else {
-    // recipeHistory is undefined (not fetched yet)
+    const sourceRefs = asset.source?.references
+    const direct = asset.references?.length ? asset.references : Array.isArray(sourceRefs) ? sourceRefs as MosaReference[] : []
     const sourceType = String(asset.source?.type || (asset as MosaAsset & { source_type?: string }).source_type || "")
-    if (/^web-/.test(sourceType)) {
-      return null // Still loading
-    }
-    references = asset.references || []
-  }
-
-  if (!references || !Array.isArray(references)) {
-    references = []
+    // Web captures keep their references in the recipe snapshot: until the
+    // history arrives, an empty list means "loading", not "none".
+    if (!direct.length && !fetched && /^web-/.test(sourceType)) return null
+    references = direct
   }
 
   const total = references.length
