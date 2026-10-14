@@ -5,7 +5,7 @@ import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
 import { translate, type Language } from "./i18n"
 import { desktopAPI } from "./desktop"
-import { logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
+import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import {
@@ -303,8 +303,11 @@ export default function App() {
     return () => {
       controller.abort()
       paginationAbortRef.current?.abort()
-      selectAllAbortRef.current?.abort()
-      historySelectAbortRef.current?.abort()
+      // A background refresh (same view) must not cancel the user's explicit
+      // selection work: the cross-page select-all and a history select carry
+      // their own view/intent/revision guards, so they land safely or discard
+      // themselves — aborting them here only dropped in-flight actions
+      // whenever a derivative landed mid-click.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, active, debouncedQuery, sortOrder, assetType, stackId, refreshKey])
@@ -413,9 +416,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, selected])
   // History/round switching: an in-flight response is invalidated by a newer
-  // history click, any selection takeover, or a view change — the load
-  // effect's cleanup aborts it so a late response can neither append its
-  // asset to, nor move the selection of, a view it no longer belongs to.
+  // history click, any explicit focus switch, a selection takeover, or a view
+  // change — the guards below discard it, so a late response can neither
+  // append its asset to, nor move the selection of, a view it no longer
+  // belongs to. Background same-view refreshes leave it alone: an explicit
+  // click must not be silently dropped by unrelated churn.
   const historySelectAbortRef = useRef<AbortController | null>(null)
   const historyIntentRef = useRef(0)
   const selectHistoryAsset = (id: string) => {
@@ -432,7 +437,12 @@ export default function App() {
         || historyIntentRef.current !== requestIntent
         || selectionRevisionRef.current !== requestRevision) return
       setAssets(old => old.some(item => item.id === full.id) ? old.map(item => item.id === full.id ? mergeAssetDetail(item, full) : item) : [...old, full])
-      setSelected(id)
+      // The revision guard above pins the selection to the click-time one, so
+      // focusSelection resolves against exactly the state the user acted on:
+      // a version focused from a multi-selection collapses the batch onto it
+      // instead of leaving hidden A/B members as batch targets.
+      const committed = focusSelection(selectionRef.current.selectedIds, selectionRef.current.selected, id)
+      applySelection(committed.selectedIds, committed.selected)
     }).catch(error => {
       if (!controller.signal.aborted) notify(errorMessage(error))
     })
@@ -738,6 +748,20 @@ export default function App() {
     setSelected(nextSelected)
   }
   const clearSelection = () => applySelection([], selectionRef.current.selected)
+  // Every explicit focus switch outside the version fetch (related
+  // recommendation, double-click preview, viewer arrows, right-click refocus)
+  // commits through here: the inspector lands on an asset the batch selection
+  // contains, and an in-flight history fetch is invalidated — the intent bump
+  // and abort take its request out of flight, so a late version response can
+  // never retake the focus from the newer explicit switch.
+  const focusAsset = (id: string) => {
+    if (!id || id === selectionRef.current.selected) return
+    historyIntentRef.current += 1
+    historySelectAbortRef.current?.abort()
+    historySelectAbortRef.current = null
+    const next = focusSelection(selectionRef.current.selectedIds, selectionRef.current.selected, id)
+    applySelection(next.selectedIds, next.selected)
+  }
   const selectCard = (id: string, event: React.MouseEvent) => {
     const index = assets.findIndex(a => a.id === id)
     if (event.shiftKey && anchorIndexRef.current >= 0) {
@@ -764,10 +788,13 @@ export default function App() {
   // filtered result is fetched (250 per page, like the previous gallery) and
   // selected in one commit. Any selection change, view change or Escape
   // cancels it mid-flight; when everything is already loaded it reduces to
-  // the synchronous path above.
+  // the synchronous path above. A ⌘A landing while a load is in flight is
+  // queued for the settled view instead of being silently swallowed.
   const selectAllInFlightRef = useRef(false)
+  const pendingSelectAllRef = useRef(false)
   const selectAllAcrossPages = async () => {
-    if (selectAllInFlightRef.current || loading) return
+    if (selectAllInFlightRef.current) return
+    if (loading) { pendingSelectAllRef.current = true; return }
     if (!nextCursor) { selectAllLoaded(); return }
     const requestViewKey = viewKeyRef.current
     const startRevision = selectionRevisionRef.current
@@ -816,6 +843,15 @@ export default function App() {
       selectAllInFlightRef.current = false
     }
   }
+  // A ⌘A queued behind an in-flight load fires once the view settles — the
+  // select-all then describes the settled result, never the one being
+  // replaced.
+  useEffect(() => {
+    if (loading || !pendingSelectAllRef.current) return
+    pendingSelectAllRef.current = false
+    void selectAllAcrossPages()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
   // Marquee selection: pointer drag across the grid background selects every
   // plain card whose box intersects the rubber band.
   const marqueeRef = useRef<{ x0: number; y0: number } | null>(null)
@@ -858,6 +894,7 @@ export default function App() {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         selectAllAbortRef.current?.abort()
+        pendingSelectAllRef.current = false
         if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         else if (settings) setSettings(false)
@@ -965,11 +1002,11 @@ export default function App() {
       // steps straight into it.
       const merged = await fetchNextPage()
       if (merged && merged.length > visible.length) {
-        setSelected(merged[visible.length].id)
+        focusAsset(merged[visible.length].id)
       }
       return
     }
-    setSelected(visible[(nextIndex + visible.length) % visible.length].id)
+    focusAsset(visible[(nextIndex + visible.length) % visible.length].id)
   }
   const toggleFavorite = async () => {
     if (!asset) return
@@ -1401,14 +1438,14 @@ export default function App() {
                     onClick={(event) => {
                       if (a.stack) {
                         goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
-                        setSelected("")
+                        applySelection([], "")
                         return
                       }
                       selectCard(a.id, event)
                     }}
                     onDoubleClick={() => {
                       if (a.stack) return
-                      setSelected(a.id)
+                      focusAsset(a.id)
                       setPreview(true)
                     }}
                     onContextMenu={(e) => {
@@ -1418,7 +1455,7 @@ export default function App() {
                       // context menu to the clicked card; inside it, the whole
                       // selection stays the action target.
                       if (!selectedIds.includes(a.id)) applySelection([], a.id)
-                      else setSelected(a.id)
+                      else focusAsset(a.id)
                       setMenu({ x: e.clientX, y: e.clientY })
                     }}
                   >
@@ -1457,14 +1494,14 @@ export default function App() {
                   onClick={(event) => {
                     if (a.stack) {
                       goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
-                      setSelected("")
+                      applySelection([], "")
                       return
                     }
                     selectCard(a.id, event)
                   }}
                   onDoubleClick={() => {
                     if (a.stack) return
-                    setSelected(a.id)
+                    focusAsset(a.id)
                     setPreview(true)
                   }}
                   onContextMenu={(e) => {
@@ -1474,7 +1511,7 @@ export default function App() {
                     // context menu to the clicked card; inside it, the whole
                     // selection stays the action target.
                     if (!selectedIds.includes(a.id)) applySelection([], a.id)
-                    else setSelected(a.id)
+                    else focusAsset(a.id)
                     setMenu({ x: e.clientX, y: e.clientY })
                     }}
                 >
@@ -1749,7 +1786,7 @@ export default function App() {
               <button
                 className="related"
                 key={relatedAsset.id}
-                onClick={() => setSelected(relatedAsset.id)}
+                onClick={() => focusAsset(relatedAsset.id)}
               >
                 <i>{relatedAsset.thumbnail_url ? <img src={relatedAsset.thumbnail_url} alt="" loading="lazy" /> : null}</i>
                 <span>

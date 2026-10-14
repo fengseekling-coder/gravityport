@@ -34,6 +34,22 @@ export function replaceSelection(selectedIds: string[], selected: string): strin
   return selectedIds.includes(selected) ? selected : selectedIds[0] ?? ""
 }
 
+/** An explicit focus switch (version row, generation row, related
+ * recommendation, double-click preview, viewer arrows, right-click refocus):
+ * the inspector must land on an asset the batch selection contains. Focusing
+ * an asset outside the current multi-selection collapses the selection onto
+ * that focus — the design's implicit single selection — so a later batch
+ * action can never silently reach the cards the user stopped looking at. */
+export function focusSelection(
+  selectedIds: string[],
+  selected: string,
+  id: string,
+): { selectedIds: string[]; selected: string } {
+  return selectedIds.includes(id)
+    ? { selectedIds, selected: id }
+    : { selectedIds: [], selected: id }
+}
+
 /** Same-view refresh (pagination / SSE window reload): keep only the selection
  * entries still present in the freshly loaded view. Selections pointing at
  * assets that left the view are dropped instead of lurking as hidden batch

@@ -83,6 +83,36 @@ describe("selection unity", () => {
   });
 });
 
+describe("explicit focus switch selection unity", () => {
+  let focusSelection, logicalSelection;
+  before(() => { ({ focusSelection, logicalSelection } = modules.selection); });
+
+  it("collapses a multi-selection onto a focus outside it", () => {
+    // Multi-select A/B, then the inspector moves to C (version row, related
+    // recommendation, viewer arrow): the batch target becomes the visible C —
+    // never the out-of-sight A/B.
+    const next = focusSelection(["a", "b"], "a", "c");
+    assert.deepEqual(next.selectedIds, []);
+    assert.equal(next.selected, "c");
+    assert.deepEqual(logicalSelection(next.selectedIds, next.selected), ["c"]);
+  });
+
+  it("keeps the multi-selection when the focus stays inside it", () => {
+    // Right-clicking a member of the selection refocuses the inspector while
+    // the whole selection stays the batch target.
+    const next = focusSelection(["a", "b"], "a", "b");
+    assert.deepEqual(next.selectedIds, ["a", "b"]);
+    assert.equal(next.selected, "b");
+  });
+
+  it("lands a single focus without inventing a set", () => {
+    const next = focusSelection([], "", "d");
+    assert.deepEqual(next.selectedIds, []);
+    assert.equal(next.selected, "d");
+    assert.deepEqual(logicalSelection(next.selectedIds, next.selected), ["d"]);
+  });
+});
+
 describe("selection pruning on same-view refresh", () => {
   let pruneSelection;
   before(() => { ({ pruneSelection } = modules.selection); });
