@@ -424,12 +424,18 @@ export default function App() {
   const historySelectAbortRef = useRef<AbortController | null>(null)
   const historyIntentRef = useRef(0)
   const selectHistoryAsset = (id: string) => {
-    if (!id || id === selected) return
-    const requestViewKey = viewKeyRef.current
-    const requestIntent = historyIntentRef.current + 1
-    historyIntentRef.current = requestIntent
-    const requestRevision = selectionRevisionRef.current
+    if (!id) return
+    // Invalidation runs on every history click, including a re-click of the
+    // currently focused version: the latest intent is "stay here", so an
+    // in-flight fetch for another version must never retake the focus (or
+    // collapse the batch) afterwards.
+    historyIntentRef.current += 1
     historySelectAbortRef.current?.abort()
+    historySelectAbortRef.current = null
+    if (id === selected) return
+    const requestViewKey = viewKeyRef.current
+    const requestIntent = historyIntentRef.current
+    const requestRevision = selectionRevisionRef.current
     const controller = new AbortController()
     historySelectAbortRef.current = controller
     fetchAsset(project, id, controller.signal).then(full => {
@@ -751,14 +757,17 @@ export default function App() {
   // Every explicit focus switch outside the version fetch (related
   // recommendation, double-click preview, viewer arrows, right-click refocus)
   // commits through here: the inspector lands on an asset the batch selection
-  // contains, and an in-flight history fetch is invalidated — the intent bump
-  // and abort take its request out of flight, so a late version response can
-  // never retake the focus from the newer explicit switch.
+  // contains, and an in-flight history fetch is invalidated. The invalidation
+  // also covers a re-click of the current focus (right-clicking the
+  // inspected card keeps its menu's batch target honest): the latest intent
+  // is "stay here", so a late version response can never retake the focus or
+  // collapse the batch afterwards.
   const focusAsset = (id: string) => {
-    if (!id || id === selectionRef.current.selected) return
+    if (!id) return
     historyIntentRef.current += 1
     historySelectAbortRef.current?.abort()
     historySelectAbortRef.current = null
+    if (id === selectionRef.current.selected) return
     const next = focusSelection(selectionRef.current.selectedIds, selectionRef.current.selected, id)
     applySelection(next.selectedIds, next.selected)
   }
@@ -789,12 +798,18 @@ export default function App() {
   // selected in one commit. Any selection change, view change or Escape
   // cancels it mid-flight; when everything is already loaded it reduces to
   // the synchronous path above. A ⌘A landing while a load is in flight is
-  // queued for the settled view instead of being silently swallowed.
+  // queued for the settled view instead of being silently swallowed — bound
+  // to the view identity and selection revision it was pressed in, so a
+  // same-view refresh lets it through while a project, search, filter, sort
+  // or stack switch (or any selection takeover) invalidates the stale intent.
   const selectAllInFlightRef = useRef(false)
-  const pendingSelectAllRef = useRef(false)
+  const pendingSelectAllRef = useRef<{ viewKey: string; revision: number } | null>(null)
   const selectAllAcrossPages = async () => {
     if (selectAllInFlightRef.current) return
-    if (loading) { pendingSelectAllRef.current = true; return }
+    if (loading) {
+      pendingSelectAllRef.current = { viewKey: viewKeyRef.current, revision: selectionRevisionRef.current }
+      return
+    }
     if (!nextCursor) { selectAllLoaded(); return }
     const requestViewKey = viewKeyRef.current
     const startRevision = selectionRevisionRef.current
@@ -843,12 +858,17 @@ export default function App() {
       selectAllInFlightRef.current = false
     }
   }
-  // A ⌘A queued behind an in-flight load fires once the view settles — the
-  // select-all then describes the settled result, never the one being
-  // replaced.
+  // A ⌘A queued behind an in-flight load fires once the view settles — but
+  // only if the settled view is still the one it was pressed in and no
+  // selection takeover happened meanwhile. A switched view simply consumes
+  // the stale intent: the queue never selects a gallery the user moved away
+  // from.
   useEffect(() => {
-    if (loading || !pendingSelectAllRef.current) return
-    pendingSelectAllRef.current = false
+    const pending = pendingSelectAllRef.current
+    if (loading || !pending) return
+    pendingSelectAllRef.current = null
+    if (pending.viewKey !== viewKeyRef.current
+      || selectionRevisionRef.current !== pending.revision) return
     void selectAllAcrossPages()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading])
@@ -894,7 +914,7 @@ export default function App() {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         selectAllAbortRef.current?.abort()
-        pendingSelectAllRef.current = false
+        pendingSelectAllRef.current = null
         if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         else if (settings) setSettings(false)
