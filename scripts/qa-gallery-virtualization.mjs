@@ -669,7 +669,21 @@ async function main() {
     await clickThroughChromium(client, ".sidebar .user-button");
     await waitForPage("Boolean(document.querySelector('.settings-modal'))", "settings open via browser mouse input");
     await clickThroughChromium(client, ".settings-modal .modal-close");
-    await waitForPage("!document.querySelector('.settings-modal')", "settings close via browser mouse input");
+    try {
+      await waitForPage("!document.querySelector('.settings-modal')", "settings close via browser mouse input");
+    } catch (error) {
+      const diagnosis = await evaluate(client, `(() => {
+        const close=document.querySelector('.settings-modal .modal-close');
+        const b=close?.getBoundingClientRect();
+        const x=b ? Math.round(b.left+b.width/2) : -1;
+        const y=b ? Math.round(b.top+b.height/2) : -1;
+        return { close:!!close, rect:b ? { x:b.x,y:b.y,width:b.width,height:b.height } : null,
+          target:document.elementFromPoint(x,y)?.outerHTML.slice(0,260),
+          modalCount:document.querySelectorAll('.settings-modal').length,
+          bodyText:document.body.innerText.slice(0,240) };
+      })()`);
+      throw new Error(`${error.message}; pointer diagnosis=${JSON.stringify(diagnosis)}`);
+    }
     await clickThroughChromium(client, ".search input");
     await waitForPage("document.activeElement === document.querySelector('.search input')", "search focus via browser mouse input");
     await client.send("Input.insertText", { text: "scale-pointer-test" });

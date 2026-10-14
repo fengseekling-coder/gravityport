@@ -68,6 +68,25 @@ describe("normalizeAsset", () => {
     assert.equal(empty.stack, null);
     assert.equal(empty.width >= 1 && empty.height >= 1, true);
   });
+
+  it("preserves both provenance prompts and sizes responsive derivatives correctly", () => {
+    const asset = adapterModule.normalizeAsset({
+      id: "a", prompt: "Main caption", source: {
+        generation_request_prompt: "Tool prompt", user_message: "Draw a forest",
+      }, thumbnail_url: "/t.webp", medium_url: "/m.webp", preview_url: "/p.webp",
+      thumbnail_ready: true, medium_ready: true, preview_ready: true,
+      business_fields: { width: 941, height: 1672 },
+    });
+    assert.equal(asset.prompt, "Main caption");
+    assert.equal(asset.prompt2, "Tool prompt");
+    assert.equal(asset.user_instruction, "Draw a forest");
+    const srcset = adapterModule.galleryImageSrcSet(asset);
+    assert.match(srcset, /\/t\.webp 225w/);
+    assert.match(srcset, /\/m\.webp 540w/);
+    assert.match(srcset, /\/p\.webp 900w/);
+    const legacy = adapterModule.normalizeAsset({ id: "legacy", business_fields: { user_message: "Old instruction" } });
+    assert.equal(legacy.user_instruction, "Old instruction");
+  });
 });
 
 describe("fetchAssetPage query mapping", () => {

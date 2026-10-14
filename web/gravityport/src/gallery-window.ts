@@ -110,3 +110,105 @@ export function gallerySpacerHeights(
   const bottom = endRow >= lastRow ? 0 : Math.max(0, model.totalHeight - model.rowOffset[endRow + 1])
   return { top, bottom }
 }
+
+/** True shortest-column masonry. Cards retain their own image aspect ratio;
+ * their vertical starts are independent of the tallest card in a CSS row.
+ * A stable input order, unchanged by viewport windowing, avoids jumps during
+ * scrolling and incremental page hydration. */
+export type MasonryPlacement = {
+  left: number
+  top: number
+  width: number
+  height: number
+  column: number
+  /** Accumulated source height ratios and card count above this item. */
+  precedingRatio: number
+  precedingCount: number
+  ratio: number
+}
+
+export type MasonryModel = {
+  placements: MasonryPlacement[]
+  totalHeight: number
+  columns: number
+  columnWidth: number
+  gap: number
+  columnRatios: number[]
+  columnCounts: number[]
+}
+
+export function buildMasonryModel(
+  heightRatios: number[], columns: number, columnWidth: number, gap: number,
+): MasonryModel {
+  const count = Math.max(1, Math.floor(columns))
+  const safeWidth = Math.max(1, columnWidth)
+  const safeGap = Math.max(0, gap)
+  const bottoms = Array<number>(count).fill(0)
+  const columnRatios = Array<number>(count).fill(0)
+  const columnCounts = Array<number>(count).fill(0)
+  const placements: MasonryPlacement[] = []
+  for (const ratio of heightRatios) {
+    let column = 0
+    for (let index = 1; index < count; index += 1) {
+      if (bottoms[index] < bottoms[column]) column = index
+    }
+    const safeRatio = Number.isFinite(ratio) && ratio > 0 ? ratio : 1
+    const height = safeWidth * safeRatio
+    placements.push({ left: column * (safeWidth + safeGap), top: bottoms[column],
+      width: safeWidth, height, column, precedingRatio: columnRatios[column],
+      precedingCount: columnCounts[column], ratio: safeRatio })
+    columnRatios[column] += safeRatio
+    columnCounts[column] += 1
+    bottoms[column] += height + safeGap
+  }
+  return {
+    placements, columns: count, columnWidth: safeWidth, gap: safeGap,
+    totalHeight: placements.length ? Math.max(...bottoms) - safeGap : 0,
+    columnRatios, columnCounts,
+  }
+}
+
+/** CSS container units keep already-mounted cards geometrically correct in
+ * background Electron windows where ResizeObserver/React may be throttled.
+ * CSS handles width changes instantly; JS only reassigns shortest columns. */
+export function masonryCardCss(model: MasonryModel, index: number) {
+  const place = model.placements[index]
+  const inline = `(100cqw - ${(model.columns - 1) * model.gap}px)`
+  return {
+    left: `calc(${inline} * ${place.column / model.columns} + ${place.column * model.gap}px)`,
+    top: `calc(${inline} * ${place.precedingRatio / model.columns} + ${place.precedingCount * model.gap}px)`,
+    width: `calc(${inline} / ${model.columns})`,
+    height: `calc(${inline} * ${place.ratio / model.columns})`,
+  }
+}
+
+export function masonryExtentCss(model: MasonryModel): string {
+  if (!model.placements.length) return "0px"
+  const inline = `(100cqw - ${(model.columns - 1) * model.gap}px)`
+  const endings = model.columnRatios.map((ratio, index) =>
+    `calc(${inline} * ${ratio / model.columns} + ${Math.max(0, model.columnCounts[index] - 1) * model.gap}px)`)
+  return `max(${endings.join(", ")})`
+}
+
+/** Return the indexes occupying a buffered viewport without mounting the full
+ * Library. Visible cards are always prioritized ahead of warm preloads. */
+export function locateMasonryWindow(
+  model: MasonryModel, scrollTop: number, viewportHeight: number,
+  overscan: number, maxCards: number,
+): number[] {
+  const viewBottom = scrollTop + Math.max(0, viewportHeight)
+  const minY = scrollTop - Math.max(0, overscan)
+  const maxY = viewBottom + Math.max(0, overscan)
+  const candidates: { index: number; distance: number }[] = []
+  for (let index = 0; index < model.placements.length; index += 1) {
+    const { top, height } = model.placements[index]
+    if (top + height < minY || top > maxY) continue
+    candidates.push({ index, distance: top > viewBottom ? top - viewBottom
+      : top + height < scrollTop ? scrollTop - top - height : 0 })
+  }
+  if (candidates.length > maxCards) {
+    candidates.sort((a, b) => a.distance - b.distance || a.index - b.index)
+    candidates.length = Math.max(1, maxCards)
+  }
+  return candidates.map(item => item.index).sort((a, b) => a - b)
+}

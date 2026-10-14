@@ -8,17 +8,19 @@ import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
+import { generationTreeRows } from "./version-tree"
 import {
-  buildGalleryRowModel, galleryModelSignature, gallerySpacerHeights, locateGalleryWindow,
-  type GalleryRowModel, type GalleryRowRange,
+  buildMasonryModel, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
+  type MasonryModel,
 } from "./gallery-window"
 import {
-  fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus,
+  fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus, fetchSimilarAssets,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
   toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, restoreAsset, setAssetsGroup,
-  createGroup, moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
-  mosaMutationHeaders, mergeAssetDetail, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
-  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent,
+  createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups,
+  moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
+  mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
+  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent, type MosaGenerationHistory,
 } from "./mosa-api"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
@@ -57,9 +59,14 @@ function errorMessage(error: unknown): string {
   return String(error)
 }
 
-function smartGroupLabel(name: string): string {
-  return name.replace(/^web-/, "").replace(/-generated$/, "")
-}
+/** Same curated capture/bridge groups as the pre-React MOSA sidebar. Manual
+ * imports and arbitrary historical source names are not smart groups. */
+const SMART_SOURCE_GROUPS = [
+  ["web-chatgpt", "ChatGPT"], ["web-gemini", "Gemini"],
+  ["web-flow", "Flow"], ["web-google-ai-studio", "Google AI Studio"],
+  ["codex-generated", "Codex"], ["grok-generated", "Grok"],
+  ["cowart-generated", "Cowart"],
+] as const
 
 const GALLERY_PAGE_SIZE = 100
 // Virtualization thresholds mirror the gallery QA budgets: below this many
@@ -137,6 +144,7 @@ export default function App() {
   }, [language])
   const [detail, setDetail] = useState(true)
   const [expandedPrompt, setExpandedPrompt] = useState(false)
+  const [promptVariant, setPromptVariant] = useState<1 | 2>(1)
   const [expandedIntro, setExpandedIntro] = useState(false)
   const [expandedTags, setExpandedTags] = useState(false)
   const [addingTag, setAddingTag] = useState(false)
@@ -151,6 +159,11 @@ export default function App() {
   const [columns, setColumns] = useState(5)
   const [toast, setToast] = useState("")
   const [expandedSections, setExpandedSections] = useState([true, true])
+  const [groupMenu, setGroupMenu] = useState<{ name: string; x: number; y: number } | null>(null)
+  const [groupRename, setGroupRename] = useState<{ original: string; draft: string } | null>(null)
+  const [groupStats, setGroupStats] = useState<{ name: string; values: Record<string, unknown> } | null>(null)
+  const [groupDeleteConfirm, setGroupDeleteConfirm] = useState<string | null>(null)
+  const [groupMerge, setGroupMerge] = useState<{ source: string; target: string } | null>(null)
   const [skipConfirm, setSkipConfirm] = useState(preferences.skipTrashConfirm)
   // 「不再提醒」persists across sessions like the preference it is.
   useEffect(() => {
@@ -158,16 +171,19 @@ export default function App() {
   }, [skipConfirm])
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
   const [generations, setGenerations] = useState<MosaGenerationEvent[] | null>(null)
+  const [generationHistory, setGenerationHistory] = useState<MosaGenerationHistory | null>(null)
+  const [similarAssets, setSimilarAssets] = useState<MosaAsset[]>([])
+  const [versionTreeOpen, setVersionTreeOpen] = useState(false)
+  const [compareBaseId, setCompareBaseId] = useState("")
+  const [compareTargetId, setCompareTargetId] = useState("")
   // The prompt draft is bound to one concrete asset; it never outlives the
   // asset (or project) it was opened for.
   const [promptEdit, setPromptEdit] = useState<PromptEditTarget & { draft: string } | null>(null)
   const [savingPromptId, setSavingPromptId] = useState<string | null>(null)
-  // Gallery windowing: which rows stay mounted and which hydrate real cards.
-  // The row model rides in the state so a pure geometry change (window
-  // resized, same row range) still re-renders the spacers with the new pixel
-  // heights — range equality alone would leave the DOM at the old geometry.
+  // Masonry placements retain each original image's intrinsic aspect ratio.
+  // Only items intersecting the viewport's warm/hydrate bands are mounted.
   const [galleryWindow, setGalleryWindow] = useState<{
-    model: GalleryRowModel; mount: GalleryRowRange; hydrate: GalleryRowRange;
+    model: MasonryModel; mounted: number[]; hydrated: number[];
   } | null>(null)
   const appRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -184,6 +200,7 @@ export default function App() {
   const [systemDark, setSystemDark] = useState(false)
   useEffect(() => {
     setExpandedPrompt(false)
+    setPromptVariant(1)
     setExpandedIntro(false)
     setExpandedTags(false)
     setAddingTag(false)
@@ -433,11 +450,19 @@ export default function App() {
     }).catch(() => {})
     setVersions(null)
     setGenerations(null)
+    setGenerationHistory(null)
+    setSimilarAssets([])
     fetchAssetVersions(project, selected, controller.signal).then(history => {
       if (!controller.signal.aborted) setVersions(history && history.versions.length > 1 ? history.versions : null)
     }).catch(() => {})
     fetchAssetGenerationHistory(project, selected, controller.signal).then(history => {
-      if (!controller.signal.aborted) setGenerations(history && history.events.length ? history.events : null)
+      if (!controller.signal.aborted) {
+        setGenerations(history && history.events.length ? history.events : null)
+        setGenerationHistory(history)
+      }
+    }).catch(() => {})
+    fetchSimilarAssets(project, selected, controller.signal).then(items => {
+      if (!controller.signal.aborted) setSimilarAssets(items)
     }).catch(() => {})
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -565,24 +590,22 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextCursor, loadingMore, loading])
   // ── gallery windowing ──
-  // Above the mount-all threshold only rows near the viewport stay in the DOM:
-  // real cards in the hydrate zone, same-geometry placeholders in the warm
-  // zone, and top/bottom spacers keep the scroll extent exact.
+  // Above the threshold only masonry items near the viewport stay mounted.
   const windowingActive = assets.length > GALLERY_MOUNT_ALL_THRESHOLD
-  const rowModelRef = useRef<{ key: string; model: GalleryRowModel } | null>(null)
+  const rowModelRef = useRef<{ key: string; model: MasonryModel } | null>(null)
   const updateGalleryWindowRef = useRef<() => void>(() => {})
-  const galleryRowModel = (): GalleryRowModel | null => {
+  const galleryRowModel = (): MasonryModel | null => {
     const grid = gridRef.current
     if (!grid) return null
     const styles = getComputedStyle(grid)
     const tracks = styles.gridTemplateColumns.split(/\s+/).map(value => Number.parseFloat(value)).filter(Number.isFinite)
     const colWidth = tracks[0] || 0
     if (!(colWidth > 0)) return null
-    const gap = Number.parseFloat(styles.rowGap) || 0
+    const gap = Number.parseFloat(styles.columnGap) || 0
     const ratios = assets.map(a => a.height / a.width)
-    const signature = galleryModelSignature(ratios, columns, colWidth)
+    const signature = galleryModelSignature(ratios, tracks.length, colWidth) + `|${gap}`
     if (rowModelRef.current?.key === signature) return rowModelRef.current.model
-    const model = buildGalleryRowModel(ratios, columns, colWidth, gap)
+    const model = buildMasonryModel(ratios, tracks.length, colWidth, gap)
     rowModelRef.current = { key: signature, model }
     return model
   }
@@ -591,19 +614,15 @@ export default function App() {
     if (!grid) return
     const model = galleryRowModel()
     if (!model) return
-    // Below the mount-all threshold every row stays mounted; the model still
-    // drives the render, so cards of a mixed-ratio row all get the row's
-    // exact height instead of leaving holes under shorter media.
-    if (!windowingActive || model.rowHeight.length === 0) {
-      if (model.rowHeight.length === 0) {
+    if (!windowingActive || model.placements.length === 0) {
+      if (model.placements.length === 0) {
         setGalleryWindow(old => old === null ? old : null)
         return
       }
-      const full = { startRow: 0, endRow: model.rowHeight.length - 1 }
+      const full = model.placements.map((_, index) => index)
       setGalleryWindow(old => (
         old && old.model === model
-          && old.mount.startRow === full.startRow && old.mount.endRow === full.endRow
-          ? old : { model, mount: full, hydrate: full }
+          ? old : { model, mounted: full, hydrated: full }
       ))
       return
     }
@@ -614,22 +633,16 @@ export default function App() {
     // about to land on instead.
     const maxScroll = Math.max(0, model.totalHeight - grid.clientHeight)
     const scrollTop = Math.min(grid.scrollTop, maxScroll)
-    const mount = locateGalleryWindow(
-      model, scrollTop, grid.clientHeight, GALLERY_WINDOW_WARMUP_PX,
-      Math.max(1, Math.floor(GALLERY_MAX_MOUNTED_CARDS / model.columns)),
-    )
-    const hydrate = mount
-      ? locateGalleryWindow(
-          model, scrollTop, grid.clientHeight, GALLERY_HYDRATE_WARMUP_PX,
-          Math.max(1, Math.floor(GALLERY_MAX_HYDRATED_CARDS / model.columns)),
-        ) ?? mount
-      : null
-    if (!mount || !hydrate) return
+    const mounted = locateMasonryWindow(model, scrollTop, grid.clientHeight,
+      GALLERY_WINDOW_WARMUP_PX, GALLERY_MAX_MOUNTED_CARDS)
+    const hydrated = locateMasonryWindow(model, scrollTop, grid.clientHeight,
+      GALLERY_HYDRATE_WARMUP_PX, GALLERY_MAX_HYDRATED_CARDS)
+    const same = (left: number[], right: number[]) =>
+      left.length === right.length && left.every((value, index) => value === right[index])
     setGalleryWindow(old => (
       old && old.model === model
-        && old.mount.startRow === mount.startRow && old.mount.endRow === mount.endRow
-        && old.hydrate.startRow === hydrate.startRow && old.hydrate.endRow === hydrate.endRow
-        ? old : { model, mount, hydrate }
+        && same(old.mounted, mounted) && same(old.hydrated, hydrated)
+        ? old : { model, mounted, hydrated }
     ))
   }
   updateGalleryWindowRef.current = updateGalleryWindow
@@ -644,9 +657,17 @@ export default function App() {
   useEffect(() => {
     const grid = gridRef.current
     if (!grid || typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(() => updateGalleryWindowRef.current())
+    // Mounted card coordinates are CSS container-relative, so native window
+    // resizes cannot leave a stale absolute pixel width while Electron is
+    // backgrounded. JS only recalculates shortest columns and virtual range.
+    const onResize = () => updateGalleryWindowRef.current()
+    const observer = new ResizeObserver(onResize)
     observer.observe(grid)
-    return () => observer.disconnect()
+    window.addEventListener("resize", onResize)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", onResize)
+    }
   }, [preview])
   // The window must follow the scroll position even after pagination is done
   // (nextCursor exhausted): a gallery-wide jump otherwise lands the viewport
@@ -1255,7 +1276,8 @@ export default function App() {
   const assetPathTail = asset
     ? (asset.image_path || asset.image_url || "").split(/[\\/]/).pop() || ""
     : ""
-  const relatedAssets = assets.filter(a => a.id !== (asset?.id || "")).slice(0, expandedRelated ? 6 : 2)
+  const shownPrompt = promptVariant === 2 ? asset?.prompt2 || "" : asset?.prompt || ""
+  const relatedAssets = similarAssets.slice(0, expandedRelated ? 6 : 2)
   const startPromptEdit = () => {
     if (!asset) return
     setPromptEdit({ project: asset.project_id, assetId: asset.id, draft: asset.prompt || "" })
@@ -1357,7 +1379,10 @@ export default function App() {
             </div>
             <nav id={`sidebar-group-${section}`} aria-label={section === 0 ? tr("智能分组") : tr("我的分组")} hidden={!expandedSections[section]}>
             {(section === 0
-              ? (navigation?.sourceTypes || []).filter(entry => entry[1] > 0).map(entry => ({ id: `source:${entry[0]}`, name: smartGroupLabel(entry[0]), count: entry[1] }))
+              ? SMART_SOURCE_GROUPS.map(([source, name]) => ({
+                  id: `source:${source}`, name,
+                  count: navigation?.sourceTypes.find(entry => entry[0] === source)?.[1] ?? 0,
+                })).filter(entry => entry.count > 0)
               : (navigation?.groups || []).map(entry => ({ id: `group:${entry.name}`, name: entry.name, count: entry.count }))
             ).map((g) => (
               <button
@@ -1369,6 +1394,11 @@ export default function App() {
                 aria-label={tr(g.name)}
                 aria-current={active === g.id ? "page" : undefined}
                 onClick={() => { goTo({ active: g.id, stackId: "", stackName: "" }); setSelectedIds([]) }}
+                onContextMenu={event => {
+                  if (section !== 1) return
+                  event.preventDefault()
+                  setGroupMenu({ name: g.name, x: event.clientX, y: event.clientY })
+                }}
                 onDragOver={event => {
                   if (g.id.startsWith("group:") && !preview && !settings) event.preventDefault()
                 }}
@@ -1392,6 +1422,67 @@ export default function App() {
           <Icon name="settings" size={14} />
         </button>
       </aside>
+      {groupMenu && <>
+        <div className="group-menu-dismiss" onClick={() => setGroupMenu(null)} aria-hidden="true" />
+        <div className="group-manage-menu" role="menu" style={{ left: Math.min(groupMenu.x, window.innerWidth - 220), top: Math.min(groupMenu.y, window.innerHeight - 310) }}>
+          <strong>{groupMenu.name}</strong>
+          <button role="menuitem" onClick={() => { setGroupRename({ original: groupMenu.name, draft: groupMenu.name }); setGroupMenu(null) }}>{tr("重命名分组")}</button>
+          {([[-1, "上移分组"], [1, "下移分组"]] as const).map(([step, label]) => <button role="menuitem" key={label} onClick={() => {
+            const names = (navigation?.groups || []).map(item => item.name)
+            const index = names.indexOf(groupMenu.name)
+            const target = index + step
+            setGroupMenu(null)
+            if (index < 0 || target < 0 || target >= names.length) return
+            ;[names[index], names[target]] = [names[target], names[index]]
+            reorderGroups(project, names).then(refreshNavigation).catch(error => notify(errorMessage(error)))
+          }}>{tr(label)}</button>)}
+          <div className="group-color-choices" role="group" aria-label={tr("分组颜色")}>
+            {["#E06C75", "#D19A66", "#98C379", "#61AFEF", "#C678DD", "#56B6C2"].map(color => <button key={color} style={{ background: color }} aria-label={`${tr("分组颜色")} ${color}`} onClick={() => {
+              recolorGroup(project, groupMenu.name, color).then(refreshNavigation).catch(error => notify(errorMessage(error)))
+              setGroupMenu(null)
+            }} />)}
+          </div>
+          <button role="menuitem" onClick={() => {
+            const name = groupMenu.name
+            setGroupMenu(null)
+            fetchGroupStats(project, name).then(result => setGroupStats({ name, values: result.stats })).catch(error => notify(errorMessage(error)))
+          }}>{tr("分组统计")}</button>
+          {navigation?.groups.some(item => item.name !== groupMenu.name) && <button role="menuitem" onClick={() => {
+            const other = navigation?.groups.find(item => item.name !== groupMenu.name)
+            if (other) setGroupMerge({ source: groupMenu.name, target: other.name })
+            setGroupMenu(null)
+          }}>{tr("合并分组")}</button>}
+          <button role="menuitem" onClick={() => { setGroupDeleteConfirm(groupMenu.name); setGroupMenu(null) }}>{tr("删除分组")}</button>
+        </div>
+      </>}
+      {(groupRename || groupDeleteConfirm || groupMerge || groupStats) && <div className="group-dialog-backdrop" role="presentation">
+        <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("分组管理")}>
+          {groupRename && <form onSubmit={event => {
+            event.preventDefault()
+            const name = groupRename.draft.trim()
+            if (!name || name === groupRename.original) { setGroupRename(null); return }
+            renameGroup(project, groupRename.original, name).then(() => {
+              if (active === `group:${groupRename.original}`) goTo({ active: `group:${name}` })
+              refreshNavigation(); setGroupRename(null)
+            }).catch(error => notify(errorMessage(error)))
+          }}><h3>{tr("重命名分组")}</h3><input autoFocus value={groupRename.draft} maxLength={80} onChange={event => setGroupRename(old => old ? { ...old, draft: event.target.value } : old)} /><div className="group-dialog-actions"><button type="button" onClick={() => setGroupRename(null)}>{tr("取消")}</button><button type="submit">{tr("保存")}</button></div></form>}
+          {groupDeleteConfirm && <><h3>{tr("删除分组")}</h3><p>{tr("仅删除分组，保留其中全部素材。")}</p><div className="group-dialog-actions"><button onClick={() => setGroupDeleteConfirm(null)}>{tr("取消")}</button><button onClick={() => {
+            const name = groupDeleteConfirm
+            deleteGroupKeepingAssets(project, name).then(() => {
+              if (active === `group:${name}`) goTo({ active: "所有素材" })
+              refreshNavigation(); setGroupDeleteConfirm(null)
+            }).catch(error => notify(errorMessage(error)))
+          }}>{tr("删除分组")}</button></div></>}
+          {groupMerge && <><h3>{tr("合并分组")}</h3><p>{groupMerge.source} →</p><select value={groupMerge.target} onChange={event => setGroupMerge(old => old ? { ...old, target: event.target.value } : old)}>{navigation?.groups.filter(item => item.name !== groupMerge.source).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select><div className="group-dialog-actions"><button onClick={() => setGroupMerge(null)}>{tr("取消")}</button><button onClick={() => {
+            const { source, target } = groupMerge
+            mergeGroups(project, source, target).then(() => {
+              if (active === `group:${source}`) goTo({ active: `group:${target}` })
+              refreshNavigation(); setGroupMerge(null)
+            }).catch(error => notify(errorMessage(error)))
+          }}>{tr("确认合并")}</button></div></>}
+          {groupStats && <><h3>{tr("分组统计")} · {groupStats.name}</h3><div className="group-stats-data">{Object.entries(groupStats.values).filter(([, value]) => typeof value === "number").map(([key, value]) => <p key={key}>{key}: {String(value)}</p>)}</div><button onClick={() => setGroupStats(null)}>{tr("关闭")}</button></>}
+        </div>
+      </div>}
       <main
         className={`workspace ${preview ? "preview-open" : ""}`}
         onDragOver={event => {
@@ -1469,8 +1560,16 @@ export default function App() {
           >
             {(() => {
               const model = galleryWindow?.model ?? null
-              const win = model ? galleryWindow : null
+              // Sorting, changing project, or reloading a page can replace
+              // the asset list BEFORE useLayoutEffect recomputes the masonry
+              // window. Old mounted indexes then address missing assets and
+              // crash React, leaving #root completely empty. Never render a
+              // window belonging to a different loaded list size.
+              const win = model && model.placements.length === assets.length ? galleryWindow : null
               if (!model || !win) {
+                if (assets.length > GALLERY_MOUNT_ALL_THRESHOLD) {
+                  return <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", minHeight: "100%" }} aria-hidden="true" />
+                }
                 return assets.map((a) => (
                   <button
                     key={a.id}
@@ -1502,7 +1601,7 @@ export default function App() {
                       setMenu({ x: e.clientX, y: e.clientY })
                     }}
                   >
-                    {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} alt="" loading="lazy" /> : <div className="black-image" />}
+                    {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
                     {a.stack && (
                       <span className="stack-mark">
                         <Icon name="layers" size={12} />
@@ -1518,22 +1617,18 @@ export default function App() {
                   </button>
                 ))
               }
-              const items = assets.slice(win.mount.startRow * model.columns, (win.mount.endRow + 1) * model.columns)
-              const hydratedIds = new Set(assets
-                .slice(win.hydrate.startRow * model.columns, (win.hydrate.endRow + 1) * model.columns)
-                .map(a => a.id))
-              const spacers = gallerySpacerHeights(model, win.mount.startRow, win.mount.endRow)
-              // Every card of a row gets the row's exact height (the tallest
-              // ratio): shorter media fills its row instead of leaving holes.
-              const rowHeightOf = (globalIndex: number) =>
-                model.rowHeight[Math.floor(globalIndex / model.columns)]
+              const hydrated = new Set(win.hydrated)
+              const placementStyle = (index: number): React.CSSProperties => {
+                return { position: "absolute", ...masonryCardCss(model, index),
+                  aspectRatio: `${assets[index].width} / ${assets[index].height}` }
+              }
               const card = (a: MosaAsset, globalIndex: number) => (
                 <button
                   key={a.id}
                   data-asset-id={a.id}
                   aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
                   className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""}`}
-                  style={{ height: rowHeightOf(globalIndex) }}
+                  style={placementStyle(globalIndex)}
                   onClick={(event) => {
                     if (a.stack) {
                       goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
@@ -1558,7 +1653,7 @@ export default function App() {
                     setMenu({ x: e.clientX, y: e.clientY })
                     }}
                 >
-                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} alt="" loading="lazy" /> : <div className="black-image" />}
+                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={`${Math.round(model.columnWidth)}px`} alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
                   {a.stack && (
                     <span className="stack-mark">
                       <Icon name="layers" size={12} />
@@ -1574,19 +1669,18 @@ export default function App() {
                 </button>
               )
               return <>
-                {spacers.top > 0 && <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: spacers.top }} aria-hidden="true" />}
-                {items.map((a, localIndex) => hydratedIds.has(a.id)
-                  ? card(a, win.mount.startRow * model.columns + localIndex)
+                <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: masonryExtentCss(model) }} aria-hidden="true" />
+                {win.mounted.map(index => hydrated.has(index)
+                  ? card(assets[index], index)
                   : (
                     <div
-                      key={a.id}
+                      key={assets[index].id}
                       className="asset-card asset-card-virtual-placeholder"
-                      data-asset-id={a.id}
+                      data-asset-id={assets[index].id}
                       aria-hidden="true"
-                      style={{ height: rowHeightOf(win.mount.startRow * model.columns + localIndex) }}
+                      style={placementStyle(index)}
                     />
                   ))}
-                {spacers.bottom > 0 && <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: spacers.bottom }} aria-hidden="true" />}
               </>
             })()}
             {loading && <div className="empty-state" role="status">{tr("加载中")}</div>}
@@ -1646,9 +1740,16 @@ export default function App() {
           </div>
           <div className="tags">
             {currentTags.slice(0, expandedTags ? currentTags.length : 3).map((t) => (
-              <button key={t} onClick={() => notify(`${tr("标签：")}${t}`)}>
-                {t}
-              </button>
+              <span className="tag-chip" key={t}>
+                <span>{t}</span>
+                <button aria-label={`${tr("移除标签")} ${t}`} title={`${tr("移除标签")} ${t}`}
+                  onClick={() => {
+                    const remaining = currentTags.filter(tag => tag !== t)
+                    updateAssetMetadata(asset.project_id, asset.id, { tags: remaining })
+                      .then(updated => setAssets(old => old.map(item => item.id === updated.id ? mergeAssetDetail(item, updated) : item)))
+                      .catch(error => notify(errorMessage(error)))
+                  }}>×</button>
+              </span>
             ))}
             {currentTags.length > 3 && <button className="tags-toggle" aria-expanded={expandedTags} onClick={() => setExpandedTags(!expandedTags)}>{expandedTags ? tr("收起") : `+${currentTags.length - 3}`}</button>}
             {!addingTag && <button className="add-tag" onClick={() => { setAddingTag(true); setTagError("") }}><Icon name="plus" size={12} />{tr("添加标签")}</button>}
@@ -1692,16 +1793,20 @@ export default function App() {
           </div>}
           <section className="detail-section">
             <div className="field-heading">
-              <span>
-                {tr("提示词")}<small>{tr("原始信息")}</small>
+              <span className="prompt-tabs" role="group" aria-label={tr("提示词")}>
+                {asset.prompt2 ? <>
+                  <button className={promptVariant === 1 ? "active" : ""} aria-pressed={promptVariant === 1} onClick={() => { setPromptVariant(1); setExpandedPrompt(false) }}>{tr("提示词1")}</button>
+                  <button className={promptVariant === 2 ? "active" : ""} aria-pressed={promptVariant === 2} onClick={() => { setPromptVariant(2); setExpandedPrompt(false); setPromptEdit(null) }}>{tr("提示词2")}</button>
+                </> : tr("提示词")}
+                <small>{tr("原始信息")}</small>
               </span>
               <span className="field-actions">
-                {!promptEditorActive(promptEdit, project, asset?.id) && <button className="section-action" onClick={startPromptEdit}>{tr("编辑")}</button>}
+                {promptVariant === 1 && !promptEditorActive(promptEdit, project, asset?.id) && <button className="section-action" onClick={startPromptEdit}>{tr("编辑")}</button>}
                 <button
                   aria-label={tr("复制提示词")}
                   onClick={async () => {
-                    if (!asset.prompt) { notify(tr("无提示词记录")); return }
-                    try { await writeText(asset.prompt); notify("提示词已复制") }
+                    if (!shownPrompt) { notify(tr("无提示词记录")); return }
+                    try { await writeText(shownPrompt); notify("提示词已复制") }
                     catch { notify(String(tr("复制失败"))) }
                   }}
                 >
@@ -1709,7 +1814,7 @@ export default function App() {
                 </button>
               </span>
             </div>
-            {promptEditorActive(promptEdit, project, asset?.id) && promptEdit ? (
+            {promptVariant === 1 && promptEditorActive(promptEdit, project, asset?.id) && promptEdit ? (
               <div className="prompt-editor">
                 <textarea
                   className="detail-editor"
@@ -1733,10 +1838,20 @@ export default function App() {
               </div>
             ) : (
               <div className={`detail-reading ${expandedPrompt ? "expanded" : ""}`}>
-                <p id="asset-prompt">{asset.prompt || tr("无提示词记录")}</p>
+                <p id="asset-prompt">{shownPrompt || tr("无提示词记录")}</p>
                 <button className="reading-toggle" aria-expanded={expandedPrompt} aria-controls="asset-prompt" onClick={() => setExpandedPrompt(!expandedPrompt)}>{expandedPrompt ? tr("收起") : tr("展开提示词")}<Icon name={expandedPrompt ? "minus" : "down"} size={12} /></button>
               </div>
             )}
+          </section>
+          <section className="detail-section user-instruction-section">
+            <div className="field-heading">
+              <span>{tr("用户指令")}</span>
+              <button aria-label={tr("复制用户指令")} disabled={!asset.user_instruction}
+                onClick={() => writeText(asset.user_instruction).then(() => notify(tr("已复制"))).catch(() => notify(tr("复制失败")))}>
+                <Icon name="copy" size={16} />
+              </button>
+            </div>
+            <div className="detail-reading expanded"><p>{asset.user_instruction || tr("未提供用户指令")}</p></div>
           </section>
           {asset.introduction && <section className="detail-section">
             <div className="field-heading">
@@ -1770,6 +1885,50 @@ export default function App() {
               })}
             </div>
           </section>}
+          <section className="detail-section">
+            <div className="field-heading">
+              <span>{tr("版本树与上下文")}</span>
+              <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "查看")}</button>
+            </div>
+            <div className="version-context" role="group" aria-label={tr("版本树与上下文")}>
+              {(generationHistory?.events || []).slice(0, 3).map(event => <button className="related" key={event.id} onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}>
+                <span>{event.provider || tr("生成记录")}{event.model ? ` · ${event.model}` : ""}<small>{event.turn_index != null ? `${tr("轮次")} ${event.turn_index}` : timeLabel(event.created_at)}</small></span>
+              </button>)}
+              {!generationHistory?.events?.length && <span className="muted">{tr("暂无生成关系")}</span>}
+            </div>
+            {versionTreeOpen && <div className="version-tree" role="region" aria-label={tr("完整版本树")}>
+              <h4>{tr("生成关系")}</h4>
+              {generationTreeRows(generationHistory).map(({ event, depth, parentIds, relationTypes }) => {
+                return <button key={event.id} className="related generation-tree-row" style={{ marginLeft: depth * 14 }} onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}>
+                  <span><strong>{event.provider || tr("生成记录")}{event.model ? ` · ${event.model}` : ""}</strong>
+                    <small>{parentIds.length ? `${tr("关联上游")} ${parentIds.length}${relationTypes.length ? ` · ${relationTypes.join(", ")}` : ""}` : tr("根节点")}{event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}</small>
+                    <small>{event.effective_prompt || event.user_prompt || ""}</small></span>
+                </button>
+              })}
+              {!!generationHistory?.context_events?.length && <><h4>{tr("同对话候选")}</h4>{generationHistory.context_events.map(event => <div key={event.id} className="related"><span>{event.provider || tr("生成记录")}<small>{event.effective_prompt || event.user_prompt || ""}</small></span></div>)}</>}
+              <h4>{tr("版本历史")}</h4>
+              {(versions || []).map(v => <button key={v.id} className="related" onClick={() => selectHistoryAsset(v.id)}><span>{tr("版本")} {v.version_index}<small>{v.version_change || ""} · {timeLabel(v.created_at)}</small></span></button>)}
+              {versions && versions.length > 1 && <div className="version-compare">
+                <h4>{tr("版本对比")}</h4>
+                <div className="version-compare-selectors">
+                  <select aria-label={tr("基准版本")} value={versions.some(v => v.id === compareBaseId) ? compareBaseId : versions[0].id} onChange={event => setCompareBaseId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
+                  <select aria-label={tr("目标版本")} value={versions.some(v => v.id === compareTargetId) ? compareTargetId : versions[versions.length - 1].id} onChange={event => setCompareTargetId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
+                </div>
+                {(() => {
+                  const before = versions.find(v => v.id === compareBaseId) || versions[0]
+                  const after = versions.find(v => v.id === compareTargetId) || versions[versions.length - 1]
+                  return <>
+                    <div className="version-compare-images">{[before, after].map(v => <img key={v.id} alt={`${tr("版本")} ${v.version_index}`} src={v.medium_url || v.preview_url || v.image_url} loading="lazy" />)}</div>
+                    <div className="version-compare-fields">{([
+                      ["尺寸", `${before.width} × ${before.height}`, `${after.width} × ${after.height}`],
+                      ["提示词", before.prompt, after.prompt],
+                      ["版本", before.version_change || "", after.version_change || ""],
+                    ] as const).map(([field, left, right]) => <div key={field} className={left !== right ? "changed" : ""}><strong>{tr(field)}</strong><span>{left || "—"}</span><span>{right || "—"}</span></div>)}</div>
+                  </>
+                })()}
+              </div>}
+            </div>}
+          </section>
           {versions && versions.length > 1 && <section className="detail-section">
             <div className="field-heading">
               <span>{tr("版本")}</span>

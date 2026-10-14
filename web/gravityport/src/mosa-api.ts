@@ -18,8 +18,14 @@ export type MosaAsset = {
   image_url: string
   thumbnail_url: string
   preview_url: string
+  medium_url: string
+  thumbnail_ready: boolean
+  medium_ready: boolean
+  preview_ready: boolean
   image_path: string
   prompt: string
+  prompt2: string
+  user_instruction: string
   introduction: string
   tags: string[]
   palette: string[]
@@ -196,8 +202,14 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     image_url,
     thumbnail_url: String(input.thumbnail_url || image_url),
     preview_url: String(input.preview_url || input.medium_url || image_url),
+    medium_url: String(input.medium_url || input.preview_url || image_url),
+    thumbnail_ready: input.thumbnail_ready !== false,
+    medium_ready: input.medium_ready !== false && Boolean(input.medium_url),
+    preview_ready: input.preview_ready !== false && Boolean(input.preview_url),
     image_path: path,
     prompt: String(input.prompt || ""),
+    prompt2: String(source.generation_request_prompt || fields.generation_request_prompt || ""),
+    user_instruction: String(source.user_message || fields.user_message || ""),
     introduction: String(fields.introduction || fields.description || input.description || ""),
     tags: asStringArray(input.tags),
     palette: asStringArray(input.palette),
@@ -218,6 +230,24 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     source,
     references: Array.isArray(refs) ? refs as MosaReference[] : [],
   }
+}
+
+/** Derivative widths depend on source aspect ratio: 400/960/1600 are LONGEST
+ * edges, not widths. Correct descriptors let Retina choose a sharp rendition
+ * without eagerly fetching every original at Library scale. */
+export function galleryImageSrcSet(asset: MosaAsset): string {
+  const longest = Math.max(asset.width, asset.height, 1)
+  const ratio = asset.width / longest
+  const items = [
+    [asset.thumbnail_url, asset.thumbnail_ready, 400],
+    [asset.medium_url, asset.medium_ready, 960],
+    [asset.preview_url, asset.preview_ready, 1600],
+  ] as const
+  const seen = new Set<string>()
+  return items.filter(([url, ready]) => url && ready && url !== asset.image_url)
+    .filter(([url]) => { if (seen.has(url)) return false; seen.add(url); return true })
+    .map(([url, , edge]) => `${url} ${Math.max(1, Math.min(asset.width, Math.round(edge * ratio)))}w`)
+    .join(", ")
 }
 
 /** The detail endpoints (single GET, PATCH, favorite) answer with the raw asset
@@ -279,6 +309,23 @@ export async function fetchHealth(signal?: AbortSignal) {
 export async function fetchVisualStatus(project: string, signal?: AbortSignal): Promise<MosaVisualStatus> {
   const data = await requestJson<{ visual?: JsonValue }>(`/api/visual/status?project=${e(project)}`, { signal })
   return (data.visual || {}) as MosaVisualStatus
+}
+
+/** Recommendations must come from the visual index, never arbitrary neighbors
+ * in the gallery page. A disabled index is a valid empty result. */
+export async function fetchSimilarAssets(project: string, id: string, signal?: AbortSignal): Promise<MosaAsset[]> {
+  try {
+    const data = await requestJson<{ similar?: { asset_id?: string }[] }>(
+      `/api/visual/assets/${e(id)}/similar?project=${e(project)}&limit=8`, { signal })
+    const ids = (Array.isArray(data.similar) ? data.similar : [])
+      .map(item => String(item.asset_id || "")).filter(otherId => otherId && otherId !== id)
+    const resolved = await Promise.allSettled(ids.map(otherId => fetchAsset(project, otherId, signal)))
+    return resolved.filter((result): result is PromiseFulfilledResult<MosaAsset> => result.status === "fulfilled")
+      .map(result => result.value)
+  } catch (error) {
+    if ((error as Error & { code?: string }).code === "VISUAL_RELATIONSHIPS_UNAVAILABLE") return []
+    throw error
+  }
 }
 
 function buildAssetParams(q: AssetQuery, options: { limit: number; cursor?: string; includeTotal?: boolean }) {
@@ -424,6 +471,36 @@ export async function createGroup(project: string, name: string) {
   })
 }
 
+export function renameGroup(project: string, name: string, nextName: string) {
+  return requestJson<{ group: { name: string } }>(`/api/groups/${e(name)}`, {
+    method: "PATCH", body: { projectId: project, name: nextName },
+  })
+}
+
+export function recolorGroup(project: string, name: string, color: string) {
+  return requestJson<{ group: { name: string; color: string } }>(`/api/groups/${e(name)}`, {
+    method: "PATCH", body: { projectId: project, color },
+  })
+}
+
+export function reorderGroups(project: string, names: string[]) {
+  return requestJson<JsonValue>("/api/group-order", { method: "PATCH", body: { projectId: project, names } })
+}
+
+export function fetchGroupStats(project: string, name: string) {
+  return requestJson<{ stats: JsonValue }>(`/api/groups/${e(name)}/stats?project=${e(project)}`)
+}
+
+export function deleteGroupKeepingAssets(project: string, name: string) {
+  return requestJson<JsonValue>(`/api/groups/${e(name)}?project=${e(project)}`, { method: "DELETE" })
+}
+
+export function mergeGroups(project: string, source: string, target: string) {
+  return requestJson<JsonValue>(`/api/groups/${e(source)}/merge`, {
+    method: "POST", body: { projectId: project, into: target },
+  })
+}
+
 export async function moveAssetsToStack(project: string, assetIds: string[], targetStackId: string | null): Promise<BatchOutcome> {
   const ids = [...new Set(assetIds)]
   if (!ids.length) return emptyOutcome(0)
@@ -515,6 +592,8 @@ export type MosaGenerationHistory = {
   events: MosaGenerationEvent[]
   context_events?: MosaGenerationEvent[]
   output_assets?: MosaAsset[]
+  relations?: { parent_generation_id: string; child_generation_id: string; relation_type?: string; verification_level?: string }[]
+  relation_candidates?: JsonValue[]
 }
 
 export async function fetchAssetVersions(project: string, id: string, signal?: AbortSignal): Promise<MosaVersionHistory | null> {
@@ -552,6 +631,8 @@ export async function fetchAssetGenerationHistory(project: string, id: string, s
       events: events.map(row => normalizeGenerationEvent(row)),
       context_events: contextEvents.map(row => normalizeGenerationEvent(row)),
       output_assets: outputAssets.map(row => normalizeAsset(row, project)),
+      relations: Array.isArray(history.relations) ? history.relations as MosaGenerationHistory["relations"] : [],
+      relation_candidates: Array.isArray(history.relation_candidates) ? history.relation_candidates as JsonValue[] : [],
     }
   } catch (error) {
     if (String((error as Error).message).includes("501")) return null
@@ -563,6 +644,7 @@ export async function fetchAssetGenerationHistory(project: string, id: string, s
 
 function normalizeGenerationEvent(row: JsonValue): MosaGenerationEvent {
   return {
+    ...row,
     id: String(row.id || ""),
     output_asset_id: row.output_asset_id ? String(row.output_asset_id) : undefined,
     provider: row.provider ? String(row.provider) : undefined,

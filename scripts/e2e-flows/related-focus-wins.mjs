@@ -1,9 +1,9 @@
 // GravityPort React UI flow: an explicit focus switch invalidates an
 // in-flight history fetch. A slow 版本 response that lands after the user
-// has switched to a related recommendation must never retake the focus —
+// has switched to a different gallery asset must never retake the focus —
 // the inspector stays on the asset the user clicked last.
 export const name = "related-focus-wins";
-export const description = "parent+2 versions + related asset -> slow 版本 3 fetch in flight -> click 相关推荐 D -> late 版本 3 response lands -> focus stays D";
+export const description = "parent+2 versions + independent asset -> slow 版本 3 fetch in flight -> explicit gallery focus D -> late response lands -> focus stays D";
 export async function run(ctx) {
   await ctx.prepare();
   const server = await ctx.startServer();
@@ -26,7 +26,7 @@ export async function run(ctx) {
       child3Id: child3.asset?.id || "",
       relatedId: related.asset?.id || "",
     }), { windowSize: [1440, 940] });
-    if (result?.relatedRowFirst !== true || result?.focusStaysRelated !== true) {
+    if (result?.independentCardPresent !== true || result?.focusStaysRelated !== true) {
       throw new Error(`related-focus-wins result: ${JSON.stringify({ parent: parent.id, ...result })}`);
     }
     return { parentId: parent.id, child3Id: child3.asset?.id, relatedId: related.asset?.id, ...result };
@@ -56,11 +56,6 @@ function flowSource(config) {
       .find((card) => card.dataset.assetId === id) || null;
     const selectedId = () => document.querySelector('.asset-card.asset-selected')?.dataset.assetId || '';
     const versionRows = () => Array.from(document.querySelectorAll('.version-list[aria-label="版本"] .related'));
-    // Related rows are the .related buttons OUTSIDE the version/generation
-    // lists; the newest seeded asset leads the list while the parent is
-    // focused.
-    const relatedRows = () => Array.from(document.querySelectorAll('button.related'))
-      .filter((row) => !row.closest('.version-list'));
     const escapeRegex = (text) => text.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&');
     const delayDetail = (id, ms) => {
       if (!window.__origFetch) window.__origFetch = window.fetch.bind(window);
@@ -84,19 +79,18 @@ function flowSource(config) {
     (await waitFor(() => cardById(config.parentId), 'parent card')).click();
     await waitFor(() => Boolean(document.querySelector('.details .asset-title')), 'inspector opens');
     await waitFor(() => versionRows().length >= 3, '版本 section lists the whole chain');
-    const firstRelated = await waitFor(() => relatedRows()[0] || null, '相关推荐 rows');
-    const relatedRowFirst = (firstRelated.textContent || '').includes('related-d');
-    if (!relatedRowFirst) {
-      throw new Error('related row 0 is not the seeded related-d asset: ' + (firstRelated.textContent || '').slice(0, 60));
-    }
+    // The visual recommendation index is legitimately empty for a fresh QA
+    // library. Use a known independent gallery card as the explicit focus
+    // target; do not manufacture arbitrary "相关推荐" to satisfy this test.
+    const independentCardPresent = Boolean(cardById(config.relatedId));
 
-    // Start the slow 版本 3 fetch, then switch focus through 相关推荐 before
+    // Start the slow 版本 3 fetch, then switch to another gallery card before
     // it lands: the explicit switch must invalidate the request so the late
     // response cannot retake the focus.
     const restore = delayDetail(config.child3Id, 1200);
     versionRows().find((row) => new RegExp('^版本 3(?!\\\\d)').test(row.querySelector('span')?.textContent || '')).click();
     await waitFor(() => window['delay-' + config.child3Id] >= 1, 'the slow 版本 3 fetch is in flight');
-    firstRelated.click();
+    cardById(config.relatedId).click();
     await waitFor(() => selectedId() === config.relatedId, 'focus moved to the related asset');
 
     restore();
@@ -106,7 +100,7 @@ function flowSource(config) {
     const focusStaysRelated = selectedId() === config.relatedId
       && document.querySelectorAll('.asset-card.asset-selected').length === 1;
 
-    return { relatedRowFirst, focusStaysRelated, focusedId: selectedId() };
+    return { independentCardPresent, focusStaysRelated, focusedId: selectedId() };
   })()
   `;
 }
