@@ -11,8 +11,8 @@
  * Folder scanning is handled by ./collect-dropped-files.ts
  */
 
-import { stageImportFile, importAssetsBatch, setAssetsGroup } from "./mosa-api";
-import { collectDroppedFiles } from "./collect-dropped-files";
+import { stageImportFile, requestJson, setAssetsGroup } from "./mosa-api.js";
+import { collectDroppedFiles } from "./collect-dropped-files.js";
 
 // Re-export for convenience
 export { collectDroppedFiles };
@@ -22,7 +22,7 @@ export { collectDroppedFiles };
 export type { ScanProgressOptions, ScanResult } from "./collect-dropped-files";
 
 export interface ImportProgress {
-  phase: "staging" | "importing" | "done"
+  phase: "importing" | "done"
   total: number
   completed: number
   imported: number
@@ -110,13 +110,18 @@ async function cleanupStagedFile(stagedPath: string): Promise<void> {
 }
 
 async function cleanupPaths(paths: string[]): Promise<void> {
-  await mapWithConcurrency(paths, STAGING_CONCURRENCY, (path) => cleanupStagedFile(path))
+  // Deduplicate paths to avoid cleaning the same file twice
+  const uniquePaths = Array.from(new Set(paths))
+  await mapWithConcurrency(uniquePaths, STAGING_CONCURRENCY, (path) => cleanupStagedFile(path))
 }
 
 // ─── Batch import ─────────────────────────────────────────────────────────────
 
 /**
  * Run the full import pipeline: stage files, batch-create assets, cleanup on failure.
+ *
+ * Process files in batches of 40: stage 40 files (concurrency 4) → import batch → cleanup failures → next batch.
+ * This avoids accumulating thousands of staged files and provides incremental progress.
  *
  * @param files - File objects to import
  * @param options.project - Target project id
@@ -161,124 +166,129 @@ export async function runImport(
 
   if (!total) return result
 
-  // ── Staging phase ──
-  onProgress?.({ phase: "staging", total, completed: 0, imported: 0, failed: 0, skipped })
+  // Process in batches: stage 40 files → import → cleanup → repeat
+  let completed = 0
+  for (let offset = 0; offset < supported.length; offset += CREATE_BATCH_SIZE) {
+    // Check signal before starting a new batch
+    if (signal?.aborted) break
 
-  // Stage all files concurrently (4 at a time)
-  const stagedResults = await mapWithConcurrency(supported, STAGING_CONCURRENCY, async (file) => {
-    // Check signal before each staging call
-    if (signal?.aborted) throw new Error("Import cancelled")
-    const path = await stageImportFile(file)
-    return { file, path }
-  })
+    const batchFiles = supported.slice(offset, offset + CREATE_BATCH_SIZE)
 
-  // Collect successfully staged files and count failures
-  const stagedFiles: { file: File; path: string }[] = []
-  for (const r of stagedResults) {
-    if (r.ok && r.value) {
-      stagedFiles.push(r.value)
-    } else if (!r.ok && r.error) {
-      result.failed += 1
-      result.errors.push({
-        fileName: (r.error as Error & { fileName?: string }).fileName || "unknown",
-        reason: r.error instanceof Error ? r.error.message : String(r.error),
-      })
-    }
-  }
-
-  // Track paths that need cleanup
-  const finalPathsToClean: string[] = []
-
-  try {
-    // ── Import phase ──
-    onProgress?.({ phase: "importing", total, completed: 0, imported: 0, failed: result.failed, skipped })
-
-    let completed = 0
-    for (let offset = 0; offset < stagedFiles.length; offset += CREATE_BATCH_SIZE) {
-      // Check signal before starting a new batch
-      if (signal?.aborted) {
-        // Clean up all staged files that haven't been imported
-        finalPathsToClean.push(...stagedFiles.slice(offset).map((s) => s.path))
-        break
+    // ── Stage batch (concurrency 4) ──
+    const stagedResults = await mapWithConcurrency(batchFiles, STAGING_CONCURRENCY, async (file, index) => {
+      if (signal?.aborted) throw new Error("Import cancelled")
+      try {
+        const path = await stageImportFile(file)
+        return { file, path }
+      } catch (error) {
+        // Attach fileName to staging errors
+        const err = error instanceof Error ? error : new Error(String(error))
+        Object.assign(err, { fileName: file.name })
+        throw err
       }
+    })
 
-      const batch = stagedFiles.slice(offset, offset + CREATE_BATCH_SIZE)
-      const batchItems = batch.map((s) => ({ imagePath: s.path }))
+    // Separate successful and failed staging results
+    const stagedItems: { file: File; path: string }[] = []
+    for (let i = 0; i < stagedResults.length; i++) {
+      const r = stagedResults[i]
+      if (r.ok && r.value) {
+        stagedItems.push(r.value)
+      } else if (!r.ok && r.error) {
+        result.failed += 1
+        result.errors.push({
+          fileName: (r.error as Error & { fileName?: string }).fileName || batchFiles[i].name,
+          reason: r.error instanceof Error ? r.error.message : String(r.error),
+        })
+      }
+    }
 
-      // Add stackId if provided
-      const requestBody: { projectId: string; items: { imagePath: string }[]; stackId?: string } = {
+    // ── Import batch ──
+    if (stagedItems.length > 0) {
+      const batchItems = stagedItems.map((s) => ({ imagePath: s.path, fileName: s.file.name }))
+      const requestBody: {
+        projectId: string
+        items: { imagePath: string; fileName: string }[]
+        stackId?: string
+      } = {
         projectId: project,
         items: batchItems,
       }
       if (stackId) requestBody.stackId = stackId
 
       try {
-        const importResult = await importAssetsBatch(project, batchItems)
+        type ImportBatchResponse = {
+          imported: number
+          failed: number
+          results: Array<{
+            index: number
+            ok: boolean
+            asset?: { id: string }
+            error?: string
+          }>
+        }
+        const importResult = await requestJson<ImportBatchResponse>("/api/assets/import-batch", {
+          method: "POST",
+          body: requestBody,
+        })
 
-        // Track successfully imported paths for cleanup tracking
-        const failedInBatch: { file: File; path: string }[] = []
-
-        for (let i = 0; i < batch.length; i++) {
+        // Track per-item results
+        const failedPaths: string[] = []
+        let batchImported = 0
+        let batchFailed = 0
+        
+        for (let i = 0; i < stagedItems.length; i++) {
           const itemResult = importResult.results?.find((r) => r.index === i)
-          if (itemResult?.ok && itemResult.id) {
-            result.createdIds.push(itemResult.id)
+          if (itemResult?.ok && itemResult.asset?.id) {
+            result.createdIds.push(itemResult.asset.id)
+            batchImported += 1
           } else {
-            failedInBatch.push(batch[i])
-            result.failed += 1
+            failedPaths.push(stagedItems[i].path)
             result.errors.push({
-              fileName: batch[i].file.name,
+              fileName: stagedItems[i].file.name,
               reason: itemResult?.error || "Import failed",
             })
+            batchFailed += 1
           }
         }
 
-        result.imported += importResult.imported
-        result.failed += importResult.failed
+        result.imported += batchImported
+        result.failed += batchFailed
 
-        // Collect paths that need cleanup (failed in batch)
-        finalPathsToClean.push(...failedInBatch.map((s) => s.path))
-
-        // Cleanup paths that failed at the individual item level
-        if (failedInBatch.length > 0) {
-          await cleanupPaths(failedInBatch.map((s) => s.path))
+        // Cleanup only the failed items
+        if (failedPaths.length > 0) {
+          await cleanupPaths(failedPaths)
         }
       } catch (error) {
-        // Entire batch request failed — all paths in this batch need cleanup
-        result.failed += batch.length
-        for (const s of batch) {
+        // Entire batch request failed — count all items as failed and clean up all paths
+        result.failed += stagedItems.length
+        for (const item of stagedItems) {
           result.errors.push({
-            fileName: s.file.name,
+            fileName: item.file.name,
             reason: error instanceof Error ? error.message : String(error),
           })
-          finalPathsToClean.push(s.path)
         }
-        // Cleanup all paths from the failed batch
-        await cleanupPaths(batch.map((s) => s.path))
-      }
-
-      completed += batch.length
-      onProgress?.({
-        phase: "importing",
-        total,
-        completed,
-        imported: result.imported,
-        failed: result.failed,
-        skipped,
-      })
-    }
-
-    // ── Group assignment ──
-    if (groupName && result.createdIds.length > 0) {
-      try {
-        await setAssetsGroup(project, result.createdIds, groupName)
-      } catch (error) {
-        console.warn(`[MOSA] group assignment failed: ${error instanceof Error ? error.message : String(error)}`)
+        await cleanupPaths(stagedItems.map((s) => s.path))
       }
     }
-  } finally {
-    // Final cleanup: any paths that were staged but not successfully imported
-    if (finalPathsToClean.length > 0) {
-      await cleanupPaths(finalPathsToClean)
+
+    completed += batchFiles.length
+    onProgress?.({
+      phase: "importing",
+      total,
+      completed,
+      imported: result.imported,
+      failed: result.failed,
+      skipped,
+    })
+  }
+
+  // ── Group assignment ──
+  if (groupName && result.createdIds.length > 0) {
+    try {
+      await setAssetsGroup(project, result.createdIds, groupName)
+    } catch (error) {
+      console.warn(`[MOSA] group assignment failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
