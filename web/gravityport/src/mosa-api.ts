@@ -45,6 +45,13 @@ export type MosaAsset = {
 export type MosaReference = {
   reference_id?: string
   asset_id?: string
+  sha256?: string
+  role?: string
+  scope?: string[]
+  applied?: boolean
+  rights?: { copyright?: string; portrait_consent?: string; redistribution?: string; attribution?: string }
+  allowed_uses?: string[]
+  forbidden_uses?: string[]
   attachment_url?: string
   thumbnail_url?: string
   image_url?: string
@@ -368,7 +375,7 @@ export async function toggleAssetFavorite(project: string, id: string) {
   return normalizeAsset(result.asset || {}, project)
 }
 
-export async function updateAssetMetadata(project: string, id: string, patch: { tags?: string[]; prompt?: string }) {
+export async function updateAssetMetadata(project: string, id: string, patch: { tags?: string[]; prompt?: string; references?: MosaReference[] }) {
   const result = await requestJson<{ asset?: JsonValue }>(`/api/assets/${e(project)}/${e(id)}`, {
     method: "PATCH", body: patch as JsonValue,
   })
@@ -501,6 +508,32 @@ export function mergeGroups(project: string, source: string, target: string) {
   })
 }
 
+export async function fetchRawGroupAssets(project: string, group: string, signal?: AbortSignal): Promise<JsonValue[]> {
+  const seenCursors = new Set<string>()
+  const seenIds = new Set<string>()
+  const assets: JsonValue[] = []
+  let cursor = ""
+  for (;;) {
+    if (signal?.aborted) throw new Error("Group export cancelled")
+    if (cursor) {
+      if (seenCursors.has(cursor)) throw new Error("Group export pagination stalled")
+      seenCursors.add(cursor)
+    }
+    const params = new URLSearchParams({ project, group, limit: "100" })
+    if (cursor) params.set("cursor", cursor)
+    const data = await requestJson<{ assets?: JsonValue[]; page?: { nextCursor?: string | null } }>(`/api/assets?${params}`, { signal })
+    if (!Array.isArray(data.assets)) throw new Error("Group export returned no asset list")
+    for (const item of data.assets) {
+      const id = String(item?.id || "")
+      if (id && seenIds.has(id)) continue
+      if (id) seenIds.add(id)
+      assets.push(item)
+    }
+    cursor = String(data.page?.nextCursor || "")
+    if (!cursor) return assets
+  }
+}
+
 export async function moveAssetsToStack(project: string, assetIds: string[], targetStackId: string | null): Promise<BatchOutcome> {
   const ids = [...new Set(assetIds)]
   if (!ids.length) return emptyOutcome(0)
@@ -588,12 +621,39 @@ export type MosaGenerationEvent = {
   [key: string]: unknown
 }
 
+export type MosaGenerationRelation = { child_generation_id: string; parent_generation_id: string; relation_type: string; verification_level?: string; evidence?: JsonValue }
+export type MosaGenerationCandidate = { child_generation_id: string; parent_generation_id: string; suggested_relation_type?: string; confidence?: number; status?: string; evidence?: JsonValue }
+
 export type MosaGenerationHistory = {
   events: MosaGenerationEvent[]
   context_events?: MosaGenerationEvent[]
   output_assets?: MosaAsset[]
-  relations?: { parent_generation_id: string; child_generation_id: string; relation_type?: string; verification_level?: string }[]
-  relation_candidates?: JsonValue[]
+  relations?: MosaGenerationRelation[]
+  relation_candidates?: MosaGenerationCandidate[]
+}
+
+export type RelationEdit = { childGenerationId: string; parentGenerationId: string; relationType: string; previousRelationType?: string; evidence?: JsonValue }
+export function createGenerationRelation(project: string, edit: RelationEdit) {
+  return requestJson<{ relation: MosaGenerationRelation }>("/api/generation-relations", { method: "POST", body: { projectId: project, ...edit, verificationLevel: "user_confirmed", evidence: { ...(edit.evidence || {}), source: "gravityport-inspector", user_confirmed_relation: true } } })
+}
+export function editGenerationRelation(project: string, edit: RelationEdit) {
+  return requestJson<{ relation: MosaGenerationRelation }>("/api/generation-relations", { method: "PATCH", body: { projectId: project, ...edit, verificationLevel: "user_confirmed", evidence: { ...(edit.evidence || {}), source: "gravityport-inspector", user_confirmed_relation: true } } })
+}
+export function removeGenerationRelation(project: string, edit: RelationEdit) {
+  return requestJson<{ relation: MosaGenerationRelation }>("/api/generation-relations", { method: "DELETE", body: { projectId: project, childGenerationId: edit.childGenerationId, parentGenerationId: edit.parentGenerationId, relationType: edit.relationType } })
+}
+export function dismissGenerationCandidate(project: string, childGenerationId: string, parentGenerationId: string) {
+  return requestJson<{ candidate: MosaGenerationCandidate }>("/api/generation-relation-candidates", { method: "PATCH", body: { projectId: project, childGenerationId, parentGenerationId, status: "dismissed" } })
+}
+export type MosaRecipeHistory = { active_snapshot_id?: string; snapshots: { snapshot_id: string; references?: MosaReference[] }[] }
+export async function fetchAssetRecipes(project: string, id: string, signal?: AbortSignal): Promise<MosaRecipeHistory | null> {
+  try {
+    const data = await requestJson<{ history?: MosaRecipeHistory }>(`/api/assets/${e(project)}/${e(id)}/recipes`, { signal })
+    return data.history || null
+  } catch (error) {
+    if ((error as Error & { code?: string }).code === "ASSET_RECIPE_HISTORY_UNAVAILABLE") return null
+    throw error
+  }
 }
 
 export async function fetchAssetVersions(project: string, id: string, signal?: AbortSignal): Promise<MosaVersionHistory | null> {
@@ -632,7 +692,7 @@ export async function fetchAssetGenerationHistory(project: string, id: string, s
       context_events: contextEvents.map(row => normalizeGenerationEvent(row)),
       output_assets: outputAssets.map(row => normalizeAsset(row, project)),
       relations: Array.isArray(history.relations) ? history.relations as MosaGenerationHistory["relations"] : [],
-      relation_candidates: Array.isArray(history.relation_candidates) ? history.relation_candidates as JsonValue[] : [],
+      relation_candidates: Array.isArray(history.relation_candidates) ? history.relation_candidates as MosaGenerationCandidate[] : [],
     }
   } catch (error) {
     if (String((error as Error).message).includes("501")) return null

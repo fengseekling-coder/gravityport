@@ -17,7 +17,7 @@ let modules;
 let tempRoot;
 before(async () => {
   tempRoot = await mkdtemp(join(tmpdir(), "mosa-gp-interaction-"));
-  const sources = ["selection.ts", "prompt-edit.ts", "keyboard.ts", "gallery-window.ts", "version-tree.ts"]
+  const sources = ["selection.ts", "prompt-edit.ts", "keyboard.ts", "gallery-window.ts", "version-tree.ts", "feature-parity.ts"]
     .map(name => join(uiRoot, "src", name));
   execFileSync(join(repositoryRoot, "node_modules", ".bin", "tsc"), [
     ...sources, "--outDir", tempRoot, "--module", "esnext", "--target", "es2022",
@@ -29,6 +29,7 @@ before(async () => {
     keyboard: await import(join(tempRoot, "keyboard.js")),
     galleryWindow: await import(join(tempRoot, "gallery-window.js")),
     versionTree: await import(join(tempRoot, "version-tree.js")),
+    featureParity: await import(join(tempRoot, "feature-parity.js")),
   };
 });
 after(async () => {
@@ -359,5 +360,43 @@ describe("generation relationship tree parity", () => {
     ] });
     assert.deepEqual(new Set(rows.map(row => row.event.id)), new Set(["a", "b", "c"]));
     assert.equal(rows.length, 3);
+  });
+});
+
+describe("legacy feature parity helpers", () => {
+  it("group export removes local paths and media URLs without rewriting authored text", () => {
+    const input = {
+      id: "asset-1", prompt: "/Users/this-is-user-authored-text",
+      image_path: "/Users/test/private.png", image_url: "/library/default/images/private.png",
+      business_fields: { note: "https://example.com/keep-as-text", cowart_project_dir: "/Users/me/secret" },
+      source: { path: "/Users/me/private", prompt_file: "/Users/me/prompt.txt", user_message: "Keep this" },
+      references: [{ attachment_url: "/library/default/attachments/private", rights: { attribution: "Artist" } }],
+    };
+    const exported = modules.featureParity.sanitizeAssetForExport(input);
+    assert.deepEqual(exported, {
+      id: "asset-1", prompt: input.prompt,
+      business_fields: { note: "https://example.com/keep-as-text" },
+      source: { user_message: "Keep this" },
+      references: [{ rights: { attribution: "Artist" } }],
+    });
+    assert.equal(input.image_path, "/Users/test/private.png", "must not mutate the input");
+  });
+
+  it("reference-use permissions remain exclusive and preserve recipe identity", () => {
+    const original = {
+      asset_id: "source-A", sha256: "digest", role: "identity", scope: ["shot-1"], applied: true,
+      rights: { copyright: "licensed" },
+      allowed_uses: ["subject", "identity"], forbidden_uses: ["style"],
+    };
+    const next = modules.featureParity.setReferencePermission(original, "identity", "forbidden");
+    assert.equal(modules.featureParity.referencePermission(next, "identity"), "forbidden");
+    assert.deepEqual(next.allowed_uses, ["subject"]);
+    assert.deepEqual(next.forbidden_uses, ["identity", "style"]);
+    const cleared = modules.featureParity.setReferencePermission(next, "identity", "undeclared");
+    assert.equal(modules.featureParity.referencePermission(cleared, "identity"), "undeclared");
+    for (const field of ["asset_id", "sha256", "role", "scope", "applied", "rights"]) {
+      assert.deepEqual(next[field], original[field], `rights edit cannot alter ${field}`);
+    }
+    assert.deepEqual(original.allowed_uses, ["subject", "identity"]);
   });
 });

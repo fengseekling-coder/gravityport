@@ -9,6 +9,7 @@ import { focusSelection, logicalSelection, pruneSelection, replaceSelection, tog
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { generationTreeRows } from "./version-tree"
+import { sanitizeAssetForExport, referenceUses, relationTypes, referencePermission, setReferencePermission } from "./feature-parity"
 import {
   buildMasonryModel, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
   type MasonryModel,
@@ -17,10 +18,11 @@ import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus, fetchSimilarAssets,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
   toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, restoreAsset, setAssetsGroup,
-  createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups,
+  createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
   moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
-  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent, type MosaGenerationHistory,
+  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent, type MosaGenerationHistory, type MosaReference,
+  fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
 } from "./mosa-api"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
@@ -164,6 +166,7 @@ export default function App() {
   const [groupStats, setGroupStats] = useState<{ name: string; values: Record<string, unknown> } | null>(null)
   const [groupDeleteConfirm, setGroupDeleteConfirm] = useState<string | null>(null)
   const [groupMerge, setGroupMerge] = useState<{ source: string; target: string } | null>(null)
+  const [exportingGroup, setExportingGroup] = useState("")
   const [skipConfirm, setSkipConfirm] = useState(preferences.skipTrashConfirm)
   // 「不再提醒」persists across sessions like the preference it is.
   useEffect(() => {
@@ -172,6 +175,28 @@ export default function App() {
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
   const [generations, setGenerations] = useState<MosaGenerationEvent[] | null>(null)
   const [generationHistory, setGenerationHistory] = useState<MosaGenerationHistory | null>(null)
+  const [relationBusy, setRelationBusy] = useState(false)
+  const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({})
+  const [newRelation, setNewRelation] = useState<{ anchor: string; other: string; direction: string; type: string } | null>(null)
+  const [referenceRights, setReferenceRights] = useState<MosaReference[] | null>(null)
+  const [referenceDirty, setReferenceDirty] = useState(false)
+  const [referenceSaving, setReferenceSaving] = useState(false)
+  const referenceDirtyRef = useRef(false)
+  referenceDirtyRef.current = referenceDirty
+  const referenceDraftRef = useRef<MosaReference[] | null>(null)
+  referenceDraftRef.current = referenceRights
+  const referenceScopeRef = useRef("")
+  referenceScopeRef.current = `${project}\u0000${selected}`
+  const confirmReferenceNavigation = () => {
+    if (referenceSaving) { notify("参考图权利信息正在保存，请稍候"); return false }
+    if (!referenceDirtyRef.current) return true
+    if (!window.confirm(tr("参考图权利有未保存的修改，确认放弃？"))) return false
+    // One confirmed navigation may pass through goTo + selection updates in
+    // the same React render; never ask twice for the same discarded draft.
+    referenceDirtyRef.current = false
+    setReferenceDirty(false)
+    return true
+  }
   const [similarAssets, setSimilarAssets] = useState<MosaAsset[]>([])
   const [versionTreeOpen, setVersionTreeOpen] = useState(false)
   const [compareBaseId, setCompareBaseId] = useState("")
@@ -200,6 +225,10 @@ export default function App() {
   const [systemDark, setSystemDark] = useState(false)
   useEffect(() => {
     setExpandedPrompt(false)
+    setReferenceRights(null)
+    setReferenceDirty(false)
+    setRelationDrafts({})
+    setNewRelation(null)
     setPromptVariant(1)
     setExpandedIntro(false)
     setExpandedTags(false)
@@ -464,6 +493,11 @@ export default function App() {
     fetchSimilarAssets(project, selected, controller.signal).then(items => {
       if (!controller.signal.aborted) setSimilarAssets(items)
     }).catch(() => {})
+    fetchAssetRecipes(project, selected, controller.signal).then(history => {
+      if (controller.signal.aborted) return
+      const active = history?.snapshots.find(item => item.snapshot_id === history.active_snapshot_id) || history?.snapshots.at(-1)
+      setReferenceRights(active?.references || [])
+    }).catch(() => {})
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, selected])
@@ -475,8 +509,28 @@ export default function App() {
   // click must not be silently dropped by unrelated churn.
   const historySelectAbortRef = useRef<AbortController | null>(null)
   const historyIntentRef = useRef(0)
+  const relationSelectionRef = useRef("")
+  relationSelectionRef.current = `${project}\u0000${selected}`
+  const mutateRelation = async (action: () => Promise<unknown>) => {
+    if (relationBusy || !selected) return
+    const identity = relationSelectionRef.current
+    setRelationBusy(true)
+    try {
+      await action()
+      if (identity !== relationSelectionRef.current) return
+      const history = await fetchAssetGenerationHistory(project, selected)
+      if (identity === relationSelectionRef.current) {
+        setGenerationHistory(history)
+        setGenerations(history?.events?.length ? history.events : null)
+        setRelationDrafts({})
+        setNewRelation(null)
+      }
+    } catch (error) { if (identity === relationSelectionRef.current) notify(errorMessage(error)) }
+    finally { setRelationBusy(false) }
+  }
   const selectHistoryAsset = (id: string) => {
     if (!id) return
+    if (id !== selected && !confirmReferenceNavigation()) return
     // Invalidation runs on every history click, including a re-click of the
     // currently focused version: the latest intent is "stay here", so an
     // in-flight fetch for another version must never retake the focus (or
@@ -699,6 +753,7 @@ export default function App() {
   }
   const switchProject = (next: string) => {
     if (!next || next === project) return
+    if (!confirmReferenceNavigation()) return
     // Only a switch away from a project that actually loaded replaces the
     // restorable snapshot; bailing out of a project that never loaded keeps
     // the older snapshot so rapid switching still restores the last good view.
@@ -745,6 +800,7 @@ export default function App() {
   // goTo records the TARGET snapshot (deduped) and applies it, so the current
   // state at each stack position is what back/forward restores.
   const goTo = (partial: Partial<NavSnapshot>) => {
+    if (!confirmReferenceNavigation()) return
     setNavHistory(old => {
       const stack = old.stack.slice(0, old.index + 1)
       const next: NavSnapshot = { active, stackId, stackName, query: debouncedQuery, sortOrder, assetType, ...partial }
@@ -760,6 +816,7 @@ export default function App() {
     setPreview(false)
   }
   const navigateHistory = (direction: -1 | 1) => {
+    if (!confirmReferenceNavigation()) return
     const next = navHistory.index + direction
     if (next < 0) {
       // The design's back arrow also resets a filtered workspace at the
@@ -796,6 +853,7 @@ export default function App() {
   const selectionRevisionRef = useRef(0)
   selectionRef.current = { selectedIds, selected }
   const applySelection = (nextIds: string[], nextSelected: string) => {
+    if (nextSelected !== selectionRef.current.selected && !confirmReferenceNavigation()) return
     selectionRevisionRef.current += 1
     selectionRef.current = { selectedIds: nextIds, selected: nextSelected }
     setSelectedIds(nextIds)
@@ -1447,6 +1505,25 @@ export default function App() {
             setGroupMenu(null)
             fetchGroupStats(project, name).then(result => setGroupStats({ name, values: result.stats })).catch(error => notify(errorMessage(error)))
           }}>{tr("分组统计")}</button>
+          <button role="menuitem" disabled={Boolean(exportingGroup)} onClick={() => {
+            const name = groupMenu.name
+            const originProject = project
+            setGroupMenu(null)
+            setExportingGroup(name)
+            fetchRawGroupAssets(originProject, name).then(records => {
+              const payload = { exportedAt: new Date().toISOString(), project: originProject, group: name,
+                assets: records.map(sanitizeAssetForExport) }
+              const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }))
+              try {
+                const link = document.createElement("a")
+                link.href = url
+                link.download = `mosa-group-${name.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "group"}.json`
+                document.body.appendChild(link)
+                link.click()
+                link.remove()
+              } finally { window.setTimeout(() => URL.revokeObjectURL(url), 30_000) }
+            }).catch(error => notify(errorMessage(error))).finally(() => setExportingGroup(""))
+          }}>{tr("导出分组")}</button>
           {navigation?.groups.some(item => item.name !== groupMenu.name) && <button role="menuitem" onClick={() => {
             const other = navigation?.groups.find(item => item.name !== groupMenu.name)
             if (other) setGroupMerge({ source: groupMenu.name, target: other.name })
@@ -1885,6 +1962,35 @@ export default function App() {
               })}
             </div>
           </section>}
+          {referenceRights !== null && referenceRights.length > 0 && <section className="detail-section reference-rights-editor">
+            <div className="field-heading"><span>{tr("参考图权利管理")}</span><button className="section-action" disabled={!referenceDirty || referenceSaving} onClick={() => {
+              if (!asset || referenceSaving) return
+              const originId = asset.id
+              const originProject = project
+              const sentDraft = JSON.stringify(referenceRights)
+              setReferenceSaving(true)
+              updateAssetMetadata(originProject, originId, { references: referenceRights }).then(updated => {
+                if (referenceScopeRef.current === `${originProject}\u0000${originId}`) {
+                  setAssets(old => old.map(item => item.id === updated.id ? mergeAssetDetail(item, updated) : item))
+                  // Edits made while PATCH was in flight were not sent. Keep
+                  // them pending rather than incorrectly marking them saved.
+                  if (JSON.stringify(referenceDraftRef.current) === sentDraft) {
+                    referenceDirtyRef.current = false
+                    setReferenceDirty(false)
+                  }
+                }
+              }).catch(error => notify(errorMessage(error))).finally(() => setReferenceSaving(false))
+            }}>{referenceSaving ? tr("保存中") : tr("保存权利信息")}</button></div>
+            {referenceRights.map((reference, index) => <div className="reference-rights-row" key={`${reference.asset_id || reference.sha256 || index}`}>
+              <strong>{reference.asset_id || `${tr("参考图")} ${index + 1}`}</strong>
+              {([ ["copyright", ["unknown", "owned", "licensed", "third-party"]], ["portrait_consent", ["unknown", "granted", "not-required", "denied"]], ["redistribution", ["unknown", "allowed", "forbidden"]] ] as const).map(([field, choices]) => <label key={field}>{tr(field)}<select value={reference.rights?.[field] || "unknown"} onChange={event => {
+                setReferenceRights(old => old?.map((item, i) => i === index ? { ...item, rights: { ...item.rights, [field]: event.target.value } } : item) || null)
+                setReferenceDirty(true)
+              }}>{choices.map(choice => <option key={choice} value={choice}>{tr(choice)}</option>)}</select></label>)}
+              <label>{tr("署名")}<input value={reference.rights?.attribution || ""} onChange={event => { setReferenceRights(old => old?.map((item, i) => i === index ? { ...item, rights: { ...item.rights, attribution: event.target.value } } : item) || null); setReferenceDirty(true) }} /></label>
+              <div className="reference-use-permissions">{referenceUses.map(use => <button key={use} className={referencePermission(reference, use)} onClick={() => { const current = referencePermission(reference, use); const next = current === "undeclared" ? "allowed" : current === "allowed" ? "forbidden" : "undeclared"; setReferenceRights(old => old?.map((item, i) => i === index ? setReferencePermission(item, use, next) : item) || null); setReferenceDirty(true) }} aria-label={`${use}: ${referencePermission(reference, use)}`}>{use}: {referencePermission(reference, use) === "allowed" ? "✓" : referencePermission(reference, use) === "forbidden" ? "✕" : "—"}</button>)}</div>
+            </div>)}
+          </section>}
           <section className="detail-section">
             <div className="field-heading">
               <span>{tr("版本树与上下文")}</span>
@@ -1905,6 +2011,35 @@ export default function App() {
                     <small>{event.effective_prompt || event.user_prompt || ""}</small></span>
                 </button>
               })}
+              {(generationHistory?.relations || []).map(relation => {
+                const key = `${relation.child_generation_id}|${relation.parent_generation_id}|${relation.relation_type}`
+                const locked = relation.verification_level === "provider_verified"
+                return <div className="generation-relation-editor" key={key}>
+                  <span>{relation.parent_generation_id} → {relation.child_generation_id}</span>
+                  <select disabled={locked || relationBusy} aria-label={tr("关系类型")} value={relationDrafts[key] || relation.relation_type} onChange={event => setRelationDrafts(old => ({ ...old, [key]: event.target.value }))}>
+                    {relationTypes.map(type => <option key={type} value={type}>{tr(type)}</option>)}
+                  </select>
+                  {locked ? <small>{tr("提供方验证关系不可修改")}</small> : <>
+                    <button disabled={relationBusy} onClick={() => void mutateRelation(() => editGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, previousRelationType: relation.relation_type, relationType: relationDrafts[key] || relation.relation_type, evidence: relation.evidence }))}>{tr("保存关系")}</button>
+                    <button disabled={relationBusy} onClick={() => { if (window.confirm(tr("确认删除这条生成关系？"))) void mutateRelation(() => removeGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, relationType: relation.relation_type })) }}>{tr("删除关系")}</button>
+                  </>}
+                </div>
+              })}
+              {(generationHistory?.relation_candidates || []).filter(candidate => candidate.status !== "dismissed" && candidate.status !== "confirmed").map(candidate => <div className="generation-relation-editor" key={`${candidate.child_generation_id}|${candidate.parent_generation_id}`}>
+                <span>{tr("候选关系")}: {candidate.parent_generation_id} → {candidate.child_generation_id} ({Math.round((candidate.confidence || 0) * 100)}%)</span>
+                <button disabled={relationBusy} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: candidate.child_generation_id, parentGenerationId: candidate.parent_generation_id, relationType: candidate.suggested_relation_type || "derived_from", evidence: candidate.evidence }))}>{tr("确认关系")}</button>
+                <button disabled={relationBusy} onClick={() => void mutateRelation(() => dismissGenerationCandidate(project, candidate.child_generation_id, candidate.parent_generation_id))}>{tr("忽略候选")}</button>
+              </div>)}
+              {!!generationHistory?.events?.length && <div className="generation-relation-editor">
+                <button disabled={relationBusy} onClick={() => setNewRelation({ anchor: generationHistory.events[0].id, other: generationHistory.events.find(item => item.id !== generationHistory.events[0].id)?.id || "", direction: "candidate-parent", type: "edited_from" })}>{tr("添加生成关系")}</button>
+                {newRelation && <div className="generation-relation-create">
+                  <select aria-label={tr("当前生成")} value={newRelation.anchor} onChange={event => setNewRelation(old => old ? { ...old, anchor: event.target.value } : old)}>{generationHistory.events.map(event => <option value={event.id} key={event.id}>{event.provider || "Generation"} · {event.id.slice(0, 10)}</option>)}</select>
+                  <select aria-label={tr("关联生成")} value={newRelation.other} onChange={event => setNewRelation(old => old ? { ...old, other: event.target.value } : old)}>{[...generationHistory.events, ...(generationHistory.context_events || [])].filter(event => event.id !== newRelation.anchor).map(event => <option key={event.id} value={event.id}>{event.provider || "Generation"} · {event.id.slice(0, 10)}</option>)}</select>
+                  <select aria-label={tr("关系方向")} value={newRelation.direction} onChange={event => setNewRelation(old => old ? { ...old, direction: event.target.value } : old)}><option value="candidate-parent">{tr("关联项为上游")}</option><option value="candidate-child">{tr("关联项为下游")}</option></select>
+                  <select aria-label={tr("关系类型")} value={newRelation.type} onChange={event => setNewRelation(old => old ? { ...old, type: event.target.value } : old)}>{relationTypes.map(type => <option value={type} key={type}>{tr(type)}</option>)}</select>
+                  <button disabled={relationBusy || !newRelation.other || newRelation.other === newRelation.anchor} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: newRelation.direction === "candidate-child" ? newRelation.other : newRelation.anchor, parentGenerationId: newRelation.direction === "candidate-child" ? newRelation.anchor : newRelation.other, relationType: newRelation.type }))}>{tr("确认添加")}</button>
+                </div>}
+              </div>}
               {!!generationHistory?.context_events?.length && <><h4>{tr("同对话候选")}</h4>{generationHistory.context_events.map(event => <div key={event.id} className="related"><span>{event.provider || tr("生成记录")}<small>{event.effective_prompt || event.user_prompt || ""}</small></span></div>)}</>}
               <h4>{tr("版本历史")}</h4>
               {(versions || []).map(v => <button key={v.id} className="related" onClick={() => selectHistoryAsset(v.id)}><span>{tr("版本")} {v.version_index}<small>{v.version_change || ""} · {timeLabel(v.created_at)}</small></span></button>)}
