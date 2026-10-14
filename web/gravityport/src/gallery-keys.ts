@@ -17,22 +17,23 @@ export function resolveNavHistoryShortcut(
 
 export function isFocusSearchKey(
   event: { key: string; metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean },
-  ctx: { viewIsLibrary: boolean; hasBlockingOverlay: boolean; targetIsTextEntry: boolean }
+  ctx: { viewIsLibrary: boolean; hasBlockingOverlay: boolean; targetIsTextEntry: boolean; platform: "mac" | "other" }
 ): boolean {
-  if (ctx.targetIsTextEntry) return false;
   if (ctx.hasBlockingOverlay) return false;
   if (!ctx.viewIsLibrary) return false;
-  
+
   if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
-    return true;
+    return !ctx.targetIsTextEntry;
   }
-  
-  // ⌘F (macOS) or Ctrl+F (other platforms)
-  if (event.key === "f" || event.key === "F") {
-    if (event.metaKey && !event.ctrlKey) return true;
-    if (event.ctrlKey && !event.metaKey) return true;
+
+  // ⌘F (macOS) or Ctrl+F (other platforms) works from inside a text field too,
+  // matching the desktop menu's Find. Ctrl+F on macOS stays the caret shortcut.
+  if ((event.key === "f" || event.key === "F") && !event.altKey && !event.shiftKey) {
+    return ctx.platform === "mac"
+      ? Boolean(event.metaKey) && !event.ctrlKey
+      : Boolean(event.ctrlKey) && !event.metaKey;
   }
-  
+
   return false;
 }
 
@@ -78,6 +79,7 @@ export function galleryKeyAction(
     viewIsLibrary: boolean;
     hasSelection: boolean;
     targetIsTextEntry: boolean;
+    insideStack?: boolean;
     currentAsset?: { stackId?: string } | null;
   }
 ): "open" | "enter-stack" | "none" {
@@ -87,6 +89,7 @@ export function galleryKeyAction(
   if (ctx.targetIsTextEntry) return "none";
   if (!ctx.currentAsset) return "none";
   
-  if (ctx.currentAsset.stackId) return "enter-stack";
+  // Inside a stack its cover still carries the stack summary; Enter opens it.
+  if (ctx.currentAsset.stackId && !ctx.insideStack) return "enter-stack";
   return "open";
 }

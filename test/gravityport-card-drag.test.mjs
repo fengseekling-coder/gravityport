@@ -149,6 +149,12 @@ describe("nativeDragPaths", () => {
 });
 
 describe("createNativeDragController", () => {
+  it("treats a missing api object as unsupported instead of throwing", () => {
+    const controller = cardDragModule.createNativeDragController({ api: undefined, onError: () => {} });
+    assert.equal(controller.supported(), false);
+    assert.equal(controller.begin(["a"], ["/a.png"]), false);
+  });
+
   it("returns supported false when api is missing", () => {
     const controller = cardDragModule.createNativeDragController({ api: {}, onError: () => {} });
     assert.equal(controller.supported(), false);

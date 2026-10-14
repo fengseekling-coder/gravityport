@@ -61,14 +61,14 @@ export function createNativeDragController({
   api,
   onError,
 }: {
-  api: NativeDragAPI;
+  api?: NativeDragAPI | null;
   onError: () => void;
 }) {
   let candidate: { assetIds: string[]; paths: string[] } | null = null;
   let nativeDragInFlight = false;
 
   function supported(): boolean {
-    return typeof api.startNativeDrag === "function";
+    return typeof api?.startNativeDrag === "function";
   }
 
   function clearCandidate(): void {
@@ -96,7 +96,7 @@ export function createNativeDragController({
       return false;
     }
     nativeDragInFlight = true;
-    Promise.resolve(api.startNativeDrag!(paths))
+    Promise.resolve(api!.startNativeDrag!(paths))
       .then((result) => {
         if (result && typeof result === "object" && "ok" in result && result.ok === false) {
           onError();

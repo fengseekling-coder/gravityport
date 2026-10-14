@@ -66,51 +66,58 @@ describe("isFocusSearchKey", () => {
   it("returns true for / in library without overlay", () => {
     assert.equal(galleryKeysModule.isFocusSearchKey(
       { key: "/" },
-      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: false }
+      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: false, platform: "mac" }
     ), true);
   });
 
   it("returns true for Cmd+F in library on mac", () => {
     assert.equal(galleryKeysModule.isFocusSearchKey(
       { key: "f", metaKey: true },
-      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: false }
+      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: false, platform: "mac" }
     ), true);
   });
 
   it("returns true for Ctrl+F in library on non-mac", () => {
     assert.equal(galleryKeysModule.isFocusSearchKey(
       { key: "F", ctrlKey: true },
-      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: false }
+      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: false, platform: "other" }
     ), true);
   });
 
   it("returns false when target is text entry", () => {
     assert.equal(galleryKeysModule.isFocusSearchKey(
       { key: "/" },
-      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: true }
+      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: true, platform: "mac" }
     ), false);
   });
 
   it("returns false when overlay is blocking", () => {
     assert.equal(galleryKeysModule.isFocusSearchKey(
       { key: "/" },
-      { viewIsLibrary: true, hasBlockingOverlay: true, targetIsTextEntry: false }
+      { viewIsLibrary: true, hasBlockingOverlay: true, targetIsTextEntry: false, platform: "mac" }
     ), false);
   });
 
   it("returns false when not in library view", () => {
     assert.equal(galleryKeysModule.isFocusSearchKey(
       { key: "/" },
-      { viewIsLibrary: false, hasBlockingOverlay: false, targetIsTextEntry: false }
+      { viewIsLibrary: false, hasBlockingOverlay: false, targetIsTextEntry: false, platform: "mac" }
     ), false);
   });
 
   it("returns false for / with modifiers", () => {
     assert.equal(galleryKeysModule.isFocusSearchKey(
       { key: "/", metaKey: true },
-      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: false }
+      { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: false, platform: "mac" }
     ), false);
+  
+  it("Cmd+F reaches search from a text field; Ctrl+F on mac and Cmd+F elsewhere do not", () => {
+    const ctx = { viewIsLibrary: true, hasBlockingOverlay: false, targetIsTextEntry: true };
+    assert.equal(galleryKeysModule.isFocusSearchKey({ key: "f", metaKey: true }, { ...ctx, platform: "mac" }), true);
+    assert.equal(galleryKeysModule.isFocusSearchKey({ key: "f", ctrlKey: true }, { ...ctx, platform: "mac" }), false);
+    assert.equal(galleryKeysModule.isFocusSearchKey({ key: "f", metaKey: true }, { ...ctx, platform: "other" }), false);
   });
+});
 });
 
 describe("neighbourAssetId", () => {
@@ -212,6 +219,13 @@ describe("galleryKeyAction", () => {
       { key: "Enter" },
       { viewIsLibrary: true, hasSelection: false, targetIsTextEntry: true, currentAsset: {} }
     ), "none");
+  });
+
+  it("opens a stack cover instead of re-entering when already inside the stack", () => {
+    assert.equal(galleryKeysModule.galleryKeyAction(
+      { key: "Enter" },
+      { viewIsLibrary: true, hasSelection: false, targetIsTextEntry: false, insideStack: true, currentAsset: { stackId: "st1" } }
+    ), "open");
   });
 
   it("returns none when no current asset", () => {
