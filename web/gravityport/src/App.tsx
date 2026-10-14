@@ -23,6 +23,13 @@ import {
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
 
+// 任务 127：macOS 桌面端原生红黄绿按钮落在窗口左上 (trafficLightPosition 16,18)，
+// 品牌栏需要为它们预留安全区。仅在 Electron 桌面 + macOS 时成立；浏览器与
+// Windows（保留原生标题栏）都不需要。
+const MAC_DESKTOP = typeof navigator !== "undefined"
+  && Boolean(desktopAPI())
+  && /^Mac/.test(navigator.platform || "")
+
 function loadPreferences() {
   try {
     const value = JSON.parse(localStorage.getItem("gravityport.preferences") || "{}")
@@ -1256,16 +1263,11 @@ export default function App() {
   return (
     <div
       ref={appRef}
-      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""}`}
+      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${MAC_DESKTOP ? "mac-desktop" : ""}`}
       onClick={() => menu && setMenu(null)}
     >
       <aside className="sidebar">
         <div className="brandbar">
-          <div className="traffic">
-            <i />
-            <i />
-            <i />
-          </div>
           <strong>GravityPort</strong>
         </div>
         {projects.length > 1 && (
