@@ -3165,3 +3165,26 @@ video.viewer-image {
   pointer-events: none;
   z-index: 5;
 }
+
+/* Native window chrome: the Electron/macOS hidden-inset caption overlaps the
+   first 56px of the page. Keep the first sidebar row as an actual titlebar
+   safe region, not an overlay on top of navigation or a fake control group. */
+.app .brandbar {
+  height: var(--space-14);
+  min-height: var(--space-14);
+  flex-shrink: 0;
+  align-items: center;
+}
+.app.native-desktop .brandbar {
+  justify-content: flex-start;
+}
+.app.native-darwin .brandbar {
+  /* Native buttons begin at x=16 and occupy approximately x=16..86.
+     Sidebar left padding is 12px; place the title at x>=96. */
+  padding-inline-start: calc(96px - var(--space-3));
+}
+.app.native-darwin .brandbar strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

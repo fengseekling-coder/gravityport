@@ -82,6 +82,13 @@ type NavSnapshot = {
 }
 
 export default function App() {
+  // macOS already draws native traffic lights with titleBarStyle=hiddenInset;
+  // Windows also owns its native caption buttons. Only the browser mockup
+  // needs the decorative circles from the original GravityPort design.
+  const desktop = desktopAPI()
+  const nativeChromeClass = desktop && navigator.platform.startsWith("Mac")
+    ? "native-desktop native-darwin"
+    : desktop ? "native-desktop" : ""
   const [assets, setAssets] = useState<MosaAsset[]>([])
   const [navigation, setNavigation] = useState<MosaNavigation | null>(null)
   const [library, setLibrary] = useState<MosaLibraryLocation | null>(null)
@@ -247,15 +254,35 @@ export default function App() {
         let collected = page.assets
         if (windowRefresh) {
           const target = Math.max(assetsRef.current.length, GALLERY_PAGE_SIZE)
+          // A fixed 30-page ceiling silently truncated a 4,249-item loaded
+          // gallery to 3,100 items on every same-view SSE refresh. Derive the
+          // work budget from the previously loaded window instead, allowing
+          // partial/duplicate pages without permitting an unbounded loop.
+          const maxFollowupPages = Math.max(30, Math.ceil(target / GALLERY_PAGE_SIZE) * 2)
+          const seenIds = new Set(collected.map(item => item.id))
+          const seenCursors = new Set<string>()
           let cursor: string | undefined = page.nextCursor ?? undefined
-          let guard = 0
-          while (page.nextCursor && collected.length < target && guard < 30) {
-            guard += 1
-            page = await fetchAssetPage(buildQuery(cursor), { cursor, signal: controller.signal })
-            const seen = new Set(collected.map(item => item.id))
-            collected = [...collected, ...page.assets.filter(item => !seen.has(item.id))]
-            if (!page.nextCursor) break
-            cursor = page.nextCursor
+          let followupPages = 0
+          while (cursor && collected.length < target) {
+            if (followupPages >= maxFollowupPages || seenCursors.has(cursor)) {
+              throw new Error("Gallery refresh pagination could not restore the previously loaded window")
+            }
+            seenCursors.add(cursor)
+            followupPages += 1
+            // Fetch only the remaining window tail. Fetching a full final
+            // page overshot the old window size (4,249 -> 4,250) and would
+            // make the next cursor skip unseen results if we sliced locally.
+            page = await fetchAssetPage(buildQuery(cursor), {
+              cursor, limit: Math.min(GALLERY_PAGE_SIZE, target - collected.length),
+              signal: controller.signal,
+            })
+            if (controller.signal.aborted) return
+            for (const item of page.assets) {
+              if (seenIds.has(item.id)) continue
+              seenIds.add(item.id)
+              collected.push(item)
+            }
+            cursor = page.nextCursor ?? undefined
           }
         }
         if (controller.signal.aborted) return
@@ -841,7 +868,7 @@ export default function App() {
         setToast(`${tr("正在全选")} ${collected.length}${page.total ? ` / ${page.total}` : "…"}`)
         morePages = Boolean(page.nextCursor)
         if (!morePages) break
-        cursor = page.nextCursor
+        cursor = page.nextCursor ?? undefined
       }
       if (controller.signal.aborted || viewKeyRef.current !== requestViewKey
         || selectionRevisionRef.current !== startRevision) return
@@ -1256,16 +1283,12 @@ export default function App() {
   return (
     <div
       ref={appRef}
-      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""}`}
+      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass}`}
       onClick={() => menu && setMenu(null)}
     >
       <aside className="sidebar">
         <div className="brandbar">
-          <div className="traffic">
-            <i />
-            <i />
-            <i />
-          </div>
+          {!desktop && <div className="traffic" aria-hidden="true"><i /><i /><i /></div>}
           <strong>GravityPort</strong>
         </div>
         {projects.length > 1 && (

@@ -36,6 +36,7 @@ const QA_CLIENT_TOKEN = "mosa_gallery_qa_client_token_0123456789abcdef";
 // caller loses the process handle on a long run, so the exit status can be
 // recovered from the file. QA diagnostics only; never read by product code.
 const RESULT_FILE = process.env.MOSA_GALLERY_QA_RESULT_FILE || "";
+const PROFILE_RENDERER = process.env.MOSA_GALLERY_QA_PROFILE === "1";
 const qaResult = {
   status: "unknown",
   assetCount: ASSET_COUNT,
@@ -51,7 +52,9 @@ const qaResult = {
   boundaryStallMax: null,
   elapsedMs: null,
   windowCollapses: null,
+  cdpPointerInputAtScale: false,
   incrementalScenarios: [],
+  cpuProfileTop: [],
   error: null,
 };
 
@@ -78,6 +81,10 @@ async function reserveFreePort() {
 }
 
 function electronExecutable() {
+  // Exercise the actual packaged macOS/Windows app without requiring a second
+  // development Electron download. The same isolated QA Library and bounded
+  // gallery performance assertions apply to either executable.
+  if (process.env.MOSA_GALLERY_QA_EXECUTABLE) return resolve(process.env.MOSA_GALLERY_QA_EXECUTABLE);
   if (process.platform === "darwin") return resolve(root, "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron");
   if (process.platform === "win32") return resolve(root, "node_modules/electron/dist/electron.exe");
   return resolve(root, "node_modules/electron/dist/electron");
@@ -132,6 +139,40 @@ async function evaluate(client, expression) {
   const result = await client.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
   if (result?.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "Renderer evaluation failed");
   return result?.result?.value;
+}
+
+async function clickThroughChromium(client, selector) {
+  const point = await evaluate(client, `(() => {
+    const node = document.querySelector(${JSON.stringify(selector)});
+    if (!node) return null;
+    const box = node.getBoundingClientRect();
+    const x = Math.round(box.left + box.width / 2);
+    const y = Math.round(box.top + box.height / 2);
+    return { x, y, hit: node.contains(document.elementFromPoint(x, y)) };
+  })()`);
+  assert.ok(point?.hit, `Chromium pointer hit-test failed at ${selector}`);
+  await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+  await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount: 1 });
+  await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 1 });
+}
+
+function summarizeCpuProfile(profile, limit = 20) {
+  const nodesById = new Map((profile?.nodes || []).map((node) => [node.id, node]));
+  const counts = new Map();
+  for (const id of profile?.samples || []) counts.set(id, (counts.get(id) || 0) + 1);
+  return [...counts.entries()]
+    .map(([id, hits]) => {
+      const frame = nodesById.get(id)?.callFrame || {};
+      return {
+        functionName: frame.functionName || "(anonymous)",
+        source: String(frame.url || "").split("/").pop(),
+        line: (frame.lineNumber ?? -1) + 1,
+        column: (frame.columnNumber ?? -1) + 1,
+        hits,
+      };
+    })
+    .sort((a, b) => b.hits - a.hits)
+    .slice(0, limit);
 }
 
 async function main() {
@@ -206,7 +247,11 @@ async function main() {
     }
 
     const [cdpPort, desktopPort] = await Promise.all([reserveFreePort(), reserveFreePort()]);
-    child = spawn(electronExecutable(), [`--remote-debugging-port=${cdpPort}`, `--user-data-dir=${userDataDir}`, root], {
+    child = spawn(electronExecutable(), [
+      `--remote-debugging-port=${cdpPort}`,
+      `--user-data-dir=${userDataDir}`,
+      ...(process.env.MOSA_GALLERY_QA_EXECUTABLE ? [] : [root]),
+    ], {
       cwd: root,
       env: {
         ...process.env,
@@ -253,6 +298,10 @@ async function main() {
       return true;
     })()`)
     await evaluate(client, `window.__mosaLongTasks=[]; window.__mosaAppendMarks=[]; window.__mosaBoundaryStalls=[]; window.__mosaBoundaryStall=null; window.__mosaLongTaskObserver=new PerformanceObserver((list)=>window.__mosaLongTasks.push(...list.getEntries().map((entry)=>({startTime:entry.startTime,duration:entry.duration})))); window.__mosaLongTaskObserver.observe({entryTypes:['longtask']}); true`);
+    if (PROFILE_RENDERER) {
+      await client.send("Profiler.enable");
+      await client.send("Profiler.start");
+    }
 
     const startedAt = Date.now();
     // Exercise the real product path: a fast continuous scroll drives the
@@ -297,6 +346,11 @@ async function main() {
     }
     await evaluate(client, `(()=>{const pending=window.__mosaBoundaryPending;const loaded=Number(document.querySelector('.asset-grid')?.dataset.loadedAssets||0);if(pending&&loaded>pending.loaded){const now=performance.now();window.__mosaAppendMarks.push({at:pending.at,committedAt:now,loaded:pending.loaded,phase:'auto-append',latency:now-pending.at});window.__mosaBoundaryPending=null;}return true;})()`);
     await wait(1200);
+    if (PROFILE_RENDERER) {
+      const { profile } = await client.send("Profiler.stop");
+      qaResult.cpuProfileTop = summarizeCpuProfile(profile);
+      await client.send("Profiler.disable");
+    }
     const topMetrics = JSON.parse(await evaluate(client, `JSON.stringify({
       scrollHeight:document.querySelector('.asset-grid').scrollHeight,
       clientHeight:document.querySelector('.asset-grid').clientHeight,
@@ -606,6 +660,21 @@ async function main() {
     const sseElapsedMs = Date.now() - sseStartedAt;
     assert.ok(sseElapsedMs < 5000, `SSE-driven refresh took ${sseElapsedMs}ms`);
     scenarios.push({ name: "sse-refresh-latency", elapsedMs: sseElapsedMs });
+
+    // The main failure report is a real macOS window that appears frozen
+    // under a 4,249-item Library. Assert mouse input reaches React even AFTER
+    // repeated SSE refreshes. Unlike element.click(), CDP uses browser hit
+    // testing and pointer dispatch; physical OS mouse acceptance is separate.
+    assert.equal(await loadedNow(), ASSET_COUNT, "the full loaded gallery must remain available before pointer QA");
+    await clickThroughChromium(client, ".sidebar .user-button");
+    await waitForPage("Boolean(document.querySelector('.settings-modal'))", "settings open via browser mouse input");
+    await clickThroughChromium(client, ".settings-modal .modal-close");
+    await waitForPage("!document.querySelector('.settings-modal')", "settings close via browser mouse input");
+    await clickThroughChromium(client, ".search input");
+    await waitForPage("document.activeElement === document.querySelector('.search input')", "search focus via browser mouse input");
+    await client.send("Input.insertText", { text: "scale-pointer-test" });
+    await waitForPage("document.querySelector('.search input')?.value === 'scale-pointer-test'", "search input via Chromium");
+    qaResult.cdpPointerInputAtScale = true;
 
     qaResult.windowCollapses = windowCollapses;
     assert.equal(windowCollapses, 0, `ordinary library changes must never collapse the loaded window (saw ${windowCollapses})`);
