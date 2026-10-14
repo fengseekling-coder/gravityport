@@ -15,11 +15,14 @@ type ElectronAPI = {
   cancelVisualPackInstall?: () => Promise<unknown>
   removeVisualPack?: () => Promise<unknown>
   onVisualPackProgress?: (callback: (progress: { percent?: number; status?: string; [key: string]: unknown }) => void) => unknown
-  checkForUpdates?: (notify?: boolean) => Promise<{ status?: string; currentVersion?: string; [key: string]: unknown }>
+  checkForUpdates?: (notify?: boolean) => Promise<{ status?: string; currentVersion?: string; latestVersion?: string; publishedAt?: string; updateAvailable?: boolean; canInstallInApp?: boolean; reason?: string; [key: string]: unknown }>
   downloadAndInstallUpdate?: () => Promise<unknown>
   cancelUpdateDownload?: () => Promise<unknown>
   onUpdateDownloadProgress?: (callback: (progress: { percent?: number; [key: string]: unknown }) => void) => unknown
   openDownloadPage?: () => Promise<unknown>
+  reportRendererReady?: () => Promise<unknown>
+  getRenameNoticeState?: () => Promise<{ shouldShow?: boolean }>
+  acknowledgeRenameNotice?: () => Promise<unknown>
   changeLibraryLocation?: () => Promise<{ ok?: boolean; libraryDir?: string; error?: string }>
   setWindowFullScreen?: (flag: boolean) => Promise<unknown>
   onWindowFullScreenChange?: (callback: (isFullScreen: boolean) => void) => unknown
