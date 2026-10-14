@@ -163,11 +163,12 @@ export function fill(text: string, values: Record<string, string | number>): str
   return text.replace(/\{(version|percent|date)\}/g, (_, key: string) => String(values[key] ?? ""))
 }
 
-function readableDate(value: string): string {
+// Same shape as the old about panel's formatDate: "2026年10月14日" / "Oct 14, 2026".
+function readableDate(value: string, language: "zh" | "en"): string {
   if (!value) return ""
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "numeric", day: "numeric" }).format(date)
+  return new Intl.DateTimeFormat(language === "zh" ? "zh-CN" : "en", { year: "numeric", month: "short", day: "numeric" }).format(date)
 }
 
 /**
@@ -183,6 +184,7 @@ export function buildUpdateText(
   state: UpdateUiState,
   downloadPercent: number,
   t: TranslateFn,
+  language: "zh" | "en" = "zh",
 ): UpdateTextResult {
   const versionLabel = currentVersion
     ? `v${String(currentVersion).replace(/^v/i, "")}`
@@ -218,7 +220,7 @@ export function buildUpdateText(
 
   if (state.phase === "available") {
     const published = state.publishedAt
-      ? ` · ${fill(t("发布于 {date}"), { date: readableDate(state.publishedAt) })}`
+      ? ` · ${fill(t("发布于 {date}"), { date: readableDate(state.publishedAt, language) })}`
       : "";
     const versionStr = state.latestVersion
       ? fill(t("可更新至 v{version}"), { version: state.latestVersion })

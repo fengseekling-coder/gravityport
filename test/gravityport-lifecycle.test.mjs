@@ -220,8 +220,10 @@ describe("buildUpdateText", () => {
   });
 
   it("formats the update summary and actions", () => {
-    const result = buildUpdateText("1.2.3", { phase: "available", latestVersion: "1.2.4", publishedAt: "2025-01-15", canInstallInApp: true }, 0, zh);
-    assert.match(result.badgeText, /v1\.2\.3 · 可更新至 v1\.2\.4 · 发布于/);
+    const result = buildUpdateText("1.2.3", { phase: "available", latestVersion: "1.2.4", publishedAt: "2025-01-15T12:00:00Z", canInstallInApp: true }, 0, zh);
+    assert.match(result.badgeText, /v1\.2\.3 · 可更新至 v1\.2\.4 · 发布于 2025年1月15日/);
+    const english = buildUpdateText("1.2.3", { phase: "available", latestVersion: "1.2.4", publishedAt: "2025-01-15T12:00:00Z", canInstallInApp: true }, 0, en, "en");
+    assert.match(english.badgeText, /Jan 15, 2025/);
     assert.equal(result.buttonLabel, "下载并更新");
     assert.equal(result.downloadAndInstall, true);
     const downloading = buildUpdateText("1.2.3", { phase: "downloading", percent: 67 }, 67, en);

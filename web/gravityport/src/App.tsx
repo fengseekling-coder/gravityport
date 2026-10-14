@@ -239,7 +239,7 @@ export default function App() {
   const readyGateRef = useRef<ReturnType<typeof createReadyGate> | null>(null)
   if (!readyGateRef.current) {
     readyGateRef.current = createReadyGate(() => {
-      void desktopAPI()?.reportRendererReady?.()
+      desktopAPI()?.reportRendererReady?.().catch(() => {})
     })
   }
   const versionOkRef = useRef(false)
@@ -253,7 +253,7 @@ export default function App() {
   renameNoticeRef.current = renameNoticeOpen
   const dismissRenameNotice = () => {
     setRenameNoticeOpen(false)
-    void desktopAPI()?.acknowledgeRenameNotice?.()
+    desktopAPI()?.acknowledgeRenameNotice?.().catch(() => {})
   }
 
   const [systemDark, setSystemDark] = useState(false)
@@ -519,7 +519,7 @@ export default function App() {
     return api.onUpdateDownloadProgress(progress => {
       const pct = Number(progress?.percent)
       setUpdateState(current => current.phase === "downloading"
-        ? { phase: "downloading", percent: Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0 }
+        ? { ...current, percent: Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0 }
         : current)
     })
   }, [])
@@ -2449,6 +2449,7 @@ export default function App() {
                           updateState,
                           updateState.phase === "downloading" ? updateState.percent : 0,
                           tr,
+                          language,
                         )
                         return <span className="settings-badge" title={text.badgeText}>{text.badgeText}</span>
                       })()}
@@ -2459,15 +2460,16 @@ export default function App() {
                         updateState,
                         updateState.phase === "downloading" ? updateState.percent : 0,
                         tr,
+                        language,
                       )
                       if (text.buttonLabel === null) return null
-                                      if (text.downloadAndInstall) {
+                      if (text.downloadAndInstall) {
                         return <button className="neutral-button about-update" onClick={downloadAndInstallUpdate} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
                       }
                       if (text.secondaryLabel) {
-                        return <div className="about-update-actions">
-                          <button className="neutral-button about-update" onClick={() => undefined} disabled>{text.buttonLabel}</button>
-                          <button className="neutral-button about-update" onClick={cancelUpdateDownload}>{text.secondaryLabel}</button>
+                        return <div className="about-update about-update-actions">
+                          <button className="neutral-button" disabled>{text.buttonLabel}</button>
+                          <button className="neutral-button" onClick={cancelUpdateDownload}>{text.secondaryLabel}</button>
                         </div>
                       }
                       if (updateState.phase === "available" && !text.downloadAndInstall) {
