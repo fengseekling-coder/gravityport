@@ -266,7 +266,10 @@ test("Windows directory move retries a transient exclusive file lock", { skip: p
 
   try {
     let locked = false;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    // powershell.exe cold start on a contended CI runner can exceed two
+    // seconds; the marker wait must outlive it (the holder keeps the lock for
+    // 6.5s after writing, so the move below still runs under contention).
+    for (let attempt = 0; attempt < 250; attempt += 1) {
       if (await readFile(markerFile, "utf8").then(() => true).catch(() => false)) {
         locked = true;
         break;

@@ -28,9 +28,9 @@ async function createFixture(t, { platform, arch, packedNatives = false }) {
   deferTestPathRemoval(projectRoot, { recursive: true, force: true });
   const runtimeRoot = join(projectRoot, "runtime");
   const manifest = { name: "mosa", version: IDENTITY.productVersion };
-  await writeFixtureFile(projectRoot, "web/app/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
+  await writeFixtureFile(projectRoot, "web/gravityport/dist/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
   await writeFixtureFile(projectRoot, "package.json", `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFixtureFile(runtimeRoot, "web/app/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
+  await writeFixtureFile(runtimeRoot, "web/gravityport/dist/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
   await writeFixtureFile(runtimeRoot, "package.json", `${JSON.stringify(manifest, null, 2)}\n`);
 
   if (platform === "darwin") {
@@ -90,9 +90,9 @@ test("packaged runtime verifier rejects optional visual runtime bundled into the
   deferTestPathRemoval(projectRoot, { recursive: true, force: true });
   const runtimeRoot = join(projectRoot, "runtime");
   const manifest = { name: "mosa", version: IDENTITY.productVersion };
-  await writeFixtureFile(projectRoot, "web/app/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
+  await writeFixtureFile(projectRoot, "web/gravityport/dist/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
   await writeFixtureFile(projectRoot, "package.json", `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFixtureFile(runtimeRoot, "web/app/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
+  await writeFixtureFile(runtimeRoot, "web/gravityport/dist/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
   await writeFixtureFile(runtimeRoot, "package.json", `${JSON.stringify(manifest, null, 2)}\n`);
   await writeFixtureFile(runtimeRoot, "node_modules/better-sqlite3/prebuilds/darwin-arm64.node", "sqlite-native");
   await writeFixtureFile(runtimeRoot, "node_modules/@img/sharp-darwin-arm64/lib/sharp-darwin-arm64.node", "sharp-native");
@@ -112,7 +112,7 @@ test("packaged runtime verifier rejects optional visual runtime bundled into the
 
 test("packaged runtime verifier rejects source/package build identity drift", async (t) => {
   const { projectRoot } = await createFixture(t, { platform: "darwin", arch: "arm64" });
-  await writeFixtureFile(projectRoot, "web/app/build-identity.json", `${JSON.stringify({
+  await writeFixtureFile(projectRoot, "web/gravityport/dist/build-identity.json", `${JSON.stringify({
     ...IDENTITY,
     runtimeFingerprint: "c".repeat(64),
   }, null, 2)}\n`);

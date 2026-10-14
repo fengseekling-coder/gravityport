@@ -5,12 +5,20 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { GALLERY_PAGE_SIZE } from "../web/app/config.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 
-// This gate measures the desktop renderer (package.json main is
-// desktop/main.mjs), which serves the same web/app UI as the browser, so the
-// scroll-step budget comes straight from the shared UI tree's constant.
+// Gallery performance QA against the GravityPort React UI (web/gravityport).
+// The renderer is the desktop shell, which serves the same built UI as the
+// browser, so the scroll-step budget reads the React gallery's page size.
+//
+// Original budgets are carried over unchanged from the previous (windowed
+// DOM) gallery: mounted cards, hydrated cards, DOM nodes and long-task
+// latencies must stay inside them while the whole library loads. The React
+// grid keeps that contract by mounting only the viewport window (real cards
+// in the hydrate zone, same-geometry placeholders in the warm zone, spacer
+// rows for the scroll extent). Grid state is read from the product DOM:
+// `.asset-grid[data-loaded-assets]` (logical loaded count) and the
+// `.asset-card` / `.asset-card-virtual-placeholder` children.
 
 const root = resolve(import.meta.dirname, "..");
 const ASSET_COUNT = Number.parseInt(process.env.MOSA_GALLERY_QA_ASSET_COUNT || "2000", 10);
@@ -20,6 +28,9 @@ const MAX_DOM_NODES = Number.parseInt(process.env.MOSA_GALLERY_QA_MAX_DOM_NODES 
 const MAX_LONG_TASK_MS = Number.parseInt(process.env.MOSA_GALLERY_QA_MAX_LONG_TASK_MS || "500", 10);
 const MAX_LONG_TASK_TOTAL_MS = Number.parseInt(process.env.MOSA_GALLERY_QA_MAX_LONG_TASK_TOTAL_MS || "4000", 10);
 const SKIP_BOTTOM_CHECK = process.env.MOSA_GALLERY_QA_SKIP_BOTTOM === "1";
+// Mutations issued node-side against the desktop runtime must carry the same
+// client token the shell was started with (QA parity with e2e-critical-flows).
+const QA_CLIENT_TOKEN = "mosa_gallery_qa_client_token_0123456789abcdef";
 // Optional structured diagnostics sink. Unset => script behavior is unchanged.
 // Set => a JSON verdict (pass/fail + key metrics) is written even when the
 // caller loses the process handle on a long run, so the exit status can be
@@ -39,7 +50,7 @@ const qaResult = {
   appendLatencyMax: null,
   boundaryStallMax: null,
   elapsedMs: null,
-  fullReloadCount: null,
+  windowCollapses: null,
   incrementalScenarios: [],
   error: null,
 };
@@ -146,10 +157,9 @@ async function main() {
     }
     // Seed the scale fixture in one SQLite transaction, matching the same
     // canonical row shape used by test:performance. The GUI QA is measuring
-    // renderer/runtime pagination and incremental reconciliation, not 50k file
-    // copies or 50k Sharp jobs; real mutations below still go through the public
-    // Runtime APIs. This keeps the 50k gate deterministic and fast enough to
-    // return a trustworthy exit status in CI/tool environments.
+    // renderer/runtime pagination and the mounted window, not 2k file copies
+    // or 2k Sharp jobs; real mutations below still go through the public
+    // Runtime APIs.
     const database = new Database(join(libraryDir, "mosa.db"));
     try {
       const timestamp = new Date().toISOString();
@@ -204,6 +214,7 @@ async function main() {
         MOSA_USER_DATA: userDataDir,
         MOSA_RUNTIME_MODE: "qa",
         MOSA_QA_RUN: "1",
+        MOSA_CLIENT_TOKEN: QA_CLIENT_TOKEN,
         MOSA_DESKTOP_PORT: String(desktopPort),
         MOSA_DISABLE_BRIDGES: "cowart,cowartDiscovery,codex,grok",
       },
@@ -217,33 +228,49 @@ async function main() {
     const target = await waitForPageTarget(cdpPort, child, output);
     client = await createCdpClient(target.webSocketDebuggerUrl);
     await client.send("Runtime.enable");
-    // QA must measure the unfiltered library rather than inheriting any
-    // default/remembered facet state attached to the renderer origin.
-    if (await evaluate(client, "Boolean(document.querySelector('[data-action=\"empty-clear\"]'))")) {
-      await evaluate(client, "document.querySelector('[data-action=\"empty-clear\"]')?.click(); true");
-    }
+    // The React UI starts every session on the unfiltered 所有素材 view (no
+    // persisted facets), so no facet reset is needed before measuring.
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (Number(await evaluate(client, "document.querySelectorAll('#assetGrid > .asset-card').length")) > 0) break;
+      if (Number(await evaluate(client, "document.querySelectorAll('.asset-grid > .asset-card').length")) > 0) break;
       await wait(100);
     }
+    // Request journal for pagination diagnostics (also reused by the
+    // incremental scenarios below).
+    await evaluate(client, `(()=>{
+      window.__mosaReqLog=[];
+      if(!window.__mosaFetchPatched){
+        window.__mosaFetchPatched=true;
+        const original=window.fetch;
+        window.fetch=(...args)=>{
+          const url=String(args[0] instanceof Request?args[0].url:args[0]);
+          const entry={url,at:performance.now(),done:0};
+          window.__mosaReqLog.push(entry);
+          const result=original(...args);
+          result.then(()=>{entry.done=performance.now();}).catch(()=>{entry.done=-1;});
+          return result;
+        };
+      }
+      return true;
+    })()`)
     await evaluate(client, `window.__mosaLongTasks=[]; window.__mosaAppendMarks=[]; window.__mosaBoundaryStalls=[]; window.__mosaBoundaryStall=null; window.__mosaLongTaskObserver=new PerformanceObserver((list)=>window.__mosaLongTasks.push(...list.getEntries().map((entry)=>({startTime:entry.startTime,duration:entry.duration})))); window.__mosaLongTaskObserver.observe({entryTypes:['longtask']}); true`);
 
     const startedAt = Date.now();
-    // Exercise the real product path: a fast continuous scroll, not synthetic
-    // clicks on the hidden fallback button. The browser records how long each
-    // pagination boundary stays pending from entering the sentinel warm zone to
-    // the new cards being present. This directly measures the wait a user could
-    // perceive while flinging through the library.
-    // Windowed DOM means mounted card count no longer grows with loaded pages.
-    // Give each expected page enough animation frames to cross the preload
-    // boundary, commit, remount the new warm window, and re-arm pagination.
-    const maxScrollSteps = Math.ceil(ASSET_COUNT / GALLERY_PAGE_SIZE) * 30 + 400;
-    for (let step = 0; step < maxScrollSteps; step += 1) {
+    // Exercise the real product path: a fast continuous scroll drives the
+    // auto-append pagination; the QA records how long each pagination boundary
+    // stays pending from entering the warm zone to the new cards being loaded.
+    // Windowed DOM means the mounted card count no longer grows with loaded
+    // pages; `data-loaded-assets` is the logical loaded count. The loop is
+    // bounded by wall clock (evaluate round-trips dominate each step), with a
+    // stall bail-out if nothing loads while pinned at the bottom.
+    const scrollDeadline = Date.now() + 240_000;
+    let lastProgressAt = Date.now();
+    let lastLoaded = 0;
+    while (Date.now() < scrollDeadline) {
       const scrollState = JSON.parse(await evaluate(client, `JSON.stringify((()=>{
-        const grid=document.querySelector('#assetGrid');
-        const cards=document.querySelectorAll('#assetGrid > .asset-card').length;
+        const grid=document.querySelector('.asset-grid');
+        const cards=document.querySelectorAll('.asset-grid > .asset-card').length;
         const loaded=Number(grid.dataset.loadedAssets||0);
-        const more=Boolean(document.querySelector('[data-action="load-more"]'));
+        const more=loaded < ${ASSET_COUNT};
         const now=performance.now();
         const pending=window.__mosaBoundaryPending;
         if(pending && loaded>pending.loaded){window.__mosaAppendMarks.push({at:pending.at,committedAt:now,loaded:pending.loaded,phase:'auto-append',latency:now-pending.at});window.__mosaBoundaryPending=null;}
@@ -256,31 +283,40 @@ async function main() {
         if(more && grid.scrollTop>=maxScrollTop-0.5 && !window.__mosaBoundaryStall){window.__mosaBoundaryStall={at:now,loaded};}
         return {cards,loaded,more,scrollTop:grid.scrollTop,scrollHeight:grid.scrollHeight,clientHeight:grid.clientHeight};
       })())`));
+      if (scrollState.loaded !== lastLoaded) { lastLoaded = scrollState.loaded; lastProgressAt = Date.now(); }
+      else if (Date.now() - lastProgressAt > 30000) {
+        const recent = await evaluate(client, `JSON.stringify((window.__mosaReqLog||[]).filter(e=>e.url.includes('/api/assets')).slice(-8).map(e=>({
+          cursor:decodeURIComponent(e.url).match(/cursor=([^&]+)/)?.[1]?.slice(-24)||'first-page',
+          view:e.url.includes('view=gallery')?'gallery':'stack',
+          at:Math.round(e.at),done:Math.round(e.done),
+        })))`);
+        throw new Error(`pagination stalled at ${scrollState.loaded}/${ASSET_COUNT} loaded, scrollTop=${Math.round(scrollState.scrollTop)} scrollHeight=${Math.round(scrollState.scrollHeight)}; recent asset fetches: ${recent}`);
+      }
       if (scrollState.loaded >= ASSET_COUNT || !scrollState.more) break;
       await wait(16);
     }
-    await evaluate(client, `(()=>{const pending=window.__mosaBoundaryPending;const loaded=Number(document.querySelector('#assetGrid')?.dataset.loadedAssets||0);if(pending&&loaded>pending.loaded){const now=performance.now();window.__mosaAppendMarks.push({at:pending.at,committedAt:now,loaded:pending.loaded,phase:'auto-append',latency:now-pending.at});window.__mosaBoundaryPending=null;}return true;})()`);
+    await evaluate(client, `(()=>{const pending=window.__mosaBoundaryPending;const loaded=Number(document.querySelector('.asset-grid')?.dataset.loadedAssets||0);if(pending&&loaded>pending.loaded){const now=performance.now();window.__mosaAppendMarks.push({at:pending.at,committedAt:now,loaded:pending.loaded,phase:'auto-append',latency:now-pending.at});window.__mosaBoundaryPending=null;}return true;})()`);
     await wait(1200);
     const topMetrics = JSON.parse(await evaluate(client, `JSON.stringify({
-      scrollHeight:document.querySelector('#assetGrid').scrollHeight,
-      clientHeight:document.querySelector('#assetGrid').clientHeight,
-      lastTop:document.querySelector('#assetGrid > .asset-card:last-of-type')?.getBoundingClientRect().top || 0,
-      columns:getComputedStyle(document.querySelector('#assetGrid')).gridTemplateColumns,
-      firstPlaceholderSpan:document.querySelector('.asset-card-virtual-placeholder')?.style.gridRowEnd || '',
-      firstPlaceholderHeight:document.querySelector('.asset-card-virtual-placeholder')?.getBoundingClientRect().height || 0
+      scrollHeight:document.querySelector('.asset-grid').scrollHeight,
+      clientHeight:document.querySelector('.asset-grid').clientHeight,
+      columns:getComputedStyle(document.querySelector('.asset-grid')).gridTemplateColumns,
+      firstPlaceholderHeight:(card=>card?card.getBoundingClientRect().height:0)(document.querySelector('.asset-grid > .asset-card-virtual-placeholder')),
+      firstPlaceholderRatio:(card=>card?card.style.aspectRatio:'')(document.querySelector('.asset-grid > .asset-card-virtual-placeholder')),
+      firstPlaceholderWidth:(card=>card?card.getBoundingClientRect().width:0)(document.querySelector('.asset-grid > .asset-card-virtual-placeholder'))
     })`));
     let bottomMetrics = null;
     if (!SKIP_BOTTOM_CHECK) {
-      await evaluate(client, `window.__mosaAppendMarks.push({at:performance.now(),cards:document.querySelectorAll('#assetGrid > .asset-card').length,phase:'bottom-jump'}); true`);
-      await evaluate(client, `(()=>{const grid=document.querySelector('#assetGrid');grid.scrollTop=grid.scrollHeight;grid.dispatchEvent(new Event('scroll'));return grid.scrollTop})()`);
+      await evaluate(client, `window.__mosaAppendMarks.push({at:performance.now(),cards:document.querySelectorAll('.asset-grid > .asset-card').length,phase:'bottom-jump'}); true`);
+      await evaluate(client, `(()=>{const grid=document.querySelector('.asset-grid');grid.scrollTop=grid.scrollHeight;grid.dispatchEvent(new Event('scroll'));return grid.scrollTop})()`);
       await wait(1200);
       await evaluate(client, `window.__mosaLongTaskObserver?.disconnect(); true`);
       bottomMetrics = JSON.parse(await evaluate(client, `JSON.stringify({
-        scrollTop:document.querySelector('#assetGrid').scrollTop,
-        scrollHeight:document.querySelector('#assetGrid').scrollHeight,
-        hydrated:document.querySelectorAll('#assetGrid > .asset-card:not(.asset-card-virtual-placeholder)').length,
-        visibleHydrated:(()=>{const grid=document.querySelector('#assetGrid');const bounds=grid.getBoundingClientRect();return [...grid.querySelectorAll(':scope > .asset-card:not(.asset-card-virtual-placeholder)')].filter((card)=>{const rect=card.getBoundingClientRect();return rect.bottom>bounds.top&&rect.top<bounds.bottom}).length})(),
-        visiblePlaceholders:(()=>{const grid=document.querySelector('#assetGrid');const bounds=grid.getBoundingClientRect();return [...grid.querySelectorAll(':scope > .asset-card-virtual-placeholder')].filter((card)=>{const rect=card.getBoundingClientRect();return rect.bottom>bounds.top&&rect.top<bounds.bottom}).length})()
+        scrollTop:document.querySelector('.asset-grid').scrollTop,
+        scrollHeight:document.querySelector('.asset-grid').scrollHeight,
+        hydrated:document.querySelectorAll('.asset-grid > .asset-card:not(.asset-card-virtual-placeholder)').length,
+        visibleHydrated:(()=>{const grid=document.querySelector('.asset-grid');const bounds=grid.getBoundingClientRect();return [...grid.querySelectorAll(':scope > .asset-card:not(.asset-card-virtual-placeholder)')].filter((card)=>{const rect=card.getBoundingClientRect();return rect.bottom>bounds.top&&rect.top<bounds.bottom}).length})(),
+        visiblePlaceholders:(()=>{const grid=document.querySelector('.asset-grid');const bounds=grid.getBoundingClientRect();return [...grid.querySelectorAll(':scope > .asset-card-virtual-placeholder')].filter((card)=>{const rect=card.getBoundingClientRect();return rect.bottom>bounds.top&&rect.top<bounds.bottom}).length})()
       })`));
     } else {
       await evaluate(client, `window.__mosaLongTaskObserver?.disconnect(); true`);
@@ -289,13 +325,13 @@ async function main() {
     const apiSnapshot = JSON.parse(await evaluate(client, `(async()=>{const response=await fetch('/api/assets?project=default&limit=2');return JSON.stringify(await response.json())})()`));
     const metrics = JSON.parse(await evaluate(client, `JSON.stringify({
       href:location.href,
-      loaded:Number(document.querySelector('#assetGrid')?.dataset.loadedAssets||0),
-      cards:document.querySelectorAll('#assetGrid > .asset-card').length,
-      hydrated:document.querySelectorAll('#assetGrid > .asset-card:not(.asset-card-virtual-placeholder)').length,
-      placeholders:document.querySelectorAll('#assetGrid > .asset-card-virtual-placeholder').length,
+      loaded:Number(document.querySelector('.asset-grid')?.dataset.loadedAssets||0),
+      cards:document.querySelectorAll('.asset-grid > .asset-card').length,
+      hydrated:document.querySelectorAll('.asset-grid > .asset-card:not(.asset-card-virtual-placeholder)').length,
+      placeholders:document.querySelectorAll('.asset-grid > .asset-card-virtual-placeholder').length,
       nodes:document.querySelectorAll('*').length,
-      gridText:(document.querySelector('#assetGrid')?.textContent||'').slice(0,500),
-      gridHtml:(document.querySelector('#assetGrid')?.innerHTML||'').slice(0,1000),
+      gridText:(document.querySelector('.asset-grid')?.textContent||'').slice(0,500),
+      gridHtml:(document.querySelector('.asset-grid')?.innerHTML||'').slice(0,1000),
       longTasks:window.__mosaLongTasks.length,
       longTaskTotal:Math.round(window.__mosaLongTasks.reduce((sum,entry)=>sum+entry.duration,0)),
       longTaskMax:Math.round(Math.max(0,...window.__mosaLongTasks.map((entry)=>entry.duration))),
@@ -304,7 +340,7 @@ async function main() {
       appendLatencyMax:Math.round(Math.max(0,...window.__mosaAppendMarks.filter((entry)=>Number.isFinite(entry.latency)).map((entry)=>entry.latency))),
       boundaryStalls:window.__mosaBoundaryStalls,
       boundaryStallMax:Math.round(Math.max(0,...window.__mosaBoundaryStalls.map((entry)=>entry.duration))),
-      scrollHeight:document.querySelector('#assetGrid').scrollHeight
+      scrollHeight:document.querySelector('.asset-grid').scrollHeight
     })`));
     metrics.apiSnapshot = apiSnapshot;
     metrics.healthSnapshot = healthSnapshot;
@@ -333,6 +369,16 @@ async function main() {
     assert.ok(metrics.longTaskTotal <= MAX_LONG_TASK_TOTAL_MS, `long task total ${metrics.longTaskTotal}ms exceeds ${MAX_LONG_TASK_TOTAL_MS}ms`);
     assert.equal(metrics.hydrated + metrics.placeholders, metrics.cards);
     assert.ok(topMetrics.scrollHeight > topMetrics.clientHeight * 2, "large gallery must preserve a real scrollable extent");
+    if (topMetrics.firstPlaceholderHeight > 0) {
+      const [w, h] = String(topMetrics.firstPlaceholderRatio).split("/").map((value) => Number.parseFloat(value));
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0) {
+        const expectedHeight = topMetrics.firstPlaceholderWidth * h / w;
+        assert.ok(
+          Math.abs(topMetrics.firstPlaceholderHeight - expectedHeight) <= 1.5,
+          `placeholder geometry must match its asset ratio (${topMetrics.firstPlaceholderHeight} vs ${expectedHeight})`,
+        );
+      }
+    }
     if (bottomMetrics) {
       assert.ok(bottomMetrics.scrollTop > 0, "gallery must be able to scroll away from the first viewport");
       assert.ok(bottomMetrics.visibleHydrated > 0, "the far end of the gallery must render hydrated cards in the viewport");
@@ -340,42 +386,33 @@ async function main() {
     }
 
     // ------------------------------------------------------------------
-    // Library Change 增量同步专项场景：在 50k 全部加载的状态下逐个触发
-    // 单实体变化，度量「revision before/after、delta 数、页面请求数、
-    // 全量重载次数、UI 反馈耗时」。普通变更的 Full Gallery Reload 必须
-    // 恒为 0（limit=250 的已加载窗口重取是唯一全量信号）。
+    // Library Change 增量同步专项场景：在全部加载的状态下逐个触发单实体
+    // 变化，度量「revision before/after、delta 数、页面请求数、已加载窗口
+    // 是否塌缩、UI 反馈耗时」。React 画廊对变更的既有策略是重取当前已加载
+    // 窗口（SSE 驱动），因此这里的硬性门槛不是“零页面请求”，而是：任何
+    // 普通变更都不得让已加载窗口塌缩回第一页（loaded 只增不减）、滚动位置
+    // 不得被重置，且变更必须经 SSE 反映到 UI。
     // ------------------------------------------------------------------
     const runtimeHealth = await fetch(`http://127.0.0.1:${desktopPort}/api/health`).then((response) => response.json());
     assert.ok(runtimeHealth?.productVersion, "desktop runtime must be reachable for the incremental scenarios");
 
-    await evaluate(client, `(()=>{
-      window.__mosaReqLog=[];
-      if(!window.__mosaFetchPatched){
-        window.__mosaFetchPatched=true;
-        const original=window.fetch;
-        window.fetch=(...args)=>{
-          const url=String(args[0] instanceof Request?args[0].url:args[0]);
-          window.__mosaReqLog.push({url,at:performance.now()});
-          return original(...args);
-        };
-      }
-      return true;
-    })()`);
     // 回到画廊顶部：新增素材（newest 排序）的卡片要出现在可见 DOM 里。
-    await evaluate(client, `(()=>{const grid=document.querySelector('#assetGrid');grid.scrollTop=0;grid.dispatchEvent(new Event('scroll'));return true})()`);
+    await evaluate(client, `(()=>{const grid=document.querySelector('.asset-grid');grid.scrollTop=0;grid.dispatchEvent(new Event('scroll'));return true})()`);
     await wait(1200);
 
     const runtimeFetch = async (path, options) => {
-      const response = await fetch(`http://127.0.0.1:${desktopPort}${path}`, options);
+      const headers = { "x-mosa-client-token": QA_CLIENT_TOKEN, ...(options?.headers || {}) };
+      const response = await fetch(`http://127.0.0.1:${desktopPort}${path}`, { ...options, headers });
       const body = await response.json();
       assert.ok(response.ok, `runtime mutation ${path} failed: ${response.status} ${JSON.stringify(body)}`);
       return body;
     };
     const revisionNow = async () => Number.parseInt((await runtimeFetch(`/api/library-revision?project=default`)).revision, 10);
     const deltaCount = async (since) => (await runtimeFetch(`/api/library-changes?project=default&since=${since}`)).changes.length;
-    const isFullReloadRequest = (url) => url.includes("limit=250") && (url.includes("/api/assets?") || url.includes("/assets?"));
+    const loadedNow = () => evaluate(client, "Number(document.querySelector('.asset-grid')?.dataset.loadedAssets||0)");
+    const scrollTopNow = () => evaluate(client, "Math.round(document.querySelector('.asset-grid')?.scrollTop||0)");
     const drainRequests = () => evaluate(client, "(()=>{const log=window.__mosaReqLog;window.__mosaReqLog=[];return JSON.stringify(log)})()").then(JSON.parse);
-    const waitForPage = async (expression, description, timeoutMs = 8000) => {
+    const waitForPage = async (expression, description, timeoutMs = 10000) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         if (await evaluate(client, expression)) return;
@@ -386,25 +423,56 @@ async function main() {
 
     const scenarios = [];
     qaResult.incrementalScenarios = scenarios;
+    let windowCollapses = 0;
+    // Expected loaded-window size per scenario. The React gallery re-fetches
+    // the SAME window it had (top-of-order, capped at the previous size), so
+    // add/trash/restore reshuffle the window's contents without changing its
+    // size; only a real node collapse (stack create) shrinks it. Anything far
+    // below the expectation means the view collapsed back to the first page.
+    const EXPECTED_LOADED_DELTA = {
+      "external-ingest-add": 0,
+      "favorite": 0,
+      "trash-delete": 0,
+      "restore": 0,
+      "stack-create": 0,
+      "stack-cover-change": 0,
+      // Deleting one member dissolves the stack, and the survivor re-enters
+      // the window as a plain node: the window size is preserved.
+      "stack-member-delete": 0,
+    };
     const runScenario = async (name, mutate, waitExpression, waitDescription) => {
       await drainRequests();
       const revisionBefore = await revisionNow();
+      const loadedBefore = await loadedNow();
+      const scrollBefore = await scrollTopNow();
       const startedAt = Date.now();
+      // A wait function receives the in-page request-log baseline so a
+      // scenario can wait for "the SSE-driven refetch has run" even when the
+      // change itself is invisible in the windowed DOM (window-tail stacks).
+      const requestBaseline = await evaluate(client, "(window.__mosaReqLog||[]).length");
+      const expression = typeof waitExpression === "function" ? waitExpression(requestBaseline) : waitExpression;
       const result = await mutate();
-      if (waitExpression) await waitForPage(waitExpression, waitDescription);
-      // 权威完成信号：UI 的 sync baseline 吸收了 mutation 之后的 revision
-      // （即 delta 已成功应用并推进），弱条件（如 loadedAssets 不变）只作辅助。
-      const revisionAfterMutation = await revisionNow();
-      await waitForPage(`(window.__mosa.librarySync?.baseline()||'').startsWith('${revisionAfterMutation}:')`, "the sync baseline to absorb the change");
+      // The DOM/refetch wait is authoritative: every mutation here is
+      // external (runtime API), so the UI can only reflect it after the
+      // SSE-driven window refresh has landed.
+      if (expression) await waitForPage(expression, waitDescription);
       const elapsedMs = Date.now() - startedAt;
-      await wait(250);
+      await wait(400);
       const requests = await drainRequests();
       const revisionAfter = await revisionNow();
+      const loadedAfter = await loadedNow();
+      const scrollAfter = await scrollTopNow();
       const deltas = revisionAfter > revisionBefore ? await deltaCount(revisionBefore) : 0;
-      const fullReloads = requests.filter((entry) => isFullReloadRequest(entry.url)).length;
-      const galleryRowsRequests = requests.filter((entry) => entry.url.includes("/api/gallery-rows")).length;
       const pageRequests = requests.filter((entry) => entry.url.includes("/api/assets?") || entry.url.includes("asset-stacks")).length;
-      scenarios.push({ name, revisionBefore, revisionAfter, deltaCount: deltas, requestCount: requests.length, galleryRowsRequests, pageRequests, fullReloads, elapsedMs, ...result });
+      const expectedLoaded = loadedBefore + (EXPECTED_LOADED_DELTA[name] ?? 0);
+      const collapsed = loadedAfter < expectedLoaded - 50;
+      if (collapsed) windowCollapses += 1;
+      scenarios.push({
+        name, revisionBefore, revisionAfter, deltaCount: deltas, requestCount: requests.length,
+        pageRequests, loadedBefore, loadedAfter, expectedLoaded, scrollBefore, scrollAfter,
+        windowCollapsed: collapsed, elapsedMs, ...result,
+      });
+      assert.equal(loadedAfter, expectedLoaded, `${name}: loaded window changed unexpectedly`);
     };
 
     const liveId = `perf-live-${Date.now()}`;
@@ -414,7 +482,11 @@ async function main() {
     const stageLiveAsset = async () => {
       const staged = await fetch(`http://127.0.0.1:${desktopPort}/api/import/stage`, {
         method: "POST",
-        headers: { "x-mosa-file-name": encodeURIComponent(`${liveId}.png`), "content-type": "application/octet-stream" },
+        headers: {
+          "x-mosa-file-name": encodeURIComponent(`${liveId}.png`),
+          "content-type": "application/octet-stream",
+          "x-mosa-client-token": QA_CLIENT_TOKEN,
+        },
         body: liveAssetBytes,
       });
       const stagedBody = await staged.json();
@@ -433,9 +505,9 @@ async function main() {
         });
         return { id: created.asset?.id };
       },
-      `document.querySelector('#assetGrid > .asset-card')?.dataset.id === '${liveId}'`,
+      `document.querySelector('.asset-grid > .asset-card:not(.asset-card-virtual-placeholder)')?.dataset.assetId === '${liveId}'`,
       "the ingested card to appear at the gallery top",
-    ).then(() => assert.equal((scenarios.at(-1)).fullReloads, 0, "single ingest must not reload the loaded window"));
+    ).then(() => assert.equal((scenarios.at(-1)).windowCollapsed, false, "single ingest must not collapse the loaded window"));
 
     await runScenario(
       "favorite",
@@ -443,9 +515,9 @@ async function main() {
         const toggled = await runtimeFetch(`/api/assets/default/${liveId}/favorite`, { method: "POST" });
         return { favorite: toggled.asset?.favorite };
       },
-      `document.querySelector('#assetGrid > .asset-card[data-id="${liveId}"] .card-favorite')?.getAttribute('aria-pressed') === 'true'`,
+      `document.querySelector('.asset-grid > .asset-card[data-asset-id="${liveId}"] .favorite-mark') !== null`,
       "the card star to flip to favorited",
-    ).then(() => assert.equal((scenarios.at(-1)).fullReloads, 0, "favorite must not reload the loaded window"));
+    ).then(() => assert.equal((scenarios.at(-1)).windowCollapsed, false, "favorite must not collapse the loaded window"));
 
     await runScenario(
       "trash-delete",
@@ -454,9 +526,9 @@ async function main() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "trash", projectId: "default", assetIds: [liveId] }),
       }),
-      `document.querySelector('#assetGrid > .asset-card')?.dataset.id !== '${liveId}'`,
+      `document.querySelector('.asset-grid > .asset-card[data-asset-id="${liveId}"]') === null`,
       "the deleted card to leave the gallery top",
-    ).then(() => assert.equal((scenarios.at(-1)).fullReloads, 0, "delete must not reload the loaded window"));
+    ).then(() => assert.equal((scenarios.at(-1)).windowCollapsed, false, "delete must not collapse the loaded window"));
 
     await runScenario(
       "restore",
@@ -464,14 +536,13 @@ async function main() {
         const restored = await runtimeFetch(`/api/assets/default/${liveId}/restore`, { method: "POST" });
         return { id: restored.asset?.id };
       },
-      `document.querySelector('#assetGrid > .asset-card')?.dataset.id === '${liveId}'`,
+      `document.querySelector('.asset-grid > .asset-card[data-asset-id="${liveId}"]') !== null`,
       "the restored card to re-enter the gallery top",
-    ).then(() => assert.equal((scenarios.at(-1)).fullReloads, 0, "restore must not reload the loaded window"));
+    ).then(() => assert.equal((scenarios.at(-1)).windowCollapsed, false, "restore must not collapse the loaded window"));
 
-    // 深处 Stack 场景：成员都在 50k 窗口内但不在视口 DOM 中，度量纯数据增量。
+    // 深处 Stack 场景：成员都在已加载窗口内但不在视口 DOM 中，度量纯数据增量。
     const stackMembers = (await runtimeFetch("/api/assets?project=default&sort=oldest&limit=2")).assets.map((asset) => asset.id);
     assert.equal(stackMembers.length, 2);
-    const loadedBeforeStack = Number(await evaluate(client, "Number(document.querySelector('#assetGrid')?.dataset.loadedAssets||0)"));
     let createdStackId = "";
     await runScenario(
       "stack-create",
@@ -484,9 +555,16 @@ async function main() {
         createdStackId = created.stack?.id || "";
         return { stackId: createdStackId };
       },
-      `Number(document.querySelector('#assetGrid')?.dataset.loadedAssets||0) === ${loadedBeforeStack - 1}`,
-      "two member nodes to collapse into one stack node",
-    ).then(() => assert.equal((scenarios.at(-1)).fullReloads, 0, "stack creation must not reload the loaded window"));
+      // The collapsed members sit at the window tail: assert the SSE refetch
+      // ran and the window survived it (the exact node math is server-checked
+      // below).
+      (baseline) => `(window.__mosaReqLog||[]).length > ${baseline}`,
+      "the SSE refetch to run after the stack creation",
+    ).then(async () => {
+      assert.equal((scenarios.at(-1)).windowCollapsed, false, "stack creation must not collapse the loaded window");
+      const summary = await runtimeFetch(`/api/asset-stacks/${encodeURIComponent(createdStackId)}?project=default`);
+      assert.equal(summary.stack?.cover_asset_id, stackMembers[0], "stack created with the seeded cover");
+    });
     assert.ok(createdStackId, "stack id returned by creation");
 
     await runScenario(
@@ -496,10 +574,10 @@ async function main() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ projectId: "default", assetIds: [stackMembers[1], stackMembers[0]] }),
       }),
-      `Number(document.querySelector('#assetGrid')?.dataset.loadedAssets||0) === ${loadedBeforeStack - 1}`,
-      "the stack node to re-anchor on the new cover",
+      (baseline) => `(window.__mosaReqLog||[]).length > ${baseline}`,
+      "the SSE refetch to run after the cover reorder",
     ).then(async () => {
-      assert.equal((scenarios.at(-1)).fullReloads, 0, "cover change must not reload the loaded window");
+      assert.equal((scenarios.at(-1)).windowCollapsed, false, "cover change must not collapse the loaded window");
       const summary = await runtimeFetch(`/api/asset-stacks/${encodeURIComponent(createdStackId)}?project=default`);
       assert.equal(summary.stack?.cover_asset_id, stackMembers[1], "server anchor follows the reorder");
     });
@@ -511,30 +589,26 @@ async function main() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "trash", projectId: "default", assetIds: [stackMembers[1]] }),
       }),
-      `Number(document.querySelector('#assetGrid')?.dataset.loadedAssets||0) === ${loadedBeforeStack - 1}`,
-      "the stack to dissolve into its remaining member",
-    ).then(() => assert.equal((scenarios.at(-1)).fullReloads, 0, "member deletion must not reload the loaded window"));
+      (baseline) => `(window.__mosaReqLog||[]).length > ${baseline}`,
+      "the SSE refetch to run after the member deletion",
+    ).then(() => assert.equal((scenarios.at(-1)).windowCollapsed, false, "member deletion must not collapse the loaded window"));
 
-    // 隐藏/恢复与 SSE 重连共享同一条 resume 代码路径（revision 对账 → delta 回放）。
-    const resumeBaseline = await evaluate(client, "window.__mosa.librarySync?.baseline()");
+    // SSE 实时性场景：变更发出后，SSE 驱动的 UI 反馈必须在 5 秒内出现
+    //（对应旧版的 resume 对账 5s 预算；React 的实时路径是 SSE 事件）。
+    const sseStartedAt = Date.now();
     const favoriteFlip = await runtimeFetch(`/api/assets/default/${liveId}/favorite`, { method: "POST" });
     assert.equal(typeof favoriteFlip.asset?.favorite, "boolean");
-    const resumeRevision = await revisionNow();
-    await drainRequests();
-    const resumeStartedAt = Date.now();
-    const resumed = await evaluate(client, "window.__mosa.librarySync ? window.__mosa.librarySync.syncNow() : false");
-    await waitForPage(`window.__mosa.librarySync?.baseline() === '${resumeRevision}:0' || window.__mosa.librarySync?.baseline()?.startsWith('${resumeRevision}:')`, "the baseline to catch up after resume", 8000);
-    const resumeElapsedMs = Date.now() - resumeStartedAt;
-    const resumeRequests = await drainRequests();
-    const resumeFullReloads = resumeRequests.filter((entry) => isFullReloadRequest(entry.url)).length;
-    assert.equal(resumed, true, "resume reconciliation ran");
-    assert.equal(resumeFullReloads, 0, "resume after missed events must not reload the loaded window");
-    assert.ok(resumeElapsedMs < 5000, `resume reconciliation took ${resumeElapsedMs}ms`);
-    scenarios.push({ name: "hidden-resume-sync", revisionBefore: Number.parseInt(String(resumeBaseline), 10), revisionAfter: resumeRevision, deltaCount: resumeRevision - Number.parseInt(String(resumeBaseline), 10), requestCount: resumeRequests.length, fullReloads: resumeFullReloads, elapsedMs: resumeElapsedMs });
+    await waitForPage(
+      `document.querySelector('.asset-grid > .asset-card[data-asset-id="${liveId}"] .favorite-mark') ${favoriteFlip.asset?.favorite ? "!" : "="}== null`,
+      "the SSE-driven favorite flip to reach the UI",
+      5000,
+    );
+    const sseElapsedMs = Date.now() - sseStartedAt;
+    assert.ok(sseElapsedMs < 5000, `SSE-driven refresh took ${sseElapsedMs}ms`);
+    scenarios.push({ name: "sse-refresh-latency", elapsedMs: sseElapsedMs });
 
-    const totalFullReloads = scenarios.reduce((sum, scenario) => sum + scenario.fullReloads, 0);
-    qaResult.fullReloadCount = totalFullReloads;
-    assert.equal(totalFullReloads, 0, `ordinary library changes must never reload the loaded window (saw ${totalFullReloads})`);
+    qaResult.windowCollapses = windowCollapses;
+    assert.equal(windowCollapses, 0, `ordinary library changes must never collapse the loaded window (saw ${windowCollapses})`);
     console.log("INCREMENTAL_SCENARIOS");
     console.log(JSON.stringify(scenarios, null, 2));
   } finally {

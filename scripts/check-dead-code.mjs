@@ -6,8 +6,9 @@
 // but must not raise false positives on dynamic class construction
 // (`version-depth-${depth}`) or prose references.
 //
-// There is a single UI tree (`web/app/`), shared by the browser and the
-// Electron shell. Files outside it consume it normally.
+// There is a single UI source tree (`web/gravityport/src/`), shared by the
+// browser and the Electron shell (which ships its build output). Files
+// outside it consume it normally.
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -18,11 +19,11 @@ const execFileAsync = promisify(execFile);
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
-const SOURCE_DIRS = ["lib", "web/app", "desktop", "mcp", "scripts"];
-const UI_TREE = "web/app";
-const SOURCE_EXTENSIONS = new Set([".mjs", ".ts", ".js", ".cjs"]);
+const SOURCE_DIRS = ["lib", "web/gravityport/src", "desktop", "mcp", "scripts"];
+const UI_TREE = "web/gravityport/src";
+const SOURCE_EXTENSIONS = new Set([".mjs", ".ts", ".tsx", ".js", ".jsx", ".cjs"]);
 const TEXT_EXTENSIONS = new Set([
-  ".mjs", ".ts", ".js", ".cjs", ".json", ".md", ".html", ".css", ".yml", ".yaml", ".svg", ".sh",
+  ".mjs", ".ts", ".tsx", ".js", ".jsx", ".cjs", ".json", ".md", ".html", ".css", ".yml", ".yaml", ".svg", ".sh",
 ]);
 const MIN_SYMBOL_LENGTH = 3;
 
@@ -35,7 +36,10 @@ function consumerPathsFor(path, allPaths) {
 
 // Intentionally retained items the scanners cannot attribute to a consumer.
 // Each entry needs a justification comment next to it.
-const DEAD_FILE_EXCEPTIONS = new Set();
+const DEAD_FILE_EXCEPTIONS = new Set([
+  // Ambient TypeScript declarations: consumed by tsc, never imported.
+  "web/gravityport/src/vite-env.d.ts",
+]);
 // Pluggable e2e flows are entry points: scripts/e2e-critical-flows.mjs loads
 // every scripts/e2e-flows/*.mjs through readdir(), so no file names them.
 // Shared helpers there ("_"-prefixed) are imported by name and stay checked.
@@ -45,9 +49,7 @@ const DEAD_CSS_EXCEPTIONS = new Set();
 // Classes whose numeric suffix is built through an intermediate variable
 // (web/app/inspector-markup.mjs: `const depthClass = `generation-depth-${...}``),
 // which the class-attribute interpolation check cannot see.
-const DEAD_CSS_EXCEPTION_PREFIXES = [
-  "web/app/styles.css::generation-depth-",
-];
+const DEAD_CSS_EXCEPTION_PREFIXES = [];
 
 const DECLARATION_EXPORT_RE = /export\s+(?:async\s+)?(?:function\s*\*?|const|let|var|(?:abstract\s+)?class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
 const LIST_EXPORT_RE = /export\s*\{([^}]*)\}/g;
@@ -99,7 +101,9 @@ function hasDynamicClassSuffix(corpus, name) {
   let hyphen = name.length;
   while ((hyphen = name.lastIndexOf("-", hyphen - 1)) > 0) {
     const escaped = name.slice(0, hyphen + 1).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (new RegExp(`class=["'][^"']*${escaped}\\$\\{`).test(corpus)) return true;
+    // HTML string classes (`class="a ${b}"`) and JSX template classes
+    // (`className={`a ${b}`}`) both count as dynamic construction.
+    if (new RegExp(`(?:class|className)=\\{?["'\`][^"'\`]*${escaped}\\$\\{`).test(corpus)) return true;
   }
   return false;
 }
@@ -151,13 +155,15 @@ export function analyzeDeadCode({ files, sourceDirs = SOURCE_DIRS, cssFiles = nu
 
   // Every tracked stylesheet in the UI tree is scanned — derived from the
   // file list, so adding a stylesheet to the tree cannot slip past the gate.
-  // A UI tree that ships stylesheets but no styles.css is a broken tree.
+  // The React tree keeps its single stylesheet at index.css; a tree that
+  // ships stylesheets but none of them is a broken tree.
+  const UI_STYLESHEETS = [`${UI_TREE}/index.css`];
   const cssPaths = cssFiles
     ? cssFiles.filter((path) => files.has(path))
     : (() => {
         const treeFiles = allPaths.filter((path) => path.startsWith(`${UI_TREE}/`) && path.endsWith(".css"));
-        if (treeFiles.length > 0 && !treeFiles.includes(`${UI_TREE}/styles.css`)) {
-          throw new Error(`${UI_TREE} has stylesheets but is missing ${UI_TREE}/styles.css.`);
+        if (treeFiles.length > 0 && !treeFiles.some((path) => UI_STYLESHEETS.includes(path))) {
+          throw new Error(`${UI_TREE} has stylesheets but is missing ${UI_STYLESHEETS.join(" or ")}.`);
         }
         return treeFiles;
       })();
@@ -189,13 +195,13 @@ export function analyzeDeadCode({ files, sourceDirs = SOURCE_DIRS, cssFiles = nu
 
 async function main() {
   // UI tree files must be tracked or ignored. An untracked stylesheet or
-  // module in web/app is invisible to this gate, the build identity, and a
-  // fresh clone — exactly how a referenced-but-untracked UI file ships
-  // broken. Fail closed on any untracked entry (`??`); staged or modified
-  // files are already visible to the scanners below.
+  // module in web/gravityport/src is invisible to this gate, the build
+  // identity, and a fresh clone — exactly how a referenced-but-untracked UI
+  // file ships broken. Fail closed on any untracked entry (`??`); staged or
+  // modified files are already visible to the scanners below.
   const { stdout: untrackedOutput } = await execFileAsync(
     "git",
-    ["status", "--porcelain", "--untracked-files=all", "--", "web/app"],
+    ["status", "--porcelain", "--untracked-files=all", "--", "web/gravityport/src"],
     { cwd: root },
   );
   const untrackedEntries = untrackedOutput.split("\n").filter((line) => line.startsWith("??"));

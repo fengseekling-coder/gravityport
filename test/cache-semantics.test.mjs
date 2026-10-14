@@ -21,7 +21,7 @@ test("static resource cache semantics: no-cache for UI files and immutable for l
     projectRoot: root,
     managerDir: repositoryRoot,
     cowartProjectDir: join(root, "desktop-data"),
-    appDir: join(repositoryRoot, "web", "app"),
+    appDir: join(repositoryRoot, "web", "gravityport", "dist"),
     assetsRoot: join(isolatedLibraryDir, "assets"),
     generatedImagesDir: join(root, "generated-images"),
     codexImagesDir: join(root, "codex-images"),
@@ -43,29 +43,20 @@ test("static resource cache semantics: no-cache for UI files and immutable for l
     assert.ok(cc?.includes("must-revalidate"), `Cache-Control should include 'must-revalidate', got: ${cc}`);
   });
 
-  await t.test("GET /styles.css returns same no-cache policy", async () => {
-    const res = await fetch(`${runtime.url}/styles.css`);
-    assert.equal(res.status, 200);
-    const cc = res.headers.get("cache-control");
-    assert.ok(cc?.includes("no-cache"), `CSS should have no-cache, got: ${cc}`);
-    assert.ok(cc?.includes("must-revalidate"), `CSS should have must-revalidate, got: ${cc}`);
-  });
-
-  await t.test("GET /app.mjs returns same no-cache policy", async () => {
-    const res = await fetch(`${runtime.url}/app.mjs`);
+  await t.test("GET /assets/* hashed bundles return same no-cache policy", async () => {
+    const shell = await (await fetch(`${runtime.url}/`)).text();
+    const bundlePath = /src="(\/assets\/[^"]+\.js)"/.exec(shell)?.[1];
+    assert.ok(bundlePath, "the built shell must reference a hashed js bundle");
+    const res = await fetch(`${runtime.url}${bundlePath}`);
     assert.equal(res.status, 200);
     const cc = res.headers.get("cache-control");
     assert.ok(cc?.includes("no-cache"), `JS should have no-cache, got: ${cc}`);
     assert.ok(cc?.includes("must-revalidate"), `JS should have must-revalidate, got: ${cc}`);
-  });
-
-  await t.test("GET /i18n.mjs returns same no-cache policy", async () => {
-    const res = await fetch(`${runtime.url}/i18n.mjs`);
-    assert.equal(res.status, 200);
-    const cc = res.headers.get("cache-control");
-    assert.ok(cc?.includes("no-cache"), `MJS should have no-cache, got: ${cc}`);
-    assert.ok(cc?.includes("must-revalidate"), `MJS should have must-revalidate, got: ${cc}`);
-    assert.match(await res.text(), /export default/, "the real i18n module should be served");
+    const cssPath = /href="(\/assets\/[^"]+\.css)"/.exec(shell)?.[1];
+    assert.ok(cssPath, "the built shell must reference a hashed css bundle");
+    const css = await fetch(`${runtime.url}${cssPath}`);
+    assert.equal(css.status, 200);
+    assert.ok(css.headers.get("cache-control")?.includes("no-cache"), "CSS should have no-cache");
   });
 
   await t.test("GET /nonexistent.html falls back to index with same cache policy", async () => {

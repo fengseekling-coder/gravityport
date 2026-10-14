@@ -427,22 +427,22 @@ test("real Electron preload smoke (opt-in)", { skip: process.env.MOSA_ELECTRON_P
     body: JSON.stringify({ projectId: "default", imagePath: fixturePath, prompt: "preload smoke fixture" }),
   });
   assert.equal(createResponse.status, 200, await createResponse.text());
-  const cardReady = await waitForRendererValue(client, `document.querySelectorAll('.asset-card-select').length`, (value) => Number(value) > 0);
+  const cardReady = await waitForRendererValue(client, `document.querySelectorAll('.asset-card').length`, (value) => Number(value) > 0);
   assert.equal(Number(cardReady) > 0, true, "the created asset arrives through the live library refresh path");
-  await evaluate(client, `document.querySelector('.asset-card-select')?.click(); true`);
+  await evaluate(client, `document.querySelector('.asset-card')?.click(); true`);
   const actionState = JSON.parse(await waitForRendererValue(client, `JSON.stringify({
     finderButtons: document.querySelectorAll('[data-action="show-in-finder"]').length,
     webLinks: document.querySelectorAll('a.original-media-link').length,
-    pathBars: document.querySelectorAll('.detail-pathbar').length,
+    pathBars: document.querySelectorAll('.details .library-location').length,
   })`, (value) => {
     try { return JSON.parse(value).pathBars > 0; } catch { return false; }
   }));
-  // 2026-09-04: the original-media entries retired from the inspector; the path
-  // bar rendering proves the inspector mounted (GravityPort A4a moved the path
-  // into the inspector's fixed bottom bar, `.detail-pathbar`). The contract test above
-  // validates every narrow IPC handler and sender/path guard. This real smoke
-  // intentionally stops at preload injection + inspector rendering so CI never
-  // invokes Finder or mutates the host clipboard as a side effect of a test run.
+  // The path bar rendering proves the React inspector mounted (the asset's
+  // real library path lives in the details pane's .library-location bar). The
+  // contract test above validates every narrow IPC handler and sender/path
+  // guard. This real smoke intentionally stops at preload injection +
+  // inspector rendering so CI never invokes Finder or mutates the host
+  // clipboard as a side effect of a test run.
   assert.equal(actionState.finderButtons, 0);
   assert.equal(actionState.webLinks, 0);
   assert.equal(actionState.pathBars > 0, true);

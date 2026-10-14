@@ -33,7 +33,7 @@ function runtimeOptions(root) {
     projectRoot: root,
     managerDir: repositoryRoot,
     cowartProjectDir: join(root, "desktop-data"),
-    appDir: join(repositoryRoot, "web", "app"),
+    appDir: join(repositoryRoot, "web", "gravityport", "dist"),
     assetsRoot: join(libraryDir, "assets"),
     generatedImagesDir: join(root, "generated-images"),
     codexImagesDir: join(root, "codex-images"),

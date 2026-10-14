@@ -7,7 +7,7 @@
  *   - uiFingerprint   (SHA-256 of all browser-delivered app shell files)
  *
  * Run as part of `npm run build` so the web runtime and the packaged desktop
- * app (which serves the same web/app UI) carry an immutable record of what UI
+ * app (which serves the same built web/gravityport/dist UI) carry an immutable record of what UI
  * they were built with.
  */
 
@@ -21,7 +21,7 @@ import { releaseManifestTrustFromEnvironment } from "../lib/release-manifest-sig
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const appDir = join(root, "web", "app");
+const appDir = join(root, "web", "gravityport", "dist");
 
 // --- productVersion --------------------------------------------------
 const productVersion = pkg.version || "0.0.0";

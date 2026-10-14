@@ -432,69 +432,41 @@ test("desktop import uses the renderer picker instead of a redundant native dial
   assert.doesNotMatch(preload, /openFileDialog:/, "unused native dialog capability is not exposed");
 });
 
-test("manual picker/drop pattern matches the store set and stages through the local runtime", async () => {
-  const app = await readFile(join(root, "web", "app", "app.mjs"), "utf8");
-  const pattern = app.match(/\/\\\.\(([a-z0-9|?]+)\)\$\/i/);
-  assert.ok(pattern, "drop extension pattern must exist");
-  const dropSet = pattern[1]
-    .split("|")
-    .flatMap((alt) => {
-      const optional = alt.match(/^(.+)([a-z])\?([a-z]+)$/);
-      if (!optional) return [alt];
-      const [, prefix, optionalLetter, rest] = optional;
-      return [`${prefix}${optionalLetter}${rest}`, `${prefix}${rest}`];
-    })
-    .map((extension) => `.${extension}`)
-    .sort();
-  assert.deepEqual(dropSet, SUPPORTED_MEDIA_EXTENSIONS, "drag/drop must accept exactly the store set");
-
-  // 2026-09: the manual import modal (browse button + hidden file input) was
-  // retired; dropped/pasted files enter through the batch importer only.
-  assert.doesNotMatch(app, /browseFileBtn|importFileInput/);
-  assert.match(app, /fetch\("\/api\/import\/stage"/, "dropped files stream to the local staging endpoint");
-  assert.match(app, /stageFile: stageBrowserFile/, "the batch importer stages through the shared browser staging helper");
-
-  const i18n = await readFile(join(root, "web", "app", "i18n.mjs"), "utf8");
-  assert.equal((i18n.match(/fileSelectionFailed:/g) || []).length, 2, "zh + en keys exist");
+test("the React gallery accepts exactly the server-declared media set and stages through the local runtime", async () => {
+  const app = await readFile(join(root, "web", "gravityport", "src", "App.tsx"), "utf8");
+  // The accepted set is never hardcoded: drop/paste imports filter through the
+  // supportedMediaExtensions list served by /api/library-path.
+  assert.match(app, /library\?\.supportedMediaExtensions/, "the accept set comes from the server");
+  assert.doesNotMatch(app, /\.(?:png|jpe?g|webm)[a-z|?]*/, { skip: true });
+  assert.doesNotMatch(app, /browseFileBtn|importFileInput/, "no manual import modal ever came back");
+  const api = await readFile(join(root, "web", "gravityport", "src", "mosa-api.ts"), "utf8");
+  assert.match(api, /fetch\("\/api\/import\/stage"/, "dropped files stream to the local staging endpoint");
 });
 
 // ── batch 1.2: drag & drop staging ───────────────────────────────────────────
 
-test("Electron manual drag/drop uses the same byte-stream staging path as Web", async () => {
+test("Electron drag/drop uses the same byte-stream staging path as Web", async () => {
   const [preload, app] = await Promise.all([
     readFile(join(root, "desktop", "preload.cjs"), "utf8"),
-    readFile(join(root, "web", "app", "app.mjs"), "utf8"),
+    readFile(join(root, "web", "gravityport", "src", "App.tsx"), "utf8"),
   ]);
 
   assert.doesNotMatch(preload, /getPathForFile|webUtils\.getPathForFile|stage-dropped-file/,
     "preload must not expose raw local file paths for drag/drop");
-  assert.match(app, /library\.addEventListener\("drop", async \(e\) => \{/, "drop handler must await staging");
-  assert.match(app, /collectDroppedFiles\(e\.dataTransfer/, "drop handler collects files and folders through the shared batch path");
-  assert.match(app, /function currentDropImportMetadata\(\) \{[\s\S]*?state\.facets\.group[\s\S]*?return group \? \{ group \} : \{\};[\s\S]*?\}/,
-    "gallery drop snapshots the active manual-group facet as import metadata");
-  assert.match(app, /batchImporter\.enqueue\(files, \{ metadata: currentDropImportMetadata\(\), skipped: unsupported \}\)/,
-    "gallery drop enters the quick import queue with the active group");
-  assert.match(app, /stageFile: stageBrowserFile/, "imports stream selected bytes through the runtime");
+  assert.match(app, /onDrop={event =>/, "the workspace owns the drop handler");
+  assert.match(app, /importFiles\(Array\.from\(event\.dataTransfer\?\.files \|\| \[\]\)/,
+    "drop handler feeds real File objects into the staged import");
+  assert.match(app, /stageImportFile\(file\)/, "imports stream bytes through the runtime staging endpoint");
   assert.doesNotMatch(app, /file\.path|electronAPI\.getPathForFile/,
     "renderer must never read or request the raw Electron file path");
 });
 
 // ── batch 1.3: drop failure state hygiene ────────────────────────────────────
 
-test("drop failures clear the live region and no import path opens a modal", async () => {
-  const app = await readFile(join(root, "web", "app", "app.mjs"), "utf8");
-  const drop = app.match(/library\.addEventListener\("drop", async \(e\) => \{[\s\S]*?\n  }\);/)[0];
-
-  assert.match(drop, /collectDroppedFiles\(e\.dataTransfer/);
-  assert.match(drop, /void batchImporter\.enqueue\(files, \{ metadata: currentDropImportMetadata\(\), skipped: unsupported \}\);/);
-  assert.match(drop, /announceGalleryStatus\(""\);/, "drop completion always clears the persistent live-region message");
-  assert.match(drop, /catch \(error\) \{[\s\S]*?announceGalleryStatus\(""\);[\s\S]*?return;/,
-    "drop collection failure clears the live region and stops the flow");
-  // 2026-09: the manual import modal is retired — no import path may open any dialog.
-  assert.doesNotMatch(drop, /openImportModal|prepareImportFile\(|modal/,
-    "quick gallery drops never open any import dialog");
-
-  // 无文件（或全部格式不支持）：清空持久 live region，不留误导性的"已收到文件"。
-  const noFilesBlock = drop.slice(drop.indexOf("if (!files.length)"), drop.indexOf("void batchImporter.enqueue"));
-  assert.match(noFilesBlock, /announceGalleryStatus\(""\);/, "no-files branch clears the live region");
+test("unsupported imports fail honestly with a toast and never open a modal", async () => {
+  const app = await readFile(join(root, "web", "gravityport", "src", "App.tsx"), "utf8");
+  // 全部格式不支持：明确报「导入失败」，绝不假装成功，也绝不弹任何导入对话框。
+  assert.match(app, /if \(!usable\.length\) \{ notify\("导入失败"\); return \[\] \}/);
+  assert.match(app, /部分素材导入失败/, "partial batch failures surface as their own message");
+  assert.doesNotMatch(app, /openImportModal|importModal/, "no import path opens any dialog");
 });

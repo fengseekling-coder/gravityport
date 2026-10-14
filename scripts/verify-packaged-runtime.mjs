@@ -128,8 +128,8 @@ export async function verifyPackagedRuntime({
   const unpackedOnnx = await stat(unpackedOnnxDir).catch(() => null);
   if (unpackedOnnx) throw new Error(`Optional ONNX Runtime must stay out of ${releaseProductNames(product).macAppBundleName} unpacked resources.`);
 
-  const sourceIdentity = JSON.parse(await readFile(resolve(projectRoot, "web", "app", "build-identity.json"), "utf8"));
-  const packagedIdentity = parseJsonBuffer(extractFile(asarPath, join("web", "app", "build-identity.json")), "packaged build identity");
+  const sourceIdentity = JSON.parse(await readFile(resolve(projectRoot, "web", "gravityport", "dist", "build-identity.json"), "utf8"));
+  const packagedIdentity = parseJsonBuffer(extractFile(asarPath, join("web", "gravityport", "dist", "build-identity.json")), "packaged build identity");
   if (!isDeepStrictEqual(packagedIdentity, sourceIdentity)) {
     throw new Error("Packaged build identity does not match the current source build identity.");
   }

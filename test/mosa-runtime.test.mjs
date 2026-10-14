@@ -24,7 +24,7 @@ function runtimeOptions(root, overrides = {}) {
     projectRoot: root,
     managerDir: repositoryRoot,
     cowartProjectDir: join(root, "desktop-data"),
-    appDir: join(repositoryRoot, "web", "app"),
+    appDir: join(repositoryRoot, "web", "gravityport", "dist"),
     libraryDir,
     assetsRoot: join(libraryDir, "assets"),
     generatedImagesDir: join(root, "generated-images"),
@@ -105,10 +105,17 @@ test("starts, identifies itself, stops idempotently, and restarts", async (t) =>
   assert.equal(typeof health.productVersion, "string");
   assert.equal(typeof health.gitSha, "string");
   assert.equal(typeof health.uiFingerprint, "string");
-  const i18nModule = await fetch(`${first.url}/i18n.mjs`);
-  assert.equal(i18nModule.status, 200);
-  assert.equal(i18nModule.headers.get("content-type"), "text/javascript; charset=utf-8");
-  assert.match(await i18nModule.text(), /export default/);
+  // The served shell is the built React bundle: the hashed module must come
+  // back as JavaScript, and a missing flat asset must stay a 404 instead of
+  // the SPA fallback handing out HTML for a script request.
+  const shell = await (await fetch(`${first.url}/`)).text();
+  const bundlePath = /src="(\/assets\/[^"]+\.js)"/.exec(shell)?.[1];
+  assert.ok(bundlePath, "the built shell must reference a hashed js bundle");
+  const bundle = await fetch(`${first.url}${bundlePath}`);
+  assert.equal(bundle.status, 200);
+  assert.equal(bundle.headers.get("content-type"), "text/javascript; charset=utf-8");
+  const missingScript = await fetch(`${first.url}/app.mjs`);
+  assert.equal(missingScript.status, 404);
   const bridges = await (await fetch(`${first.url}/api/bridges`)).json();
   assert.equal(bridges.cowart.sources[0].projectDir, options.cowartProjectDir);
   assert.equal(typeof bridges.codex.watchingImages, "boolean");

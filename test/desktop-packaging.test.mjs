@@ -298,11 +298,8 @@ test("desktop package keeps every required runtime surface", () => {
   for (const path of [
     "/LICENSE",
     "/package.json",
-    "/web/app/app.mjs",
-    "/web/app/build-identity.json",
-    "/web/app/index.html",
-    "/web/app/styles.css",
-    "/web/app/i18n.mjs",
+    "/web/gravityport/dist/index.html",
+    "/web/gravityport/dist/build-identity.json",
     "/desktop/main.mjs",
     "/desktop/notification-i18n.mjs",
     "/desktop/platform/index.mjs",
@@ -511,42 +508,46 @@ test("keeps the desktop window single-instance and sandboxed", async () => {
     "shutdown must not surface a false startup error dialog",
   );
 
-  const appSource = await readFile(resolve(import.meta.dirname, "..", "web", "app", "app.mjs"), "utf8");
-  const index = await readFile(resolve(import.meta.dirname, "..", "web", "app", "index.html"), "utf8");
-  assert.doesNotMatch(appSource, /window\.open\(/);
-  assert.match(appSource, /openImagePreview\(asset\.id, event\.currentTarget\)/);
-  assert.match(index, /<video id="imagePreviewVideo" controls playsinline hidden>/);
+  // The React viewer renders media internally: images and videos both mount
+  // inside .viewer-stage as .viewer-image elements instead of external windows.
+  const viewerSource = await readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "ImageViewer.tsx"), "utf8");
+  assert.match(viewerSource, /img className="viewer-image"/);
+  assert.match(viewerSource, /video className="viewer-image"/);
+  const appSource = await readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "App.tsx"), "utf8");
+  assert.match(appSource, /setPreview\(true\)/);
 });
 
 test("packaged smoke waits for the real renderer and tears Electron down before cleanup", async () => {
   const source = await readFile(resolve(import.meta.dirname, "..", "scripts", "packaged-smoke.mjs"), "utf8");
-  const apiClientSource = await readFile(resolve(import.meta.dirname, "..", "web", "app", "api-client.mjs"), "utf8");
+  const apiClientSource = await readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "mosa-api.ts"), "utf8");
   assert.match(source, /--remote-debugging-port=/, "packaged smoke must inspect the packaged renderer");
   assert.match(source, /waitForRenderer\(/, "packaged smoke must wait for renderer readiness");
-  assert.match(source, /document\.querySelector\('#appShell'\)/, "renderer readiness must require the real MOSA app shell");
+  assert.match(source, /document\.querySelector\('\.app'\)/, "renderer readiness must require the real MOSA app shell");
   assert.match(source, /window\.electronAPI/, "renderer readiness must verify preload exposure");
   assert.match(source, /sessionStorage.*mosa\.client-token/, "packaged smoke must reuse the real renderer client capability");
   assert.match(source, /"x-mosa-client-token": clientToken/, "packaged smoke mutations must authenticate with that capability");
-  const clientFactoryStart = apiClientSource.indexOf("export function createApiClient(deps)");
-  const bootstrapConsume = apiClientSource.indexOf("mosaClientToken();", clientFactoryStart);
-  const apiFetchStart = apiClientSource.indexOf("async function apiFetch", clientFactoryStart);
-  assert.ok(clientFactoryStart >= 0 && bootstrapConsume > clientFactoryStart && bootstrapConsume < apiFetchStart,
-    "API client construction must consume the bootstrap capability before request handling begins");
+  // The React adapter memoizes the bootstrap capability and consumes it at
+  // module load; every request helper reads the same memoized token.
+  const tokenFactory = apiClientSource.indexOf("function takeBootstrapToken()");
+  const moduleConsume = apiClientSource.indexOf("if (typeof window !== \"undefined\") takeBootstrapToken()");
+  assert.ok(tokenFactory >= 0 && moduleConsume > tokenFactory,
+    "the API adapter must consume the bootstrap capability at module load");
+  assert.match(apiClientSource, /takeBootstrapToken\(\)/, "request helpers must read the memoized capability");
   assert.match(source, /await stopChild\(.*\.child\)/, "cleanup must wait for Electron teardown");
   assert.match(source, /signalProcessTree\(childProcess\.pid, \{ force: true \}\)/, "teardown must have a bounded process-tree hard-stop fallback");
 });
 
 test("the packaged app keeps the shared web UI tree and its build identity", () => {
-  // web/app is the single packaged UI surface, shared with the browser; its
-  // generated build-identity.json must not be filtered out by the forge
-  // ignore rules. /web itself must stay allowed too: the packager matches
-  // directory entries against the ignore rules.
+  // The built GravityPort bundle is the single packaged UI surface, shared
+  // with the browser; its generated build-identity.json must not be filtered
+  // out by the forge ignore rules. /web itself must stay allowed too: the
+  // packager matches directory entries against the ignore rules.
   assert.equal(isIgnored("/web"), false);
-  assert.equal(isIgnored("/web/app"), false);
-  assert.equal(isIgnored("/web/app/build-identity.json"), false);
-  assert.equal(isIgnored("/web/app/index.html"), false);
-  assert.equal(isIgnored("/web/app/app.mjs"), false);
-  assert.equal(isIgnored("/web/app/styles.css"), false);
+  assert.equal(isIgnored("/web/gravityport"), false);
+  assert.equal(isIgnored("/web/gravityport/dist"), false);
+  assert.equal(isIgnored("/web/gravityport/dist/build-identity.json"), false);
+  assert.equal(isIgnored("/web/gravityport/dist/index.html"), false);
+  assert.equal(isIgnored("/web/gravityport/dist/assets/index.js"), false);
   assert.equal(isIgnored("/desktop/startup.html"), false);
   assert.equal(isIgnored("/lib/build-identity.mjs"), false);
   assert.equal(isIgnored("/desktop/preload.cjs"), false);
@@ -555,6 +556,9 @@ test("the packaged app keeps the shared web UI tree and its build identity", () 
   assert.equal(isIgnored("/web/legacy-ui/index.html"), true);
   assert.equal(isIgnored("/web/notes.md"), true);
   assert.equal(isIgnored("/app/app.mjs"), true);
+  // The UI sources and dependencies live outside the shipped build output.
+  assert.equal(isIgnored("/web/gravityport/src/App.tsx"), true);
+  assert.equal(isIgnored("/web/gravityport/node_modules/react/index.js"), true);
 });
 
 // The dedicated Finder IPC was retired after renderer actions converged on the

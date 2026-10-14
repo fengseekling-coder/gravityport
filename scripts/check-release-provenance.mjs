@@ -68,8 +68,8 @@ function gitLines(args, cwd = rootDir) {
 export function readReleaseProvenance(projectRoot = rootDir) {
   const root = resolve(projectRoot);
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  // Desktop and web releases share web/app/build-identity.json
-  const buildIdentity = JSON.parse(readFileSync(join(root, "web", "app", "build-identity.json"), "utf8"));
+  // Desktop and web releases share the built UI's build-identity.json
+  const buildIdentity = JSON.parse(readFileSync(join(root, "web", "gravityport", "dist", "build-identity.json"), "utf8"));
   const head = gitLines(["rev-parse", "HEAD"], root)[0] || "";
   const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root, encoding: "utf8" });
   const tags = gitLines(["tag", "--points-at", "HEAD"], root);

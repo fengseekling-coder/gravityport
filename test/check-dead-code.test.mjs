@@ -76,34 +76,34 @@ test("ignores files outside the source directories", () => {
 
 test("flags a CSS class no tracked markup or script emits", () => {
   const result = analyze({
-    "web/app/styles.css": ".dead-thing { color: red; }\n.live-thing { color: blue; }\n",
-    "web/app/app.mjs": "el.classList.add('live-thing');\n",
+    "web/gravityport/src/index.css": ".dead-thing { color: red; }\n.live-thing { color: blue; }\n",
+    "web/gravityport/src/main.tsx": "el.classList.add('live-thing');\n",
   });
-  assert.deepEqual(result.deadCssClasses, [{ file: "web/app/styles.css", name: "dead-thing" }]);
+  assert.deepEqual(result.deadCssClasses, [{ file: "web/gravityport/src/index.css", name: "dead-thing" }]);
 });
 
 test("keeps classes built by dynamic suffix interpolation", () => {
   const result = analyze({
-    "web/app/styles.css": ".depth-0 { color: red; }\n.depth-1 { color: blue; }\n",
-    "web/app/app.mjs": "return `<span class=\"depth-${index}\"></span>`;\n",
+    "web/gravityport/src/index.css": ".depth-0 { color: red; }\n.depth-1 { color: blue; }\n",
+    "web/gravityport/src/main.tsx": "return `<span class=\"depth-${index}\"></span>`;\n",
   });
   assert.equal(result.deadCssClasses.length, 0);
 });
 
 test("does not let unrelated template interpolation rescue a class prefix", () => {
   const result = analyze({
-    "web/app/styles.css": ".mosa-thing { color: red; }\n",
+    "web/gravityport/src/index.css": ".mosa-thing { color: red; }\n",
     "lib/worker.mjs": "const channel = `mosa-${Date.now().toString(36)}`;\n",
   });
-  assert.deepEqual(result.deadCssClasses, [{ file: "web/app/styles.css", name: "mosa-thing" }]);
+  assert.deepEqual(result.deadCssClasses, [{ file: "web/gravityport/src/index.css", name: "mosa-thing" }]);
 });
 
 test("flags classes built through an intermediate variable for exception listing", () => {
   const result = analyze({
-    "web/app/styles.css": ".lineage-depth-0 { color: red; }\n",
-    "web/app/app.mjs": "const depthClass = `lineage-depth-${Math.min(depth, 6)}`;\nreturn `<li class=\"node ${depthClass}\"></li>`;\n",
+    "web/gravityport/src/index.css": ".lineage-depth-0 { color: red; }\n",
+    "web/gravityport/src/main.tsx": "const depthClass = `lineage-depth-${Math.min(depth, 6)}`;\nreturn `<li class=\"node ${depthClass}\"></li>`;\n",
   });
-  assert.deepEqual(result.deadCssClasses, [{ file: "web/app/styles.css", name: "lineage-depth-0" }]);
+  assert.deepEqual(result.deadCssClasses, [{ file: "web/gravityport/src/index.css", name: "lineage-depth-0" }]);
 });
 
 test("does not extract class names from CSS comments", () => {
@@ -118,48 +118,48 @@ test("extractExports strips export statements from own-file usage detection", ()
   assert.doesNotMatch(strippedSource, /export/);
 });
 
-test("a web/app export with no consumer anywhere is dead", () => {
+test("a UI-tree export with no consumer anywhere is dead", () => {
   const result = analyze({
-    "web/app/pair.mjs": "export function pairOnly() { return 1; }\n",
-    "web/app/other.mjs": "const other = 1;\n",
+    "web/gravityport/src/pair.ts": "export function pairOnly() { return 1; }\n",
+    "web/gravityport/src/other.ts": "const other = 1;\n",
   });
-  assert.deepEqual(result.deadExports, [{ file: "web/app/pair.mjs", name: "pairOnly" }]);
+  assert.deepEqual(result.deadExports, [{ file: "web/gravityport/src/pair.ts", name: "pairOnly" }]);
 });
 
-test("a web/app export consumed outside the UI tree stays alive", () => {
+test("a UI-tree export consumed outside the UI tree stays alive", () => {
   const result = analyze({
-    "web/app/shared.mjs": "export function sharedThing() { return 1; }\n",
-    "test/shared.test.mjs": "import { sharedThing } from '../web/app/shared.mjs';\nsharedThing();\n",
+    "web/gravityport/src/shared.ts": "export function sharedThing() { return 1; }\n",
+    "test/shared.test.mjs": "import { sharedThing } from '../web/gravityport/src/shared.ts';\nsharedThing();\n",
   });
   assert.equal(result.deadExports.length, 0);
 });
 
-test("a web/app module consumed within its own tree stays alive", () => {
+test("a UI-tree module consumed within its own tree stays alive", () => {
   const result = analyze({
-    "web/app/index.html": '<script type="module" src="/app.mjs"></script>\n',
-    "web/app/app.mjs": "import { lonelyValue } from './lonely.mjs';\nconsole.log(lonelyValue);\n",
-    "web/app/lonely.mjs": "export const lonelyValue = 1;\n",
+    "web/gravityport/index.html": '<script type="module" src="/src/main.tsx"></script>\n',
+    "web/gravityport/src/main.tsx": "import { lonelyValue } from './lonely.ts';\nconsole.log(lonelyValue);\n",
+    "web/gravityport/src/lonely.ts": "export const lonelyValue = 1;\n",
   });
   assert.equal(result.deadFiles.length, 0);
 });
 
-test("the styles.css presence gate applies to the single UI tree", () => {
+test("the index.css presence gate applies to the single UI tree", () => {
   assert.throws(
     () => analyze({
-      "web/app/extra.css": ".extra { color: red; }\n",
-      "web/app/app.mjs": "el.classList.add('extra');\n",
+      "web/gravityport/src/extra.css": ".extra { color: red; }\n",
+      "web/gravityport/src/main.tsx": "el.classList.add('extra');\n",
     }),
-    /missing web\/app\/styles\.css/,
+    /missing web\/gravityport\/src\/index\.css/,
   );
 });
 
 test("scans every stylesheet in the UI tree, not just styles.css", () => {
   const result = analyze({
-    "web/app/styles.css": ".alive { color: red; }\n",
-    "web/app/extra.css": ".extra-dead { color: blue; }\n",
-    "web/app/app.mjs": "el.classList.add('alive');\n",
+    "web/gravityport/src/index.css": ".alive { color: red; }\n",
+    "web/gravityport/src/extra.css": ".extra-dead { color: blue; }\n",
+    "web/gravityport/src/main.tsx": "el.classList.add('alive');\n",
   });
-  assert.deepEqual(result.deadCssClasses, [{ file: "web/app/extra.css", name: "extra-dead" }]);
+  assert.deepEqual(result.deadCssClasses, [{ file: "web/gravityport/src/extra.css", name: "extra-dead" }]);
 });
 
 test("treats pluggable e2e flows as entry points but still checks their helpers", () => {

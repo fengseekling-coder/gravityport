@@ -192,7 +192,7 @@ async function main() {
   }
   const previousManifest = args.previous ? JSON.parse(await readFile(resolve(args.previous), "utf8")) : null;
   const projectRoot = new URL("..", import.meta.url);
-  const buildIdentity = JSON.parse(await readFile(resolve(fileURLToPath(projectRoot), "web", "app", "build-identity.json"), "utf8"));
+  const buildIdentity = JSON.parse(await readFile(resolve(fileURLToPath(projectRoot), "web", "gravityport", "dist", "build-identity.json"), "utf8"));
   const signingPrivateKey = releaseManifestPrivateKeyFromEnvironment(process.env);
   const manifest = await prepareDesktopReleaseManifest({
     version: args.version,
