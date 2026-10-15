@@ -107,13 +107,16 @@ const PAGE_HELPERS = `
     };
     // Switching assets renders the new row with the previous fit for one
     // frame; the folded count settles once the re-measure effect has run.
-    const settledToggle = async () => {
+    // After a resize, pass the old count as staleCount: a slow runner can read
+    // the pre-resize value twice before the ResizeObserver re-fit lands, so
+    // that value never counts as settled.
+    const settledToggle = async (staleCount = -1) => {
       let previous = -1;
       const deadline = Date.now() + 8000;
       for (;;) {
         const toggle = row().querySelector(':scope > .tags-toggle');
         const current = toggle && toggle.textContent.startsWith('+') ? Number.parseInt(toggle.textContent.slice(1), 10) : -1;
-        if (current >= 0 && current === previous) return { toggle, foldedCount: current };
+        if (current >= 0 && current !== staleCount && current === previous) return { toggle, foldedCount: current };
         previous = current;
         if (Date.now() > deadline) throw new Error('folded count never settled, last=+' + previous);
         await sleep(120);
@@ -176,7 +179,7 @@ ${PAGE_HELPERS}
     const details = document.querySelector('.details');
     const wideWidth = details.style.width;
     details.style.width = '150px';
-    const shrunk = await settledToggle();
+    const shrunk = await settledToggle(foldedCount);
     if (shrunk.foldedCount <= foldedCount) {
       throw new Error('shrunk container folded count +' + shrunk.foldedCount + ' must exceed +' + foldedCount);
     }
