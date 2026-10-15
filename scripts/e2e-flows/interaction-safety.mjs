@@ -189,7 +189,7 @@ function interactionSafetySource(config) {
     const keptA = Boolean(cardFor(config.alphaId));
     navButton('回收站').click();
     await waitFor(() => document.querySelectorAll('.asset-card').length === 1, 'trash lists the card');
-    (await menuOn(document.querySelector('.asset-card'), '恢复素材')).click();
+    (await menuOn(document.querySelector('.asset-card'), '恢复')).click();
     await waitFor(() => Number(navSmall('回收站')) === 0, 'restore from trash');
     navButton('所有素材').click();
     await waitFor(() => Boolean(cardFor(config.betaId)), 'beta back in the all view');

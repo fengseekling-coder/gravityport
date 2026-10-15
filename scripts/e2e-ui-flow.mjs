@@ -475,7 +475,7 @@ export function createTrashUiFlowSource(config) {
   clickLabel('回收站', '.main-nav');
   await waitFor(() => settled() && cardCount() === 1, 'trashed asset survived the restart');
   const trashedCard = document.querySelector('.asset-card');
-  await contextMenuOn(trashedCard, '恢复素材').then((item) => item.click());
+  await contextMenuOn(trashedCard, '恢复').then((item) => item.click());
   await waitFor(() => Number(navSmallText('回收站')) === 0, 'restore after restart');
   clickLabel('所有素材', '.main-nav');
   await waitFor(() => settled() && cardCount() >= 5, 'restored asset back in the root view');

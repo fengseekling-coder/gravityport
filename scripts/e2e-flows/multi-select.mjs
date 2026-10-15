@@ -84,7 +84,7 @@ function multiSelectSource() {
       const card = document.querySelector('.asset-card');
       card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 600, clientY: 400 }));
       const item = await waitFor(() => Array.from(document.querySelectorAll('.context-menu button'))
-        .find((entry) => entry.textContent.trim() === '恢复素材') || null, 'restore item');
+        .find((entry) => entry.textContent.trim() === '恢复') || null, 'restore item');
       item.click();
       await sleep(700);
     }

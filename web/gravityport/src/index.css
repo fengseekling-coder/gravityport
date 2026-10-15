@@ -3318,3 +3318,28 @@ video.viewer-image {
 .group-stats-data p { margin: 0; }
 .app .empty-state small { margin-top: 6px; max-width: 360px; text-align: center; color: var(--ui-muted); }
 .app .empty-state button { margin-top: 12px; }
+
+/* Task 142: the trash countdown badge mirrors the stack mark's geometry; the
+   undo toast action is a bare text button in the toast's theme color. */
+.trash-countdown {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(22, 22, 22, 0.72);
+  color: #f5f5f7;
+  font-size: 12px;
+  line-height: 16px;
+  z-index: 1;
+}.stack-mark ~ .trash-countdown {
+  top: 36px;
+}.toast-action {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: #659076;
+  font-size: 12px;
+  line-height: var(--space-4);
+  cursor: pointer;
+}

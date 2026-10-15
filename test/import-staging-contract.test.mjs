@@ -446,17 +446,23 @@ test("the React gallery accepts exactly the server-declared media set and stages
 // ── batch 1.2: drag & drop staging ───────────────────────────────────────────
 
 test("Electron drag/drop uses the same byte-stream staging path as Web", async () => {
-  const [preload, app] = await Promise.all([
+  const [preload, app, pipeline] = await Promise.all([
     readFile(join(root, "desktop", "preload.cjs"), "utf8"),
     readFile(join(root, "web", "gravityport", "src", "App.tsx"), "utf8"),
+    readFile(join(root, "web", "gravityport", "src", "import-pipeline.ts"), "utf8"),
   ]);
 
   assert.doesNotMatch(preload, /getPathForFile|webUtils\.getPathForFile|stage-dropped-file/,
     "preload must not expose raw local file paths for drag/drop");
   assert.match(app, /onDrop={event =>/, "the workspace owns the drop handler");
-  assert.match(app, /importFiles\(Array\.from\(event\.dataTransfer\?\.files \|\| \[\]\)/,
-    "drop handler feeds real File objects into the staged import");
-  assert.match(app, /stageImportFile\(file\)/, "imports stream bytes through the runtime staging endpoint");
+  // Task 142: the drop handler hands the DataTransfer to collectDroppedFiles
+  // (folder expansion, still real File objects) and importFiles runs the
+  // staged pipeline from import-pipeline.ts.
+  assert.match(app, /importDroppedFiles\(event\.dataTransfer\)/,
+    "drop handler feeds the DataTransfer into the staged import pipeline");
+  assert.match(app, /collectDroppedFiles\(dataTransfer/,
+    "dropped folders expand into real File objects before staging");
+  assert.match(pipeline, /stageImportFile\(file\)/, "imports stream bytes through the runtime staging endpoint");
   assert.doesNotMatch(app, /file\.path|electronAPI\.getPathForFile/,
     "renderer must never read or request the raw Electron file path");
 });
@@ -466,7 +472,7 @@ test("Electron drag/drop uses the same byte-stream staging path as Web", async (
 test("unsupported imports fail honestly with a toast and never open a modal", async () => {
   const app = await readFile(join(root, "web", "gravityport", "src", "App.tsx"), "utf8");
   // 全部格式不支持：明确报「导入失败」，绝不假装成功，也绝不弹任何导入对话框。
-  assert.match(app, /if \(!usable\.length\) \{ notify\("导入失败"\); return \[\] \}/);
+  assert.match(app, /if \(!result\.imported && !result\.failed\) notify\("导入失败"\)/);
   assert.match(app, /部分素材导入失败/, "partial batch failures surface as their own message");
   assert.doesNotMatch(app, /openImportModal|importModal/, "no import path opens any dialog");
 });

@@ -160,7 +160,10 @@ export function mapUpdateResult(result: UpdateCheckResult): UpdateUiState {
 type TranslateFn = (text: string) => string
 
 export function fill(text: string, values: Record<string, string | number>): string {
-  return text.replace(/\{(version|percent|date)\}/g, (_, key: string) => String(values[key] ?? ""))
+  // Only names present in `values` are replaced; any other {placeholder}
+  // stays visible instead of silently turning into an empty string.
+  return text.replace(/\{(\w+)\}/g, (match, key: string) =>
+    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match)
 }
 
 // Same shape as the old about panel's formatDate: "2026年10月14日" / "Oct 14, 2026".
