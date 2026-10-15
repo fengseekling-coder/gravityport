@@ -118,7 +118,7 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
   ]
 
   const copySection = isMultiple
-    ? [{ kind: "item" as const, id: "cut", label: "剪切", icon: "scissors" }]
+    ? [{ kind: "item" as const, id: "cut", label: "剪切", icon: "scissors", disabled: hasStacks }]
     : [
         { kind: "item" as const, id: "copy-image", label: "复制图片", icon: "image" },
         { kind: "item" as const, id: "cut", label: "剪切", icon: "scissors" },

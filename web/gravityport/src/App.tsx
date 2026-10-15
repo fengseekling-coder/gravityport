@@ -2281,32 +2281,37 @@ export default function App() {
                     className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""}`}
                     style={{ aspectRatio: `${a.width} / ${a.height}` }}
                     onClick={(event) => {
+                      // Stacks behave like plain cards here: one click
+                      // selects (the inspector shows the cover). The second
+                      // press of a double-click must not re-run selection —
+                      // the dblclick handler owns entering the stack.
+                      if (event.detail > 1) return
+                      selectCard(a.id, event)
+                    }}
+                    onDoubleClick={() => {
                       if (a.stack) {
                         goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
                         applySelection([], "")
                         return
                       }
-                      selectCard(a.id, event)
-                    }}
-                    onDoubleClick={() => {
-                      if (a.stack) return
                       focusAsset(a.id)
                       setPreview(true)
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      if (active === "回收站") return
+                      // Right-clicking outside the multi-selection re-targets the
+                      // context menu to the clicked card; inside it, the whole
+                      // selection stays the action target. Stack cards follow the
+                      // same grammar — the stack menu still acts on that stack
+                      // alone through its own target. Trash keeps its restore
+                      // menu, but stack cards stay inert there.
+                      if (a.stack && active === "回收站") return
+                      if (!selectedIds.includes(a.id)) applySelection([], a.id)
+                      else focusAsset(a.id)
                       if (a.stack) {
-                        // Stack card: the menu acts on this stack and the
-                        // selection stays untouched.
                         openStackMenu(a.stack, a.name, e.clientX, e.clientY)
                         return
                       }
-                      // Right-clicking outside the multi-selection re-targets the
-                      // context menu to the clicked card; inside it, the whole
-                      // selection stays the action target.
-                      if (!selectedIds.includes(a.id)) applySelection([], a.id)
-                      else focusAsset(a.id)
                       openAssetMenu(a, e.clientX, e.clientY)
                     }}
                   >
@@ -2339,32 +2344,37 @@ export default function App() {
                   className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""}`}
                   style={placementStyle(globalIndex)}
                   onClick={(event) => {
+                    // Stacks behave like plain cards here: one click
+                    // selects (the inspector shows the cover). The second
+                    // press of a double-click must not re-run selection —
+                    // the dblclick handler owns entering the stack.
+                    if (event.detail > 1) return
+                    selectCard(a.id, event)
+                  }}
+                  onDoubleClick={() => {
                     if (a.stack) {
                       goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
                       applySelection([], "")
                       return
                     }
-                    selectCard(a.id, event)
-                  }}
-                  onDoubleClick={() => {
-                    if (a.stack) return
                     focusAsset(a.id)
                     setPreview(true)
                   }}
                   onContextMenu={(e) => {
                     e.preventDefault()
-                    if (active === "回收站") return
+                    // Right-clicking outside the multi-selection re-targets the
+                    // context menu to the clicked card; inside it, the whole
+                    // selection stays the action target. Stack cards follow the
+                    // same grammar — the stack menu still acts on that stack
+                    // alone through its own target. Trash keeps its restore
+                    // menu, but stack cards stay inert there.
+                    if (a.stack && active === "回收站") return
+                    if (!selectedIds.includes(a.id)) applySelection([], a.id)
+                    else focusAsset(a.id)
                     if (a.stack) {
-                      // Stack card: the menu acts on this stack and the
-                      // selection stays untouched.
                       openStackMenu(a.stack, a.name, e.clientX, e.clientY)
                       return
                     }
-                    // Right-clicking outside the multi-selection re-targets the
-                    // context menu to the clicked card; inside it, the whole
-                    // selection stays the action target.
-                    if (!selectedIds.includes(a.id)) applySelection([], a.id)
-                    else focusAsset(a.id)
                     openAssetMenu(a, e.clientX, e.clientY)
                     }}
                 >

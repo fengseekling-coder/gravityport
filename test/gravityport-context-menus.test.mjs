@@ -135,6 +135,10 @@ describe("context-menus / asset menu", () => {
     assert.ok(!itemIds(entries).includes("stack-selected"));
     assert.ok(!itemIds(entries).includes("remove-from-stack"));
     assert.ok(!itemIds(entries).includes("export"));
+    // Stack cards cannot be cut (old grammar): the multi-select cut greys out.
+    assert.equal(findItem(entries, "cut").disabled, true);
+    const plain = buildContextMenu(baseCtx({ selectionCount: 2 }));
+    assert.notEqual(findItem(plain, "cut").disabled, true);
   });
 
   it("移除分组 greys out without grouped assets and enables with one", () => {

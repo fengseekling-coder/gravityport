@@ -221,7 +221,7 @@ function interactionSafetySource(config) {
     const stackNode = Array.from(document.querySelectorAll('.asset-card'))
       .find((card) => card.querySelector('.stack-mark') && card.getAttribute('data-asset-id') === config.stackCoverId);
     if (!stackNode) throw new Error('stack node missing');
-    stackNode.click();
+    stackNode.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
     await waitFor(() => document.querySelectorAll('.asset-card').length === 2
       && !document.querySelector('.asset-card .stack-mark'), 'stack interior shows its two members');
     const pasteDeadline = Date.now() + 20000;

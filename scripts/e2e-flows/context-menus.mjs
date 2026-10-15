@@ -188,18 +188,17 @@ function contextMenusSource(config) {
       return labels;
     });
 
-    // ── 2) Stack card menu without changing the selection ──
+    // ── 2) Stack card menu: right-clicking re-targets the selection to it ──
     await step('stack card menu appears', async () => {
-      const ringedBefore = Array.from(document.querySelectorAll('.asset-card.asset-selected')).map((card) => card.getAttribute('data-asset-id')).sort();
       const menu = await openMenu(cardFor(config.coverId));
       const labels = menuLabels();
       for (const expected of ['打开堆叠', '添加分组', '移除分组', '重命名堆叠', '解散堆叠', '移至回收站']) {
         if (!labels.includes(expected)) throw new Error('missing ' + expected + ' in ' + JSON.stringify(labels));
       }
       if (labels.includes('粘贴到此堆叠')) throw new Error('paste-into-stack shown without cut content');
-      const ringedAfter = Array.from(document.querySelectorAll('.asset-card.asset-selected')).map((card) => card.getAttribute('data-asset-id')).sort();
-      if (JSON.stringify(ringedBefore) !== JSON.stringify(ringedAfter)) {
-        throw new Error('stack right-click changed the selection: ' + JSON.stringify(ringedBefore) + ' -> ' + JSON.stringify(ringedAfter));
+      const ringed = Array.from(document.querySelectorAll('.asset-card.asset-selected')).map((card) => card.getAttribute('data-asset-id')).sort();
+      if (JSON.stringify(ringed) !== JSON.stringify([config.coverId])) {
+        throw new Error('stack right-click did not select the stack card: ' + JSON.stringify(ringed));
       }
       await closeMenu();
       return labels;
@@ -246,9 +245,13 @@ function contextMenusSource(config) {
       return annotated?.stack?.count;
     });
 
-    // ── 6) Inside the stack: 移出堆叠 then blank -> 返回素材库 ──
-    await step('remove from stack inside stack view', async () => {
+    // ── 6) Single click only selects the stack card; double-click enters ──
+    await step('stack single click selects, double click enters', async () => {
       cardFor(config.coverId).click();
+      await waitFor(() => cardFor(config.coverId)?.classList.contains('asset-selected'), 'single click rings the stack card');
+      if (document.querySelector('.viewer-title')) throw new Error('single click entered the stack: the topbar shows the stack title');
+      if (!cardFor(config.looseIds[1])) throw new Error('single click left the root gallery');
+      cardFor(config.coverId).dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
       await waitFor(() => cardFor(config.memberIds[1]) && !cardFor(config.memberIds[1]).querySelector('.stack-mark'), 'stack view opens with plain member cards');
       cardFor(config.memberIds[1]).click();
       await openMenu(cardFor(config.memberIds[1]));
