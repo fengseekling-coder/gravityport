@@ -1023,8 +1023,14 @@ img.black-image {
 .prompt-tabs > button { border: 0; background: transparent; color: var(--ink-secondary); padding: 4px 6px; cursor: pointer; border-radius: 5px; }
 .prompt-tabs > button.active { color: var(--ui-text); background: var(--ui-hover); font-weight: 600; }
 .user-instruction-section .detail-reading p { white-space: pre-wrap; }
-.tag-chip { display: inline-flex; align-items: center; gap: 3px; padding-left: 7px; border-radius: 6px; background: var(--ui-hover); }
-.tag-chip button { font-size: 14px; line-height: 1; padding: 3px 6px; }
+/* Tags render as bare text (no chip frame): the hover background below is the
+ * only surface, and the remove × only appears on hover/keyboard focus. */
+.tag-chip { display: inline-flex; align-items: center; gap: 3px; padding: var(--space-1) 0; }
+.tag-chip button { font-size: 12px; line-height: 1; padding: 0; }
+/* Hidden measuring twin of the tag row: max-content keeps the copies at their
+ * natural widths (a zero-width container would shrink-to-fit CJK labels down
+ * to one character), the zero height clips it out of view and scroll area. */
+.tags-measure { position: absolute; width: max-content; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
 .group-menu-dismiss { position: fixed; inset: 0; z-index: 101; }
 .group-manage-menu { position: fixed; z-index: 102; display: flex; flex-direction: column; gap: 2px; width: 214px; padding: 8px; border-radius: 10px; background: var(--ui-panel); color: var(--ui-text); border: 1px solid var(--ui-line); box-shadow: 0 12px 40px #0004; }
 .group-manage-menu > strong { padding: 5px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2171,6 +2177,23 @@ img.black-image {
 }.app .details .tags button:hover {
   background: var(--ui-hover);
   color: var(--ui-text);
+}.app .details .tag-chip {
+  /* Bare-text tags: no frame, no horizontal padding, so the first label's
+   * text edge lines up with the inspector's other text. The small vertical
+   * padding only carries the hover background. */
+  padding: var(--space-1) 0;
+  font-size: 12px;
+  line-height: var(--space-4);
+  color: var(--ui-muted);
+}.app .details .tag-chip:hover {
+  background: var(--ui-hover);
+  color: var(--ui-text);
+}.app .details .tag-chip button {
+  padding: 0;
+  opacity: 0;
+}.app .details .tag-chip:hover button,
+.app .details .tag-chip:focus-within button {
+  opacity: 1;
 }.app .details .tags .tags-toggle {
   color: var(--ui-secondary);
 }.app .details .tags .add-tag {
