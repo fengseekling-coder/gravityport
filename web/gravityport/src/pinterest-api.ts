@@ -171,11 +171,17 @@ export async function waitForPinterestConnection({
   const startTime = Date.now();
   const defaultSleep = async (ms: number, sig?: AbortSignal) => {
     return new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(resolve, ms);
-      sig?.addEventListener("abort", () => {
+      const onAbort = () => {
         clearTimeout(timeout);
         reject(new DOMException("Aborted", "AbortError"));
-      });
+      };
+      // Drop the listener once the wait ends so a long poll does not pile up
+      // one abort listener per round on the caller's signal.
+      const timeout = setTimeout(() => {
+        sig?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      sig?.addEventListener("abort", onAbort, { once: true });
     });
   };
   const sleepFn = sleep || defaultSleep;
@@ -248,9 +254,9 @@ export function createPinterestPager<T extends { id: string }>(
     return { items, loading, done, error };
   }
 
-  function loadFirst(): void {
+  /** Abort whatever is in flight, clear the list and fetch page one. */
+  function loadFirst(): Promise<void> {
     generation++;
-    const currentGen = generation;
     if (currentController) {
       currentController.abort();
     }
@@ -261,7 +267,7 @@ export function createPinterestPager<T extends { id: string }>(
     loading = false;
     currentRequest = null;
     currentController = null;
-    notifyListeners();
+    return loadMore();
   }
 
   function loadMore(): Promise<void> {
@@ -295,13 +301,9 @@ export function createPinterestPager<T extends { id: string }>(
         done = !lastBookmark;
         error = null;
       } catch (err) {
-        if (
-          err instanceof DOMException &&
-          err.name === "AbortError" &&
-          gen !== generation
-        ) {
-          return; // Aborted by newer generation
-        }
+        // A failure from a superseded generation (aborted or not) must not
+        // surface as an error on the list that replaced it.
+        if (gen !== generation) return;
         error = err instanceof Error ? err : new Error(String(err));
       } finally {
         if (gen === generation) {
@@ -335,7 +337,7 @@ export function pinterestErrorMessage(error: unknown): string {
     return "";
   }
 
-  const code = (error as Error & { code?: string }).code;
+  const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
 
   const messages: Record<string, string> = {
     PINTEREST_NOT_CONNECTED: "尚未连接 Pinterest",
@@ -351,7 +353,7 @@ export function pinterestErrorMessage(error: unknown): string {
     PINTEREST_CONNECT_TIMEOUT: "没等到 Pinterest 授权完成，请重试",
   };
 
-  if (code && code in messages) {
+  if (typeof code === "string" && Object.prototype.hasOwnProperty.call(messages, code)) {
     return messages[code];
   }
 

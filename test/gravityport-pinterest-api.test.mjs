@@ -667,3 +667,45 @@ describe("createPinterestPager — error handling", () => {
     assert.equal(state.items.length, 1);
   });
 });
+
+describe("createPinterestPager — loadFirst fetches page one", () => {
+  it("loadFirst() loads the first page from an empty bookmark", async () => {
+    const bookmarks = [];
+    const pager = pinterestApi.createPinterestPager(async (bookmark) => {
+      bookmarks.push(bookmark);
+      return { items: [{ id: "p1" }], bookmark: "next" };
+    });
+    await pager.loadFirst();
+    assert.deepEqual(bookmarks, [""]);
+    assert.deepEqual(pager.state().items.map((item) => item.id), ["p1"]);
+    assert.equal(pager.state().done, false);
+  });
+
+  it("a superseded request that fails does not set error on the new list", async () => {
+    let rejectFirst;
+    let call = 0;
+    const pager = pinterestApi.createPinterestPager(async () => {
+      call++;
+      if (call === 1) return new Promise((_, reject) => { rejectFirst = reject; });
+      return { items: [{ id: "fresh" }], bookmark: "" };
+    });
+    const first = pager.loadMore();
+    await pager.loadFirst();
+    rejectFirst(new Error("old network error"));
+    await first;
+    assert.equal(pager.state().error, null);
+    assert.deepEqual(pager.state().items.map((item) => item.id), ["fresh"]);
+  });
+});
+
+describe("pinterestErrorMessage — non-Error inputs", () => {
+  it("falls back instead of throwing for null, undefined and strings", () => {
+    for (const value of [null, undefined, "boom", 42]) {
+      assert.equal(pinterestApi.pinterestErrorMessage(value), "加载 Pinterest 内容失败");
+    }
+  });
+
+  it("ignores inherited object keys as codes", () => {
+    assert.equal(pinterestApi.pinterestErrorMessage({ code: "toString" }), "加载 Pinterest 内容失败");
+  });
+});
