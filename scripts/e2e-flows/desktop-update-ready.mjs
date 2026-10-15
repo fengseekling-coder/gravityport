@@ -26,10 +26,11 @@ export async function run(ctx) {
   // The update-ready file must live under the platform's staging root, which
   // the main process derives from app.getPath("userData"): updates/macos
   // (resolveMacosUpdateReadyFile) or updates/windows
-  // (resolveWindowsUpdateReadyFile). The native realpath expands macOS
-  // /var -> /private/var and Windows 8.3 short names (RUNNER~1), so the
-  // prefix check sees the same path the main process does.
-  const stagingRoot = join(realpathSync.native(ctx.userDataDir), "updates", process.platform === "win32" ? "windows" : "macos");
+  // (resolveWindowsUpdateReadyFile). Electron resolves macOS /var to
+  // /private/var but keeps a Windows 8.3 short name (RUNNER~1) as given, so
+  // hand it one resolved path and build the ready file from the same one.
+  const userDataDir = realpathSync.native(ctx.userDataDir);
+  const stagingRoot = join(userDataDir, "updates", process.platform === "win32" ? "windows" : "macos");
   const updateReadyFile = join(stagingRoot, "gravityport-update-ready.json");
 
   await mkdir(stagingRoot, { recursive: true });
@@ -44,7 +45,7 @@ export async function run(ctx) {
     args: [
       ...qaFlags,
       "desktop/main.mjs",
-      `--user-data-dir=${ctx.userDataDir}`,
+      `--user-data-dir=${userDataDir}`,
       `--remote-debugging-port=${cdpPort}`,
       // This tells the main process where to write the ready file.
       `--mosa-update-ready-file=${updateReadyFile}`,
@@ -55,7 +56,7 @@ export async function run(ctx) {
       MOSA_QA_RUN: "1",
       MOSA_CLIENT_TOKEN: ctx.token,
       MOSA_LIBRARY_DIR: ctx.libraryDir,
-      MOSA_USER_DATA: ctx.userDataDir,
+      MOSA_USER_DATA: userDataDir,
       MOSA_DISABLE_BRIDGES: "cowart,cowartDiscovery,codex,grok",
       MOSA_PROJECT_DIR: ctx.rootDir,
       MOSA_DESKTOP_PORT: String(port),
