@@ -148,6 +148,123 @@ describe("nativeDragPaths", () => {
   });
 });
 
+describe("moveBlockRelative", () => {
+  it("moves a single card before the target", () => {
+    assert.deepEqual(
+      cardDragModule.moveBlockRelative(["a", "b", "c", "d"], ["c"], "a", "before"),
+      ["c", "a", "b", "d"],
+    );
+  });
+
+  it("moves a single card after the target", () => {
+    assert.deepEqual(
+      cardDragModule.moveBlockRelative(["a", "b", "c", "d"], ["a"], "b", "after"),
+      ["b", "a", "c", "d"],
+    );
+  });
+
+  it("moves a non-contiguous block after the target, keeping inner order", () => {
+    assert.deepEqual(
+      cardDragModule.moveBlockRelative(["a", "b", "c", "d", "e", "f"], ["a", "c"], "d", "after"),
+      ["b", "d", "a", "c", "e", "f"],
+    );
+  });
+
+  it("parks the block at the end when the target is inside the block", () => {
+    assert.deepEqual(
+      cardDragModule.moveBlockRelative(["a", "b", "c"], ["a", "b"], "a", "before"),
+      ["c", "a", "b"],
+    );
+  });
+
+  it("parks the block at the end when the target does not exist", () => {
+    assert.deepEqual(
+      cardDragModule.moveBlockRelative(["a", "b", "c"], ["b"], "missing", "before"),
+      ["a", "c", "b"],
+    );
+  });
+
+  it("returns the original order when nothing moves", () => {
+    assert.deepEqual(
+      cardDragModule.moveBlockRelative(["a", "b", "c"], ["a"], "b", "before"),
+      ["a", "b", "c"],
+    );
+  });
+});
+
+describe("stackMemberPaths", () => {
+  it("keeps stack order and maps members to their paths", () => {
+    const result = cardDragModule.stackMemberPaths([
+      { id: "c", imagePath: "/path/c.jpg" },
+      { id: "a", imagePath: "/path/a.jpg" },
+      { id: "b", imagePath: "/path/b.jpg" },
+    ]);
+    assert.deepEqual(result, ["/path/c.jpg", "/path/a.jpg", "/path/b.jpg"]);
+  });
+
+  it("deduplicates paths", () => {
+    const result = cardDragModule.stackMemberPaths([
+      { id: "a", imagePath: "/path/same.jpg" },
+      { id: "b", imagePath: "/path/same.jpg" },
+      { id: "c", imagePath: "/path/other.jpg" },
+    ]);
+    assert.deepEqual(result, ["/path/same.jpg", "/path/other.jpg"]);
+  });
+
+  it("skips members without a usable path", () => {
+    const result = cardDragModule.stackMemberPaths([
+      { id: "a", imagePath: "" },
+      { id: "b" },
+      { id: "c", imagePath: "/path/c.jpg" },
+      { id: "d", imagePath: "   " },
+    ]);
+    assert.deepEqual(result, ["/path/c.jpg"]);
+  });
+
+  it("returns an empty array for empty or missing input", () => {
+    assert.deepEqual(cardDragModule.stackMemberPaths([]), []);
+    assert.deepEqual(cardDragModule.stackMemberPaths(null), []);
+  });
+});
+
+describe("undoPlanForStackDrop", () => {
+  it("plans a dissolve for a newly created stack", () => {
+    assert.deepEqual(
+      cardDragModule.undoPlanForStackDrop({ kind: "created-stack", project: "p", stackId: "s1" }),
+      { kind: "dissolve-stack", project: "p", stackId: "s1" },
+    );
+  });
+
+  it("plans to move out exactly the added ids, never the cover", () => {
+    assert.deepEqual(
+      cardDragModule.undoPlanForStackDrop({
+        kind: "added-to-stack", project: "p", stackId: "s1",
+        addedIds: ["c", "d"], coverId: "cover",
+      }),
+      { kind: "remove-from-stack", project: "p", stackId: "s1", assetIds: ["c", "d"] },
+    );
+  });
+
+  it("excludes the cover id even when it slips into the added ids", () => {
+    assert.deepEqual(
+      cardDragModule.undoPlanForStackDrop({
+        kind: "added-to-stack", project: "p", stackId: "s1",
+        addedIds: ["c", "cover", "d"], coverId: "cover",
+      }),
+      { kind: "remove-from-stack", project: "p", stackId: "s1", assetIds: ["c", "d"] },
+    );
+  });
+
+  it("returns null when nothing would actually be undone", () => {
+    assert.equal(cardDragModule.undoPlanForStackDrop({
+      kind: "added-to-stack", project: "p", stackId: "s1",
+      addedIds: ["cover"], coverId: "cover",
+    }), null);
+    assert.equal(cardDragModule.undoPlanForStackDrop(null), null);
+    assert.equal(cardDragModule.undoPlanForStackDrop({ kind: "created-stack", project: "", stackId: "s1" }), null);
+  });
+});
+
 describe("createNativeDragController", () => {
   it("treats a missing api object as unsupported instead of throwing", () => {
     const controller = cardDragModule.createNativeDragController({ api: undefined, onError: () => {} });

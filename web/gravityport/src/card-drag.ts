@@ -53,6 +53,80 @@ export function nativeDragPaths(
   return paths;
 }
 
+// ---------------------------------------------------------------------------
+// Stack reorder + drop-undo planning (task 146)
+// ---------------------------------------------------------------------------
+
+/**
+ * Move the block of `movingIds` (original relative order preserved) to sit
+ * before/after `targetId` in `items`. A target that is itself part of the
+ * moving block, or one that does not exist at all, parks the block at the end —
+ * the caller compares the result against the input and skips the request when
+ * nothing moved.
+ */
+export function moveBlockRelative(
+  items: string[],
+  movingIds: string[],
+  targetId: string,
+  placement: "before" | "after" = "before"
+): string[] {
+  const moving = new Set(movingIds);
+  const block = items.filter((id) => moving.has(id));
+  const rest = items.filter((id) => !moving.has(id));
+  let targetIndex = rest.indexOf(targetId);
+  if (targetIndex < 0) targetIndex = rest.length;
+  else if (placement === "after") targetIndex += 1;
+  rest.splice(targetIndex, 0, ...block);
+  return rest;
+}
+
+/**
+ * File paths of a stack's members, in stack order, for handing to the system
+ * drag: duplicate paths collapse to one, members without a path are skipped.
+ * Input is the pages fetched by library-actions' listStackMemberPaths.
+ */
+export function stackMemberPaths(members: { id?: string; imagePath?: string }[]): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const member of Array.isArray(members) ? members : []) {
+    const path = String(member?.imagePath || "").trim();
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    paths.push(path);
+  }
+  return paths;
+}
+
+/** What actually happened when a root-gallery card drop landed. */
+export type StackDropRecord = {
+  kind: "created-stack" | "added-to-stack";
+  project: string;
+  stackId: string;
+  /** Only for added-to-stack: the ids this gesture really added. */
+  addedIds?: string[];
+  /** Only for added-to-stack: the drop-target card (stack cover) to exclude. */
+  coverId?: string;
+};
+
+/** The undo a stack drop offers: dissolve the new stack, or move out exactly
+ *  what was added — never the cover that was already there. */
+export type StackUndoPlan =
+  | { kind: "dissolve-stack"; project: string; stackId: string }
+  | { kind: "remove-from-stack"; project: string; stackId: string; assetIds: string[] };
+
+export function undoPlanForStackDrop(drop: StackDropRecord): StackUndoPlan | null {
+  if (!drop || !drop.project || !drop.stackId) return null;
+  if (drop.kind === "created-stack") {
+    return { kind: "dissolve-stack", project: drop.project, stackId: drop.stackId };
+  }
+  const coverId = drop.coverId ? String(drop.coverId) : "";
+  const assetIds = [...new Set((Array.isArray(drop.addedIds) ? drop.addedIds : [])
+    .map((id) => String(id || ""))
+    .filter((id) => id && id !== coverId && id !== drop.stackId))];
+  if (!assetIds.length) return null;
+  return { kind: "remove-from-stack", project: drop.project, stackId: drop.stackId, assetIds };
+}
+
 export interface NativeDragAPI {
   startNativeDrag?: (paths: string[]) => Promise<{ ok?: boolean } | unknown>;
 }
