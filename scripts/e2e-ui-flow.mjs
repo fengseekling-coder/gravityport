@@ -482,7 +482,7 @@ export function createTrashUiFlowSource(config) {
   const rootCountAfterRestore = cardCount();
 
   const stackCard = await waitFor(() => document.querySelector('.asset-card .stack-mark')?.closest('.asset-card') || null, 'stack card after restart');
-  stackCard.click();
+  stackCard.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
   await waitFor(() => settled() && cardCount() === 2, 'stack interior after restart');
   const stackCountShown = document.querySelector('.viewer-title span')?.textContent?.trim().split(' ')[0] || String(cardCount());
 

@@ -185,7 +185,11 @@ function MenuRow({ entry, onAction }: { entry: Extract<MenuEntry, { kind: "item"
           : () => onAction(entry.id)}
         onMouseEnter={expand}
         onFocus={expand}
-        onBlur={() => setOpen(false)}
+        onBlur={event => {
+          // Pressing a submenu item moves focus off this button before the
+          // click lands; closing here would unmount the item mid-click.
+          if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) setOpen(false)
+        }}
         aria-label={entry.label}
       >
         {iconFor(entry)}
