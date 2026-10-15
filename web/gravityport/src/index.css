@@ -1827,6 +1827,14 @@ img.black-image {
 }.app .field-heading button:hover {
   background: var(--ui-hover);
   color: var(--ui-text);
+}.app .prompt-tabs > button {
+  /* The fixed square above is for the heading's icon buttons; the
+     提示词1 / 提示词2 tabs are text and size to their label. */
+  width: auto;
+  height: auto;
+  white-space: nowrap;
+}.app .prompt-tabs > button.active {
+  color: var(--ui-text);
 }.app .asset-title .is-favorite {
   color: var(--ui-danger);
 }.app .tags {
