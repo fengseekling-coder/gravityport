@@ -196,9 +196,41 @@ async function evaluate(expression) {
 }
 
 async function snapshot(label) {
-  await wait(600);
+  // Native window-resize and CDP device emulation can commit their CSS tracks
+  // after the bounds command returns. Never snapshot the old placement against
+  // the new viewport before React has had a chance to reconcile; require
+  // geometry convergence within a strict 2-second interaction budget.
+  const settleStartedAt = Date.now();
+  let settled = false;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    settled = await evaluate(`(()=>{
+      const grid=document.querySelector('.asset-grid');if(!grid)return false;
+      const track=parseFloat(getComputedStyle(grid).gridTemplateColumns);
+      const cards=[...grid.querySelectorAll(':scope > .asset-card')];
+      if(!cards.length)return false;
+      const bounds=grid.getBoundingClientRect();
+      const visible=cards.some(card=>{
+        const box=card.getBoundingClientRect();
+        return box.bottom>Math.max(0,bounds.top) && box.top<Math.min(innerHeight,bounds.bottom)
+          && !card.classList.contains('asset-card-virtual-placeholder');
+      });
+      return visible && cards.every(card=>Math.abs(card.getBoundingClientRect().width-track)<=0.1)
+        && grid.scrollWidth-grid.clientWidth<=1;
+    })()`);
+    if (settled) break;
+    await wait(100);
+  }
+  const geometrySettledMs = Date.now() - settleStartedAt;
+  assert.ok(settled, `${label}: masonry geometry did not converge within 2 seconds`);
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (await evaluate("[...document.querySelectorAll('.asset-grid img.black-image')].some(img => img.naturalWidth > 0)")) break;
+    if (await evaluate(`(()=>{
+      const grid=document.querySelector('.asset-grid');
+      const bounds=grid.getBoundingClientRect();
+      return [...grid.querySelectorAll('.asset-card:not(.asset-card-virtual-placeholder) img.black-image')]
+        .some(img=>{ const r=img.getBoundingClientRect();
+          return img.naturalWidth>0 && r.bottom>Math.max(0,bounds.top) && r.top<Math.min(innerHeight,bounds.bottom);
+        });
+    })()`)) break;
     await wait(100);
   }
   const metrics = await evaluate(`(() => {
@@ -213,16 +245,13 @@ async function snapshot(label) {
       return rect.bottom > Math.max(0, bounds.top) && rect.top < Math.min(innerHeight, bounds.bottom);
     });
     const media = visible.flatMap(card => [...card.querySelectorAll('img.black-image')]).filter(img => img.naturalWidth > 0);
-    // Cards stretch to fill their row: a shorter media must not leave a hole
-    // under itself, so every card in a row shares the row's height (the
-    // tallest media's aspect-derived height).
-    const rowErrors = visible.map(card => {
+    // Genuine masonry: each card must keep its OWN intrinsic ratio, not be
+    // stretched to the tallest card in a common CSS row.
+    const aspectErrors = visible.map(card => {
       const rect = card.getBoundingClientRect();
-      const peers = visible.filter(other => other !== card
-        && Math.abs(other.getBoundingClientRect().top - rect.top) < 4);
-      if (!peers.length) return 0;
-      const rowHeight = Math.max(rect.height, ...peers.map(other => other.getBoundingClientRect().height));
-      return Math.abs(rowHeight - rect.height);
+      const ratio = card.style.aspectRatio.split('/').map(Number);
+      return ratio.length === 2 && ratio[0] > 0 && ratio[1] > 0
+        ? Math.abs(rect.height - rect.width * ratio[1] / ratio[0]) : 999;
     });
     // The React grid uses implicit auto-placement, so same-column cards share
     // a left edge; vertical overlap inside a column is a layout defect.
@@ -235,12 +264,17 @@ async function snapshot(label) {
     for (const rect of rects) if (rects.some(other => other !== rect && other.column === rect.column && other.top > rect.top && other.top < rect.bottom - 1)) overlaps++;
     const placeholders = [...grid.querySelectorAll(':scope > .asset-card-virtual-placeholder')];
     return { width: innerWidth, loaded: Number(grid.dataset.loadedAssets || 0), tracks,
-      visible: visible.length, images: media.length, overlaps, maxAspectError: Math.max(0, ...rowErrors),
+      visible: visible.length, images: media.length, overlaps, maxAspectError: Math.max(0, ...aspectErrors),
       widthSpread: rects.length ? Math.max(...rects.map(r => r.width)) - Math.min(...rects.map(r => r.width)) : null,
       overflow: grid.scrollWidth - grid.clientWidth,
+      debugWidth: grid.clientWidth,
+      observer: grid.dataset.masonryObserver,
+      widthCheck: grid.dataset.masonryWidthCheck,
+      maxCardRight: Math.max(0, ...cards.map(card => card.getBoundingClientRect().right - bounds.left)),
+      lastPosition: [...cards].slice(-1).map(card => ({ left: card.style.left, width: card.style.width })),
       visiblePlaceholders: placeholders.filter(card => { const rect = card.getBoundingClientRect(); return rect.bottom > Math.max(0, bounds.top) && rect.top < Math.min(innerHeight, bounds.bottom); }).length };
   })()`);
-  result.cases.push({ label, ...metrics });
+  result.cases.push({ label, geometrySettledMs, ...metrics });
   console.log(JSON.stringify({ label, ...metrics }));
   if (metrics.overlaps) console.log(await evaluate(`(() => {
     const cards = [...document.querySelectorAll('.asset-grid > .asset-card')].map(card => ({ id: card.dataset.assetId, left: card.getBoundingClientRect().left, top: card.getBoundingClientRect().top, bottom: card.getBoundingClientRect().bottom, html: card.querySelector('img')?.outerHTML }));
@@ -254,7 +288,7 @@ async function snapshot(label) {
   assert.ok(Math.max(...metrics.tracks) - Math.min(...metrics.tracks) <= 1, `${label}: unequal tracks`);
   assert.ok(metrics.widthSpread !== null && metrics.widthSpread <= 1, `${label}: unequal card widths`);
   assert.ok(metrics.images > 0, `${label}: no visible decoded images`);
-  assert.ok(metrics.maxAspectError < 1.1, `${label}: a shorter card leaves a hole under the row height`);
+  assert.ok(metrics.maxAspectError < 1.1, `${label}: card was stretched or cropped away from its source ratio`);
   assert.equal(metrics.overlaps, 0, `${label}: cards overlap`);
   assert.equal(metrics.visiblePlaceholders, 0, `${label}: unhydrated visible cards`);
   assert.ok(metrics.overflow <= 1, `${label}: horizontal overflow`);
@@ -319,6 +353,7 @@ try {
     if (firstAfterSort === "resize-0") break;
     await wait(100);
   }
+  if (firstAfterSort !== "resize-0") console.log("NAME_SORT_DIAGNOSTIC", await evaluate(`JSON.stringify((()=>{const grid=document.querySelector('.asset-grid');return {loaded:grid?.dataset.loadedAssets,scroll:grid?.scrollTop,cards:grid?.querySelectorAll(':scope > .asset-card').length,first:grid?.querySelector(':scope > .asset-card')?.outerHTML?.slice(0,220),height:grid?.scrollHeight,content:grid?.innerHTML?.slice(0,400),body:document.body.innerText.slice(0,900),root:document.querySelector('#root')?.innerHTML.slice(0,350)}})())`));
   assert.equal(firstAfterSort, "resize-0", "name sort must land on the smallest sort_name");
   await snapshot("sorted-name-windowed");
 

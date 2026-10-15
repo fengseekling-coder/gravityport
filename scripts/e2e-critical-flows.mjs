@@ -22,6 +22,9 @@ const flowsDir = join(rootDir, "scripts", "e2e-flows");
 // electron, stack, trash; plugin flows use their exported name). Development
 // aid only — CI always runs everything.
 const onlyFlows = new Set(String(process.env.MOSA_E2E_ONLY || "").split(",").map((name) => name.trim()).filter(Boolean));
+// Optional verdict sink for long native CI/local runs whose process output
+// cannot always be retained by the remote runner. Unset in ordinary CI.
+const resultFile = process.env.MOSA_E2E_RESULT_FILE || "";
 const selected = (name) => !onlyFlows.size || onlyFlows.has(name);
 const ELECTRON_QA_FLAGS = process.platform === "win32" ? ["--disable-gpu"] : [];
 const QA_CLIENT_TOKEN = "mosa_e2e_client_token_0123456789abcdefghijklmnop";
@@ -76,6 +79,7 @@ await Promise.all([
   )),
 ]);
 
+let verdict = { ok: false, storage: "sqlite", flows: [], restartVerified: false, error: "incomplete" };
 try {
   const flowsRun = [];
   if (selected("web")) {
@@ -111,8 +115,13 @@ try {
   flowsRun.push(...await runPluginFlows());
 
   if (!flowsRun.length) throw new Error(`MOSA_E2E_ONLY matched no flow: ${[...onlyFlows].join(",")}`);
-  console.log(JSON.stringify({ ok: true, storage: "sqlite", flows: flowsRun, restartVerified: true }));
+  verdict = { ok: true, storage: "sqlite", flows: flowsRun, restartVerified: true };
+  console.log(JSON.stringify(verdict));
+} catch (error) {
+  verdict = { ok: false, storage: "sqlite", flows: [], restartVerified: false, error: String(error?.message || error) };
+  throw error;
 } finally {
+  if (resultFile) await writeFile(resultFile, `${JSON.stringify(verdict, null, 2)}\n`);
   await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 }
 

@@ -99,8 +99,13 @@ function browseSource() {
       if (save) save.click();
       return !document.querySelector('.tag-editor');
     }, 'tag editor closes after save');
-    await waitFor(() => Array.from(document.querySelectorAll('.tags button')).some((b) => b.textContent.trim() === 'e2e-tag'),
-      'the new tag renders in the inspector');
+    // Tag text and the new per-tag remove control are distinct siblings.
+    // Preserve the visibility contract without mistaking the remove button's
+    // accessible name for the tag's displayed text.
+    await waitFor(() => Array.from(document.querySelectorAll('.tags .tag-chip'))
+      .some((chip) => chip.querySelector('span')?.textContent.trim() === 'e2e-tag'
+        && chip.querySelector('button[aria-label]')),
+    'the new tag and its removal control render in the inspector');
     const tagPersisted = await fetch('/api/assets?project=default&limit=50').then((r) => r.json())
       .then((data) => (data.assets || []).some((a) => (a.tags || []).includes('e2e-tag')));
 
