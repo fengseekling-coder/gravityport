@@ -8,17 +8,31 @@ import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
+import { generationTreeRows } from "./version-tree"
+import { sanitizeAssetForExport, referenceUses, relationTypes, referencePermission, setReferencePermission } from "./feature-parity"
 import {
-  buildGalleryRowModel, galleryModelSignature, gallerySpacerHeights, locateGalleryWindow,
-  type GalleryRowModel, type GalleryRowRange,
+  buildMasonryModel, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
+  type MasonryModel,
 } from "./gallery-window"
 import {
-  fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus,
+  checkVersionConsistency,
+  createReadyGate,
+  fill,
+  mapUpdateResult,
+  buildUpdateText,
+  shouldAutoCheckForUpdates,
+  recordUpdateCheck,
+  type UpdateUiState,
+} from "./app-lifecycle"
+import {
+  fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus, fetchSimilarAssets,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
   toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, restoreAsset, setAssetsGroup,
-  createGroup, moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
-  mosaMutationHeaders, mergeAssetDetail, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
-  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent,
+  createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
+  moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
+  mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
+  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent, type MosaGenerationHistory, type MosaReference,
+  fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
 } from "./mosa-api"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
@@ -57,9 +71,14 @@ function errorMessage(error: unknown): string {
   return String(error)
 }
 
-function smartGroupLabel(name: string): string {
-  return name.replace(/^web-/, "").replace(/-generated$/, "")
-}
+/** Same curated capture/bridge groups as the pre-React MOSA sidebar. Manual
+ * imports and arbitrary historical source names are not smart groups. */
+const SMART_SOURCE_GROUPS = [
+  ["web-chatgpt", "ChatGPT"], ["web-gemini", "Gemini"],
+  ["web-flow", "Flow"], ["web-google-ai-studio", "Google AI Studio"],
+  ["codex-generated", "Codex"], ["grok-generated", "Grok"],
+  ["cowart-generated", "Cowart"],
+] as const
 
 const GALLERY_PAGE_SIZE = 100
 // Virtualization thresholds mirror the gallery QA budgets: below this many
@@ -82,6 +101,13 @@ type NavSnapshot = {
 }
 
 export default function App() {
+  // macOS already draws the native window buttons with titleBarStyle=hiddenInset;
+  // Windows also owns its native caption buttons. Only the browser mockup
+  // needs the decorative circles from the original GravityPort design.
+  const desktop = desktopAPI()
+  const nativeChromeClass = desktop && navigator.platform.startsWith("Mac")
+    ? "native-desktop native-darwin"
+    : desktop ? "native-desktop" : ""
   const [assets, setAssets] = useState<MosaAsset[]>([])
   const [navigation, setNavigation] = useState<MosaNavigation | null>(null)
   const [library, setLibrary] = useState<MosaLibraryLocation | null>(null)
@@ -130,6 +156,7 @@ export default function App() {
   }, [language])
   const [detail, setDetail] = useState(true)
   const [expandedPrompt, setExpandedPrompt] = useState(false)
+  const [promptVariant, setPromptVariant] = useState<1 | 2>(1)
   const [expandedIntro, setExpandedIntro] = useState(false)
   const [expandedTags, setExpandedTags] = useState(false)
   const [addingTag, setAddingTag] = useState(false)
@@ -144,23 +171,58 @@ export default function App() {
   const [columns, setColumns] = useState(5)
   const [toast, setToast] = useState("")
   const [expandedSections, setExpandedSections] = useState([true, true])
+  const [groupMenu, setGroupMenu] = useState<{ name: string; x: number; y: number } | null>(null)
+  const [groupRename, setGroupRename] = useState<{ original: string; draft: string } | null>(null)
+  const [groupStats, setGroupStats] = useState<{ name: string; values: Record<string, unknown> } | null>(null)
+  const [groupDeleteConfirm, setGroupDeleteConfirm] = useState<string | null>(null)
+  const [groupMerge, setGroupMerge] = useState<{ source: string; target: string } | null>(null)
+  const [exportingGroup, setExportingGroup] = useState("")
   const [skipConfirm, setSkipConfirm] = useState(preferences.skipTrashConfirm)
   // 「不再提醒」persists across sessions like the preference it is.
   useEffect(() => {
     try { localStorage.setItem("gravityport.skip-trash-confirm", skipConfirm ? "1" : "0") } catch { /* session-only */ }
   }, [skipConfirm])
+  // Update check state machine (app-lifecycle).
+  const [updateState, setUpdateState] = useState<UpdateUiState>({ phase: "idle" })
+  // Rename notice (task 116): shown once at first-screen render.
+  const [renameNoticeOpen, setRenameNoticeOpen] = useState(false)
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
   const [generations, setGenerations] = useState<MosaGenerationEvent[] | null>(null)
+  const [generationHistory, setGenerationHistory] = useState<MosaGenerationHistory | null>(null)
+  const [relationBusy, setRelationBusy] = useState(false)
+  const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({})
+  const [newRelation, setNewRelation] = useState<{ anchor: string; other: string; direction: string; type: string } | null>(null)
+  const [referenceRights, setReferenceRights] = useState<MosaReference[] | null>(null)
+  const [referenceDirty, setReferenceDirty] = useState(false)
+  const [referenceSaving, setReferenceSaving] = useState(false)
+  const referenceDirtyRef = useRef(false)
+  referenceDirtyRef.current = referenceDirty
+  const referenceDraftRef = useRef<MosaReference[] | null>(null)
+  referenceDraftRef.current = referenceRights
+  const referenceScopeRef = useRef("")
+  referenceScopeRef.current = `${project}\u0000${selected}`
+  const confirmReferenceNavigation = () => {
+    if (referenceSaving) { notify("参考图权利信息正在保存，请稍候"); return false }
+    if (!referenceDirtyRef.current) return true
+    if (!window.confirm(tr("参考图权利有未保存的修改，确认放弃？"))) return false
+    // One confirmed navigation may pass through goTo + selection updates in
+    // the same React render; never ask twice for the same discarded draft.
+    referenceDirtyRef.current = false
+    setReferenceDirty(false)
+    return true
+  }
+  const [similarAssets, setSimilarAssets] = useState<MosaAsset[]>([])
+  const [versionTreeOpen, setVersionTreeOpen] = useState(false)
+  const [compareBaseId, setCompareBaseId] = useState("")
+  const [compareTargetId, setCompareTargetId] = useState("")
   // The prompt draft is bound to one concrete asset; it never outlives the
   // asset (or project) it was opened for.
   const [promptEdit, setPromptEdit] = useState<PromptEditTarget & { draft: string } | null>(null)
   const [savingPromptId, setSavingPromptId] = useState<string | null>(null)
-  // Gallery windowing: which rows stay mounted and which hydrate real cards.
-  // The row model rides in the state so a pure geometry change (window
-  // resized, same row range) still re-renders the spacers with the new pixel
-  // heights — range equality alone would leave the DOM at the old geometry.
+  // Masonry placements retain each original image's intrinsic aspect ratio.
+  // Only items intersecting the viewport's warm/hydrate bands are mounted.
   const [galleryWindow, setGalleryWindow] = useState<{
-    model: GalleryRowModel; mount: GalleryRowRange; hydrate: GalleryRowRange;
+    model: MasonryModel; mounted: number[]; hydrated: number[];
   } | null>(null)
   const appRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -174,9 +236,34 @@ export default function App() {
   // selection reset of the view change it causes.
   const pendingInspectRef = useRef("")
   const cutIdsRef = useRef<string[]>([])
+  const readyGateRef = useRef<ReturnType<typeof createReadyGate> | null>(null)
+  if (!readyGateRef.current) {
+    readyGateRef.current = createReadyGate(() => {
+      desktopAPI()?.reportRendererReady?.().catch(() => {})
+    })
+  }
+  const versionOkRef = useRef(false)
+  const firstPageOkRef = useRef(false)
+  const sseOpenRef = useRef(false)
+  const deletingRef = useRef(deleting)
+  const settingsRef = useRef(settings)
+  const renameNoticeRef = useRef(renameNoticeOpen)
+  deletingRef.current = deleting
+  settingsRef.current = settings
+  renameNoticeRef.current = renameNoticeOpen
+  const dismissRenameNotice = () => {
+    setRenameNoticeOpen(false)
+    desktopAPI()?.acknowledgeRenameNotice?.().catch(() => {})
+  }
+
   const [systemDark, setSystemDark] = useState(false)
   useEffect(() => {
     setExpandedPrompt(false)
+    setReferenceRights(null)
+    setReferenceDirty(false)
+    setRelationDrafts({})
+    setNewRelation(null)
+    setPromptVariant(1)
     setExpandedIntro(false)
     setExpandedTags(false)
     setAddingTag(false)
@@ -247,15 +334,35 @@ export default function App() {
         let collected = page.assets
         if (windowRefresh) {
           const target = Math.max(assetsRef.current.length, GALLERY_PAGE_SIZE)
+          // A fixed 30-page ceiling silently truncated a 4,249-item loaded
+          // gallery to 3,100 items on every same-view SSE refresh. Derive the
+          // work budget from the previously loaded window instead, allowing
+          // partial/duplicate pages without permitting an unbounded loop.
+          const maxFollowupPages = Math.max(30, Math.ceil(target / GALLERY_PAGE_SIZE) * 2)
+          const seenIds = new Set(collected.map(item => item.id))
+          const seenCursors = new Set<string>()
           let cursor: string | undefined = page.nextCursor ?? undefined
-          let guard = 0
-          while (page.nextCursor && collected.length < target && guard < 30) {
-            guard += 1
-            page = await fetchAssetPage(buildQuery(cursor), { cursor, signal: controller.signal })
-            const seen = new Set(collected.map(item => item.id))
-            collected = [...collected, ...page.assets.filter(item => !seen.has(item.id))]
-            if (!page.nextCursor) break
-            cursor = page.nextCursor
+          let followupPages = 0
+          while (cursor && collected.length < target) {
+            if (followupPages >= maxFollowupPages || seenCursors.has(cursor)) {
+              throw new Error("Gallery refresh pagination could not restore the previously loaded window")
+            }
+            seenCursors.add(cursor)
+            followupPages += 1
+            // Fetch only the remaining window tail. Fetching a full final
+            // page overshot the old window size (4,249 -> 4,250) and would
+            // make the next cursor skip unseen results if we sliced locally.
+            page = await fetchAssetPage(buildQuery(cursor), {
+              cursor, limit: Math.min(GALLERY_PAGE_SIZE, target - collected.length),
+              signal: controller.signal,
+            })
+            if (controller.signal.aborted) return
+            for (const item of page.assets) {
+              if (seenIds.has(item.id)) continue
+              seenIds.add(item.id)
+              collected.push(item)
+            }
+            cursor = page.nextCursor ?? undefined
           }
         }
         if (controller.signal.aborted) return
@@ -286,6 +393,10 @@ export default function App() {
           applySelection(pruned.selectedIds, fallback)
         }
         lastGoodProjectRef.current = project
+        if (!firstPageOkRef.current) {
+          firstPageOkRef.current = true
+          readyGateRef.current?.markFirstPageOk()
+        }
       } catch (error) {
         if (controller.signal.aborted) return
         // A failed load for a freshly switched-to project is a failed switch:
@@ -347,11 +458,15 @@ export default function App() {
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, refreshKey])
-  // Live library updates: the runtime broadcasts journaled revisions over SSE;
-  // bursts are debounced into one reload of the current view.
+  // SSE stream setup (combined with sseConnectedRef tracking).
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null
     const stream = new EventSource(`/api/library-events?project=${encodeURIComponent(project)}`)
+    stream.addEventListener("open", () => {
+      if (sseOpenRef.current) return
+      sseOpenRef.current = true
+      readyGateRef.current?.markSseOpen()
+    })
     stream.addEventListener("library-changed", () => {
       if (timer) clearTimeout(timer)
       timer = setTimeout(() => refreshNavigation(), 300)
@@ -362,6 +477,71 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project])
+  // Version-consistency check: runs once at startup. On mismatch, the gallery
+  // shows an error state and reportRendererReady is never called so the
+  // main-process update machinery does not roll back the installed update.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const mismatch = await checkVersionConsistency(
+        () => fetchHealth().then(d => d ?? {}),
+        () => fetch("/build-identity.json", { cache: "no-store" }).then(r => r.ok ? r.json() : {}),
+      )
+      if (cancelled) return
+      if (mismatch) {
+        setLoadError(tr("界面与本地服务版本不一致。请退出旧版 GravityPort 后重新打开当前版本。"))
+        return
+      }
+      if (!versionOkRef.current) {
+        versionOkRef.current = true
+        readyGateRef.current?.markVersionOk()
+      }
+    })()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // Silent auto-check for updates every 24 hours.
+  useEffect(() => {
+    if (!shouldAutoCheckForUpdates(key => localStorage.getItem(key))) return
+    const api = desktopAPI()
+    if (!api?.checkForUpdates) return
+    api.checkForUpdates(false).then(result => {
+      recordUpdateCheck((key, value) => localStorage.setItem(key, value))
+      if (result?.updateAvailable) {
+        notify(fill(tr("发现新版本 v{version}"), { version: String(result.latestVersion ?? "").replace(/^v/i, "") }))
+      }
+    }).catch(() => {})
+  }, [])
+  // Listen for update download progress.
+  useEffect(() => {
+    const api = desktopAPI()
+    if (!api?.onUpdateDownloadProgress) return
+    return api.onUpdateDownloadProgress(progress => {
+      const pct = Number(progress?.percent)
+      setUpdateState(current => current.phase === "downloading"
+        ? { ...current, percent: Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0 }
+        : current)
+    })
+  }, [])
+  // Task 116 — Rename notice: fire once at first-screen render after the initial
+  // load completes. Skips silently in browser (no electronAPI). Waits until the
+  // gallery has actually rendered (loading=false) so we know whether another
+  // alertdialog is already open; does not count as read if another modal is open.
+  useEffect(() => {
+    if (loading || !desktopAPI()?.getRenameNoticeState) return
+    // The notice must fire after the first asset page resolves. Without a
+    // loading check, the modal could open before any other dialog's state is
+    // readable and the synchronous pre-check in maybeShowRenameNotice would be
+    // too early.
+    const api = desktopAPI()
+    api?.getRenameNoticeState?.().then(notice => {
+      if (notice?.shouldShow !== true) return
+      // Guard against dialogs that opened while the async state request was pending.
+      if (deletingRef.current || settingsRef.current || renameNoticeRef.current) return
+      setRenameNoticeOpen(true)
+    }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)")
     const sync = () => setSystemDark(media.matches)
@@ -406,11 +586,24 @@ export default function App() {
     }).catch(() => {})
     setVersions(null)
     setGenerations(null)
+    setGenerationHistory(null)
+    setSimilarAssets([])
     fetchAssetVersions(project, selected, controller.signal).then(history => {
       if (!controller.signal.aborted) setVersions(history && history.versions.length > 1 ? history.versions : null)
     }).catch(() => {})
     fetchAssetGenerationHistory(project, selected, controller.signal).then(history => {
-      if (!controller.signal.aborted) setGenerations(history && history.events.length ? history.events : null)
+      if (!controller.signal.aborted) {
+        setGenerations(history && history.events.length ? history.events : null)
+        setGenerationHistory(history)
+      }
+    }).catch(() => {})
+    fetchSimilarAssets(project, selected, controller.signal).then(items => {
+      if (!controller.signal.aborted) setSimilarAssets(items)
+    }).catch(() => {})
+    fetchAssetRecipes(project, selected, controller.signal).then(history => {
+      if (controller.signal.aborted) return
+      const active = history?.snapshots.find(item => item.snapshot_id === history.active_snapshot_id) || history?.snapshots.at(-1)
+      setReferenceRights(active?.references || [])
     }).catch(() => {})
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -423,8 +616,28 @@ export default function App() {
   // click must not be silently dropped by unrelated churn.
   const historySelectAbortRef = useRef<AbortController | null>(null)
   const historyIntentRef = useRef(0)
+  const relationSelectionRef = useRef("")
+  relationSelectionRef.current = `${project}\u0000${selected}`
+  const mutateRelation = async (action: () => Promise<unknown>) => {
+    if (relationBusy || !selected) return
+    const identity = relationSelectionRef.current
+    setRelationBusy(true)
+    try {
+      await action()
+      if (identity !== relationSelectionRef.current) return
+      const history = await fetchAssetGenerationHistory(project, selected)
+      if (identity === relationSelectionRef.current) {
+        setGenerationHistory(history)
+        setGenerations(history?.events?.length ? history.events : null)
+        setRelationDrafts({})
+        setNewRelation(null)
+      }
+    } catch (error) { if (identity === relationSelectionRef.current) notify(errorMessage(error)) }
+    finally { setRelationBusy(false) }
+  }
   const selectHistoryAsset = (id: string) => {
     if (!id) return
+    if (id !== selected && !confirmReferenceNavigation()) return
     // Invalidation runs on every history click, including a re-click of the
     // currently focused version: the latest intent is "stay here", so an
     // in-flight fetch for another version must never retake the focus (or
@@ -538,24 +751,22 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextCursor, loadingMore, loading])
   // ── gallery windowing ──
-  // Above the mount-all threshold only rows near the viewport stay in the DOM:
-  // real cards in the hydrate zone, same-geometry placeholders in the warm
-  // zone, and top/bottom spacers keep the scroll extent exact.
+  // Above the threshold only masonry items near the viewport stay mounted.
   const windowingActive = assets.length > GALLERY_MOUNT_ALL_THRESHOLD
-  const rowModelRef = useRef<{ key: string; model: GalleryRowModel } | null>(null)
+  const rowModelRef = useRef<{ key: string; model: MasonryModel } | null>(null)
   const updateGalleryWindowRef = useRef<() => void>(() => {})
-  const galleryRowModel = (): GalleryRowModel | null => {
+  const galleryRowModel = (): MasonryModel | null => {
     const grid = gridRef.current
     if (!grid) return null
     const styles = getComputedStyle(grid)
     const tracks = styles.gridTemplateColumns.split(/\s+/).map(value => Number.parseFloat(value)).filter(Number.isFinite)
     const colWidth = tracks[0] || 0
     if (!(colWidth > 0)) return null
-    const gap = Number.parseFloat(styles.rowGap) || 0
+    const gap = Number.parseFloat(styles.columnGap) || 0
     const ratios = assets.map(a => a.height / a.width)
-    const signature = galleryModelSignature(ratios, columns, colWidth)
+    const signature = galleryModelSignature(ratios, tracks.length, colWidth) + `|${gap}`
     if (rowModelRef.current?.key === signature) return rowModelRef.current.model
-    const model = buildGalleryRowModel(ratios, columns, colWidth, gap)
+    const model = buildMasonryModel(ratios, tracks.length, colWidth, gap)
     rowModelRef.current = { key: signature, model }
     return model
   }
@@ -564,19 +775,15 @@ export default function App() {
     if (!grid) return
     const model = galleryRowModel()
     if (!model) return
-    // Below the mount-all threshold every row stays mounted; the model still
-    // drives the render, so cards of a mixed-ratio row all get the row's
-    // exact height instead of leaving holes under shorter media.
-    if (!windowingActive || model.rowHeight.length === 0) {
-      if (model.rowHeight.length === 0) {
+    if (!windowingActive || model.placements.length === 0) {
+      if (model.placements.length === 0) {
         setGalleryWindow(old => old === null ? old : null)
         return
       }
-      const full = { startRow: 0, endRow: model.rowHeight.length - 1 }
+      const full = model.placements.map((_, index) => index)
       setGalleryWindow(old => (
         old && old.model === model
-          && old.mount.startRow === full.startRow && old.mount.endRow === full.endRow
-          ? old : { model, mount: full, hydrate: full }
+          ? old : { model, mounted: full, hydrated: full }
       ))
       return
     }
@@ -587,22 +794,16 @@ export default function App() {
     // about to land on instead.
     const maxScroll = Math.max(0, model.totalHeight - grid.clientHeight)
     const scrollTop = Math.min(grid.scrollTop, maxScroll)
-    const mount = locateGalleryWindow(
-      model, scrollTop, grid.clientHeight, GALLERY_WINDOW_WARMUP_PX,
-      Math.max(1, Math.floor(GALLERY_MAX_MOUNTED_CARDS / model.columns)),
-    )
-    const hydrate = mount
-      ? locateGalleryWindow(
-          model, scrollTop, grid.clientHeight, GALLERY_HYDRATE_WARMUP_PX,
-          Math.max(1, Math.floor(GALLERY_MAX_HYDRATED_CARDS / model.columns)),
-        ) ?? mount
-      : null
-    if (!mount || !hydrate) return
+    const mounted = locateMasonryWindow(model, scrollTop, grid.clientHeight,
+      GALLERY_WINDOW_WARMUP_PX, GALLERY_MAX_MOUNTED_CARDS)
+    const hydrated = locateMasonryWindow(model, scrollTop, grid.clientHeight,
+      GALLERY_HYDRATE_WARMUP_PX, GALLERY_MAX_HYDRATED_CARDS)
+    const same = (left: number[], right: number[]) =>
+      left.length === right.length && left.every((value, index) => value === right[index])
     setGalleryWindow(old => (
       old && old.model === model
-        && old.mount.startRow === mount.startRow && old.mount.endRow === mount.endRow
-        && old.hydrate.startRow === hydrate.startRow && old.hydrate.endRow === hydrate.endRow
-        ? old : { model, mount, hydrate }
+        && same(old.mounted, mounted) && same(old.hydrated, hydrated)
+        ? old : { model, mounted, hydrated }
     ))
   }
   updateGalleryWindowRef.current = updateGalleryWindow
@@ -617,9 +818,17 @@ export default function App() {
   useEffect(() => {
     const grid = gridRef.current
     if (!grid || typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(() => updateGalleryWindowRef.current())
+    // Mounted card coordinates are CSS container-relative, so native window
+    // resizes cannot leave a stale absolute pixel width while Electron is
+    // backgrounded. JS only recalculates shortest columns and virtual range.
+    const onResize = () => updateGalleryWindowRef.current()
+    const observer = new ResizeObserver(onResize)
     observer.observe(grid)
-    return () => observer.disconnect()
+    window.addEventListener("resize", onResize)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", onResize)
+    }
   }, [preview])
   // The window must follow the scroll position even after pagination is done
   // (nextCursor exhausted): a gallery-wide jump otherwise lands the viewport
@@ -651,6 +860,7 @@ export default function App() {
   }
   const switchProject = (next: string) => {
     if (!next || next === project) return
+    if (!confirmReferenceNavigation()) return
     // Only a switch away from a project that actually loaded replaces the
     // restorable snapshot; bailing out of a project that never loaded keeps
     // the older snapshot so rapid switching still restores the last good view.
@@ -697,6 +907,7 @@ export default function App() {
   // goTo records the TARGET snapshot (deduped) and applies it, so the current
   // state at each stack position is what back/forward restores.
   const goTo = (partial: Partial<NavSnapshot>) => {
+    if (!confirmReferenceNavigation()) return
     setNavHistory(old => {
       const stack = old.stack.slice(0, old.index + 1)
       const next: NavSnapshot = { active, stackId, stackName, query: debouncedQuery, sortOrder, assetType, ...partial }
@@ -712,6 +923,7 @@ export default function App() {
     setPreview(false)
   }
   const navigateHistory = (direction: -1 | 1) => {
+    if (!confirmReferenceNavigation()) return
     const next = navHistory.index + direction
     if (next < 0) {
       // The design's back arrow also resets a filtered workspace at the
@@ -748,6 +960,7 @@ export default function App() {
   const selectionRevisionRef = useRef(0)
   selectionRef.current = { selectedIds, selected }
   const applySelection = (nextIds: string[], nextSelected: string) => {
+    if (nextSelected !== selectionRef.current.selected && !confirmReferenceNavigation()) return
     selectionRevisionRef.current += 1
     selectionRef.current = { selectedIds: nextIds, selected: nextSelected }
     setSelectedIds(nextIds)
@@ -841,7 +1054,7 @@ export default function App() {
         setToast(`${tr("正在全选")} ${collected.length}${page.total ? ` / ${page.total}` : "…"}`)
         morePages = Boolean(page.nextCursor)
         if (!morePages) break
-        cursor = page.nextCursor
+        cursor = page.nextCursor ?? undefined
       }
       if (controller.signal.aborted || viewKeyRef.current !== requestViewKey
         || selectionRevisionRef.current !== startRevision) return
@@ -915,7 +1128,8 @@ export default function App() {
       if (e.key === "Escape") {
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
-        if (deleting) setDeleting(false)
+        if (renameNoticeOpen) dismissRenameNotice()
+        else if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         else if (settings) setSettings(false)
         else if (preview) setPreview(false)
@@ -1168,11 +1382,52 @@ export default function App() {
   const checkForUpdates = async () => {
     const api = desktopAPI()
     if (!api?.checkForUpdates) { notify(tr("网页版请访问官网获取最新版本")); return }
+    if (updateState.phase === "checking") return
+    setUpdateState({ phase: "checking" })
     try {
-      await api.checkForUpdates(true)
+      const result = await api.checkForUpdates(true)
+      recordUpdateCheck((key, value) => localStorage.setItem(key, value))
+      const state = mapUpdateResult(result ?? {})
+      setUpdateState(state)
+      if (state.phase === "current") {
+        notify(tr("已是最新版本"))
+      } else if (state.phase === "available") {
+        notify(fill(tr("发现新版本 v{version}"), { version: state.latestVersion }))
+      } else if (state.phase === "unavailable") {
+        notify(tr("请先把 App 拖进『应用程序』文件夹再更新"))
+      } else if (state.phase === "error") {
+        notify(tr("暂时无法检查更新"))
+      }
     } catch (error) {
-      notify(String((error as Error)?.message || error))
+      setUpdateState({ phase: "error" })
+      notify(String((error as Error)?.message || tr("暂时无法检查更新")))
     }
+  }
+  const downloadAndInstallUpdate = async () => {
+    const api = desktopAPI()
+    if (!api?.downloadAndInstallUpdate) return
+    if (updateState.phase === "downloading") return
+    if (updateState.phase !== "available") return
+    setUpdateState({ phase: "downloading", percent: 0, latestVersion: updateState.latestVersion, publishedAt: updateState.publishedAt, canInstallInApp: updateState.canInstallInApp })
+    try {
+      await api.downloadAndInstallUpdate()
+    } catch (error) {
+      setUpdateState(current => current.phase === "downloading"
+        ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false }
+        : current)
+      notify(tr("更新失败，请稍后重试"))
+    }
+  }
+  const cancelUpdateDownload = () => {
+    desktopAPI()?.cancelUpdateDownload?.()
+    setUpdateState(current => current.phase === "downloading"
+      ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false }
+      : current)
+  }
+  const openDownloadPage = () => {
+    desktopAPI()?.openDownloadPage?.().then(result => {
+      if (!result?.ok) notify(tr("暂时无法检查更新"))
+    }).catch(() => notify(tr("暂时无法检查更新")))
   }
   const changeLibraryLocation = async () => {
     const api = desktopAPI()
@@ -1228,7 +1483,8 @@ export default function App() {
   const assetPathTail = asset
     ? (asset.image_path || asset.image_url || "").split(/[\\/]/).pop() || ""
     : ""
-  const relatedAssets = assets.filter(a => a.id !== (asset?.id || "")).slice(0, expandedRelated ? 6 : 2)
+  const shownPrompt = promptVariant === 2 ? asset?.prompt2 || "" : asset?.prompt || ""
+  const relatedAssets = similarAssets.slice(0, expandedRelated ? 6 : 2)
   const startPromptEdit = () => {
     if (!asset) return
     setPromptEdit({ project: asset.project_id, assetId: asset.id, draft: asset.prompt || "" })
@@ -1256,16 +1512,11 @@ export default function App() {
   return (
     <div
       ref={appRef}
-      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""}`}
+      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass}`}
       onClick={() => menu && setMenu(null)}
     >
       <aside className="sidebar">
         <div className="brandbar">
-          <div className="traffic">
-            <i />
-            <i />
-            <i />
-          </div>
           <strong>GravityPort</strong>
         </div>
         {projects.length > 1 && (
@@ -1334,7 +1585,10 @@ export default function App() {
             </div>
             <nav id={`sidebar-group-${section}`} aria-label={section === 0 ? tr("智能分组") : tr("我的分组")} hidden={!expandedSections[section]}>
             {(section === 0
-              ? (navigation?.sourceTypes || []).filter(entry => entry[1] > 0).map(entry => ({ id: `source:${entry[0]}`, name: smartGroupLabel(entry[0]), count: entry[1] }))
+              ? SMART_SOURCE_GROUPS.map(([source, name]) => ({
+                  id: `source:${source}`, name,
+                  count: navigation?.sourceTypes.find(entry => entry[0] === source)?.[1] ?? 0,
+                })).filter(entry => entry.count > 0)
               : (navigation?.groups || []).map(entry => ({ id: `group:${entry.name}`, name: entry.name, count: entry.count }))
             ).map((g) => (
               <button
@@ -1346,6 +1600,11 @@ export default function App() {
                 aria-label={tr(g.name)}
                 aria-current={active === g.id ? "page" : undefined}
                 onClick={() => { goTo({ active: g.id, stackId: "", stackName: "" }); setSelectedIds([]) }}
+                onContextMenu={event => {
+                  if (section !== 1) return
+                  event.preventDefault()
+                  setGroupMenu({ name: g.name, x: event.clientX, y: event.clientY })
+                }}
                 onDragOver={event => {
                   if (g.id.startsWith("group:") && !preview && !settings) event.preventDefault()
                 }}
@@ -1369,6 +1628,86 @@ export default function App() {
           <Icon name="settings" size={14} />
         </button>
       </aside>
+      {groupMenu && <>
+        <div className="group-menu-dismiss" onClick={() => setGroupMenu(null)} aria-hidden="true" />
+        <div className="group-manage-menu" role="menu" style={{ left: Math.min(groupMenu.x, window.innerWidth - 220), top: Math.min(groupMenu.y, window.innerHeight - 310) }}>
+          <strong>{groupMenu.name}</strong>
+          <button role="menuitem" onClick={() => { setGroupRename({ original: groupMenu.name, draft: groupMenu.name }); setGroupMenu(null) }}>{tr("重命名分组")}</button>
+          {([[-1, "上移分组"], [1, "下移分组"]] as const).map(([step, label]) => <button role="menuitem" key={label} onClick={() => {
+            const names = (navigation?.groups || []).map(item => item.name)
+            const index = names.indexOf(groupMenu.name)
+            const target = index + step
+            setGroupMenu(null)
+            if (index < 0 || target < 0 || target >= names.length) return
+            ;[names[index], names[target]] = [names[target], names[index]]
+            reorderGroups(project, names).then(refreshNavigation).catch(error => notify(errorMessage(error)))
+          }}>{tr(label)}</button>)}
+          <div className="group-color-choices" role="group" aria-label={tr("分组颜色")}>
+            {["#E06C75", "#D19A66", "#98C379", "#61AFEF", "#C678DD", "#56B6C2"].map(color => <button key={color} style={{ background: color }} aria-label={`${tr("分组颜色")} ${color}`} onClick={() => {
+              recolorGroup(project, groupMenu.name, color).then(refreshNavigation).catch(error => notify(errorMessage(error)))
+              setGroupMenu(null)
+            }} />)}
+          </div>
+          <button role="menuitem" onClick={() => {
+            const name = groupMenu.name
+            setGroupMenu(null)
+            fetchGroupStats(project, name).then(result => setGroupStats({ name, values: result.stats })).catch(error => notify(errorMessage(error)))
+          }}>{tr("分组统计")}</button>
+          <button role="menuitem" disabled={Boolean(exportingGroup)} onClick={() => {
+            const name = groupMenu.name
+            const originProject = project
+            setGroupMenu(null)
+            setExportingGroup(name)
+            fetchRawGroupAssets(originProject, name).then(records => {
+              const payload = { exportedAt: new Date().toISOString(), project: originProject, group: name,
+                assets: records.map(sanitizeAssetForExport) }
+              const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }))
+              try {
+                const link = document.createElement("a")
+                link.href = url
+                link.download = `mosa-group-${name.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "group"}.json`
+                document.body.appendChild(link)
+                link.click()
+                link.remove()
+              } finally { window.setTimeout(() => URL.revokeObjectURL(url), 30_000) }
+            }).catch(error => notify(errorMessage(error))).finally(() => setExportingGroup(""))
+          }}>{tr("导出分组")}</button>
+          {navigation?.groups.some(item => item.name !== groupMenu.name) && <button role="menuitem" onClick={() => {
+            const other = navigation?.groups.find(item => item.name !== groupMenu.name)
+            if (other) setGroupMerge({ source: groupMenu.name, target: other.name })
+            setGroupMenu(null)
+          }}>{tr("合并分组")}</button>}
+          <button role="menuitem" onClick={() => { setGroupDeleteConfirm(groupMenu.name); setGroupMenu(null) }}>{tr("删除分组")}</button>
+        </div>
+      </>}
+      {(groupRename || groupDeleteConfirm || groupMerge || groupStats) && <div className="group-dialog-backdrop" role="presentation">
+        <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("分组管理")}>
+          {groupRename && <form onSubmit={event => {
+            event.preventDefault()
+            const name = groupRename.draft.trim()
+            if (!name || name === groupRename.original) { setGroupRename(null); return }
+            renameGroup(project, groupRename.original, name).then(() => {
+              if (active === `group:${groupRename.original}`) goTo({ active: `group:${name}` })
+              refreshNavigation(); setGroupRename(null)
+            }).catch(error => notify(errorMessage(error)))
+          }}><h3>{tr("重命名分组")}</h3><input autoFocus value={groupRename.draft} maxLength={80} onChange={event => setGroupRename(old => old ? { ...old, draft: event.target.value } : old)} /><div className="group-dialog-actions"><button type="button" onClick={() => setGroupRename(null)}>{tr("取消")}</button><button type="submit">{tr("保存")}</button></div></form>}
+          {groupDeleteConfirm && <><h3>{tr("删除分组")}</h3><p>{tr("仅删除分组，保留其中全部素材。")}</p><div className="group-dialog-actions"><button onClick={() => setGroupDeleteConfirm(null)}>{tr("取消")}</button><button onClick={() => {
+            const name = groupDeleteConfirm
+            deleteGroupKeepingAssets(project, name).then(() => {
+              if (active === `group:${name}`) goTo({ active: "所有素材" })
+              refreshNavigation(); setGroupDeleteConfirm(null)
+            }).catch(error => notify(errorMessage(error)))
+          }}>{tr("删除分组")}</button></div></>}
+          {groupMerge && <><h3>{tr("合并分组")}</h3><p>{groupMerge.source} →</p><select value={groupMerge.target} onChange={event => setGroupMerge(old => old ? { ...old, target: event.target.value } : old)}>{navigation?.groups.filter(item => item.name !== groupMerge.source).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select><div className="group-dialog-actions"><button onClick={() => setGroupMerge(null)}>{tr("取消")}</button><button onClick={() => {
+            const { source, target } = groupMerge
+            mergeGroups(project, source, target).then(() => {
+              if (active === `group:${source}`) goTo({ active: `group:${target}` })
+              refreshNavigation(); setGroupMerge(null)
+            }).catch(error => notify(errorMessage(error)))
+          }}>{tr("确认合并")}</button></div></>}
+          {groupStats && <><h3>{tr("分组统计")} · {groupStats.name}</h3><div className="group-stats-data">{Object.entries(groupStats.values).filter(([, value]) => typeof value === "number").map(([key, value]) => <p key={key}>{key}: {String(value)}</p>)}</div><button onClick={() => setGroupStats(null)}>{tr("关闭")}</button></>}
+        </div>
+      </div>}
       <main
         className={`workspace ${preview ? "preview-open" : ""}`}
         onDragOver={event => {
@@ -1446,8 +1785,16 @@ export default function App() {
           >
             {(() => {
               const model = galleryWindow?.model ?? null
-              const win = model ? galleryWindow : null
+              // Sorting, changing project, or reloading a page can replace
+              // the asset list BEFORE useLayoutEffect recomputes the masonry
+              // window. Old mounted indexes then address missing assets and
+              // crash React, leaving #root completely empty. Never render a
+              // window belonging to a different loaded list size.
+              const win = model && model.placements.length === assets.length ? galleryWindow : null
               if (!model || !win) {
+                if (assets.length > GALLERY_MOUNT_ALL_THRESHOLD) {
+                  return <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", minHeight: "100%" }} aria-hidden="true" />
+                }
                 return assets.map((a) => (
                   <button
                     key={a.id}
@@ -1479,7 +1826,7 @@ export default function App() {
                       setMenu({ x: e.clientX, y: e.clientY })
                     }}
                   >
-                    {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} alt="" loading="lazy" /> : <div className="black-image" />}
+                    {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
                     {a.stack && (
                       <span className="stack-mark">
                         <Icon name="layers" size={12} />
@@ -1495,22 +1842,18 @@ export default function App() {
                   </button>
                 ))
               }
-              const items = assets.slice(win.mount.startRow * model.columns, (win.mount.endRow + 1) * model.columns)
-              const hydratedIds = new Set(assets
-                .slice(win.hydrate.startRow * model.columns, (win.hydrate.endRow + 1) * model.columns)
-                .map(a => a.id))
-              const spacers = gallerySpacerHeights(model, win.mount.startRow, win.mount.endRow)
-              // Every card of a row gets the row's exact height (the tallest
-              // ratio): shorter media fills its row instead of leaving holes.
-              const rowHeightOf = (globalIndex: number) =>
-                model.rowHeight[Math.floor(globalIndex / model.columns)]
+              const hydrated = new Set(win.hydrated)
+              const placementStyle = (index: number): React.CSSProperties => {
+                return { position: "absolute", ...masonryCardCss(model, index),
+                  aspectRatio: `${assets[index].width} / ${assets[index].height}` }
+              }
               const card = (a: MosaAsset, globalIndex: number) => (
                 <button
                   key={a.id}
                   data-asset-id={a.id}
                   aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
                   className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""}`}
-                  style={{ height: rowHeightOf(globalIndex) }}
+                  style={placementStyle(globalIndex)}
                   onClick={(event) => {
                     if (a.stack) {
                       goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
@@ -1535,7 +1878,7 @@ export default function App() {
                     setMenu({ x: e.clientX, y: e.clientY })
                     }}
                 >
-                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} alt="" loading="lazy" /> : <div className="black-image" />}
+                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={`${Math.round(model.columnWidth)}px`} alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
                   {a.stack && (
                     <span className="stack-mark">
                       <Icon name="layers" size={12} />
@@ -1551,19 +1894,18 @@ export default function App() {
                 </button>
               )
               return <>
-                {spacers.top > 0 && <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: spacers.top }} aria-hidden="true" />}
-                {items.map((a, localIndex) => hydratedIds.has(a.id)
-                  ? card(a, win.mount.startRow * model.columns + localIndex)
+                <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: masonryExtentCss(model) }} aria-hidden="true" />
+                {win.mounted.map(index => hydrated.has(index)
+                  ? card(assets[index], index)
                   : (
                     <div
-                      key={a.id}
+                      key={assets[index].id}
                       className="asset-card asset-card-virtual-placeholder"
-                      data-asset-id={a.id}
+                      data-asset-id={assets[index].id}
                       aria-hidden="true"
-                      style={{ height: rowHeightOf(win.mount.startRow * model.columns + localIndex) }}
+                      style={placementStyle(index)}
                     />
                   ))}
-                {spacers.bottom > 0 && <div className="gallery-window-spacer" style={{ gridColumn: "1 / -1", height: spacers.bottom }} aria-hidden="true" />}
               </>
             })()}
             {loading && <div className="empty-state" role="status">{tr("加载中")}</div>}
@@ -1623,9 +1965,16 @@ export default function App() {
           </div>
           <div className="tags">
             {currentTags.slice(0, expandedTags ? currentTags.length : 3).map((t) => (
-              <button key={t} onClick={() => notify(`${tr("标签：")}${t}`)}>
-                {t}
-              </button>
+              <span className="tag-chip" key={t}>
+                <span>{t}</span>
+                <button aria-label={`${tr("移除标签")} ${t}`} title={`${tr("移除标签")} ${t}`}
+                  onClick={() => {
+                    const remaining = currentTags.filter(tag => tag !== t)
+                    updateAssetMetadata(asset.project_id, asset.id, { tags: remaining })
+                      .then(updated => setAssets(old => old.map(item => item.id === updated.id ? mergeAssetDetail(item, updated) : item)))
+                      .catch(error => notify(errorMessage(error)))
+                  }}>×</button>
+              </span>
             ))}
             {currentTags.length > 3 && <button className="tags-toggle" aria-expanded={expandedTags} onClick={() => setExpandedTags(!expandedTags)}>{expandedTags ? tr("收起") : `+${currentTags.length - 3}`}</button>}
             {!addingTag && <button className="add-tag" onClick={() => { setAddingTag(true); setTagError("") }}><Icon name="plus" size={12} />{tr("添加标签")}</button>}
@@ -1669,16 +2018,20 @@ export default function App() {
           </div>}
           <section className="detail-section">
             <div className="field-heading">
-              <span>
-                {tr("提示词")}<small>{tr("原始信息")}</small>
+              <span className="prompt-tabs" role="group" aria-label={tr("提示词")}>
+                {asset.prompt2 ? <>
+                  <button className={promptVariant === 1 ? "active" : ""} aria-pressed={promptVariant === 1} onClick={() => { setPromptVariant(1); setExpandedPrompt(false) }}>{tr("提示词1")}</button>
+                  <button className={promptVariant === 2 ? "active" : ""} aria-pressed={promptVariant === 2} onClick={() => { setPromptVariant(2); setExpandedPrompt(false); setPromptEdit(null) }}>{tr("提示词2")}</button>
+                </> : tr("提示词")}
+                <small>{tr("原始信息")}</small>
               </span>
               <span className="field-actions">
-                {!promptEditorActive(promptEdit, project, asset?.id) && <button className="section-action" onClick={startPromptEdit}>{tr("编辑")}</button>}
+                {promptVariant === 1 && !promptEditorActive(promptEdit, project, asset?.id) && <button className="section-action" onClick={startPromptEdit}>{tr("编辑")}</button>}
                 <button
                   aria-label={tr("复制提示词")}
                   onClick={async () => {
-                    if (!asset.prompt) { notify(tr("无提示词记录")); return }
-                    try { await writeText(asset.prompt); notify("提示词已复制") }
+                    if (!shownPrompt) { notify(tr("无提示词记录")); return }
+                    try { await writeText(shownPrompt); notify("提示词已复制") }
                     catch { notify(String(tr("复制失败"))) }
                   }}
                 >
@@ -1686,7 +2039,7 @@ export default function App() {
                 </button>
               </span>
             </div>
-            {promptEditorActive(promptEdit, project, asset?.id) && promptEdit ? (
+            {promptVariant === 1 && promptEditorActive(promptEdit, project, asset?.id) && promptEdit ? (
               <div className="prompt-editor">
                 <textarea
                   className="detail-editor"
@@ -1710,10 +2063,20 @@ export default function App() {
               </div>
             ) : (
               <div className={`detail-reading ${expandedPrompt ? "expanded" : ""}`}>
-                <p id="asset-prompt">{asset.prompt || tr("无提示词记录")}</p>
+                <p id="asset-prompt">{shownPrompt || tr("无提示词记录")}</p>
                 <button className="reading-toggle" aria-expanded={expandedPrompt} aria-controls="asset-prompt" onClick={() => setExpandedPrompt(!expandedPrompt)}>{expandedPrompt ? tr("收起") : tr("展开提示词")}<Icon name={expandedPrompt ? "minus" : "down"} size={12} /></button>
               </div>
             )}
+          </section>
+          <section className="detail-section user-instruction-section">
+            <div className="field-heading">
+              <span>{tr("用户指令")}</span>
+              <button aria-label={tr("复制用户指令")} disabled={!asset.user_instruction}
+                onClick={() => writeText(asset.user_instruction).then(() => notify(tr("已复制"))).catch(() => notify(tr("复制失败")))}>
+                <Icon name="copy" size={16} />
+              </button>
+            </div>
+            <div className="detail-reading expanded"><p>{asset.user_instruction || tr("未提供用户指令")}</p></div>
           </section>
           {asset.introduction && <section className="detail-section">
             <div className="field-heading">
@@ -1747,6 +2110,108 @@ export default function App() {
               })}
             </div>
           </section>}
+          {referenceRights !== null && referenceRights.length > 0 && <section className="detail-section reference-rights-editor">
+            <div className="field-heading"><span>{tr("参考图权利管理")}</span><button className="section-action" disabled={!referenceDirty || referenceSaving} onClick={() => {
+              if (!asset || referenceSaving) return
+              const originId = asset.id
+              const originProject = project
+              const sentDraft = JSON.stringify(referenceRights)
+              setReferenceSaving(true)
+              updateAssetMetadata(originProject, originId, { references: referenceRights }).then(updated => {
+                if (referenceScopeRef.current === `${originProject}\u0000${originId}`) {
+                  setAssets(old => old.map(item => item.id === updated.id ? mergeAssetDetail(item, updated) : item))
+                  // Edits made while PATCH was in flight were not sent. Keep
+                  // them pending rather than incorrectly marking them saved.
+                  if (JSON.stringify(referenceDraftRef.current) === sentDraft) {
+                    referenceDirtyRef.current = false
+                    setReferenceDirty(false)
+                  }
+                }
+              }).catch(error => notify(errorMessage(error))).finally(() => setReferenceSaving(false))
+            }}>{referenceSaving ? tr("保存中") : tr("保存权利信息")}</button></div>
+            {referenceRights.map((reference, index) => <div className="reference-rights-row" key={`${reference.asset_id || reference.sha256 || index}`}>
+              <strong>{reference.asset_id || `${tr("参考图")} ${index + 1}`}</strong>
+              {([ ["copyright", ["unknown", "owned", "licensed", "third-party"]], ["portrait_consent", ["unknown", "granted", "not-required", "denied"]], ["redistribution", ["unknown", "allowed", "forbidden"]] ] as const).map(([field, choices]) => <label key={field}>{tr(field)}<select value={reference.rights?.[field] || "unknown"} onChange={event => {
+                setReferenceRights(old => old?.map((item, i) => i === index ? { ...item, rights: { ...item.rights, [field]: event.target.value } } : item) || null)
+                setReferenceDirty(true)
+              }}>{choices.map(choice => <option key={choice} value={choice}>{tr(choice)}</option>)}</select></label>)}
+              <label>{tr("署名")}<input value={reference.rights?.attribution || ""} onChange={event => { setReferenceRights(old => old?.map((item, i) => i === index ? { ...item, rights: { ...item.rights, attribution: event.target.value } } : item) || null); setReferenceDirty(true) }} /></label>
+              <div className="reference-use-permissions">{referenceUses.map(use => <button key={use} className={referencePermission(reference, use)} onClick={() => { const current = referencePermission(reference, use); const next = current === "undeclared" ? "allowed" : current === "allowed" ? "forbidden" : "undeclared"; setReferenceRights(old => old?.map((item, i) => i === index ? setReferencePermission(item, use, next) : item) || null); setReferenceDirty(true) }} aria-label={`${use}: ${referencePermission(reference, use)}`}>{use}: {referencePermission(reference, use) === "allowed" ? "✓" : referencePermission(reference, use) === "forbidden" ? "✕" : "—"}</button>)}</div>
+            </div>)}
+          </section>}
+          <section className="detail-section">
+            <div className="field-heading">
+              <span>{tr("版本树与上下文")}</span>
+              <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "查看")}</button>
+            </div>
+            <div className="version-context" role="group" aria-label={tr("版本树与上下文")}>
+              {(generationHistory?.events || []).slice(0, 3).map(event => <button className="related" key={event.id} onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}>
+                <span>{event.provider || tr("生成记录")}{event.model ? ` · ${event.model}` : ""}<small>{event.turn_index != null ? `${tr("轮次")} ${event.turn_index}` : timeLabel(event.created_at)}</small></span>
+              </button>)}
+              {!generationHistory?.events?.length && <span className="muted">{tr("暂无生成关系")}</span>}
+            </div>
+            {versionTreeOpen && <div className="version-tree" role="region" aria-label={tr("完整版本树")}>
+              <h4>{tr("生成关系")}</h4>
+              {generationTreeRows(generationHistory).map(({ event, depth, parentIds, relationTypes }) => {
+                return <button key={event.id} className="related generation-tree-row" style={{ marginLeft: depth * 14 }} onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}>
+                  <span><strong>{event.provider || tr("生成记录")}{event.model ? ` · ${event.model}` : ""}</strong>
+                    <small>{parentIds.length ? `${tr("关联上游")} ${parentIds.length}${relationTypes.length ? ` · ${relationTypes.join(", ")}` : ""}` : tr("根节点")}{event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}</small>
+                    <small>{event.effective_prompt || event.user_prompt || ""}</small></span>
+                </button>
+              })}
+              {(generationHistory?.relations || []).map(relation => {
+                const key = `${relation.child_generation_id}|${relation.parent_generation_id}|${relation.relation_type}`
+                const locked = relation.verification_level === "provider_verified"
+                return <div className="generation-relation-editor" key={key}>
+                  <span>{relation.parent_generation_id} → {relation.child_generation_id}</span>
+                  <select disabled={locked || relationBusy} aria-label={tr("关系类型")} value={relationDrafts[key] || relation.relation_type} onChange={event => setRelationDrafts(old => ({ ...old, [key]: event.target.value }))}>
+                    {relationTypes.map(type => <option key={type} value={type}>{tr(type)}</option>)}
+                  </select>
+                  {locked ? <small>{tr("提供方验证关系不可修改")}</small> : <>
+                    <button disabled={relationBusy} onClick={() => void mutateRelation(() => editGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, previousRelationType: relation.relation_type, relationType: relationDrafts[key] || relation.relation_type, evidence: relation.evidence }))}>{tr("保存关系")}</button>
+                    <button disabled={relationBusy} onClick={() => { if (window.confirm(tr("确认删除这条生成关系？"))) void mutateRelation(() => removeGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, relationType: relation.relation_type })) }}>{tr("删除关系")}</button>
+                  </>}
+                </div>
+              })}
+              {(generationHistory?.relation_candidates || []).filter(candidate => candidate.status !== "dismissed" && candidate.status !== "confirmed").map(candidate => <div className="generation-relation-editor" key={`${candidate.child_generation_id}|${candidate.parent_generation_id}`}>
+                <span>{tr("候选关系")}: {candidate.parent_generation_id} → {candidate.child_generation_id} ({Math.round((candidate.confidence || 0) * 100)}%)</span>
+                <button disabled={relationBusy} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: candidate.child_generation_id, parentGenerationId: candidate.parent_generation_id, relationType: candidate.suggested_relation_type || "derived_from", evidence: candidate.evidence }))}>{tr("确认关系")}</button>
+                <button disabled={relationBusy} onClick={() => void mutateRelation(() => dismissGenerationCandidate(project, candidate.child_generation_id, candidate.parent_generation_id))}>{tr("忽略候选")}</button>
+              </div>)}
+              {!!generationHistory?.events?.length && <div className="generation-relation-editor">
+                <button disabled={relationBusy} onClick={() => setNewRelation({ anchor: generationHistory.events[0].id, other: generationHistory.events.find(item => item.id !== generationHistory.events[0].id)?.id || "", direction: "candidate-parent", type: "edited_from" })}>{tr("添加生成关系")}</button>
+                {newRelation && <div className="generation-relation-create">
+                  <select aria-label={tr("当前生成")} value={newRelation.anchor} onChange={event => setNewRelation(old => old ? { ...old, anchor: event.target.value } : old)}>{generationHistory.events.map(event => <option value={event.id} key={event.id}>{event.provider || "Generation"} · {event.id.slice(0, 10)}</option>)}</select>
+                  <select aria-label={tr("关联生成")} value={newRelation.other} onChange={event => setNewRelation(old => old ? { ...old, other: event.target.value } : old)}>{[...generationHistory.events, ...(generationHistory.context_events || [])].filter(event => event.id !== newRelation.anchor).map(event => <option key={event.id} value={event.id}>{event.provider || "Generation"} · {event.id.slice(0, 10)}</option>)}</select>
+                  <select aria-label={tr("关系方向")} value={newRelation.direction} onChange={event => setNewRelation(old => old ? { ...old, direction: event.target.value } : old)}><option value="candidate-parent">{tr("关联项为上游")}</option><option value="candidate-child">{tr("关联项为下游")}</option></select>
+                  <select aria-label={tr("关系类型")} value={newRelation.type} onChange={event => setNewRelation(old => old ? { ...old, type: event.target.value } : old)}>{relationTypes.map(type => <option value={type} key={type}>{tr(type)}</option>)}</select>
+                  <button disabled={relationBusy || !newRelation.other || newRelation.other === newRelation.anchor} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: newRelation.direction === "candidate-child" ? newRelation.other : newRelation.anchor, parentGenerationId: newRelation.direction === "candidate-child" ? newRelation.anchor : newRelation.other, relationType: newRelation.type }))}>{tr("确认添加")}</button>
+                </div>}
+              </div>}
+              {!!generationHistory?.context_events?.length && <><h4>{tr("同对话候选")}</h4>{generationHistory.context_events.map(event => <div key={event.id} className="related"><span>{event.provider || tr("生成记录")}<small>{event.effective_prompt || event.user_prompt || ""}</small></span></div>)}</>}
+              <h4>{tr("版本历史")}</h4>
+              {(versions || []).map(v => <button key={v.id} className="related" onClick={() => selectHistoryAsset(v.id)}><span>{tr("版本")} {v.version_index}<small>{v.version_change || ""} · {timeLabel(v.created_at)}</small></span></button>)}
+              {versions && versions.length > 1 && <div className="version-compare">
+                <h4>{tr("版本对比")}</h4>
+                <div className="version-compare-selectors">
+                  <select aria-label={tr("基准版本")} value={versions.some(v => v.id === compareBaseId) ? compareBaseId : versions[0].id} onChange={event => setCompareBaseId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
+                  <select aria-label={tr("目标版本")} value={versions.some(v => v.id === compareTargetId) ? compareTargetId : versions[versions.length - 1].id} onChange={event => setCompareTargetId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
+                </div>
+                {(() => {
+                  const before = versions.find(v => v.id === compareBaseId) || versions[0]
+                  const after = versions.find(v => v.id === compareTargetId) || versions[versions.length - 1]
+                  return <>
+                    <div className="version-compare-images">{[before, after].map(v => <img key={v.id} alt={`${tr("版本")} ${v.version_index}`} src={v.medium_url || v.preview_url || v.image_url} loading="lazy" />)}</div>
+                    <div className="version-compare-fields">{([
+                      ["尺寸", `${before.width} × ${before.height}`, `${after.width} × ${after.height}`],
+                      ["提示词", before.prompt, after.prompt],
+                      ["版本", before.version_change || "", after.version_change || ""],
+                    ] as const).map(([field, left, right]) => <div key={field} className={left !== right ? "changed" : ""}><strong>{tr(field)}</strong><span>{left || "—"}</span><span>{right || "—"}</span></div>)}</div>
+                  </>
+                })()}
+              </div>}
+            </div>}
+          </section>
           {versions && versions.length > 1 && <section className="detail-section">
             <div className="field-heading">
               <span>{tr("版本")}</span>
@@ -1976,8 +2441,42 @@ export default function App() {
                     <div className="about-symbol">
                       <img className="app-logo" src={`/assets/gravityport-mark-${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : "light"}.svg`} width={40} height={40} alt="" aria-hidden="true" />
                     </div>
-                    <div className="about-identity"><h4>GravityPort</h4><span className="settings-badge" title={versionBadge}>{versionBadge}</span></div>
-                    <button className="neutral-button about-update" onClick={checkForUpdates}>{tr("检查更新")}</button>
+                    <div className="about-identity">
+                      <h4>GravityPort</h4>
+                      {(() => {
+                        const text = buildUpdateText(
+                          health?.productVersion || "",
+                          updateState,
+                          updateState.phase === "downloading" ? updateState.percent : 0,
+                          tr,
+                          language,
+                        )
+                        return <span className="settings-badge" title={text.badgeText}>{text.badgeText}</span>
+                      })()}
+                    </div>
+                    {(() => {
+                      const text = buildUpdateText(
+                        health?.productVersion || "",
+                        updateState,
+                        updateState.phase === "downloading" ? updateState.percent : 0,
+                        tr,
+                        language,
+                      )
+                      if (text.buttonLabel === null) return null
+                      if (text.downloadAndInstall) {
+                        return <button className="neutral-button about-update" onClick={downloadAndInstallUpdate} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
+                      }
+                      if (text.secondaryLabel) {
+                        return <div className="about-update about-update-actions">
+                          <button className="neutral-button" disabled>{text.buttonLabel}</button>
+                          <button className="neutral-button" onClick={cancelUpdateDownload}>{text.secondaryLabel}</button>
+                        </div>
+                      }
+                      if (updateState.phase === "available" && !text.downloadAndInstall) {
+                        return <button className="neutral-button about-update" onClick={openDownloadPage}>{text.buttonLabel}</button>
+                      }
+                      return <button className="neutral-button about-update" onClick={checkForUpdates} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
+                    })()}
                   </section>
                   <section className="settings-section release-notes" aria-labelledby="release-notes-title">
                     <div className="release-heading"><h4 id="release-notes-title">{tr("本次更新")}</h4><span>{tr("构建信息")}</span></div>
@@ -2111,6 +2610,25 @@ export default function App() {
                 {tr("取消")}</button>
               <button className="primary-button" onClick={remove}>
                 {tr("移至回收站")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {renameNoticeOpen && (
+        <div className="modal-layer" onClick={(e) => { if (e.target === e.currentTarget) dismissRenameNotice() }}>
+          <div className="delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="rename-notice-title">
+            <div className="delete-icon">
+              <Icon name="info" size={26} />
+            </div>
+            <h3 id="rename-notice-title">{tr("MOSA 现已更名为 GravityPort")}</h3>
+            <p>{tr("只是换了名字。你的素材、设置和浏览器插件都在原处，不需要做任何操作。")}</p>
+            <div className="delete-actions">
+              <button
+                className="primary-button"
+                onClick={dismissRenameNotice}
+              >
+                {tr("知道了")}
+              </button>
             </div>
           </div>
         </div>

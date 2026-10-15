@@ -65,16 +65,6 @@
 }.brandbar strong {
   letter-spacing: -.45px;
   font-weight: 600;
-}.traffic {
-  display: flex;
-}.traffic i {
-  border-radius: 50%;
-  background: #ff5f57;
-  box-shadow: inset 0 0 0 1px #00000008;
-}.traffic i:nth-child(2) {
-  background: #febc2e;
-}.traffic i:nth-child(3) {
-  background: #28c840;
 }.main-nav {
   display: flex;
   flex-direction: column;
@@ -862,11 +852,6 @@ img.black-image {
     display: none;
   }.user-button svg:last-child {
     display: none;
-  }.traffic {
-    gap: 4px;
-  }.traffic i {
-    width: 9px;
-    height: 9px;
   }.nav-row {
     justify-content: center;
   }.section-label {
@@ -947,17 +932,16 @@ img.black-image {
   width: auto;
   padding: 0 var(--space-3) var(--space-4);
   border-right: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}.sidebar > * {
+  flex-shrink: 0;
 }.brandbar {
-  height: var(--space-12);
+  height: var(--space-14);
   gap: var(--space-2);
 }.brandbar strong {
   font-size: 12px;
   line-height: var(--space-4);
-}.traffic {
-  gap: var(--space-1);
-}.traffic i {
-  width: var(--space-3);
-  height: var(--space-3);
 }.main-nav {
   gap: var(--space-1);
 }.nav-row {
@@ -992,7 +976,7 @@ img.black-image {
   padding: 0 var(--space-3);
   min-height: 0;
 }.toolbar {
-  height: var(--space-12);
+  height: var(--space-14);
   gap: var(--space-2);
 }.toolbar-left {
   gap: var(--space-1);
@@ -1022,6 +1006,8 @@ img.black-image {
   grid-auto-rows: max-content;
   align-content: start;
   align-items: start;
+  position: relative;
+  container-type: inline-size;
 }.asset-card {
   min-height: 0;
   border-radius: var(--radius-small);
@@ -1032,7 +1018,48 @@ img.black-image {
 }.app .asset-card .black-image {
   inset: 0;
   border-radius: inherit;
-}.app .asset-card::after {
+}
+.prompt-tabs { display: inline-flex; align-items: center; gap: 6px; }
+.prompt-tabs > button { border: 0; background: transparent; color: var(--ink-secondary); padding: 4px 6px; cursor: pointer; border-radius: 5px; }
+.prompt-tabs > button.active { color: var(--ui-text); background: var(--ui-hover); font-weight: 600; }
+.user-instruction-section .detail-reading p { white-space: pre-wrap; }
+.tag-chip { display: inline-flex; align-items: center; gap: 3px; padding-left: 7px; border-radius: 6px; background: var(--ui-hover); }
+.tag-chip button { font-size: 14px; line-height: 1; padding: 3px 6px; }
+.group-menu-dismiss { position: fixed; inset: 0; z-index: 101; }
+.group-manage-menu { position: fixed; z-index: 102; display: flex; flex-direction: column; gap: 2px; width: 214px; padding: 8px; border-radius: 10px; background: var(--ui-panel); color: var(--ui-text); border: 1px solid var(--ui-line); box-shadow: 0 12px 40px #0004; }
+.group-manage-menu > strong { padding: 5px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-manage-menu > button { text-align: left; border: 0; border-radius: 5px; background: transparent; color: inherit; padding: 6px 8px; cursor: pointer; }
+.group-manage-menu > button:hover { background: var(--ui-hover); }
+.group-color-choices { display: flex; gap: 5px; padding: 8px 4px; }
+.group-color-choices button { width: 19px; height: 19px; border-radius: 50%; border: 1px solid #fff5; cursor: pointer; }
+.group-dialog-backdrop { position: fixed; inset: 0; z-index: 105; display: grid; place-items: center; background: #0007; }
+.group-dialog { width: min(380px, calc(100vw - 40px)); max-height: 80vh; overflow: auto; padding: 24px; border: 1px solid var(--ui-line); border-radius: 12px; background: var(--ui-panel); color: var(--ui-text); box-shadow: 0 18px 56px #0005; }
+.group-dialog h3 { margin: 0 0 16px; }
+.group-dialog input,.group-dialog select { width: 100%; padding: 8px; border: 1px solid var(--ui-line); border-radius: 6px; color: inherit; background: transparent; }
+.group-dialog-actions { margin-top: 24px; display: flex; justify-content: flex-end; gap: 8px; }
+.group-dialog-actions button { border: 1px solid var(--ui-line); border-radius: 6px; padding: 7px 12px; color: inherit; background: var(--ui-hover); cursor: pointer; }
+.group-stats-data { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.version-tree { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }
+.generation-tree-row { border-left: 1px solid var(--ui-accent); max-width: 100%; }
+.generation-relation-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 7px; border: 1px solid var(--ui-line); border-radius: 6px; overflow-wrap: anywhere; }
+.generation-relation-editor > span { flex: 1 1 100%; font-size: 11px; }
+.generation-relation-editor button, .generation-relation-editor select, .generation-relation-create select { min-width: 0; max-width: 100%; border: 1px solid var(--ui-line); border-radius: 5px; background: var(--ui-panel); color: var(--ui-text); padding: 5px; cursor: pointer; }
+.generation-relation-create { display: grid; gap: 6px; width: 100%; }
+.reference-rights-editor .reference-rights-row { display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--ui-line); }
+.reference-rights-row label { display: grid; gap: 3px; font-size: 12px; }
+.reference-rights-row input, .reference-rights-row select { min-width: 0; width: 100%; border: 1px solid var(--ui-line); background: var(--ui-panel); color: var(--ui-text); padding: 5px; border-radius: 5px; }
+.reference-use-permissions { display: flex; gap: 4px; flex-wrap: wrap; }
+.reference-use-permissions button { font-size: 10px; border: 1px solid var(--ui-line); border-radius: 5px; padding: 4px; }
+.reference-use-permissions button.allowed { color: #218a64; }
+.reference-use-permissions button.forbidden { color: #b85b59; }
+.version-compare { border-top: 1px solid var(--ui-line); margin-top: 10px; padding-top: 10px; }
+.version-compare-selectors, .version-compare-images { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.version-compare-selectors select { min-width: 0; max-width: 100%; color: var(--ui-text); background: var(--ui-panel); border: 1px solid var(--ui-line); border-radius: 6px; padding: 6px; }
+.version-compare-images img { width: 100%; height: 128px; object-fit: contain; background: var(--ui-inset); }
+.version-compare-fields > div { display: grid; grid-template-columns: 55px 1fr 1fr; gap: 5px; padding: 6px 0; border-bottom: 1px solid var(--ui-line); word-break: break-word; }
+.version-compare-fields > div.changed { border-left: 2px solid var(--ui-accent); padding-left: 5px; }
+.version-compare-fields strong, .version-compare-fields span { font-size: 11px; font-weight: 400; }
+.app .asset-card::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -1057,7 +1084,7 @@ img.black-image {
   padding: 0 var(--space-4) var(--space-4);
   border-radius: var(--radius-panel) 0 0 var(--radius-panel);
 }.detail-heading {
-  height: var(--space-12);
+  height: var(--space-14);
 }.asset-summary {
   gap: var(--space-3);
 }.summary-image {
@@ -2619,6 +2646,9 @@ img.black-image {
   grid-column: 3;
   grid-row: 1;
   justify-self: end;
+}.app .about-update-actions {
+  display: flex;
+  gap: var(--space-2);
 }.app .about-symbol {
   width: var(--space-10);
   height: var(--space-10);
@@ -3164,4 +3194,32 @@ video.viewer-image {
   border: 1px solid var(--ui-accent);
   pointer-events: none;
   z-index: 5;
+}
+
+/* Native window chrome: the Electron/macOS hidden-inset caption overlaps the
+   first 56px of the page. Keep the first sidebar row as an actual titlebar
+   safe region, not an overlay on top of navigation or a fake control group. */
+.app .brandbar {
+  height: var(--space-14);
+  min-height: var(--space-14);
+  flex-shrink: 0;
+  align-items: center;
+}
+.app.native-desktop .brandbar {
+  /* The title's right edge lines up with the nav rows' counts, which sit
+     inside the rows' own var(--space-2) inline padding. */
+  justify-content: flex-end;
+  padding-inline-end: var(--space-2);
+}
+.app.native-darwin .brandbar {
+  /* Native buttons sit at x=16..75, centred on y=25 (trafficLightPosition
+     16,18). Keep the title clear of them when the sidebar is narrow and
+     centre it on their row. */
+  padding-inline-start: calc(85px - var(--space-3));
+  padding-bottom: 6px;
+}
+.app.native-darwin .brandbar strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

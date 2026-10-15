@@ -68,6 +68,25 @@ describe("normalizeAsset", () => {
     assert.equal(empty.stack, null);
     assert.equal(empty.width >= 1 && empty.height >= 1, true);
   });
+
+  it("preserves both provenance prompts and sizes responsive derivatives correctly", () => {
+    const asset = adapterModule.normalizeAsset({
+      id: "a", prompt: "Main caption", source: {
+        generation_request_prompt: "Tool prompt", user_message: "Draw a forest",
+      }, thumbnail_url: "/t.webp", medium_url: "/m.webp", preview_url: "/p.webp",
+      thumbnail_ready: true, medium_ready: true, preview_ready: true,
+      business_fields: { width: 941, height: 1672 },
+    });
+    assert.equal(asset.prompt, "Main caption");
+    assert.equal(asset.prompt2, "Tool prompt");
+    assert.equal(asset.user_instruction, "Draw a forest");
+    const srcset = adapterModule.galleryImageSrcSet(asset);
+    assert.match(srcset, /\/t\.webp 225w/);
+    assert.match(srcset, /\/m\.webp 540w/);
+    assert.match(srcset, /\/p\.webp 900w/);
+    const legacy = adapterModule.normalizeAsset({ id: "legacy", business_fields: { user_message: "Old instruction" } });
+    assert.equal(legacy.user_instruction, "Old instruction");
+  });
 });
 
 describe("fetchAssetPage query mapping", () => {
@@ -194,6 +213,53 @@ describe("batch mutations", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("feature parity API contracts", () => {
+  it("exports all unique group pages and rejects repeated cursors", async () => {
+    const original = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url) => {
+      const parsed = new URL(String(url), "http://localhost");
+      calls.push(parsed);
+      const cursor = parsed.searchParams.get("cursor");
+      const payload = cursor === "next" ? { assets: [{ id: "b" }, { id: "c" }], page: { nextCursor: null } }
+        : { assets: [{ id: "a" }, { id: "b" }], page: { nextCursor: "next" } };
+      return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+    };
+    try {
+      const results = await adapterModule.fetchRawGroupAssets("default", "灵感");
+      assert.deepEqual(results.map(x => x.id), ["a", "b", "c"]);
+      assert.equal(calls[0].searchParams.get("group"), "灵感");
+      assert.equal(calls[1].searchParams.get("cursor"), "next");
+      globalThis.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ assets: [], page: { nextCursor: "loop" } }) });
+      await assert.rejects(adapterModule.fetchRawGroupAssets("default", "group"), /pagination stalled/);
+    } finally { globalThis.fetch = original; }
+  });
+
+  it("uses explicit user-confirmed generation relation endpoints", async () => {
+    const original = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, init = {}) => {
+      calls.push({ url: String(url), method: init.method, body: JSON.parse(init.body || "{}") });
+      return { ok: true, status: 200, text: async () => JSON.stringify({ relation: {}, candidate: {} }) };
+    };
+    try {
+      const item = { childGenerationId: "child", parentGenerationId: "parent", relationType: "edited_from" };
+      await adapterModule.createGenerationRelation("default", item);
+      await adapterModule.editGenerationRelation("default", { ...item, previousRelationType: "derived_from" });
+      await adapterModule.removeGenerationRelation("default", item);
+      await adapterModule.dismissGenerationCandidate("default", "child", "parent");
+      assert.deepEqual(calls.map(c => [c.method, c.url]), [
+        ["POST", "/api/generation-relations"], ["PATCH", "/api/generation-relations"],
+        ["DELETE", "/api/generation-relations"], ["PATCH", "/api/generation-relation-candidates"],
+      ]);
+      assert.equal(calls[0].body.verificationLevel, "user_confirmed");
+      assert.equal(calls[0].body.evidence.user_confirmed_relation, true);
+      assert.equal(calls[1].body.previousRelationType, "derived_from");
+      assert.equal(calls[3].body.status, "dismissed");
+    } finally { globalThis.fetch = original; }
   });
 });
 

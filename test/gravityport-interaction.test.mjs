@@ -17,7 +17,7 @@ let modules;
 let tempRoot;
 before(async () => {
   tempRoot = await mkdtemp(join(tmpdir(), "mosa-gp-interaction-"));
-  const sources = ["selection.ts", "prompt-edit.ts", "keyboard.ts", "gallery-window.ts"]
+  const sources = ["selection.ts", "prompt-edit.ts", "keyboard.ts", "gallery-window.ts", "version-tree.ts", "feature-parity.ts"]
     .map(name => join(uiRoot, "src", name));
   execFileSync(join(repositoryRoot, "node_modules", ".bin", "tsc"), [
     ...sources, "--outDir", tempRoot, "--module", "esnext", "--target", "es2022",
@@ -28,6 +28,8 @@ before(async () => {
     promptEdit: await import(join(tempRoot, "prompt-edit.js")),
     keyboard: await import(join(tempRoot, "keyboard.js")),
     galleryWindow: await import(join(tempRoot, "gallery-window.js")),
+    versionTree: await import(join(tempRoot, "version-tree.js")),
+    featureParity: await import(join(tempRoot, "feature-parity.js")),
   };
 });
 after(async () => {
@@ -299,5 +301,102 @@ describe("gallery window geometry", () => {
     const spacersRight = gallerySpacerHeights(modelRight, 0, 0);
     assert.deepEqual(spacersLeft, { top: 0, bottom: 400 });
     assert.deepEqual(spacersRight, { top: 0, bottom: 200 });
+  });
+});
+
+describe("production masonry geometry", () => {
+  it("preserves every source ratio and places into the shortest column", () => {
+    const { buildMasonryModel } = modules.galleryWindow;
+    const model = buildMasonryModel([2, 0.5, 1, 0.8, 3], 2, 100, 4);
+    assert.deepEqual(model.placements.map(item => item.column), [0, 1, 1, 1, 0]);
+    assert.deepEqual(model.placements.map(item => item.height), [200, 50, 100, 80, 300]);
+    assert.deepEqual(model.placements.map(item => item.top), [0, 0, 54, 158, 204]);
+    assert.equal(model.totalHeight, 504);
+  });
+
+  it("has no overlap or unfilled gap inside each column", () => {
+    const { buildMasonryModel } = modules.galleryWindow;
+    const model = buildMasonryModel([1.8, 0.5, 1, 2.3, 0.6, 0.75, 1.5, 0.4, 1.9], 3, 240, 5);
+    for (let column = 0; column < 3; column++) {
+      const cards = model.placements.filter(item => item.column === column);
+      for (let i = 1; i < cards.length; i++)
+        assert.ok(Math.abs(cards[i].top - cards[i - 1].top - cards[i - 1].height - 5) < 0.001);
+    }
+  });
+
+  it("retains viewport cards in bounded 4249-item virtual windows", () => {
+    const { buildMasonryModel, locateMasonryWindow } = modules.galleryWindow;
+    const model = buildMasonryModel(Array.from({ length: 4249 }, (_, i) => 0.5 + (i % 7) / 3), 5, 200, 4);
+    for (const scroll of [0, 1500, 12000, model.totalHeight - 900]) {
+      const ids = locateMasonryWindow(model, scroll, 900, 1200, 380);
+      assert.ok(ids.length > 0 && ids.length <= 380);
+      const visible = model.placements.flatMap((p, i) => p.top < scroll + 900 && p.top + p.height > scroll ? [i] : []);
+      for (const id of visible) assert.ok(ids.includes(id), `missing visible card ${id}`);
+    }
+  });
+});
+
+describe("generation relationship tree parity", () => {
+  it("orders proven relationships by depth without treating context as ancestry", () => {
+    const events = [{ id: "child" }, { id: "root" }, { id: "sibling" }];
+    const rows = modules.versionTree.generationTreeRows({
+      events, context_events: [{ id: "candidate" }],
+      relations: [
+        { parent_generation_id: "root", child_generation_id: "child", relation_type: "edited_from" },
+        { parent_generation_id: "root", child_generation_id: "sibling", relation_type: "derived_from" },
+      ],
+    });
+    assert.deepEqual(rows.map(row => [row.event.id, row.depth]), [["root", 0], ["child", 1], ["sibling", 1]]);
+    assert.equal(rows[1].relationTypes[0], "edited_from");
+    assert.ok(!rows.some(row => row.event.id === "candidate"));
+  });
+
+  it("bounds cyclic data and shows multi-parent events only once", () => {
+    const events = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    const rows = modules.versionTree.generationTreeRows({ events, relations: [
+      { parent_generation_id: "a", child_generation_id: "b" },
+      { parent_generation_id: "b", child_generation_id: "a" },
+      { parent_generation_id: "c", child_generation_id: "b" },
+    ] });
+    assert.deepEqual(new Set(rows.map(row => row.event.id)), new Set(["a", "b", "c"]));
+    assert.equal(rows.length, 3);
+  });
+});
+
+describe("legacy feature parity helpers", () => {
+  it("group export removes local paths and media URLs without rewriting authored text", () => {
+    const input = {
+      id: "asset-1", prompt: "/Users/this-is-user-authored-text",
+      image_path: "/Users/test/private.png", image_url: "/library/default/images/private.png",
+      business_fields: { note: "https://example.com/keep-as-text", cowart_project_dir: "/Users/me/secret" },
+      source: { path: "/Users/me/private", prompt_file: "/Users/me/prompt.txt", user_message: "Keep this" },
+      references: [{ attachment_url: "/library/default/attachments/private", rights: { attribution: "Artist" } }],
+    };
+    const exported = modules.featureParity.sanitizeAssetForExport(input);
+    assert.deepEqual(exported, {
+      id: "asset-1", prompt: input.prompt,
+      business_fields: { note: "https://example.com/keep-as-text" },
+      source: { user_message: "Keep this" },
+      references: [{ rights: { attribution: "Artist" } }],
+    });
+    assert.equal(input.image_path, "/Users/test/private.png", "must not mutate the input");
+  });
+
+  it("reference-use permissions remain exclusive and preserve recipe identity", () => {
+    const original = {
+      asset_id: "source-A", sha256: "digest", role: "identity", scope: ["shot-1"], applied: true,
+      rights: { copyright: "licensed" },
+      allowed_uses: ["subject", "identity"], forbidden_uses: ["style"],
+    };
+    const next = modules.featureParity.setReferencePermission(original, "identity", "forbidden");
+    assert.equal(modules.featureParity.referencePermission(next, "identity"), "forbidden");
+    assert.deepEqual(next.allowed_uses, ["subject"]);
+    assert.deepEqual(next.forbidden_uses, ["identity", "style"]);
+    const cleared = modules.featureParity.setReferencePermission(next, "identity", "undeclared");
+    assert.equal(modules.featureParity.referencePermission(cleared, "identity"), "undeclared");
+    for (const field of ["asset_id", "sha256", "role", "scope", "applied", "rights"]) {
+      assert.deepEqual(next[field], original[field], `rights edit cannot alter ${field}`);
+    }
+    assert.deepEqual(original.allowed_uses, ["subject", "identity"]);
   });
 });
