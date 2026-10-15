@@ -516,7 +516,7 @@ export default function App() {
   useEffect(() => {
     const api = desktopAPI()
     if (!api?.onUpdateDownloadProgress) return
-    return api.onUpdateDownloadProgress(progress => {
+    api.onUpdateDownloadProgress(progress => {
       const pct = Number(progress?.percent)
       setUpdateState(current => current.phase === "downloading"
         ? { ...current, percent: Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0 }

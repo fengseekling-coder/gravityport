@@ -19,7 +19,7 @@ type ElectronAPI = {
   downloadAndInstallUpdate?: () => Promise<unknown>
   cancelUpdateDownload?: () => Promise<unknown>
   onUpdateDownloadProgress?: (callback: (progress: { percent?: number; [key: string]: unknown }) => void) => unknown
-  openDownloadPage?: () => Promise<unknown>
+  openDownloadPage?: () => Promise<{ ok?: boolean }>
   reportRendererReady?: () => Promise<unknown>
   getRenameNoticeState?: () => Promise<{ shouldShow?: boolean }>
   acknowledgeRenameNotice?: () => Promise<unknown>
