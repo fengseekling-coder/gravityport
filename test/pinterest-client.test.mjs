@@ -493,3 +493,100 @@ test("Pinterest: no sensitive data in logs", async (t) => {
   assert.doesNotMatch(allLogs, /refresh_token_123/);
   assert.doesNotMatch(allLogs, new RegExp(state));
 });
+
+test("Pinterest: refresh without new refresh_token keeps original value", async (t) => {
+  const userDataDir = await mkdtemp(join(tmpdir(), "pinterest-"));
+  t.after(() => rm(userDataDir, { recursive: true, force: true }));
+  
+  const { fakeTokenServer, fakePinterestApi } = createFakeServices();
+  const tokenPort = await startServer(fakeTokenServer);
+  const apiPort = await startServer(fakePinterestApi);
+  t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
+  
+  // Create a custom token server that doesn't return refresh_token on refresh
+  const customTokenServer = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      try {
+        const data = JSON.parse(body);
+        if (data.grant === "authorization_code") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            access_token: "access_token_123",
+            refresh_token: "refresh_token_123",
+            expires_in: 2592000,
+            refresh_token_expires_in: 5184000,
+            scope: "user_accounts:read,boards:read",
+          }));
+        } else if (data.grant === "refresh_token") {
+          // Don't return new refresh_token or refresh_token_expires_in
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            access_token: "refreshed_access_token",
+            expires_in: 2592000,
+            scope: "user_accounts:read,boards:read",
+          }));
+        }
+      } catch {
+        res.writeHead(400);
+        res.end();
+      }
+    });
+  });
+  
+  const customTokenPort = await startServer(customTokenServer);
+  t.after(() => Promise.all([stopServer(customTokenServer), stopServer(fakePinterestApi)]));
+  
+  const fetchImpl = (url, options) => {
+    const targetUrl = url.replace("http://token", `http://127.0.0.1:${customTokenPort}`)
+                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
+    return httpFetch(targetUrl, options);
+  };
+  
+  const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
+  const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
+  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
+  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  t.after(() => {
+    process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
+    process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
+  });
+  
+  const client = createPinterestClient({ userDataDir, fetchImpl });
+  const { authorizeUrl } = client.beginConnect({ port: 43517 });
+  const state = new URL(authorizeUrl).searchParams.get("state");
+  
+  await client.completeConnect({ code: "valid_code", state });
+  
+  const tokenPath = join(userDataDir, "pinterest-auth.json");
+  let tokenContent = JSON.parse(await readFile(tokenPath, "utf-8"));
+  const originalRefreshToken = tokenContent.refresh_token;
+  const originalRefreshExpires = tokenContent.refresh_expires_at;
+  
+  // Trigger refresh by simulating access token near expiry (but refresh token still valid)
+  const futureTime = Date.now() + (29 * 24 * 60 * 60 * 1000); // 29 days later
+  const clientWithFuture = createPinterestClient({ 
+    userDataDir, 
+    fetchImpl,
+    now: () => futureTime,
+  });
+  
+  await clientWithFuture.listBoards();
+  
+  tokenContent = JSON.parse(await readFile(tokenPath, "utf-8"));
+  assert.equal(tokenContent.refresh_token, originalRefreshToken);
+  assert.equal(tokenContent.refresh_expires_at, originalRefreshExpires);
+  assert.equal(tokenContent.access_token, "refreshed_access_token");
+});
+
+test("Pinterest: status when not connected has needsReconnect false", async (t) => {
+  const userDataDir = await mkdtemp(join(tmpdir(), "pinterest-"));
+  t.after(() => rm(userDataDir, { recursive: true, force: true }));
+  
+  const client = createPinterestClient({ userDataDir });
+  
+  const status = await client.status();
+  assert.equal(status.connected, false);
+  assert.equal(status.needsReconnect, false);
+});
