@@ -16,6 +16,7 @@ import { generationTreeRows } from "./version-tree"
 import { computeConversationRounds, conversationRoundRows, roundLine } from "./conversation-rounds"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
 import { resolveReferences } from "./inspector-info"
+import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, removeTagFromStored, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
   type MasonryModel,
@@ -111,15 +112,6 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
 }
-
-/** Same curated capture/bridge groups as the pre-React MOSA sidebar. Manual
- * imports and arbitrary historical source names are not smart groups. */
-const SMART_SOURCE_GROUPS = [
-  ["web-chatgpt", "ChatGPT"], ["web-gemini", "Gemini"],
-  ["web-flow", "Flow"], ["web-google-ai-studio", "Google AI Studio"],
-  ["codex-generated", "Codex"], ["grok-generated", "Grok"],
-  ["cowart-generated", "Cowart"],
-] as const
 
 const GALLERY_PAGE_SIZE = 100
 // Virtualization thresholds mirror the gallery QA budgets: below this many
@@ -311,6 +303,11 @@ export default function App() {
   const [expandedIntro, setExpandedIntro] = useState(false)
   const [expandedInstruction, setExpandedInstruction] = useState(false)
   const [expandedTags, setExpandedTags] = useState(false)
+  // Collapsed tag-row capacity: how many items (vendor name + visible tags)
+  // fit on two lines with "+N" and "添加标签" at the end. Measured, not guessed.
+  const [tagFitCount, setTagFitCount] = useState(0)
+  const tagsRowRef = useRef<HTMLDivElement>(null)
+  const tagsMeasureRef = useRef<HTMLDivElement>(null)
   const [addingTag, setAddingTag] = useState(false)
   const [tagDraft, setTagDraft] = useState("")
   const [tagError, setTagError] = useState("")
@@ -862,6 +859,13 @@ export default function App() {
     [generationHistory, asset?.id],
   )
   const currentTags = asset ? asset.tags : []
+  // Source type read the same way inspector-info reads it; the smart-group
+  // sources get a vendor chip first, everything else just shows stored tags.
+  const tagSourceType = asset ? String(asset.source?.type || (asset as MosaAsset & { source_type?: string }).source_type || "") : ""
+  const tagVendor = vendorLabelFor(tagSourceType)
+  const tagItems = [...(tagVendor ? [tagVendor] : []), ...visibleTags(currentTags, tagSourceType)]
+  const tagItemsKey = tagItems.join("\n")
+  const collapsedTagCount = expandedTags ? tagItems.length : Math.max(1, Math.min(tagFitCount, tagItems.length))
   const visible = assets
   const notify = (text: string) => setToast({ text: tr(text) })
   const notifyWithAction = (text: string, action: ToastAction, duration = 6000) =>
@@ -874,6 +878,34 @@ export default function App() {
     const timer = setTimeout(() => setToast(null), toast.duration ?? 2600)
     return () => clearTimeout(timer)
   }, [toast, importing])
+  // Collapsed tag-row fitting: measure every item's natural width in a hidden
+  // copy of the row, then solve how many fit on two lines with "+N" and
+  // "添加标签" trailing. Re-runs when the container resizes, the tags change,
+  // or the fit count itself moves — the "+N" label width depends on it, and
+  // the sequence converges because a shorter label never fits fewer items.
+  useLayoutEffect(() => {
+    const row = tagsRowRef.current
+    const measureLayer = tagsMeasureRef.current
+    if (!row || !measureLayer || expandedTags) return
+    const solve = () => {
+      const gapValue = Number.parseFloat(getComputedStyle(row).columnGap)
+      const itemWidths = Array.from(measureLayer.querySelectorAll<HTMLElement>("[data-tag-measure-item]")).map(el => el.offsetWidth)
+      const toggleWidth = measureLayer.querySelector<HTMLElement>("[data-tag-measure-toggle]")?.offsetWidth ?? 0
+      const addWidth = measureLayer.querySelector<HTMLElement>("[data-tag-measure-add]")?.offsetWidth ?? 0
+      setTagFitCount(fitTagsInTwoLines({
+        itemWidths,
+        containerWidth: row.clientWidth,
+        gap: Number.isFinite(gapValue) ? gapValue : 0,
+        toggleWidth,
+        addWidth,
+      }))
+    }
+    solve()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(solve)
+    observer.observe(row)
+    return () => observer.disconnect()
+  }, [expandedTags, tagItemsKey, tagFitCount])
   // The same refresh the blank-area 刷新 menu entries run: a visible notice
   // plus a navigation-key reload of the current view.
   const refreshCurrentView = () => {
@@ -2677,20 +2709,36 @@ export default function App() {
                 <span className="property-tag" key={label} title={`${tr(label)}: ${tr(value)}`} aria-label={`${tr(label)}: ${tr(value)}`}>{tr(value)}</span>
               ))}
           </div>
-          <div className="tags">
-            {currentTags.slice(0, expandedTags ? currentTags.length : 3).map((t) => (
-              <span className="tag-chip" key={t}>
-                <span>{t}</span>
-                <button aria-label={`${tr("移除标签")} ${t}`} title={`${tr("移除标签")} ${t}`}
-                  onClick={() => {
-                    const remaining = currentTags.filter(tag => tag !== t)
-                    updateAssetMetadata(asset.project_id, asset.id, { tags: remaining })
-                      .then(updated => setAssets(old => old.map(item => item.id === updated.id ? mergeAssetDetail(item, updated) : item)))
-                      .catch(error => notify(errorMessage(error)))
-                  }}>×</button>
-              </span>
+          <div className="tags" ref={tagsRowRef}>
+            <div className="tags-measure" aria-hidden="true" ref={tagsMeasureRef}>
+              {tagItems.map((t, index) => (
+                <span className={`tag-chip${index === 0 && tagVendor ? " tag-vendor" : ""}`} data-tag-measure-item key={`measure-${index}-${t}`}>
+                  {t}
+                  {!(index === 0 && tagVendor) && <button tabIndex={-1}>×</button>}
+                </span>
+              ))}
+              <button className="tags-toggle" data-tag-measure-toggle>{`+${Math.max(0, tagItems.length - collapsedTagCount)}`}</button>
+              <button className="add-tag" data-tag-measure-add><Icon name="plus" size={12} />{tr("添加标签")}</button>
+            </div>
+            {(expandedTags ? tagItems : tagItems.slice(0, collapsedTagCount)).map((t, index) => (
+              index === 0 && tagVendor ? (
+                <span className="tag-chip tag-vendor" key={`vendor-${t}`}>{t}</span>
+              ) : (
+                <span className="tag-chip" key={`tag-${t}`}>
+                  <span>{t}</span>
+                  <button aria-label={`${tr("移除标签")} ${t}`} title={`${tr("移除标签")} ${t}`}
+                    onClick={() => {
+                      const remaining = removeTagFromStored(currentTags, t)
+                      updateAssetMetadata(asset.project_id, asset.id, { tags: remaining })
+                        .then(updated => setAssets(old => old.map(item => item.id === updated.id ? mergeAssetDetail(item, updated) : item)))
+                        .catch(error => notify(errorMessage(error)))
+                    }}>×</button>
+                </span>
+              )
             ))}
-            {currentTags.length > 3 && <button className="tags-toggle" aria-expanded={expandedTags} onClick={() => setExpandedTags(!expandedTags)}>{expandedTags ? tr("收起") : `+${currentTags.length - 3}`}</button>}
+            {expandedTags
+              ? <button className="tags-toggle" aria-expanded="true" onClick={() => setExpandedTags(false)}>{tr("收起")}</button>
+              : (collapsedTagCount < tagItems.length && <button className="tags-toggle" aria-expanded="false" onClick={() => setExpandedTags(true)}>{`+${tagItems.length - collapsedTagCount}`}</button>)}
             {!addingTag && <button className="add-tag" onClick={() => { setAddingTag(true); setTagError("") }}><Icon name="plus" size={12} />{tr("添加标签")}</button>}
             {addingTag && <form className="tag-editor" onSubmit={e => {
               e.preventDefault()
