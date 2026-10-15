@@ -1521,7 +1521,8 @@ img.black-image {
   --ui-panel: #fafafa;
   --ui-work: #dedede;
   --ui-raised: #fff;
-  --ui-accent: #526c86;
+  --ui-accent: #009a1a;
+  --focus-ring: #009a1a;
   --ui-primary: #343434;
   --ui-primary-text: #fff;
   --ui-danger: #c45050;
@@ -1544,7 +1545,8 @@ img.black-image {
   --ui-panel: #242424;
   --ui-work: #343434;
   --ui-raised: #2c2c2c;
-  --ui-accent: #b7cce0;
+  --ui-accent: #39ff14;
+  --focus-ring: #39ff14;
   --ui-primary: #e3e3e3;
   --ui-primary-text: #292929;
   --ui-danger: #ef9494;
@@ -3354,7 +3356,7 @@ video.viewer-image {
   background: none;
   border: 0;
   padding: 0;
-  color: #659076;
+  color: var(--ui-accent);
   font-size: 12px;
   line-height: var(--space-4);
   cursor: pointer;
