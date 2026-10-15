@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react"
 import Icon from "./Icon"
 import { translate, type Language } from "./i18n"
+import { columnOptions } from "./gallery-columns"
 
-export const columnOptions = [2, 4, 5, 6, 8]
+export { columnOptions } from "./gallery-columns"
 
 export default function ColumnControl({ value, onChange, language }: {
   value: number
@@ -17,6 +18,8 @@ export default function ColumnControl({ value, onChange, language }: {
   const id = useId()
   const tr = (text: string) => translate(text, language)
   const index = columnOptions.indexOf(value)
+  const maxIndex = columnOptions.length - 1
+  const fillStep = 100 / maxIndex
   useEffect(() => {
     if (!open) return
     if (focusWhenOpened.current) input.current?.focus({ preventScroll: true })
@@ -39,7 +42,7 @@ export default function ColumnControl({ value, onChange, language }: {
       <Icon name="grid" size={16} /><span>{value}</span>
     </button>
     {open && <div id={id} className="column-popover" role="group" aria-label={tr("列数")}>
-      <input ref={input} className="column-range" aria-label={tr("列数")} aria-valuetext={`${value} ${tr("列")}`} type="range" min={0} max={4} step={1} value={index} style={{ "--range-fill": `${index * 25}%` } as CSSProperties} onChange={event => onChange(columnOptions[Number(event.target.value)])} />
+      <input ref={input} className="column-range" aria-label={tr("列数")} aria-valuetext={`${value} ${tr("列")}`} type="range" min={0} max={maxIndex} step={1} value={index} style={{ "--range-fill": `${index * fillStep}%` } as CSSProperties} onChange={event => onChange(columnOptions[Number(event.target.value)])} />
       <div className="column-ticks">{columnOptions.map(count => <button key={count} className={value === count ? "selected" : ""} aria-label={`${count} ${tr("列")}`} aria-pressed={value === count} onClick={() => onChange(count)}>{count}</button>)}</div>
     </div>}
   </div>

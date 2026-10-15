@@ -3309,3 +3309,12 @@ video.viewer-image {
   color: #d74742;
   font-size: 12px;
 }
+
+/* Task 139 wiring: visual model status lines, group statistics facets, empty-state hint */
+.app .model-description.model-description-stacked { flex-direction: column; align-items: flex-start; gap: 2px; }
+.app .model-summary .model-description-stacked span { white-space: normal; }
+.app .visual-model-error { color: var(--ui-danger); }
+.group-stats-facet { grid-column: 1 / -1; display: grid; gap: 2px; margin-top: 6px; }
+.group-stats-data p { margin: 0; }
+.app .empty-state small { margin-top: 6px; max-width: 360px; text-align: center; color: var(--ui-muted); }
+.app .empty-state button { margin-top: 12px; }

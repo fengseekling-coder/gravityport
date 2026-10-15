@@ -11,6 +11,7 @@ type ElectronAPI = {
   setLocale?: (locale: string) => Promise<unknown>
   getUserProfile?: () => Promise<{ installationId?: string; [key: string]: unknown }>
   getVisualModelState?: (refresh?: boolean) => Promise<{ state?: string; [key: string]: unknown }>
+  setVisualModelEnabled?: (enabled: boolean) => Promise<{ state?: string; [key: string]: unknown }>
   installVisualPack?: () => Promise<{ ok?: boolean; error?: string }>
   cancelVisualPackInstall?: () => Promise<unknown>
   removeVisualPack?: () => Promise<unknown>

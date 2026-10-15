@@ -14,9 +14,14 @@ import { generationTreeRows } from "./version-tree"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
 import { resolveReferences } from "./inspector-info"
 import {
-  buildMasonryModel, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
+  buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
   type MasonryModel,
 } from "./gallery-window"
+import { readStoredColumns, resolveInitialColumns, writeStoredColumns } from "./gallery-columns"
+import { deriveEmptyState } from "./empty-state"
+import { describeGroupStats } from "./group-stats"
+import { createResyncOnReconnect } from "./live-sync-resync"
+import { applyVisualPackProgress, describeVisualModel, visualModelActionLabel, type VisualModelAction, type VisualModelStatus } from "./visual-model"
 import {
   checkVersionConsistency,
   createReadyGate,
@@ -229,6 +234,12 @@ function MenuRow({ entry, onAction }: { entry: Extract<MenuEntry, { kind: "item"
   )
 }
 
+/** localStorage for the remembered column count; blocked storage (privacy
+ * mode, denied access) just means the choice is not remembered. */
+function columnsStorage(): { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void } {
+  try { return window.localStorage } catch { return { getItem: () => null, setItem: () => {} } }
+}
+
 export default function App() {
   // macOS already draws the native window buttons with titleBarStyle=hiddenInset;
   // Windows also owns its native caption buttons. Only the browser mockup
@@ -242,6 +253,9 @@ export default function App() {
   const [library, setLibrary] = useState<MosaLibraryLocation | null>(null)
   const [health, setHealth] = useState<{ productVersion: string; gitSha: string; distribution: string } | null>(null)
   const [visual, setVisual] = useState<MosaVisualStatus | null>(null)
+  // Desktop-side visual model state (install / enable / progress), shown on the
+  // settings 模型 tab; null until the desktop bridge answers.
+  const [visualModel, setVisualModel] = useState<VisualModelStatus | null>(null)
   const [modelProgress, setModelProgress] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -313,7 +327,7 @@ export default function App() {
   const [deleting, setDeleting] = useState(false)
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
-  const [columns, setColumns] = useState(5)
+  const [columns, setColumns] = useState(() => resolveInitialColumns(readStoredColumns(columnsStorage()), window.innerWidth))
   const [toast, setToast] = useState("")
   const [expandedSections, setExpandedSections] = useState([true, true])
   const [groupMenu, setGroupMenu] = useState<{ name: string; x: number; y: number } | null>(null)
@@ -603,19 +617,19 @@ export default function App() {
   }, [project, refreshKey])
   // SSE stream setup (combined with sseConnectedRef tracking).
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null
+    // Reconnects refresh once too: a library-changed event sent while the
+    // stream was down is never replayed.
+    const resync = createResyncOnReconnect({ onResync: () => refreshNavigation() })
     const stream = new EventSource(`/api/library-events?project=${encodeURIComponent(project)}`)
     stream.addEventListener("open", () => {
+      resync.handleOpen()
       if (sseOpenRef.current) return
       sseOpenRef.current = true
       readyGateRef.current?.markSseOpen()
     })
-    stream.addEventListener("library-changed", () => {
-      if (timer) clearTimeout(timer)
-      timer = setTimeout(() => refreshNavigation(), 300)
-    })
+    stream.addEventListener("library-changed", () => resync.handleChange())
     return () => {
-      if (timer) clearTimeout(timer)
+      resync.dispose()
       stream.close()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -809,8 +823,23 @@ export default function App() {
     api.onVisualPackProgress(progress => {
       const percent = Number(progress?.percent)
       setModelProgress(Number.isFinite(percent) ? percent : null)
+      setVisualModel(old => applyVisualPackProgress(
+        old,
+        progress && typeof progress.phase === "string" ? { phase: progress.phase, percent } : null,
+      ))
     })
   }, [])
+  const refreshVisualModel = () => {
+    const api = desktopAPI()
+    if (!api?.getVisualModelState) return Promise.resolve()
+    return api.getVisualModelState(true)
+      .then(state => setVisualModel(state as unknown as VisualModelStatus))
+      .catch(() => {})
+  }
+  useEffect(() => {
+    if (settings && settingTab === "模型") void refreshVisualModel()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, settingTab])
   assetsRef.current = assets
   const asset = assets.find((a) => a.id === selected) || assets[0]
   const currentTags = asset ? asset.tags : []
@@ -902,7 +931,7 @@ export default function App() {
     const ratios = assets.map(a => a.height / a.width)
     const signature = galleryModelSignature(ratios, tracks.length, colWidth) + `|${gap}`
     if (rowModelRef.current?.key === signature) return rowModelRef.current.model
-    const model = buildMasonryModel(ratios, tracks.length, colWidth, gap)
+    const model = buildMasonryModel(ratios, tracks.length, colWidth, gap, { spanWide: true })
     rowModelRef.current = { key: signature, model }
     return model
   }
@@ -1724,6 +1753,30 @@ export default function App() {
     } finally {
       setModelProgress(null)
       refreshNavigation()
+      void refreshVisualModel()
+    }
+  }
+  const runVisualModelAction = async (action: VisualModelAction) => {
+    const api = desktopAPI()
+    if (!api) return
+    try {
+      if (action === "install" || action === "update") {
+        await installModelPack()
+        return
+      }
+      if (action === "cancel") await api.cancelVisualPackInstall?.()
+      else if (action === "enable" || action === "disable") {
+        const state = await api.setVisualModelEnabled?.(action === "enable")
+        if (state) setVisualModel(state as unknown as VisualModelStatus)
+        refreshNavigation()
+      } else if (action === "remove") {
+        const result = await api.removeVisualPack?.() as { ok?: boolean; cancelled?: boolean } | undefined
+        if (result?.ok) notify(tr("视觉能力包已删除，GravityPort 正在重启"))
+      }
+    } catch (error) {
+      notify(String((error as Error)?.message || tr("视觉能力包删除失败")))
+    } finally {
+      void refreshVisualModel()
     }
   }
   const checkForUpdates = async () => {
@@ -2052,7 +2105,22 @@ export default function App() {
               refreshNavigation(); setGroupMerge(null)
             }).catch(error => notify(errorMessage(error)))
           }}>{tr("确认合并")}</button></div></>}
-          {groupStats && <><h3>{tr("分组统计")} · {groupStats.name}</h3><div className="group-stats-data">{Object.entries(groupStats.values).filter(([, value]) => typeof value === "number").map(([key, value]) => <p key={key}>{key}: {String(value)}</p>)}</div><button onClick={() => setGroupStats(null)}>{tr("关闭")}</button></>}
+          {groupStats && (() => {
+            const described = describeGroupStats(groupStats.values)
+            return <>
+              <h3>{tr("分组统计")} · {groupStats.name}</h3>
+              <div className="group-stats-data">
+                {described.overview.map(item => <p key={item.label}>{tr(item.label)}: {item.value}</p>)}
+                {described.facets.map(facet => <div key={facet.title} className="group-stats-facet">
+                  <strong>{tr(facet.title)}</strong>
+                  {facet.entries.length
+                    ? facet.entries.map(entry => <p key={entry.name}>{entry.name}: {entry.count}</p>)
+                    : <p>{tr(facet.emptyText)}</p>}
+                </div>)}
+              </div>
+              <button onClick={() => setGroupStats(null)}>{tr("关闭")}</button>
+            </>
+          })()}
         </div>
       </div>}
 
@@ -2234,7 +2302,7 @@ export default function App() {
               <>
                 <ToolbarSelect label={tr("素材类型")} value={assetType} onChange={setAssetType} options={[{ value: "all", label: tr("全部类型") }, { value: "image", label: tr("图片") }, { value: "video", label: tr("视频") }]} />
                 <ToolbarSelect label={tr("排序")} value={sortOrder} onChange={setSortOrder} options={[{ value: "newest", label: tr("最新优先") }, { value: "name", label: tr("名称排序") }]} />
-                <ColumnControl value={columns} onChange={setColumns} language={language} />
+                <ColumnControl value={columns} onChange={value => { setColumns(value); writeStoredColumns(columnsStorage(), value) }} language={language} />
                 <label className="search">
                   <input
                     aria-label={tr("搜索素材")}
@@ -2386,7 +2454,7 @@ export default function App() {
                     openAssetMenu(a, e.clientX, e.clientY)
                     }}
                 >
-                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={`${Math.round(model.columnWidth)}px`} alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
+                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={galleryImageSizes(model.placements[globalIndex]?.width ?? model.columnWidth)} alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
                   {a.stack && (
                     <span className="stack-mark">
                       <Icon name="layers" size={12} />
@@ -2419,17 +2487,25 @@ export default function App() {
             {loading && <div className="empty-state" role="status">{tr("加载中")}</div>}
             {!loading && loadError && <div className="empty-state" role="alert"><Icon name="info" size={30} /><p>{loadError}</p><button onClick={refreshNavigation}>{tr("重试")}</button></div>}
             {!loading && !loadError && visible.length === 0 && (
-              <div className="empty-state">
-                <Icon
-                  name={active === "回收站" ? "trash" : "search"}
-                  size={30}
-                />
-                <p>
-                  {active === "回收站"
-                    ? tr("回收站中的素材保留 90 天")
-                    : tr("没有找到匹配的素材")}
-                </p>
-              </div>
+              (() => {
+                const empty = deriveEmptyState({
+                  loading, error: loadError, visibleCount: visible.length, active, query: debouncedQuery,
+                  assetType, libraryTotal: navigation?.total, insideStack: Boolean(stackId),
+                })
+                if (!empty) return null
+                const icon = empty.kind === "trash-empty" ? "trash"
+                  : empty.kind === "favorites-empty" ? "heart"
+                  : empty.kind === "library-empty" ? "plus"
+                  : empty.kind === "no-results" ? "search" : "folder"
+                return (
+                  <div className="empty-state">
+                    <Icon name={icon} size={30} />
+                    <p>{tr(empty.title)}</p>
+                    <small>{tr(empty.description)}</small>
+                    {empty.clearAction && <button className="neutral-button" onClick={() => goTo({ query: "", assetType: "all" })}>{tr("清除筛选")}</button>}
+                  </div>
+                )
+              })()
             )}
             <div ref={sentinelRef} aria-hidden="true" />
           </div>
@@ -2896,6 +2972,36 @@ export default function App() {
                   <div className="settings-note"><p>{library ? `${tr("存储类型")}: ${library.storage}` : ""}</p></div>
                 </>
               ) : settingTab === "模型" ? (
+                desktopAPI()?.getVisualModelState ? (() => {
+                  const api = desktopAPI()
+                  const described = describeVisualModel(visualModel, {
+                    install: Boolean(api?.installVisualPack),
+                    cancel: Boolean(api?.cancelVisualPackInstall),
+                    remove: Boolean(api?.removeVisualPack),
+                    toggle: Boolean(api?.setVisualModelEnabled),
+                  })
+                  return <>
+                    <section className="settings-section">
+                      <div className="model-summary">
+                        <div className="model-symbol"><Icon name="layers" size={16} /></div>
+                        <div className="model-description model-description-stacked">
+                          <strong>{tr("本地视觉搜索")}</strong>
+                          <span>{tr(described.label)}</span>
+                          {described.details.map(detail => <span key={detail}>{detail}</span>)}
+                          {described.progress && <span>{tr(described.progress.phaseLabel)} {described.progress.percent}%</span>}
+                          {described.note && <span className="visual-model-error">{tr(described.note)}</span>}
+                        </div>
+                        <div className="storage-actions">
+                          {described.actions.map(action => (
+                            <button key={action} className="neutral-button" onClick={() => void runVisualModelAction(action)}>
+                              {tr(visualModelActionLabel(action))}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  </>
+                })() : (
                 <>
                   <section className="settings-section">
                     <div className="model-summary">
@@ -2912,6 +3018,7 @@ export default function App() {
                   </section>
                   <div className="settings-note"><p>{tr("连接模型服务后即可启用。")}</p></div>
                 </>
+                )
               ) : settingTab === "MCP" ? (
                 <>
                   <section className="settings-section integration-card">

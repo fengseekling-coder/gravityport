@@ -114,16 +114,26 @@ export function gallerySpacerHeights(
 /** True shortest-column masonry. Cards retain their own image aspect ratio;
  * their vertical starts are independent of the tallest card in a CSS row.
  * A stable input order, unchanged by viewport windowing, avoids jumps during
- * scrolling and incremental page hydration. */
+ * scrolling and incremental page hydration. With `spanWide`, landscape cards
+ * occupy 2–3 adjacent columns (chosen by `masonrySpanFor`) and everything
+ * else still occupies one. */
 export type MasonryPlacement = {
   left: number
   top: number
   width: number
   height: number
+  /** First column the card occupies. */
   column: number
-  /** Accumulated source height ratios and card count above this item. */
-  precedingRatio: number
-  precedingCount: number
+  /** Columns the card spans (1 for the plain shortest-column flow). */
+  span: number
+  /** Position as multiples of the column-width unit U (see masonryCardCss):
+   * top = U·topUnits + topGaps·gap, height = U·heightUnits + heightGaps·gap.
+   * For single-column cards topUnits/topGaps are the accumulated ratios and
+   * card count above this item in its column. */
+  topUnits: number
+  topGaps: number
+  heightUnits: number
+  heightGaps: number
   ratio: number
 }
 
@@ -133,60 +143,103 @@ export type MasonryModel = {
   columns: number
   columnWidth: number
   gap: number
-  columnRatios: number[]
-  columnCounts: number[]
+  spanWide: boolean
+  /** Per-column bottom edge in the same coefficients: bottom[c] =
+   * U·bottomUnits[c] + bottomGaps[c]·gap (trailing inter-card gap included). */
+  bottomUnits: number[]
+  bottomGaps: number[]
+}
+
+/** How many columns a card spans given its height/width ratio: aspect ratio
+ * (width/height) ≥ 2.6 → 3 columns, ≥ 1.6 → 2, otherwise 1 — never more
+ * than `columns`; non-finite or non-positive ratios stay single-column. */
+export function masonrySpanFor(heightRatio: number, columns: number): number {
+  const safeColumns = Math.max(1, Math.floor(columns))
+  const ratio = Number.isFinite(heightRatio) && heightRatio > 0 ? heightRatio : 1
+  const wideRatio = 1 / 2.6
+  const tallRatio = 1 / 1.6
+  let span = 1
+  if (ratio <= wideRatio) span = 3
+  else if (ratio <= tallRatio) span = 2
+  return Math.min(span, safeColumns)
 }
 
 export function buildMasonryModel(
   heightRatios: number[], columns: number, columnWidth: number, gap: number,
+  options?: { spanWide?: boolean },
 ): MasonryModel {
   const count = Math.max(1, Math.floor(columns))
   const safeWidth = Math.max(1, columnWidth)
   const safeGap = Math.max(0, gap)
+  const spanWide = options?.spanWide === true
   const bottoms = Array<number>(count).fill(0)
-  const columnRatios = Array<number>(count).fill(0)
-  const columnCounts = Array<number>(count).fill(0)
+  const bottomUnits = Array<number>(count).fill(0)
+  const bottomGaps = Array<number>(count).fill(0)
   const placements: MasonryPlacement[] = []
   for (const ratio of heightRatios) {
-    let column = 0
-    for (let index = 1; index < count; index += 1) {
-      if (bottoms[index] < bottoms[column]) column = index
-    }
     const safeRatio = Number.isFinite(ratio) && ratio > 0 ? ratio : 1
-    const height = safeWidth * safeRatio
-    placements.push({ left: column * (safeWidth + safeGap), top: bottoms[column],
-      width: safeWidth, height, column, precedingRatio: columnRatios[column],
-      precedingCount: columnCounts[column], ratio: safeRatio })
-    columnRatios[column] += safeRatio
-    columnCounts[column] += 1
-    bottoms[column] += height + safeGap
+    const span = spanWide ? masonrySpanFor(safeRatio, count) : 1
+    // Leftmost start column whose whole span-window has the lowest crest.
+    // For span 1 this is the plain shortest-column scan; comparing the real
+    // window maximum keeps spanned cards from covering a taller neighbour.
+    // The window starting at column 0 is measured the same way — its crest is
+    // its tallest column, not column 0 — and the CSS top coefficients come from
+    // the column that sets the crest.
+    let column = 0
+    let crest = 0
+    let crestColumn = 0
+    for (let start = 0; start + span <= count; start += 1) {
+      let windowCrest = bottoms[start]
+      let windowCrestColumn = start
+      for (let covered = start + 1; covered < start + span; covered += 1) {
+        if (bottoms[covered] > windowCrest) { windowCrest = bottoms[covered]; windowCrestColumn = covered }
+      }
+      if (start === 0 || windowCrest < crest) { column = start; crest = windowCrest; crestColumn = windowCrestColumn }
+    }
+    const width = span * safeWidth + (span - 1) * safeGap
+    const height = width * safeRatio
+    const heightUnits = safeRatio * span
+    const heightGaps = safeRatio * (span - 1)
+    placements.push({ left: column * (safeWidth + safeGap), top: crest,
+      width, height, column, span, topUnits: bottomUnits[crestColumn],
+      topGaps: bottomGaps[crestColumn], heightUnits, heightGaps, ratio: safeRatio })
+    const restedUnits = bottomUnits[crestColumn] + heightUnits
+    const restedGaps = bottomGaps[crestColumn] + heightGaps + 1
+    for (let covered = column; covered < column + span; covered += 1) {
+      bottoms[covered] = crest + (height + safeGap)
+      bottomUnits[covered] = restedUnits
+      bottomGaps[covered] = restedGaps
+    }
   }
   return {
-    placements, columns: count, columnWidth: safeWidth, gap: safeGap,
+    placements, columns: count, columnWidth: safeWidth, gap: safeGap, spanWide,
     totalHeight: placements.length ? Math.max(...bottoms) - safeGap : 0,
-    columnRatios, columnCounts,
+    bottomUnits, bottomGaps,
   }
 }
 
 /** CSS container units keep already-mounted cards geometrically correct in
  * background Electron windows where ResizeObserver/React may be throttled.
- * CSS handles width changes instantly; JS only reassigns shortest columns. */
+ * CSS handles width changes instantly; JS only reassigns columns. Every
+ * offset is U·coefficients + gap counts with U = the column-width unit
+ * (100cqw − (columns−1)·gap) / columns, so spanned and single-column cards
+ * share one coordinate system. */
 export function masonryCardCss(model: MasonryModel, index: number) {
   const place = model.placements[index]
-  const inline = `(100cqw - ${(model.columns - 1) * model.gap}px)`
+  const unit = `(100cqw - ${(model.columns - 1) * model.gap}px) / ${model.columns}`
   return {
-    left: `calc(${inline} * ${place.column / model.columns} + ${place.column * model.gap}px)`,
-    top: `calc(${inline} * ${place.precedingRatio / model.columns} + ${place.precedingCount * model.gap}px)`,
-    width: `calc(${inline} / ${model.columns})`,
-    height: `calc(${inline} * ${place.ratio / model.columns})`,
+    left: `calc(${unit} * ${place.column} + ${place.column * model.gap}px)`,
+    top: `calc(${unit} * ${place.topUnits} + ${place.topGaps * model.gap}px)`,
+    width: `calc(${unit} * ${place.span} + ${(place.span - 1) * model.gap}px)`,
+    height: `calc(${unit} * ${place.heightUnits} + ${place.heightGaps * model.gap}px)`,
   }
 }
 
 export function masonryExtentCss(model: MasonryModel): string {
   if (!model.placements.length) return "0px"
-  const inline = `(100cqw - ${(model.columns - 1) * model.gap}px)`
-  const endings = model.columnRatios.map((ratio, index) =>
-    `calc(${inline} * ${ratio / model.columns} + ${Math.max(0, model.columnCounts[index] - 1) * model.gap}px)`)
+  const unit = `(100cqw - ${(model.columns - 1) * model.gap}px) / ${model.columns}`
+  const endings = model.bottomUnits.map((units, index) =>
+    `calc(${unit} * ${units} + ${Math.max(0, model.bottomGaps[index] - 1) * model.gap}px)`)
   return `max(${endings.join(", ")})`
 }
 
@@ -211,4 +264,12 @@ export function locateMasonryWindow(
     candidates.length = Math.max(1, maxCards)
   }
   return candidates.map(item => item.index).sort((a, b) => a - b)
+}
+
+/** <img sizes> hint for a card: ask for 1.5× the rendered card width so on
+ * 2× displays the browser steps up to the next thumbnail tier instead of
+ * showing the smallest one. Degenerate widths fall back to the 240px tier. */
+export function galleryImageSizes(cardWidthPx: number): string {
+  if (!Number.isFinite(cardWidthPx) || cardWidthPx <= 0) return "240px"
+  return `${Math.max(1, Math.round(cardWidthPx * 1.5))}px`
 }
