@@ -327,8 +327,9 @@ export function createStackUiFlowSource() {
     .find((card) => memberIds.includes(card.dataset.assetId)) || null, 'stack node for given members');
   const stackACard = await nodeFor([ids[0], ids[1]]);
 
-  // Enter stack A: the toolbar gains the stack title and the two members show.
-  stackACard.click();
+  // Enter stack A (double-click): the toolbar gains the stack title and the
+  // two members show.
+  stackACard.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
   await waitFor(() => settled() && cardCount() === 2 && !document.querySelector('.asset-card .stack-mark'),
     'stack A interior (members, not nodes)');
   const memberA = plainCard();
@@ -343,7 +344,7 @@ export function createStackUiFlowSource() {
   // The other stack: unnamed stacks share an identical label, so tell them
   // apart by their cover thumbnails.
   const stackBRow = await nodeFor([ids[2], ids[3]]);
-  stackBRow.click();
+  stackBRow.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
   await waitFor(() => settled() && cardCount() === 2 && !document.querySelector('.asset-card .stack-mark'),
     'stack B interior (members, not nodes)');
   // Dispatch ⌘V until the member actually lands; the card count (never a
@@ -362,7 +363,7 @@ export function createStackUiFlowSource() {
       'root gallery after the move');
     const nodeB = await waitFor(() => Array.from(document.querySelectorAll('.asset-card'))
       .find((card) => card.querySelector('.stack-mark')?.textContent.trim() === '3') || null, 'stack B node with three members');
-    nodeB.click();
+    nodeB.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
   }
   await waitFor(() => settled() && cardCount() === 3, 'paste moved the cut member into stack B');
   memberCountAfterPaste = cardCount();
@@ -481,7 +482,7 @@ export function createTrashUiFlowSource(config) {
   const rootCountAfterRestore = cardCount();
 
   const stackCard = await waitFor(() => document.querySelector('.asset-card .stack-mark')?.closest('.asset-card') || null, 'stack card after restart');
-  stackCard.click();
+  stackCard.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
   await waitFor(() => settled() && cardCount() === 2, 'stack interior after restart');
   const stackCountShown = document.querySelector('.viewer-title span')?.textContent?.trim().split(' ')[0] || String(cardCount());
 
