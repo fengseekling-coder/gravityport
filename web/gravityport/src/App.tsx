@@ -1697,6 +1697,11 @@ export default function App() {
       event.preventDefault()
       event.stopImmediatePropagation()
     }
+    // A hand-off to the system drag never gets its pointerup or click back,
+    // so a pending suppression must not outlive the gesture: the next real
+    // press starts fresh and its click goes through.
+    const press = () => { suppressCardDragClickRef.current = false }
+    window.addEventListener("pointerdown", press, true)
     window.addEventListener("pointermove", move)
     window.addEventListener("pointerup", up)
     window.addEventListener("pointercancel", cancel)
@@ -1708,6 +1713,7 @@ export default function App() {
       window.removeEventListener("pointercancel", cancel)
       window.removeEventListener("blur", blur)
       window.removeEventListener("click", click, true)
+      window.removeEventListener("pointerdown", press, true)
     }
   }, [])
   const runStackUndo = async (undo: StackUndoPlan | null) => {
@@ -1812,7 +1818,12 @@ export default function App() {
       if (e.key === "Escape") {
         // A live card drag consumes Escape on its own: cancel the gesture,
         // leave selection and dialogs alone.
-        if (cardDragRef.current) { cancelCardDrag(cardDragRef.current); return }
+        if (cardDragRef.current) {
+          // The release after a cancelled drag must not select the pressed card.
+          if (cardDragRef.current.dragging) suppressCardDragClickRef.current = true
+          cancelCardDrag(cardDragRef.current)
+          return
+        }
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
         if (renameNoticeOpen) dismissRenameNotice()
