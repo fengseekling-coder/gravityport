@@ -2407,7 +2407,7 @@ export default function App() {
             ) : (
               <>
                 {active === "回收站" && (navigation?.trash ?? 0) > 0 && (
-                  <button onClick={() => setEmptyTrashConfirm(true)}>
+                  <button className="toolbar-empty-trash" onClick={() => setEmptyTrashConfirm(true)}>
                     <Icon name="trash" size={12} />
                     {tr("清空回收站")}
                   </button>

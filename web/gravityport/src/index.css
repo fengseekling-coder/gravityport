@@ -3343,3 +3343,9 @@ video.viewer-image {
   line-height: var(--space-4);
   cursor: pointer;
 }
+/* Keep 清空回收站 on one line at narrow window widths (~1000pt with both
+   side panels open); the search field gives up the width instead. */
+.toolbar-empty-trash {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
