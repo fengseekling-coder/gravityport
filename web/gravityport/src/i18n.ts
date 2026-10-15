@@ -139,10 +139,43 @@ const english: Record<string, string> = {
   "添加分组失败": "Adding to group failed", "已加入分组 X 项，Y 项失败": "Added X to group, Y failed",
   "移除分组失败": "Removing from group failed", "已从分组移除 X 项，Y 项失败": "Removed X from group, Y failed",
   "粘贴失败": "Paste failed", "已粘贴 X 项，Y 项失败": "Pasted X, Y failed",
+  // Task 137: Context menu completeness
+  "新建分组并移入": "New group with selection",
+  "粘贴": "Paste",
+  "粘贴到此堆叠": "Paste into This Stack",
+  "返回素材库": "Back to library",
+  "刷新": "Refresh",
+  "刷新素材库": "Refresh library",
+  "正在刷新...": "Refreshing...",
+  "已选 {count} 项": "{count} selected",
+  "全选": "Select all",
+  "堆叠所选": "Stack selected",
+  "打开堆叠": "Open stack",
+  "重命名堆叠": "Rename stack",
+  "堆叠已重命名": "Stack renamed",
+  "移出堆叠": "Move out",
+  "堆叠已移动到「{group}」": "Stack moved to \"{group}\"",
+  "堆叠已移出分组": "Stack removed from group",
+  "解散堆叠": "Dissolve stack",
+  "解散这个堆叠？": "Dissolve this stack?",
+  "仅解除素材之间的堆叠关系，不会删除或归档任何素材。": "This only removes the stack relationship. No assets will be deleted or archived.",
+  "已解散堆叠 · {count} 个素材已恢复为独立素材": "Stack dissolved · {count} assets restored to standalone",
+  "将这个堆叠移到回收站？": "Move this stack to Trash?",
+  "其中的 {count} 个素材也会一起移到回收站。你可以之后从回收站恢复。": "Its {count} assets will also move to Trash. You can restore them later from Trash.",
+  "堆叠已移到回收站，共 {count} 个素材": "Stack moved to Trash ({count} assets)",
+  "新建分组": "New group",
 }
 
 export function translate(text: string, language: Language): string {
   if (language !== "en") return text
   if (/^新分组 \d+$/.test(text)) return text.replace("新分组", "New group")
   return english[text] || text
+}
+
+export function fill(template: string, values: Record<string, string | number>): string {
+  let result = template
+  for (const [key, value] of Object.entries(values)) {
+    result = result.replace(new RegExp(`\\{${key}\\}`, "g"), String(value))
+  }
+  return result
 }

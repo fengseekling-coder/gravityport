@@ -3,7 +3,9 @@ import Icon from "./Icon"
 import ToolbarSelect from "./ToolbarSelect"
 import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
-import { translate, type Language } from "./i18n"
+import { translate, fill, type Language } from "./i18n"
+import { buildContextMenu, type MenuEntry, type MenuContext } from "./context-menus"
+import { createStack, renameStack, dissolveStack, removeAssetsFromStack, assignStackToGroup, trashStack, type StackInfo } from "./library-actions"
 import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
@@ -18,7 +20,7 @@ import {
 import {
   checkVersionConsistency,
   createReadyGate,
-  fill,
+  fill as fillTemplate,
   mapUpdateResult,
   buildUpdateText,
   shouldAutoCheckForUpdates,
@@ -205,6 +207,11 @@ export default function App() {
   const [expandedSections, setExpandedSections] = useState([true, true])
   const [groupMenu, setGroupMenu] = useState<{ name: string; x: number; y: number } | null>(null)
   const [groupRename, setGroupRename] = useState<{ original: string; draft: string } | null>(null)
+  const [stackRename, setStackRename] = useState<{ stackId: string; initialName: string; draft: string } | null>(null)
+  const [stackDissolveConfirm, setStackDissolveConfirm] = useState<{ stackId: string; stackCount: number } | null>(null)
+  const [stackTrashConfirm, setStackTrashConfirm] = useState<{ stackId: string; stackCount: number } | null>(null)
+  const [groupCreateWithSelection, setGroupCreateWithSelection] = useState<{ target: "asset" | "stack"; targetStackId?: string } | null>(null)
+  const [contextMenuItems, setContextMenuItems] = useState<MenuEntry[]>([])
   const [groupStats, setGroupStats] = useState<{ name: string; values: Record<string, unknown> } | null>(null)
   const [groupDeleteConfirm, setGroupDeleteConfirm] = useState<string | null>(null)
   const [groupMerge, setGroupMerge] = useState<{ source: string; target: string } | null>(null)
@@ -1167,15 +1174,14 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
         if (!cutIdsRef.current.length) return
         e.preventDefault()
-        if (!stackId) { notify("粘贴需要在堆叠中进行"); return }
         const ids = [...new Set(cutIdsRef.current)]
         cutIdsRef.current = []
-        moveAssetsToStack(project, ids, stackId)
+        moveAssetsToStack(project, ids, stackId || null)
           .then(outcome => {
             if (!outcome.succeeded) { notify(outcome.firstError || tr("粘贴失败")); return }
             notify(outcome.failed
               ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-              : tr("已粘贴到堆叠"))
+              : (stackId ? tr("已粘贴到堆叠") : "已粘贴"))
             refreshNavigation()
           })
           .catch(error => notify(errorMessage(error)))
@@ -1350,6 +1356,187 @@ export default function App() {
       await writeText(asset.image_path || asset.image_url)
       notify(tr("路径已复制"))
     } catch { notify(tr("无法打开该位置")) }
+  }
+
+  // Menu action handlers for context menu
+  const handleMenuAction = async (id: string) => {
+    setMenu(null)
+    const sel = contextMenuItems.length > 0 ? selectedIds : []
+    const batchIds = sel.length > 0 ? sel : (asset ? [asset.id] : [])
+    const selAssets = assets.filter(x => batchIds.includes(x.id))
+
+    // Asset actions
+    if (id === "open-viewer") {
+      setPreview(true)
+    } else if (id === "show-in-library") {
+      showInLibrary()
+    } else if (id === "copy-image") {
+      await copyImage()
+    } else if (id === "cut") {
+      cutIdsRef.current = [...batchIds]
+      notify("已剪切")
+    } else if (id === "copy-prompt") {
+      if (!asset?.prompt) { notify(tr("无提示词记录")); return }
+      try {
+        await writeText(asset.prompt)
+        notify(`${tr("复制提示词")} ${tr("完成")}`)
+      } catch { notify(tr("复制失败")) }
+    } else if (id === "copy-path") {
+      if (!asset) return
+      try {
+        await writeText(asset.image_path || asset.image_url)
+        notify(`${tr("复制路径")} ${tr("完成")}`)
+      } catch { notify(tr("复制失败")) }
+    } else if (id === "toggle-favorite") {
+      if (batchIds.length > 1) {
+        setAssetsFavorite(project, batchIds, !selAssets[0]?.favorite)
+          .then(outcome => {
+            if (!outcome.succeeded) { notify(outcome.firstError || tr("收藏失败")); return }
+            setSelectedIds([])
+            if (outcome.failed) {
+              notify(tr("已收藏 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+            }
+            refreshNavigation()
+          })
+          .catch(error => notify(errorMessage(error)))
+      } else toggleFavorite()
+    } else if (id === "create-group-with-selection") {
+      setGroupCreateWithSelection({ target: "asset" })
+    } else if (id.startsWith("add-to-group:")) {
+      const groupName = id.replace("add-to-group:", "")
+      setAssetsGroup(project, batchIds, groupName)
+        .then(outcome => {
+          if (!outcome.succeeded) { notify(outcome.firstError || tr("添加分组失败")); return }
+          setSelectedIds([])
+          notify(outcome.failed
+            ? tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+            : tr("已添加到分组"))
+          refreshNavigation()
+        })
+        .catch(error => notify(errorMessage(error)))
+    } else if (id === "remove-from-group") {
+      setAssetsGroup(project, batchIds, "")
+        .then(outcome => {
+          if (!outcome.succeeded) { notify(outcome.firstError || tr("移除分组失败")); return }
+          setSelectedIds([])
+          notify(outcome.failed
+            ? tr("已从分组移除 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+            : tr("已从分组移除"))
+          refreshNavigation()
+        })
+        .catch(error => notify(errorMessage(error)))
+    } else if (id === "export") {
+      exportAsset()
+    } else if (id === "stack-selected") {
+      const focusId = asset?.id || batchIds[0] || ""
+      createStack(project, batchIds, focusId)
+        .then(() => {
+          refreshNavigation()
+          setSelectedIds([])
+          notify("堆叠已创建")
+        })
+        .catch(error => notify(errorMessage(error)))
+    } else if (id === "remove-from-stack") {
+      if (!stackId) return
+      removeAssetsFromStack(project, stackId, batchIds)
+        .then(() => {
+          refreshNavigation()
+          setSelectedIds([])
+          notify("已移出堆叠")
+        })
+        .catch(error => notify(errorMessage(error)))
+    } else if (id === "move-to-trash") {
+      if (active === "回收站") {
+        await restore()
+      } else {
+        requestDelete()
+      }
+    }
+    // Stack actions
+    else if (id === "open-stack") {
+      const stack = asset?.stack || (contextMenuItems.length > 0 && assets[0]?.stack)
+      if (stack) {
+        goTo({ stackId: stack.id, stackName: stack.name || "" })
+      }
+    } else if (id === "paste-into-stack") {
+      const stack = asset?.stack
+      if (!stack) return
+      const ids = [...new Set(cutIdsRef.current)]
+      cutIdsRef.current = []
+      moveAssetsToStack(project, ids, stack.id)
+        .then(outcome => {
+          if (!outcome.succeeded) { notify(outcome.firstError || tr("粘贴失败")); return }
+          notify(outcome.failed
+            ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+            : tr("粘贴"))
+          refreshNavigation()
+        })
+        .catch(error => notify(errorMessage(error)))
+    } else if (id === "create-group-with-stack") {
+      const stack = asset?.stack
+      if (stack) {
+        setGroupCreateWithSelection({ target: "stack", targetStackId: stack.id })
+      }
+    } else if (id.startsWith("stack-add-to-group:")) {
+      const stack = asset?.stack
+      if (!stack) return
+      const groupName = id.replace("stack-add-to-group:", "")
+      assignStackToGroup(project, stack.id, groupName)
+        .then(() => {
+          notify(fill(tr("堆叠已移动到「{group}」"), { group: groupName }))
+          refreshNavigation()
+        })
+        .catch(error => notify(errorMessage(error)))
+    } else if (id === "stack-remove-from-group") {
+      const stack = asset?.stack
+      if (!stack) return
+      assignStackToGroup(project, stack.id, "")
+        .then(() => {
+          notify(tr("堆叠已移出分组"))
+          refreshNavigation()
+        })
+        .catch(error => notify(errorMessage(error)))
+    } else if (id === "rename-stack") {
+      const targetStack = asset?.stack || (stackId ? assets.find(a => a.stack?.id === stackId)?.stack : null)
+      if (targetStack) {
+        setStackRename({ stackId: targetStack.id, initialName: targetStack.name || "", draft: targetStack.name || "" })
+      }
+    } else if (id === "dissolve-stack") {
+      const targetStack = asset?.stack || (stackId ? assets.find(a => a.stack?.id === stackId)?.stack : null)
+      if (targetStack) {
+        setStackDissolveConfirm({ stackId: targetStack.id, stackCount: targetStack.count || 0 })
+      }
+    } else if (id === "stack-move-to-trash") {
+      const targetStack = asset?.stack
+      if (targetStack) {
+        setStackTrashConfirm({ stackId: targetStack.id, stackCount: targetStack.count || 0 })
+      }
+    }
+    // Blank area actions
+    else if (id === "back-to-library") {
+      goTo({ stackId: "", stackName: "" })
+    } else if (id === "paste") {
+      const ids = [...new Set(cutIdsRef.current)]
+      cutIdsRef.current = []
+      moveAssetsToStack(project, ids, stackId || null)
+        .then(outcome => {
+          if (!outcome.succeeded) { notify(outcome.firstError || tr("粘贴失败")); return }
+          notify(outcome.failed
+            ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+            : tr("粘贴"))
+          refreshNavigation()
+        })
+        .catch(error => notify(errorMessage(error)))
+    } else if (id === "create-group") {
+      createNamedGroup()
+    } else if (id === "select-all") {
+      void selectAllAcrossPages()
+    } else if (id === "refresh") {
+      notify(tr("正在刷新..."))
+      void refreshNavigation()
+      // Reload current asset list
+      setRefreshKey(k => k + 1)
+    }
   }
   const showInLibrary = () => {
     setMenu(null)
@@ -1718,6 +1905,154 @@ export default function App() {
           {groupStats && <><h3>{tr("分组统计")} · {groupStats.name}</h3><div className="group-stats-data">{Object.entries(groupStats.values).filter(([, value]) => typeof value === "number").map(([key, value]) => <p key={key}>{key}: {String(value)}</p>)}</div><button onClick={() => setGroupStats(null)}>{tr("关闭")}</button></>}
         </div>
       </div>}
+
+      {/* Stack rename dialog */}
+      {stackRename && (
+        <div className="group-dialog-backdrop" role="presentation" onClick={() => setStackRename(null)}>
+          <div className="group-dialog" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+            <form onSubmit={event => {
+              event.preventDefault()
+              const name = stackRename.draft.trim()
+              if (!name) return
+              renameStack(project, stackRename.stackId, name)
+                .then(() => {
+                  notify(tr("堆叠已重命名"))
+                  setAssets(old => old.map(a => 
+                    a.stack?.id === stackRename.stackId 
+                      ? { ...a, stack: { ...a.stack, name } } 
+                      : a
+                  ))
+                  if (stackId === stackRename.stackId) setStackName(name)
+                  setStackRename(null)
+                  refreshNavigation()
+                })
+                .catch(error => notify(errorMessage(error)))
+            }}>
+              <h3>{tr("重命名堆叠")}</h3>
+              <input 
+                autoFocus 
+                value={stackRename.draft} 
+                maxLength={80} 
+                onChange={event => setStackRename(old => old ? { ...old, draft: event.target.value } : old)} 
+              />
+              <div className="group-dialog-actions">
+                <button type="button" onClick={() => setStackRename(null)}>{tr("取消")}</button>
+                <button type="submit">{tr("保存")}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Stack dissolve confirmation */}
+      {stackDissolveConfirm && (
+        <div className="modal-layer delete-layer" onClick={() => setStackDissolveConfirm(null)}>
+          <div className="delete-modal" role="alertdialog" aria-modal="true">
+            <div className="delete-icon"><Icon name="layers" size={26} /></div>
+            <h3>{tr("解散这个堆叠？")}</h3>
+            <p>{tr("仅解除素材之间的堆叠关系，不会删除或归档任何素材。")}</p>
+            <div className="delete-actions">
+              <button className="neutral-button" onClick={() => setStackDissolveConfirm(null)}>{tr("取消")}</button>
+              <button className="primary-button" onClick={async () => {
+                setStackDissolveConfirm(null)
+                try {
+                  const result = await dissolveStack(project, stackDissolveConfirm.stackId)
+                  const count = result.assetIds.length || stackDissolveConfirm.stackCount
+                  notify(fill(tr("已解散堆叠 · {count} 个素材已恢复为独立素材"), { count }))
+                  if (stackId === stackDissolveConfirm.stackId) {
+                    goTo({ stackId: "", stackName: "" })
+                  }
+                  setAssets(old => old.map(a => 
+                    a.stack?.id === stackDissolveConfirm.stackId 
+                      ? { ...a, stack: null } 
+                      : a
+                  ))
+                  refreshNavigation()
+                } catch (error) {
+                  notify(errorMessage(error))
+                }
+              }}>{tr("解散堆叠")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stack move to trash confirmation */}
+      {stackTrashConfirm && (
+        <div className="modal-layer delete-layer" onClick={() => setStackTrashConfirm(null)}>
+          <div className="delete-modal" role="alertdialog" aria-modal="true">
+            <div className="delete-icon"><Icon name="trash" size={26} /></div>
+            <h3>{tr("将这个堆叠移到回收站？")}</h3>
+            <p>{fill(tr("其中的 {count} 个素材也会一起移到回收站。你可以之后从回收站恢复。"), { count: stackTrashConfirm.stackCount })}</p>
+            <div className="delete-actions">
+              <button className="neutral-button" onClick={() => setStackTrashConfirm(null)}>{tr("取消")}</button>
+              <button className="primary-button" onClick={async () => {
+                setStackTrashConfirm(null)
+                try {
+                  const outcome = await trashStack(project, stackTrashConfirm.stackId)
+                  if (outcome.succeeded) {
+                    const msg = fill(tr("堆叠已移到回收站，共 {count} 个素材"), { count: outcome.succeeded })
+                    notify(outcome.failed ? msg + ` · ${outcome.failed}失败` : msg)
+                    setAssets(old => old.filter(a => a.stack?.id !== stackTrashConfirm.stackId))
+                    if (stackId === stackTrashConfirm.stackId) {
+                      goTo({ stackId: "", stackName: "" })
+                    }
+                  } else {
+                    notify(outcome.firstError || "操作失败")
+                  }
+                  refreshNavigation()
+                } catch (error) {
+                  notify(errorMessage(error))
+                }
+              }}>{tr("移至回收站")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create group with selection */}
+      {groupCreateWithSelection && (
+        <div className="group-dialog-backdrop" role="presentation" onClick={() => setGroupCreateWithSelection(null)}>
+          <div className="group-dialog" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+            <form onSubmit={async event => {
+              event.preventDefault()
+              const input = event.currentTarget.querySelector("input") as HTMLInputElement
+              const name = input.value.trim()
+              if (!name) return
+              
+              try {
+                await createGroup(project, name)
+                
+                if (groupCreateWithSelection.target === "asset") {
+                  const sel = selectedIds.length > 0 ? selectedIds : (asset ? [asset.id] : [])
+                  if (sel.length > 0) {
+                    await setAssetsGroup(project, sel, name)
+                  }
+                } else if (groupCreateWithSelection.targetStackId) {
+                  await assignStackToGroup(project, groupCreateWithSelection.targetStackId, name)
+                }
+                
+                notify(tr("已添加到分组"))
+                setGroupCreateWithSelection(null)
+                refreshNavigation()
+              } catch (error) {
+                notify(errorMessage(error))
+              }
+            }}>
+              <h3>{tr("新建分组并移入")}</h3>
+              <input 
+                autoFocus 
+                placeholder={`${tr("新分组")} 1`}
+                maxLength={80}
+              />
+              <div className="group-dialog-actions">
+                <button type="button" onClick={() => setGroupCreateWithSelection(null)}>{tr("取消")}</button>
+                <button type="submit">{tr("保存")}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       <main
         className={`workspace ${preview ? "preview-open" : ""}`}
         onDragOver={event => {
@@ -1792,6 +2127,26 @@ export default function App() {
             }}
             data-loaded-assets={assets.length}
             onPointerDown={onGridPointerDown}
+            onContextMenu={(e) => {
+              // Blank area right-click: only if clicking on grid, not on asset card
+              const target = e.target as HTMLElement
+              if (target.closest(".asset-card") || preview || settings || active === "回收站") return
+              e.preventDefault()
+              const ctx: MenuContext = {
+                target: stackId ? "stack-blank" : "gallery-blank",
+                scope: active === "回收站" ? "trash" : "all",
+                selectionCount: 0,
+                selectionHasStacks: false,
+                anyGrouped: false,
+                favorite: false,
+                insideStackId: stackId || null,
+                cutActive: cutIdsRef.current.length > 0,
+                groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
+                pageTotal: assets.length,
+              }
+              setContextMenuItems(buildContextMenu(ctx))
+              setMenu({ x: e.clientX, y: e.clientY })
+            }}
           >
             {(() => {
               const model = galleryWindow?.model ?? null
@@ -1827,12 +2182,43 @@ export default function App() {
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      if (a.stack) return
-                      // Right-clicking outside the multi-selection re-targets the
-                      // context menu to the clicked card; inside it, the whole
-                      // selection stays the action target.
+                      if (a.stack) {
+                        // Stack card right-click: open stack menu without changing selection
+                        const ctx: MenuContext = {
+                          target: "stack",
+                          scope: active === "回收站" ? "trash" : "all",
+                          selectionCount: 1,
+                          selectionHasStacks: false,
+                          anyGrouped: Boolean(a.group),
+                          favorite: false,
+                          insideStackId: null,
+                          cutActive: cutIdsRef.current.length > 0,
+                          groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
+                          pageTotal: assets.length,
+                        }
+                        setContextMenuItems(buildContextMenu(ctx))
+                        setMenu({ x: e.clientX, y: e.clientY })
+                        return
+                      }
+                      // Regular asset: right-clicking outside the multi-selection re-targets the
+                      // context menu to the clicked card; inside it, the whole selection stays the action target.
                       if (!selectedIds.includes(a.id)) applySelection([], a.id)
                       else focusAsset(a.id)
+                      const sel = selectedIds.includes(a.id) ? selectedIds : [a.id]
+                      const selAssets = assets.filter(x => sel.includes(x.id))
+                      const ctx: MenuContext = {
+                        target: "asset",
+                        scope: active === "回收站" ? "trash" : "all",
+                        selectionCount: sel.length,
+                        selectionHasStacks: selAssets.some(x => x.stack),
+                        anyGrouped: selAssets.some(x => x.group),
+                        favorite: selAssets.every(x => x.favorite),
+                        insideStackId: stackId || null,
+                        cutActive: cutIdsRef.current.length > 0,
+                        groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
+                        pageTotal: assets.length,
+                      }
+                      setContextMenuItems(buildContextMenu(ctx))
                       setMenu({ x: e.clientX, y: e.clientY })
                     }}
                   >
@@ -1879,12 +2265,43 @@ export default function App() {
                   }}
                   onContextMenu={(e) => {
                     e.preventDefault()
-                    if (a.stack) return
-                    // Right-clicking outside the multi-selection re-targets the
-                    // context menu to the clicked card; inside it, the whole
-                    // selection stays the action target.
+                    if (a.stack) {
+                      // Stack card right-click: open stack menu without changing selection
+                      const ctx: MenuContext = {
+                        target: "stack",
+                        scope: active === "回收站" ? "trash" : "all",
+                        selectionCount: 1,
+                        selectionHasStacks: false,
+                        anyGrouped: Boolean(a.group),
+                        favorite: false,
+                        insideStackId: null,
+                        cutActive: cutIdsRef.current.length > 0,
+                        groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
+                        pageTotal: assets.length,
+                      }
+                      setContextMenuItems(buildContextMenu(ctx))
+                      setMenu({ x: e.clientX, y: e.clientY })
+                      return
+                    }
+                    // Regular asset: right-clicking outside the multi-selection re-targets the
+                    // context menu to the clicked card; inside it, the whole selection stays the action target.
                     if (!selectedIds.includes(a.id)) applySelection([], a.id)
                     else focusAsset(a.id)
+                    const sel = selectedIds.includes(a.id) ? selectedIds : [a.id]
+                    const selAssets = assets.filter(x => sel.includes(x.id))
+                    const ctx: MenuContext = {
+                      target: "asset",
+                      scope: active === "回收站" ? "trash" : "all",
+                      selectionCount: sel.length,
+                      selectionHasStacks: selAssets.some(x => x.stack),
+                      anyGrouped: selAssets.some(x => x.group),
+                      favorite: selAssets.every(x => x.favorite),
+                      insideStackId: stackId || null,
+                      cutActive: cutIdsRef.current.length > 0,
+                      groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
+                      pageTotal: assets.length,
+                    }
+                    setContextMenuItems(buildContextMenu(ctx))
                     setMenu({ x: e.clientX, y: e.clientY })
                     }}
                 >
@@ -2489,94 +2906,108 @@ export default function App() {
           </div>
         </div>
       )}
-      {menu && asset && (
+      {menu && (
         <div
           className="context-menu"
           style={{
-            left: Math.min(menu.x, window.innerWidth - 220),
-            top: Math.min(menu.y, window.innerHeight - 385),
+            left: Math.min(menu.x, window.innerWidth - 240),
+            top: (() => {
+              const menuHeight = contextMenuItems.length * 32 + 16
+              return Math.min(menu.y, window.innerHeight - menuHeight - 20)
+            })(),
+          }}
+          onMouseLeave={() => {
+            // Clear any open submenus when mouse leaves
           }}
         >
-          {[
-            ["在查看器中打开", "external"],
-            ["在素材库中显示", "folder"],
-            ["复制图片", "image"],
-            ["剪切", "scissors"],
-            ["复制提示词", "copy"],
-            ["复制路径", "link"],
-            [asset.favorite ? "取消收藏" : "收藏", "heart"],
-            ["添加分组", "plus"],
-            ["移除分组", "folder"],
-            ["导出至", "external"],
-            [active === "回收站" ? "恢复素材" : "移至回收站", "trash"],
-          ].map(([label, icon], i) => (
-            <button
-              className={`${
-                i === 2 || i === 6 || i === 9 ? "menu-divider" : ""
-              } ${i === 10 ? "danger" : ""}`}
-              key={label}
-              onClick={() => {
-                setMenu(null)
-                const batch = batchIds.length > 1
-                const batchIdsAll = [...batchIds]
-                if (i === 0) setPreview(true)
-                else if (i === 1) showInLibrary()
-                else if (i === 2) copyImage()
-                else if (i === 3) {
-                  cutIdsRef.current = batchIdsAll
-                  notify("已剪切")
-                } else if (i === 4) {
-                  if (!asset.prompt) { notify(tr("无提示词记录")); return }
-                  writeText(asset.prompt).then(() => notify(`${tr("复制提示词")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
-                } else if (i === 5) {
-                  writeText(asset.image_path || asset.image_url).then(() => notify(`${tr("复制路径")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
-                } else if (i === 6) {
-                  if (batch) {
-                    setAssetsFavorite(asset.project_id, batchIdsAll, !asset.favorite)
-                      .then(outcome => {
-                        if (!outcome.succeeded) { notify(outcome.firstError || tr("收藏失败")); return }
-                        setSelectedIds([])
-                        if (outcome.failed) {
-                          notify(tr("已收藏 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+          {contextMenuItems.map((entry, i) => {
+            if (entry.kind === "separator") {
+              return <div key={`sep-${i}`} className="menu-divider-line" />
+            }
+            if (entry.kind === "heading") {
+              return <div key={`head-${i}`} className="menu-heading">{entry.label}</div>
+            }
+            const item = entry as Extract<MenuEntry, { kind: "item" }>
+            return (
+              <button
+                key={item.id}
+                className={`menu-item ${item.danger ? "danger" : ""} ${item.disabled ? "disabled" : ""}`}
+                disabled={item.disabled}
+                onClick={() => {
+                  if (item.submenu) return // Submenu items don't close menu on click
+                  void handleMenuAction(item.id)
+                }}
+                onMouseEnter={(e) => {
+                  if (item.submenu && item.submenu.length > 0) {
+                    // Show submenu
+                    const btn = e.currentTarget
+                    const rect = btn.getBoundingClientRect()
+                    const submenuHeight = item.submenu.length * 32 + 16
+                    const submenuTop = Math.min(rect.top, window.innerHeight - submenuHeight - 20)
+                    const submenuLeft = rect.right + 4
+                    const submenuRight = submenuLeft + 200
+                    
+                    // Create or update submenu portal
+                    let portal = document.getElementById("submenu-portal")
+                    if (!portal) {
+                      portal = document.createElement("div")
+                      portal.id = "submenu-portal"
+                      document.body.appendChild(portal)
+                    }
+                    
+                    portal.innerHTML = ""
+                    const submenu = document.createElement("div")
+                    submenu.className = "context-menu submenu"
+                    submenu.style.left = `${submenuRight > window.innerWidth ? rect.left - 204 : submenuLeft}px`
+                    submenu.style.top = `${submenuTop}px`
+                    
+                    item.submenu.forEach(sub => {
+                      if (sub.kind === "separator") {
+                        const sep = document.createElement("div")
+                        sep.className = "menu-divider-line"
+                        submenu.appendChild(sep)
+                      } else if (sub.kind === "heading") {
+                        const heading = document.createElement("div")
+                        heading.className = "menu-heading"
+                        heading.textContent = tr(sub.label)
+                        submenu.appendChild(heading)
+                      } else {
+                        const subBtn = document.createElement("button")
+                        subBtn.className = `menu-item ${sub.disabled ? "disabled" : ""}`
+                        if (sub.disabled) subBtn.disabled = true
+                        
+                        // Group color dot
+                        if (sub.id.includes("group") && sub.icon) {
+                          const dot = document.createElement("span")
+                          dot.className = "group-color-dot"
+                          dot.style.backgroundColor = sub.icon
+                          subBtn.appendChild(dot)
                         }
-                        refreshNavigation()
-                      })
-                      .catch(error => notify(errorMessage(error)))
-                  } else toggleFavorite()
-                } else if (i === 7) {
-                  if (!group) { notify(tr("请先在左侧选择或新建分组")); return }
-                  setAssetsGroup(asset.project_id, batchIdsAll, group)
-                    .then(outcome => {
-                      if (!outcome.succeeded) { notify(outcome.firstError || tr("添加分组失败")); return }
-                      setSelectedIds([])
-                      notify(outcome.failed
-                        ? tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-                        : tr("已添加到分组"))
-                      refreshNavigation()
+                        
+                        const label = document.createElement("span")
+                        label.textContent = tr(sub.label)
+                        subBtn.appendChild(label)
+                        
+                        subBtn.addEventListener("click", () => {
+                          portal?.remove()
+                          void handleMenuAction(sub.id)
+                        })
+                        submenu.appendChild(subBtn)
+                      }
                     })
-                    .catch(error => notify(errorMessage(error)))
-                } else if (i === 8) {
-                  setAssetsGroup(asset.project_id, batchIdsAll, "")
-                    .then(outcome => {
-                      if (!outcome.succeeded) { notify(outcome.firstError || tr("移除分组失败")); return }
-                      setSelectedIds([])
-                      notify(outcome.failed
-                        ? tr("已从分组移除 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-                        : tr("已从分组移除"))
-                      refreshNavigation()
-                    })
-                    .catch(error => notify(errorMessage(error)))
-                } else if (i === 9) exportAsset()
-                else if (active === "回收站") restore()
-                else requestDelete()
-              }}
-            >
-              <Icon name={icon} size={14} />
-              <span>{tr(String(label))}</span>
-              {i === 0 && <small><Icon name="enter" size={12} /></small>}
-              {i === 10 && <small><Icon name="backspace" size={12} /></small>}
-            </button>
-          ))}
+                    
+                    portal.appendChild(submenu)
+                  }
+                }}
+              >
+                {item.icon && !item.submenu && <Icon name={item.icon} size={14} />}
+                {item.submenu && <span className="group-color-dot" style={{ backgroundColor: "transparent", marginRight: "4px" }} />}
+                <span>{tr(item.label)}</span>
+                {item.shortcut && <small>{item.shortcut}</small>}
+                {item.submenu && <Icon name="chevron-right" size={12} />}
+              </button>
+            )
+          })}
         </div>
       )}
       {deleting && (
