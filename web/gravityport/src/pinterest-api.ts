@@ -241,6 +241,7 @@ export function createPinterestPager<T extends { id: string }>(
   let error: Error | null = null;
   let lastBookmark = "";
   let generation = 0;
+  let disposed = false;
   let currentRequest: Promise<void> | null = null;
   let currentController: AbortController | null = null;
   const listeners = new Set<(state: PinterestPagerState<T>) => void>();
@@ -256,6 +257,7 @@ export function createPinterestPager<T extends { id: string }>(
 
   /** Abort whatever is in flight, clear the list and fetch page one. */
   function loadFirst(): Promise<void> {
+    if (disposed) return Promise.resolve();
     generation++;
     if (currentController) {
       currentController.abort();
@@ -271,7 +273,7 @@ export function createPinterestPager<T extends { id: string }>(
   }
 
   function loadMore(): Promise<void> {
-    if (done || loading) {
+    if (disposed || done || loading) {
       return currentRequest || Promise.resolve();
     }
 
@@ -325,7 +327,29 @@ export function createPinterestPager<T extends { id: string }>(
     };
   }
 
-  return { state, loadFirst, loadMore, subscribe };
+  /**
+   * Abort the in-flight request, drop every listener, and freeze the pager:
+   * late responses from a disposed pager never land and it never fetches
+   * again. Used when a board view goes away so an old board's results cannot
+   * bleed into a new board's pager.
+   */
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    generation++;
+    if (currentController) {
+      currentController.abort();
+      currentController = null;
+    }
+    currentRequest = null;
+    loading = false;
+    done = true;
+    error = null;
+    items = [];
+    listeners.clear();
+  }
+
+  return { state, loadFirst, loadMore, subscribe, dispose };
 }
 
 // ============================================================================

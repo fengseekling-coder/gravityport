@@ -709,3 +709,75 @@ describe("pinterestErrorMessage — non-Error inputs", () => {
     assert.equal(pinterestApi.pinterestErrorMessage({ code: "toString" }), "加载 Pinterest 内容失败");
   });
 });
+
+describe("createPinterestPager — dispose", () => {
+  it("aborts the in-flight request when disposed", async () => {
+    let seenSignal;
+    const pager = pinterestApi.createPinterestPager(
+      (_bookmark, signal) =>
+        new Promise((resolve, reject) => {
+          seenSignal = signal;
+          signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        })
+    );
+    const first = pager.loadMore();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    pager.dispose();
+    await first.catch(() => {});
+    assert.equal(seenSignal?.aborted, true);
+  });
+
+  it("a response arriving after dispose never lands and notifies nobody", async () => {
+    let resolveFirst;
+    let call = 0;
+    const pager = pinterestApi.createPinterestPager(async () => {
+      call++;
+      if (call === 1) {
+        return new Promise((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return { items: [{ id: "never" }], bookmark: "" };
+    });
+    const first = pager.loadMore();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const updates = [];
+    const unsubscribe = pager.subscribe((state) => updates.push(state.items.length));
+    pager.dispose();
+    resolveFirst({ items: [{ id: "late" }], bookmark: "more" });
+    await first.catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const state = pager.state();
+    assert.deepEqual(state.items, []);
+    assert.deepEqual(updates, []);
+    unsubscribe();
+  });
+
+  it("never fetches again after dispose", async () => {
+    let fetchCount = 0;
+    const pager = pinterestApi.createPinterestPager(async () => {
+      fetchCount++;
+      return { items: [{ id: "a1" }], bookmark: "next" };
+    });
+    await pager.loadMore();
+    pager.dispose();
+    await pager.loadMore();
+    await pager.loadFirst();
+    assert.equal(fetchCount, 1);
+  });
+
+  it("clears existing items and starts empty for state() readers", async () => {
+    const pager = pinterestApi.createPinterestPager(async () => ({
+      items: [{ id: "a1" }],
+      bookmark: "",
+    }));
+    await pager.loadMore();
+    assert.equal(pager.state().items.length, 1);
+    pager.dispose();
+    assert.deepEqual(pager.state().items, []);
+    assert.equal(pager.state().done, true);
+    assert.equal(pager.state().loading, false);
+  });
+});

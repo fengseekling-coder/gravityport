@@ -261,6 +261,7 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "onVisualPackProgress",
     "onWindowFullScreenChange",
     "openDownloadPage",
+    "openExternalLink", // 任务 147：第 22 条 open-external-link（Pinterest Pin 外链，仅 http/https）
     "openPinterestAuthorize", // 任务 135：第 21 条 open-pinterest-authorize（Pinterest 授权页，只放行 https://www.pinterest.com/oauth/）
     "pasteImage",
     "removeVisualPack",

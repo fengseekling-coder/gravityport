@@ -32,6 +32,7 @@ const EXPECTED_API_KEYS = [
   "onVisualPackProgress",
   "onWindowFullScreenChange",
   "openDownloadPage",
+  "openExternalLink",
   "openPinterestAuthorize",
   "pasteImage",
   "removeVisualPack",
@@ -83,15 +84,18 @@ test("preload path, module format, security settings, and API surface are stable
   assert.doesNotMatch(preload, /require\s*:/, "require is not exposed as an API key");
   assert.doesNotMatch(preload, /ipcRenderer\s*:/, "ipcRenderer is not exposed as an API value");
   assert.doesNotMatch(preload, /^\s*shell\s*:/m, "shell is not exposed as an API value");
-  assert.doesNotMatch(preload, /openExternal|sendSync|\.send\(/, "generic IPC is not exposed");
+  // 任务 147：open-external-link 是带 URL 白名单的受控通道（open-external-link.mjs
+  // 校验后由主进程代开），不算 generic shell；这里仍然禁止裸 openExternal。
+  assert.doesNotMatch(preload, /openExternal(?![A-Za-z])|sendSync|\.send\(/, "generic IPC is not exposed");
   // The preload exposes only narrow, named request channels. Update actions
   // accept no URL from the renderer; the main process owns the fixed website.
   // 任务 96（A6）：第 18 条批准通道 set-window-full-screen（大图页全屏与窗口
   // 系统全屏双向同步）；window-full-screen-change 是 ipcRenderer.on 单向广播，
   // 不在 invoke 计数内。任务 116：第 19/20 条 rename-notice-state /
   // acknowledge-rename-notice（老用户「已更名」提示）。任务 135：第 21 条
-  // open-pinterest-authorize（Pinterest OAuth 授权页）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 21, "only the twenty-one approved invoke channels remain");
+  // open-pinterest-authorize（Pinterest OAuth 授权页）。任务 147：第 22 条
+  // open-external-link（Pinterest Pin 外链，仅 http/https）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 22, "only the twenty-two approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
@@ -111,6 +115,7 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(preload, /onUpdateDownloadProgress: \(callback\) =>[\s\S]*?ipcRenderer\.on\("update-download-progress"/);
   assert.match(preload, /openDownloadPage: \(\) => ipcRenderer\.invoke\("open-download-page"\)/);
   assert.match(preload, /openPinterestAuthorize: \(url\) => ipcRenderer\.invoke\("open-pinterest-authorize", url\)/);
+  assert.match(preload, /openExternalLink: \(url\) => ipcRenderer\.invoke\("open-external-link", url\)/);
   assert.match(preload, /changeLibraryLocation: \(\) => ipcRenderer\.invoke\("change-library-location"\)/);
   assert.match(preload, /getVisualModelState: \(refresh = false\) => ipcRenderer\.invoke\("visual-model-state", refresh === true\)/);
   assert.match(preload, /setVisualModelEnabled: \(enabled\) => ipcRenderer\.invoke\("visual-model-set-enabled", enabled === true\)/);
@@ -126,6 +131,7 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /ipcMain\.handle\("download-and-install-update"/);
   assert.match(main, /ipcMain\.handle\("open-download-page"/);
   assert.match(main, /ipcMain\.handle\("open-pinterest-authorize"/);
+  assert.match(main, /ipcMain\.handle\("open-external-link"/);
   assert.match(main, /ipcMain\.handle\("change-library-location"/);
   assert.match(main, /ipcMain\.handle\("visual-model-state"/);
   assert.match(main, /ipcMain\.handle\("visual-model-set-enabled"/);
