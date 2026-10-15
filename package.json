@@ -30,7 +30,7 @@
     "test:e2e": "node scripts/e2e-critical-flows.mjs",
     "test:coverage": "c8 --reporter=html --reporter=text npm test",
     "lint": "eslint .",
-    "check": "node scripts/check-source.mjs && node scripts/check-dead-code.mjs",
+    "check": "node scripts/check-source.mjs && node scripts/check-dead-code.mjs && npm --prefix web/gravityport run typecheck",
     "check:dead-code": "node scripts/check-dead-code.mjs",
     "clean:local": "node scripts/clean-local.mjs",
     "check:web-capture-store": "node scripts/check-web-capture-store.mjs",
