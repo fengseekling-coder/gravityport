@@ -96,16 +96,19 @@ export function usePinterestConnection(options: {
   const callbacksRef = useRef(options);
   callbacksRef.current = options;
   const flowRef = useRef<PinterestConnectionFlow | null>(null);
-  if (!flowRef.current) {
-    flowRef.current = createPinterestConnectionFlow({
+  // The flow is created per mount: StrictMode mounts, unmounts and remounts
+  // once, and a flow created during render would stay disposed after that.
+  useEffect(() => {
+    const flow = createPinterestConnectionFlow({
       onPhase: setPhase,
       onConnected: (status) => callbacksRef.current.onConnected?.(status),
       onError: (message) => callbacksRef.current.onError?.(message),
     });
-  }
-  useEffect(() => {
-    const flow = flowRef.current;
-    return () => flow?.dispose();
+    flowRef.current = flow;
+    return () => {
+      flow.dispose();
+      if (flowRef.current === flow) flowRef.current = null;
+    };
   }, []);
   return { phase, start: () => flowRef.current?.start(), cancel: () => flowRef.current?.cancel() };
 }

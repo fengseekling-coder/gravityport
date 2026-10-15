@@ -7,9 +7,10 @@
  * never mentions MCP.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   disconnectPinterest,
+  fetchPinterestStatus,
   pinterestErrorMessage,
   type PinterestStatus,
 } from "./pinterest-api.js";
@@ -139,6 +140,22 @@ export function PinterestConnectionCard({ language, onStatusChange }: PinterestC
     },
   });
 
+  // Read the current connection when the card opens. A failed read shows the
+  // card as not connected so the user can still start a connection.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchPinterestStatus(controller.signal)
+      .then((next) => {
+        if (controller.signal.aborted) return;
+        setStatus(next);
+        onStatusChangeRef.current?.(next);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setStatus({ connected: false });
+      });
+    return () => controller.abort();
+  }, []);
+
   const confirmDisconnect = async () => {
     setDisconnecting(true);
     setDisconnectError("");
@@ -160,7 +177,7 @@ export function PinterestConnectionCard({ language, onStatusChange }: PinterestC
       language={language}
       status={status}
       connecting={connection.phase.kind === "connecting"}
-      connectionError={connection.phase.kind === "error" ? connection.phase.message : ""}
+      connectionError={connection.phase.kind === "error" ? t(connection.phase.message) : ""}
       disconnecting={disconnecting}
       disconnectError={disconnectError}
       confirmOpen={confirmOpen}

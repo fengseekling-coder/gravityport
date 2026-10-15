@@ -423,11 +423,11 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
   const listError = board ? pinsState.error : boardsState.error;
   useEffect(() => {
     const code = errorCode(listError);
-    if (code === "PINTEREST_RECONNECT_REQUIRED") {
-      setStatus({ connected: false, needsReconnect: true });
-    } else if (code === "PINTEREST_NOT_CONNECTED") {
-      setStatus({ connected: false });
-    }
+    if (code !== "PINTEREST_RECONNECT_REQUIRED" && code !== "PINTEREST_NOT_CONNECTED") return;
+    // Leave the board too: after reconnecting the view starts from the board list.
+    setBoard(null);
+    setDetailPin(null);
+    setStatus(code === "PINTEREST_RECONNECT_REQUIRED" ? { connected: false, needsReconnect: true } : { connected: false });
   }, [listError]);
 
   // Sidebar badge: boards loaded so far, complete once paging is exhausted.
@@ -466,6 +466,9 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
 
   const openBoard = useCallback((next: PinterestBoard) => {
     savedBoardsScrollTop.current = scrollRef.current?.scrollTop ?? 0;
+    // Clear the previous board's pins in the same render, before the new
+    // board's pager effect runs, so they never flash under the new title.
+    setPinsState(EMPTY_PINS_STATE);
     setBoard(next);
     setDetailPin(null);
   }, []);
@@ -540,7 +543,7 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
         language={language}
         needsReconnect={status?.needsReconnect === true}
         connecting={connection.phase.kind === "connecting"}
-        error={connection.phase.kind === "error" ? connection.phase.message : ""}
+        error={connection.phase.kind === "error" ? t(connection.phase.message) : ""}
         onConnect={connection.start}
         onCancel={connection.cancel}
         onOpenSettings={onOpenSettings}
