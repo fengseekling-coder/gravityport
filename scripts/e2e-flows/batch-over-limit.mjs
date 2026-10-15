@@ -88,7 +88,11 @@ function flowSource() {
     }
     const loadedCount = () => Number(document.querySelector('.asset-grid')?.dataset.loadedAssets || 0);
     const mountedCards = () => Array.from(document.querySelectorAll('.asset-card:not(.asset-card-virtual-placeholder)'));
-    const toastText = () => (document.querySelector('.toast')?.textContent || '').trim();
+    // The toast message without its action button (task 142 adds 撤销).
+    const toastText = () => Array.from(document.querySelector('.toast')?.childNodes || [])
+      .filter((node) => !(node.nodeType === 1 && node.matches('button')))
+      .map((node) => node.textContent).join('').trim();
+    const toastAction = () => (document.querySelector('.toast .toast-action')?.textContent || '').trim();
     const navSmall = (label) => Array.from(document.querySelectorAll('.main-nav button'))
       .find((button) => Array.from(button.querySelectorAll(':scope > span')).some((span) => span.textContent.trim() === label))
       ?.querySelector('small')?.textContent || '0';
@@ -164,7 +168,8 @@ function flowSource() {
     await waitFor(() => toastText() === '已移至回收站 ' + (TOTAL - 1) + ' 项，1 项失败',
       'the partial result is announced with real counts');
     const partialTrashHonest = window.__batchPosts === 2
-      && navSmall('回收站') === String(TOTAL - 1);
+      && navSmall('回收站') === String(TOTAL - 1)
+      && toastAction() === '撤销';
     window.__batchFailAt = -1;
 
     // ── 5) Retry on the survivor: one chunk, the job finishes ──

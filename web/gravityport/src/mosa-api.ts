@@ -582,21 +582,6 @@ export async function stageImportFile(file: File): Promise<string> {
   return String(data.path || "")
 }
 
-export async function importAssetsBatch(project: string, items: { imagePath: string }[]) {
-  const result = await requestJson<{ imported?: number; failed?: number; results?: { index: number; ok: boolean; asset?: JsonValue; error?: string }[] }>("/api/assets/import-batch", {
-    method: "POST",
-    body: { projectId: project, items },
-  })
-  // The route reports each created row as `asset`; flatten to plain ids.
-  const results = (result.results || []).map(item => ({
-    index: item.index,
-    ok: item.ok !== false,
-    ...(typeof item.asset?.id === "string" ? { id: item.asset.id } : {}),
-    ...(item.error ? { error: item.error } : {}),
-  }))
-  return { imported: Number(result.imported || 0), failed: Number(result.failed || 0), results }
-}
-
 export type MosaVersionRow = MosaAsset & {
   version_index: number
   version_depth: number

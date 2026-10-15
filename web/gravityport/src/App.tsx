@@ -5,7 +5,9 @@ import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, type MenuContext, type MenuEntry } from "./context-menus"
-import { createStack, renameStack, dissolveStack, removeAssetsFromStack, assignStackToGroup, trashStack } from "./library-actions"
+import { createStack, renameStack, dissolveStack, removeAssetsFromStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash } from "./library-actions"
+import { runImport, collectDroppedFiles } from "./import-pipeline"
+import { trashRemainingDays } from "./trash-ui"
 import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
@@ -35,9 +37,9 @@ import {
 import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus, fetchSimilarAssets,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
-  toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, restoreAsset, setAssetsGroup,
+  toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, setAssetsGroup,
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
-  moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
+  moveAssetsToStack, openLibraryFolder,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
   type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
   fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
@@ -138,6 +140,11 @@ type NavSnapshot = {
   assetType: string
 }
 
+/** One toast action button (task 142): the undo affordance on trash toasts. */
+type ToastAction = { label: string; run: () => void }
+
+type ToastState = { text: string; action?: ToastAction; duration?: number } | null
+
 /** One row of the context menu. A row with a submenu expands it on hover or
  * keyboard focus; near the right window edge the submenu flips to the left,
  * and a submenu taller than the window shifts up and scrolls internally. */
@@ -201,7 +208,7 @@ function MenuRow({ entry, onAction }: { entry: Extract<MenuEntry, { kind: "item"
         <span>{entry.label}</span>
         {entry.shortcut && <small>{entry.shortcut}</small>}
         {!entry.shortcut && entry.id === "open-viewer" && <small><Icon name="enter" size={12} /></small>}
-        {(entry.id === "move-to-trash" || entry.id === "restore") && <small><Icon name="backspace" size={12} /></small>}
+        {entry.id === "move-to-trash" && <small><Icon name="backspace" size={12} /></small>}
         {entry.submenu && <small><Icon name="right" size={12} /></small>}
       </button>
       {open && entry.submenu && (
@@ -328,13 +335,18 @@ export default function App() {
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
   const [columns, setColumns] = useState(() => resolveInitialColumns(readStoredColumns(columnsStorage()), window.innerWidth))
-  const [toast, setToast] = useState("")
+  const [toast, setToast] = useState<ToastState>(null)
   const [expandedSections, setExpandedSections] = useState([true, true])
   const [groupMenu, setGroupMenu] = useState<{ name: string; x: number; y: number } | null>(null)
   const [groupRename, setGroupRename] = useState<{ original: string; draft: string } | null>(null)
   const [stackRename, setStackRename] = useState<{ stackId: string; initialName: string; draft: string } | null>(null)
   const [stackDissolveConfirm, setStackDissolveConfirm] = useState<{ stackId: string; stackCount: number } | null>(null)
   const [stackTrashConfirm, setStackTrashConfirm] = useState<{ stackId: string; stackCount: number } | null>(null)
+  // Task 142: the trash's own confirmations — permanent delete carries the ids
+  // captured at menu time; neither shares state with the move-to-trash dialog
+  // and neither honors the 「不再提醒」 suppression.
+  const [permanentDeleteIds, setPermanentDeleteIds] = useState<string[] | null>(null)
+  const [emptyTrashConfirm, setEmptyTrashConfirm] = useState(false)
   const [groupCreateWithSelection, setGroupCreateWithSelection] = useState<{ target: "asset" | "stack"; targetStackId?: string; draft: string } | null>(null)
   const [groupCreateError, setGroupCreateError] = useState("")
   const [groupStats, setGroupStats] = useState<{ name: string; values: Record<string, unknown> } | null>(null)
@@ -844,13 +856,31 @@ export default function App() {
   const asset = assets.find((a) => a.id === selected) || assets[0]
   const currentTags = asset ? asset.tags : []
   const visible = assets
-  const notify = (text: string) => setToast(tr(text))
+  const notify = (text: string) => setToast({ text: tr(text) })
+  const notifyWithAction = (text: string, action: ToastAction, duration = 6000) =>
+    setToast({ text: tr(text), action, duration })
   useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => setToast(""), 2600)
-      return () => clearTimeout(timer)
-    }
-  }, [toast])
+    // An import in progress holds the toast on screen; the timer resumes with
+    // the toast's own duration once the import settles. A newer toast replaces
+    // the old one together with its timer (the effect re-runs on the object).
+    if (!toast || importing) return
+    const timer = setTimeout(() => setToast(null), toast.duration ?? 2600)
+    return () => clearTimeout(timer)
+  }, [toast, importing])
+  // The same refresh the blank-area 刷新 menu entries run: a visible notice
+  // plus a navigation-key reload of the current view.
+  const refreshCurrentView = () => {
+    notify(tr("正在刷新..."))
+    refreshNavigation()
+  }
+  // Translate, then fill the named placeholders ({count}, {completed}, …).
+  const fillNamed = (text: string, values: Record<string, string | number>) => fill(tr(text), values)
+  // Batch outcomes share one toast grammar: any failure → the existing
+  // 「…X 项，Y 项失败」 line; full success → single or counted text.
+  const notifyBatchOutcome = (doneCount: number, failed: number, texts: { single: string; multi: string; partial: string }) => {
+    if (failed) notify(tr(texts.partial).replace("X", String(doneCount)).replace("Y", String(failed)))
+    else notify(doneCount > 1 ? fillNamed(texts.multi, { count: doneCount }) : texts.single)
+  }
   // The in-flight lock lives in a ref: the render-state flag is stale inside
   // same-tick re-entrancy (scroll listener + IntersectionObserver firing
   // together), which used to send duplicate page requests with one cursor.
@@ -1190,7 +1220,7 @@ export default function App() {
     const controller = new AbortController()
     selectAllAbortRef.current = controller
     selectAllInFlightRef.current = true
-    setToast(tr("正在全选"))
+    setToast({ text: tr("正在全选") })
     try {
       const collected: string[] = []
       const seen = new Set<string>()
@@ -1212,7 +1242,7 @@ export default function App() {
           seen.add(item.id)
           collected.push(item.id)
         }
-        setToast(`${tr("正在全选")} ${collected.length}${page.total ? ` / ${page.total}` : "…"}`)
+        setToast({ text: `${tr("正在全选")} ${collected.length}${page.total ? ` / ${page.total}` : "…"}` })
         morePages = Boolean(page.nextCursor)
         if (!morePages) break
         cursor = page.nextCursor ?? undefined
@@ -1221,9 +1251,9 @@ export default function App() {
         || selectionRevisionRef.current !== startRevision) return
       if (collected.length) {
         applySelection(collected, replaceSelection(collected, selectionRef.current.selected))
-        setToast((morePages
+        setToast({ text: (morePages
           ? tr("结果过大，已选前 N 项")
-          : tr("已选 N 项")).replace("N", String(collected.length)))
+          : tr("已选 N 项")).replace("N", String(collected.length)) })
       }
     } catch (error) {
       if (!controller.signal.aborted) notify(errorMessage(error))
@@ -1327,47 +1357,58 @@ export default function App() {
     return () => window.removeEventListener("keydown", key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, deleting, menu, assets, asset, stackId, active, language, selectedIds, selected, selectionIds])
-  // Local file import: drag onto the workspace or paste image files. Every file
-  // goes through the server's staging endpoint, so rejected types surface as
-  // real errors instead of silent drops.
+  // Local file import through the staged pipeline (task 130): 40-file batches
+  // of stage → create → cleanup, optional target stack and group, live
+  // progress in the toast.
   const importFiles = async (files: File[], groupName?: string): Promise<string[]> => {
-    if (!files.length || importing) return []
+    if (!files.length) return []
+    if (importing) { notify("正在导入，请稍候"); return [] }
     const supported = library?.supportedMediaExtensions
-    const usable = files.filter(file => {
+    const isSupported = (name: string) => {
       if (!supported || !supported.length) return true
-      const lower = file.name.toLowerCase()
+      const lower = name.toLowerCase()
       return supported.some(ext => lower.endsWith(ext.toLowerCase()))
-    })
-    if (!usable.length) { notify("导入失败"); return [] }
+    }
     setImporting(true)
-    notify("正在导入素材")
     try {
-      const items: { imagePath: string }[] = []
-      for (const file of usable) {
-        try { items.push({ imagePath: await stageImportFile(file) }) }
-        catch (error) { notify(errorMessage(error)) }
-      }
-      if (!items.length) return []
-      const result = await importAssetsBatch(project, items)
-      const createdIds = result.results.filter(item => item.ok !== false && typeof item.id === "string").map(item => item.id as string)
-      if (groupName && createdIds.length) {
-        try {
-          const outcome = await setAssetsGroup(project, createdIds, groupName)
-          if (outcome.failed) {
-            notify(tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
-          }
-        } catch (error) { notify(errorMessage(error)) }
-      }
-      if (result.failed) notify("部分素材导入失败")
+      const result = await runImport(files, {
+        project,
+        ...(stackId ? { stackId } : {}),
+        ...(groupName ? { groupName } : {}),
+        isSupported,
+        onProgress: progress => {
+          notify(fillNamed("正在导入 {completed}/{total} · 成功 {imported} · 失败 {failed}", {
+            completed: progress.completed, total: progress.total, imported: progress.imported, failed: progress.failed,
+          }))
+        },
+      })
+      const firstReason = result.errors[0]?.reason
+      if (!result.imported && !result.failed) notify("导入失败")
+      else if (result.failed) notify(firstReason ? `${tr("部分素材导入失败")}：${firstReason}` : tr("部分素材导入失败"))
+      else if (result.skipped) notify(fillNamed("有 {count} 个文件格式不支持，已跳过", { count: result.skipped }))
       else notify("导入完成")
+      // The navigation key reloads the current view too (inside a stack, the
+      // stack's members), without a 正在刷新 toast replacing the result above.
       refreshNavigation()
-      return createdIds
+      return result.createdIds
     } catch (error) {
       notify(errorMessage(error))
       return []
     } finally {
       setImporting(false)
     }
+  }
+  // Drop entry: collectDroppedFiles must be invoked synchronously inside the
+  // drop handler — dataTransfer.items die after the event tick — and the scan
+  // promise is awaited afterwards. A folder over the scan limit surfaces as a
+  // toast and nothing imports.
+  const importDroppedFiles = (dataTransfer: DataTransfer | null, groupName?: string) => {
+    const scan = collectDroppedFiles(dataTransfer, {
+      onScanProgress: count => notify(fillNamed("正在扫描拖入的文件…已找到 {count} 个", { count })),
+    })
+    void scan
+      .then(result => importFiles(result.files, groupName))
+      .catch(error => notify(errorMessage(error)))
   }
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
@@ -1378,7 +1419,7 @@ export default function App() {
     window.addEventListener("paste", paste)
     return () => window.removeEventListener("paste", paste)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [importing, library, active])
+  }, [importing, library, active, project, stackId])
   const navigateAsset = async (direction: number) => {
     if (!visible.length) return
     const index = visible.findIndex(a => a.id === selected)
@@ -1408,8 +1449,11 @@ export default function App() {
     // when it spans pages that are not loaded into the grid.
     const ids = selectionIds
     if (!ids.length) return
+    // The undo restores against the project the deletion ran in, even if the
+    // user has switched projects by the time the button is pressed.
+    const originProject = asset?.project_id ?? project
     try {
-      const outcome = await moveAssetsToTrash(asset?.project_id ?? project, ids)
+      const outcome = await moveAssetsToTrash(originProject, ids)
       setDeleting(false)
       setPreview(false)
       if (!outcome.succeeded) {
@@ -1418,13 +1462,31 @@ export default function App() {
       }
       // Only rows the server confirmed leave the grid; a partial chunk
       // failure keeps the rest selectable and says so.
-      const trashed = new Set(ids.filter(id => !outcome.failedIds.includes(id)))
-      setAssets(old => old.filter(a => !trashed.has(a.id)))
-      applySelection([], trashed.has(selectionRef.current.selected) ? "" : selectionRef.current.selected)
-      notify(outcome.failed
+      const movedIds = ids.filter(id => !outcome.failedIds.includes(id))
+      const moved = new Set(movedIds)
+      setAssets(old => old.filter(a => !moved.has(a.id)))
+      applySelection([], moved.has(selectionRef.current.selected) ? "" : selectionRef.current.selected)
+      // A partial failure still offers undo for the rows that did move.
+      notifyWithAction(outcome.failed
         ? tr("已移至回收站 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-        : tr("素材已移至回收站"))
+        : "素材已移至回收站", {
+        label: tr("撤销"),
+        run: () => { void undoTrashMove(originProject, movedIds) },
+      })
       refreshNavigation()
+    } catch (error) { notify(errorMessage(error)) }
+  }
+  // Undo for a move-to-trash: restore exactly the ids the server confirmed
+  // moving, then reload whatever view is current (the user may have navigated
+  // anywhere, or into another project, in the meantime).
+  const undoTrashMove = async (originProject: string, ids: string[]) => {
+    if (!ids.length) return
+    try {
+      const outcome = await restoreAssets(originProject, ids)
+      refreshCurrentView()
+      notifyBatchOutcome(ids.filter(id => !outcome.failedIds.includes(id)).length, outcome.failed, {
+        single: "素材已恢复至素材库", multi: "已恢复 {count} 个素材", partial: "已恢复 X 项，Y 项失败",
+      })
     } catch (error) { notify(errorMessage(error)) }
   }
   const requestDelete = () => {
@@ -1432,13 +1494,50 @@ export default function App() {
     if (skipConfirm) remove()
     else setDeleting(true)
   }
-  const restore = async () => {
-    if (!asset) return
+  // Restore the selection (or just the focused asset when nothing else is
+  // selected) back into the library; confirmed rows leave the trash view.
+  const restoreSelection = async () => {
+    const ids = selectionIds.length ? [...selectionIds] : asset ? [asset.id] : []
+    if (!ids.length) return
     try {
-      await restoreAsset(asset.project_id, asset.id)
+      const outcome = await restoreAssets(asset?.project_id ?? project, ids)
       setMenu(null)
       setPreview(false)
-      notify("素材已恢复至素材库")
+      notifyBatchOutcome(ids.filter(id => !outcome.failedIds.includes(id)).length, outcome.failed, {
+        single: "素材已恢复至素材库", multi: "已恢复 {count} 个素材", partial: "已恢复 X 项，Y 项失败",
+      })
+      applySelection([], "")
+      refreshNavigation()
+    } catch (error) { notify(errorMessage(error)) }
+  }
+  // Permanent delete from trash: the viewer closes first when it is showing a
+  // victim, so a playing video file cannot hold the media open mid-delete.
+  const confirmPermanentDelete = async () => {
+    const ids = permanentDeleteIds || []
+    setPermanentDeleteIds(null)
+    if (!ids.length) return
+    if (preview && asset && ids.includes(asset.id)) setPreview(false)
+    try {
+      const outcome = await permanentlyDeleteAssets(project, ids)
+      if (!outcome.succeeded) { notify(outcome.firstError || "永久删除失败"); return }
+      const deleted = new Set(ids.filter(id => !outcome.failedIds.includes(id)))
+      setAssets(old => old.filter(a => !deleted.has(a.id)))
+      applySelection([], deleted.has(selectionRef.current.selected) ? "" : selectionRef.current.selected)
+      notifyBatchOutcome(deleted.size, outcome.failed, {
+        single: "素材已永久删除", multi: "已永久删除 {count} 个素材", partial: "已永久删除 X 项，Y 项失败",
+      })
+      refreshNavigation()
+    } catch (error) { notify(errorMessage(error)) }
+  }
+  const confirmEmptyTrash = async () => {
+    setEmptyTrashConfirm(false)
+    try {
+      const result = await emptyTrash(project)
+      const failedCount = Array.isArray(result.failed) ? result.failed.length : 0
+      if (result.partial) notify(fillNamed("{count} 个素材暂时无法永久删除，稍后会重试", { count: failedCount }))
+      else notify("回收站已清空")
+      applySelection([], "")
+      setAssets([])
       refreshNavigation()
     } catch (error) { notify(errorMessage(error)) }
   }
@@ -1497,13 +1596,14 @@ export default function App() {
   // ===== Context menu: open helpers, shared paste, action dispatch =====
 
   // Translate the builder's Chinese source labels once at open time (and fill
-  // the selection heading's {count}); the renderer just prints the labels.
+  // the {count} placeholders the selection heading and trash labels carry);
+  // the renderer just prints the labels.
   const translateMenuEntries = (entries: MenuEntry[], selectionCount: number): MenuEntry[] =>
     entries.map(entry => {
       if (entry.kind === "item") {
-        return { ...entry, label: tr(entry.label), submenu: entry.submenu ? translateMenuEntries(entry.submenu, selectionCount) : undefined }
+        return { ...entry, label: fillNamed(entry.label, { count: selectionCount }), submenu: entry.submenu ? translateMenuEntries(entry.submenu, selectionCount) : undefined }
       }
-      if (entry.kind === "heading") return { ...entry, label: fill(tr(entry.label), { count: selectionCount }) }
+      if (entry.kind === "heading") return { ...entry, label: fillNamed(entry.label, { count: selectionCount }) }
       return entry
     })
 
@@ -1529,6 +1629,7 @@ export default function App() {
       groups: menuGroups(),
       pageTotal: pageTotal ?? assets.length,
       isMac: isMacPlatform(),
+      trashCount: navigation?.trash ?? 0,
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), ctx.selectionCount)
     setMenu({ x, y, entries, target: "asset", selectionCount: ctx.selectionCount, stackId: "", stackName: "", stackCount: 0 })
@@ -1549,6 +1650,7 @@ export default function App() {
       groups: menuGroups(),
       pageTotal: assets.length,
       isMac: isMacPlatform(),
+      trashCount: navigation?.trash ?? 0,
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), 0)
     setMenu({ x, y, entries, target: "stack", selectionCount: 0, stackId: stack.id, stackName: stack.name || cardName, stackCount: stack.count })
@@ -1558,7 +1660,7 @@ export default function App() {
     const inStack = Boolean(stackId)
     const ctx: MenuContext = {
       target: inStack ? "stack-blank" : "gallery-blank",
-      scope: "all",
+      scope: active === "回收站" ? "trash" : "all",
       selectionCount: 0,
       selectionHasStacks: false,
       anyGrouped: false,
@@ -1568,8 +1670,11 @@ export default function App() {
       groups: menuGroups(),
       pageTotal: pageTotal ?? assets.length,
       isMac: isMacPlatform(),
+      trashCount: navigation?.trash ?? 0,
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), 0)
+    // An empty builder result (stack surfaces inside the trash) opens nothing.
+    if (!entries.length) return
     setMenu({ x, y, entries, target: ctx.target, selectionCount: 0, stackId, stackName, stackCount: assets.length })
   }
 
@@ -1663,7 +1768,11 @@ export default function App() {
     else if (id.startsWith("add-to-group:")) assignSelectionToGroup(id.slice("add-to-group:".length))
     else if (id === "remove-from-group") assignSelectionToGroup("")
     else if (id === "export") exportAsset()
-    else if (id === "restore") void restore()
+    else if (id === "restore-selection") void restoreSelection()
+    else if (id === "permanent-delete") setPermanentDeleteIds(ids)
+    else if (id === "empty-trash") {
+      if ((navigation?.trash ?? 0) > 0) setEmptyTrashConfirm(true)
+    }
     else if (id === "move-to-trash") requestDelete()
     else if (id === "remove-from-stack") {
       if (!stackId) return
@@ -1712,10 +1821,7 @@ export default function App() {
     else if (id === "paste") pasteCut(target.target === "stack-blank" ? target.stackId : null)
     else if (id === "create-group") createNamedGroup()
     else if (id === "select-all") void selectAllAcrossPages()
-    else if (id === "refresh" || id === "refresh-library") {
-      notify(tr("正在刷新..."))
-      refreshNavigation()
-    }
+    else if (id === "refresh" || id === "refresh-library") refreshCurrentView()
   }
   const showInLibrary = () => {
     setMenu(null)
@@ -2011,7 +2117,7 @@ export default function App() {
                 onDrop={event => {
                   if (!g.id.startsWith("group:") || preview || settings) return
                   event.preventDefault()
-                  void importFiles(Array.from(event.dataTransfer?.files || []), g.name)
+                  importDroppedFiles(event.dataTransfer, g.name)
                 }}
               >
                 <Icon name={section === 0 ? "layers" : "folder"} size={16} />
@@ -2263,7 +2369,7 @@ export default function App() {
         onDrop={event => {
           if (preview || settings || active === "回收站") return
           event.preventDefault()
-          void importFiles(Array.from(event.dataTransfer?.files || []))
+          importDroppedFiles(event.dataTransfer)
         }}
       >
         <header className="toolbar">
@@ -2300,6 +2406,12 @@ export default function App() {
               </>
             ) : (
               <>
+                {active === "回收站" && (navigation?.trash ?? 0) > 0 && (
+                  <button onClick={() => setEmptyTrashConfirm(true)}>
+                    <Icon name="trash" size={12} />
+                    {tr("清空回收站")}
+                  </button>
+                )}
                 <ToolbarSelect label={tr("素材类型")} value={assetType} onChange={setAssetType} options={[{ value: "all", label: tr("全部类型") }, { value: "image", label: tr("图片") }, { value: "video", label: tr("视频") }]} />
                 <ToolbarSelect label={tr("排序")} value={sortOrder} onChange={setSortOrder} options={[{ value: "newest", label: tr("最新优先") }, { value: "name", label: tr("名称排序") }]} />
                 <ColumnControl value={columns} onChange={value => { setColumns(value); writeStoredColumns(columnsStorage(), value) }} language={language} />
@@ -2318,7 +2430,7 @@ export default function App() {
           </div>
         </header>
         {preview ? (
-          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} onNavigate={navigateAsset} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} message={toast} />
+          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} onNavigate={navigateAsset} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} message={toast?.text ?? ""} />
         ) : (
           <div
             ref={gridRef}
@@ -2329,10 +2441,10 @@ export default function App() {
             data-loaded-assets={assets.length}
             onPointerDown={onGridPointerDown}
             onContextMenu={(e) => {
-              // Blank-area menu: cards handle their own contextmenu, the
-              // viewer and the settings dialog suppress it, and the trash
-              // scope stays read-only.
-              if ((e.target as HTMLElement).closest(".asset-card") || preview || settings || active === "回收站") return
+              // Blank-area menu: cards handle their own contextmenu, and the
+              // viewer and the settings dialog suppress it. In the trash the
+              // blank menu offers select-all / empty-trash instead.
+              if ((e.target as HTMLElement).closest(".asset-card") || preview || settings) return
               e.preventDefault()
               openBlankMenu(e.clientX, e.clientY)
             }}
@@ -2403,6 +2515,9 @@ export default function App() {
                         <Icon name="heart" size={12} />
                       </span>
                     )}
+                    {active === "回收站" && a.deleted_at && (
+                      <span className="trash-countdown">{fillNamed("{count} 天后删除", { count: trashRemainingDays(a.deleted_at, Date.now()) })}</span>
+                    )}
                     {cardInfo && <span className="card-name">{a.stack ? a.stack.name || a.name : a.name}</span>}
                   </button>
                 ))
@@ -2465,6 +2580,9 @@ export default function App() {
                     <span className="favorite-mark">
                       <Icon name="heart" size={12} />
                     </span>
+                  )}
+                  {active === "回收站" && a.deleted_at && (
+                    <span className="trash-countdown">{fillNamed("{count} 天后删除", { count: trashRemainingDays(a.deleted_at, Date.now()) })}</span>
                   )}
                   {cardInfo && <span className="card-name">{a.stack ? a.stack.name || a.name : a.name}</span>}
                 </button>
@@ -3140,6 +3258,40 @@ export default function App() {
           </div>
         </div>
       )}
+      {permanentDeleteIds && (
+        <div className="modal-layer delete-layer">
+          <div className="delete-modal" role="alertdialog" aria-modal="true">
+            <div className="delete-icon">
+              <Icon name="trash" size={26} />
+            </div>
+            <h3>{permanentDeleteIds.length > 1 ? fillNamed("永久删除 {count} 个素材？", { count: permanentDeleteIds.length }) : tr("永久删除这个素材？")}</h3>
+            <p>{tr("永久删除后无法恢复。")}</p>
+            <div className="delete-actions">
+              <button className="neutral-button" onClick={() => setPermanentDeleteIds(null)}>
+                {tr("取消")}</button>
+              <button className="primary-button" onClick={confirmPermanentDelete}>
+                {tr("永久删除")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {emptyTrashConfirm && (
+        <div className="modal-layer delete-layer">
+          <div className="delete-modal" role="alertdialog" aria-modal="true">
+            <div className="delete-icon">
+              <Icon name="trash" size={26} />
+            </div>
+            <h3>{tr("清空回收站？")}</h3>
+            <p>{tr("回收站中的所有素材都会被永久删除，且无法恢复。")}</p>
+            <div className="delete-actions">
+              <button className="neutral-button" onClick={() => setEmptyTrashConfirm(false)}>
+                {tr("取消")}</button>
+              <button className="primary-button" onClick={confirmEmptyTrash}>
+                {tr("清空回收站")}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {renameNoticeOpen && (
         <div className="modal-layer" onClick={(e) => { if (e.target === e.currentTarget) dismissRenameNotice() }}>
           <div className="delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="rename-notice-title">
@@ -3174,7 +3326,13 @@ export default function App() {
       {toast && !preview && (
         <div className="toast" role="status" aria-live="polite">
           <Icon name="info" size={16} />
-          {toast}
+          {toast.text}
+          {toast.action && (
+            <button
+              className="toast-action"
+              onClick={() => { const run = toast.action!.run; setToast(null); run() }}
+            >{toast.action.label}</button>
+          )}
         </div>
       )}
     </div>

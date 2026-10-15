@@ -25,6 +25,8 @@ export type MenuContext = {
   groups: { name: string; color?: string }[]
   pageTotal: number
   isMac: boolean
+  /** Assets currently in the trash; 清空回收站 greys out at zero. */
+  trashCount: number
 }
 
 /** Drop empty sections and join the rest with one separator each, so the
@@ -65,28 +67,34 @@ const selectAllEntry = (ctx: MenuContext): MenuEntry => ({
 })
 
 export function buildContextMenu(ctx: MenuContext): MenuEntry[] {
-  // Trash keeps the pre-task menu (a dedicated trash menu is a later task):
-  // the same list the gallery used to render, with 恢复素材 last.
+  // Trash scope has its own menu: restore/permanent-delete on cards,
+  // select-all/empty-trash on blank ground. Stack surfaces stay inert there.
   if (ctx.scope === "trash") {
-    if (ctx.target !== "asset") return []
+    if (ctx.target === "stack" || ctx.target === "stack-blank") return []
+    if (ctx.target === "gallery-blank") {
+      return buildSectionedMenu([
+        [selectAllEntry(ctx)],
+        [
+          { kind: "item", id: "empty-trash", label: "清空回收站", icon: "trash", danger: true, disabled: ctx.trashCount === 0 },
+        ],
+      ])
+    }
+    const isMultiple = ctx.selectionCount > 1
+    const headingSection: MenuEntry[] | null = isMultiple
+      ? [{ kind: "heading", label: "已选 {count} 项" }]
+      : null
     return buildSectionedMenu([
+      headingSection,
       [
-        { kind: "item", id: "open-viewer", label: "在查看器中打开", icon: "external" },
-        { kind: "item", id: "show-in-library", label: "在素材库中显示", icon: "folder" },
+        ...(isMultiple ? [] : [{ kind: "item" as const, id: "open-viewer", label: "在查看器中打开", icon: "external" }]),
+        { kind: "item" as const, id: "copy-path", label: "复制路径", icon: "link" },
       ],
       [
-        { kind: "item", id: "copy-image", label: "复制图片", icon: "image" },
-        { kind: "item", id: "cut", label: "剪切", icon: "scissors" },
-        { kind: "item", id: "copy-prompt", label: "复制提示词", icon: "copy" },
-        { kind: "item", id: "copy-path", label: "复制路径", icon: "link" },
+        { kind: "item" as const, id: "restore-selection", label: isMultiple ? "恢复 {count} 个素材" : "恢复", icon: "inbox" },
       ],
       [
-        { kind: "item", id: "toggle-favorite", label: ctx.favorite ? "取消收藏" : "收藏", icon: "heart" },
-        { kind: "item", id: "add-to-group", label: "添加分组", icon: "plus" },
-        { kind: "item", id: "remove-from-group", label: "移除分组", icon: "folder" },
+        { kind: "item" as const, id: "permanent-delete", label: isMultiple ? "永久删除 {count} 个素材" : "永久删除", icon: "trash", danger: true },
       ],
-      [{ kind: "item", id: "export", label: "导出至", icon: "external" }],
-      [{ kind: "item", id: "restore", label: "恢复素材", icon: "trash", danger: true }],
     ])
   }
 

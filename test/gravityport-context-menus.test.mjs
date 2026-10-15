@@ -258,37 +258,61 @@ describe("context-menus / gallery blank menu", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Trash scope: the menu stays exactly what the gallery used to render
+// Trash scope: the dedicated trash menu (task 142)
 // ---------------------------------------------------------------------------
 
 describe("context-menus / trash scope", () => {
-  it("asset menu keeps the pre-change list, with 恢复素材 last", () => {
-    const entries = buildContextMenu(baseCtx({ scope: "trash", favorite: true }));
+  const trashCtx = (overrides = {}) => baseCtx({ scope: "trash", trashCount: 3, ...overrides });
+
+  it("single asset: exact entry order and separator positions", () => {
+    const entries = buildContextMenu(trashCtx());
     assert.deepEqual(idList(entries), [
-      "open-viewer", "show-in-library",
+      "open-viewer", "copy-path",
       "|",
-      "copy-image", "cut", "copy-prompt", "copy-path",
+      "restore-selection",
       "|",
-      "toggle-favorite", "add-to-group", "remove-from-group",
-      "|",
-      "export",
-      "|",
-      "restore",
+      "permanent-delete",
     ]);
-    const restore = findItem(entries, "restore");
-    assert.equal(restore.label, "恢复素材");
-    assert.equal(restore.danger, true);
-    // The flat add-to-group keeps its old no-submenu shape (the sidebar group
-    // is still the target in trash; a dedicated trash menu is a later task).
-    assert.equal(findItem(entries, "add-to-group").submenu, undefined);
-    // Nothing in the trash menu greys out today; that stays.
-    assert.equal(findItem(entries, "remove-from-group").disabled, undefined);
-    assert.ok(!itemIds(entries).includes("move-to-trash"));
+    assert.equal(findItem(entries, "open-viewer").icon, "external");
+    const restore = findItem(entries, "restore-selection");
+    assert.equal(restore.label, "恢复");
+    const permanent = findItem(entries, "permanent-delete");
+    assert.equal(permanent.label, "永久删除");
+    assert.equal(permanent.danger, true);
   });
 
-  it("trash blank areas keep popping no menu", () => {
-    assert.deepEqual(buildContextMenu(baseCtx({ scope: "trash", target: "gallery-blank" })), []);
-    assert.deepEqual(buildContextMenu(baseCtx({ scope: "trash", target: "stack-blank" })), []);
+  it("multi-select: heading with {count}, no 在查看器中打开, counted labels", () => {
+    const entries = buildContextMenu(trashCtx({ selectionCount: 2 }));
+    const ids = idList(entries);
+    assert.equal(ids[0], "HEAD:已选 {count} 项", "heading comes first");
+    assert.equal(ids[1], "|", "one separator after the heading");
+    assert.ok(!ids.includes("open-viewer"), "multi-select has no viewer entry");
+    assert.equal(findItem(entries, "restore-selection").label, "恢复 {count} 个素材");
+    assert.equal(findItem(entries, "permanent-delete").label, "永久删除 {count} 个素材");
+  });
+
+  it("blank area: 全选 + 清空回收站, greying out on an empty trash", () => {
+    const entries = buildContextMenu(trashCtx({ target: "gallery-blank" }));
+    assert.deepEqual(idList(entries), ["select-all", "|", "empty-trash"]);
+    const emptyTrashItem = findItem(entries, "empty-trash");
+    assert.equal(emptyTrashItem.danger, true);
+    assert.notEqual(emptyTrashItem.disabled, true, "enabled while the trash holds assets");
+    const empty = buildContextMenu(trashCtx({ target: "gallery-blank", trashCount: 0 }));
+    assert.equal(findItem(empty, "empty-trash").disabled, true, "trashCount 0 greys out 清空回收站");
+  });
+
+  it("stack card and stack blank surfaces return no entries", () => {
+    assert.deepEqual(buildContextMenu(trashCtx({ target: "stack" })), []);
+    assert.deepEqual(buildContextMenu(trashCtx({ target: "stack-blank", insideStackId: "s" })), []);
+  });
+
+  it("gallery actions never appear in the trash menu", () => {
+    for (const selectionCount of [1, 3]) {
+      const ids = itemIds(buildContextMenu(trashCtx({ selectionCount })));
+      for (const banned of ["cut", "toggle-favorite", "add-to-group", "export", "move-to-trash", "restore", "show-in-library", "copy-image", "copy-prompt"]) {
+        assert.ok(!ids.includes(banned), `count=${selectionCount} leaked ${banned}`);
+      }
+    }
   });
 });
 

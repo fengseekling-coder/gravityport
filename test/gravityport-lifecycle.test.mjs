@@ -318,3 +318,19 @@ describe("recordUpdateCheck", () => {
     assert.ok(Math.abs(saved - Date.now()) < 5000);
   });
 });
+
+describe("fill", () => {
+  it("fills any named placeholder present in the values, including {count}", () => {
+    assert.equal(lifecycle.fill("已选 {count} 项", { count: 3 }), "已选 3 项");
+    assert.equal(lifecycle.fill("正在导入 {completed}/{total}", { completed: 2, total: 40 }), "正在导入 2/40");
+    assert.equal(lifecycle.fill("可更新至 v{version}", { version: "1.2.3" }), "可更新至 v1.2.3");
+  });
+
+  it("fills a zero value and repeated placeholders", () => {
+    assert.equal(lifecycle.fill("{count} / {count}", { count: 0 }), "0 / 0");
+  });
+
+  it("leaves placeholders without a value visible", () => {
+    assert.equal(lifecycle.fill("{count} 天后删除", {}), "{count} 天后删除");
+  });
+});
