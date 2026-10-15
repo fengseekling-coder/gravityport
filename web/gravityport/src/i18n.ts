@@ -229,6 +229,20 @@ const english: Record<string, string> = {
   "正在扫描拖入的文件…已找到 {count} 个": "Scanning dropped files… {count} found so far",
   "有 {count} 个文件格式不支持，已跳过": "{count} unsupported files were skipped",
   "正在导入，请稍候": "Import in progress, please wait",
+  // Task 144: version tree conversation rounds (second line per row). English
+  // uses singular "turn" when turns is 1 — the singular keys bake the 1 in
+  // ("共 1 轮 …") so both languages render correctly from one map.
+  "共 {turns} 轮 · 当前第 {n} 轮": "{turns} turns · this asset, turn {n}",
+  "共 1 轮 · 当前第 {n} 轮": "1 turn · this asset, turn {n}",
+  "共 {turns} 轮 · 第 {n} 轮": "{turns} turns · turn {n}",
+  "共 1 轮 · 第 {n} 轮": "1 turn · turn {n}",
+  "共 {turns} 轮 · 当前": "{turns} turns · this asset",
+  "共 1 轮 · 当前": "1 turn · this asset",
+  "共 {turns} 轮": "{turns} turns",
+  "共 1 轮": "1 turn",
+  "当前第 {n} 轮": "This asset, turn {n}",
+  "第 {n} 轮": "Turn {n}",
+  "当前": "This asset",
 }
 
 export function translate(text: string, language: Language): string {

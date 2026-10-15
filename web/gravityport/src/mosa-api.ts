@@ -600,6 +600,8 @@ export type MosaGenerationEvent = {
   provider?: string
   model?: string
   turn_index?: number | null
+  conversation_id?: string
+  turn_synced_at: string
   user_prompt?: string
   effective_prompt?: string
   created_at?: string
@@ -608,6 +610,7 @@ export type MosaGenerationEvent = {
 
 export type MosaGenerationRelation = { child_generation_id: string; parent_generation_id: string; relation_type: string; verification_level?: string; evidence?: JsonValue }
 export type MosaGenerationCandidate = { child_generation_id: string; parent_generation_id: string; suggested_relation_type?: string; confidence?: number; status?: string; evidence?: JsonValue }
+export type MosaGenerationConversation = { provider?: string; conversation_id?: string; turn_count?: number; synced_at?: string }
 
 export type MosaGenerationHistory = {
   events: MosaGenerationEvent[]
@@ -615,6 +618,8 @@ export type MosaGenerationHistory = {
   output_assets?: MosaAsset[]
   relations?: MosaGenerationRelation[]
   relation_candidates?: MosaGenerationCandidate[]
+  conversations?: MosaGenerationConversation[]
+  context_truncated?: boolean
 }
 
 export type RelationEdit = { childGenerationId: string; parentGenerationId: string; relationType: string; previousRelationType?: string; evidence?: JsonValue }
@@ -678,6 +683,8 @@ export async function fetchAssetGenerationHistory(project: string, id: string, s
       output_assets: outputAssets.map(row => normalizeAsset(row, project)),
       relations: Array.isArray(history.relations) ? history.relations as MosaGenerationHistory["relations"] : [],
       relation_candidates: Array.isArray(history.relation_candidates) ? history.relation_candidates as MosaGenerationCandidate[] : [],
+      conversations: Array.isArray(history.conversations) ? history.conversations as MosaGenerationConversation[] : [],
+      context_truncated: history.context_truncated === true,
     }
   } catch (error) {
     if (String((error as Error).message).includes("501")) return null
@@ -695,6 +702,8 @@ function normalizeGenerationEvent(row: JsonValue): MosaGenerationEvent {
     provider: row.provider ? String(row.provider) : undefined,
     model: row.model ? String(row.model) : undefined,
     turn_index: row.turn_index == null ? null : Number(row.turn_index),
+    conversation_id: row.conversation_id ? String(row.conversation_id) : "",
+    turn_synced_at: row.turn_synced_at ? String(row.turn_synced_at) : "",
     user_prompt: row.user_prompt ? String(row.user_prompt) : undefined,
     effective_prompt: row.effective_prompt ? String(row.effective_prompt) : undefined,
     created_at: row.created_at ? String(row.created_at) : undefined,

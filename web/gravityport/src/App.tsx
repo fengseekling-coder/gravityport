@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import Icon from "./Icon"
 import ToolbarSelect from "./ToolbarSelect"
 import ColumnControl from "./ColumnControl"
@@ -13,6 +13,7 @@ import { focusSelection, logicalSelection, pruneSelection, replaceSelection, tog
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { generationTreeRows } from "./version-tree"
+import { computeConversationRounds, conversationRoundRows, roundLine } from "./conversation-rounds"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
 import { resolveReferences } from "./inspector-info"
 import {
@@ -854,6 +855,12 @@ export default function App() {
   }, [settings, settingTab])
   assetsRef.current = assets
   const asset = assets.find((a) => a.id === selected) || assets[0]
+  // 版本树（任务 144）：有对话时行来自对话轮次计算——默认当前素材前后共三行，
+  // 「查看」展开全部；无对话时列表回退到 events（rounds.rows 为空）。
+  const versionRounds = useMemo(
+    () => computeConversationRounds(generationHistory, asset?.id || ""),
+    [generationHistory, asset?.id],
+  )
   const currentTags = asset ? asset.tags : []
   const visible = assets
   const notify = (text: string) => setToast({ text: tr(text) })
@@ -875,6 +882,8 @@ export default function App() {
   }
   // Translate, then fill the named placeholders ({count}, {completed}, …).
   const fillNamed = (text: string, values: Record<string, string | number>) => fill(tr(text), values)
+  // roundLine's translate callback: optional params, filled after translation.
+  const roundText = (text: string, params?: Record<string, string | number>) => (params ? fillNamed(text, params) : tr(text))
   // Batch outcomes share one toast grammar: any failure → the existing
   // 「…X 项，Y 项失败」 line; full success → single or counted text.
   const notifyBatchOutcome = (doneCount: number, failed: number, texts: { single: string; multi: string; partial: string }) => {
@@ -2825,35 +2834,65 @@ export default function App() {
           <section className="detail-section">
             <div className="field-heading">
               <span>{tr("版本树")}</span>
-              {!!generationHistory?.events?.length && <span className="field-actions">
-                <span className="settings-badge">{generationHistory.events.length}</span>
-                <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "查看")}</button>
-              </span>}
+              {(() => {
+                // The badge is the conversation's captured-image count
+                // (context mode); truncated counts stay hidden. Plain mode
+                // keeps the raw event count.
+                const badgeCount = versionRounds.mode === "context"
+                  ? versionRounds.images
+                  : generationHistory?.events?.length || 0
+                if (versionRounds.mode !== "context" && !badgeCount) return null
+                return <span className="field-actions">
+                  {badgeCount ? <span className="settings-badge">{badgeCount}</span> : null}
+                  <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "查看")}</button>
+                </span>
+              })()}
             </div>
             {/* One list for the generation records: the record IS the version
-                tree entry — its output's thumbnail on the left, prompt and
-                time/provider/model on the right. */}
+                tree entry — its output's thumbnail on the left, prompt on the
+                first line and the conversation-rounds text on the second.
+                Conversation mode lists every captured image of the current
+                ChatGPT conversation (three around this asset by default, all
+                when expanded); the current row is highlighted and inert, the
+                others jump to that image. Plain mode keeps the events list
+                with the time/provider/model line. */}
             <div className="version-list" aria-label={tr("版本树")}>
-              {(generationHistory?.events || []).slice(0, versionTreeOpen ? undefined : 3).map((event, index) => {
-                const output = event.output_asset_id
-                  ? generationHistory?.output_assets?.find(item => item.id === event.output_asset_id)
-                    || (asset && asset.id === event.output_asset_id ? asset : undefined)
-                  : undefined
-                return <button
-                  className="related"
-                  key={event.id || index}
-                  onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}
-                >
-                  <i>{output?.thumbnail_url ? <img src={output.thumbnail_url} alt="" loading="lazy" /> : null}</i>
-                  <span>
-                    {(event.effective_prompt || event.user_prompt || tr("无提示词记录")).slice(0, 60)}
-                    <small>
-                      {timeLabel(event.created_at)}{event.provider ? ` · ${event.provider}` : ""}{event.model ? ` · ${event.model}` : ""}{event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}
-                    </small>
-                  </span>
-                  <Icon name="right" size={11} />
-                </button>
-              })}
+              {versionRounds.mode === "context"
+                ? (versionTreeOpen ? conversationRoundRows(generationHistory, asset?.id || "") : versionRounds.rows).map((row) => {
+                  const output = row.outputAsset || (row.isCurrent ? asset : undefined)
+                  return <button
+                    className={row.isCurrent ? "related is-current" : "related"}
+                    key={row.outputAsset?.id || row.event.id || row.event.output_asset_id}
+                    onClick={() => { if (!row.isCurrent && row.outputAsset?.id) selectHistoryAsset(row.outputAsset.id) }}
+                  >
+                    <i>{output?.thumbnail_url ? <img src={output.thumbnail_url} alt="" loading="lazy" /> : null}</i>
+                    <span>
+                      {(row.event.effective_prompt || row.event.user_prompt || tr("无提示词记录")).slice(0, 60)}
+                      <small>{roundLine(row, versionRounds, roundText)}</small>
+                    </span>
+                    <Icon name="right" size={11} />
+                  </button>
+                })
+                : (generationHistory?.events || []).slice(0, versionTreeOpen ? undefined : 3).map((event, index) => {
+                  const output = event.output_asset_id
+                    ? generationHistory?.output_assets?.find(item => item.id === event.output_asset_id)
+                      || (asset && asset.id === event.output_asset_id ? asset : undefined)
+                    : undefined
+                  return <button
+                    className="related"
+                    key={event.id || index}
+                    onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}
+                  >
+                    <i>{output?.thumbnail_url ? <img src={output.thumbnail_url} alt="" loading="lazy" /> : null}</i>
+                    <span>
+                      {(event.effective_prompt || event.user_prompt || tr("无提示词记录")).slice(0, 60)}
+                      <small>
+                        {timeLabel(event.created_at)}{event.provider ? ` · ${event.provider}` : ""}{event.model ? ` · ${event.model}` : ""}{event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}
+                      </small>
+                    </span>
+                    <Icon name="right" size={11} />
+                  </button>
+                })}
               {!generationHistory?.events?.length && <span className="muted">{tr("暂无生成关系")}</span>}
             </div>
             {versionTreeOpen && <div className="version-tree" role="region" aria-label={tr("完整版本树")}>
