@@ -76,7 +76,7 @@ test("returns 404 for a missing library image without stopping the server", asyn
   await waitForServer(port, server);
   const home = await fetch(`http://127.0.0.1:${port}/`);
   assert.equal(home.status, 200);
-  assert.equal(home.headers.get("content-security-policy"), "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self'");
+  assert.equal(home.headers.get("content-security-policy"), "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: https://i.pinimg.com; media-src 'self' blob:; connect-src 'self'");
 
   const unknownApi = await fetch(`http://127.0.0.1:${port}/api/not-a-route`);
   assert.equal(unknownApi.status, 404);

@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onUpdateDownloadProgress: (callback) =>
     ipcRenderer.on("update-download-progress", (_event, progress) => callback(progress)),
   openDownloadPage: () => ipcRenderer.invoke("open-download-page"),
+  openPinterestAuthorize: (url) => ipcRenderer.invoke("open-pinterest-authorize", url),
   changeLibraryLocation: () => ipcRenderer.invoke("change-library-location"),
   onMenuSearch: (callback) => ipcRenderer.on("menu-search", (_event, ...args) => callback(...args)),
   // 任务 96（A6）：大图页「全屏」与窗口系统全屏双向同步——渲染层写窗口全屏态、

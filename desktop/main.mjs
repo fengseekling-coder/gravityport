@@ -999,6 +999,22 @@ function registerIPC() {
     }
   });
 
+  ipcMain.handle("open-pinterest-authorize", async (event, url) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+    
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:" || parsed.hostname !== "www.pinterest.com" || parsed.pathname !== "/oauth/") {
+        return { ok: false };
+      }
+      await shell.openExternal(url);
+      return { ok: true };
+    } catch (error) {
+      console.warn(`[MOSA] unable to open Pinterest authorize page: ${error?.message || error}`);
+      return { ok: false };
+    }
+  });
+
   ipcMain.handle("change-library-location", async (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
       return { ok: false, reason: "unavailable" };
