@@ -338,6 +338,10 @@ export default function App() {
       selectionViewKeyRef.current = viewKey
       const preserve = pendingInspectRef.current
       pendingInspectRef.current = ""
+      // A select-all started in the old view is stale now: drop it so the
+      // post-load prune below can seat the new view's implicit single card.
+      selectAllAbortRef.current?.abort()
+      pendingSelectAllRef.current = null
       applySelection([], preserve)
       anchorIndexRef.current = -1
     }
