@@ -39,8 +39,8 @@ export async function checkVersionConsistency(
   ];
 
   const [health, buildIdentity] = await Promise.all([
-    fetchHealth().catch(() => ({})),
-    fetchBuildIdentity().catch(() => ({})),
+    fetchHealth().catch((): HealthData => ({})),
+    fetchBuildIdentity().catch((): BuildIdentity => ({})),
   ]);
 
   const mismatched: string[] = [];
@@ -73,7 +73,7 @@ export async function checkVersionConsistency(
 // ---------------------------------------------------------------------------
 
 export type UpdateCheckResult = {
-  status: string
+  status?: string
   updateAvailable?: boolean
   canInstallInApp?: boolean
   currentVersion?: string
