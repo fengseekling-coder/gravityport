@@ -1001,7 +1001,7 @@ function registerIPC() {
 
   ipcMain.handle("open-pinterest-authorize", async (event, url) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
-    
+
     try {
       const parsed = new URL(url);
       if (parsed.protocol !== "https:" || parsed.hostname !== "www.pinterest.com" || parsed.pathname !== "/oauth/") {

@@ -16,7 +16,7 @@ function httpFetch(url, options = {}) {
       method: options.method || "GET",
       headers: options.headers || {},
     };
-    
+
     const req = request(reqOptions, (res) => {
       let data = "";
       res.on("data", (chunk) => { data += chunk; });
@@ -30,13 +30,13 @@ function httpFetch(url, options = {}) {
         });
       });
     });
-    
+
     req.on("error", reject);
-    
+
     if (options.body) {
       req.write(options.body);
     }
-    
+
     req.end();
   });
 }
@@ -62,7 +62,7 @@ function createFakeServices() {
       }
     });
   });
-  
+
   const fakePinterestApi = createServer((req, res) => {
     const auth = req.headers.authorization;
     if (req.url === "/user_account" && auth?.includes("token")) {
@@ -76,7 +76,7 @@ function createFakeServices() {
       res.end();
     }
   });
-  
+
   return { fakeTokenServer, fakePinterestApi };
 }
 
@@ -93,18 +93,18 @@ function stopServer(server) {
 test("Pinterest: auto-refresh near expiry", async (t) => {
   const userDataDir = await mkdtemp(join(tmpdir(), "pinterest-"));
   t.after(() => rm(userDataDir, { recursive: true, force: true }));
-  
+
   const { fakeTokenServer, fakePinterestApi } = createFakeServices();
   const tokenPort = await startServer(fakeTokenServer);
   const apiPort = await startServer(fakePinterestApi);
   t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
-  
+
   const fetchImpl = (url, options) => {
     const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
                          .replace("http://api", `http://127.0.0.1:${apiPort}`);
     return httpFetch(targetUrl, options);
   };
-  
+
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
   process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
@@ -113,11 +113,11 @@ test("Pinterest: auto-refresh near expiry", async (t) => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
   });
-  
+
   const baseNow = Date.now();
   let currentNow = baseNow;
   const mockNow = () => currentNow;
-  
+
   const tokenPath = join(userDataDir, "pinterest-auth.json");
   await writeFile(tokenPath, JSON.stringify({
     access_token: "old_token",
@@ -128,11 +128,11 @@ test("Pinterest: auto-refresh near expiry", async (t) => {
     username: "testuser",
     connected_at: new Date(baseNow).toISOString(),
   }), { mode: 0o600 });
-  
+
   const client = createPinterestClient({ userDataDir, fetchImpl, now: mockNow });
-  
+
   await client.listBoards();
-  
+
   const tokenContent = JSON.parse(await readFile(tokenPath, "utf-8"));
   assert.equal(tokenContent.access_token, "new_token");
 });
@@ -140,18 +140,18 @@ test("Pinterest: auto-refresh near expiry", async (t) => {
 test("Pinterest: refresh rejected sets needsReconnect", async (t) => {
   const userDataDir = await mkdtemp(join(tmpdir(), "pinterest-"));
   t.after(() => rm(userDataDir, { recursive: true, force: true }));
-  
+
   const { fakeTokenServer, fakePinterestApi } = createFakeServices();
   const tokenPort = await startServer(fakeTokenServer);
   const apiPort = await startServer(fakePinterestApi);
   t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
-  
+
   const fetchImpl = (url, options) => {
     const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
                          .replace("http://api", `http://127.0.0.1:${apiPort}`);
     return httpFetch(targetUrl, options);
   };
-  
+
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
   process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
@@ -160,7 +160,7 @@ test("Pinterest: refresh rejected sets needsReconnect", async (t) => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
   });
-  
+
   const tokenPath = join(userDataDir, "pinterest-auth.json");
   await writeFile(tokenPath, JSON.stringify({
     access_token: "expiring_token",
@@ -171,14 +171,14 @@ test("Pinterest: refresh rejected sets needsReconnect", async (t) => {
     username: "testuser",
     connected_at: new Date().toISOString(),
   }), { mode: 0o600 });
-  
+
   const client = createPinterestClient({ userDataDir, fetchImpl });
-  
+
   await assert.rejects(
     client.listBoards(),
     { code: "PINTEREST_RECONNECT_REQUIRED" }
   );
-  
+
   const status = await client.status();
   assert.equal(status.needsReconnect, true);
 });
