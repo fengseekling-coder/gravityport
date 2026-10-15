@@ -9,7 +9,8 @@ import { focusSelection, logicalSelection, pruneSelection, replaceSelection, tog
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { generationTreeRows } from "./version-tree"
-import { sanitizeAssetForExport, referenceUses, relationTypes, referencePermission, setReferencePermission } from "./feature-parity"
+import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
+import { resolveReferences } from "./inspector-info"
 import {
   buildMasonryModel, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
   type MasonryModel,
@@ -31,7 +32,7 @@ import {
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
   moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
-  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent, type MosaGenerationHistory, type MosaReference,
+  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent, type MosaGenerationHistory, type MosaRecipeHistory,
   fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
 } from "./mosa-api"
 
@@ -223,25 +224,9 @@ export default function App() {
   const [relationBusy, setRelationBusy] = useState(false)
   const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({})
   const [newRelation, setNewRelation] = useState<{ anchor: string; other: string; direction: string; type: string } | null>(null)
-  const [referenceRights, setReferenceRights] = useState<MosaReference[] | null>(null)
-  const [referenceDirty, setReferenceDirty] = useState(false)
-  const [referenceSaving, setReferenceSaving] = useState(false)
-  const referenceDirtyRef = useRef(false)
-  referenceDirtyRef.current = referenceDirty
-  const referenceDraftRef = useRef<MosaReference[] | null>(null)
-  referenceDraftRef.current = referenceRights
-  const referenceScopeRef = useRef("")
-  referenceScopeRef.current = `${project}\u0000${selected}`
-  const confirmReferenceNavigation = () => {
-    if (referenceSaving) { notify("参考图权利信息正在保存，请稍候"); return false }
-    if (!referenceDirtyRef.current) return true
-    if (!window.confirm(tr("参考图权利有未保存的修改，确认放弃？"))) return false
-    // One confirmed navigation may pass through goTo + selection updates in
-    // the same React render; never ask twice for the same discarded draft.
-    referenceDirtyRef.current = false
-    setReferenceDirty(false)
-    return true
-  }
+  // undefined: the recipe history has not answered for this asset yet;
+  // null: it answered with none. Web captures keep their references there.
+  const [recipeHistory, setRecipeHistory] = useState<MosaRecipeHistory | null | undefined>(undefined)
   const [similarAssets, setSimilarAssets] = useState<MosaAsset[]>([])
   const [versionTreeOpen, setVersionTreeOpen] = useState(false)
   const [compareBaseId, setCompareBaseId] = useState("")
@@ -290,8 +275,7 @@ export default function App() {
   const [systemDark, setSystemDark] = useState(false)
   useEffect(() => {
     setExpandedPrompt(false)
-    setReferenceRights(null)
-    setReferenceDirty(false)
+    setRecipeHistory(undefined)
     setRelationDrafts({})
     setNewRelation(null)
     setPromptVariant(1)
@@ -634,8 +618,7 @@ export default function App() {
     }).catch(() => {})
     fetchAssetRecipes(project, selected, controller.signal).then(history => {
       if (controller.signal.aborted) return
-      const active = history?.snapshots.find(item => item.snapshot_id === history.active_snapshot_id) || history?.snapshots.at(-1)
-      setReferenceRights(active?.references || [])
+      setRecipeHistory(history)
     }).catch(() => {})
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -669,7 +652,6 @@ export default function App() {
   }
   const selectHistoryAsset = (id: string) => {
     if (!id) return
-    if (id !== selected && !confirmReferenceNavigation()) return
     // Invalidation runs on every history click, including a re-click of the
     // currently focused version: the latest intent is "stay here", so an
     // in-flight fetch for another version must never retake the focus (or
@@ -892,7 +874,6 @@ export default function App() {
   }
   const switchProject = (next: string) => {
     if (!next || next === project) return
-    if (!confirmReferenceNavigation()) return
     // Only a switch away from a project that actually loaded replaces the
     // restorable snapshot; bailing out of a project that never loaded keeps
     // the older snapshot so rapid switching still restores the last good view.
@@ -939,7 +920,6 @@ export default function App() {
   // goTo records the TARGET snapshot (deduped) and applies it, so the current
   // state at each stack position is what back/forward restores.
   const goTo = (partial: Partial<NavSnapshot>) => {
-    if (!confirmReferenceNavigation()) return
     setNavHistory(old => {
       const stack = old.stack.slice(0, old.index + 1)
       const next: NavSnapshot = { active, stackId, stackName, query: debouncedQuery, sortOrder, assetType, ...partial }
@@ -955,7 +935,6 @@ export default function App() {
     setPreview(false)
   }
   const navigateHistory = (direction: -1 | 1) => {
-    if (!confirmReferenceNavigation()) return
     const next = navHistory.index + direction
     if (next < 0) {
       // The design's back arrow also resets a filtered workspace at the
@@ -992,7 +971,6 @@ export default function App() {
   const selectionRevisionRef = useRef(0)
   selectionRef.current = { selectedIds, selected }
   const applySelection = (nextIds: string[], nextSelected: string) => {
-    if (nextSelected !== selectionRef.current.selected && !confirmReferenceNavigation()) return
     selectionRevisionRef.current += 1
     selectionRef.current = { selectedIds: nextIds, selected: nextSelected }
     setSelectedIds(nextIds)
@@ -2139,49 +2117,20 @@ export default function App() {
               <button className="reading-toggle" aria-expanded={expandedIntro} aria-controls="asset-introduction" onClick={() => setExpandedIntro(!expandedIntro)}>{expandedIntro ? tr("收起") : tr("展开介绍")}<Icon name={expandedIntro ? "minus" : "down"} size={12} /></button>
             </div>
           </section>}
-          {asset.references.length > 0 && <section className="detail-section">
-            <div className="field-heading">
-              <span>{tr("参考图")}</span>
-            </div>
-            <div className="reference-gallery" aria-label={tr("参考图缩略图")}>
-              {asset.references.slice(0, 8).map((reference, index) => {
-                const url = reference.attachment_url || reference.thumbnail_url || reference.image_url || ""
-                if (!url) return null
-                return <button key={reference.reference_id || index} className="reference-thumbnail" aria-label={tr("预览参考图")} onClick={() => window.open(url, "_blank", "noopener")}>
-                  <img className="reference-image" src={url} alt="" loading="lazy" />
-                </button>
-              })}
-            </div>
-          </section>}
-          {referenceRights !== null && referenceRights.length > 0 && <section className="detail-section reference-rights-editor">
-            <div className="field-heading"><span>{tr("参考图权利管理")}</span><button className="section-action" disabled={!referenceDirty || referenceSaving} onClick={() => {
-              if (!asset || referenceSaving) return
-              const originId = asset.id
-              const originProject = project
-              const sentDraft = JSON.stringify(referenceRights)
-              setReferenceSaving(true)
-              updateAssetMetadata(originProject, originId, { references: referenceRights }).then(updated => {
-                if (referenceScopeRef.current === `${originProject}\u0000${originId}`) {
-                  setAssets(old => old.map(item => item.id === updated.id ? mergeAssetDetail(item, updated) : item))
-                  // Edits made while PATCH was in flight were not sent. Keep
-                  // them pending rather than incorrectly marking them saved.
-                  if (JSON.stringify(referenceDraftRef.current) === sentDraft) {
-                    referenceDirtyRef.current = false
-                    setReferenceDirty(false)
-                  }
-                }
-              }).catch(error => notify(errorMessage(error))).finally(() => setReferenceSaving(false))
-            }}>{referenceSaving ? tr("保存中") : tr("保存权利信息")}</button></div>
-            {referenceRights.map((reference, index) => <div className="reference-rights-row" key={`${reference.asset_id || reference.sha256 || index}`}>
-              <strong>{reference.asset_id || `${tr("参考图")} ${index + 1}`}</strong>
-              {([ ["copyright", ["unknown", "owned", "licensed", "third-party"]], ["portrait_consent", ["unknown", "granted", "not-required", "denied"]], ["redistribution", ["unknown", "allowed", "forbidden"]] ] as const).map(([field, choices]) => <label key={field}>{tr(field)}<select value={reference.rights?.[field] || "unknown"} onChange={event => {
-                setReferenceRights(old => old?.map((item, i) => i === index ? { ...item, rights: { ...item.rights, [field]: event.target.value } } : item) || null)
-                setReferenceDirty(true)
-              }}>{choices.map(choice => <option key={choice} value={choice}>{tr(choice)}</option>)}</select></label>)}
-              <label>{tr("署名")}<input value={reference.rights?.attribution || ""} onChange={event => { setReferenceRights(old => old?.map((item, i) => i === index ? { ...item, rights: { ...item.rights, attribution: event.target.value } } : item) || null); setReferenceDirty(true) }} /></label>
-              <div className="reference-use-permissions">{referenceUses.map(use => <button key={use} className={referencePermission(reference, use)} onClick={() => { const current = referencePermission(reference, use); const next = current === "undeclared" ? "allowed" : current === "allowed" ? "forbidden" : "undeclared"; setReferenceRights(old => old?.map((item, i) => i === index ? setReferencePermission(item, use, next) : item) || null); setReferenceDirty(true) }} aria-label={`${use}: ${referencePermission(reference, use)}`}>{use}: {referencePermission(reference, use) === "allowed" ? "✓" : referencePermission(reference, use) === "forbidden" ? "✕" : "—"}</button>)}</div>
-            </div>)}
-          </section>}
+          {(() => {
+            const references = resolveReferences(asset, recipeHistory, assets)?.items.filter(item => item.thumbnailUrl) || []
+            if (!references.length) return null
+            return <section className="detail-section">
+              <div className="field-heading">
+                <span>{tr("参考图")}</span>
+              </div>
+              <div className="reference-gallery" aria-label={tr("参考图缩略图")}>
+                {references.map(reference => <button key={reference.key} className="reference-thumbnail" title={reference.label} aria-label={tr("预览参考图")} onClick={() => window.open(reference.openUrl || reference.thumbnailUrl, "_blank", "noopener")}>
+                  <img className="reference-image" src={reference.thumbnailUrl} alt="" loading="lazy" />
+                </button>)}
+              </div>
+            </section>
+          })()}
           <section className="detail-section">
             <div className="field-heading">
               <span>{tr("版本树与上下文")}</span>
