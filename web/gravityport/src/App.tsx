@@ -32,7 +32,7 @@ import {
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
   moveAssetsToStack, stageImportFile, importAssetsBatch, openLibraryFolder,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
-  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationEvent, type MosaGenerationHistory, type MosaRecipeHistory,
+  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
   fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
 } from "./mosa-api"
 
@@ -219,7 +219,6 @@ export default function App() {
   // Rename notice (task 116): shown once at first-screen render.
   const [renameNoticeOpen, setRenameNoticeOpen] = useState(false)
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
-  const [generations, setGenerations] = useState<MosaGenerationEvent[] | null>(null)
   const [generationHistory, setGenerationHistory] = useState<MosaGenerationHistory | null>(null)
   const [relationBusy, setRelationBusy] = useState(false)
   const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({})
@@ -601,17 +600,13 @@ export default function App() {
       if (!controller.signal.aborted) setAssets(old => old.map(item => item.id === full.id ? mergeAssetDetail(item, full) : item))
     }).catch(() => {})
     setVersions(null)
-    setGenerations(null)
     setGenerationHistory(null)
     setSimilarAssets([])
     fetchAssetVersions(project, selected, controller.signal).then(history => {
       if (!controller.signal.aborted) setVersions(history && history.versions.length > 1 ? history.versions : null)
     }).catch(() => {})
     fetchAssetGenerationHistory(project, selected, controller.signal).then(history => {
-      if (!controller.signal.aborted) {
-        setGenerations(history && history.events.length ? history.events : null)
-        setGenerationHistory(history)
-      }
+      if (!controller.signal.aborted) setGenerationHistory(history)
     }).catch(() => {})
     fetchSimilarAssets(project, selected, controller.signal).then(items => {
       if (!controller.signal.aborted) setSimilarAssets(items)
@@ -643,7 +638,6 @@ export default function App() {
       const history = await fetchAssetGenerationHistory(project, selected)
       if (identity === relationSelectionRef.current) {
         setGenerationHistory(history)
-        setGenerations(history?.events?.length ? history.events : null)
         setRelationDrafts({})
         setNewRelation(null)
       }
@@ -901,7 +895,7 @@ export default function App() {
     setStackId(""); setStackName(""); setActive("所有素材")
     setQuery(""); setDebouncedQuery("")
     applySelection([], "")
-    setVersions(null); setGenerations(null)
+    setVersions(null); setGenerationHistory(null)
     setPromptEdit(null)
     // Old-project rows must never linger under the new project, not even
     // while the new project's first page is still in flight.
@@ -2033,7 +2027,6 @@ export default function App() {
                   <button className={promptVariant === 1 ? "active" : ""} aria-pressed={promptVariant === 1} onClick={() => { setPromptVariant(1); setExpandedPrompt(false) }}>{tr("提示词1")}</button>
                   <button className={promptVariant === 2 ? "active" : ""} aria-pressed={promptVariant === 2} onClick={() => { setPromptVariant(2); setExpandedPrompt(false); setPromptEdit(null) }}>{tr("提示词2")}</button>
                 </> : tr("提示词")}
-                <small>{tr("原始信息")}</small>
               </span>
               <span className="field-actions">
                 {promptVariant === 1 && !promptEditorActive(promptEdit, project, asset?.id) && <button className="section-action" onClick={startPromptEdit}>{tr("编辑")}</button>}
@@ -2133,13 +2126,36 @@ export default function App() {
           })()}
           <section className="detail-section">
             <div className="field-heading">
-              <span>{tr("版本树与上下文")}</span>
-              <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "查看")}</button>
+              <span>{tr("版本树")}</span>
+              {!!generationHistory?.events?.length && <span className="field-actions">
+                <span className="settings-badge">{generationHistory.events.length}</span>
+                <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "查看")}</button>
+              </span>}
             </div>
-            <div className="version-context" role="group" aria-label={tr("版本树与上下文")}>
-              {(generationHistory?.events || []).slice(0, 3).map(event => <button className="related" key={event.id} onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}>
-                <span>{event.provider || tr("生成记录")}{event.model ? ` · ${event.model}` : ""}<small>{event.turn_index != null ? `${tr("轮次")} ${event.turn_index}` : timeLabel(event.created_at)}</small></span>
-              </button>)}
+            {/* One list for the generation records: the record IS the version
+                tree entry — its output's thumbnail on the left, prompt and
+                time/provider/model on the right. */}
+            <div className="version-list" aria-label={tr("版本树")}>
+              {(generationHistory?.events || []).slice(0, versionTreeOpen ? undefined : 3).map((event, index) => {
+                const output = event.output_asset_id
+                  ? generationHistory?.output_assets?.find(item => item.id === event.output_asset_id)
+                    || (asset && asset.id === event.output_asset_id ? asset : undefined)
+                  : undefined
+                return <button
+                  className="related"
+                  key={event.id || index}
+                  onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}
+                >
+                  <i>{output?.thumbnail_url ? <img src={output.thumbnail_url} alt="" loading="lazy" /> : null}</i>
+                  <span>
+                    {(event.effective_prompt || event.user_prompt || tr("无提示词记录")).slice(0, 60)}
+                    <small>
+                      {timeLabel(event.created_at)}{event.provider ? ` · ${event.provider}` : ""}{event.model ? ` · ${event.model}` : ""}{event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}
+                    </small>
+                  </span>
+                  <Icon name="right" size={11} />
+                </button>
+              })}
               {!generationHistory?.events?.length && <span className="muted">{tr("暂无生成关系")}</span>}
             </div>
             {versionTreeOpen && <div className="version-tree" role="region" aria-label={tr("完整版本树")}>
@@ -2223,30 +2239,6 @@ export default function App() {
                     {tr("版本")} {v.version_index}
                     <small>
                       {v.version_change || ""} {v.format || "—"} · {v.width} × {v.height} · {timeLabel(v.created_at)}
-                    </small>
-                  </span>
-                  <Icon name="right" size={11} />
-                </button>
-              ))}
-            </div>
-          </section>}
-          {generations && generations.length > 0 && <section className="detail-section">
-            <div className="field-heading">
-              <span>{tr("生成记录")}</span>
-              <span className="settings-badge">{generations.length}</span>
-            </div>
-            <div className="version-list" aria-label={tr("生成记录")}>
-              {generations.slice(0, expandedRelated ? 8 : 3).map((event, index) => (
-                <button
-                  className="related"
-                  key={event.id || index}
-                  onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}
-                >
-                  <i />
-                  <span>
-                    {(event.effective_prompt || event.user_prompt || tr("无提示词记录")).slice(0, 60)}
-                    <small>
-                      {timeLabel(event.created_at)}{event.provider ? ` · ${event.provider}` : ""}{event.model ? ` · ${event.model}` : ""}{event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}
                     </small>
                   </span>
                   <Icon name="right" size={11} />

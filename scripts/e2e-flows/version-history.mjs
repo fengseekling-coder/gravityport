@@ -1,7 +1,7 @@
 // GravityPort React UI flow: version lineage and generation rounds surface in
 // the React inspector, and the prompt editor writes through the real API.
 export const name = "version-history";
-export const description = "parent+child version -> 版本 section lists both and switches -> generation event -> 生成记录 shows the prompt -> prompt editor PATCHes";
+export const description = "parent+child version -> 版本 section lists both and switches -> generation event -> 版本树 row shows thumbnail and prompt -> prompt editor PATCHes";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -71,6 +71,11 @@ function versionHistorySource(config) {
     await waitFor(() => (document.body.innerHTML).includes('e2e generation prompt marker'),
       '生成记录 shows the generation prompt');
     const generationRowShown = document.body.innerHTML.includes('e2e generation prompt marker');
+    // The generation records ARE the version tree: each row leads with its
+    // output's thumbnail, and the retired "原始信息" label stays gone.
+    await waitFor(() => document.querySelector('.version-list[aria-label="版本树"] .related i img[src]'),
+      '版本树 rows show the output thumbnail');
+    if (document.body.textContent.includes('原始信息')) throw new Error('原始信息 label is back in the inspector');
 
     // Switching versions selects the child through the real API. The selected
     // row leads with the check icon (svg); unselected rows lead with a bare
