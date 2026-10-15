@@ -2248,6 +2248,8 @@ img.black-image {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
+}.app .detail-reading.five-lines:not(.expanded) p {
+  -webkit-line-clamp: 5;
 }.app .reading-toggle {
   padding: 0 var(--space-1);
   margin-top: var(--space-1);

@@ -51,6 +51,36 @@ function loadPreferences() {
   }
 }
 
+/** Inspector text that shows its first five lines and offers to expand only
+ *  when there is more to show. */
+function ReadingText({ id, text, expanded, onToggle, expandLabel, collapseLabel }: {
+  id: string
+  text: string
+  expanded: boolean
+  onToggle: () => void
+  expandLabel: string
+  collapseLabel: string
+}) {
+  const ref = useRef<HTMLParagraphElement>(null)
+  const [overflows, setOverflows] = useState(false)
+  useLayoutEffect(() => {
+    const paragraph = ref.current
+    if (!paragraph || expanded) return
+    const measure = () => setOverflows(paragraph.scrollHeight > paragraph.clientHeight + 1)
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(paragraph)
+    return () => observer.disconnect()
+  }, [text, expanded])
+  return (
+    <div className={`detail-reading five-lines ${expanded ? "expanded" : ""}`}>
+      <p id={id} ref={ref}>{text}</p>
+      {overflows && <button className="reading-toggle" aria-expanded={expanded} aria-controls={id} onClick={onToggle}>{expanded ? collapseLabel : expandLabel}<Icon name={expanded ? "minus" : "down"} size={12} /></button>}
+    </div>
+  )
+}
+
 function humanSize(bytes: number | null): string {
   if (!bytes || bytes <= 0) return "—"
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
@@ -158,6 +188,7 @@ export default function App() {
   const [expandedPrompt, setExpandedPrompt] = useState(false)
   const [promptVariant, setPromptVariant] = useState<1 | 2>(1)
   const [expandedIntro, setExpandedIntro] = useState(false)
+  const [expandedInstruction, setExpandedInstruction] = useState(false)
   const [expandedTags, setExpandedTags] = useState(false)
   const [addingTag, setAddingTag] = useState(false)
   const [tagDraft, setTagDraft] = useState("")
@@ -265,6 +296,7 @@ export default function App() {
     setNewRelation(null)
     setPromptVariant(1)
     setExpandedIntro(false)
+    setExpandedInstruction(false)
     setExpandedTags(false)
     setAddingTag(false)
     setTagDraft("")
@@ -2062,10 +2094,14 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div className={`detail-reading ${expandedPrompt ? "expanded" : ""}`}>
-                <p id="asset-prompt">{shownPrompt || tr("无提示词记录")}</p>
-                <button className="reading-toggle" aria-expanded={expandedPrompt} aria-controls="asset-prompt" onClick={() => setExpandedPrompt(!expandedPrompt)}>{expandedPrompt ? tr("收起") : tr("展开提示词")}<Icon name={expandedPrompt ? "minus" : "down"} size={12} /></button>
-              </div>
+              <ReadingText
+                id="asset-prompt"
+                text={shownPrompt || tr("无提示词记录")}
+                expanded={expandedPrompt}
+                onToggle={() => setExpandedPrompt(!expandedPrompt)}
+                expandLabel={tr("展开提示词")}
+                collapseLabel={tr("收起")}
+              />
             )}
           </section>
           <section className="detail-section user-instruction-section">
@@ -2076,7 +2112,14 @@ export default function App() {
                 <Icon name="copy" size={16} />
               </button>
             </div>
-            <div className="detail-reading expanded"><p>{asset.user_instruction || tr("未提供用户指令")}</p></div>
+            <ReadingText
+              id="asset-instruction"
+              text={asset.user_instruction || tr("未提供用户指令")}
+              expanded={expandedInstruction}
+              onToggle={() => setExpandedInstruction(!expandedInstruction)}
+              expandLabel={tr("展开用户指令")}
+              collapseLabel={tr("收起")}
+            />
           </section>
           {asset.introduction && <section className="detail-section">
             <div className="field-heading">

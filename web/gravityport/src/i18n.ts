@@ -52,7 +52,7 @@ const english: Record<string, string> = {
   "收藏素材": "Favorite asset", "图片 · 本地素材": "Image · Local asset", "打开预览": "Preview",
   "格式": "Format", "尺寸": "Dimensions", "比例": "Ratio", "大小": "Size", "时间": "Added",
   "今天 14:08": "Today, 14:08", "收起": "Collapse", "提示词": "Prompt", "原始信息": "Original",
-  "复制提示词": "Copy prompt", "提示词已复制": "Prompt copied", "展开提示词": "Show full prompt",
+  "复制提示词": "Copy prompt", "提示词已复制": "Prompt copied", "展开提示词": "Show full prompt", "展开用户指令": "Show full instruction",
   "提示词1": "Prompt 1", "提示词2": "Prompt 2", "用户指令": "User instruction",
   "复制用户指令": "Copy user instruction", "未提供用户指令": "No user instruction provided",
   "内容介绍": "Description", "复制内容介绍": "Copy description", "内容介绍已复制": "Description copied",
