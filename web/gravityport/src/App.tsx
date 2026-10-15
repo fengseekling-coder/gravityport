@@ -2710,16 +2710,6 @@ export default function App() {
               ))}
           </div>
           <div className="tags" ref={tagsRowRef}>
-            <div className="tags-measure" aria-hidden="true" ref={tagsMeasureRef}>
-              {tagItems.map((t, index) => (
-                <span className={`tag-chip${index === 0 && tagVendor ? " tag-vendor" : ""}`} data-tag-measure-item key={`measure-${index}-${t}`}>
-                  {t}
-                  {!(index === 0 && tagVendor) && <button tabIndex={-1}>×</button>}
-                </span>
-              ))}
-              <button className="tags-toggle" data-tag-measure-toggle>{`+${Math.max(0, tagItems.length - collapsedTagCount)}`}</button>
-              <button className="add-tag" data-tag-measure-add><Icon name="plus" size={12} />{tr("添加标签")}</button>
-            </div>
             {(expandedTags ? tagItems : tagItems.slice(0, collapsedTagCount)).map((t, index) => (
               index === 0 && tagVendor ? (
                 <span className="tag-chip tag-vendor" key={`vendor-${t}`}>{t}</span>
@@ -2763,6 +2753,18 @@ export default function App() {
               </div>
               {tagError && <p id="tag-error" role="alert">{tr(tagError)}</p>}
             </form>}
+            {/* Measuring twin last: document-order lookups of .add-tag / .tags-toggle
+             * must reach the live controls, never these inert copies. */}
+            <div className="tags-measure" aria-hidden="true" ref={tagsMeasureRef}>
+              {tagItems.map((t, index) => (
+                <span className={`tag-chip${index === 0 && tagVendor ? " tag-vendor" : ""}`} data-tag-measure-item key={`measure-${index}-${t}`}>
+                  {t}
+                  {!(index === 0 && tagVendor) && <button tabIndex={-1}>×</button>}
+                </span>
+              ))}
+              <button className="tags-toggle" data-tag-measure-toggle>{`+${Math.max(0, tagItems.length - collapsedTagCount)}`}</button>
+              <button className="add-tag" data-tag-measure-add><Icon name="plus" size={12} />{tr("添加标签")}</button>
+            </div>
           </div>
           {asset.palette.length > 0 && <div className="palette">
             {asset.palette.map((c) => (
