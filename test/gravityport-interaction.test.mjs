@@ -382,21 +382,4 @@ describe("legacy feature parity helpers", () => {
     assert.equal(input.image_path, "/Users/test/private.png", "must not mutate the input");
   });
 
-  it("reference-use permissions remain exclusive and preserve recipe identity", () => {
-    const original = {
-      asset_id: "source-A", sha256: "digest", role: "identity", scope: ["shot-1"], applied: true,
-      rights: { copyright: "licensed" },
-      allowed_uses: ["subject", "identity"], forbidden_uses: ["style"],
-    };
-    const next = modules.featureParity.setReferencePermission(original, "identity", "forbidden");
-    assert.equal(modules.featureParity.referencePermission(next, "identity"), "forbidden");
-    assert.deepEqual(next.allowed_uses, ["subject"]);
-    assert.deepEqual(next.forbidden_uses, ["identity", "style"]);
-    const cleared = modules.featureParity.setReferencePermission(next, "identity", "undeclared");
-    assert.equal(modules.featureParity.referencePermission(cleared, "identity"), "undeclared");
-    for (const field of ["asset_id", "sha256", "role", "scope", "applied", "rights"]) {
-      assert.deepEqual(next[field], original[field], `rights edit cannot alter ${field}`);
-    }
-    assert.deepEqual(original.allowed_uses, ["subject", "identity"]);
-  });
 });

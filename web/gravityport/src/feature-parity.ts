@@ -9,18 +9,4 @@ export function sanitizeAssetForExport(value: unknown): unknown {
   ).map(([key, item]) => [key, sanitizeAssetForExport(item)]))
 }
 
-export const referenceUses = ["identity", "subject", "world", "space", "composition", "lighting", "wardrobe", "color", "style", "prop"] as const
 export const relationTypes = ["edited_from", "variant_of", "derived_from", "based_on"] as const
-
-export function referencePermission(reference: { allowed_uses?: string[]; forbidden_uses?: string[] }, use: string): "allowed" | "forbidden" | "undeclared" {
-  if (reference.forbidden_uses?.includes(use)) return "forbidden"
-  if (reference.allowed_uses?.includes(use)) return "allowed"
-  return "undeclared"
-}
-
-export function setReferencePermission<T extends { allowed_uses?: string[]; forbidden_uses?: string[] }>(reference: T, use: string, permission: "allowed" | "forbidden" | "undeclared"): T {
-  return { ...reference,
-    allowed_uses: [...new Set([...(reference.allowed_uses || []).filter(item => item !== use), ...(permission === "allowed" ? [use] : [])])].sort(),
-    forbidden_uses: [...new Set([...(reference.forbidden_uses || []).filter(item => item !== use), ...(permission === "forbidden" ? [use] : [])])].sort(),
-  }
-}
