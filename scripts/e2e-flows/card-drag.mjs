@@ -170,25 +170,99 @@ function cardDragSource(config) {
     };
     const DRAG_ID = 9;
     const moveEvent = (x, y) => new PointerEvent('pointermove', { bubbles: true, cancelable: true, pointerId: DRAG_ID, clientX: x, clientY: y });
-    // Press the card's center, walk to the target point in steps wide enough
-    // to cross the 8px threshold on the first move, then release on window.
+    // The gallery re-lays-out asynchronously (page loads, worker fills), and a
+    // drag that starts while cards are still moving would chase a stale point.
+    // Wait until the full card id sequence AND every card's rect hold still
+    // across two samples, then drag.
+    async function waitForGalleryStable(timeoutMs = 8000) {
+      const snapshot = () => Array.from(document.querySelectorAll('.asset-grid .asset-card')).map((c) => {
+        const r = c.getBoundingClientRect();
+        return c.getAttribute('data-asset-id') + ':' + Math.round(r.left) + ',' + Math.round(r.top);
+      }).join('|');
+      let prev = snapshot();
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        await sleep(120);
+        const next = snapshot();
+        if (next === prev) return true;
+        prev = next;
+      }
+      throw new Error('gallery layout never stabilized');
+    }
+    // The sidebar-drop and stack-drop paths clear the selection on success, so
+    // the next multi-select must start from a known empty baseline — otherwise
+    // the modifier-clicks toggle against whatever survived from the last step.
+    async function resetSelection() {
+      if (!selectedIds().length) return;
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await waitFor(() => !selectedIds().length, 'selection cleared');
+    }
+    // A drag whose drop lands on nothing (the gallery can still relayout
+    // behind a finished wait) is exactly what a real user does next: drag
+    // again. Rebuild the selection from the empty baseline, redo the gesture,
+    // and only accept the server state — never the UI.
+    async function dragWithRetry(fromEl, targetEl, offset, serverCheck, label, attempts = 3) {
+      let lastError;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        await resetSelection();
+        cmdClick(cardFor(config.looseIds[2]));
+        cmdClick(cardFor(config.looseIds[3]));
+        await waitFor(() => selectedIds().length === 2, 'C+D selected (attempt ' + attempt + ')');
+        const base = targetEl && targetEl() ? centerOf(targetEl()) : null;
+        if (!base) throw new Error('retry drag target missing: ' + label);
+        const toPoint = { x: base.x + (offset ? offset.x : 0), y: base.y + (offset ? offset.y : 0) };
+        await dragTo(fromEl, toPoint, { trackEl: targetEl });
+        try {
+          return await waitForApi(serverCheck, label + ' (attempt ' + attempt + ')', 3000);
+        } catch (error) { lastError = error; }
+      }
+      throw lastError;
+    }
+    // Press the card's center, walk towards the tracked target and release on
+    // it. The target point is re-resolved from trackEl on every sample, so a
+    // gallery relayout between the press and the release cannot strand the
+    // drop on a stale coordinate: the pointer ends on the target's current
+    // center plus the offset the caller aimed for (left-half stays left-half).
     // A real browser synthesizes a click after pointerup; synthetic pointers
     // don't, so the flow dispatches the equivalent click itself — that is the
     // click the drag-swallow logic must eat.
     async function dragTo(fromEl, toPoint, opts) {
       const options = opts || {};
+      await waitForGalleryStable();
+      const trackEl = options.trackEl || null;
+      const startTrack = trackEl && trackEl() ? centerOf(trackEl()) : null;
+      const rel = startTrack ? { x: toPoint.x - startTrack.x, y: toPoint.y - startTrack.y } : { x: 0, y: 0 };
+      const aimNow = () => {
+        const el = trackEl && trackEl();
+        if (!el) return toPoint;
+        const c = centerOf(el);
+        return { x: c.x + rel.x, y: c.y + rel.y };
+      };
       const from = centerOf(fromEl);
+      const start = aimNow();
       fromEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: DRAG_ID, button: 0, clientX: from.x, clientY: from.y }));
       await sleep(40);
       const total = options.steps || 6;
       for (let i = 1; i <= total; i++) {
-        const x = from.x + (toPoint.x - from.x) * (i / total);
-        const y = from.y + (toPoint.y - from.y) * (i / total);
+        const x = from.x + (start.x - from.x) * (i / total);
+        const y = from.y + (start.y - from.y) * (i / total);
         window.dispatchEvent(moveEvent(x, y));
         await sleep(40);
       }
+      // Follow the target to where it sits right now, and keep chasing until
+      // two consecutive reads agree: a relayout that lands between samples
+      // must not strand the release on a stale point.
+      let finalPoint = aimNow();
+      for (let chase = 0; chase < 3; chase++) {
+        window.dispatchEvent(moveEvent(finalPoint.x, finalPoint.y));
+        await sleep(130);
+        const again = aimNow();
+        const settled = Math.abs(again.x - finalPoint.x) <= 1 && Math.abs(again.y - finalPoint.y) <= 1;
+        finalPoint = again;
+        if (settled) break;
+      }
       if (options.beforeRelease) await options.beforeRelease();
-      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: DRAG_ID, clientX: toPoint.x, clientY: toPoint.y }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: DRAG_ID, clientX: finalPoint.x, clientY: finalPoint.y }));
       fromEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       await sleep(80);
     }
@@ -271,7 +345,7 @@ function cardDragSource(config) {
 
     // ── 2) A onto B: new stack with cover B, undo dissolves it ──
     await step('drag A onto B creates a stack with cover B, undo dissolves', async () => {
-      await dragTo(cardFor(config.looseIds[0]), centerOf(cardFor(config.looseIds[1])));
+      await dragTo(cardFor(config.looseIds[0]), centerOf(cardFor(config.looseIds[1])), { trackEl: () => cardFor(config.looseIds[1]) });
       const stackId = await waitForApi(async () => {
         const annotated = await assetById(config.looseIds[1]);
         return annotated.stack && annotated.stack.id ? annotated.stack.id : null;
@@ -296,7 +370,7 @@ function cardDragSource(config) {
 
     // ── 3) Rebuild the stack, then multi-select C+D onto it; undo moves them back out ──
     await step('multi-drag C+D onto the rebuilt stack joins it, undo restores', async () => {
-      await dragTo(cardFor(config.looseIds[0]), centerOf(cardFor(config.looseIds[1])));
+      await dragTo(cardFor(config.looseIds[0]), centerOf(cardFor(config.looseIds[1])), { trackEl: () => cardFor(config.looseIds[1]) });
       const stackId = await waitForApi(async () => {
         const annotated = await assetById(config.looseIds[1]);
         return annotated.stack && annotated.stack.id ? annotated.stack.id : null;
@@ -308,22 +382,18 @@ function cardDragSource(config) {
       if (JSON.stringify(selectedIds()) === JSON.stringify([config.looseIds[0]])) {
         throw new Error('a finished drag left the pressed card selected: ' + JSON.stringify(selectedIds()));
       }
-      cmdClick(cardFor(config.looseIds[2]));
-      cmdClick(cardFor(config.looseIds[3]));
-      await waitFor(() => JSON.stringify(selectedIds().slice().sort()) === JSON.stringify([config.looseIds[2], config.looseIds[3]].sort()), 'C+D selected');
-      await dragTo(cardFor(config.looseIds[2]), centerOf(cardFor(config.looseIds[1])));
-      // The swallowed click must not turn into "select the pressed card".
-      if (JSON.stringify(selectedIds()) === JSON.stringify([config.looseIds[2]])) {
+      // The swallowed click must not turn into "select the pressed card":
+      // asserted below on the selection left by this gesture.
+      await dragWithRetry(cardFor(config.looseIds[2]), () => cardFor(config.looseIds[1]), null,
+        async () => {
+          const order = await stackOrder(stackId);
+          const wanted = [config.looseIds[0], config.looseIds[1], config.looseIds[2], config.looseIds[3]].sort();
+          return JSON.stringify(order.slice().sort()) === JSON.stringify(wanted) ? order : null;
+        }, 'stack gains C and D');
+      const selAfterJoin = selectedIds();
+      if (JSON.stringify(selAfterJoin) === JSON.stringify([config.looseIds[2]])) {
         throw new Error('the post-drag click selected the pressed card');
       }
-      let joinProbe = '';
-      await waitForApi(async () => {
-        const order = await stackOrder(stackId);
-        const wanted = [config.looseIds[0], config.looseIds[1], config.looseIds[2], config.looseIds[3]].sort();
-        joinProbe = 'order=' + JSON.stringify(order) + ' toast=' + (document.querySelector('.toast')?.textContent || 'none')
-          + ' selected=' + JSON.stringify(selectedIds());
-        return JSON.stringify(order.slice().sort()) === JSON.stringify(wanted) ? order : null;
-      }, () => 'stack gains C and D | ' + joinProbe);
       await pressUndo();
       await waitForApi(async () => {
         const order = await stackOrder(stackId);
@@ -338,19 +408,18 @@ function cardDragSource(config) {
 
     // ── 4) Multi-drag C+D onto the sidebar group row, then C onto 待整理 ──
     await step('drag C+D onto a group row, then C onto 待整理', async () => {
-      cmdClick(cardFor(config.looseIds[2]));
-      cmdClick(cardFor(config.looseIds[3]));
-      await waitFor(() => selectedIds().length === 2, 'C+D re-selected');
-      await dragTo(cardFor(config.looseIds[2]), centerOf(groupRow()));
-      await waitForApi(async () => {
-        const c = await assetById(config.looseIds[2]);
-        const d = await assetById(config.looseIds[3]);
-        return c.group === config.dropGroup && d.group === config.dropGroup ? true : null;
-      }, 'C and D join the group');
-      // The sidebar drop cleared the selection, so ⌘-click C selects C alone.
+      await dragWithRetry(cardFor(config.looseIds[2]), () => groupRow(), null,
+        async () => {
+          const c = await assetById(config.looseIds[2]);
+          const d = await assetById(config.looseIds[3]);
+          return c.group === config.dropGroup && d.group === config.dropGroup ? true : null;
+        }, 'C and D join the group');
+      // The sidebar drop cleared the selection (a retry may have left C+D
+      // marked), so start from the empty baseline and ⌘-click C alone.
+      await resetSelection();
       cmdClick(cardFor(config.looseIds[2]));
       await waitFor(() => JSON.stringify(selectedIds()) === JSON.stringify([config.looseIds[2]]), 'only C selected');
-      await dragTo(cardFor(config.looseIds[2]), centerOf(ungroupRow()));
+      await dragTo(cardFor(config.looseIds[2]), centerOf(ungroupRow()), { trackEl: () => ungroupRow() });
       await waitForApi(async () => {
         const c = await assetById(config.looseIds[2]);
         return !(c.group || '') ? true : null;
@@ -360,7 +429,7 @@ function cardDragSource(config) {
 
     // ── 5) Stack card onto the group row: every member follows ──
     await step('stack card onto the group row moves all members', async () => {
-      await dragTo(cardFor(config.looseIds[1]), centerOf(groupRow()));
+      await dragTo(cardFor(config.looseIds[1]), centerOf(groupRow()), { trackEl: () => groupRow() });
       await waitForApi(async () => {
         const a = await assetById(config.looseIds[0]);
         const b = await assetById(config.looseIds[1]);
@@ -373,6 +442,7 @@ function cardDragSource(config) {
     await step('stack card is inert on gallery cards', async () => {
       const stackCard = cardFor(config.looseIds[1]);
       await dragTo(stackCard, centerOf(cardFor(config.looseIds[2])), {
+          trackEl: () => cardFor(config.looseIds[2]),
         beforeRelease: async () => {
           const highlights = dropHighlights();
           if (highlights.card) throw new Error('stack drag highlighted a gallery card: ' + JSON.stringify(highlights));
@@ -393,6 +463,7 @@ function cardDragSource(config) {
     await step('inert nav rows accept nothing', async () => {
       for (const label of ['收藏', '回收站', '所有素材']) {
         await dragTo(cardFor(config.looseIds[2]), centerOf(navRow(label)), {
+          trackEl: () => navRow(label),
           beforeRelease: async () => {
             if (document.querySelectorAll('.nav-row.side-drop-target').length) {
               throw new Error(label + ' row highlighted during drag');
@@ -424,6 +495,7 @@ function cardDragSource(config) {
       const firstBox = cardFor(first).getBoundingClientRect();
       const leftHalf = { x: firstBox.left + firstBox.width * 0.25, y: firstBox.top + firstBox.height / 2 };
       await dragTo(cardFor(third), leftHalf, {
+        trackEl: () => cardFor(first),
         beforeRelease: async () => {
           const line = cardFor(first);
           if (!line || !line.classList.contains('stack-reorder-target')) {
@@ -455,6 +527,7 @@ function cardDragSource(config) {
       const shown = Array.from(document.querySelectorAll('.asset-grid .asset-card:not(.asset-card-virtual-placeholder)'))
         .map(c => c.getAttribute('data-asset-id'));
       await dragTo(cardFor(shown[2]), centerOf(cardFor(shown[0])), {
+        trackEl: () => cardFor(shown[0]),
         beforeRelease: async () => {
           if (document.querySelectorAll('.asset-card.stack-reorder-target').length) {
             throw new Error('reorder line shown while a search term is active');
@@ -474,8 +547,7 @@ function cardDragSource(config) {
 
     // ── 10) Escape mid-drag cancels: no server change, no leftover visuals ──
     await step('escape cancels a live drag', async () => {
-      const dbg = (window).__dragDbg || [];
-      if (dbg.length) steps.push('DRAG-DBG :: ' + JSON.stringify(dbg));
+      await waitForGalleryStable();
       const targetCard = cardFor(config.looseIds[3]);
       const to = centerOf(targetCard);
       const from = centerOf(cardFor(config.looseIds[2]));
