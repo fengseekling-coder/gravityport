@@ -363,6 +363,148 @@ describe("generation relationship tree parity", () => {
   });
 });
 
+// Task 148: the expanded version view resolves every generation id into a
+// thumbnail row (no gen- id may reach the screen), with rounds taken from the
+// validated conversation-round rows only.
+describe("generation display resolution", () => {
+  let generationDisplay, relatedChoices;
+  before(() => { ({ generationDisplay, relatedChoices } = modules.versionTree); });
+
+  // One 4-turn conversation. Turn 3 belongs to the inspected asset and its
+  // stored turn_synced_at matches the snapshot; turn 4 carries a stale
+  // turn_synced_at, so its row must not show a turn.
+  const asset = (id, extras = {}) => ({ id, name: `${id}.png`, thumbnail_url: `/thumb/${id}`, deleted_at: null, ...extras });
+  const assets = {
+    one: asset("asset-1"),
+    two: asset("asset-2"),
+    three: asset("asset-3"),
+    four: asset("asset-4", { deleted_at: "2026-10-15T08:00:00.000Z" }),
+    gone: asset("asset-gone"),
+  };
+  const event = (id, outputAssetId, turnIndex, createdAt, syncedAt = "snapshot-1") => ({
+    id, output_asset_id: outputAssetId, provider: "chatgpt", conversation_id: "conv-1",
+    turn_index: turnIndex, turn_synced_at: syncedAt, created_at: createdAt,
+    effective_prompt: `prompt for ${outputAssetId}`, user_prompt: "",
+  });
+  const history = {
+    events: [event("gen-3", "asset-3", 3, "2026-10-15T10:01:00Z")],
+    context_events: [
+      event("gen-1", "asset-1", 1, "2026-10-15T08:00:00Z"),
+      event("gen-2", "asset-2", 2, "2026-10-15T09:31:00Z"),
+      event("gen-4", "asset-4", 4, "2026-10-15T10:29:00Z", "stale-snapshot"),
+      event("gen-5", "asset-nothing", 5, "2026-10-15T10:05:00Z"), // no output asset anywhere
+    ],
+    output_assets: [assets.one, assets.two, assets.three, assets.four, assets.gone],
+    conversations: [{ provider: "chatgpt", conversation_id: "conv-1", turn_count: 4, synced_at: "snapshot-1" }],
+    context_truncated: false,
+  };
+  const current = assets.three; // the inspected asset
+
+  const assertNoGenerationId = (value) => {
+    assert.ok(!JSON.stringify(value).includes("gen-"), `generation id leaked: ${JSON.stringify(value).slice(0, 200)}`);
+  };
+
+  it("resolves events, context events and unknown ids", () => {
+    const self = generationDisplay(history, "gen-3", current);
+    assert.equal(self.known, true);
+    assert.equal(self.asset, current);
+    assert.equal(self.prompt, "prompt for asset-3");
+    assert.equal(self.turnIndex, 3);
+    assert.equal(self.isCurrent, true);
+    assertNoGenerationId(self);
+
+    const context = generationDisplay(history, "gen-2", current);
+    assert.equal(context.known, true);
+    assert.equal(context.asset, assets.two);
+    assert.equal(context.turnIndex, 2);
+    assert.equal(context.isCurrent, false);
+    assertNoGenerationId(context);
+
+    const missing = generationDisplay(history, "gen-404", current);
+    assert.deepEqual(missing, { known: false, asset: null, prompt: "", turnIndex: null, isCurrent: false });
+    assertNoGenerationId(missing);
+  });
+
+  it("falls back to the passed current asset when output_assets omits it", () => {
+    // Production shape (144): the inspector passes the live asset, so the row
+    // still resolves. The conversation rows cannot validate without the
+    // record's asset entry, so the turn drops — 宁可不显示.
+    const incomplete = { ...history, output_assets: [assets.one, assets.two] };
+    const display = generationDisplay(incomplete, "gen-3", current);
+    assert.equal(display.known, true);
+    assert.equal(display.asset, current);
+    assert.equal(display.turnIndex, null, "no validated conversation rows without the asset entry");
+    assert.equal(display.isCurrent, true);
+    assertNoGenerationId(display);
+  });
+
+  it("marks a record without an output asset as unknown but keeps its prompt", () => {
+    const display = generationDisplay(history, "gen-5", current);
+    assert.equal(display.known, false);
+    assert.equal(display.asset, null);
+    assert.equal(display.prompt, "prompt for asset-nothing");
+    assert.equal(display.turnIndex, null);
+    assert.equal(display.isCurrent, false);
+    assertNoGenerationId(display);
+  });
+
+  it("never trusts event.turn_index — the validated conversation rows decide", () => {
+    // Same conversation, but the stored turn index cannot be reconciled with
+    // the snapshot (stale turn_synced_at): the row drops the turn entirely.
+    assert.equal(generationDisplay(history, "gen-4", current).turnIndex, null);
+    // A plain (non-conversation) history has no validated rows at all.
+    const plain = { events: [event("gen-9", "asset-9", 2, "2026-10-15T10:00:00Z")], output_assets: [asset("asset-9")] };
+    const display = generationDisplay(plain, "gen-9", current);
+    assert.equal(display.known, true);
+    assert.equal(display.turnIndex, null);
+  });
+
+  it("handles a missing history or empty id without throwing", () => {
+    assert.deepEqual(generationDisplay(null, "gen-3", current), { known: false, asset: null, prompt: "", turnIndex: null, isCurrent: false });
+    assert.deepEqual(generationDisplay(history, "", current), { known: false, asset: null, prompt: "", turnIndex: null, isCurrent: false });
+  });
+
+  it("relatedChoices drops the anchor, duplicates, asset-less, current and trashed records", () => {
+    const duplicated = {
+      ...history,
+      context_events: [...history.context_events, history.events[0]], // gen-3 twice
+    };
+    // Rows are asset-keyed: the anchor record AND the whole current asset stay
+    // out, so the picker can never offer the inspected image itself.
+    const choices = relatedChoices(duplicated, "gen-3", current);
+    assert.deepEqual(choices.map(choice => choice.asset.id), ["asset-1", "asset-2"],
+      "anchor/current gone, duplicate gone, asset-less gen-5 gone, trashed gen-4 gone; turns ascending");
+    assert.deepEqual(choices.map(choice => choice.turnIndex), [1, 2]);
+    for (const choice of choices) {
+      assert.equal(choice.asset.deleted_at, null);
+      assertNoGenerationId(choice);
+    }
+  });
+
+  it("relatedChoices orders unvalidated records after turned ones, by time", () => {
+    // gen-1 keeps a stale snapshot (no validated turn), gen-2 keeps turn 2:
+    // the turned row leads even though gen-1 is older.
+    const mixed = {
+      ...history,
+      context_events: [
+        event("gen-1", "asset-1", 1, "2026-10-15T08:00:00Z", "stale-snapshot"),
+        event("gen-2", "asset-2", 2, "2026-10-15T09:31:00Z"),
+      ],
+    };
+    const choices = relatedChoices(mixed, "gen-3", current);
+    assert.deepEqual(choices.map(choice => choice.asset.id), ["asset-2", "asset-1"]);
+    assert.deepEqual(choices.map(choice => choice.turnIndex), [2, null]);
+    assertNoGenerationId(choices);
+  });
+
+  it("relatedChoices tolerates missing history and an anchor that covers everything", () => {
+    assert.deepEqual(relatedChoices(null, "", current), []);
+    assert.deepEqual(relatedChoices(history, "gen-1", current).map(choice => choice.asset.id), ["asset-2"],
+      "the current asset never comes back, whatever the anchor is");
+    assert.deepEqual(relatedChoices(history, "gen-1", current).map(choice => choice.turnIndex), [2]);
+  });
+});
+
 describe("legacy feature parity helpers", () => {
   it("group export removes local paths and media URLs without rewriting authored text", () => {
     const input = {

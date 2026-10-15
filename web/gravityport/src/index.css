@@ -3390,3 +3390,61 @@ video.viewer-image {
   white-space: nowrap;
   flex-shrink: 0;
 }
+/* Task 148: the expanded version view renders every block as thumbnail rows.
+   Gray placeholder frame for records without a resolvable asset; static rows
+   (unknown records, the anchor display) keep no hover state. */
+.app .details .related i.row-thumb-empty {
+  background: var(--ui-work);
+}.app .details .related.row-static {
+  cursor: default;
+}.app .details .related.row-static:hover {
+  background: transparent;
+}/* Pressed rows in the relation pickers. */
+.app .details .related[aria-pressed="true"] {
+  background: var(--ui-selected);
+}/* Upstream → downstream pair row (confirmed relations and candidates):
+   two 36px thumbnails, one arrow, clipped caption — no overflow at the
+   ~280px inspector width. */
+.relation-pair-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 100%;
+  min-width: 0;
+}.relation-pair-row i {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+  background: var(--ui-work);
+  overflow: hidden;
+}.relation-pair-row i img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}.relation-pair-row .relation-thumb-link {
+  display: flex;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}.relation-pair-row > small {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-muted);
+  font-size: 12px;
+}.generation-candidate-card > small {
+  flex: 1 1 100%;
+  color: var(--ui-muted);
+  font-size: 12px;
+}.relation-show-all {
+  justify-self: start;
+  padding: 0 var(--space-1);
+  color: var(--ui-accent);
+}

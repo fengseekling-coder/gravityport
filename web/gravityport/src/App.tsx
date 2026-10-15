@@ -12,7 +12,7 @@ import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
-import { generationTreeRows } from "./version-tree"
+import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
 import { computeConversationRounds, conversationRoundRows, roundLine } from "./conversation-rounds"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
 import { resolveReferences } from "./inspector-info"
@@ -240,6 +240,63 @@ function columnsStorage(): { getItem: (key: string) => string | null; setItem: (
   try { return window.localStorage } catch { return { getItem: () => null, setItem: () => {} } }
 }
 
+// Task 148: one row renderer shared by the version-tree list above and every
+// block of the expanded 「查看」 region below. The list rows keep the exact DOM
+// they had before the extraction (the version-history e2e drives it).
+type InspectorRowSpec = {
+  key: string
+  thumbnailUrl?: string | null
+  emptyThumb?: boolean
+  title: string
+  detail?: string
+  isCurrent?: boolean
+  selected?: boolean
+  showChevron?: boolean
+  staticRow?: boolean
+  rowClassName?: string
+  indent?: number
+  onClick?: () => void
+}
+
+function InspectorRow(spec: InspectorRowSpec) {
+  const className = [
+    "related",
+    spec.isCurrent ? "is-current" : "",
+    spec.staticRow ? "row-static" : "",
+    spec.rowClassName || "",
+  ].filter(Boolean).join(" ")
+  const style = spec.indent ? { marginLeft: spec.indent * 14 } : undefined
+  const row = (
+    <>
+      <i className={spec.emptyThumb ? "row-thumb-empty" : undefined}>
+        {!spec.emptyThumb && spec.thumbnailUrl ? <img src={spec.thumbnailUrl} alt="" loading="lazy" /> : null}
+      </i>
+      <span>{spec.title}<small>{spec.detail || ""}</small></span>
+      {spec.showChevron === false ? null : <Icon name="right" size={11} />}
+    </>
+  )
+  if (spec.staticRow) return <div className={className} key={spec.key} style={style}>{row}</div>
+  return (
+    <button
+      className={className}
+      key={spec.key}
+      aria-pressed={spec.selected === true ? true : undefined}
+      style={style}
+      onClick={spec.onClick}
+    >{row}</button>
+  )
+}
+
+// One generation record as a 36px thumbnail for the upstream → downstream pair
+// rows; records that resolve to no asset render the gray placeholder frame.
+function RelationThumb({ display, onClick, label }: { display: GenerationDisplay; onClick?: () => void; label?: string }) {
+  const thumb = display.known && display.asset
+    ? <i>{display.asset.thumbnail_url ? <img src={display.asset.thumbnail_url} alt="" loading="lazy" /> : null}</i>
+    : <i className="row-thumb-empty" />
+  if (!onClick) return <span className="relation-thumb-frame">{thumb}</span>
+  return <button className="relation-thumb-link" title={label} aria-label={label} onClick={onClick}>{thumb}</button>
+}
+
 export default function App() {
   // macOS already draws the native window buttons with titleBarStyle=hiddenInset;
   // Windows also owns its native caption buttons. Only the browser mockup
@@ -365,6 +422,8 @@ export default function App() {
   const [relationBusy, setRelationBusy] = useState(false)
   const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({})
   const [newRelation, setNewRelation] = useState<{ anchor: string; other: string; direction: string; type: string } | null>(null)
+  // Task 148: the related-generation picker shows six rows until expanded.
+  const [showAllRelationChoices, setShowAllRelationChoices] = useState(false)
   // undefined: the recipe history has not answered for this asset yet;
   // null: it answered with none. Web captures keep their references there.
   const [recipeHistory, setRecipeHistory] = useState<MosaRecipeHistory | null | undefined>(undefined)
@@ -916,6 +975,16 @@ export default function App() {
   const fillNamed = (text: string, values: Record<string, string | number>) => fill(tr(text), values)
   // roundLine's translate callback: optional params, filled after translation.
   const roundText = (text: string, params?: Record<string, string | number>) => (params ? fillNamed(text, params) : tr(text))
+  // Task 148: the right-hand text of a confirmed/proposed relation pair — the
+  // two validated turns when both exist, otherwise both prompts clipped to 12
+  // characters. Generation ids never appear here.
+  const relationPairLine = (upstream: GenerationDisplay, downstream: GenerationDisplay): string => {
+    if (upstream.turnIndex != null && downstream.turnIndex != null) {
+      return `${fillNamed(tr("第 {n} 轮"), { n: upstream.turnIndex })} → ${fillNamed(tr("第 {n} 轮"), { n: downstream.turnIndex })}`
+    }
+    const clip = (display: GenerationDisplay) => (display.prompt ? display.prompt.slice(0, 12) : tr("无提示词记录"))
+    return `${clip(upstream)} → ${clip(downstream)}`
+  }
   // Batch outcomes share one toast grammar: any failure → the existing
   // 「…X 项，Y 项失败」 line; full success → single or counted text.
   const notifyBatchOutcome = (doneCount: number, failed: number, texts: { single: string; multi: string; partial: string }) => {
@@ -2913,102 +2982,217 @@ export default function App() {
               {versionRounds.mode === "context"
                 ? (versionTreeOpen ? conversationRoundRows(generationHistory, asset?.id || "") : versionRounds.rows).map((row) => {
                   const output = row.outputAsset || (row.isCurrent ? asset : undefined)
-                  return <button
-                    className={row.isCurrent ? "related is-current" : "related"}
-                    key={row.outputAsset?.id || row.event.id || row.event.output_asset_id}
-                    onClick={() => { if (!row.isCurrent && row.outputAsset?.id) selectHistoryAsset(row.outputAsset.id) }}
-                  >
-                    <i>{output?.thumbnail_url ? <img src={output.thumbnail_url} alt="" loading="lazy" /> : null}</i>
-                    <span>
-                      {(row.event.effective_prompt || row.event.user_prompt || tr("无提示词记录")).slice(0, 60)}
-                      <small>{roundLine(row, versionRounds, roundText)}</small>
-                    </span>
-                    <Icon name="right" size={11} />
-                  </button>
+                  return InspectorRow({
+                    key: String(row.outputAsset?.id || row.event.id || row.event.output_asset_id),
+                    thumbnailUrl: output?.thumbnail_url,
+                    isCurrent: row.isCurrent,
+                    title: (row.event.effective_prompt || row.event.user_prompt || tr("无提示词记录")).slice(0, 60),
+                    detail: roundLine(row, versionRounds, roundText),
+                    onClick: () => { if (!row.isCurrent && row.outputAsset?.id) selectHistoryAsset(row.outputAsset.id) },
+                  })
                 })
                 : (generationHistory?.events || []).slice(0, versionTreeOpen ? undefined : 3).map((event, index) => {
                   const output = event.output_asset_id
                     ? generationHistory?.output_assets?.find(item => item.id === event.output_asset_id)
                       || (asset && asset.id === event.output_asset_id ? asset : undefined)
                     : undefined
-                  return <button
-                    className="related"
-                    key={event.id || index}
-                    onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}
-                  >
-                    <i>{output?.thumbnail_url ? <img src={output.thumbnail_url} alt="" loading="lazy" /> : null}</i>
-                    <span>
-                      {(event.effective_prompt || event.user_prompt || tr("无提示词记录")).slice(0, 60)}
-                      <small>
-                        {timeLabel(event.created_at)}{event.provider ? ` · ${event.provider}` : ""}{event.model ? ` · ${event.model}` : ""}{event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}
-                      </small>
-                    </span>
-                    <Icon name="right" size={11} />
-                  </button>
+                  return InspectorRow({
+                    key: String(event.id || index),
+                    thumbnailUrl: output?.thumbnail_url,
+                    title: (event.effective_prompt || event.user_prompt || tr("无提示词记录")).slice(0, 60),
+                    detail: `${timeLabel(event.created_at)}${event.provider ? ` · ${event.provider}` : ""}${event.model ? ` · ${event.model}` : ""}${event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}`,
+                    onClick: () => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) },
+                  })
                 })}
               {!generationHistory?.events?.length && <span className="muted">{tr("暂无生成关系")}</span>}
             </div>
-            {versionTreeOpen && <div className="version-tree" role="region" aria-label={tr("完整版本树")}>
-              <h4>{tr("生成关系")}</h4>
-              {generationTreeRows(generationHistory).map(({ event, depth, parentIds, relationTypes }) => {
-                return <button key={event.id} className="related generation-tree-row" style={{ marginLeft: depth * 14 }} onClick={() => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) }}>
-                  <span><strong>{event.provider || tr("生成记录")}{event.model ? ` · ${event.model}` : ""}</strong>
-                    <small>{parentIds.length ? `${tr("关联上游")} ${parentIds.length}${relationTypes.length ? ` · ${relationTypes.join(", ")}` : ""}` : tr("根节点")}{event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}</small>
-                    <small>{event.effective_prompt || event.user_prompt || ""}</small></span>
-                </button>
-              })}
-              {(generationHistory?.relations || []).map(relation => {
-                const key = `${relation.child_generation_id}|${relation.parent_generation_id}|${relation.relation_type}`
-                const locked = relation.verification_level === "provider_verified"
-                return <div className="generation-relation-editor" key={key}>
-                  <span>{relation.parent_generation_id} → {relation.child_generation_id}</span>
-                  <select disabled={locked || relationBusy} aria-label={tr("关系类型")} value={relationDrafts[key] || relation.relation_type} onChange={event => setRelationDrafts(old => ({ ...old, [key]: event.target.value }))}>
-                    {relationTypes.map(type => <option key={type} value={type}>{tr(type)}</option>)}
-                  </select>
-                  {locked ? <small>{tr("提供方验证关系不可修改")}</small> : <>
-                    <button disabled={relationBusy} onClick={() => void mutateRelation(() => editGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, previousRelationType: relation.relation_type, relationType: relationDrafts[key] || relation.relation_type, evidence: relation.evidence }))}>{tr("保存关系")}</button>
-                    <button disabled={relationBusy} onClick={() => { if (window.confirm(tr("确认删除这条生成关系？"))) void mutateRelation(() => removeGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, relationType: relation.relation_type })) }}>{tr("删除关系")}</button>
-                  </>}
-                </div>
-              })}
-              {(generationHistory?.relation_candidates || []).filter(candidate => candidate.status !== "dismissed" && candidate.status !== "confirmed").map(candidate => <div className="generation-relation-editor" key={`${candidate.child_generation_id}|${candidate.parent_generation_id}`}>
-                <span>{tr("候选关系")}: {candidate.parent_generation_id} → {candidate.child_generation_id} ({Math.round((candidate.confidence || 0) * 100)}%)</span>
-                <button disabled={relationBusy} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: candidate.child_generation_id, parentGenerationId: candidate.parent_generation_id, relationType: candidate.suggested_relation_type || "derived_from", evidence: candidate.evidence }))}>{tr("确认关系")}</button>
-                <button disabled={relationBusy} onClick={() => void mutateRelation(() => dismissGenerationCandidate(project, candidate.child_generation_id, candidate.parent_generation_id))}>{tr("忽略候选")}</button>
-              </div>)}
-              {!!generationHistory?.events?.length && <div className="generation-relation-editor">
-                <button disabled={relationBusy} onClick={() => setNewRelation({ anchor: generationHistory.events[0].id, other: generationHistory.events.find(item => item.id !== generationHistory.events[0].id)?.id || "", direction: "candidate-parent", type: "edited_from" })}>{tr("添加生成关系")}</button>
-                {newRelation && <div className="generation-relation-create">
-                  <select aria-label={tr("当前生成")} value={newRelation.anchor} onChange={event => setNewRelation(old => old ? { ...old, anchor: event.target.value } : old)}>{generationHistory.events.map(event => <option value={event.id} key={event.id}>{event.provider || "Generation"} · {event.id.slice(0, 10)}</option>)}</select>
-                  <select aria-label={tr("关联生成")} value={newRelation.other} onChange={event => setNewRelation(old => old ? { ...old, other: event.target.value } : old)}>{[...generationHistory.events, ...(generationHistory.context_events || [])].filter(event => event.id !== newRelation.anchor).map(event => <option key={event.id} value={event.id}>{event.provider || "Generation"} · {event.id.slice(0, 10)}</option>)}</select>
-                  <select aria-label={tr("关系方向")} value={newRelation.direction} onChange={event => setNewRelation(old => old ? { ...old, direction: event.target.value } : old)}><option value="candidate-parent">{tr("关联项为上游")}</option><option value="candidate-child">{tr("关联项为下游")}</option></select>
-                  <select aria-label={tr("关系类型")} value={newRelation.type} onChange={event => setNewRelation(old => old ? { ...old, type: event.target.value } : old)}>{relationTypes.map(type => <option value={type} key={type}>{tr(type)}</option>)}</select>
-                  <button disabled={relationBusy || !newRelation.other || newRelation.other === newRelation.anchor} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: newRelation.direction === "candidate-child" ? newRelation.other : newRelation.anchor, parentGenerationId: newRelation.direction === "candidate-child" ? newRelation.anchor : newRelation.other, relationType: newRelation.type }))}>{tr("确认添加")}</button>
+            {versionTreeOpen && (() => {
+              // Every block below renders the same thumbnail rows as the list
+              // above; no gen- id may reach this region (task 148).
+              const currentAssetId = asset?.id || ""
+              const anchorRecordIds = (() => {
+                const seen = new Set<string>()
+                return [
+                  ...(generationHistory?.events || []),
+                  ...(generationHistory?.context_events || []),
+                ].filter((event) => {
+                  const id = String(event.id || "")
+                  if (!id || seen.has(id)) return false
+                  seen.add(id)
+                  return String(event.output_asset_id || "") === currentAssetId
+                }).sort((left, right) => String(left.created_at || "").localeCompare(String(right.created_at || ""))
+                  || String(left.id || "").localeCompare(String(right.id || "")))
+              })()
+              const fallbackAnchorId = String(anchorRecordIds[0]?.id || generationHistory?.events?.[0]?.id || "")
+              // The picker rows are asset-keyed (relatedChoices returns no
+              // generation ids); resolve the clicked asset back to its earliest
+              // generation record here — ids live in state, never in a row.
+              const generationIdForAsset = (assetId: string) => {
+                const seen = new Set<string>()
+                for (const event of [...(generationHistory?.events || []), ...(generationHistory?.context_events || [])]) {
+                  const id = String(event.id || "")
+                  if (!id || seen.has(id)) continue
+                  seen.add(id)
+                  if (String(event.output_asset_id || "") === assetId) return id
+                }
+                return ""
+              }
+              const candidateList = (generationHistory?.relation_candidates || [])
+                .filter(candidate => candidate.status !== "dismissed" && candidate.status !== "confirmed")
+              const jumpToDisplay = (display: GenerationDisplay) => (
+                display.known && display.asset && !display.isCurrent ? () => selectHistoryAsset(display.asset!.id) : undefined
+              )
+              const turnLine = (turnIndex: number | null) => (turnIndex != null ? fillNamed(tr("第 {n} 轮"), { n: turnIndex }) : "")
+              return <div className="version-tree" role="region" aria-label={tr("完整版本树")}>
+                <h4>{tr("生成关系")}</h4>
+                {generationTreeRows(generationHistory).map(({ event, depth, parentIds, relationTypes }) => {
+                  const display = generationDisplay(generationHistory, event.id, asset)
+                  const ancestry = !parentIds.length
+                    ? tr("根节点")
+                    : relationTypes[0] === "edited_from" ? tr("改自上一张") : tr(String(relationTypes[0] || "derived_from"))
+                  return InspectorRow({
+                    key: `tree-${event.id}`,
+                    rowClassName: "generation-tree-row",
+                    indent: depth,
+                    emptyThumb: !display.known,
+                    thumbnailUrl: display.asset?.thumbnail_url,
+                    isCurrent: display.isCurrent,
+                    title: display.known ? (display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录")) : tr("不在这段对话里的生成记录"),
+                    detail: `${ancestry}${display.turnIndex != null ? ` · ${turnLine(display.turnIndex)}` : ""}`,
+                    staticRow: !display.known,
+                    onClick: jumpToDisplay(display),
+                  })
+                })}
+                {(generationHistory?.relations || []).map(relation => {
+                  const key = `${relation.child_generation_id}|${relation.parent_generation_id}|${relation.relation_type}`
+                  const locked = relation.verification_level === "provider_verified"
+                  const upstream = generationDisplay(generationHistory, relation.parent_generation_id, asset)
+                  const downstream = generationDisplay(generationHistory, relation.child_generation_id, asset)
+                  return <div className="generation-relation-editor" key={key}>
+                    <span className="relation-pair-row">
+                      <RelationThumb display={upstream} />
+                      <Icon name="right" size={12} />
+                      <RelationThumb display={downstream} />
+                      <small>{relationPairLine(upstream, downstream)}</small>
+                    </span>
+                    <select disabled={locked || relationBusy} aria-label={tr("关系类型")} value={relationDrafts[key] || relation.relation_type} onChange={event => setRelationDrafts(old => ({ ...old, [key]: event.target.value }))}>
+                      {relationTypes.map(type => <option key={type} value={type}>{tr(type)}</option>)}
+                    </select>
+                    {locked ? <small>{tr("提供方验证关系不可修改")}</small> : <>
+                      <button disabled={relationBusy} onClick={() => void mutateRelation(() => editGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, previousRelationType: relation.relation_type, relationType: relationDrafts[key] || relation.relation_type, evidence: relation.evidence }))}>{tr("保存关系")}</button>
+                      <button disabled={relationBusy} onClick={() => { if (window.confirm(tr("确认删除这条生成关系？"))) void mutateRelation(() => removeGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, relationType: relation.relation_type })) }}>{tr("删除关系")}</button>
+                    </>}
+                  </div>
+                })}
+                {candidateList.length > 0 && <h4>{tr("候选关系")}</h4>}
+                {candidateList.map(candidate => {
+                  const upstream = generationDisplay(generationHistory, candidate.parent_generation_id, asset)
+                  const downstream = generationDisplay(generationHistory, candidate.child_generation_id, asset)
+                  return <div className="generation-relation-editor generation-candidate-card" key={`${candidate.child_generation_id}|${candidate.parent_generation_id}`}>
+                    <span className="relation-pair-row">
+                      <RelationThumb display={upstream} onClick={jumpToDisplay(upstream)} label={tr("查看素材")} />
+                      <Icon name="right" size={12} />
+                      <RelationThumb display={downstream} onClick={jumpToDisplay(downstream)} label={tr("查看素材")} />
+                      <small>{relationPairLine(upstream, downstream)}</small>
+                    </span>
+                    <small>{fillNamed(tr("把握 {percent}%"), { percent: Math.round((candidate.confidence || 0) * 100) })}</small>
+                    <button disabled={relationBusy} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: candidate.child_generation_id, parentGenerationId: candidate.parent_generation_id, relationType: candidate.suggested_relation_type || "derived_from", evidence: candidate.evidence }))}>{tr("确认关系")}</button>
+                    <button disabled={relationBusy} onClick={() => void mutateRelation(() => dismissGenerationCandidate(project, candidate.child_generation_id, candidate.parent_generation_id))}>{tr("忽略候选")}</button>
+                  </div>
+                })}
+                {!!generationHistory?.events?.length && <div className="generation-relation-editor">
+                  <button disabled={relationBusy} onClick={() => {
+                    setNewRelation({ anchor: fallbackAnchorId, other: "", direction: "candidate-parent", type: "edited_from" })
+                    setShowAllRelationChoices(false)
+                  }}>{tr("添加生成关系")}</button>
+                  {newRelation && (() => {
+                    const choices = relatedChoices(generationHistory, newRelation.anchor, asset)
+                    const visibleChoices = showAllRelationChoices ? choices : choices.slice(0, 6)
+                    return <div className="generation-relation-create">
+                      {anchorRecordIds.length > 1
+                        ? <div className="relation-choice-list" aria-label={tr("当前生成")}>
+                          {anchorRecordIds.map(record => {
+                            const display = generationDisplay(generationHistory, String(record.id), asset)
+                            return InspectorRow({
+                              key: `anchor-${record.id}`,
+                              thumbnailUrl: display.asset?.thumbnail_url,
+                              isCurrent: display.isCurrent,
+                              selected: newRelation.anchor === String(record.id),
+                              title: display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录"),
+                              detail: turnLine(display.turnIndex),
+                              showChevron: false,
+                              onClick: () => setNewRelation(old => old ? { ...old, anchor: String(record.id) } : old),
+                            })
+                          })}
+                        </div>
+                        : (() => {
+                          const display = generationDisplay(generationHistory, newRelation.anchor, asset)
+                          return InspectorRow({
+                            key: "anchor-current",
+                            thumbnailUrl: display.asset?.thumbnail_url ?? asset?.thumbnail_url,
+                            isCurrent: true,
+                            title: display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录"),
+                            detail: turnLine(display.turnIndex),
+                            showChevron: false,
+                            staticRow: true,
+                          })
+                        })()}
+                      <div className="relation-choice-list" aria-label={tr("关联生成")}>
+                        {choices.length === 0
+                          ? <span className="muted">{tr("这段对话里没有别的图可以关联")}</span>
+                          : <>
+                            {visibleChoices.map(choice => InspectorRow({
+                              key: `choice-${choice.asset.id}`,
+                              thumbnailUrl: choice.asset.thumbnail_url,
+                              selected: newRelation.other === generationIdForAsset(String(choice.asset.id)),
+                              title: choice.prompt ? choice.prompt.slice(0, 60) : tr("无提示词记录"),
+                              detail: turnLine(choice.turnIndex),
+                              showChevron: false,
+                              onClick: () => setNewRelation(old => old ? { ...old, other: generationIdForAsset(String(choice.asset.id)) } : old),
+                            }))}
+                            {choices.length > 6 && <button className="relation-show-all" onClick={() => setShowAllRelationChoices(!showAllRelationChoices)}>
+                              {showAllRelationChoices ? tr("收起") : fillNamed(tr("显示全部 {count} 张"), { count: choices.length })}
+                            </button>}
+                          </>}
+                      </div>
+                      <select aria-label={tr("关系方向")} value={newRelation.direction} onChange={event => setNewRelation(old => old ? { ...old, direction: event.target.value } : old)}><option value="candidate-parent">{tr("关联项为上游")}</option><option value="candidate-child">{tr("关联项为下游")}</option></select>
+                      <select aria-label={tr("关系类型")} value={newRelation.type} onChange={event => setNewRelation(old => old ? { ...old, type: event.target.value } : old)}>{relationTypes.map(type => <option value={type} key={type}>{tr(type)}</option>)}</select>
+                      <button disabled={relationBusy || !newRelation.other || newRelation.other === newRelation.anchor} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: newRelation.direction === "candidate-child" ? newRelation.other : newRelation.anchor, parentGenerationId: newRelation.direction === "candidate-child" ? newRelation.anchor : newRelation.other, relationType: newRelation.type }))}>{tr("确认添加")}</button>
+                    </div>
+                  })()}
                 </div>}
-              </div>}
-              {!!generationHistory?.context_events?.length && <><h4>{tr("同对话候选")}</h4>{generationHistory.context_events.map(event => <div key={event.id} className="related"><span>{event.provider || tr("生成记录")}<small>{event.effective_prompt || event.user_prompt || ""}</small></span></div>)}</>}
-              <h4>{tr("版本历史")}</h4>
-              {(versions || []).map(v => <button key={v.id} className="related" onClick={() => selectHistoryAsset(v.id)}><span>{tr("版本")} {v.version_index}<small>{v.version_change || ""} · {timeLabel(v.created_at)}</small></span></button>)}
-              {versions && versions.length > 1 && <div className="version-compare">
-                <h4>{tr("版本对比")}</h4>
-                <div className="version-compare-selectors">
-                  <select aria-label={tr("基准版本")} value={versions.some(v => v.id === compareBaseId) ? compareBaseId : versions[0].id} onChange={event => setCompareBaseId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
-                  <select aria-label={tr("目标版本")} value={versions.some(v => v.id === compareTargetId) ? compareTargetId : versions[versions.length - 1].id} onChange={event => setCompareTargetId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
-                </div>
-                {(() => {
-                  const before = versions.find(v => v.id === compareBaseId) || versions[0]
-                  const after = versions.find(v => v.id === compareTargetId) || versions[versions.length - 1]
-                  return <>
-                    <div className="version-compare-images">{[before, after].map(v => <img key={v.id} alt={`${tr("版本")} ${v.version_index}`} src={v.medium_url || v.preview_url || v.image_url} loading="lazy" />)}</div>
-                    <div className="version-compare-fields">{([
-                      ["尺寸", `${before.width} × ${before.height}`, `${after.width} × ${after.height}`],
-                      ["提示词", before.prompt, after.prompt],
-                      ["版本", before.version_change || "", after.version_change || ""],
-                    ] as const).map(([field, left, right]) => <div key={field} className={left !== right ? "changed" : ""}><strong>{tr(field)}</strong><span>{left || "—"}</span><span>{right || "—"}</span></div>)}</div>
-                  </>
-                })()}
-              </div>}
-            </div>}
+                <h4>{tr("版本历史")}</h4>
+                {(versions || []).map(v => InspectorRow({
+                  key: `version-${v.id}`,
+                  thumbnailUrl: v.thumbnail_url,
+                  // The inspector shows `asset` (the first card when nothing is
+                  // selected), so that is the current version; it does not jump.
+                  isCurrent: v.id === asset?.id,
+                  title: `${tr("版本")} ${v.version_index}`,
+                  detail: [v.version_change || "", timeLabel(v.created_at)].filter(Boolean).join(" · "),
+                  onClick: v.id === asset?.id ? undefined : () => selectHistoryAsset(v.id),
+                }))}
+                {versions && versions.length > 1 && <div className="version-compare">
+                  <h4>{tr("版本对比")}</h4>
+                  <div className="version-compare-selectors">
+                    <select aria-label={tr("基准版本")} value={versions.some(v => v.id === compareBaseId) ? compareBaseId : versions[0].id} onChange={event => setCompareBaseId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
+                    <select aria-label={tr("目标版本")} value={versions.some(v => v.id === compareTargetId) ? compareTargetId : versions[versions.length - 1].id} onChange={event => setCompareTargetId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
+                  </div>
+                  {(() => {
+                    const before = versions.find(v => v.id === compareBaseId) || versions[0]
+                    const after = versions.find(v => v.id === compareTargetId) || versions[versions.length - 1]
+                    return <>
+                      <div className="version-compare-images">{[before, after].map(v => <img key={v.id} alt={`${tr("版本")} ${v.version_index}`} src={v.medium_url || v.preview_url || v.image_url} loading="lazy" />)}</div>
+                      <div className="version-compare-fields">{([
+                        ["尺寸", `${before.width} × ${before.height}`, `${after.width} × ${after.height}`],
+                        ["提示词", before.prompt, after.prompt],
+                        ["版本", before.version_change || "", after.version_change || ""],
+                      ] as const).map(([field, left, right]) => <div key={field} className={left !== right ? "changed" : ""}><strong>{tr(field)}</strong><span>{left || "—"}</span><span>{right || "—"}</span></div>)}</div>
+                    </>
+                  })()}
+                </div>}
+              </div>
+            })()}
           </section>
           {versions && versions.length > 1 && <section className="detail-section">
             <div className="field-heading">

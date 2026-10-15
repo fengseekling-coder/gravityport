@@ -243,6 +243,12 @@ const english: Record<string, string> = {
   "当前第 {n} 轮": "This asset, turn {n}",
   "第 {n} 轮": "Turn {n}",
   "当前": "This asset",
+  // Task 148: expanded version view rows (thumbnails instead of generation ids)
+  "把握 {percent}%": "{percent}% confidence",
+  "改自上一张": "Edited from the previous image",
+  "不在这段对话里的生成记录": "A generation outside this conversation",
+  "这段对话里没有别的图可以关联": "No other images in this conversation to link",
+  "显示全部 {count} 张": "Show all {count}",
 }
 
 export function translate(text: string, language: Language): string {
