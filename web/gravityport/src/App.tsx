@@ -401,7 +401,13 @@ export default function App() {
           kept.selected,
           id => validIds.has(id) || !previousIds.has(id),
         )
-        if (pruned.changed || (!pruned.selectedIds.length && !pruned.selected)) {
+        // A background refresh must not touch the selection while a
+        // select-all is running or queued: applySelection bumps the selection
+        // revision, which the select-all loop reads as "the user took over"
+        // and silently drops the whole run. The commit replaces the selection
+        // wholesale anyway; a real view switch is reset above, not here.
+        const selectAllBusy = selectAllInFlightRef.current || pendingSelectAllRef.current !== null
+        if (!selectAllBusy && (pruned.changed || (!pruned.selectedIds.length && !pruned.selected))) {
           const fallback = pruned.selected
             || (pruned.selectedIds.length ? pruned.selectedIds[0] : collected[0]?.id)
             || ""
