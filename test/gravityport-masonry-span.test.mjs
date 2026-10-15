@@ -127,6 +127,29 @@ function assertColumnStackingInOrder(placements, gap) {
   }
 }
 
+/** Largest void a card opens over the columns it covers: its top minus the
+ * column's current bottom (which already carries the regular gap), replayed
+ * in input order — the void the span-level rule promises to bound. */
+function maxUnfilledVoid(placements, gap) {
+  const columnCount = Math.max(...placements.map(place => place.column + place.span));
+  const bottoms = Array(columnCount).fill(0);
+  let maxVoid = 0;
+  for (const place of placements) {
+    for (let column = place.column; column < place.column + place.span; column += 1) {
+      maxVoid = Math.max(maxVoid, place.top - bottoms[column]);
+    }
+    for (let column = place.column; column < place.column + place.span; column += 1) {
+      bottoms[column] = place.top + place.height + gap;
+    }
+  }
+  return maxVoid;
+}
+
+// The void bound the tests hold the layout to, pinned to the spec value
+// (0.12 × columnWidth) rather than read from the module, so loosening the
+// implementation's constant cannot silently loosen these assertions.
+const SPEC_SPAN_TOLERANCE = 0.12;
+
 describe("masonrySpanFor", () => {
   let masonrySpanFor;
   before(() => { ({ masonrySpanFor } = masonry); });
@@ -259,26 +282,29 @@ describe("spanWide: true layout", () => {
   });
 
   it("clears the tallest column a window covers, not just its start column", () => {
-    // Column bottoms dip at column 1 (140) then climb to 200/205: the 3-span
-    // banner must start at column 1 but rest on the 200px crest it covers —
-    // starting at the 140px start-column bottom would bury two cards.
-    const model = buildMasonryModel([2.0, 1.3, 1.4, 1.9, 1.95, 0.25], 5, 100, 10, { spanWide: true });
+    // Column bottoms sit at 210/140/146/143: the only level-enough 3-span
+    // window (waste 6+0+3 = 9 ≤ tolerance 12) starts at column 1, and the
+    // banner must rest on the 146px crest it covers — starting at the 140px
+    // start-column bottom would bury the card standing in column 2.
+    const model = buildMasonryModel([2.0, 1.3, 1.36, 1.33, 0.25], 5, 100, 10, { spanWide: true });
     assertNoPairwiseOverlap(model.placements, model.gap);
-    const banner = model.placements[5];
-    assert.deepEqual([banner.column, banner.span, banner.top], [1, 3, 200]);
+    const banner = model.placements[4];
+    assert.deepEqual([banner.column, banner.span, banner.top], [1, 3, 146]);
     assertColumnStackingInOrder(model.placements, model.gap);
   });
 
   it("measures the window starting at column 0 by its tallest column too", () => {
-    // Column 1 holds a 300px card while column 0 is only 100px tall: a 2-span
-    // banner starting at column 0 must rest on the 310 crest, not on column 0's
-    // 110 bottom, and its CSS offsets must be built from the column that sets
-    // the crest so every later card still lines up with the pixel placements.
-    const model = buildMasonryModel([1, 3, 1, 0.4, 0.4, 1.2, 0.35], 3, 100, 10, { spanWide: true });
+    // Column 1's bottom (115) sits 5px above column 0's (110): a 2-span
+    // banner starting at column 0 must rest on the 115 crest, not on column
+    // 0's 110 bottom, and its CSS offsets must be built from the column that
+    // sets the crest so every later card still lines up with the pixel
+    // placements. Both 2-span windows are level (waste 5 ≤ tolerance), so the
+    // banner keeps its wanted span and the tie resolves leftward.
+    const model = buildMasonryModel([1, 1.05, 1, 0.4, 0.4, 1.2, 0.35], 3, 100, 10, { spanWide: true });
     assertNoPairwiseOverlap(model.placements, model.gap);
     assert.deepEqual(
       [model.placements[3].column, model.placements[3].span, model.placements[3].top],
-      [0, 2, 310],
+      [0, 2, 115],
     );
     for (let index = 0; index < model.placements.length; index += 1) {
       const css = masonry.masonryCardCss(model, index);
@@ -331,23 +357,159 @@ describe("spanWide: true layout", () => {
     assertNoPairwiseOverlap(model.placements, model.gap);
     assertColumnStackingInOrder(model.placements, model.gap);
   });
+
+  it("steps a wide card down instead of spanning over an uneven window", () => {
+    // Screenshot regression: a 4:1 banner fills columns 0–2, then two 1.2
+    // portraits drop onto column 3 and column 0, leaving bottoms at
+    // 220/90/90/130. Every 3-span window of the next 4:1 banner is uneven
+    // (waste 260 / 80 > tolerance 12), so it must narrow to 2 columns and
+    // rest on the level 90px window at columns 1–2 instead of bridging from
+    // a high crest and parking a ~40px void under columns 1–2.
+    const model = buildMasonryModel([0.25, 1.2, 1.2, 0.25], 4, 100, 10, { spanWide: true });
+    const banner = model.placements[3];
+    assert.equal(banner.span, 2, "no level 3-span window remains, so the card narrows");
+    assert.deepEqual([banner.column, banner.top], [1, 90]);
+    const voidPx = maxUnfilledVoid(model.placements, model.gap);
+    assert.ok(
+      voidPx <= SPEC_SPAN_TOLERANCE * 100,
+      `largest void ${voidPx} must stay within tolerance ${SPEC_SPAN_TOLERANCE * 100}`,
+    );
+    assertNoPairwiseOverlap(model.placements, model.gap);
+    assertColumnStackingInOrder(model.placements, model.gap);
+  });
+
+  it("keeps the full wanted span when the covered columns are level", () => {
+    // Empty columns are perfectly level, so the wanted span must survive —
+    // narrowing exists to avoid voids, not to shrink spanning in general.
+    const twoSpan = buildMasonryModel([0.5], 4, 100, 10, { spanWide: true });
+    assert.deepEqual([twoSpan.placements[0].span, twoSpan.placements[0].column], [2, 0]);
+    const threeSpan = buildMasonryModel([1 / 3], 4, 100, 10, { spanWide: true });
+    assert.deepEqual([threeSpan.placements[0].span, threeSpan.placements[0].column], [3, 0]);
+  });
+
+  it("narrows one span level at a time instead of dropping straight to 1", () => {
+    // Columns 0/1 sit at 110/105 with column 2 empty: no 3-span window is
+    // level enough (each would bridge onto the empty column), but the 2-span
+    // window over columns 0–1 is (waste 5 ≤ tolerance 12) — the card must
+    // land at span 2, not fall through to the single-column flow.
+    const model = buildMasonryModel([1.0, 0.95, 0.25], 3, 100, 10, { spanWide: true });
+    assert.deepEqual([model.placements[2].span, model.placements[2].column], [2, 0]);
+  });
 });
 
 describe("spanWide: true virtual windows", () => {
-  it("retains viewport cards in bounded 4249-item windows with ~15% landscape", () => {
+  it("retains viewport cards in bounded 4249-item windows while landscape spans narrow on uneven columns", () => {
     const { buildMasonryModel, locateMasonryWindow } = masonry;
     const ratios = Array.from({ length: 4249 }, (_, i) => (
       i % 20 < 3 ? 1 / (2 + (i % 3)) : 0.5 + (i % 7) / 3
     ));
     const model = buildMasonryModel(ratios, 5, 200, 4, { spanWide: true });
+    // The span-level rule narrows landscape cards on uneven windows, but a
+    // level-window majority must still span: ~637 landscape cards ship here
+    // and well over half keep a span ≥ 2 on this fixed input.
     const spanned = model.placements.filter(place => place.span > 1);
-    assert.ok(spanned.length > 500, `landscape cards must span (got ${spanned.length})`);
+    assert.ok(spanned.length > 300, `landscape cards must still span where windows are level (got ${spanned.length})`);
     for (const scroll of [0, 1500, 12000, model.totalHeight - 900]) {
       const ids = locateMasonryWindow(model, scroll, 900, 1200, 380);
       assert.ok(ids.length > 0 && ids.length <= 380);
       const visible = model.placements.flatMap((p, i) => p.top < scroll + 900 && p.top + p.height > scroll ? [i] : []);
       for (const id of visible) assert.ok(ids.includes(id), `missing visible card ${id}`);
     }
+  });
+});
+
+describe("span-level invariants under random layouts", () => {
+  let buildMasonryModel, masonryCardCss;
+  before(() => { ({ buildMasonryModel, masonryCardCss } = masonry); });
+
+  // Deterministic 32-bit PRNG so any failure reproduces exactly.
+  function mulberry32(seed) {
+    let state = seed >>> 0;
+    return () => {
+      state = (state + 0x6D2B79F5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  it("holds no-overlap, bounded-void, input-order and CSS invariants for 400 random layouts", () => {
+    const rand = mulberry32(0x60d5eed);
+    for (let group = 0; group < 400; group += 1) {
+      const columns = 2 + Math.floor(rand() * 7);
+      const count = 30 + Math.floor(rand() * 171);
+      const ratios = Array.from({ length: count }, () => (
+        rand() < 0.15 ? 1 / (1.6 + rand() * 3.4) : 0.5 + rand() * 0.9
+      ));
+      const columnWidth = 90 + Math.round(rand() * 210);
+      const gap = [4, 8, 10][Math.floor(rand() * 3)];
+      const model = buildMasonryModel(ratios, columns, columnWidth, gap, { spanWide: true });
+      assert.equal(model.placements.length, count, `group ${group} keeps every card`);
+      for (let index = 0; index < count; index += 1) {
+        assert.equal(model.placements[index].ratio, ratios[index],
+          `group ${group} card ${index} must stay in input order`);
+      }
+      assertNoPairwiseOverlap(model.placements, model.gap);
+      // Replay the bottoms in input order: every spanned card must have been
+      // placed on a window whose unevenness stays within the tolerance.
+      const bottoms = Array(columns).fill(0);
+      const tolerance = SPEC_SPAN_TOLERANCE * columnWidth;
+      for (let index = 0; index < model.placements.length; index += 1) {
+        const place = model.placements[index];
+        let crest = bottoms[place.column];
+        for (let covered = place.column + 1; covered < place.column + place.span; covered += 1) {
+          crest = Math.max(crest, bottoms[covered]);
+        }
+        assert.ok(Math.abs(place.top - crest) < 1e-9,
+          `group ${group} card ${index} must rest on its window's crest`);
+        if (place.span > 1) {
+          let waste = 0;
+          for (let covered = place.column; covered < place.column + place.span; covered += 1) {
+            waste += crest - bottoms[covered];
+          }
+          assert.ok(waste <= tolerance + 1e-9,
+            `group ${group} card ${index}: span-${place.span} window waste ${waste} > tolerance ${tolerance}`);
+        }
+        for (let covered = place.column; covered < place.column + place.span; covered += 1) {
+          bottoms[covered] = place.top + place.height + gap;
+        }
+      }
+      // The CSS must evaluate to the pixel placements at a concrete width.
+      const container = columns * columnWidth + (columns - 1) * gap;
+      for (let index = 0; index < model.placements.length; index += 1) {
+        const css = masonryCardCss(model, index);
+        for (const edge of ["left", "top", "width", "height"]) {
+          const value = evalCalc(css[edge], container);
+          assert.ok(Math.abs(value - model.placements[index][edge]) < 0.01,
+            `group ${group} card ${index} ${edge}: css ${value} vs placement ${model.placements[index][edge]}`);
+        }
+      }
+    }
+  });
+});
+
+describe("span levels on a realistic ratio mix", () => {
+  it("keeps every void within tolerance across the 372-card mixed fixture", async () => {
+    const fixturePath = join(repositoryRoot, "test", "fixtures", "masonry-mixed-ratios.json");
+    const pairs = JSON.parse(await readFile(fixturePath, "utf8"));
+    assert.equal(pairs.length, 372);
+    const widthOverHeight = pairs.map(([width, height]) => width / height);
+    const extraWide = widthOverHeight.filter(ratio => ratio >= 2.6);
+    const wide = widthOverHeight.filter(ratio => ratio >= 1.6 && ratio < 2.6);
+    const rest = widthOverHeight.filter(ratio => ratio < 1.6);
+    assert.equal(extraWide.length, 6, "six cards span up to 3 columns");
+    assert.equal(wide.length, 29, "twenty-nine cards span 2 columns");
+    assert.equal(rest.length, 337);
+    assert.ok(rest.every(ratio => ratio >= 0.5 && ratio <= 1.4), "the rest stay portrait-to-squarish");
+    const ratios = pairs.map(([width, height]) => height / width);
+    const model = masonry.buildMasonryModel(ratios, 4, 293, 8, { spanWide: true });
+    const tolerance = SPEC_SPAN_TOLERANCE * 293;
+    const voidPx = maxUnfilledVoid(model.placements, model.gap);
+    assert.ok(voidPx <= tolerance, `largest void ${voidPx} must stay within tolerance ${tolerance}`);
+    const spanned = model.placements.filter(place => place.span > 1).length;
+    console.log(`spanned wide cards ${spanned} / 35; max void ${voidPx.toFixed(2)}px (tolerance ${tolerance.toFixed(2)}px)`);
+    assertNoPairwiseOverlap(model.placements, model.gap);
   });
 });
 

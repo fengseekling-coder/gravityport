@@ -115,8 +115,9 @@ export function gallerySpacerHeights(
  * their vertical starts are independent of the tallest card in a CSS row.
  * A stable input order, unchanged by viewport windowing, avoids jumps during
  * scrolling and incremental page hydration. With `spanWide`, landscape cards
- * occupy 2–3 adjacent columns (chosen by `masonrySpanFor`) and everything
- * else still occupies one. */
+ * occupy 2–3 adjacent columns (wanted by `masonrySpanFor`), narrowing one
+ * span level at a time to the widest span whose placement window is level
+ * within `SPAN_LEVEL_TOLERANCE`, and everything else still occupies one. */
 export type MasonryPlacement = {
   left: number
   top: number
@@ -164,6 +165,11 @@ export function masonrySpanFor(heightRatio: number, columns: number): number {
   return Math.min(span, safeColumns)
 }
 
+/** Largest share of the column width a spanned card may leave as new void —
+ * the sum of crest-minus-bottom over its covered columns — while keeping its
+ * span; more uneven windows make the card step its span down instead. */
+export const SPAN_LEVEL_TOLERANCE = 0.12
+
 export function buildMasonryModel(
   heightRatios: number[], columns: number, columnWidth: number, gap: number,
   options?: { spanWide?: boolean },
@@ -178,23 +184,54 @@ export function buildMasonryModel(
   const placements: MasonryPlacement[] = []
   for (const ratio of heightRatios) {
     const safeRatio = Number.isFinite(ratio) && ratio > 0 ? ratio : 1
-    const span = spanWide ? masonrySpanFor(safeRatio, count) : 1
-    // Leftmost start column whose whole span-window has the lowest crest.
-    // For span 1 this is the plain shortest-column scan; comparing the real
-    // window maximum keeps spanned cards from covering a taller neighbour.
-    // The window starting at column 0 is measured the same way — its crest is
-    // its tallest column, not column 0 — and the CSS top coefficients come from
-    // the column that sets the crest.
+    let span = spanWide ? masonrySpanFor(safeRatio, count) : 1
     let column = 0
     let crest = 0
     let crestColumn = 0
-    for (let start = 0; start + span <= count; start += 1) {
-      let windowCrest = bottoms[start]
-      let windowCrestColumn = start
-      for (let covered = start + 1; covered < start + span; covered += 1) {
-        if (bottoms[covered] > windowCrest) { windowCrest = bottoms[covered]; windowCrestColumn = covered }
+    // A spanned card always rests on its window's crest, so placing it on an
+    // uneven window leaves a permanent void under each shorter covered column
+    // (later cards never backfill). A window qualifies only when that void —
+    // the sum of crest-minus-bottom over the covered columns — stays within
+    // SPAN_LEVEL_TOLERANCE × columnWidth; otherwise the card steps its span
+    // down one column at a time. Span 1 always qualifies (void is 0), so a
+    // fully narrowed card falls through to the plain shortest-column scan.
+    let levelled = false
+    if (spanWide && span > 1) {
+      const tolerance = SPAN_LEVEL_TOLERANCE * safeWidth
+      for (; span > 1; span -= 1) {
+        let placed = false
+        for (let start = 0; start + span <= count; start += 1) {
+          let windowCrest = bottoms[start]
+          let windowCrestColumn = start
+          for (let covered = start + 1; covered < start + span; covered += 1) {
+            if (bottoms[covered] > windowCrest) { windowCrest = bottoms[covered]; windowCrestColumn = covered }
+          }
+          let waste = 0
+          for (let covered = start; covered < start + span; covered += 1) {
+            waste += windowCrest - bottoms[covered]
+          }
+          if (waste > tolerance) continue
+          if (!placed || windowCrest < crest) { column = start; crest = windowCrest; crestColumn = windowCrestColumn }
+          placed = true
+        }
+        if (placed) { levelled = true; break }
       }
-      if (start === 0 || windowCrest < crest) { column = start; crest = windowCrest; crestColumn = windowCrestColumn }
+    }
+    if (!levelled) {
+      // Leftmost start column whose whole span-window has the lowest crest.
+      // For span 1 this is the plain shortest-column scan; comparing the real
+      // window maximum keeps spanned cards from covering a taller neighbour.
+      // The window starting at column 0 is measured the same way — its crest is
+      // its tallest column, not column 0 — and the CSS top coefficients come from
+      // the column that sets the crest.
+      for (let start = 0; start + span <= count; start += 1) {
+        let windowCrest = bottoms[start]
+        let windowCrestColumn = start
+        for (let covered = start + 1; covered < start + span; covered += 1) {
+          if (bottoms[covered] > windowCrest) { windowCrest = bottoms[covered]; windowCrestColumn = covered }
+        }
+        if (start === 0 || windowCrest < crest) { column = start; crest = windowCrest; crestColumn = windowCrestColumn }
+      }
     }
     const width = span * safeWidth + (span - 1) * safeGap
     const height = width * safeRatio
