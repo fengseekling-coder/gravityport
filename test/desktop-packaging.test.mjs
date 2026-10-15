@@ -580,7 +580,8 @@ test("retired show-in-folder IPC stays removed without expanding renderer author
   assert.doesNotMatch(main, /ipcMain\.handle\("open-file-dialog"/, "unused open-file dialog handler was removed");
   // 任务 96（A6）：第 18 条批准通道 set-window-full-screen（大图页全屏与窗口系统全屏同步）。
   // 任务 116：第 19/20 条 rename-notice-state / acknowledge-rename-notice（老用户「已更名」提示）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 20, "no invoke channel beyond the currently approved narrow requests (Visual Pack lifecycle remains named and URL-free)");
+  // 任务 135：第 21 条 open-pinterest-authorize（Pinterest 授权页，只放行 https://www.pinterest.com/oauth/）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 21, "no invoke channel beyond the currently approved narrow requests (Visual Pack lifecycle remains named and URL-free)");
   assert.doesNotMatch(preload, /shell\s*[:.]/, "shell is never exposed to the renderer");
   assert.doesNotMatch(preload, /exec\(|spawn\(|execFile\(/, "no arbitrary command execution");
 

@@ -261,6 +261,7 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "onVisualPackProgress",
     "onWindowFullScreenChange",
     "openDownloadPage",
+    "openPinterestAuthorize", // 任务 135：第 21 条 open-pinterest-authorize（Pinterest 授权页，只放行 https://www.pinterest.com/oauth/）
     "pasteImage",
     "removeVisualPack",
     "reportRendererReady",
