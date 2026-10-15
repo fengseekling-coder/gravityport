@@ -128,9 +128,25 @@ function selectAllSource() {
     const capTruncationAnnounced = true;
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await waitFor(() => selectedCount() <= 1, 'the synthetic selection clears');
+
+    // ── 2c) A background refresh landing mid-select-all must not drop it ──
+    // Escape left the selection EMPTY, so a refresh's prune would refill the
+    // implicit single card and bump the selection revision — which the loop
+    // reads as "the user took over". Make the window deterministic: slow the
+    // page fetch, then toggle a favorite so the library-changed event
+    // (SSE poll -> debounced reload) lands while the loop is awaiting.
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : String(input.url || '');
+      if (url.includes('limit=250')) await sleep(1800);
+      return window.__origFetch(input, init);
+    };
     pressSelectAll();
+    const tokenHeaders = { 'x-mosa-client-token': sessionStorage.getItem('mosa.client-token') || '' };
+    const probe = await window.__origFetch('/api/assets?project=default&limit=1', { headers: tokenHeaders }).then((r) => r.json());
+    await window.__origFetch('/api/assets/default/' + probe.assets[0].id + '/favorite', { method: 'POST', headers: tokenHeaders });
     await waitFor(() => (document.querySelector('.toast')?.textContent || '').trim() === '已选 ${TOTAL} 项',
-      'the real select-all re-runs after the cap');
+      'select-all survives a background refresh mid-flight');
+    window.fetch = window.__origFetch;
     await sleep(400);
 
     // ── 3) The cross-page selection drives a real batch trash ──
