@@ -23,9 +23,13 @@ export async function run(ctx) {
   const logFile = join(ctx.userDataDir, "main.log");
   const healthFile = join(ctx.userDataDir, "health.json");
 
-  // The update-ready file must live under <userDataDir>/updates/macos so the
-  // main process accepts it (macos-updater.mjs: resolveMacosUpdateReadyFile).
-  const stagingRoot = join(realpathSync(ctx.userDataDir), "updates", "macos");
+  // The update-ready file must live under the platform's staging root, which
+  // the main process derives from app.getPath("userData"): updates/macos
+  // (resolveMacosUpdateReadyFile) or updates/windows
+  // (resolveWindowsUpdateReadyFile). The native realpath expands macOS
+  // /var -> /private/var and Windows 8.3 short names (RUNNER~1), so the
+  // prefix check sees the same path the main process does.
+  const stagingRoot = join(realpathSync.native(ctx.userDataDir), "updates", process.platform === "win32" ? "windows" : "macos");
   const updateReadyFile = join(stagingRoot, "gravityport-update-ready.json");
 
   await mkdir(stagingRoot, { recursive: true });
