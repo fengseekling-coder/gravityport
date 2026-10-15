@@ -154,6 +154,12 @@ const HELPERS = `
         + ' | probe=' + probe.slice(0, 1200));
     }
     const assetJson = (id) => fetch('/api/assets/default/' + id).then((r) => r.json()).then((d) => d.asset || d);
+    // A row shows the thumbnail, or the original image while the thumbnail
+    // is still being made (slow CI runners), so a src matches an asset when
+    // it is any of that asset's image URLs.
+    const assetUrls = (asset) => [asset.thumbnail_url, asset.image_url, asset.medium_url, asset.preview_url].filter(Boolean);
+    const srcIsAsset = (src, asset) => Boolean(src) && assetUrls(asset).includes(src);
+    const srcsAre = (srcs, assets) => srcs.length === assets.length && assets.every((asset, index) => srcIsAsset(srcs[index], asset));
     const historyOf = (id) => fetch('/api/assets/default/' + id + '/generation-history')
       .then((r) => r.json()).then((d) => d.history || d);
     const region = () => document.querySelector('.version-tree');
@@ -219,9 +225,8 @@ function firstStageSource(config) {
       assetJson(config.asset2Id), assetJson(config.asset3Id), assetJson(config.asset4Id),
     ]);
     const pairSrcs = (card) => Array.from(card.querySelectorAll('.relation-pair-row i img')).map((img) => img.getAttribute('src'));
-    const pairKey = (a, b) => JSON.stringify([a.thumbnail_url, b.thumbnail_url]);
-    const confirmCard = cards.find((card) => JSON.stringify(pairSrcs(card)) === pairKey(upstream, downstream));
-    const dismissCard = cards.find((card) => JSON.stringify(pairSrcs(card)) === pairKey(downstream, downstream4));
+    const confirmCard = cards.find((card) => srcsAre(pairSrcs(card), [upstream, downstream]));
+    const dismissCard = cards.find((card) => srcsAre(pairSrcs(card), [downstream, downstream4]));
     if (!confirmCard || !dismissCard) throw new Error('候选卡配对不上: ' + JSON.stringify(cards.map(pairSrcs)));
     const candidatePairSrcs = true;
     const secondCandidatePairSrcs = true;
@@ -245,7 +250,7 @@ function firstStageSource(config) {
     const confirmAddedRelation = true;
     const confirmedCardGone = await waitFor(() => {
       const list = Array.from(region().querySelectorAll('.generation-candidate-card'));
-      return list.length === 1 && JSON.stringify(pairSrcs(list[0])) === JSON.stringify([downstream.thumbnail_url, downstream4.thumbnail_url]);
+      return list.length === 1 && srcsAre(pairSrcs(list[0]), [downstream, downstream4]);
     }, '已确认的候选卡消失，只剩 4←3');
 
     // Dismiss the remaining 4←3 candidate: it leaves the screen and the API
@@ -325,11 +330,10 @@ function secondStageSource(config) {
     const [a1, a2, a3, a4] = await Promise.all([
       assetJson(config.asset1Id), assetJson(config.asset2Id), assetJson(config.asset3Id), assetJson(config.asset4Id),
     ]);
-    const pickerHasNoTrashed = !pickerImgs.includes(a4.thumbnail_url);
-    const pickerHasNoCurrent = !pickerImgs.includes(a3.thumbnail_url);
-    const pickerSrcs = pickerImgs.slice().sort().join('|');
-    const expectedSrcs = [a1.thumbnail_url, a2.thumbnail_url].sort().join('|');
-    if (pickerSrcs !== expectedSrcs) throw new Error('关联列表缩略图不对: ' + pickerSrcs);
+    const pickerHasNoTrashed = !pickerImgs.some((src) => srcIsAsset(src, a4));
+    const pickerHasNoCurrent = !pickerImgs.some((src) => srcIsAsset(src, a3));
+    // Rows are ordered by turn, so the picker lists asset 1 then asset 2.
+    if (!srcsAre(pickerImgs, [a1, a2])) throw new Error('关联列表缩略图不对: ' + pickerImgs.join('|'));
 
     // Pick asset 1, keep 关联项为上游, confirm: relation asset1 → asset3.
     pickerRows[0].click();
@@ -398,7 +402,7 @@ function secondStageSource(config) {
     }, '版本对比两张图');
 
     return {
-      anchorIsCurrent, pickerRows: pickerRows.length, pickerHasNoTrashed, pickerHasNoCurrent, pickerSrcs,
+      anchorIsCurrent, pickerRows: pickerRows.length, pickerHasNoTrashed, pickerHasNoCurrent, pickerImgs: pickerImgs.join('|'),
       choiceSelected, addCreatedRelation, editorPairLines, relationTypeEdited, relationDeleted,
       regionStillHasNoGenerationId, versionRows, versionRowImages, currentVersionMarked, compareImages,
     };
