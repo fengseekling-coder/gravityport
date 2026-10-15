@@ -2270,6 +2270,15 @@ img.black-image {
   white-space: nowrap;
 }.app .details .related small {
   margin-top: var(--space-1);
+}
+/* Task 144: the second line (rounds text) needs its own ellipsis — the
+   parent's text-overflow doesn't reach block-level children. */
+.app .details .related > span > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}.app .details .version-list .related.is-current {
+  background: var(--ui-selected);
 }.app .details .library-location {
   min-height: var(--space-10);
   margin-top: var(--space-5);
