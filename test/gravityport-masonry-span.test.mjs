@@ -3,10 +3,12 @@
 // ship as TypeScript inside web/gravityport, so they are compiled to a
 // temporary ESM module with the project's own tsc before import (same
 // approach as gravityport-interaction.test.mjs). The pre-span implementation
-// is compiled from git (3eac855) alongside the current one so the default
+// is compiled from a frozen copy of the pre-span source (3eac855, kept as
+// test/fixtures/gallery-window.pre-span.ts.txt — CI clones are shallow, so
+// git history cannot be relied on) alongside the current one so the default
 // (spanWide: false) geometry can be proven unchanged bit for bit.
 import { execFileSync } from "node:child_process";
-import { rm, mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { readFile, rm, mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -14,7 +16,7 @@ import assert from "node:assert/strict";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const uiRoot = join(repositoryRoot, "web", "gravityport");
-const PRE_SPAN_COMMIT = "3eac855";
+const PRE_SPAN_SOURCE = join(repositoryRoot, "test", "fixtures", "gallery-window.pre-span.ts.txt");
 
 let masonry, columns, legacy;
 let tempRoot;
@@ -30,10 +32,7 @@ before(async () => {
     "--moduleResolution", "bundler", "--skipLibCheck",
   ], { stdio: "pipe" });
   compile(["gallery-window.ts", "gallery-columns.ts"].map(name => join(uiRoot, "src", name)), newDir);
-  const legacySource = execFileSync("git", [
-    "show", `${PRE_SPAN_COMMIT}:web/gravityport/src/gallery-window.ts`,
-  ], { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] }).toString();
-  await writeFile(join(legacySrc, "gallery-window.ts"), legacySource);
+  await writeFile(join(legacySrc, "gallery-window.ts"), await readFile(PRE_SPAN_SOURCE, "utf8"));
   compile([join(legacySrc, "gallery-window.ts")], legacyDir);
   masonry = await import(join(newDir, "gallery-window.js"));
   columns = await import(join(newDir, "gallery-columns.js"));
