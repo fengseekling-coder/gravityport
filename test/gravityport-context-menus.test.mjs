@@ -1,476 +1,316 @@
-/**
- * Test suite for context-menus.ts
- * Compiles TypeScript to temp directory and imports the result, matching gravityport-library-actions.test.mjs pattern.
- */
+// GravityPort context menu builder (context-menus.ts) tests.
+//
+// The builder is pure logic; the real module is compiled with tsc into a temp
+// directory and imported from there (gravityport-library-actions.test.mjs
+// pattern) — nothing is hand-copied into this file.
+import { execFileSync } from "node:child_process";
+import { rm, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { after, before, describe, it } from "node:test";
+import assert from "node:assert/strict";
 
-import { describe, it, before } from "node:test"
-import assert from "node:assert"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
-import { execSync } from "node:child_process"
+const repositoryRoot = resolve(import.meta.dirname, "..");
+const uiRoot = join(repositoryRoot, "web", "gravityport");
 
-let buildContextMenu
+let buildContextMenu;
 
 before(async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "gravityport-cm-test-"))
-  try {
-    execSync(`npx tsc web/gravityport/src/context-menus.ts --outDir ${tmp} --module esnext --target esnext --moduleResolution bundler --esModuleInterop --skipLibCheck`, { cwd: process.cwd(), stdio: "inherit" })
-    const module = await import(join(tmp, "context-menus.js"))
-    buildContextMenu = module.buildContextMenu
-  } finally {
-    rmSync(tmp, { recursive: true })
+  const compileRoot = await mkdtemp(join(tmpdir(), "mosa-gp-cm-"));
+  execFileSync(join(repositoryRoot, "node_modules", ".bin", "tsc"), [
+    join(uiRoot, "src", "context-menus.ts"),
+    "--outDir", compileRoot,
+    "--module", "esnext",
+    "--target", "es2022",
+    "--moduleResolution", "bundler",
+    "--skipLibCheck",
+  ], { stdio: "pipe" });
+  ({ buildContextMenu } = await import(join(compileRoot, "context-menus.js")));
+  after(async () => {
+    await rm(compileRoot, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const baseCtx = (overrides = {}) => ({
+  target: "asset",
+  scope: "all",
+  selectionCount: 1,
+  selectionHasStacks: false,
+  anyGrouped: false,
+  favorite: false,
+  insideStackId: null,
+  cutActive: false,
+  groups: [],
+  pageTotal: 10,
+  isMac: true,
+  ...overrides,
+});
+
+const entryId = (entry) => {
+  if (entry.kind === "separator") return "|";
+  if (entry.kind === "heading") return `HEAD:${entry.label}`;
+  return entry.id;
+};
+const idList = (entries) => entries.map(entryId);
+const itemIds = (entries) => entries.filter(entry => entry.kind === "item").map(entry => entry.id);
+const findItem = (entries, id) => entries.find(entry => entry.kind === "item" && entry.id === id);
+
+function assertNoBadSeparators(entries, label) {
+  const ids = idList(entries);
+  assert.notEqual(ids[0], "|", `${label}: leading separator`);
+  assert.notEqual(ids[ids.length - 1], "|", `${label}: trailing separator`);
+  for (let index = 0; index < ids.length - 1; index += 1) {
+    assert.ok(!(ids[index] === "|" && ids[index + 1] === "|"), `${label}: consecutive separators at ${index}`);
   }
-})
+}
 
-describe("context-menus / buildContextMenu", () => {
-  describe("asset menu (non-trash)", () => {
-    it("has correct order and separators", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "library",
-        selectionCount: 1,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.map(e => e.kind === "separator" ? "|" : e.kind === "heading" ? `HEAD:${e.label}` : e.id)
-      
-      // Should have view actions, copy actions, favorite, group actions, trash
-      assert(ids.includes("open-in-viewer"), "Missing open-in-viewer")
-      assert(ids.includes("copy-image"), "Missing copy-image")
-      assert(ids.includes("favorite"), "Missing favorite")
-      assert(ids.includes("add-group"), "Missing add-group")
-      assert(ids.includes("trash"), "Missing trash")
-      
-      // No leading/trailing/consecutive separators
-      assert(ids[0] !== "|", "Leading separator")
-      assert(ids[ids.length - 1] !== "|", "Trailing separator")
-      for (let i = 0; i < ids.length - 1; i++) {
-        assert(!(ids[i] === "|" && ids[i + 1] === "|"), `Consecutive separators at ${i}`)
-      }
-    })
+// ---------------------------------------------------------------------------
+// Asset menu
+// ---------------------------------------------------------------------------
 
-    it("has heading when multi-select", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "library",
-        selectionCount: 3,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const headings = items.filter(e => e.kind === "heading")
-      assert.strictEqual(headings.length, 1, "Should have one heading for multi-select")
-      assert(headings[0].label.includes("3"), "Heading should show selection count")
-    })
+describe("context-menus / asset menu", () => {
+  it("single asset: exact entry order and separator positions", () => {
+    const entries = buildContextMenu(baseCtx());
+    assert.deepEqual(idList(entries), [
+      "open-viewer", "show-in-library",
+      "|",
+      "copy-image", "cut", "copy-prompt", "copy-path",
+      "|",
+      "toggle-favorite", "add-to-group", "remove-from-group",
+      "|",
+      "export",
+      "|",
+      "move-to-trash",
+    ]);
+    // 「在查看器中打开」 carries the Enter icon and 「移至回收站」 the danger
+    // styling, same as the menu it replaces.
+    const viewer = findItem(entries, "open-viewer");
+    assert.equal(viewer.icon, "external");
+    const trash = findItem(entries, "move-to-trash");
+    assert.equal(trash.danger, true);
+    assert.equal(findItem(entries, "toggle-favorite").label, "收藏");
+  });
 
-    it("no heading when single-select", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "library",
-        selectionCount: 1,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const headings = items.filter(e => e.kind === "heading")
-      assert.strictEqual(headings.length, 0, "Single-select should have no heading")
-    })
+  it("single favorite asset: label flips to 取消收藏", () => {
+    const entries = buildContextMenu(baseCtx({ favorite: true }));
+    assert.equal(findItem(entries, "toggle-favorite").label, "取消收藏");
+  });
 
-    it("has 'move-out' when inside stack", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "library",
-        selectionCount: 1,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: "stack-123",
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(ids.includes("move-out"), "Should have move-out when inside stack")
-      assert(!ids.includes("create-stack"), "Should not have create-stack when inside stack")
-    })
+  it("multi-select: heading first, no open section, cut-only copy section", () => {
+    const entries = buildContextMenu(baseCtx({ selectionCount: 3 }));
+    const ids = idList(entries);
+    assert.equal(ids[0], "HEAD:已选 {count} 项", "heading with {count} placeholder comes first");
+    assert.equal(ids[1], "|", "one separator after the heading");
+    assert.ok(!ids.includes("open-viewer"), "multi-select has no viewer section");
+    assert.deepEqual(itemIds(entries).filter(id => id === "cut" || id === "copy-image"), ["cut"],
+      "multi-select copy section is cut only");
+    assert.ok(ids.includes("HEAD:已选 {count} 项"));
+  });
 
-    it("has 'create-stack' when multi-select, not in stack, no stacks in selection", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "library",
-        selectionCount: 2,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(ids.includes("create-stack"), "Should have create-stack")
-      assert(!ids.includes("move-out"), "Should not have move-out")
-    })
+  it("single-select: no heading", () => {
+    const entries = buildContextMenu(baseCtx({ selectionCount: 1 }));
+    assert.equal(entries.filter(entry => entry.kind === "heading").length, 0);
+  });
 
-    it("no stack actions when selection has stacks", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "library",
-        selectionCount: 2,
-        selectionHasStacks: true,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(!ids.includes("create-stack"), "Should not have create-stack when selection has stacks")
-      assert(!ids.includes("export"), "Should not have export when selection has stacks")
-    })
-
-    it("has 'remove-group' disabled when no grouped assets", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "library",
-        selectionCount: 1,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const removeGroup = items.find(e => e.kind === "item" && e.id === "remove-group")
-      assert(removeGroup, "Should have remove-group")
-      assert.strictEqual(removeGroup.disabled, true, "remove-group should be disabled when no grouped assets")
-    })
-
-    it("has 'add-group' submenu with new group + groups", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "library",
-        selectionCount: 1,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [
-          { name: "Group A", color: "#ff0000" },
-          { name: "Group B", color: "#00ff00" },
-        ],
-        pageTotal: 10,
-      })
-      
-      const addGroup = items.find(e => e.kind === "item" && e.id === "add-group")
-      assert(addGroup, "Should have add-group")
-      assert(addGroup.submenu, "add-group should have submenu")
-      assert(addGroup.submenu.length > 0, "add-group submenu should not be empty")
-      
-      const submenuIds = addGroup.submenu.filter(e => e.kind === "item").map(e => e.id)
-      assert(submenuIds.includes("create-group-with-selection"), "Submenu should have create-group-with-selection")
-      assert(submenuIds.includes("group:Group A"), "Submenu should have Group A")
-      assert(submenuIds.includes("group:Group B"), "Submenu should have Group B")
-    })
-
-    it("has 'add-group' submenu with only new group when no groups", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "library",
-        selectionCount: 1,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const addGroup = items.find(e => e.kind === "item" && e.id === "add-group")
-      assert(addGroup.submenu, "add-group should have submenu")
-      const items_in_submenu = addGroup.submenu.filter(e => e.kind === "item")
-      assert.strictEqual(items_in_submenu.length, 1, "Submenu should have only one item")
-      assert.strictEqual(items_in_submenu[0].id, "create-group-with-selection", "Only item should be create-group-with-selection")
-    })
-  })
-
-  describe("stack card menu", () => {
-    it("has paste when cut active", () => {
-      const items = buildContextMenu({
-        target: "stack",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: true,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(ids.includes("paste-into-stack"), "Should have paste-into-stack when cut active")
-      assert.strictEqual(ids[0], "paste-into-stack", "paste-into-stack should be first")
-    })
-
-    it("no paste when no cut", () => {
-      const items = buildContextMenu({
-        target: "stack",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(!ids.includes("paste-into-stack"), "Should not have paste-into-stack when no cut")
-    })
-
-    it("has core stack actions", () => {
-      const items = buildContextMenu({
-        target: "stack",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(ids.includes("open-stack"), "Should have open-stack")
-      assert(ids.includes("rename-stack"), "Should have rename-stack")
-      assert(ids.includes("dissolve-stack"), "Should have dissolve-stack")
-      assert(ids.includes("trash"), "Should have trash")
-    })
-  })
-
-  describe("stack blank menu", () => {
-    it("has back to library", () => {
-      const items = buildContextMenu({
-        target: "stack-blank",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: "stack-123",
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(ids.includes("back-to-library"), "Should have back-to-library")
-    })
-
-    it("has paste when cut active", () => {
-      const items = buildContextMenu({
-        target: "stack-blank",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: "stack-123",
-        cutActive: true,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(ids.includes("paste"), "Should have paste when cut active")
-    })
-
-    it("no paste when no cut", () => {
-      const items = buildContextMenu({
-        target: "stack-blank",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: "stack-123",
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(!ids.includes("paste"), "Should not have paste when no cut")
-    })
-
-    it("has select-all disabled when page empty", () => {
-      const items = buildContextMenu({
-        target: "stack-blank",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: "stack-123",
-        cutActive: false,
-        groups: [],
-        pageTotal: 0,
-      })
-      
-      const selectAll = items.find(e => e.kind === "item" && e.id === "select-all")
-      assert(selectAll, "Should have select-all")
-      assert.strictEqual(selectAll.disabled, true, "select-all should be disabled when page empty")
-    })
-  })
-
-  describe("gallery blank menu", () => {
-    it("has paste when cut active", () => {
-      const items = buildContextMenu({
-        target: "gallery-blank",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: true,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(ids.includes("paste"), "Should have paste when cut active")
-    })
-
-    it("no paste when no cut", () => {
-      const items = buildContextMenu({
-        target: "gallery-blank",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(!ids.includes("paste"), "Should not have paste when no cut")
-    })
-
-    it("has create-group and utils", () => {
-      const items = buildContextMenu({
-        target: "gallery-blank",
-        scope: "library",
-        selectionCount: 0,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      const ids = items.filter(e => e.kind === "item").map(e => e.id)
-      assert(ids.includes("create-group"), "Should have create-group")
-      assert(ids.includes("select-all"), "Should have select-all")
-      assert(ids.includes("refresh"), "Should have refresh")
-    })
-  })
-
-  describe("trash scope", () => {
-    it("returns similar menu for trash", () => {
-      const items = buildContextMenu({
-        target: "asset",
-        scope: "trash",
-        selectionCount: 1,
-        selectionHasStacks: false,
-        anyGrouped: false,
-        favorite: false,
-        insideStackId: null,
-        cutActive: false,
-        groups: [],
-        pageTotal: 10,
-      })
-      
-      // Should still have some actions, preserving existing behavior
-      assert(items.length > 0, "Should have items in trash")
-    })
-  })
-
-  describe("no bad separators", () => {
-    const scenarios = [
-      { target: "asset", selectionCount: 1, cutActive: false, groups: [] },
-      { target: "asset", selectionCount: 3, cutActive: true, groups: [{ name: "G1" }] },
-      { target: "stack", selectionCount: 0, cutActive: false, groups: [] },
-      { target: "stack", selectionCount: 0, cutActive: true, groups: [] },
-      { target: "stack-blank", selectionCount: 0, cutActive: false, groups: [] },
-      { target: "gallery-blank", selectionCount: 0, cutActive: false, groups: [] },
-    ]
-
-    for (const scenario of scenarios) {
-      it(`no bad separators for ${scenario.target} (count=${scenario.selectionCount}, cut=${scenario.cutActive})`, () => {
-        const items = buildContextMenu({
-          ...scenario,
-          scope: "library",
-          selectionHasStacks: false,
-          anyGrouped: false,
-          favorite: false,
-          insideStackId: null,
-          pageTotal: 10,
-        })
-        
-        const ids = items.map(e => e.kind === "separator" ? "|" : "x")
-        
-        // No leading separator
-        if (ids.length > 0) {
-          assert(ids[0] !== "|", `Leading separator in ${scenario.target}`)
-        }
-        
-        // No trailing separator
-        if (ids.length > 0) {
-          assert(ids[ids.length - 1] !== "|", `Trailing separator in ${scenario.target}`)
-        }
-        
-        // No consecutive separators
-        for (let i = 0; i < ids.length - 1; i++) {
-          assert(!(ids[i] === "|" && ids[i + 1] === "|"), `Consecutive separators at ${i} in ${scenario.target}`)
-        }
-      })
+  it("inside a stack: 移出堆叠 present (single and multi), no 堆叠所选", () => {
+    for (const selectionCount of [1, 3]) {
+      const entries = buildContextMenu(baseCtx({ insideStackId: "stack-1", selectionCount }));
+      assert.ok(itemIds(entries).includes("remove-from-stack"), `count=${selectionCount}`);
+      assert.ok(!itemIds(entries).includes("stack-selected"), `count=${selectionCount}`);
     }
-  })
-})
+  });
+
+  it("root gallery multi-select without stacks: 堆叠所选 present, no 移出堆叠", () => {
+    const entries = buildContextMenu(baseCtx({ selectionCount: 2 }));
+    assert.ok(itemIds(entries).includes("stack-selected"));
+    assert.ok(!itemIds(entries).includes("remove-from-stack"));
+  });
+
+  it("selection containing stacks: no stack actions and no export section", () => {
+    const entries = buildContextMenu(baseCtx({ selectionCount: 2, selectionHasStacks: true }));
+    assert.ok(!itemIds(entries).includes("stack-selected"));
+    assert.ok(!itemIds(entries).includes("remove-from-stack"));
+    assert.ok(!itemIds(entries).includes("export"));
+  });
+
+  it("移除分组 greys out without grouped assets and enables with one", () => {
+    const disabled = findItem(buildContextMenu(baseCtx({ anyGrouped: false })), "remove-from-group");
+    assert.equal(disabled.disabled, true);
+    const enabled = findItem(buildContextMenu(baseCtx({ anyGrouped: true })), "remove-from-group");
+    assert.notEqual(enabled.disabled, true);
+  });
+
+  it("添加分组 submenu: 新建分组并移入 first, then every group; no groups → only the create entry", () => {
+    const withGroups = findItem(buildContextMenu(baseCtx({
+      groups: [{ name: "Group A", color: "#ff0000" }, { name: "Group B" }],
+    })), "add-to-group");
+    assert.ok(withGroups.submenu, "add-to-group carries a submenu");
+    const submenuIds = idList(withGroups.submenu);
+    assert.deepEqual(submenuIds, ["add-to-group:create", "|", "add-to-group:Group A", "add-to-group:Group B"]);
+    assert.equal(withGroups.submenu[0].label, "新建分组并移入");
+    assert.equal(withGroups.submenu[2].label, "Group A");
+    assert.equal(withGroups.submenu[2].color, "#ff0000", "group entries carry the color for the dot");
+    assert.equal(withGroups.submenu[3].color, undefined, "uncolored groups leave the color empty (UI picks the fallback)");
+
+    const withoutGroups = findItem(buildContextMenu(baseCtx()), "add-to-group");
+    assert.deepEqual(idList(withoutGroups.submenu), ["add-to-group:create"]);
+    assert.equal(withoutGroups.submenu[0].label, "新建分组并移入");
+  });
+
+  it("select-all shortcut follows the platform and greys out on an empty page", () => {
+    const mac = findItem(buildContextMenu(baseCtx({ target: "gallery-blank", isMac: true })), "select-all");
+    assert.equal(mac.shortcut, "⌘A");
+    const windows = findItem(buildContextMenu(baseCtx({ target: "gallery-blank", isMac: false })), "select-all");
+    assert.equal(windows.shortcut, "Ctrl+A");
+    const empty = findItem(buildContextMenu(baseCtx({ target: "gallery-blank", pageTotal: 0 })), "select-all");
+    assert.equal(empty.disabled, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stack card menu
+// ---------------------------------------------------------------------------
+
+describe("context-menus / stack card menu", () => {
+  const entries = (overrides = {}) => buildContextMenu(baseCtx({ target: "stack", ...overrides }));
+
+  it("exact entry order: 打开堆叠, 分组, 管理, 回收站", () => {
+    assert.deepEqual(idList(entries()), [
+      "open-stack",
+      "|",
+      "stack-add-to-group", "stack-remove-from-group",
+      "|",
+      "rename-stack", "dissolve-stack",
+      "|",
+      "stack-move-to-trash",
+    ]);
+    assert.equal(findItem(entries(), "stack-move-to-trash").danger, true);
+  });
+
+  it("cut active: 粘贴到此堆叠 is its own first section", () => {
+    const ids = idList(entries({ cutActive: true }));
+    assert.equal(ids[0], "paste-into-stack");
+    assert.equal(ids[1], "|");
+  });
+
+  it("no cut content: 粘贴到此堆叠 absent", () => {
+    assert.ok(!itemIds(entries()).includes("paste-into-stack"));
+  });
+
+  it("stack group submenu mirrors the asset one", () => {
+    const addGroup = findItem(entries({ groups: [{ name: "G1" }] }), "stack-add-to-group");
+    assert.deepEqual(idList(addGroup.submenu), ["stack-add-to-group:create", "|", "stack-add-to-group:G1"]);
+    assert.equal(addGroup.submenu[0].label, "新建分组并移入");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Blank-area menus
+// ---------------------------------------------------------------------------
+
+describe("context-menus / stack blank menu", () => {
+  const entries = (overrides = {}) => buildContextMenu(baseCtx({ target: "stack-blank", insideStackId: "stack-1", ...overrides }));
+
+  it("exact entry order: 返回素材库, 堆叠管理, 全选/刷新", () => {
+    assert.deepEqual(idList(entries()), [
+      "back-to-library",
+      "|",
+      "rename-stack", "dissolve-stack",
+      "|",
+      "select-all", "refresh",
+    ]);
+  });
+
+  it("cut active: 粘贴 appears after 返回素材库; absent without cut content", () => {
+    assert.deepEqual(idList(entries({ cutActive: true })).slice(0, 3), ["back-to-library", "|", "paste"]);
+    assert.ok(!itemIds(entries()).includes("paste"));
+  });
+
+  it("全选 greys out on an empty stack", () => {
+    assert.equal(findItem(entries({ pageTotal: 0 }), "select-all").disabled, true);
+    assert.notEqual(findItem(entries({ pageTotal: 3 }), "select-all").disabled, true);
+  });
+});
+
+describe("context-menus / gallery blank menu", () => {
+  const entries = (overrides = {}) => buildContextMenu(baseCtx({ target: "gallery-blank", ...overrides }));
+
+  it("exact entry order: 新建分组 with optional 粘贴, then 全选/刷新素材库", () => {
+    assert.deepEqual(idList(entries()), [
+      "create-group",
+      "|",
+      "select-all", "refresh-library",
+    ]);
+    assert.deepEqual(idList(entries({ cutActive: true })), [
+      "paste", "create-group",
+      "|",
+      "select-all", "refresh-library",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Trash scope: the menu stays exactly what the gallery used to render
+// ---------------------------------------------------------------------------
+
+describe("context-menus / trash scope", () => {
+  it("asset menu keeps the pre-change list, with 恢复素材 last", () => {
+    const entries = buildContextMenu(baseCtx({ scope: "trash", favorite: true }));
+    assert.deepEqual(idList(entries), [
+      "open-viewer", "show-in-library",
+      "|",
+      "copy-image", "cut", "copy-prompt", "copy-path",
+      "|",
+      "toggle-favorite", "add-to-group", "remove-from-group",
+      "|",
+      "export",
+      "|",
+      "restore",
+    ]);
+    const restore = findItem(entries, "restore");
+    assert.equal(restore.label, "恢复素材");
+    assert.equal(restore.danger, true);
+    // The flat add-to-group keeps its old no-submenu shape (the sidebar group
+    // is still the target in trash; a dedicated trash menu is a later task).
+    assert.equal(findItem(entries, "add-to-group").submenu, undefined);
+    // Nothing in the trash menu greys out today; that stays.
+    assert.equal(findItem(entries, "remove-from-group").disabled, undefined);
+    assert.ok(!itemIds(entries).includes("move-to-trash"));
+  });
+
+  it("trash blank areas keep popping no menu", () => {
+    assert.deepEqual(buildContextMenu(baseCtx({ scope: "trash", target: "gallery-blank" })), []);
+    assert.deepEqual(buildContextMenu(baseCtx({ scope: "trash", target: "stack-blank" })), []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Separator hygiene across every scenario
+// ---------------------------------------------------------------------------
+
+describe("context-menus / separator hygiene", () => {
+  const scenarios = [
+    { label: "asset single", ctx: { target: "asset", selectionCount: 1 } },
+    { label: "asset single in stack", ctx: { target: "asset", selectionCount: 1, insideStackId: "s" } },
+    { label: "asset multi", ctx: { target: "asset", selectionCount: 4 } },
+    { label: "asset multi with groups", ctx: { target: "asset", selectionCount: 4, cutActive: true, groups: [{ name: "G" }], anyGrouped: true } },
+    { label: "asset multi with stacks", ctx: { target: "asset", selectionCount: 4, selectionHasStacks: true } },
+    { label: "stack card", ctx: { target: "stack" } },
+    { label: "stack card with cut", ctx: { target: "stack", cutActive: true } },
+    { label: "stack blank", ctx: { target: "stack-blank", insideStackId: "s" } },
+    { label: "stack blank with cut", ctx: { target: "stack-blank", insideStackId: "s", cutActive: true, pageTotal: 0 } },
+    { label: "gallery blank", ctx: { target: "gallery-blank" } },
+    { label: "gallery blank with cut", ctx: { target: "gallery-blank", cutActive: true } },
+    { label: "trash asset", ctx: { target: "asset", scope: "trash" } },
+  ];
+
+  for (const scenario of scenarios) {
+    it(`no leading/trailing/consecutive separators: ${scenario.label}`, () => {
+      assertNoBadSeparators(buildContextMenu(baseCtx(scenario.ctx)), scenario.label);
+    });
+  }
+});

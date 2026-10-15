@@ -3226,3 +3226,86 @@ video.viewer-image {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Task 137: context menu separators, headings and submenus. The separator is
+   a real <div> now, so the button-sized .menu-divider rules above are
+   neutralized for it (higher specificity, additive only). */
+.context-menu div.menu-divider {
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  margin: var(--space-1) var(--space-2);
+  border-top: 1px solid #e5e5e5;
+  border-radius: 0;
+}
+.dark .context-menu div.menu-divider {
+  border-top-color: #505056;
+}
+.context-menu .menu-heading {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: 11px;
+  line-height: 1.2;
+  color: #8a8a8e;
+  cursor: default;
+}
+.dark .context-menu .menu-heading {
+  color: #9a9aa2;
+}
+.context-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.context-menu button:disabled:hover {
+  background: transparent;
+}
+.dark .context-menu button:disabled:hover {
+  background: transparent;
+}
+.menu-row {
+  position: relative;
+}
+.menu-icon-slot {
+  width: 16px;
+  flex: none;
+}
+.group-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: none;
+  margin: 0 3px;
+}
+.context-submenu {
+  position: absolute;
+  top: -4px;
+  /* Overlaps the row by 2px so the pointer crosses without a hover gap. */
+  left: calc(100% - 2px);
+  right: auto;
+  width: 200px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: var(--space-1);
+  background: #fffffff2;
+  backdrop-filter: blur(20px);
+  border: 1px solid #ffffffc9;
+  border-radius: var(--radius-control);
+  box-shadow: 0 10px 35px #0003, 0 0 0 1px #00000015;
+  z-index: 41;
+  animation: surface-in 180ms var(--ease-out) both;
+}
+.context-submenu.flip {
+  left: auto;
+  right: calc(100% + 6px);
+}
+.dark .context-submenu {
+  background: #303034f5;
+  border-color: #555;
+  color: #eee;
+}
+/* The create-group dialog shows server rejections (duplicate names) inline
+   and stays open. */
+.group-dialog-error {
+  margin: var(--space-4) 0 0;
+  color: #d74742;
+  font-size: 12px;
+}

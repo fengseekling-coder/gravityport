@@ -1,10 +1,15 @@
 /**
  * Context menu builder — pure logic, no React or DOM dependencies.
- * Returns menu entries by scenario; the UI renders them and dispatches actions by id.
+ *
+ * buildContextMenu(ctx) returns the menu entries for one scenario; App.tsx
+ * renders them and dispatches actions by entry id. Labels are the Chinese
+ * source strings the UI passes through tr(); the multi-selection heading keeps
+ * its {count} placeholder so the UI can fill() it. Group entries carry the
+ * group color in `color` for the dot the UI renders.
  */
 
 export type MenuEntry =
-  | { kind: "item"; id: string; label: string; icon: string; danger?: boolean; disabled?: boolean; shortcut?: string; submenu?: MenuEntry[] }
+  | { kind: "item"; id: string; label: string; icon?: string; danger?: boolean; disabled?: boolean; shortcut?: string; submenu?: MenuEntry[]; color?: string }
   | { kind: "separator" }
   | { kind: "heading"; label: string }
 
@@ -19,23 +24,70 @@ export type MenuContext = {
   cutActive: boolean
   groups: { name: string; color?: string }[]
   pageTotal: number
+  isMac: boolean
 }
 
-/** Build sectioned menu: drop empty sections, one separator between sections, no leading/trailing/consecutive separators. */
-function buildSectionedMenu(sections: (MenuEntry[] | null)[]): MenuEntry[] {
+/** Drop empty sections and join the rest with one separator each, so the
+ * result never opens, ends, or repeats with a separator. */
+function buildSectionedMenu(sections: (MenuEntry[] | null | undefined)[]): MenuEntry[] {
   const items: MenuEntry[] = []
   for (const section of sections) {
     if (!Array.isArray(section) || section.length === 0) continue
-    if (items.length > 0) items.push({ kind: "separator" })
+    if (items.length) items.push({ kind: "separator" })
     items.push(...section)
   }
   return items
 }
 
+const groupSubmenu = (prefix: string, groups: MenuContext["groups"]): MenuEntry[] => {
+  const entries: MenuEntry[] = [
+    { kind: "item", id: `${prefix}:create`, label: "新建分组并移入" },
+  ]
+  if (groups.length) {
+    entries.push({ kind: "separator" })
+    entries.push(...groups.map(group => ({
+      kind: "item" as const,
+      id: `${prefix}:${group.name}`,
+      label: group.name,
+      color: group.color,
+    })))
+  }
+  return entries
+}
+
+const selectAllEntry = (ctx: MenuContext): MenuEntry => ({
+  kind: "item",
+  id: "select-all",
+  label: "全选",
+  icon: "grid",
+  shortcut: ctx.isMac ? "⌘A" : "Ctrl+A",
+  disabled: ctx.pageTotal === 0,
+})
+
 export function buildContextMenu(ctx: MenuContext): MenuEntry[] {
-  // Trash scope keeps existing behavior (next task handles trash menu)
+  // Trash keeps the pre-task menu (a dedicated trash menu is a later task):
+  // the same list the gallery used to render, with 恢复素材 last.
   if (ctx.scope === "trash") {
-    return ctx.target === "asset" ? buildTrashAssetMenu(ctx) : []
+    if (ctx.target !== "asset") return []
+    return buildSectionedMenu([
+      [
+        { kind: "item", id: "open-viewer", label: "在查看器中打开", icon: "external" },
+        { kind: "item", id: "show-in-library", label: "在素材库中显示", icon: "folder" },
+      ],
+      [
+        { kind: "item", id: "copy-image", label: "复制图片", icon: "image" },
+        { kind: "item", id: "cut", label: "剪切", icon: "scissors" },
+        { kind: "item", id: "copy-prompt", label: "复制提示词", icon: "copy" },
+        { kind: "item", id: "copy-path", label: "复制路径", icon: "link" },
+      ],
+      [
+        { kind: "item", id: "toggle-favorite", label: ctx.favorite ? "取消收藏" : "收藏", icon: "heart" },
+        { kind: "item", id: "add-to-group", label: "添加分组", icon: "plus" },
+        { kind: "item", id: "remove-from-group", label: "移除分组", icon: "folder" },
+      ],
+      [{ kind: "item", id: "export", label: "导出至", icon: "external" }],
+      [{ kind: "item", id: "restore", label: "恢复素材", icon: "trash", danger: true }],
+    ])
   }
 
   switch (ctx.target) {
@@ -52,30 +104,21 @@ export function buildContextMenu(ctx: MenuContext): MenuEntry[] {
   }
 }
 
-// Trash asset menu — preserve existing structure
-function buildTrashAssetMenu(ctx: MenuContext): MenuEntry[] {
-  const heading = ctx.selectionCount > 1 ? [{ kind: "heading" as const, label: `已选 ${ctx.selectionCount} 项` }] : []
-  return [
-    ...heading,
-    { kind: "item", id: "restore", label: "恢复素材", icon: "refresh" },
-    { kind: "item", id: "permanent-delete", label: "永久删除", icon: "trash", danger: true },
-  ]
-}
-
-// Asset menu (not in trash)
 function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
   const isMultiple = ctx.selectionCount > 1
   const hasStacks = ctx.selectionHasStacks
 
-  const headingSection = isMultiple ? [[{ kind: "heading" as const, label: `已选 ${ctx.selectionCount} 项` }]] : []
+  const headingSection: MenuEntry[] | null = isMultiple
+    ? [{ kind: "heading", label: "已选 {count} 项" }]
+    : null
 
   const openSection = isMultiple ? null : [
-    { kind: "item" as const, id: "open-viewer", label: "在查看器中打开", icon: "external", shortcut: "Enter" },
+    { kind: "item" as const, id: "open-viewer", label: "在查看器中打开", icon: "external" },
     { kind: "item" as const, id: "show-in-library", label: "在素材库中显示", icon: "folder" },
   ]
 
   const copySection = isMultiple
-    ? [{ kind: "item" as const, id: "cut", label: "剪切", icon: "scissors", disabled: hasStacks }]
+    ? [{ kind: "item" as const, id: "cut", label: "剪切", icon: "scissors" }]
     : [
         { kind: "item" as const, id: "copy-image", label: "复制图片", icon: "image" },
         { kind: "item" as const, id: "cut", label: "剪切", icon: "scissors" },
@@ -83,29 +126,21 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
         { kind: "item" as const, id: "copy-path", label: "复制路径", icon: "link" },
       ]
 
-  const groupSubmenu: MenuEntry[] = [
-    { kind: "item", id: "create-group-with-selection", label: "新建分组并移入", icon: "plus" },
-  ]
-  if (ctx.groups.length > 0) {
-    groupSubmenu.push({ kind: "separator" })
-    groupSubmenu.push(...ctx.groups.map(g => ({
-      kind: "item" as const,
-      id: `add-to-group:${g.name}`,
-      label: g.name,
-      icon: `<svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="${g.color || "#6366f1"}"/></svg>`,
-    })))
-  }
-
-  const organizeSection = [
-    { kind: "item" as const, id: "toggle-favorite", label: ctx.favorite ? "取消收藏" : "收藏", icon: "heart" },
-    { kind: "item" as const, id: "add-to-group", label: "添加分组", icon: "folder", submenu: groupSubmenu },
-    { kind: "item" as const, id: "remove-from-group", label: "移除分组", icon: "minus", disabled: !ctx.anyGrouped },
+  const organizeSection: MenuEntry[] = [
+    { kind: "item", id: "toggle-favorite", label: ctx.favorite ? "取消收藏" : "收藏", icon: "heart" },
+    { kind: "item", id: "add-to-group", label: "添加分组", icon: "plus", submenu: groupSubmenu("add-to-group", ctx.groups) },
+    { kind: "item", id: "remove-from-group", label: "移除分组", icon: "folder", disabled: !ctx.anyGrouped },
   ]
 
+  // A selection containing stack nodes exports nothing (old grammar): the
+  // whole section disappears instead of greying out.
   const exportSection = hasStacks ? null : [
     { kind: "item" as const, id: "export", label: "导出至", icon: "external" },
   ]
 
+  // Stack section only when it applies: inside a stack → move out (single and
+  // multi); root gallery multi → stack the selection; a selection with stack
+  // nodes supports neither.
   let stackSection: MenuEntry[] | null = null
   if (ctx.insideStackId) {
     stackSection = [{ kind: "item" as const, id: "remove-from-stack", label: "移出堆叠", icon: "layers" }]
@@ -114,109 +149,76 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
   }
 
   const dangerSection = [
-    { kind: "item" as const, id: "move-to-trash", label: "移至回收站", icon: "trash", danger: true, shortcut: "⌫" },
+    { kind: "item" as const, id: "move-to-trash", label: "移至回收站", icon: "trash", danger: true },
   ]
 
   return buildSectionedMenu([
-    ...headingSection,
+    headingSection,
     openSection,
     copySection,
     organizeSection,
     exportSection,
     stackSection,
     dangerSection,
-  ].filter((s): s is MenuEntry[] => s !== null))
+  ])
 }
 
-// Stack card menu
 function buildStackMenu(ctx: MenuContext): MenuEntry[] {
-  const pasteSection = ctx.cutActive ? [[{ kind: "item" as const, id: "paste-into-stack", label: "粘贴到此堆叠", icon: "copy" }]] : []
-
-  const openSection = [
-    { kind: "item" as const, id: "open-stack", label: "打开堆叠", icon: "layers" },
-  ]
-
-  const groupSubmenu: MenuEntry[] = [
-    { kind: "item", id: "create-group-with-stack", label: "新建分组并移入", icon: "plus" },
-  ]
-  if (ctx.groups.length > 0) {
-    groupSubmenu.push({ kind: "separator" })
-    groupSubmenu.push(...ctx.groups.map(g => ({
-      kind: "item" as const,
-      id: `stack-add-to-group:${g.name}`,
-      label: g.name,
-      icon: `<svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="${g.color || "#6366f1"}"/></svg>`,
-    })))
-  }
-
-  const organizeSection = [
-    { kind: "item" as const, id: "stack-add-to-group", label: "添加分组", icon: "folder", submenu: groupSubmenu },
-    { kind: "item" as const, id: "stack-remove-from-group", label: "移除分组", icon: "minus" },
-  ]
-
-  const manageSection = [
-    { kind: "item" as const, id: "rename-stack", label: "重命名堆叠", icon: "edit" },
-    { kind: "item" as const, id: "dissolve-stack", label: "解散堆叠", icon: "layers" },
-  ]
-
-  const dangerSection = [
-    { kind: "item" as const, id: "stack-move-to-trash", label: "移至回收站", icon: "trash", danger: true },
-  ]
+  const pasteSection: MenuEntry[] = ctx.cutActive
+    ? [{ kind: "item" as const, id: "paste-into-stack", label: "粘贴到此堆叠", icon: "copy" }]
+    : []
 
   return buildSectionedMenu([
-    ...pasteSection,
-    openSection,
-    organizeSection,
-    manageSection,
-    dangerSection,
+    pasteSection,
+    [
+      { kind: "item" as const, id: "open-stack", label: "打开堆叠", icon: "layers" },
+    ],
+    [
+      { kind: "item" as const, id: "stack-add-to-group", label: "添加分组", icon: "plus", submenu: groupSubmenu("stack-add-to-group", ctx.groups) },
+      { kind: "item" as const, id: "stack-remove-from-group", label: "移除分组", icon: "folder" },
+    ],
+    [
+      { kind: "item" as const, id: "rename-stack", label: "重命名堆叠" },
+      { kind: "item" as const, id: "dissolve-stack", label: "解散堆叠" },
+    ],
+    [
+      { kind: "item" as const, id: "stack-move-to-trash", label: "移至回收站", icon: "trash", danger: true },
+    ],
   ])
 }
 
-// Stack blank area menu
 function buildStackBlankMenu(ctx: MenuContext): MenuEntry[] {
-  const backSection = [
-    { kind: "item" as const, id: "back-to-library", label: "返回素材库", icon: "left" },
-  ]
-
-  const pasteSection = ctx.cutActive ? [
-    { kind: "item" as const, id: "paste", label: "粘贴", icon: "copy" },
-  ] : []
-
-  const manageSection = [
-    { kind: "item" as const, id: "rename-stack", label: "重命名堆叠", icon: "edit" },
-    { kind: "item" as const, id: "dissolve-stack", label: "解散堆叠", icon: "layers" },
-  ]
-
-  const utilSection = [
-    { kind: "item" as const, id: "select-all", label: "全选", icon: "grid", shortcut: /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘A" : "Ctrl+A", disabled: ctx.pageTotal === 0 },
-    { kind: "item" as const, id: "refresh", label: "刷新", icon: "refresh" },
-  ]
+  const pasteSection: MenuEntry[] = ctx.cutActive
+    ? [{ kind: "item" as const, id: "paste", label: "粘贴", icon: "copy" }]
+    : []
 
   return buildSectionedMenu([
-    backSection,
-    ...(pasteSection.length > 0 ? [pasteSection] : []),
-    manageSection,
-    utilSection,
+    [{ kind: "item" as const, id: "back-to-library", label: "返回素材库", icon: "left" }],
+    pasteSection,
+    [
+      { kind: "item" as const, id: "rename-stack", label: "重命名堆叠" },
+      { kind: "item" as const, id: "dissolve-stack", label: "解散堆叠" },
+    ],
+    [
+      selectAllEntry(ctx),
+      { kind: "item" as const, id: "refresh", label: "刷新" },
+    ],
   ])
 }
 
-// Gallery blank area menu
 function buildGalleryBlankMenu(ctx: MenuContext): MenuEntry[] {
-  const pasteSection = ctx.cutActive ? [
-    { kind: "item" as const, id: "paste", label: "粘贴", icon: "copy" },
-  ] : []
-
-  const createSection = [
-    { kind: "item" as const, id: "create-group", label: "新建分组", icon: "plus" },
-  ]
-
-  const utilSection = [
-    { kind: "item" as const, id: "select-all", label: "全选", icon: "grid", shortcut: /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘A" : "Ctrl+A", disabled: ctx.pageTotal === 0 },
-    { kind: "item" as const, id: "refresh", label: "刷新素材库", icon: "refresh" },
-  ]
+  const pasteSection: MenuEntry[] = ctx.cutActive
+    ? [{ kind: "item" as const, id: "paste", label: "粘贴", icon: "copy" }]
+    : []
 
   return buildSectionedMenu([
-    pasteSection.length > 0 ? [...pasteSection, ...createSection] : createSection,
-    utilSection,
+    [
+      ...pasteSection,
+      { kind: "item" as const, id: "create-group", label: "新建分组", icon: "plus" },
+    ],
+    [
+      selectAllEntry(ctx),
+      { kind: "item" as const, id: "refresh-library", label: "刷新素材库" },
+    ],
   ])
 }

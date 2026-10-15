@@ -3,9 +3,9 @@ import Icon from "./Icon"
 import ToolbarSelect from "./ToolbarSelect"
 import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
-import { translate, fill, type Language } from "./i18n"
-import { buildContextMenu, type MenuEntry, type MenuContext } from "./context-menus"
-import { createStack, renameStack, dissolveStack, removeAssetsFromStack, assignStackToGroup, trashStack, type StackInfo } from "./library-actions"
+import { translate, type Language } from "./i18n"
+import { buildContextMenu, type MenuContext, type MenuEntry } from "./context-menus"
+import { createStack, renameStack, dissolveStack, removeAssetsFromStack, assignStackToGroup, trashStack } from "./library-actions"
 import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
@@ -20,7 +20,7 @@ import {
 import {
   checkVersionConsistency,
   createReadyGate,
-  fill as fillTemplate,
+  fill,
   mapUpdateResult,
   buildUpdateText,
   shouldAutoCheckForUpdates,
@@ -133,6 +133,98 @@ type NavSnapshot = {
   assetType: string
 }
 
+/** One row of the context menu. A row with a submenu expands it on hover or
+ * keyboard focus; near the right window edge the submenu flips to the left,
+ * and a submenu taller than the window shifts up and scrolls internally. */
+const MENU_SUBMENU_WIDTH = 200
+
+function MenuRow({ entry, onAction }: { entry: Extract<MenuEntry, { kind: "item" }>; onAction: (id: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [flip, setFlip] = useState(false)
+  const [shiftUp, setShiftUp] = useState(0)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  // Leaving the row starts a short close timer so the pointer can travel the
+  // gap to the submenu (and cross back over the flipped side) without
+  // collapsing it; entering either part cancels the timer.
+  const closeTimer = useRef<number | null>(null)
+  useEffect(() => () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current) }, [])
+  const scheduleClose = () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+    closeTimer.current = window.setTimeout(() => setOpen(false), 250)
+  }
+  const cancelClose = () => {
+    if (closeTimer.current !== null) { window.clearTimeout(closeTimer.current); closeTimer.current = null }
+  }
+  const expand = () => {
+    cancelClose()
+    if (!entry.submenu?.length) return
+    const rect = buttonRef.current?.getBoundingClientRect()
+    if (rect) {
+      setFlip(rect.right + MENU_SUBMENU_WIDTH + 8 > window.innerWidth)
+      // The submenu must clear the window bottom before its real height can
+      // be measured; the row count bounds it well enough for the shift.
+      const estimatedHeight = entry.submenu.length * 32 + 8
+      setShiftUp(Math.max(0, rect.bottom + estimatedHeight - window.innerHeight + 8))
+    }
+    setOpen(true)
+  }
+  const iconFor = (item: Extract<MenuEntry, { kind: "item" }>) => item.color
+    ? <span className="group-color-dot" style={{ background: item.color || "#8b8b93" }} />
+    : item.icon ? <Icon name={item.icon} size={14} /> : <span className="menu-icon-slot" />
+  return (
+    <div className="menu-row" onMouseLeave={scheduleClose}>
+      <button
+        ref={buttonRef}
+        role="menuitem"
+        aria-haspopup={entry.submenu ? "menu" : undefined}
+        aria-expanded={entry.submenu ? open : undefined}
+        className={entry.danger ? "danger" : ""}
+        disabled={entry.disabled}
+        onClick={entry.submenu
+          ? () => { if (open) setOpen(false); else expand() }
+          : () => onAction(entry.id)}
+        onMouseEnter={expand}
+        onFocus={expand}
+        onBlur={() => setOpen(false)}
+        aria-label={entry.label}
+      >
+        {iconFor(entry)}
+        <span>{entry.label}</span>
+        {entry.shortcut && <small>{entry.shortcut}</small>}
+        {!entry.shortcut && entry.id === "open-viewer" && <small><Icon name="enter" size={12} /></small>}
+        {(entry.id === "move-to-trash" || entry.id === "restore") && <small><Icon name="backspace" size={12} /></small>}
+        {entry.submenu && <small><Icon name="right" size={12} /></small>}
+      </button>
+      {open && entry.submenu && (
+        <div
+          className={`context-submenu${flip ? " flip" : ""}`}
+          role="menu"
+          style={shiftUp ? { top: -4 - shiftUp } : undefined}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        >
+          {entry.submenu.map((sub, index) => {
+            if (sub.kind === "separator") return <div key={`sep-${index}`} className="menu-divider" />
+            if (sub.kind === "heading") return <div key={`head-${index}`} className="menu-heading">{sub.label}</div>
+            return (
+              <button
+                key={sub.id}
+                role="menuitem"
+                className={sub.danger ? "danger" : ""}
+                disabled={sub.disabled}
+                onClick={() => { setOpen(false); onAction(sub.id) }}
+              >
+                {iconFor(sub)}
+                <span>{sub.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
   // macOS already draws the native window buttons with titleBarStyle=hiddenInset;
   // Windows also owns its native caption buttons. Only the browser mockup
@@ -198,7 +290,22 @@ export default function App() {
   const [tagError, setTagError] = useState("")
   const [expandedRelated, setExpandedRelated] = useState(false)
   const [preview, setPreview] = useState(false)
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  // The context menu carries its target with it: stack menus act on the
+  // right-clicked stack without touching the selection, so the handlers read
+  // the menu state instead of guessing from the focused asset.
+  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[]; target: MenuContext["target"]; selectionCount: number; stackId: string; stackName: string; stackCount: number } | null>(null)
+  // The menu clamps into the window by its real rendered size, not a row
+  // estimate: the effect measures after mount and corrects before paint.
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null)
+  useLayoutEffect(() => {
+    if (!menu) { setMenuPos(null); return }
+    const node = menuRef.current
+    setMenuPos({
+      left: Math.max(8, Math.min(menu.x, window.innerWidth - (node?.offsetWidth || 192) - 8)),
+      top: Math.max(8, Math.min(menu.y, window.innerHeight - (node?.offsetHeight || 320) - 8)),
+    })
+  }, [menu])
   const [deleting, setDeleting] = useState(false)
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
@@ -210,8 +317,8 @@ export default function App() {
   const [stackRename, setStackRename] = useState<{ stackId: string; initialName: string; draft: string } | null>(null)
   const [stackDissolveConfirm, setStackDissolveConfirm] = useState<{ stackId: string; stackCount: number } | null>(null)
   const [stackTrashConfirm, setStackTrashConfirm] = useState<{ stackId: string; stackCount: number } | null>(null)
-  const [groupCreateWithSelection, setGroupCreateWithSelection] = useState<{ target: "asset" | "stack"; targetStackId?: string } | null>(null)
-  const [contextMenuItems, setContextMenuItems] = useState<MenuEntry[]>([])
+  const [groupCreateWithSelection, setGroupCreateWithSelection] = useState<{ target: "asset" | "stack"; targetStackId?: string; draft: string } | null>(null)
+  const [groupCreateError, setGroupCreateError] = useState("")
   const [groupStats, setGroupStats] = useState<{ name: string; values: Record<string, unknown> } | null>(null)
   const [groupDeleteConfirm, setGroupDeleteConfirm] = useState<string | null>(null)
   const [groupMerge, setGroupMerge] = useState<{ source: string; target: string } | null>(null)
@@ -1174,17 +1281,9 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
         if (!cutIdsRef.current.length) return
         e.preventDefault()
-        const ids = [...new Set(cutIdsRef.current)]
-        cutIdsRef.current = []
-        moveAssetsToStack(project, ids, stackId || null)
-          .then(outcome => {
-            if (!outcome.succeeded) { notify(outcome.firstError || tr("粘贴失败")); return }
-            notify(outcome.failed
-              ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-              : (stackId ? tr("已粘贴到堆叠") : "已粘贴"))
-            refreshNavigation()
-          })
-          .catch(error => notify(errorMessage(error)))
+        // Same entry as the menu paste: inside a stack the cut assets move
+        // into it, anywhere else they move back out to loose assets.
+        pasteCut(stackId || null)
       }
     }
     window.addEventListener("keydown", key)
@@ -1358,38 +1457,144 @@ export default function App() {
     } catch { notify(tr("无法打开该位置")) }
   }
 
-  // Menu action handlers for context menu
-  const handleMenuAction = async (id: string) => {
-    setMenu(null)
-    const sel = contextMenuItems.length > 0 ? selectedIds : []
-    const batchIds = sel.length > 0 ? sel : (asset ? [asset.id] : [])
-    const selAssets = assets.filter(x => batchIds.includes(x.id))
+  // ===== Context menu: open helpers, shared paste, action dispatch =====
 
-    // Asset actions
-    if (id === "open-viewer") {
-      setPreview(true)
-    } else if (id === "show-in-library") {
-      showInLibrary()
-    } else if (id === "copy-image") {
-      await copyImage()
-    } else if (id === "cut") {
-      cutIdsRef.current = [...batchIds]
+  // Translate the builder's Chinese source labels once at open time (and fill
+  // the selection heading's {count}); the renderer just prints the labels.
+  const translateMenuEntries = (entries: MenuEntry[], selectionCount: number): MenuEntry[] =>
+    entries.map(entry => {
+      if (entry.kind === "item") {
+        return { ...entry, label: tr(entry.label), submenu: entry.submenu ? translateMenuEntries(entry.submenu, selectionCount) : undefined }
+      }
+      if (entry.kind === "heading") return { ...entry, label: fill(tr(entry.label), { count: selectionCount }) }
+      return entry
+    })
+
+  const menuGroups = () => (navigation?.groups || []).map(item => ({ name: item.name, color: item.color }))
+  const isMacPlatform = () => navigator.platform.startsWith("Mac")
+
+  // Right-clicking outside the multi-selection targets the clicked card
+  // alone; inside it, the whole selection stays the action target.
+  const openAssetMenu = (clicked: MosaAsset, x: number, y: number) => {
+    const ids = selectedIds.includes(clicked.id) ? [...batchIds] : [clicked.id]
+    const loaded = assets.filter(entry => ids.includes(entry.id))
+    const ctx: MenuContext = {
+      target: "asset",
+      scope: active === "回收站" ? "trash" : "all",
+      selectionCount: ids.length,
+      selectionHasStacks: loaded.some(entry => entry.stack),
+      anyGrouped: ids.length > 1
+        ? loaded.some(entry => Boolean(entry.group)) || loaded.length !== ids.length
+        : Boolean(clicked.group),
+      favorite: Boolean(clicked.favorite),
+      insideStackId: stackId || null,
+      cutActive: cutIdsRef.current.length > 0,
+      groups: menuGroups(),
+      pageTotal: pageTotal ?? assets.length,
+      isMac: isMacPlatform(),
+    }
+    const entries = translateMenuEntries(buildContextMenu(ctx), ctx.selectionCount)
+    setMenu({ x, y, entries, target: "asset", selectionCount: ctx.selectionCount, stackId: "", stackName: "", stackCount: 0 })
+  }
+
+  // Right-clicking a stack card never changes the selection: the menu acts on
+  // this stack alone, so its target rides along in the menu state.
+  const openStackMenu = (stack: NonNullable<MosaAsset["stack"]>, cardName: string, x: number, y: number) => {
+    const ctx: MenuContext = {
+      target: "stack",
+      scope: "all",
+      selectionCount: 0,
+      selectionHasStacks: false,
+      anyGrouped: false,
+      favorite: false,
+      insideStackId: null,
+      cutActive: cutIdsRef.current.length > 0,
+      groups: menuGroups(),
+      pageTotal: assets.length,
+      isMac: isMacPlatform(),
+    }
+    const entries = translateMenuEntries(buildContextMenu(ctx), 0)
+    setMenu({ x, y, entries, target: "stack", selectionCount: 0, stackId: stack.id, stackName: stack.name || cardName, stackCount: stack.count })
+  }
+
+  const openBlankMenu = (x: number, y: number) => {
+    const inStack = Boolean(stackId)
+    const ctx: MenuContext = {
+      target: inStack ? "stack-blank" : "gallery-blank",
+      scope: "all",
+      selectionCount: 0,
+      selectionHasStacks: false,
+      anyGrouped: false,
+      favorite: false,
+      insideStackId: stackId || null,
+      cutActive: cutIdsRef.current.length > 0,
+      groups: menuGroups(),
+      pageTotal: pageTotal ?? assets.length,
+      isMac: isMacPlatform(),
+    }
+    const entries = translateMenuEntries(buildContextMenu(ctx), 0)
+    setMenu({ x, y, entries, target: ctx.target, selectionCount: 0, stackId, stackName, stackCount: assets.length })
+  }
+
+  // Shared paste: ⌘V and both menu paste entries move the cut ids into the
+  // target stack, or back out to loose assets when the target is null.
+  const pasteCut = (targetStackId: string | null) => {
+    const ids = [...new Set(cutIdsRef.current)]
+    if (!ids.length) return
+    cutIdsRef.current = []
+    moveAssetsToStack(project, ids, targetStackId)
+      .then(outcome => {
+        if (!outcome.succeeded) { notify(outcome.firstError || tr("粘贴失败")); return }
+        notify(outcome.failed
+          ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+          : targetStackId ? tr("已粘贴到堆叠") : tr("已移出堆叠"))
+        refreshNavigation()
+      })
+      .catch(error => notify(errorMessage(error)))
+  }
+
+  // Batch group assignment for the asset menu (add via submenu, remove, and
+  // the trash menu's flat add-to-group, which still needs the sidebar group).
+  const assignSelectionToGroup = (name: string) => {
+    if (!asset) return
+    setAssetsGroup(asset.project_id, [...batchIds], name)
+      .then(outcome => {
+        if (!outcome.succeeded) { notify(outcome.firstError || tr(name ? "添加分组失败" : "移除分组失败")); return }
+        setSelectedIds([])
+        notify(outcome.failed
+          ? (name
+              ? tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+              : tr("已从分组移除 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+          : name ? tr("已添加到分组") : tr("已从分组移除"))
+        refreshNavigation()
+      })
+      .catch(error => notify(errorMessage(error)))
+  }
+
+  const runMenuAction = (id: string) => {
+    const target = menu
+    setMenu(null)
+    if (!target) return
+    const ids = [...batchIds]
+    // Asset menu
+    if (id === "open-viewer") setPreview(true)
+    else if (id === "show-in-library") showInLibrary()
+    else if (id === "copy-image") void copyImage()
+    else if (id === "cut") {
+      cutIdsRef.current = ids
       notify("已剪切")
-    } else if (id === "copy-prompt") {
+    }
+    else if (id === "copy-prompt") {
       if (!asset?.prompt) { notify(tr("无提示词记录")); return }
-      try {
-        await writeText(asset.prompt)
-        notify(`${tr("复制提示词")} ${tr("完成")}`)
-      } catch { notify(tr("复制失败")) }
-    } else if (id === "copy-path") {
+      writeText(asset.prompt).then(() => notify(`${tr("复制提示词")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
+    }
+    else if (id === "copy-path") {
       if (!asset) return
-      try {
-        await writeText(asset.image_path || asset.image_url)
-        notify(`${tr("复制路径")} ${tr("完成")}`)
-      } catch { notify(tr("复制失败")) }
-    } else if (id === "toggle-favorite") {
-      if (batchIds.length > 1) {
-        setAssetsFavorite(project, batchIds, !selAssets[0]?.favorite)
+      writeText(asset.image_path || asset.image_url).then(() => notify(`${tr("复制路径")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
+    }
+    else if (id === "toggle-favorite") {
+      if (ids.length > 1 && asset) {
+        setAssetsFavorite(asset.project_id, ids, !asset.favorite)
           .then(outcome => {
             if (!outcome.succeeded) { notify(outcome.firstError || tr("收藏失败")); return }
             setSelectedIds([])
@@ -1399,143 +1604,80 @@ export default function App() {
             refreshNavigation()
           })
           .catch(error => notify(errorMessage(error)))
-      } else toggleFavorite()
-    } else if (id === "create-group-with-selection") {
-      setGroupCreateWithSelection({ target: "asset" })
-    } else if (id.startsWith("add-to-group:")) {
-      const groupName = id.replace("add-to-group:", "")
-      setAssetsGroup(project, batchIds, groupName)
-        .then(outcome => {
-          if (!outcome.succeeded) { notify(outcome.firstError || tr("添加分组失败")); return }
-          setSelectedIds([])
-          notify(outcome.failed
-            ? tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-            : tr("已添加到分组"))
-          refreshNavigation()
-        })
-        .catch(error => notify(errorMessage(error)))
-    } else if (id === "remove-from-group") {
-      setAssetsGroup(project, batchIds, "")
-        .then(outcome => {
-          if (!outcome.succeeded) { notify(outcome.firstError || tr("移除分组失败")); return }
-          setSelectedIds([])
-          notify(outcome.failed
-            ? tr("已从分组移除 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-            : tr("已从分组移除"))
-          refreshNavigation()
-        })
-        .catch(error => notify(errorMessage(error)))
-    } else if (id === "export") {
-      exportAsset()
-    } else if (id === "stack-selected") {
-      const focusId = asset?.id || batchIds[0] || ""
-      createStack(project, batchIds, focusId)
-        .then(() => {
-          refreshNavigation()
-          setSelectedIds([])
-          notify("堆叠已创建")
-        })
-        .catch(error => notify(errorMessage(error)))
-    } else if (id === "remove-from-stack") {
-      if (!stackId) return
-      removeAssetsFromStack(project, stackId, batchIds)
-        .then(() => {
-          refreshNavigation()
-          setSelectedIds([])
-          notify("已移出堆叠")
-        })
-        .catch(error => notify(errorMessage(error)))
-    } else if (id === "move-to-trash") {
-      if (active === "回收站") {
-        await restore()
-      } else {
-        requestDelete()
-      }
+      } else void toggleFavorite()
     }
-    // Stack actions
-    else if (id === "open-stack") {
-      const stack = asset?.stack || (contextMenuItems.length > 0 && assets[0]?.stack)
-      if (stack) {
-        goTo({ stackId: stack.id, stackName: stack.name || "" })
-      }
-    } else if (id === "paste-into-stack") {
-      const stack = asset?.stack
-      if (!stack) return
-      const ids = [...new Set(cutIdsRef.current)]
-      cutIdsRef.current = []
-      moveAssetsToStack(project, ids, stack.id)
-        .then(outcome => {
-          if (!outcome.succeeded) { notify(outcome.firstError || tr("粘贴失败")); return }
-          notify(outcome.failed
-            ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-            : tr("粘贴"))
+    else if (id === "add-to-group") {
+      // The trash menu keeps the old flat entry: it still needs the group
+      // picked in the sidebar.
+      if (!group) { notify(tr("请先在左侧选择或新建分组")); return }
+      assignSelectionToGroup(group)
+    }
+    else if (id === "add-to-group:create" || id === "stack-add-to-group:create") {
+      // Must be matched before the add-to-group: prefix or the ":create"
+      // suffix would be taken for a literal group name.
+      const forStack = id.startsWith("stack-")
+      setGroupCreateError("")
+      setGroupCreateWithSelection({
+        target: forStack ? "stack" : "asset",
+        targetStackId: forStack ? target.stackId : undefined,
+        draft: `新分组 ${(navigation?.groups.length ?? 0) + 1}`,
+      })
+    }
+    else if (id.startsWith("add-to-group:")) assignSelectionToGroup(id.slice("add-to-group:".length))
+    else if (id === "remove-from-group") assignSelectionToGroup("")
+    else if (id === "export") exportAsset()
+    else if (id === "restore") void restore()
+    else if (id === "move-to-trash") requestDelete()
+    else if (id === "remove-from-stack") {
+      if (!stackId) return
+      removeAssetsFromStack(project, stackId, ids)
+        .then(() => {
+          notify(fill(tr("已从堆叠移出 {count} 项素材"), { count: ids.length }))
+          applySelection([], "")
           refreshNavigation()
         })
         .catch(error => notify(errorMessage(error)))
-    } else if (id === "create-group-with-stack") {
-      const stack = asset?.stack
-      if (stack) {
-        setGroupCreateWithSelection({ target: "stack", targetStackId: stack.id })
-      }
-    } else if (id.startsWith("stack-add-to-group:")) {
-      const stack = asset?.stack
-      if (!stack) return
-      const groupName = id.replace("stack-add-to-group:", "")
-      assignStackToGroup(project, stack.id, groupName)
+    }
+    else if (id === "stack-selected") {
+      createStack(project, ids, asset?.id || ids[0] || "")
+        .then(() => {
+          notify(fill(tr("已堆叠 {count} 项素材"), { count: ids.length }))
+          applySelection([], "")
+          refreshNavigation()
+        })
+        .catch(error => notify(errorMessage(error)))
+    }
+    // Stack menu — every action reads the stack the menu was opened on.
+    else if (id === "open-stack") goTo({ stackId: target.stackId, stackName: target.stackName })
+    else if (id === "paste-into-stack") pasteCut(target.stackId)
+    else if (id.startsWith("stack-add-to-group:")) {
+      const groupName = id.slice("stack-add-to-group:".length)
+      assignStackToGroup(project, target.stackId, groupName)
         .then(() => {
           notify(fill(tr("堆叠已移动到「{group}」"), { group: groupName }))
           refreshNavigation()
         })
         .catch(error => notify(errorMessage(error)))
-    } else if (id === "stack-remove-from-group") {
-      const stack = asset?.stack
-      if (!stack) return
-      assignStackToGroup(project, stack.id, "")
+    }
+    else if (id === "stack-remove-from-group") {
+      assignStackToGroup(project, target.stackId, "")
         .then(() => {
           notify(tr("堆叠已移出分组"))
           refreshNavigation()
         })
         .catch(error => notify(errorMessage(error)))
-    } else if (id === "rename-stack") {
-      const targetStack = asset?.stack || (stackId ? assets.find(a => a.stack?.id === stackId)?.stack : null)
-      if (targetStack) {
-        setStackRename({ stackId: targetStack.id, initialName: targetStack.name || "", draft: targetStack.name || "" })
-      }
-    } else if (id === "dissolve-stack") {
-      const targetStack = asset?.stack || (stackId ? assets.find(a => a.stack?.id === stackId)?.stack : null)
-      if (targetStack) {
-        setStackDissolveConfirm({ stackId: targetStack.id, stackCount: targetStack.count || 0 })
-      }
-    } else if (id === "stack-move-to-trash") {
-      const targetStack = asset?.stack
-      if (targetStack) {
-        setStackTrashConfirm({ stackId: targetStack.id, stackCount: targetStack.count || 0 })
-      }
     }
-    // Blank area actions
-    else if (id === "back-to-library") {
-      goTo({ stackId: "", stackName: "" })
-    } else if (id === "paste") {
-      const ids = [...new Set(cutIdsRef.current)]
-      cutIdsRef.current = []
-      moveAssetsToStack(project, ids, stackId || null)
-        .then(outcome => {
-          if (!outcome.succeeded) { notify(outcome.firstError || tr("粘贴失败")); return }
-          notify(outcome.failed
-            ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-            : tr("粘贴"))
-          refreshNavigation()
-        })
-        .catch(error => notify(errorMessage(error)))
-    } else if (id === "create-group") {
-      createNamedGroup()
-    } else if (id === "select-all") {
-      void selectAllAcrossPages()
-    } else if (id === "refresh") {
+    else if (id === "rename-stack") setStackRename({ stackId: target.stackId, initialName: target.stackName, draft: target.stackName })
+    else if (id === "dissolve-stack") setStackDissolveConfirm({ stackId: target.stackId, stackCount: target.stackCount })
+    else if (id === "stack-move-to-trash") setStackTrashConfirm({ stackId: target.stackId, stackCount: target.stackCount })
+    // Blank-area menus
+    else if (id === "back-to-library") goTo({ stackId: "", stackName: "" })
+    else if (id === "paste") pasteCut(target.target === "stack-blank" ? target.stackId : null)
+    else if (id === "create-group") createNamedGroup()
+    else if (id === "select-all") void selectAllAcrossPages()
+    else if (id === "refresh" || id === "refresh-library") {
       notify(tr("正在刷新..."))
-      void refreshNavigation()
-      // Reload current asset list
-      setRefreshKey(k => k + 1)
+      refreshNavigation()
     }
   }
   const showInLibrary = () => {
@@ -1909,7 +2051,7 @@ export default function App() {
       {/* Stack rename dialog */}
       {stackRename && (
         <div className="group-dialog-backdrop" role="presentation" onClick={() => setStackRename(null)}>
-          <div className="group-dialog" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+          <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("重命名堆叠")}>
             <form onSubmit={event => {
               event.preventDefault()
               const name = stackRename.draft.trim()
@@ -1917,11 +2059,7 @@ export default function App() {
               renameStack(project, stackRename.stackId, name)
                 .then(() => {
                   notify(tr("堆叠已重命名"))
-                  setAssets(old => old.map(a => 
-                    a.stack?.id === stackRename.stackId 
-                      ? { ...a, stack: { ...a.stack, name } } 
-                      : a
-                  ))
+                  setAssets(old => old.map(a => a.stack && a.stack.id === stackRename.stackId ? { ...a, stack: { ...a.stack, name } } : a))
                   if (stackId === stackRename.stackId) setStackName(name)
                   setStackRename(null)
                   refreshNavigation()
@@ -1929,12 +2067,7 @@ export default function App() {
                 .catch(error => notify(errorMessage(error)))
             }}>
               <h3>{tr("重命名堆叠")}</h3>
-              <input 
-                autoFocus 
-                value={stackRename.draft} 
-                maxLength={80} 
-                onChange={event => setStackRename(old => old ? { ...old, draft: event.target.value } : old)} 
-              />
+              <input autoFocus value={stackRename.draft} maxLength={80} onChange={event => setStackRename(old => old ? { ...old, draft: event.target.value } : old)} />
               <div className="group-dialog-actions">
                 <button type="button" onClick={() => setStackRename(null)}>{tr("取消")}</button>
                 <button type="submit">{tr("保存")}</button>
@@ -1953,31 +2086,27 @@ export default function App() {
             <p>{tr("仅解除素材之间的堆叠关系，不会删除或归档任何素材。")}</p>
             <div className="delete-actions">
               <button className="neutral-button" onClick={() => setStackDissolveConfirm(null)}>{tr("取消")}</button>
-              <button className="primary-button" onClick={async () => {
+              <button className="primary-button" onClick={() => {
+                const target = stackDissolveConfirm
                 setStackDissolveConfirm(null)
-                try {
-                  const result = await dissolveStack(project, stackDissolveConfirm.stackId)
-                  const count = result.assetIds.length || stackDissolveConfirm.stackCount
-                  notify(fill(tr("已解散堆叠 · {count} 个素材已恢复为独立素材"), { count }))
-                  if (stackId === stackDissolveConfirm.stackId) {
-                    goTo({ stackId: "", stackName: "" })
-                  }
-                  setAssets(old => old.map(a => 
-                    a.stack?.id === stackDissolveConfirm.stackId 
-                      ? { ...a, stack: null } 
-                      : a
-                  ))
-                  refreshNavigation()
-                } catch (error) {
-                  notify(errorMessage(error))
-                }
+                dissolveStack(project, target.stackId)
+                  .then(result => {
+                    // The server echoes the members it released; the toast
+                    // counts those, not the stale menu-time count.
+                    notify(fill(tr("已解散堆叠 · {count} 个素材已恢复为独立素材"), { count: result.assetIds.length }))
+                    setAssets(old => old.map(a => a.stack && a.stack.id === target.stackId ? { ...a, stack: null } : a))
+                    if (stackId === target.stackId) goTo({ stackId: "", stackName: "" })
+                    refreshNavigation()
+                  })
+                  .catch(error => notify(errorMessage(error)))
               }}>{tr("解散堆叠")}</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Stack move to trash confirmation */}
+      {/* Stack move-to-trash confirmation — a stack always confirms, the
+      "不再提醒" suppression only ever covered plain assets. */}
       {stackTrashConfirm && (
         <div className="modal-layer delete-layer" onClick={() => setStackTrashConfirm(null)}>
           <div className="delete-modal" role="alertdialog" aria-modal="true">
@@ -1986,65 +2115,61 @@ export default function App() {
             <p>{fill(tr("其中的 {count} 个素材也会一起移到回收站。你可以之后从回收站恢复。"), { count: stackTrashConfirm.stackCount })}</p>
             <div className="delete-actions">
               <button className="neutral-button" onClick={() => setStackTrashConfirm(null)}>{tr("取消")}</button>
-              <button className="primary-button" onClick={async () => {
+              <button className="primary-button" onClick={() => {
+                const target = stackTrashConfirm
                 setStackTrashConfirm(null)
-                try {
-                  const outcome = await trashStack(project, stackTrashConfirm.stackId)
-                  if (outcome.succeeded) {
-                    const msg = fill(tr("堆叠已移到回收站，共 {count} 个素材"), { count: outcome.succeeded })
-                    notify(outcome.failed ? msg + ` · ${outcome.failed}失败` : msg)
-                    setAssets(old => old.filter(a => a.stack?.id !== stackTrashConfirm.stackId))
-                    if (stackId === stackTrashConfirm.stackId) {
-                      goTo({ stackId: "", stackName: "" })
+                trashStack(project, target.stackId)
+                  .then(outcome => {
+                    if (outcome.failed) {
+                      notify(tr("已移至回收站 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+                    } else if (outcome.succeeded) {
+                      notify(fill(tr("堆叠已移到回收站，共 {count} 个素材"), { count: outcome.succeeded }))
                     }
-                  } else {
-                    notify(outcome.firstError || "操作失败")
-                  }
-                  refreshNavigation()
-                } catch (error) {
-                  notify(errorMessage(error))
-                }
+                    const failedIds = new Set(outcome.failedIds)
+                    setAssets(old => old.filter(a => !(a.stack && a.stack.id === target.stackId && !failedIds.has(a.id))))
+                    if (stackId === target.stackId) goTo({ stackId: "", stackName: "" })
+                    refreshNavigation()
+                  })
+                  .catch(error => notify(errorMessage(error)))
               }}>{tr("移至回收站")}</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Create group with selection */}
+      {/* Create a group and move the menu's target into it. A server rejection
+      (duplicate name) shows inside the dialog and keeps it open. */}
       {groupCreateWithSelection && (
         <div className="group-dialog-backdrop" role="presentation" onClick={() => setGroupCreateWithSelection(null)}>
-          <div className="group-dialog" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}>
-            <form onSubmit={async event => {
+          <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("新建分组并移入")}>
+            <form onSubmit={event => {
               event.preventDefault()
-              const input = event.currentTarget.querySelector("input") as HTMLInputElement
-              const name = input.value.trim()
+              const name = groupCreateWithSelection.draft.trim()
               if (!name) return
-              
-              try {
-                await createGroup(project, name)
-                
-                if (groupCreateWithSelection.target === "asset") {
-                  const sel = selectedIds.length > 0 ? selectedIds : (asset ? [asset.id] : [])
-                  if (sel.length > 0) {
-                    await setAssetsGroup(project, sel, name)
-                  }
-                } else if (groupCreateWithSelection.targetStackId) {
-                  await assignStackToGroup(project, groupCreateWithSelection.targetStackId, name)
-                }
-                
-                notify(tr("已添加到分组"))
-                setGroupCreateWithSelection(null)
-                refreshNavigation()
-              } catch (error) {
-                notify(errorMessage(error))
-              }
+              const target = groupCreateWithSelection
+              createGroup(project, name)
+                .then(() => {
+                  if (target.target === "stack" && target.targetStackId) return assignStackToGroup(project, target.targetStackId, name).then(() => {})
+                  return setAssetsGroup(project, [...batchIds], name).then(outcome => {
+                    if (!outcome.succeeded) throw new Error(outcome.firstError || tr("添加分组失败"))
+                  })
+                })
+                .then(() => {
+                  notify(target.target === "stack"
+                    ? fill(tr("堆叠已移动到「{group}」"), { group: name })
+                    : tr("已添加到分组"))
+                  if (target.target === "asset") setSelectedIds([])
+                  setGroupCreateWithSelection(null)
+                  refreshNavigation()
+                })
+                .catch(error => setGroupCreateError(errorMessage(error)))
             }}>
               <h3>{tr("新建分组并移入")}</h3>
-              <input 
-                autoFocus 
-                placeholder={`${tr("新分组")} 1`}
-                maxLength={80}
-              />
+              <input autoFocus value={groupCreateWithSelection.draft} maxLength={80} onChange={event => {
+                setGroupCreateError("")
+                setGroupCreateWithSelection(old => old ? { ...old, draft: event.target.value } : old)
+              }} />
+              {groupCreateError && <p className="group-dialog-error" role="alert">{groupCreateError}</p>}
               <div className="group-dialog-actions">
                 <button type="button" onClick={() => setGroupCreateWithSelection(null)}>{tr("取消")}</button>
                 <button type="submit">{tr("保存")}</button>
@@ -2117,7 +2242,7 @@ export default function App() {
           </div>
         </header>
         {preview ? (
-          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} onNavigate={navigateAsset} onContextMenu={(x, y) => setMenu({ x, y })} message={toast} />
+          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} onNavigate={navigateAsset} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} message={toast} />
         ) : (
           <div
             ref={gridRef}
@@ -2128,24 +2253,12 @@ export default function App() {
             data-loaded-assets={assets.length}
             onPointerDown={onGridPointerDown}
             onContextMenu={(e) => {
-              // Blank area right-click: only if clicking on grid, not on asset card
-              const target = e.target as HTMLElement
-              if (target.closest(".asset-card") || preview || settings || active === "回收站") return
+              // Blank-area menu: cards handle their own contextmenu, the
+              // viewer and the settings dialog suppress it, and the trash
+              // scope stays read-only.
+              if ((e.target as HTMLElement).closest(".asset-card") || preview || settings || active === "回收站") return
               e.preventDefault()
-              const ctx: MenuContext = {
-                target: stackId ? "stack-blank" : "gallery-blank",
-                scope: active === "回收站" ? "trash" : "all",
-                selectionCount: 0,
-                selectionHasStacks: false,
-                anyGrouped: false,
-                favorite: false,
-                insideStackId: stackId || null,
-                cutActive: cutIdsRef.current.length > 0,
-                groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
-                pageTotal: assets.length,
-              }
-              setContextMenuItems(buildContextMenu(ctx))
-              setMenu({ x: e.clientX, y: e.clientY })
+              openBlankMenu(e.clientX, e.clientY)
             }}
           >
             {(() => {
@@ -2182,44 +2295,19 @@ export default function App() {
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault()
+                      if (active === "回收站") return
                       if (a.stack) {
-                        // Stack card right-click: open stack menu without changing selection
-                        const ctx: MenuContext = {
-                          target: "stack",
-                          scope: active === "回收站" ? "trash" : "all",
-                          selectionCount: 1,
-                          selectionHasStacks: false,
-                          anyGrouped: Boolean(a.group),
-                          favorite: false,
-                          insideStackId: null,
-                          cutActive: cutIdsRef.current.length > 0,
-                          groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
-                          pageTotal: assets.length,
-                        }
-                        setContextMenuItems(buildContextMenu(ctx))
-                        setMenu({ x: e.clientX, y: e.clientY })
+                        // Stack card: the menu acts on this stack and the
+                        // selection stays untouched.
+                        openStackMenu(a.stack, a.name, e.clientX, e.clientY)
                         return
                       }
-                      // Regular asset: right-clicking outside the multi-selection re-targets the
-                      // context menu to the clicked card; inside it, the whole selection stays the action target.
+                      // Right-clicking outside the multi-selection re-targets the
+                      // context menu to the clicked card; inside it, the whole
+                      // selection stays the action target.
                       if (!selectedIds.includes(a.id)) applySelection([], a.id)
                       else focusAsset(a.id)
-                      const sel = selectedIds.includes(a.id) ? selectedIds : [a.id]
-                      const selAssets = assets.filter(x => sel.includes(x.id))
-                      const ctx: MenuContext = {
-                        target: "asset",
-                        scope: active === "回收站" ? "trash" : "all",
-                        selectionCount: sel.length,
-                        selectionHasStacks: selAssets.some(x => x.stack),
-                        anyGrouped: selAssets.some(x => x.group),
-                        favorite: selAssets.every(x => x.favorite),
-                        insideStackId: stackId || null,
-                        cutActive: cutIdsRef.current.length > 0,
-                        groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
-                        pageTotal: assets.length,
-                      }
-                      setContextMenuItems(buildContextMenu(ctx))
-                      setMenu({ x: e.clientX, y: e.clientY })
+                      openAssetMenu(a, e.clientX, e.clientY)
                     }}
                   >
                     {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
@@ -2265,44 +2353,19 @@ export default function App() {
                   }}
                   onContextMenu={(e) => {
                     e.preventDefault()
+                    if (active === "回收站") return
                     if (a.stack) {
-                      // Stack card right-click: open stack menu without changing selection
-                      const ctx: MenuContext = {
-                        target: "stack",
-                        scope: active === "回收站" ? "trash" : "all",
-                        selectionCount: 1,
-                        selectionHasStacks: false,
-                        anyGrouped: Boolean(a.group),
-                        favorite: false,
-                        insideStackId: null,
-                        cutActive: cutIdsRef.current.length > 0,
-                        groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
-                        pageTotal: assets.length,
-                      }
-                      setContextMenuItems(buildContextMenu(ctx))
-                      setMenu({ x: e.clientX, y: e.clientY })
+                      // Stack card: the menu acts on this stack and the
+                      // selection stays untouched.
+                      openStackMenu(a.stack, a.name, e.clientX, e.clientY)
                       return
                     }
-                    // Regular asset: right-clicking outside the multi-selection re-targets the
-                    // context menu to the clicked card; inside it, the whole selection stays the action target.
+                    // Right-clicking outside the multi-selection re-targets the
+                    // context menu to the clicked card; inside it, the whole
+                    // selection stays the action target.
                     if (!selectedIds.includes(a.id)) applySelection([], a.id)
                     else focusAsset(a.id)
-                    const sel = selectedIds.includes(a.id) ? selectedIds : [a.id]
-                    const selAssets = assets.filter(x => sel.includes(x.id))
-                    const ctx: MenuContext = {
-                      target: "asset",
-                      scope: active === "回收站" ? "trash" : "all",
-                      selectionCount: sel.length,
-                      selectionHasStacks: selAssets.some(x => x.stack),
-                      anyGrouped: selAssets.some(x => x.group),
-                      favorite: selAssets.every(x => x.favorite),
-                      insideStackId: stackId || null,
-                      cutActive: cutIdsRef.current.length > 0,
-                      groups: navigation?.groups.map(g => ({ name: g.name, color: g.color })) || [],
-                      pageTotal: assets.length,
-                    }
-                    setContextMenuItems(buildContextMenu(ctx))
-                    setMenu({ x: e.clientX, y: e.clientY })
+                    openAssetMenu(a, e.clientX, e.clientY)
                     }}
                 >
                   {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={`${Math.round(model.columnWidth)}px`} alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
@@ -2908,105 +2971,22 @@ export default function App() {
       )}
       {menu && (
         <div
+          ref={menuRef}
           className="context-menu"
-          style={{
-            left: Math.min(menu.x, window.innerWidth - 240),
-            top: (() => {
-              const menuHeight = contextMenuItems.length * 32 + 16
-              return Math.min(menu.y, window.innerHeight - menuHeight - 20)
-            })(),
-          }}
-          onMouseLeave={() => {
-            // Clear any open submenus when mouse leaves
+          role="menu"
+          style={{ left: menuPos?.left ?? menu.x, top: menuPos?.top ?? menu.y }}
+          onClick={event => {
+            // Rows close themselves through their action; a click on the
+            // menu's own padding dismisses it. Neither may reach the app-wide
+            // click-away, which would close the menu out from under a submenu.
+            event.stopPropagation()
+            if (event.target === event.currentTarget) setMenu(null)
           }}
         >
-          {contextMenuItems.map((entry, i) => {
-            if (entry.kind === "separator") {
-              return <div key={`sep-${i}`} className="menu-divider-line" />
-            }
-            if (entry.kind === "heading") {
-              return <div key={`head-${i}`} className="menu-heading">{entry.label}</div>
-            }
-            const item = entry as Extract<MenuEntry, { kind: "item" }>
-            return (
-              <button
-                key={item.id}
-                className={`menu-item ${item.danger ? "danger" : ""} ${item.disabled ? "disabled" : ""}`}
-                disabled={item.disabled}
-                onClick={() => {
-                  if (item.submenu) return // Submenu items don't close menu on click
-                  void handleMenuAction(item.id)
-                }}
-                onMouseEnter={(e) => {
-                  if (item.submenu && item.submenu.length > 0) {
-                    // Show submenu
-                    const btn = e.currentTarget
-                    const rect = btn.getBoundingClientRect()
-                    const submenuHeight = item.submenu.length * 32 + 16
-                    const submenuTop = Math.min(rect.top, window.innerHeight - submenuHeight - 20)
-                    const submenuLeft = rect.right + 4
-                    const submenuRight = submenuLeft + 200
-                    
-                    // Create or update submenu portal
-                    let portal = document.getElementById("submenu-portal")
-                    if (!portal) {
-                      portal = document.createElement("div")
-                      portal.id = "submenu-portal"
-                      document.body.appendChild(portal)
-                    }
-                    
-                    portal.innerHTML = ""
-                    const submenu = document.createElement("div")
-                    submenu.className = "context-menu submenu"
-                    submenu.style.left = `${submenuRight > window.innerWidth ? rect.left - 204 : submenuLeft}px`
-                    submenu.style.top = `${submenuTop}px`
-                    
-                    item.submenu.forEach(sub => {
-                      if (sub.kind === "separator") {
-                        const sep = document.createElement("div")
-                        sep.className = "menu-divider-line"
-                        submenu.appendChild(sep)
-                      } else if (sub.kind === "heading") {
-                        const heading = document.createElement("div")
-                        heading.className = "menu-heading"
-                        heading.textContent = tr(sub.label)
-                        submenu.appendChild(heading)
-                      } else {
-                        const subBtn = document.createElement("button")
-                        subBtn.className = `menu-item ${sub.disabled ? "disabled" : ""}`
-                        if (sub.disabled) subBtn.disabled = true
-                        
-                        // Group color dot
-                        if (sub.id.includes("group") && sub.icon) {
-                          const dot = document.createElement("span")
-                          dot.className = "group-color-dot"
-                          dot.style.backgroundColor = sub.icon
-                          subBtn.appendChild(dot)
-                        }
-                        
-                        const label = document.createElement("span")
-                        label.textContent = tr(sub.label)
-                        subBtn.appendChild(label)
-                        
-                        subBtn.addEventListener("click", () => {
-                          portal?.remove()
-                          void handleMenuAction(sub.id)
-                        })
-                        submenu.appendChild(subBtn)
-                      }
-                    })
-                    
-                    portal.appendChild(submenu)
-                  }
-                }}
-              >
-                {item.icon && !item.submenu && <Icon name={item.icon} size={14} />}
-                {item.submenu && <span className="group-color-dot" style={{ backgroundColor: "transparent", marginRight: "4px" }} />}
-                <span>{tr(item.label)}</span>
-                {item.shortcut && <small>{item.shortcut}</small>}
-                {item.submenu && <Icon name="chevron-right" size={12} />}
-              </button>
-            )
+          {menu.entries.map((entry, index) => {
+            if (entry.kind === "separator") return <div key={`sep-${index}`} className="menu-divider" />
+            if (entry.kind === "heading") return <div key={`head-${index}`} className="menu-heading">{entry.label}</div>
+            return <MenuRow key={entry.id} entry={entry} onAction={runMenuAction} />
           })}
         </div>
       )}

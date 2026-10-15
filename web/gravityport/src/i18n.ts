@@ -118,7 +118,7 @@ const english: Record<string, string> = {
   "路径已复制": "Path copied", "无法打开该位置": "This location can't be opened",
   "请先在左侧选择或新建分组": "Select or create a group in the sidebar first.",
   "已添加到分组": "Added to group", "已从分组移除": "Removed from group",
-  "已剪切": "Cut", "已粘贴到堆叠": "Pasted into stack", "粘贴需要在堆叠中进行": "Paste works inside a stack.",
+  "已剪切": "Cut", "已粘贴到堆叠": "Pasted into stack", "已移出堆叠": "Moved out of the stack",
   "复制图片失败": "Couldn't copy the image", "不支持复制的素材类型": "This asset type can't be copied",
   "重试": "Retry", "加载更多": "Load more", "此操作尚未接入 MOSA 服务": "This action isn't connected to MOSA yet.",
   "恢复素材": "Restore asset", "构建": "Build", "正式版": "Production",
@@ -150,11 +150,13 @@ const english: Record<string, string> = {
   "已选 {count} 项": "{count} selected",
   "全选": "Select all",
   "堆叠所选": "Stack selected",
+  "已堆叠 {count} 项素材": "Stacked {count} assets",
   "打开堆叠": "Open stack",
   "重命名堆叠": "Rename stack",
   "堆叠已重命名": "Stack renamed",
   "移出堆叠": "Move out",
-  "堆叠已移动到「{group}」": "Stack moved to \"{group}\"",
+  "已从堆叠移出 {count} 项素材": "Moved out {count} assets",
+  "堆叠已移动到「{group}」": "Stack moved to “{group}”",
   "堆叠已移出分组": "Stack removed from group",
   "解散堆叠": "Dissolve stack",
   "解散这个堆叠？": "Dissolve this stack?",
@@ -170,12 +172,4 @@ export function translate(text: string, language: Language): string {
   if (language !== "en") return text
   if (/^新分组 \d+$/.test(text)) return text.replace("新分组", "New group")
   return english[text] || text
-}
-
-export function fill(template: string, values: Record<string, string | number>): string {
-  let result = template
-  for (const [key, value] of Object.entries(values)) {
-    result = result.replace(new RegExp(`\\{${key}\\}`, "g"), String(value))
-  }
-  return result
 }
