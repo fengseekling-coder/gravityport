@@ -1290,6 +1290,9 @@ export default function App() {
   const marqueeRef = useRef<{ x0: number; y0: number } | null>(null)
   const onGridPointerDown = (event: React.PointerEvent) => {
     if (event.button !== 0 || preview || settings || (event.target as HTMLElement).closest(".asset-card")) return
+    // A leftover native text selection would keep painting cards blue in DOM
+    // order, which has nothing to do with where they sit in the masonry.
+    window.getSelection()?.removeAllRanges()
     marqueeRef.current = { x0: event.clientX, y0: event.clientY }
     setMarquee({ x0: event.clientX, y0: event.clientY, x1: event.clientX, y1: event.clientY })
     const move = (e: PointerEvent) => {

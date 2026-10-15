@@ -13,7 +13,7 @@ export async function run(ctx) {
       });
     }
     const result = await ctx.runInPage(server, multiSelectSource());
-    if (result?.multiSelected !== 2 || result?.batchTrashMoved !== 2 || result?.marqueeSelected !== 2
+    if (result?.multiSelected !== 2 || result?.batchTrashMoved !== 2 || result?.marqueeSelected !== 2 || result?.nativeSelectionCleared !== true
       || result?.batchFavorited !== true || result?.selectAllCount < 1 || result?.escapeCleared !== true) {
       throw new Error(`multi-select result: ${JSON.stringify(result)}`);
     }
@@ -102,12 +102,18 @@ function multiSelectSource() {
     const y0 = firstBox.top + firstBox.height / 2;
     const x1 = secondBox.left + secondBox.width / 2;
     const y1 = secondBox.bottom + 40;
+    // A leftover native selection over the cards must not survive the marquee
+    // (the browser paints it in DOM order, unrelated to the masonry).
+    window.getSelection().selectAllChildren(grid);
+    const nativeSelectionPlanted = !window.getSelection().isCollapsed;
     grid.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7, button: 0, clientX: x0, clientY: y0 }));
     window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, pointerId: 7, clientX: x1, clientY: y1 }));
     await sleep(120);
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: 7, clientX: x1, clientY: y1 }));
     await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 2, 'marquee selects two');
     const marqueeSelected = document.querySelectorAll('.asset-card.asset-selected').length;
+    const nativeSelectionCleared = nativeSelectionPlanted && window.getSelection().isCollapsed
+      && getComputedStyle(grid).userSelect === 'none';
 
     // Batch favorite through the context menu on the marquee selection.
     plain()[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 600, clientY: 300 }));
@@ -126,7 +132,7 @@ function multiSelectSource() {
     await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 0, 'Escape clears selection');
     const escapeCleared = document.querySelectorAll('.asset-card.asset-selected').length === 0;
 
-    return { multiSelected, batchTrashMoved, marqueeSelected, batchFavorited, selectAllCount, escapeCleared };
+    return { multiSelected, batchTrashMoved, marqueeSelected, nativeSelectionCleared, batchFavorited, selectAllCount, escapeCleared };
   })()
   `;
 }

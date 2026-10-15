@@ -3201,6 +3201,13 @@ video.viewer-image {
   gap: 8px;
 }
 
+/* Dragging across the gallery is the marquee, never a native text selection:
+   the browser would highlight cards in DOM order, unrelated to the masonry. */
+.app .asset-grid {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .app .marquee-rect {
   position: fixed;
   border: 1px solid var(--ui-accent);
