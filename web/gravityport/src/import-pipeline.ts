@@ -176,7 +176,7 @@ export async function runImport(
 
     // ── Stage batch (concurrency 4) ──
     const stagedResults = await mapWithConcurrency(batchFiles, STAGING_CONCURRENCY, async (file, index) => {
-      if (signal?.aborted) throw new Error("Import cancelled")
+      if (signal?.aborted) throw Object.assign(new Error("Import cancelled"), { cancelled: true })
       try {
         const path = await stageImportFile(file)
         return { file, path }
@@ -195,12 +195,21 @@ export async function runImport(
       if (r.ok && r.value) {
         stagedItems.push(r.value)
       } else if (!r.ok && r.error) {
+        // A file skipped because the user cancelled is not a failure.
+        if ((r.error as { cancelled?: boolean }).cancelled) continue
         result.failed += 1
         result.errors.push({
           fileName: (r.error as Error & { fileName?: string }).fileName || batchFiles[i].name,
           reason: r.error instanceof Error ? r.error.message : String(r.error),
         })
       }
+    }
+
+    // Cancelled while staging: drop what this batch staged instead of
+    // creating assets the user no longer wants.
+    if (signal?.aborted) {
+      await cleanupPaths(stagedItems.map((s) => s.path))
+      break
     }
 
     // ── Import batch ──
@@ -292,6 +301,6 @@ export async function runImport(
     }
   }
 
-  onProgress?.({ phase: "done", total, completed: total, imported: result.imported, failed: result.failed, skipped })
+  onProgress?.({ phase: "done", total, completed, imported: result.imported, failed: result.failed, skipped })
   return result
 }

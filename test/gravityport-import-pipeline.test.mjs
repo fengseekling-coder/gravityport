@@ -559,6 +559,37 @@ describe("runImport with mocked fetch", () => {
     assert.ok(batchCount <= 2, "should not send more batches after abort")
     assert.ok(result.imported < 100, "should not import all files")
   })
+
+  it("cancelling while staging cleans up the batch and counts nothing as failed", async () => {
+    const controller = new AbortController()
+    let staged = 0
+    let batches = 0
+    const deleted = []
+
+    globalThis.fetch = async (url, init) => {
+      if (url === "/api/import/stage" && init?.method === "POST") {
+        staged += 1
+        if (staged === 6) controller.abort()
+        const data = { path: `/staged/${staged}` }
+        return { ok: true, json: async () => data, text: async () => JSON.stringify(data) }
+      }
+      if (url === "/api/import/stage" && init?.method === "DELETE") {
+        deleted.push(JSON.parse(init.body).path)
+        return { ok: true, json: async () => ({}), text: async () => "{}" }
+      }
+      if (url === "/api/assets/import-batch") batches += 1
+      return { ok: false, status: 404, json: async () => ({}), text: async () => "{}" }
+    }
+
+    const files = Array.from({ length: 40 }, (_, i) => new globalThis.File([`img${i}`], `img${i}.png`, { type: "image/png" }))
+    const result = await runImport(files, { project: "default", signal: controller.signal, isSupported: () => true })
+
+    assert.equal(batches, 0, "no assets are created after cancelling")
+    assert.equal(result.failed, 0)
+    assert.equal(result.imported, 0)
+    assert.equal(deleted.length, staged, "every staged file is cleaned up")
+    assert.deepEqual([...deleted].sort(), Array.from({ length: staged }, (_, i) => `/staged/${i + 1}`).sort())
+  })
 })
 
 // ─── Real server integration test ────────────────────────────────────────────
