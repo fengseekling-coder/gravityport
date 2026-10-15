@@ -15,6 +15,16 @@ import {
   type MasonryModel,
 } from "./gallery-window"
 import {
+  checkVersionConsistency,
+  createReadyGate,
+  fill,
+  mapUpdateResult,
+  buildUpdateText,
+  shouldAutoCheckForUpdates,
+  recordUpdateCheck,
+  type UpdateUiState,
+} from "./app-lifecycle"
+import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus, fetchSimilarAssets,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
   toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, restoreAsset, setAssetsGroup,
@@ -172,6 +182,10 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem("gravityport.skip-trash-confirm", skipConfirm ? "1" : "0") } catch { /* session-only */ }
   }, [skipConfirm])
+  // Update check state machine (app-lifecycle).
+  const [updateState, setUpdateState] = useState<UpdateUiState>({ phase: "idle" })
+  // Rename notice (task 116): shown once at first-screen render.
+  const [renameNoticeOpen, setRenameNoticeOpen] = useState(false)
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
   const [generations, setGenerations] = useState<MosaGenerationEvent[] | null>(null)
   const [generationHistory, setGenerationHistory] = useState<MosaGenerationHistory | null>(null)
@@ -222,6 +236,26 @@ export default function App() {
   // selection reset of the view change it causes.
   const pendingInspectRef = useRef("")
   const cutIdsRef = useRef<string[]>([])
+  const readyGateRef = useRef<ReturnType<typeof createReadyGate> | null>(null)
+  if (!readyGateRef.current) {
+    readyGateRef.current = createReadyGate(() => {
+      desktopAPI()?.reportRendererReady?.().catch(() => {})
+    })
+  }
+  const versionOkRef = useRef(false)
+  const firstPageOkRef = useRef(false)
+  const sseOpenRef = useRef(false)
+  const deletingRef = useRef(deleting)
+  const settingsRef = useRef(settings)
+  const renameNoticeRef = useRef(renameNoticeOpen)
+  deletingRef.current = deleting
+  settingsRef.current = settings
+  renameNoticeRef.current = renameNoticeOpen
+  const dismissRenameNotice = () => {
+    setRenameNoticeOpen(false)
+    desktopAPI()?.acknowledgeRenameNotice?.().catch(() => {})
+  }
+
   const [systemDark, setSystemDark] = useState(false)
   useEffect(() => {
     setExpandedPrompt(false)
@@ -359,6 +393,10 @@ export default function App() {
           applySelection(pruned.selectedIds, fallback)
         }
         lastGoodProjectRef.current = project
+        if (!firstPageOkRef.current) {
+          firstPageOkRef.current = true
+          readyGateRef.current?.markFirstPageOk()
+        }
       } catch (error) {
         if (controller.signal.aborted) return
         // A failed load for a freshly switched-to project is a failed switch:
@@ -420,11 +458,15 @@ export default function App() {
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, refreshKey])
-  // Live library updates: the runtime broadcasts journaled revisions over SSE;
-  // bursts are debounced into one reload of the current view.
+  // SSE stream setup (combined with sseConnectedRef tracking).
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null
     const stream = new EventSource(`/api/library-events?project=${encodeURIComponent(project)}`)
+    stream.addEventListener("open", () => {
+      if (sseOpenRef.current) return
+      sseOpenRef.current = true
+      readyGateRef.current?.markSseOpen()
+    })
     stream.addEventListener("library-changed", () => {
       if (timer) clearTimeout(timer)
       timer = setTimeout(() => refreshNavigation(), 300)
@@ -435,6 +477,71 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project])
+  // Version-consistency check: runs once at startup. On mismatch, the gallery
+  // shows an error state and reportRendererReady is never called so the
+  // main-process update machinery does not roll back the installed update.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const mismatch = await checkVersionConsistency(
+        () => fetchHealth().then(d => d ?? {}),
+        () => fetch("/build-identity.json", { cache: "no-store" }).then(r => r.ok ? r.json() : {}),
+      )
+      if (cancelled) return
+      if (mismatch) {
+        setLoadError(tr("界面与本地服务版本不一致。请退出旧版 GravityPort 后重新打开当前版本。"))
+        return
+      }
+      if (!versionOkRef.current) {
+        versionOkRef.current = true
+        readyGateRef.current?.markVersionOk()
+      }
+    })()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // Silent auto-check for updates every 24 hours.
+  useEffect(() => {
+    if (!shouldAutoCheckForUpdates(key => localStorage.getItem(key))) return
+    const api = desktopAPI()
+    if (!api?.checkForUpdates) return
+    api.checkForUpdates(false).then(result => {
+      recordUpdateCheck((key, value) => localStorage.setItem(key, value))
+      if (result?.updateAvailable) {
+        notify(fill(tr("发现新版本 v{version}"), { version: String(result.latestVersion ?? "").replace(/^v/i, "") }))
+      }
+    }).catch(() => {})
+  }, [])
+  // Listen for update download progress.
+  useEffect(() => {
+    const api = desktopAPI()
+    if (!api?.onUpdateDownloadProgress) return
+    return api.onUpdateDownloadProgress(progress => {
+      const pct = Number(progress?.percent)
+      setUpdateState(current => current.phase === "downloading"
+        ? { ...current, percent: Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0 }
+        : current)
+    })
+  }, [])
+  // Task 116 — Rename notice: fire once at first-screen render after the initial
+  // load completes. Skips silently in browser (no electronAPI). Waits until the
+  // gallery has actually rendered (loading=false) so we know whether another
+  // alertdialog is already open; does not count as read if another modal is open.
+  useEffect(() => {
+    if (loading || !desktopAPI()?.getRenameNoticeState) return
+    // The notice must fire after the first asset page resolves. Without a
+    // loading check, the modal could open before any other dialog's state is
+    // readable and the synchronous pre-check in maybeShowRenameNotice would be
+    // too early.
+    const api = desktopAPI()
+    api?.getRenameNoticeState?.().then(notice => {
+      if (notice?.shouldShow !== true) return
+      // Guard against dialogs that opened while the async state request was pending.
+      if (deletingRef.current || settingsRef.current || renameNoticeRef.current) return
+      setRenameNoticeOpen(true)
+    }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)")
     const sync = () => setSystemDark(media.matches)
@@ -1021,7 +1128,8 @@ export default function App() {
       if (e.key === "Escape") {
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
-        if (deleting) setDeleting(false)
+        if (renameNoticeOpen) dismissRenameNotice()
+        else if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         else if (settings) setSettings(false)
         else if (preview) setPreview(false)
@@ -1274,11 +1382,52 @@ export default function App() {
   const checkForUpdates = async () => {
     const api = desktopAPI()
     if (!api?.checkForUpdates) { notify(tr("网页版请访问官网获取最新版本")); return }
+    if (updateState.phase === "checking") return
+    setUpdateState({ phase: "checking" })
     try {
-      await api.checkForUpdates(true)
+      const result = await api.checkForUpdates(true)
+      recordUpdateCheck((key, value) => localStorage.setItem(key, value))
+      const state = mapUpdateResult(result ?? {})
+      setUpdateState(state)
+      if (state.phase === "current") {
+        notify(tr("已是最新版本"))
+      } else if (state.phase === "available") {
+        notify(fill(tr("发现新版本 v{version}"), { version: state.latestVersion }))
+      } else if (state.phase === "unavailable") {
+        notify(tr("请先把 App 拖进『应用程序』文件夹再更新"))
+      } else if (state.phase === "error") {
+        notify(tr("暂时无法检查更新"))
+      }
     } catch (error) {
-      notify(String((error as Error)?.message || error))
+      setUpdateState({ phase: "error" })
+      notify(String((error as Error)?.message || tr("暂时无法检查更新")))
     }
+  }
+  const downloadAndInstallUpdate = async () => {
+    const api = desktopAPI()
+    if (!api?.downloadAndInstallUpdate) return
+    if (updateState.phase === "downloading") return
+    if (updateState.phase !== "available") return
+    setUpdateState({ phase: "downloading", percent: 0, latestVersion: updateState.latestVersion, publishedAt: updateState.publishedAt, canInstallInApp: updateState.canInstallInApp })
+    try {
+      await api.downloadAndInstallUpdate()
+    } catch (error) {
+      setUpdateState(current => current.phase === "downloading"
+        ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false }
+        : current)
+      notify(tr("更新失败，请稍后重试"))
+    }
+  }
+  const cancelUpdateDownload = () => {
+    desktopAPI()?.cancelUpdateDownload?.()
+    setUpdateState(current => current.phase === "downloading"
+      ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false }
+      : current)
+  }
+  const openDownloadPage = () => {
+    desktopAPI()?.openDownloadPage?.().then(result => {
+      if (!result?.ok) notify(tr("暂时无法检查更新"))
+    }).catch(() => notify(tr("暂时无法检查更新")))
   }
   const changeLibraryLocation = async () => {
     const api = desktopAPI()
@@ -2292,8 +2441,42 @@ export default function App() {
                     <div className="about-symbol">
                       <img className="app-logo" src={`/assets/gravityport-mark-${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : "light"}.svg`} width={40} height={40} alt="" aria-hidden="true" />
                     </div>
-                    <div className="about-identity"><h4>GravityPort</h4><span className="settings-badge" title={versionBadge}>{versionBadge}</span></div>
-                    <button className="neutral-button about-update" onClick={checkForUpdates}>{tr("检查更新")}</button>
+                    <div className="about-identity">
+                      <h4>GravityPort</h4>
+                      {(() => {
+                        const text = buildUpdateText(
+                          health?.productVersion || "",
+                          updateState,
+                          updateState.phase === "downloading" ? updateState.percent : 0,
+                          tr,
+                          language,
+                        )
+                        return <span className="settings-badge" title={text.badgeText}>{text.badgeText}</span>
+                      })()}
+                    </div>
+                    {(() => {
+                      const text = buildUpdateText(
+                        health?.productVersion || "",
+                        updateState,
+                        updateState.phase === "downloading" ? updateState.percent : 0,
+                        tr,
+                        language,
+                      )
+                      if (text.buttonLabel === null) return null
+                      if (text.downloadAndInstall) {
+                        return <button className="neutral-button about-update" onClick={downloadAndInstallUpdate} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
+                      }
+                      if (text.secondaryLabel) {
+                        return <div className="about-update about-update-actions">
+                          <button className="neutral-button" disabled>{text.buttonLabel}</button>
+                          <button className="neutral-button" onClick={cancelUpdateDownload}>{text.secondaryLabel}</button>
+                        </div>
+                      }
+                      if (updateState.phase === "available" && !text.downloadAndInstall) {
+                        return <button className="neutral-button about-update" onClick={openDownloadPage}>{text.buttonLabel}</button>
+                      }
+                      return <button className="neutral-button about-update" onClick={checkForUpdates} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
+                    })()}
                   </section>
                   <section className="settings-section release-notes" aria-labelledby="release-notes-title">
                     <div className="release-heading"><h4 id="release-notes-title">{tr("本次更新")}</h4><span>{tr("构建信息")}</span></div>
@@ -2427,6 +2610,25 @@ export default function App() {
                 {tr("取消")}</button>
               <button className="primary-button" onClick={remove}>
                 {tr("移至回收站")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {renameNoticeOpen && (
+        <div className="modal-layer" onClick={(e) => { if (e.target === e.currentTarget) dismissRenameNotice() }}>
+          <div className="delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="rename-notice-title">
+            <div className="delete-icon">
+              <Icon name="info" size={26} />
+            </div>
+            <h3 id="rename-notice-title">{tr("MOSA 现已更名为 GravityPort")}</h3>
+            <p>{tr("只是换了名字。你的素材、设置和浏览器插件都在原处，不需要做任何操作。")}</p>
+            <div className="delete-actions">
+              <button
+                className="primary-button"
+                onClick={dismissRenameNotice}
+              >
+                {tr("知道了")}
+              </button>
             </div>
           </div>
         </div>

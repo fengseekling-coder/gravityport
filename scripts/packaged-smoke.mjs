@@ -125,7 +125,9 @@ function assertPackagedWindowChrome(renderer) {
   if (chrome.firstNavTop < chrome.brandbarHeight) {
     throw new Error(`Sidebar navigation overlaps the titlebar: ${JSON.stringify(chrome)}`);
   }
-  if (process.platform === "darwin" && chrome.brandTitleLeft < 96) {
+  // Native buttons end near x=75 (trafficLightPosition 16,18); the title is
+  // right-aligned with the nav counts and never starts before x=85.
+  if (process.platform === "darwin" && chrome.brandTitleLeft < 80) {
     throw new Error(`GravityPort title overlaps native macOS controls: ${JSON.stringify(chrome)}`);
   }
 }

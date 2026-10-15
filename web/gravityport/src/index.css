@@ -2646,6 +2646,9 @@ img.black-image {
   grid-column: 3;
   grid-row: 1;
   justify-self: end;
+}.app .about-update-actions {
+  display: flex;
+  gap: var(--space-2);
 }.app .about-symbol {
   width: var(--space-10);
   height: var(--space-10);
@@ -3203,12 +3206,17 @@ video.viewer-image {
   align-items: center;
 }
 .app.native-desktop .brandbar {
-  justify-content: flex-start;
+  /* The title's right edge lines up with the nav rows' counts, which sit
+     inside the rows' own var(--space-2) inline padding. */
+  justify-content: flex-end;
+  padding-inline-end: var(--space-2);
 }
 .app.native-darwin .brandbar {
-  /* Native buttons begin at x=16 and occupy approximately x=16..86.
-     Sidebar left padding is 12px; place the title at x>=96. */
-  padding-inline-start: calc(96px - var(--space-3));
+  /* Native buttons sit at x=16..75, centred on y=25 (trafficLightPosition
+     16,18). Keep the title clear of them when the sidebar is narrow and
+     centre it on their row. */
+  padding-inline-start: calc(85px - var(--space-3));
+  padding-bottom: 6px;
 }
 .app.native-darwin .brandbar strong {
   overflow: hidden;
