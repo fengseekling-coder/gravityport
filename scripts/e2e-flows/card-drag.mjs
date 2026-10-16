@@ -278,7 +278,19 @@ function cardDragSource(config) {
         finalPoint = again;
         if (settled) break;
       }
-      if (options.beforeRelease) await options.beforeRelease();
+      if (options.beforeRelease) {
+        try {
+          await options.beforeRelease();
+        } catch (error) {
+          // A failed check must not leak a live drag into the next steps:
+          // cancel it the way a user would (Escape), then let go.
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          await sleep(60);
+          window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: DRAG_ID, clientX: finalPoint.x, clientY: finalPoint.y }));
+          await sleep(120);
+          throw error;
+        }
+      }
       window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: DRAG_ID, clientX: finalPoint.x, clientY: finalPoint.y }));
       fromEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       await sleep(80);
@@ -519,20 +531,33 @@ function cardDragSource(config) {
       if (shown.length !== 3) throw new Error('stack view should show 3 members: ' + JSON.stringify(shown));
       const first = shown[0];
       const third = shown[2];
-      const firstBox = cardFor(first).getBoundingClientRect();
-      const leftHalf = { x: firstBox.left + firstBox.width * 0.25, y: firstBox.top + firstBox.height / 2 };
-      await dragTo(cardFor(third), leftHalf, {
-        trackEl: () => cardFor(first),
-        beforeRelease: async () => {
-          const line = cardFor(first);
-          if (!line || !line.classList.contains('stack-reorder-target')) {
-            throw new Error('no reorder line on the first card: ' + dumpCards());
-          }
-          if (!line.classList.contains('stack-reorder-before')) {
-            throw new Error('left half must show the before line: ' + line.className);
-          }
-        },
-      });
+      const coverBefore = stackOrderCache[0];
+      try {
+        const firstBox = cardFor(first).getBoundingClientRect();
+        const leftHalf = { x: firstBox.left + firstBox.width * 0.25, y: firstBox.top + firstBox.height / 2 };
+        await dragTo(cardFor(third), leftHalf, {
+          trackEl: () => cardFor(first),
+          beforeRelease: async () => {
+            // The line is painted by the drag's rAF flush; a hidden window on
+            // a slow runner (Windows CI) can run it well after the chase's
+            // last 130ms sleep, so wait for it instead of reading once.
+            const line = await waitFor(() => {
+              const el = cardFor(first);
+              return el && el.classList.contains('stack-reorder-target') ? el : null;
+            }, 'reorder line', 3000).catch(() => {
+              throw new Error('no reorder line on the first card: ' + dumpCards());
+            });
+            if (!line.classList.contains('stack-reorder-before')) {
+              throw new Error('left half must show the before line: ' + line.className);
+            }
+          },
+        });
+      } catch (error) {
+        // Still in the stack view: leave it, or the next step's double-click
+        // lands on a member card and opens the preview instead.
+        await leaveStack(coverBefore).catch(() => {});
+        throw error;
+      }
       const expected = [third, first, shown[1]];
       const order = await waitForApi(async () => {
         const current = await stackOrder(config.orderStackId);
