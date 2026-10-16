@@ -448,6 +448,79 @@ describe("listStackMemberIds — mock fetch", () => {
   });
 });
 
+describe("listStackMemberPaths — mock fetch", () => {
+  it("stitches pages together in stack order, carrying image_path", async () => {
+    let callCount = 0;
+    const seenUrls = [];
+    globalThis.fetch = function (url) {
+      callCount++;
+      seenUrls.push(String(url));
+      const cursor = callCount === 1 ? "cursor-page-2" : "";
+      const assets = callCount === 1
+        ? [{ id: "m2", image_path: "/lib/b.jpg" }, { id: "m1", image_path: "/lib/a.jpg" }]
+        : [{ id: "m3", image_path: "/lib/c.jpg" }];
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ assets, page: { nextCursor: cursor || null } }),
+          { status: 200 },
+        ),
+      );
+    };
+    try {
+      const members = await la.listStackMemberPaths("p", "s1");
+      assert.equal(callCount, 2);
+      assert.deepEqual(members, [
+        { id: "m2", imagePath: "/lib/b.jpg" },
+        { id: "m1", imagePath: "/lib/a.jpg" },
+        { id: "m3", imagePath: "/lib/c.jpg" },
+      ]);
+      assert.ok(seenUrls[1].includes("cursor=cursor-page-2"));
+    } finally {
+      globalThis.fetch = ORIGINAL_FETCH;
+    }
+  });
+
+  it("throws on repeated cursor (loop guard)", async () => {
+    globalThis.fetch = function () {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ assets: [{ id: "x", image_path: "/x" }], page: { nextCursor: "same-cursor" } }),
+          { status: 200 },
+        ),
+      );
+    };
+    try {
+      await la.listStackMemberPaths("p", "s1");
+      assert.fail("should have thrown");
+    } catch (err) {
+      assert.ok(/cursor/i.test(err.message));
+    } finally {
+      globalThis.fetch = ORIGINAL_FETCH;
+    }
+  });
+
+  it("sends no request when the signal is already aborted", async () => {
+    let called = 0;
+    globalThis.fetch = function () {
+      called++;
+      return Promise.resolve(
+        new Response(JSON.stringify({ assets: [], page: { nextCursor: null } }), { status: 200 }),
+      );
+    };
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await la.listStackMemberPaths("p", "s1", controller.signal);
+      assert.fail("should have thrown");
+    } catch (err) {
+      assert.ok(/aborted/i.test(err.message));
+    } finally {
+      assert.equal(called, 0);
+      globalThis.fetch = ORIGINAL_FETCH;
+    }
+  });
+});
+
 describe("trashStack — mock fetch", () => {
   it("enumerates members then calls moveAssetsToTrash (/api/assets/batch)", async () => {
     let callCount = 0;

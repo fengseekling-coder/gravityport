@@ -249,6 +249,14 @@ const english: Record<string, string> = {
   "不在这段对话里的生成记录": "A generation outside this conversation",
   "这段对话里没有别的图可以关联": "No other images in this conversation to link",
   "显示全部 {count} 张": "Show all {count}",
+  // Task 146: card dragging (drag to another app / groups / stacks, reorder)
+  "已把 {count} 个素材移到「{group}」": "Moved {count} assets to “{group}”",
+  "已把 {count} 个素材移出分组": "Removed {count} assets from their group",
+  "已向堆叠加入 {count} 项素材": "Added {count} assets",
+  "堆叠内容已发生变化，已刷新，请重新拖动排序": "The stack changed while you were reordering it. It has been refreshed; drag again.",
+  "当前素材无法拖出到其他应用": "This asset cannot be dragged to another app",
+  "一次最多拖出 512 个文件，已带出前 512 个": "Up to 512 files can be dragged at once; the first 512 were included.",
+  "已撤销": "Undone",
 }
 
 export function translate(text: string, language: Language): string {

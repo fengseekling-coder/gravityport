@@ -5,7 +5,12 @@ import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, type MenuContext, type MenuEntry } from "./context-menus"
-import { createStack, renameStack, dissolveStack, removeAssetsFromStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash } from "./library-actions"
+import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberPaths } from "./library-actions"
+import {
+  dragIdsForCard, dragGhostCount, pointOutsideWindow, nativeDragPaths,
+  createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop,
+  type StackUndoPlan,
+} from "./card-drag"
 import { runImport, collectDroppedFiles } from "./import-pipeline"
 import { trashRemainingDays } from "./trash-ui"
 import { desktopAPI } from "./desktop"
@@ -111,6 +116,47 @@ function ratioText(width: number, height: number): string {
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
+}
+
+// Task 146 card dragging.
+const CARD_DRAG_THRESHOLD_PX = 8
+const NATIVE_DRAG_MAX_FILES = 512
+
+type CardDragGesture = {
+  pointerId: number
+  startX: number; startY: number; lastX: number; lastY: number
+  pressedId: string
+  dragIds: string[]
+  /** Set when the pressed card is a root-gallery stack card: the whole stack
+   *  travels as one unit (to the sidebar or out of the window). */
+  fromStackId: string
+  insideStack: boolean
+  dragging: boolean
+  /** True while a stack hand-off waits for its member paths to finish loading. */
+  awaitingPaths: boolean
+  frame: number | null
+  pathsOverLimit: boolean
+  nativeController: ReturnType<typeof createNativeDragController>
+  membersAbort: AbortController | null
+  membersPromise: Promise<string[]> | null
+}
+
+type CardDropTarget = { cardId: string; placement: "before" | "after"; mode: "stack-target" | "reorder" }
+type CardSideTarget = { kind: "group"; name: string } | { kind: "ungrouped" }
+
+function sideDropTargetAt(x: number, y: number): CardSideTarget | null {
+  const element = document.elementFromPoint(x, y)
+  const groupRow = element?.closest?.("[data-drop-group]")
+  if (groupRow) {
+    const name = groupRow.getAttribute("data-drop-group") || ""
+    return name ? { kind: "group", name } : null
+  }
+  if (element?.closest?.("[data-drop-ungroup]")) return { kind: "ungrouped" }
+  return null
+}
+
+function cardElementAt(x: number, y: number): HTMLElement | null {
+  return document.elementFromPoint(x, y)?.closest?.(".asset-card:not(.asset-card-virtual-placeholder)") || null
 }
 
 const GALLERY_PAGE_SIZE = 100
@@ -1427,9 +1473,357 @@ export default function App() {
   const selectionSet = new Set(selectionIds)
   const batchIds = selectionIds
   const clearSelectionAndReload = () => { clearSelection(); refreshNavigation() }
+  // ─── Card dragging (task 146): press a card and move ≥8px to drag. Drop on
+  // ─── another card to build/join a stack (6s undo), on a sidebar group row /
+  // ─── 待整理 to regroup, leave the window to hand off to the system drag, or
+  // ─── reorder inside an unfiltered stack view. All mutable gesture state
+  // ─── lives in refs; the highlight states only update when the target
+  // ─── actually changes, so a moving pointer never re-renders the gallery.
+  const cardDragRef = useRef<CardDragGesture | null>(null)
+  const cardDragMutationRef = useRef(false)
+  const suppressCardDragClickRef = useRef(false)
+  const ghostRef = useRef<HTMLDivElement | null>(null)
+  const dropRef = useRef<CardDropTarget | null>(null)
+  const sideDropRef = useRef<CardSideTarget | null>(null)
+  const cardDragMoveRef = useRef<(event: PointerEvent) => void>(() => {})
+  const cardDragUpRef = useRef<(event: PointerEvent) => void>(() => {})
+  const cardDragCancelRef = useRef<(drag: CardDragGesture) => void>(() => {})
+  const cardDragFinishRef = useRef<(drop: CardDropTarget | null, side: CardSideTarget | null, gesture: { dragIds: string[]; pressedId: string; fromStackId: string; insideStack: boolean }) => void>(() => {})
+  const [cardDropTarget, setCardDropTarget] = useState<CardDropTarget | null>(null)
+  const [cardDropSide, setCardDropSide] = useState<CardSideTarget | null>(null)
+  const [cardDragGhost, setCardDragGhost] = useState<{ src: string; count: number } | null>(null)
+  const setCardDrop = (next: CardDropTarget | null) => {
+    const prev = dropRef.current
+    if (prev?.cardId === next?.cardId && prev?.placement === next?.placement && prev?.mode === next?.mode) return
+    dropRef.current = next
+    setCardDropTarget(next)
+  }
+  const setSideDrop = (next: CardSideTarget | null) => {
+    if (JSON.stringify(sideDropRef.current) === JSON.stringify(next)) return
+    sideDropRef.current = next
+    setCardDropSide(next)
+  }
+  const cancelCardDrag = (drag: CardDragGesture) => {
+    if (drag.frame !== null) { cancelAnimationFrame(drag.frame); drag.frame = null }
+    drag.membersAbort?.abort()
+    cardDragRef.current = null
+    setCardDrop(null)
+    setSideDrop(null)
+    setCardDragGhost(null)
+    document.body.classList.remove("gp-card-dragging")
+  }
+  const clearCardDragVisuals = () => {
+    setCardDrop(null)
+    setSideDrop(null)
+    document.body.classList.remove("gp-card-dragging")
+  }
+  const onCardDragPointerDown = (a: MosaAsset, event: React.PointerEvent<HTMLButtonElement>) => {
+    if (cardDragMutationRef.current || active === "回收站" || preview || settings) return
+    if (event.button !== 0 || event.pointerType === "touch" || event.shiftKey) return
+    const pressedId = a.id
+    if (!pressedId) return
+    const insideStack = Boolean(stackId)
+    let dragIds: string[] = []
+    let fromStackId = ""
+    if (insideStack || a.stack?.id) {
+      // Inside a stack every card is a reorder candidate; a root-gallery stack
+      // card drags its whole stack as one unit (never as just its cover).
+      dragIds = [pressedId]
+      fromStackId = insideStack ? "" : a.stack!.id
+    } else {
+      dragIds = dragIdsForCard(new Set(selectionIds), pressedId)
+      // A mixed selection (plain cards + a stack card) is not draggable, as in
+      // the legacy gallery.
+      if (dragIds.some(id => assetsRef.current.find(item => item.id === id)?.stack?.id)) return
+    }
+    const nativeController = createNativeDragController({
+      api: desktopAPI(),
+      onError: () => notify(tr("当前素材无法拖出到其他应用")),
+    })
+    let pathsOverLimit = false
+    let membersAbort: AbortController | null = null
+    let membersPromise: Promise<string[]> | null = null
+    if (fromStackId) {
+      // Start fetching the stack's member paths on press (all pages, stack
+      // order, deduplicated) so leaving the window never waits on the network
+      // longer than it must; the gesture is abandoned silently if the button
+      // is released while the fetch is still running.
+      membersAbort = new AbortController()
+      membersPromise = listStackMemberPaths(project, fromStackId, membersAbort.signal)
+        .then(members => stackMemberPaths(members))
+      membersPromise.catch(() => {})
+    } else if (nativeController.supported()) {
+      const paths = nativeDragPaths(assetsRef.current, dragIds)
+      if (paths.length > NATIVE_DRAG_MAX_FILES) { paths.length = NATIVE_DRAG_MAX_FILES; pathsOverLimit = true }
+      nativeController.begin(dragIds, paths)
+    }
+    cardDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX, startY: event.clientY,
+      lastX: event.clientX, lastY: event.clientY,
+      pressedId, dragIds, fromStackId, insideStack,
+      dragging: false, awaitingPaths: false, frame: null, pathsOverLimit,
+      nativeController, membersAbort, membersPromise,
+    }
+    // Keep the gesture alive while the pointer leaves the window — that is the
+    // moment the system drag takes over, and it needs the moves to detect it.
+    try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* window listeners keep the gesture alive */ }
+  }
+  const handOffToNativeDrag = (drag: CardDragGesture, event: PointerEvent): boolean => {
+    const controller = drag.nativeController
+    if (drag.awaitingPaths) return true
+    if (!controller.supported() || !pointOutsideWindow(event, window)) return false
+    if (!drag.fromStackId) {
+      if (!controller.startIfOutside(event, window)) return false
+      if (drag.pathsOverLimit) notify(tr("一次最多拖出 512 个文件，已带出前 512 个"))
+      cancelCardDrag(drag)
+      suppressCardDragClickRef.current = true
+      return true
+    }
+    // Stack hand-off: wait for the member paths (prefetch started on press);
+    // a release during the wait aborts the fetch and the gesture quietly.
+    drag.awaitingPaths = true
+    clearCardDragVisuals()
+    drag.membersPromise?.then(paths => {
+      if (cardDragRef.current !== drag) return
+      const overLimit = paths.length > NATIVE_DRAG_MAX_FILES
+      const slice = overLimit ? paths.slice(0, NATIVE_DRAG_MAX_FILES) : paths
+      if (!slice.length || !controller.begin([drag.fromStackId], slice) || !controller.startIfOutside(event, window)) {
+        notify(tr("当前素材无法拖出到其他应用"))
+      } else if (overLimit) {
+        notify(tr("一次最多拖出 512 个文件，已带出前 512 个"))
+      }
+      cancelCardDrag(drag)
+      suppressCardDragClickRef.current = true
+    }).catch(() => {
+      if (cardDragRef.current !== drag) return
+      notify(tr("当前素材无法拖出到其他应用"))
+      cancelCardDrag(drag)
+      suppressCardDragClickRef.current = true
+    })
+    return true
+  }
+  // Reorder is only safe when the stack view shows the complete membership in
+  // its canonical order (no search term, "all" types, no pending page): the
+  // PATCH replaces the whole order, and a partial view would drop the tail.
+  const stackReorderAllowed = () => {
+    if (!stackId) return false
+    if (debouncedQuery || assetType !== "all") return false
+    if (nextCursor) return false
+    return assets.length >= (pageTotal ?? assets.length)
+  }
+  const flushCardDragMove = (drag: CardDragGesture) => {
+    if (!drag.dragging || drag.awaitingPaths || cardDragRef.current !== drag) return
+    const x = drag.lastX
+    const y = drag.lastY
+    if (ghostRef.current) ghostRef.current.style.transform = `translate3d(${x + 14}px, ${y + 14}px, 0)`
+    // Sidebar targets win over gallery cards. Inside a stack the sidebar does
+    // not accept drops at all (same as the legacy gallery).
+    const side = drag.insideStack ? null : sideDropTargetAt(x, y)
+    if (side) {
+      setSideDrop(side)
+      setCardDrop(null)
+      return
+    }
+    setSideDrop(null)
+    if (drag.fromStackId) { setCardDrop(null); return }
+    const card = cardElementAt(x, y)
+    if (!card) { setCardDrop(null); return }
+    const cardId = card.getAttribute("data-asset-id") || ""
+    if (!cardId) { setCardDrop(null); return }
+    if (drag.insideStack) {
+      // Reorder insertion line; no line while over the dragged cards. With a
+      // search term or an incomplete view the drag only serves the hand-off.
+      if (!stackReorderAllowed() || drag.dragIds.includes(cardId)) { setCardDrop(null); return }
+      const rect = card.getBoundingClientRect()
+      const placement: "before" | "after" = x < rect.left + rect.width / 2 ? "before" : "after"
+      setCardDrop({ cardId, placement, mode: "reorder" })
+      return
+    }
+    setCardDrop({ cardId, placement: "before", mode: "stack-target" })
+  }
+  cardDragMoveRef.current = (event: PointerEvent) => {
+    const drag = cardDragRef.current
+    if (!drag || event.pointerId !== drag.pointerId) return
+    drag.lastX = event.clientX
+    drag.lastY = event.clientY
+    if (!drag.dragging) {
+      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < CARD_DRAG_THRESHOLD_PX) return
+      drag.dragging = true
+      document.body.classList.add("gp-card-dragging")
+      const pressed = assetsRef.current.find(item => item.id === drag.pressedId)
+      setCardDragGhost({
+        src: pressed?.thumbnail_url || "",
+        count: dragGhostCount(drag.fromStackId ? { stackId: drag.fromStackId } : { assetIds: drag.dragIds }),
+      })
+    }
+    if (handOffToNativeDrag(drag, event)) return
+    event.preventDefault()
+    if (drag.frame === null) drag.frame = requestAnimationFrame(() => { drag.frame = null; flushCardDragMove(drag) })
+  }
+  cardDragCancelRef.current = cancelCardDrag
+  cardDragUpRef.current = (event: PointerEvent) => {
+    const drag = cardDragRef.current
+    if (!drag || event.pointerId !== drag.pointerId) return
+    // A fast release can land before the coalesced frame runs: resolve the
+    // latest pointer position synchronously so the drop target is never lost.
+    if (drag.frame !== null) { cancelAnimationFrame(drag.frame); drag.frame = null }
+    flushCardDragMove(drag)
+    const completed = drag.dragging && !drag.awaitingPaths
+    const drop = dropRef.current
+    const side = sideDropRef.current
+    const gesture = { dragIds: [...drag.dragIds], pressedId: drag.pressedId, fromStackId: drag.fromStackId, insideStack: drag.insideStack }
+    cancelCardDrag(drag)
+    if (!completed) return
+    suppressCardDragClickRef.current = true
+    cardDragFinishRef.current(drop, side, gesture)
+  }
+  useEffect(() => {
+    const move = (event: PointerEvent) => cardDragMoveRef.current(event)
+    const up = (event: PointerEvent) => cardDragUpRef.current(event)
+    const cancel = (event: PointerEvent) => {
+      const drag = cardDragRef.current
+      if (drag && event.pointerId === drag.pointerId) cardDragCancelRef.current(drag)
+    }
+    const blur = () => {
+      const drag = cardDragRef.current
+      if (drag) cardDragCancelRef.current(drag)
+    }
+    const click = (event: MouseEvent) => {
+      // The browser fires a synthetic click after pointerup; a finished drag
+      // must not turn it into "select the pressed card".
+      if (!suppressCardDragClickRef.current) return
+      suppressCardDragClickRef.current = false
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+    // A hand-off to the system drag never gets its pointerup or click back,
+    // so a pending suppression must not outlive the gesture: the next real
+    // press starts fresh and its click goes through.
+    const press = () => { suppressCardDragClickRef.current = false }
+    window.addEventListener("pointerdown", press, true)
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", up)
+    window.addEventListener("pointercancel", cancel)
+    window.addEventListener("blur", blur)
+    window.addEventListener("click", click, true)
+    return () => {
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+      window.removeEventListener("pointercancel", cancel)
+      window.removeEventListener("blur", blur)
+      window.removeEventListener("click", click, true)
+      window.removeEventListener("pointerdown", press, true)
+    }
+  }, [])
+  const runStackUndo = async (undo: StackUndoPlan | null) => {
+    if (!undo) return
+    try {
+      if (undo.kind === "dissolve-stack") await dissolveStack(undo.project, undo.stackId)
+      else await removeAssetsFromStack(undo.project, undo.stackId, undo.assetIds)
+      notify(tr("已撤销"))
+      refreshCurrentView()
+    } catch (error) { notify(errorMessage(error)) }
+  }
+  const runSideDrop = async (side: CardSideTarget, gesture: { dragIds: string[]; fromStackId: string }) => {
+    const groupName = side.kind === "group" ? side.name : ""
+    cardDragMutationRef.current = true
+    try {
+      if (gesture.fromStackId) {
+        await assignStackToGroup(project, gesture.fromStackId, groupName)
+        notify(groupName ? fillNamed("堆叠已移动到「{group}」", { group: groupName }) : tr("堆叠已移出分组"))
+      } else {
+        const outcome = await setAssetsGroup(project, gesture.dragIds, groupName)
+        if (!outcome.succeeded) { notify(outcome.firstError || tr(groupName ? "添加分组失败" : "移除分组失败")); return }
+        notify(groupName
+          ? fillNamed("已把 {count} 个素材移到「{group}」", { count: outcome.succeeded, group: groupName })
+          : fillNamed("已把 {count} 个素材移出分组", { count: outcome.succeeded }))
+      }
+      applySelection([], "")
+      refreshNavigation()
+    } catch (error) { notify(errorMessage(error)) }
+    finally { cardDragMutationRef.current = false }
+  }
+  const runRootStackDrop = async (drop: CardDropTarget, gesture: { dragIds: string[]; fromStackId: string }) => {
+    if (!drop.cardId || gesture.dragIds.includes(drop.cardId)) return
+    // Dropping a multi-selection back onto one of its own members is a common
+    // tiny mouse-jitter path — treat it as a no-op instead of surprising the
+    // user with a new stack.
+    const targetAsset = assetsRef.current.find(item => item.id === drop.cardId)
+    if (!targetAsset) return
+    // The undo closes over the project the drop ran in, even if the user has
+    // switched away by the time the button is pressed.
+    const originProject = targetAsset.project_id || project
+    cardDragMutationRef.current = true
+    try {
+      const targetStackId = targetAsset.stack?.id || ""
+      if (targetStackId) {
+        const toAdd = gesture.dragIds.filter(id => id !== drop.cardId)
+        if (!toAdd.length) return
+        await addAssetsToStack(originProject, targetStackId, toAdd)
+        const undo = undoPlanForStackDrop({ kind: "added-to-stack", project: originProject, stackId: targetStackId, addedIds: toAdd, coverId: drop.cardId })
+        notifyWithAction(fillNamed("已向堆叠加入 {count} 项素材", { count: toAdd.length }), {
+          label: tr("撤销"),
+          run: () => { void runStackUndo(undo) },
+        })
+      } else {
+        const ids = [...gesture.dragIds, drop.cardId]
+        const stack = await createStack(originProject, ids, drop.cardId)
+        const undo = undoPlanForStackDrop({ kind: "created-stack", project: originProject, stackId: stack.id })
+        notifyWithAction(fillNamed("已堆叠 {count} 项素材", { count: ids.length }), {
+          label: tr("撤销"),
+          run: () => { void runStackUndo(undo) },
+        })
+      }
+      applySelection([], "")
+      refreshNavigation()
+    } catch (error) { notify(errorMessage(error)) }
+    finally { cardDragMutationRef.current = false }
+  }
+  const runReorderDrop = async (drop: CardDropTarget, gesture: { dragIds: string[] }) => {
+    if (!drop.cardId || gesture.dragIds.includes(drop.cardId) || !stackReorderAllowed()) return
+    const currentIds = assetsRef.current.map(item => item.id)
+    const nextIds = moveBlockRelative(currentIds, gesture.dragIds, drop.cardId, drop.placement)
+    if (nextIds.length === currentIds.length && nextIds.every((id, i) => id === currentIds[i])) return
+    cardDragMutationRef.current = true
+    try {
+      await reorderStack(project, stackId, nextIds)
+      refreshNavigation()
+    } catch (error) {
+      // A concurrent membership change can make the drag snapshot stale
+      // between pointerdown and PATCH; reload the stack and ask for a new drag
+      // instead of leaking the server's validation prose.
+      if ((error as { code?: string })?.code === "STACK_ORDER_MISMATCH") {
+        notify(tr("堆叠内容已发生变化，已刷新，请重新拖动排序"))
+        refreshNavigation()
+      } else notify(errorMessage(error))
+    } finally { cardDragMutationRef.current = false }
+  }
+  cardDragFinishRef.current = (drop, side, gesture) => {
+    if (side) { void runSideDrop(side, gesture); return }
+    if (!drop) return
+    if (gesture.insideStack) void runReorderDrop(drop, gesture)
+    else void runRootStackDrop(drop, gesture)
+  }
+  const cardDropClassFor = (id: string) => {
+    const drop = cardDropTarget
+    if (drop?.cardId !== id) return ""
+    if (drop.mode === "reorder") {
+      return drop.placement === "before" ? "stack-reorder-target stack-reorder-before" : "stack-reorder-target stack-reorder-after"
+    }
+    return "card-drop-target"
+  }
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // A live card drag consumes Escape on its own: cancel the gesture,
+        // leave selection and dialogs alone.
+        if (cardDragRef.current) {
+          // The release after a cancelled drag must not select the pressed card.
+          if (cardDragRef.current.dragging) suppressCardDragClickRef.current = true
+          cancelCardDrag(cardDragRef.current)
+          return
+        }
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
         if (renameNoticeOpen) dismissRenameNotice()
@@ -2127,6 +2521,45 @@ export default function App() {
     })
   }
   const timeLabel = (value?: string) => (value ? value.slice(0, 10) : "")
+  // The one set of card event handlers shared by both render paths (mount-all
+  // branch and windowed card()), including the drag-gesture entry point.
+  const cardEventHandlers = (a: MosaAsset) => ({
+    onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => onCardDragPointerDown(a, event),
+    onClick: (event: React.MouseEvent) => {
+      // Stacks behave like plain cards here: one click
+      // selects (the inspector shows the cover). The second
+      // press of a double-click must not re-run selection —
+      // the dblclick handler owns entering the stack.
+      if (event.detail > 1) return
+      selectCard(a.id, event)
+    },
+    onDoubleClick: () => {
+      if (a.stack) {
+        goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
+        applySelection([], "")
+        return
+      }
+      focusAsset(a.id)
+      setPreview(true)
+    },
+    onContextMenu: (e: React.MouseEvent) => {
+      e.preventDefault()
+      // Right-clicking outside the multi-selection re-targets the
+      // context menu to the clicked card; inside it, the whole
+      // selection stays the action target. Stack cards follow the
+      // same grammar — the stack menu still acts on that stack
+      // alone through its own target. Trash keeps its restore
+      // menu, but stack cards stay inert there.
+      if (a.stack && active === "回收站") return
+      if (!selectedIds.includes(a.id)) applySelection([], a.id)
+      else focusAsset(a.id)
+      if (a.stack) {
+        openStackMenu(a.stack, a.name, e.clientX, e.clientY)
+        return
+      }
+      openAssetMenu(a, e.clientX, e.clientY)
+    },
+  })
 
   return (
     <div
@@ -2156,7 +2589,8 @@ export default function App() {
                 title={tr(label)}
                 aria-label={tr(label)}
                 aria-current={active === label ? "page" : undefined}
-                className={`nav-row ${active === label ? "selected" : ""}`}
+                className={`nav-row ${active === label ? "selected" : ""} ${label === "待整理" && cardDropSide?.kind === "ungrouped" ? "side-drop-target" : ""}`}
+                {...(label === "待整理" ? { "data-drop-ungroup": "" } : {})}
                 onClick={() => {
                   goTo({ active: label, stackId: "", stackName: "" })
                   setSelectedIds([])
@@ -2213,11 +2647,12 @@ export default function App() {
               <button
                 className={`nav-row group-row ${
                   active === g.id ? "selected" : ""
-                }`}
+                } ${g.id.startsWith("group:") && cardDropSide?.kind === "group" && cardDropSide.name === g.name ? "side-drop-target" : ""}`}
                 key={g.id}
                 title={tr(g.name)}
                 aria-label={tr(g.name)}
                 aria-current={active === g.id ? "page" : undefined}
+                {...(g.id.startsWith("group:") ? { "data-drop-group": g.name } : {})}
                 onClick={() => { goTo({ active: g.id, stackId: "", stackName: "" }); setSelectedIds([]) }}
                 onContextMenu={event => {
                   if (section !== 1) return
@@ -2579,44 +3014,11 @@ export default function App() {
                     key={a.id}
                     data-asset-id={a.id}
                     aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
-                    className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""}`}
+                    className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""} ${cardDropClassFor(a.id)}`}
                     style={{ aspectRatio: `${a.width} / ${a.height}` }}
-                    onClick={(event) => {
-                      // Stacks behave like plain cards here: one click
-                      // selects (the inspector shows the cover). The second
-                      // press of a double-click must not re-run selection —
-                      // the dblclick handler owns entering the stack.
-                      if (event.detail > 1) return
-                      selectCard(a.id, event)
-                    }}
-                    onDoubleClick={() => {
-                      if (a.stack) {
-                        goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
-                        applySelection([], "")
-                        return
-                      }
-                      focusAsset(a.id)
-                      setPreview(true)
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      // Right-clicking outside the multi-selection re-targets the
-                      // context menu to the clicked card; inside it, the whole
-                      // selection stays the action target. Stack cards follow the
-                      // same grammar — the stack menu still acts on that stack
-                      // alone through its own target. Trash keeps its restore
-                      // menu, but stack cards stay inert there.
-                      if (a.stack && active === "回收站") return
-                      if (!selectedIds.includes(a.id)) applySelection([], a.id)
-                      else focusAsset(a.id)
-                      if (a.stack) {
-                        openStackMenu(a.stack, a.name, e.clientX, e.clientY)
-                        return
-                      }
-                      openAssetMenu(a, e.clientX, e.clientY)
-                    }}
+                    {...cardEventHandlers(a)}
                   >
-                    {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
+                    {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
                     {a.stack && (
                       <span className="stack-mark">
                         <Icon name="layers" size={12} />
@@ -2645,44 +3047,11 @@ export default function App() {
                   key={a.id}
                   data-asset-id={a.id}
                   aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
-                  className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""}`}
+                  className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""} ${cardDropClassFor(a.id)}`}
                   style={placementStyle(globalIndex)}
-                  onClick={(event) => {
-                    // Stacks behave like plain cards here: one click
-                    // selects (the inspector shows the cover). The second
-                    // press of a double-click must not re-run selection —
-                    // the dblclick handler owns entering the stack.
-                    if (event.detail > 1) return
-                    selectCard(a.id, event)
-                  }}
-                  onDoubleClick={() => {
-                    if (a.stack) {
-                      goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
-                      applySelection([], "")
-                      return
-                    }
-                    focusAsset(a.id)
-                    setPreview(true)
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault()
-                    // Right-clicking outside the multi-selection re-targets the
-                    // context menu to the clicked card; inside it, the whole
-                    // selection stays the action target. Stack cards follow the
-                    // same grammar — the stack menu still acts on that stack
-                    // alone through its own target. Trash keeps its restore
-                    // menu, but stack cards stay inert there.
-                    if (a.stack && active === "回收站") return
-                    if (!selectedIds.includes(a.id)) applySelection([], a.id)
-                    else focusAsset(a.id)
-                    if (a.stack) {
-                      openStackMenu(a.stack, a.name, e.clientX, e.clientY)
-                      return
-                    }
-                    openAssetMenu(a, e.clientX, e.clientY)
-                    }}
+                  {...cardEventHandlers(a)}
                 >
-                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={galleryImageSizes(model.placements[globalIndex]?.width ?? model.columnWidth)} alt="" loading="lazy" decoding="async" /> : <div className="black-image" />}
+                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={galleryImageSizes(model.placements[globalIndex]?.width ?? model.columnWidth)} alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
                   {a.stack && (
                     <span className="stack-mark">
                       <Icon name="layers" size={12} />
@@ -3609,6 +3978,14 @@ export default function App() {
               onClick={() => { const run = toast.action!.run; setToast(null); run() }}
             >{toast.action.label}</button>
           )}
+        </div>
+      )}
+      {cardDragGhost && (
+        <div className="card-drag-ghost" ref={ghostRef} aria-hidden="true">
+          {cardDragGhost.src
+            ? <img src={cardDragGhost.src} alt="" draggable={false} />
+            : <span className="card-drag-ghost-fallback" />}
+          {cardDragGhost.count > 1 && <span className="card-drag-ghost-count">{cardDragGhost.count}</span>}
         </div>
       )}
     </div>

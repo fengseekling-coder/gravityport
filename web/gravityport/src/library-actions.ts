@@ -284,6 +284,60 @@ export async function listStackMemberIds(
   return memberIds;
 }
 
+export type StackMemberPathEntry = { id: string; imagePath: string };
+
+/**
+ * Retrieve every member of a stack together with its image file path, in stack
+ * order — the input for dragging a whole stack out to another app. Same
+ * pagination guardrails as listStackMemberIds: limit=250 pages, a repeated
+ * cursor throws instead of looping, and an already-aborted signal never sends
+ * a request.
+ */
+export async function listStackMemberPaths(
+  project: string,
+  stackId: string,
+  signal?: AbortSignal,
+): Promise<StackMemberPathEntry[]> {
+  const seenCursors = new Set<string>();
+  const members: StackMemberPathEntry[] = [];
+  let cursor = "";
+
+  for (;;) {
+    if (signal?.aborted) throw new Error("listStackMemberPaths aborted");
+    if (cursor) {
+      if (seenCursors.has(cursor)) {
+        throw new Error("listStackMemberPaths: cursor repeated — possible infinite pagination loop");
+      }
+      seenCursors.add(cursor);
+    }
+
+    const params = new URLSearchParams({ project, limit: "250" });
+    if (cursor) params.set("cursor", cursor);
+
+    const data = await requestJson<{
+      assets?: Record<string, unknown>[];
+      page?: { nextCursor?: string | null };
+    }>(`/api/asset-stacks/${e(stackId)}/assets?${params.toString()}`, { signal });
+
+    if (Array.isArray(data.assets)) {
+      for (const asset of data.assets) {
+        const id = String(asset?.id ?? "");
+        if (!id) continue;
+        members.push({
+          id,
+          imagePath: String(asset?.image_path ?? ""),
+        });
+      }
+    }
+
+    const nextCursor = data.page?.nextCursor;
+    cursor = nextCursor != null ? String(nextCursor) : "";
+    if (!cursor) break;
+  }
+
+  return members;
+}
+
 // ---------------------------------------------------------------------------
 // Stack — compound operations
 // ---------------------------------------------------------------------------

@@ -3448,3 +3448,70 @@ video.viewer-image {
   padding: 0 var(--space-1);
   color: var(--ui-accent);
 }
+/* Task 146: card dragging. Drop-target highlight on a gallery card (theme
+   accent through the existing ::after frame), the reorder insertion line, the
+   sidebar row highlight, the floating drag thumbnail with its count badge, and
+   the grabbing cursor while a drag is live. */
+.app .asset-card.card-drop-target {
+  transform: scale(.985);
+}.app .asset-card.card-drop-target::after {
+  border-color: var(--ui-accent);
+}.app .asset-card.stack-reorder-target::after {
+  border-color: var(--ui-accent);
+}.app .asset-card.stack-reorder-target.stack-reorder-before::after {
+  box-shadow: inset 3px 0 0 0 var(--ui-accent);
+}.app .asset-card.stack-reorder-target.stack-reorder-after::after {
+  box-shadow: inset -3px 0 0 0 var(--ui-accent);
+}.nav-row.side-drop-target {
+  background: var(--ui-hover);
+  box-shadow: inset 0 0 0 1.5px var(--ui-accent);
+}.nav-row.side-drop-target small {
+  color: var(--ui-accent);
+}.card-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 120;
+  pointer-events: none;
+  will-change: transform;
+}.card-drag-ghost img,
+.card-drag-ghost .card-drag-ghost-fallback {
+  display: block;
+  width: 76px;
+  height: 92px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: var(--ui-panel);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.22), 0 2px 8px rgba(15, 23, 42, 0.16);
+  opacity: 0.94;
+}.card-drag-ghost-count {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  display: grid;
+  min-width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0 6px;
+  border: 2px solid var(--ui-raised);
+  border-radius: 999px;
+  color: #fff;
+  background: var(--ui-accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}.app.dark .card-drag-ghost-count {
+  color: #111;
+}body.gp-card-dragging {
+  cursor: grabbing;
+  user-select: none;
+}body.gp-card-dragging * {
+  cursor: grabbing !important;
+}
+/* A drag sweeping under the toast must still hit-test its real drop target:
+   while a card drag is live the toast is click-through. */
+body.gp-card-dragging .toast {
+  pointer-events: none;
+}
