@@ -31,7 +31,7 @@ import {
 } from "./gallery-window"
 import { readStoredColumns, resolveInitialColumns, writeStoredColumns } from "./gallery-columns"
 import {
-  buildScrollRecord, GalleryScrollMemory, pickScrollAnchor, resolveRestoredScrollTop, revealCardScrollTop,
+  buildScrollRecord, GalleryScrollMemory, resolveRestoredScrollTop, revealCardScrollTop,
   type GalleryScrollRecord,
 } from "./gallery-scroll-memory"
 import { deriveEmptyState } from "./empty-state"
@@ -533,7 +533,6 @@ export default function App() {
   const liveScrollRef = useRef<{ key: string; record: GalleryScrollRecord } | null>(null)
   const pendingScrollRestoreRef = useRef<{ viewKey: string; reveal: boolean } | null>(null)
   const restoringScrollRef = useRef(false)
-  const lastScrollRecordAtRef = useRef(0)
   // The view identity the current selection was made in (same key as the
   // load effect's viewKey); a mismatch resets the selection.
   const selectionViewKeyRef = useRef("")
@@ -631,12 +630,17 @@ export default function App() {
     if (isViewSwitch) {
       const leavingKey = committedViewKeyRef.current
       const live = liveScrollRef.current
-      if (leavingKey && live && live.key === leavingKey) {
+      if (leavingKey) {
+        // No live record means the view was never scrolled (it sits at the
+        // top): still remember it, or its focused card is lost on return.
+        const base = live && live.key === leavingKey
+          ? live.record
+          : { anchorId: "", anchorOffset: 0, scrollTop: 0, loaded: 0, selected: "" }
         // switchProject empties assets before this effect runs; the record's
         // own loaded count is still the one the leaving view displayed.
         scrollMemoryRef.current.set(leavingKey, {
-          ...live.record,
-          loaded: assetsRef.current.length || live.record.loaded,
+          ...base,
+          loaded: assetsRef.current.length || base.loaded,
           selected: selectionRef.current.selected,
         })
       }
@@ -1257,15 +1261,13 @@ export default function App() {
   }
   updateGalleryWindowRef.current = updateGalleryWindow
   // Task 152: capture the displayed view's live position as the user scrolls
-  // (lightly throttled; recording resumes only after a restore has settled).
+  // (every event: a throttle would drop the final position of a short flick;
+  // recording resumes only after a restore has settled).
   const recordLiveGalleryScroll = () => {
     if (restoringScrollRef.current) return
     const grid = gridRef.current
     const key = committedViewKeyRef.current
     if (!grid || !key) return
-    const now = Date.now()
-    if (now - lastScrollRecordAtRef.current < 100) return
-    lastScrollRecordAtRef.current = now
     const model = galleryRowModel()
     if (!model || !model.placements.length) return
     const record = buildScrollRecord(model, assetsRef.current.map(item => item.id), grid.scrollTop,
@@ -1298,15 +1300,6 @@ export default function App() {
     const record = live && live.key === pending.viewKey
       ? live.record
       : scrollMemoryRef.current.get(pending.viewKey)
-    const anchorInto = (base: GalleryScrollRecord, top: number): GalleryScrollRecord => {
-      const anchor = pickScrollAnchor(model, ids, top)
-      return {
-        ...base,
-        scrollTop: top,
-        anchorId: anchor?.anchorId ?? base.anchorId,
-        anchorOffset: anchor?.anchorOffset ?? base.anchorOffset,
-      }
-    }
     // The masonry extent (the spacer that carries the real scroll height)
     // commits one render late: updateGalleryWindow above queued the new
     // window state inside this same layout pass, and the scroller's full
@@ -1319,25 +1312,18 @@ export default function App() {
     requestAnimationFrame(() => {
       try {
         if (committedViewKeyRef.current !== pending.viewKey) return
-        if (record) {
-          grid.scrollTop = resolveRestoredScrollTop(model, ids, record, grid.clientHeight)
-          liveScrollRef.current = { key: pending.viewKey, record: anchorInto(record, grid.scrollTop) }
-        } else {
-          // First visit to this view: start at the top explicitly instead of
-          // inheriting whatever the outgoing content left in the scroller.
-          grid.scrollTop = 0
-          liveScrollRef.current = null
-        }
+        // First visit to this view: start at the top explicitly instead of
+        // inheriting whatever the outgoing content left in the scroller.
+        grid.scrollTop = record ? resolveRestoredScrollTop(model, ids, record, grid.clientHeight) : 0
         if (pending.reveal) {
+          // Also when the view sat untouched at the top: a card paged to in
+          // the viewer still has to come into view.
           const index = ids.indexOf(selectionRef.current.selected)
-          if (index >= 0 && liveScrollRef.current) {
-            grid.scrollTop = revealCardScrollTop(model, index, grid.scrollTop, grid.clientHeight)
-            liveScrollRef.current = {
-              key: pending.viewKey,
-              record: anchorInto(liveScrollRef.current.record, grid.scrollTop),
-            }
-          }
+          if (index >= 0) grid.scrollTop = revealCardScrollTop(model, index, grid.scrollTop, grid.clientHeight)
         }
+        // Re-read scrollTop: the browser may have clamped the write.
+        const landed = buildScrollRecord(model, ids, grid.scrollTop, ids.length, selectionRef.current.selected)
+        liveScrollRef.current = landed ? { key: pending.viewKey, record: landed } : null
         updateGalleryWindow()
       } finally {
         restoringScrollRef.current = false

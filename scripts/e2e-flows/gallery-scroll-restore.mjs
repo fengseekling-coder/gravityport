@@ -3,10 +3,12 @@
 // viewer-paged focused card), stack round-trips restore the loaded window,
 // position and focused card via both the back button and the blank-menu
 // 「返回素材库」, sidebar switches to a group and to Pinterest restore per
-// view, and never-visited views start explicitly at the top.
+// view, never-visited views start explicitly at the top, and the root as the
+// app opens it (never scrolled) still keeps its focused card and reveals a
+// card paged to in the viewer.
 export const name = "gallery-scroll-restore";
 export const description =
-  "341 cards -> preview exit holds position / reveals paged card -> stack via back and 返回素材库 restores window+position+selection -> group and Pinterest sidebar switches restore -> first visit starts at 0";
+  "341 cards -> preview exit holds position / reveals paged card -> stack via back and 返回素材库 restores window+position+selection -> group and Pinterest sidebar switches restore -> first visit starts at 0 -> untouched views keep focus and reveal a paged card";
 
 const PLAIN_TOTAL = 340; // > GALLERY_MOUNT_ALL_THRESHOLD (320): windowing on
 const STACK_MEMBERS = 3;
@@ -226,6 +228,45 @@ function pageSource({ coverId, groupName }) {
         return Math.abs(r.height - r.width * 0.75) <= 2;
       });
     }, 'cards render their real aspect ratios');
+
+    // ── step 0: the root as the app opens it — at the top, never scrolled,
+    // so no scroll event has recorded anything yet ──
+    if (Math.round(grid().scrollTop) !== 0) throw new Error('root did not open at the top: ' + scrollState());
+    // 0a: a card focused there survives a trip to another view.
+    const pristine = realCards().filter((el) => el.getAttribute('data-asset-id') !== selectedId());
+    const pick = pristine[1];
+    if (!pick) throw new Error('no second card on the first screen');
+    const pickId = pick.getAttribute('data-asset-id');
+    pick.click();
+    await waitFor(() => selectedId() === pickId, 'root card selected (step 0)');
+    navButton('${groupName}').click();
+    await waitFor(() => loaded() === ${GROUP_MEMBERS}, 'group view loads (step 0)');
+    await settle('group view (step 0)');
+    navButton('所有素材').click();
+    await waitFor(() => grid() && loaded() > ${GROUP_MEMBERS}, 'root gallery returns (step 0)');
+    await settle('root (step 0)');
+    if (selectedId() !== pickId) throw new Error('untouched root lost its focused card: ' + selectedId() + ' vs ' + pickId);
+    if (Math.round(grid().scrollTop) !== 0) throw new Error('untouched root did not come back at the top: ' + scrollState());
+    // 0b: paging far in the viewer from the top reveals the focused card.
+    const topPair = fullyVisiblePair();
+    if (!topPair) throw new Error('no fully visible card pair at the top of the root');
+    await openPreview(topPair);
+    for (let i = 0; i < 120; i += 1) {
+      const at = viewerIndex();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      await waitFor(() => viewerIndex() === at + 1, 'viewer arrow (step 0) ' + i);
+    }
+    await closePreviewViaEscape();
+    const sel0 = document.querySelector('.asset-card.asset-selected');
+    if (!sel0) throw new Error('no selected card after paging from the top');
+    const g0 = grid();
+    const g0Top = g0.getBoundingClientRect().top;
+    const sel0Rect = sel0.getBoundingClientRect();
+    if (sel0Rect.top < g0Top - 1 || sel0Rect.bottom > g0Top + g0.clientHeight + 1 || !(g0.scrollTop > 0)) {
+      throw new Error('paged card not revealed from the top: top=' + (sel0Rect.top - g0Top)
+        + ' bottom=' + (sel0Rect.bottom - g0Top) + ' ch=' + g0.clientHeight + ' scrollTop=' + g0.scrollTop);
+    }
+    result.untouchedRoot = { selected: pickId, revealedFromTop: Math.round(g0.scrollTop), failed: false };
 
     // ── step 1: preview round-trip keeps the exact position ──
     await scrollTo(3 * grid().clientHeight, 'deep scroll');

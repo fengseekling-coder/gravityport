@@ -116,7 +116,9 @@ function raceSource(config) {
 
     // ── Pagination must work cleanly again after the aborted race ──
     await chooseProject('default');
-    await waitFor(() => loadedCount() === ${PAGE_SIZE}, 'default project back to its first page');
+    // The default view comes back at its remembered (bottom) position, which
+    // may pull page 2 straight away — at least the first page, never alpha's.
+    await waitFor(() => loadedCount() >= ${PAGE_SIZE}, 'default project back to at least its first page');
     const grid2 = document.querySelector('.asset-grid');
     for (let step = 0; step < 40 && loadedCount() < ${TOTAL}; step += 1) {
       grid2.scrollTop = grid2.scrollHeight;
