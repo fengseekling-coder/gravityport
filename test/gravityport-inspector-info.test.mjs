@@ -311,3 +311,37 @@ describe("promptNotice", () => {
     assert.equal(result, null);
   });
 });
+
+describe("aspectRatioLabel", () => {
+  const label = (w, h) => inspectorInfoModule.aspectRatioLabel(w, h);
+  it("names common ratios width first, within 1%", () => {
+    assert.equal(label(941, 1672), "9:16");
+    assert.equal(label(1080, 1920), "9:16");
+    assert.equal(label(1920, 1080), "16:9");
+    assert.equal(label(1024, 1024), "1:1");
+    assert.equal(label(1024, 1536), "2:3");
+    assert.equal(label(1536, 1024), "3:2");
+    assert.equal(label(1200, 1600), "3:4");
+    assert.equal(label(32, 24), "4:3");
+    assert.equal(label(1080, 1350), "4:5");
+    assert.equal(label(1456, 624), "21:9");
+    // "ultrawide" 2560×1080 is 2.37, 1.6% off 21:9: stays numeric.
+    assert.equal(label(2560, 1080), "2.37:1");
+  });
+  it("falls back to the shorter side normalized to 1 off the named ratios", () => {
+    assert.equal(label(1000, 1520), "1:1.52");
+    assert.equal(label(1560, 1000), "1.56:1");
+    assert.equal(label(3000, 1000), "3:1");
+  });
+  it("does not stretch a name past the tolerance", () => {
+    // 0.5 vs 9:16 (0.5625) is 11% off; 1:2 is exact.
+    assert.equal(label(500, 1000), "1:2");
+    // 1.5% off 16:9 stays numeric.
+    assert.equal(label(1804, 1000), "1.8:1");
+  });
+  it("shows a dash for missing or placeholder sizes", () => {
+    assert.equal(label(0, 100), "—");
+    assert.equal(label(1, 1), "—");
+    assert.equal(label(Number.NaN, 100), "—");
+  });
+});
