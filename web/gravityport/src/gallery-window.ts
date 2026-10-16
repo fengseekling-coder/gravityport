@@ -117,7 +117,9 @@ export function gallerySpacerHeights(
  * scrolling and incremental page hydration. With `spanWide`, landscape cards
  * occupy 2–3 adjacent columns (wanted by `masonrySpanFor`), narrowing one
  * span level at a time to the widest span whose placement window is level
- * within `SPAN_LEVEL_TOLERANCE`, and everything else still occupies one. */
+ * within `SPAN_LEVEL_TOLERANCE` and whose crest stays within
+ * `SPAN_RISE_TOLERANCE` of the shortest column's bottom, and everything
+ * else still occupies one. */
 export type MasonryPlacement = {
   left: number
   top: number
@@ -170,6 +172,13 @@ export function masonrySpanFor(heightRatio: number, columns: number): number {
  * span; more uneven windows make the card step its span down instead. */
 export const SPAN_LEVEL_TOLERANCE = 0.12
 
+/** Largest share of the column width a spanned card's placement window may
+ * rise above the shortest column's bottom (window crest minus the global
+ * minimum bottom) while keeping its span; a card parked higher strands the
+ * shortest columns — nothing later backfills them — so the card steps its
+ * span down instead and a smaller span fills them in. */
+export const SPAN_RISE_TOLERANCE = 0.5
+
 export function buildMasonryModel(
   heightRatios: number[], columns: number, columnWidth: number, gap: number,
   options?: { spanWide?: boolean },
@@ -192,14 +201,19 @@ export function buildMasonryModel(
     // uneven window leaves a permanent void under each shorter covered column
     // (later cards never backfill). A window qualifies only when that void —
     // the sum of crest-minus-bottom over the covered columns — stays within
-    // SPAN_LEVEL_TOLERANCE × columnWidth; otherwise the card steps its span
-    // down one column at a time. Span 1 always qualifies (void is 0), so a
-    // fully narrowed card falls through to the plain shortest-column scan.
+    // SPAN_LEVEL_TOLERANCE × columnWidth, and when the crest itself stays
+    // within SPAN_RISE_TOLERANCE × columnWidth of the shortest column's
+    // bottom — a card parked higher starves that column for good. Otherwise
+    // the card steps its span down one column at a time. Span 1 always
+    // qualifies (void is 0), so a fully narrowed card falls through to the
+    // plain shortest-column scan.
     let levelled = false
     if (spanWide && span > 1) {
       const tolerance = SPAN_LEVEL_TOLERANCE * safeWidth
+      const riseLimit = SPAN_RISE_TOLERANCE * safeWidth
       for (; span > 1; span -= 1) {
         let placed = false
+        const shortest = Math.min(...bottoms)
         for (let start = 0; start + span <= count; start += 1) {
           let windowCrest = bottoms[start]
           let windowCrestColumn = start
@@ -211,6 +225,7 @@ export function buildMasonryModel(
             waste += windowCrest - bottoms[covered]
           }
           if (waste > tolerance) continue
+          if (windowCrest - shortest > riseLimit) continue
           if (!placed || windowCrest < crest) { column = start; crest = windowCrest; crestColumn = windowCrestColumn }
           placed = true
         }
