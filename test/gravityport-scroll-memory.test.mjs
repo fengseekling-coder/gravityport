@@ -92,6 +92,16 @@ describe("resolveRestoredScrollTop", () => {
     const negative = { anchorId: "a", anchorOffset: 5, scrollTop: -50, loaded: 5, selected: "" };
     assert.equal(memory.resolveRestoredScrollTop(model, ["a", "b", "c", "d", "e"], negative, viewport), 0);
   });
+  it("clamps to the scroller's real limit when given, not the model's shorter extent", () => {
+    // The grid's trailing pagination sentinel adds one row gap below the
+    // masonry extent: a position held at the very bottom must come back there.
+    const model = build(ratios);
+    const viewport = 100;
+    const realMax = model.totalHeight - viewport + 8;
+    const bottom = { anchorId: "missing", anchorOffset: 0, scrollTop: realMax, loaded: 5, selected: "" };
+    assert.equal(memory.resolveRestoredScrollTop(model, ["a", "b", "c", "d", "e"], bottom, viewport, realMax), realMax);
+    assert.equal(memory.resolveRestoredScrollTop(model, ["a", "b", "c", "d", "e"], bottom, viewport), realMax - 8);
+  });
 });
 
 describe("revealCardScrollTop", () => {

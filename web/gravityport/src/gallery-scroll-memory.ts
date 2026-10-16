@@ -26,8 +26,13 @@ export type GalleryScrollRecord = {
 
 export type GalleryScrollAnchor = { anchorId: string; anchorOffset: number }
 
-function clampScrollTop(value: number, model: MasonryModel, viewportHeight: number): number {
-  const max = Math.max(0, model.totalHeight - Math.max(0, viewportHeight))
+/** `maxScrollTop`, when given, is the scroller's real limit (scrollHeight −
+ * clientHeight): container padding makes it exceed the model's extent, and
+ * clamping to the model then lands short of a position the user really held. */
+function clampScrollTop(value: number, model: MasonryModel, viewportHeight: number, maxScrollTop?: number): number {
+  const max = Number.isFinite(maxScrollTop)
+    ? Math.max(0, maxScrollTop as number)
+    : Math.max(0, model.totalHeight - Math.max(0, viewportHeight))
   if (!Number.isFinite(value)) return 0
   return Math.min(max, Math.max(0, value))
 }
@@ -54,13 +59,13 @@ export function pickScrollAnchor(model: MasonryModel, ids: string[], scrollTop: 
  * recorded offset again. Falls back to the recorded scrollTop when the anchor
  * card no longer exists, and clamps into the valid range. */
 export function resolveRestoredScrollTop(
-  model: MasonryModel, ids: string[], record: GalleryScrollRecord, viewportHeight: number,
+  model: MasonryModel, ids: string[], record: GalleryScrollRecord, viewportHeight: number, maxScrollTop?: number,
 ): number {
   const index = ids.indexOf(record.anchorId)
   const raw = index >= 0
     ? model.placements[index].top - record.anchorOffset
     : record.scrollTop
-  return clampScrollTop(raw, model, viewportHeight)
+  return clampScrollTop(raw, model, viewportHeight, maxScrollTop)
 }
 
 /** Minimal scroll that fits card `index` fully into the viewport: no movement
@@ -69,20 +74,20 @@ export function resolveRestoredScrollTop(
  * edge (plus margin) when it sits above. A card taller than the viewport
  * aligns its top edge. */
 export function revealCardScrollTop(
-  model: MasonryModel, index: number, scrollTop: number, viewportHeight: number, margin = 8,
+  model: MasonryModel, index: number, scrollTop: number, viewportHeight: number, margin = 8, maxScrollTop?: number,
 ): number {
   const placement = model.placements[index]
-  if (!placement) return clampScrollTop(scrollTop, model, viewportHeight)
+  if (!placement) return clampScrollTop(scrollTop, model, viewportHeight, maxScrollTop)
   const view = Math.max(0, viewportHeight)
   const top = placement.top
   const bottom = placement.top + placement.height
-  if (top >= scrollTop && bottom <= scrollTop + view) return clampScrollTop(scrollTop, model, viewportHeight)
+  if (top >= scrollTop && bottom <= scrollTop + view) return clampScrollTop(scrollTop, model, viewportHeight, maxScrollTop)
   const target = placement.height > view
     ? top - margin
     : bottom > scrollTop + view
       ? bottom + margin - view
       : top - margin
-  return clampScrollTop(target, model, viewportHeight)
+  return clampScrollTop(target, model, viewportHeight, maxScrollTop)
 }
 
 /** Snapshot of a view's live position: anchor card, fallback scrollTop,

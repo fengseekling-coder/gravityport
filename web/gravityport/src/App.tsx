@@ -1310,12 +1310,13 @@ export default function App() {
         if (committedViewKeyRef.current !== pending.viewKey) return
         // First visit to this view: start at the top explicitly instead of
         // inheriting whatever the outgoing content left in the scroller.
-        grid.scrollTop = record ? resolveRestoredScrollTop(model, ids, record, grid.clientHeight) : 0
+        const maxScrollTop = grid.scrollHeight - grid.clientHeight
+        grid.scrollTop = record ? resolveRestoredScrollTop(model, ids, record, grid.clientHeight, maxScrollTop) : 0
         if (pending.reveal) {
           // Also when the view sat untouched at the top: a card paged to in
           // the viewer still has to come into view.
           const index = ids.indexOf(selectionRef.current.selected)
-          if (index >= 0) grid.scrollTop = revealCardScrollTop(model, index, grid.scrollTop, grid.clientHeight)
+          if (index >= 0) grid.scrollTop = revealCardScrollTop(model, index, grid.scrollTop, grid.clientHeight, undefined, maxScrollTop)
         }
         // Re-read scrollTop: the browser may have clamped the write.
         const landed = buildScrollRecord(model, ids, grid.scrollTop, ids.length, selectionRef.current.selected)
