@@ -255,6 +255,12 @@ function cardDragSource(config) {
         const c = centerOf(el);
         return { x: c.x + rel.x, y: c.y + rel.y };
       };
+      // Only a highlighted card drags (task 155); a press on an unselected
+      // card is a marquee. Click it first, as a user would.
+      if (!fromEl.classList.contains('asset-selected')) {
+        fromEl.click();
+        await waitFor(() => fromEl.classList.contains('asset-selected'), 'drag source selected');
+      }
       const from = centerOf(fromEl);
       const start = aimNow();
       fromEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: DRAG_ID, button: 0, clientX: from.x, clientY: from.y }));
@@ -487,11 +493,9 @@ function cardDragSource(config) {
           if (highlights.card) throw new Error('stack drag highlighted a gallery card: ' + JSON.stringify(highlights));
         },
       });
-      // This drop is a no-op on the server, so nothing clears the selection:
-      // if the post-drag click is not swallowed it lands right here.
-      if (JSON.stringify(selectedIds()) === JSON.stringify([config.looseIds[1]])) {
-        throw new Error('the post-drag click selected the dragged stack card');
-      }
+      // Only a selected card drags (task 155), so the stack card is already
+      // the selection here and a leaked post-drag click would change nothing;
+      // the multi-drag step above is where the swallow is proven.
       if ((await stackCount()) !== 2) throw new Error('stack drag onto a card changed the stack count');
       const c = await assetById(config.looseIds[2]);
       if (c.stack) throw new Error('target card joined a stack: ' + JSON.stringify(c.stack));
@@ -602,6 +606,8 @@ function cardDragSource(config) {
       await waitForGalleryStable();
       const targetCard = cardFor(config.looseIds[3]);
       const to = centerOf(targetCard);
+      cardFor(config.looseIds[2]).click();
+      await waitFor(() => cardFor(config.looseIds[2]).classList.contains('asset-selected'), 'escape drag source selected');
       const from = centerOf(cardFor(config.looseIds[2]));
       cardFor(config.looseIds[2]).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: DRAG_ID, button: 0, clientX: from.x, clientY: from.y }));
       await sleep(40);
