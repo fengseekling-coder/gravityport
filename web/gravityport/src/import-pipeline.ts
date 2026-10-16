@@ -12,10 +12,10 @@
  */
 
 import { stageImportFile, requestJson, setAssetsGroup } from "./mosa-api.js";
-import { collectDroppedFiles } from "./collect-dropped-files.js";
+import { collectDroppedFiles, excludeLibraryFiles } from "./collect-dropped-files.js";
 
 // Re-export for convenience
-export { collectDroppedFiles };
+export { collectDroppedFiles, excludeLibraryFiles };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

@@ -674,6 +674,23 @@ function registerIPC() {
     return { ok: true, count: files.length };
   });
 
+  // The reverse check for drops: true for each path that resolves to an
+  // existing file inside the library (same canonicalization as the drag-out
+  // bridge above), so the renderer can skip re-importing those files.
+  ipcMain.handle("library-file-flags", async (event, requestedPaths) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return [];
+    const input = Array.isArray(requestedPaths) ? requestedPaths.slice(0, 10_000) : [];
+    return input.map((requestedPath) => {
+      if (typeof requestedPath !== "string" || !requestedPath.trim()) return false;
+      try {
+        const allowed = resolveAllowedFolderPath(requestedPath.trim(), [libraryDir]);
+        return Boolean(allowed && existsSync(allowed) && statSync(allowed).isFile());
+      } catch {
+        return false;
+      }
+    });
+  });
+
   ipcMain.handle("set-locale", async (event, locale) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
     if (locale !== "zh" && locale !== "en") return false;

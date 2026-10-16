@@ -27,6 +27,7 @@ const EXPECTED_API_KEYS = [
   "getUserProfile",
   "getVisualModelState",
   "installVisualPack",
+  "libraryFileFlags",
   "onMenuSearch",
   "onUpdateDownloadProgress",
   "onVisualPackProgress",
@@ -74,7 +75,8 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /webContents\.on\("console-message"/);
   assert.match(main, /MAX_RENDERER_CONSOLE_ERRORS = 32/);
   assert.doesNotMatch(main, /process\.cwd\(\)|join\(__dirname/);
-  assert.match(preload, /^const \{ contextBridge, ipcRenderer \} = require\("electron"\);/);
+  // webUtils only resolves a dropped File to its path (drop-back guard).
+  assert.match(preload, /^const \{ contextBridge, ipcRenderer, webUtils \} = require\("electron"\);/);
   assert.doesNotMatch(preload, /^\s*import\s/m);
 
   for (const setting of ["contextIsolation: true", "sandbox: true", "nodeIntegration: false"]) {
@@ -94,12 +96,17 @@ test("preload path, module format, security settings, and API surface are stable
   // 不在 invoke 计数内。任务 116：第 19/20 条 rename-notice-state /
   // acknowledge-rename-notice（老用户「已更名」提示）。任务 135：第 21 条
   // open-pinterest-authorize（Pinterest OAuth 授权页）。任务 147：第 22 条
-  // open-external-link（Pinterest Pin 外链，仅 http/https）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 22, "only the twenty-two approved invoke channels remain");
+  // open-external-link（Pinterest Pin 外链，仅 http/https）。第 23 条
+  // library-file-flags（拖出又拖回时不重复导入，只回布尔值）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "only the twenty-three approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
   assert.match(preload, /startNativeDrag: \(paths\) => ipcRenderer\.invoke\("start-native-file-drag", paths\)/);
+  // Drop-back guard: the preload only resolves dropped File objects to paths;
+  // the main process decides which of them are library files.
+  assert.match(preload, /libraryFileFlags: \(files\) => ipcRenderer\.invoke\("library-file-flags"[\s\S]*?webUtils\.getPathForFile\(file\)/);
+  assert.match(main, /ipcMain\.handle\("library-file-flags"[\s\S]*?resolveAllowedFolderPath\(requestedPath\.trim\(\), \[libraryDir\]\)/);
   assert.match(preload, /getUserProfile: \(\) => ipcRenderer\.invoke\("user-profile"\)/);
   // 任务 116：老用户「已更名」提示的取状态/确认通道。
   assert.match(preload, /getRenameNoticeState: \(\) => ipcRenderer\.invoke\("rename-notice-state"\)/);

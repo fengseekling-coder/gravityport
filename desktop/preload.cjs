@@ -1,10 +1,15 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   pasteImage: () => ipcRenderer.invoke("paste-image"),
   writeClipboardText: (text) => ipcRenderer.invoke("write-clipboard-text", text),
   writeClipboardImage: (path) => ipcRenderer.invoke("write-clipboard-image", path),
   startNativeDrag: (paths) => ipcRenderer.invoke("start-native-file-drag", paths),
+  // Which dropped files already live inside the library — a card dragged out
+  // of the window and dropped back must not import a second copy.
+  libraryFileFlags: (files) => ipcRenderer.invoke("library-file-flags", Array.from(files || [], (file) => {
+    try { return webUtils.getPathForFile(file) || ""; } catch { return ""; }
+  })),
   setLocale: (locale) => ipcRenderer.invoke("set-locale", locale),
   getUserProfile: () => ipcRenderer.invoke("user-profile"),
   // 任务 116：老用户「已更名」提示——取启动早期判定结果、确认已读。

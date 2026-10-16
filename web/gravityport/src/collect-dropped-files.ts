@@ -128,3 +128,17 @@ export async function collectDroppedFiles(
   if (files.length > maxFiles) throw dropTooLargeError(maxFiles)
   return { files, unsupported }
 }
+
+// ─── Library files dropped back ──────────────────────────────────────────────
+
+/** Drop the scanned files that are copies of `libraryFiles` (top-level dropped
+ * files the desktop bridge found inside the library: a card dragged out of
+ * the window and dropped back). Matched by name, size and modification time,
+ * since entry-scanned File objects are distinct from the dropped ones. */
+export function excludeLibraryFiles(files: File[], libraryFiles: File[]): { files: File[]; skipped: number } {
+  if (!libraryFiles.length) return { files, skipped: 0 }
+  const keyOf = (file: File) => `${file.name}\u0000${file.size}\u0000${file.lastModified}`
+  const library = new Set(libraryFiles.map(keyOf))
+  const kept = files.filter((file) => !library.has(keyOf(file)))
+  return { files: kept, skipped: files.length - kept.length }
+}

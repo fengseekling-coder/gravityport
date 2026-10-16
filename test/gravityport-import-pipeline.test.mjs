@@ -773,3 +773,56 @@ describe("runImport against real MOSA runtime", () => {
     globalThis.fetch = originalFetch
   })
 })
+
+// ─── excludeLibraryFiles: a card dragged out and dropped back ────────────────
+
+describe("excludeLibraryFiles", () => {
+  let excludeLibraryFiles
+  let root
+
+  before(async () => {
+    root = await mkdtemp(join(tmpdir(), "mosa-gp-exclude-"))
+    execFileSync(join(repositoryRoot, "node_modules", ".bin", "tsc"), [
+      join(uiRoot, "src", "collect-dropped-files.ts"),
+      "--outDir", root, "--module", "esnext", "--target", "es2022",
+      "--moduleResolution", "bundler", "--skipLibCheck",
+    ], { stdio: "pipe" })
+    excludeLibraryFiles = (await import(join(root, "collect-dropped-files.js"))).excludeLibraryFiles
+  })
+
+  after(async () => {
+    if (root) await rm(root, { recursive: true, force: true })
+  })
+
+  const file = (name, bytes, lastModified) => new File([new Uint8Array(bytes)], name, { lastModified })
+
+  it("drops scanned copies of library files and keeps the rest", () => {
+    const dropped = file("web-chatgpt-1.png", 10, 1000)
+    // Entry-scanned File objects are new instances with the same metadata.
+    const scanned = [file("web-chatgpt-1.png", 10, 1000), file("new.png", 10, 1000)]
+    const result = excludeLibraryFiles(scanned, [dropped])
+    assert.equal(result.skipped, 1)
+    assert.deepEqual(result.files.map((f) => f.name), ["new.png"])
+  })
+
+  it("does not treat a same-named file of a different size or time as a library file", () => {
+    const library = [file("a.png", 10, 1000)]
+    const result = excludeLibraryFiles([file("a.png", 11, 1000), file("a.png", 10, 2000)], library)
+    assert.equal(result.skipped, 0)
+    assert.equal(result.files.length, 2)
+  })
+
+  it("skips everything when every dropped file came from the library", () => {
+    const library = [file("a.png", 3, 1), file("b.png", 4, 2)]
+    const result = excludeLibraryFiles([file("a.png", 3, 1), file("b.png", 4, 2)], library)
+    assert.equal(result.skipped, 2)
+    assert.equal(result.files.length, 0)
+  })
+
+  it("is a no-op without library files", () => {
+    const scanned = [file("a.png", 3, 1)]
+    const result = excludeLibraryFiles(scanned, [])
+    assert.equal(result.skipped, 0)
+    assert.equal(result.files, scanned)
+  })
+})
