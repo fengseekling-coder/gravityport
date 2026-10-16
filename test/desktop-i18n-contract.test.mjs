@@ -139,6 +139,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "getUserProfile",
     "getVisualModelState",
     "installVisualPack",
+    "libraryFileFlags",
     "onMenuSearch",
     "onUpdateDownloadProgress",
     "onVisualPackProgress",
@@ -160,7 +161,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // rename-notice-state / acknowledge-rename-notice（老用户「已更名」提示）。任务 135：
   // 第 21 条 open-pinterest-authorize（Pinterest OAuth 授权页）。任务 147：第 22 条
   // open-external-link（Pinterest Pin 外链，仅 http/https）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 22, "preload keeps the approved invoke channels");
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");
   // R1 isolation fix (2026-08-09, approved scope) added qa:web/qa:electron/

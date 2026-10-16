@@ -256,6 +256,7 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "getUserProfile",
     "getVisualModelState",
     "installVisualPack",
+    "libraryFileFlags", // drop-back guard: which dropped files already live in the library (booleans only)
     "onMenuSearch",
     "onUpdateDownloadProgress",
     "onVisualPackProgress",
@@ -454,8 +455,13 @@ test("Electron drag/drop uses the same byte-stream staging path as Web", async (
     readFile(join(root, "web", "gravityport", "src", "import-pipeline.ts"), "utf8"),
   ]);
 
-  assert.doesNotMatch(preload, /getPathForFile|webUtils\.getPathForFile|stage-dropped-file/,
-    "preload must not expose raw local file paths for drag/drop");
+  // The drop-back guard is the one place a dropped File becomes a path, and
+  // only on its way to the main process: the renderer gets booleans back and
+  // still imports through the byte-stream staging below.
+  assert.doesNotMatch(preload, /stage-dropped-file/, "preload must not stage dropped files by path");
+  assert.equal(preload.split("getPathForFile").length - 1, 1, "getPathForFile appears exactly once");
+  assert.match(preload, /libraryFileFlags: \(files\) => ipcRenderer\.invoke\("library-file-flags", Array\.from\(files \|\| \[\], \(file\) => \{\n\s+try \{ return webUtils\.getPathForFile\(file\) \|\| ""; \} catch \{ return ""; \}\n\s+\}\)\),/,
+    "dropped-file paths only go to the main process, never back to the page");
   assert.match(app, /onDrop={event =>/, "the workspace owns the drop handler");
   // Task 142: the drop handler hands the DataTransfer to collectDroppedFiles
   // (folder expansion, still real File objects) and importFiles runs the

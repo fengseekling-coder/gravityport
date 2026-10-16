@@ -8,6 +8,7 @@ type ElectronAPI = {
   writeClipboardText?: (text: string) => Promise<unknown>
   writeClipboardImage?: (path: string) => Promise<unknown>
   startNativeDrag?: (paths: string[]) => Promise<unknown>
+  libraryFileFlags?: (files: File[]) => Promise<boolean[]>
   setLocale?: (locale: string) => Promise<unknown>
   getUserProfile?: () => Promise<{ installationId?: string; [key: string]: unknown }>
   getVisualModelState?: (refresh?: boolean) => Promise<{ state?: string; [key: string]: unknown }>

@@ -14,7 +14,7 @@ import {
   createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop,
   type StackUndoPlan,
 } from "./card-drag"
-import { runImport, collectDroppedFiles } from "./import-pipeline"
+import { runImport, collectDroppedFiles, excludeLibraryFiles } from "./import-pipeline"
 import { trashRemainingDays } from "./trash-ui"
 import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
@@ -2199,13 +2199,26 @@ export default function App() {
   // Drop entry: collectDroppedFiles must be invoked synchronously inside the
   // drop handler — dataTransfer.items die after the event tick — and the scan
   // promise is awaited afterwards. A folder over the scan limit surfaces as a
-  // toast and nothing imports.
+  // toast and nothing imports. Files that already live in the library (a card
+  // dragged out of the window and dropped back) are skipped, never re-imported.
   const importDroppedFiles = (dataTransfer: DataTransfer | null, groupName?: string) => {
+    const topLevel = Array.from(dataTransfer?.files || [])
     const scan = collectDroppedFiles(dataTransfer, {
       onScanProgress: count => notify(fillNamed("正在扫描拖入的文件…已找到 {count} 个", { count })),
     })
-    void scan
-      .then(result => importFiles(result.files, groupName))
+    const flagLibrary = desktopAPI()?.libraryFileFlags
+    const flags: Promise<boolean[]> = flagLibrary && topLevel.length
+      ? flagLibrary(topLevel).catch(() => [])
+      : Promise.resolve([])
+    void Promise.all([scan, flags])
+      .then(([result, flagged]) => {
+        const { files, skipped } = excludeLibraryFiles(result.files, topLevel.filter((_, index) => flagged[index] === true))
+        if (skipped && !files.length) {
+          notify(fillNamed("{count} 个文件已在素材库中，没有重复导入", { count: skipped }))
+          return
+        }
+        return importFiles(files, groupName)
+      })
       .catch(error => notify(errorMessage(error)))
   }
   useEffect(() => {

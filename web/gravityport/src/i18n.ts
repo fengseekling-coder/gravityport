@@ -225,6 +225,7 @@ const english: Record<string, string> = {
   "撤销": "Undo",
   "正在导入 {completed}/{total} · 成功 {imported} · 失败 {failed}": "Importing {completed}/{total} · {imported} succeeded · {failed} failed",
   "正在扫描拖入的文件…已找到 {count} 个": "Scanning dropped files… {count} found so far",
+  "{count} 个文件已在素材库中，没有重复导入": "{count} files are already in the library — not imported again",
   "有 {count} 个文件格式不支持，已跳过": "{count} unsupported files were skipped",
   "正在导入，请稍候": "Import in progress, please wait",
   // Task 144: version tree conversation rounds (second line per row). English
