@@ -2268,6 +2268,11 @@ img.black-image {
   overflow: hidden;
 }.app .detail-reading.five-lines:not(.expanded) p {
   -webkit-line-clamp: 5;
+}.app .prompt-provenance {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+  line-height: var(--space-4);
+  color: var(--ui-muted);
 }.app .reading-toggle {
   padding: 0 var(--space-1);
   margin-top: var(--space-1);

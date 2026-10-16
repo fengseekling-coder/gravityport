@@ -23,7 +23,7 @@ import { isEditableTarget } from "./keyboard"
 import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
 import { computeConversationRounds, conversationRoundRows, roundLine } from "./conversation-rounds"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
-import { resolveReferences } from "./inspector-info"
+import { describeSource, promptNotice, resolveReferences } from "./inspector-info"
 import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, removeTagFromStored, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
@@ -114,6 +114,14 @@ function ratioText(width: number, height: number): string {
   // Design convention normalizes the shorter side to 1: "1:1.52" portrait,
   // "1.56:1" landscape.
   return width >= height ? `${trim((width / height).toFixed(2))}:1` : `1:${trim((height / width).toFixed(2))}`
+}
+
+/** Inspector header line "kind · source · date". Whole-sentence templates keep
+ *  the kind word singular — the bare "图片" key is the filter buttons' plural. */
+function inspectorHeaderLine(info: ReturnType<typeof describeSource>, tr: (text: string) => string): string {
+  const kind = info.kindLabel === "视频" ? "视频" : "图片"
+  const template = info.dateLabel ? `${kind} · {source} · {date}` : `${kind} · {source}`
+  return tr(template).replace("{source}", tr(info.sourceLabel)).replace("{date}", info.dateLabel)
 }
 
 function errorMessage(error: unknown): string {
@@ -2519,6 +2527,9 @@ export default function App() {
     ? (asset.image_path || asset.image_url || "").split(/[\\/]/).pop() || ""
     : ""
   const shownPrompt = promptVariant === 2 ? asset?.prompt2 || "" : asset?.prompt || ""
+  const sourceInfo = asset ? describeSource(asset, language) : null
+  const headerLine = sourceInfo ? inspectorHeaderLine(sourceInfo, tr) : ""
+  const promptNoticeInfo = asset ? promptNotice(asset) : null
   const relatedAssets = similarAssets.slice(0, expandedRelated ? 6 : 2)
   const startPromptEdit = () => {
     if (!asset) return
@@ -3162,7 +3173,7 @@ export default function App() {
                   <Icon name="heart" size={13} />
                 </button>
               </div>
-              <span className="muted">{asset.mediaKind === "video" ? tr("视频 · 本地素材") : tr("图片 · 本地素材")}</span>
+              <span className="muted">{headerLine}</span>
               <button className="summary-preview" onClick={() => setPreview(true)}>{tr("打开预览")}<Icon name="right" size={12} /></button>
             </div>
           </div>
@@ -3175,6 +3186,9 @@ export default function App() {
               ].map(([label, value]) => (
                 <span className="property-tag" key={label} title={`${tr(label)}: ${tr(value)}`} aria-label={`${tr(label)}: ${tr(value)}`}>{tr(value)}</span>
               ))}
+              {sourceInfo?.groupLabel ? (
+                <span className="property-tag" title={`${tr("分组")}: ${sourceInfo.groupLabel}`} aria-label={`${tr("分组")}: ${sourceInfo.groupLabel}`}>{sourceInfo.groupLabel}</span>
+              ) : null}
           </div>
           <div className="tags" ref={tagsRowRef}>
             {(expandedTags ? tagItems : tagItems.slice(0, collapsedTagCount)).map((t, index) => (
@@ -3292,14 +3306,19 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <ReadingText
-                id="asset-prompt"
-                text={shownPrompt || tr("无提示词记录")}
-                expanded={expandedPrompt}
-                onToggle={() => setExpandedPrompt(!expandedPrompt)}
-                expandLabel={tr("展开提示词")}
-                collapseLabel={tr("收起")}
-              />
+              <>
+                <ReadingText
+                  id="asset-prompt"
+                  text={shownPrompt || tr(promptNoticeInfo?.key === "webPromptUnavailable" ? "网页来源未暴露原始生图提示词" : "无提示词记录")}
+                  expanded={expandedPrompt}
+                  onToggle={() => setExpandedPrompt(!expandedPrompt)}
+                  expandLabel={tr("展开提示词")}
+                  collapseLabel={tr("收起")}
+                />
+                {promptVariant === 1 && promptNoticeInfo && promptNoticeInfo.key !== "webPromptUnavailable" && (
+                  <p className="prompt-provenance">{tr(promptNoticeInfo.text)}</p>
+                )}
+              </>
             )}
           </section>
           <section className="detail-section user-instruction-section">

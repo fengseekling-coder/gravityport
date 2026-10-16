@@ -213,6 +213,39 @@ describe("describeSource", () => {
     const result = inspectorInfoModule.describeSource(asset, "zh");
     assert.equal(result.groupLabel, "");
   });
+
+  it("falls back to unknown source when source type is empty", () => {
+    const asset = {
+      mediaKind: "image",
+      source: {},
+      created_at: "2024-03-15T10:30:00Z",
+      group: "",
+    };
+    const result = inspectorInfoModule.describeSource(asset, "zh");
+    assert.equal(result.sourceLabel, "未知来源");
+  });
+
+  it("returns unrecognized source types verbatim", () => {
+    const asset = {
+      mediaKind: "image",
+      source: { type: "web-sora" },
+      created_at: "2024-03-15T10:30:00Z",
+      group: "",
+    };
+    const result = inspectorInfoModule.describeSource(asset, "zh");
+    assert.equal(result.sourceLabel, "web-sora");
+  });
+
+  it("formats the date label in English for language en", () => {
+    const asset = {
+      mediaKind: "image",
+      source: { type: "local-file" },
+      created_at: "2024-03-15T10:30:00Z",
+      group: "",
+    };
+    const result = inspectorInfoModule.describeSource(asset, "en");
+    assert.equal(result.dateLabel, "Mar 15, 2024");
+  });
 });
 
 describe("promptNotice", () => {
