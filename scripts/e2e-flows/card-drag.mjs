@@ -218,7 +218,8 @@ function cardDragSource(config) {
       const wantSel = JSON.stringify([config.looseIds[2], config.looseIds[3]].sort());
       for (let attempt = 1; attempt <= attempts; attempt++) {
         await resetSelection();
-        cmdClick(cardFor(config.looseIds[2]));
+        // Click C, ⌘-click D (a ⌘-click adds to the inspected card, task 155).
+        cardFor(config.looseIds[2]).click();
         cmdClick(cardFor(config.looseIds[3]));
         // A reload landing between the reset and the clicks adds the implicit
         // first card; that is a wrong start, so it counts as a retry too.
@@ -455,7 +456,7 @@ function cardDragSource(config) {
       // card between the reset and the click, start over.
       for (let pick = 1; ; pick++) {
         await resetSelection();
-        cmdClick(cardFor(config.looseIds[2]));
+        cardFor(config.looseIds[2]).click();
         try {
           await waitFor(() => JSON.stringify(selectedIds()) === JSON.stringify([config.looseIds[2]]), 'only C selected', 3000);
           break;

@@ -59,8 +59,8 @@ function multiSelectSource() {
 
     await waitFor(() => plain().length === 3, 'three seeded cards');
 
-    // ctrl-click marks two cards; the ring renders on both.
-    clickCard(plain()[0], { ctrlKey: true });
+    // Click one card, ctrl-click another: the ring renders on both.
+    clickCard(plain()[0]);
     clickCard(plain()[1], { ctrlKey: true });
     await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 2, 'two selected rings');
     const multiSelected = document.querySelectorAll('.asset-card.asset-selected').length;

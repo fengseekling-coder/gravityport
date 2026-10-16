@@ -173,14 +173,17 @@ function interactionSafetySource(config) {
     const promptInFlightSafe = saveLanded && betaStillClean;
 
     // ── 3) Selection unity ────────────────────────────────────────────────
-    // Plain click A then modifier-click B: the logical selection is exactly B,
-    // so a menu trash removes B — not the previously inspected A.
+    // The rings are the batch target. Plain click A, modifier-click B: the
+    // inspected A is the implicit selection, so both carry a ring (task 155).
+    // Modifier-click A again drops it, and a menu trash removes exactly B.
     clickCard(cardA());
     await waitFor(() => rings().length === 1 && rings()[0].getAttribute('data-asset-id') === config.alphaId,
       'plain click focuses A');
     clickCard(cardB(), { ctrlKey: true });
+    await waitFor(() => rings().length === 2, 'modifier click adds B to the inspected A');
+    clickCard(cardA(), { ctrlKey: true });
     await waitFor(() => rings().length === 1 && rings()[0].getAttribute('data-asset-id') === config.betaId,
-      'modifier click re-targets the selection to B');
+      'modifier click on A leaves only B');
     (await menuOn(cardB(), '移至回收站')).click();
     await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'single trash confirm');
     Array.from(document.querySelectorAll('[role="alertdialog"] button'))
@@ -194,8 +197,8 @@ function interactionSafetySource(config) {
     navButton('所有素材').click();
     await waitFor(() => Boolean(cardFor(config.betaId)), 'beta back in the all view');
 
-    // Batch favorite acts on both modifier-selected cards.
-    clickCard(cardA(), { ctrlKey: true });
+    // Batch favorite acts on both selected cards.
+    clickCard(cardA());
     await waitFor(() => rings().length === 1 && rings()[0].getAttribute('data-asset-id') === config.alphaId,
       'ring on alpha before batch favorite');
     clickCard(cardB(), { ctrlKey: true });
@@ -212,8 +215,8 @@ function interactionSafetySource(config) {
     // triggered may legally re-land the design's implicit single ring on the
     // first card, so the gate is "no batch selection left", not "zero rings".
     await waitFor(() => rings().length <= 1, 'selection cleared before the cut round');
-    clickCard(cardA(), { ctrlKey: true });
-    await waitFor(() => rings().length === 1, 'one ring after modifier click');
+    clickCard(cardA());
+    await waitFor(() => rings().length === 1 && rings()[0].getAttribute('data-asset-id') === config.alphaId, 'one ring on A');
     clickCard(cardB(), { ctrlKey: true });
     await waitFor(() => rings().length === 2, 'two rings before the cut');
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', ctrlKey: true, bubbles: true, cancelable: true }));
