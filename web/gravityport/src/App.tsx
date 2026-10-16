@@ -18,6 +18,7 @@ import { runImport, collectDroppedFiles } from "./import-pipeline"
 import { trashRemainingDays } from "./trash-ui"
 import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
+import { boxFromPoints, boxesIntersect, marqueeAutoScrollStep, marqueeSelection, masonryCardBoxes, MARQUEE_DRAG_THRESHOLD_PX, type Box } from "./marquee"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
@@ -1451,40 +1452,137 @@ export default function App() {
     void selectAllAcrossPages()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading])
-  // Marquee selection: pointer drag across the grid background selects every
-  // plain card whose box intersects the rubber band.
-  const marqueeRef = useRef<{ x0: number; y0: number } | null>(null)
+  // Marquee selection: a drag that starts on the grid background or on an
+  // unselected card selects every plain card whose box intersects the rubber
+  // band; a press on a highlighted card drags the selection instead (task 155:
+  // left mouse only, no modifier needed). Shift-drag starts an additive
+  // marquee even on a selected card. Near the grid's top or bottom edge the
+  // sweep auto-scrolls, and hits come from the masonry model, so cards the
+  // virtualized window has unmounted still join the selection.
+  const galleryWindowRef = useRef(galleryWindow)
+  galleryWindowRef.current = galleryWindow
+  const marqueeRef = useRef<{ pointerId: number } | null>(null)
+  const cardIsSelected = (id: string) =>
+    Boolean(id) && logicalSelection(selectionRef.current.selectedIds, selectionRef.current.selected).includes(id)
   const onGridPointerDown = (event: React.PointerEvent) => {
-    if (event.button !== 0 || preview || settings || (event.target as HTMLElement).closest(".asset-card")) return
+    const grid = gridRef.current
+    if (!grid || marqueeRef.current || event.button !== 0 || event.pointerType === "touch" || preview || settings) return
+    const startCard = (event.target as HTMLElement).closest<HTMLElement>(".asset-card")
+    if (startCard && !event.shiftKey && cardIsSelected(startCard.dataset.assetId || "")) return
     // A leftover native text selection would keep painting cards blue in DOM
     // order, which has nothing to do with where they sit in the masonry.
     window.getSelection()?.removeAllRanges()
-    marqueeRef.current = { x0: event.clientX, y0: event.clientY }
-    setMarquee({ x0: event.clientX, y0: event.clientY, x1: event.clientX, y1: event.clientY })
-    const move = (e: PointerEvent) => {
-      const start = marqueeRef.current
-      if (!start) return
-      setMarquee({ x0: start.x0, y0: start.y0, x1: e.clientX, y1: e.clientY })
-      const rect = { left: Math.min(start.x0, e.clientX), right: Math.max(start.x0, e.clientX), top: Math.min(start.y0, e.clientY), bottom: Math.max(start.y0, e.clientY) }
-      const hits = Array.from(document.querySelectorAll<HTMLElement>(".asset-card:not(.asset-card-virtual-placeholder)"))
-        .filter(node => !node.querySelector(".stack-mark"))
-        .filter(node => {
-          const box = node.getBoundingClientRect()
-          return box.left < rect.right && box.right > rect.left && box.top < rect.bottom && box.bottom > rect.top
-        })
-        .map(node => node.dataset.assetId)
-        .filter((id): id is string => Boolean(id))
-      const unique = [...new Set(hits)]
-      applySelection(unique, replaceSelection(unique, selectionRef.current.selected))
+    const gesture = { pointerId: event.pointerId }
+    marqueeRef.current = gesture
+    const pressX = event.clientX
+    const pressY = event.clientY
+    const base = event.shiftKey ? logicalSelection(selectionRef.current.selectedIds, selectionRef.current.selected) : []
+    const startId = startCard && !startCard.querySelector(".stack-mark") ? startCard.dataset.assetId || "" : ""
+    const toContent = (clientX: number, clientY: number) => {
+      const bounds = grid.getBoundingClientRect()
+      return {
+        x: Math.min(Math.max(clientX, bounds.left), bounds.right) - bounds.left + grid.scrollLeft,
+        y: Math.min(Math.max(clientY, bounds.top), bounds.bottom) - bounds.top + grid.scrollTop,
+      }
     }
-    const up = () => {
+    const origin = toContent(pressX, pressY)
+    let dragging = false
+    let lastX = pressX
+    let lastY = pressY
+    let frame = 0
+    let candidates: { id: string; box: Box }[] = []
+    let candidatesKey: unknown = null
+    const refreshCandidates = () => {
+      const items = assetsRef.current
+      const win = galleryWindowRef.current
+      const key = win && win.model.placements.length === items.length ? win.model : items
+      if (key === candidatesKey) return
+      candidatesKey = key
+      const bounds = grid.getBoundingClientRect()
+      const domBox = (node: HTMLElement): Box => {
+        const r = node.getBoundingClientRect()
+        const left = r.left - bounds.left + grid.scrollLeft
+        const top = r.top - bounds.top + grid.scrollTop
+        return { left, top, right: left + r.width, bottom: top + r.height }
+      }
+      const mounted = Array.from(grid.querySelectorAll<HTMLElement>(".asset-card:not(.asset-card-virtual-placeholder)"))
+      if (key === items) {
+        candidates = mounted.filter(node => !node.querySelector(".stack-mark") && node.dataset.assetId)
+          .map(node => ({ id: node.dataset.assetId!, box: domBox(node) }))
+        return
+      }
+      const model = win!.model
+      const styles = getComputedStyle(grid)
+      const contentWidth = grid.clientWidth - (Number.parseFloat(styles.paddingLeft) || 0) - (Number.parseFloat(styles.paddingRight) || 0)
+      const boxes = masonryCardBoxes(model, (contentWidth - (model.columns - 1) * model.gap) / model.columns)
+      // Anchor the model origin on a mounted card so grid padding and the
+      // containing block never shift the boxes off the rendered cards.
+      let dx = 0
+      let dy = 0
+      const anchor = mounted.find(node => node.dataset.assetId)
+      const anchorIndex = anchor ? items.findIndex(a => a.id === anchor.dataset.assetId) : -1
+      if (anchor && anchorIndex >= 0) {
+        const box = domBox(anchor)
+        dx = box.left - boxes[anchorIndex].left
+        dy = box.top - boxes[anchorIndex].top
+      }
+      candidates = items.flatMap((a, index) => a.stack || !a.id ? [] : [{
+        id: a.id,
+        box: { left: boxes[index].left + dx, top: boxes[index].top + dy, right: boxes[index].right + dx, bottom: boxes[index].bottom + dy },
+      }])
+    }
+    const update = () => {
+      refreshCandidates()
+      const current = toContent(lastX, lastY)
+      const rect = boxFromPoints(origin.x, origin.y, current.x, current.y)
+      const bounds = grid.getBoundingClientRect()
+      const clipX = (x: number) => Math.min(Math.max(bounds.left + x - grid.scrollLeft, bounds.left), bounds.right)
+      const clipY = (y: number) => Math.min(Math.max(bounds.top + y - grid.scrollTop, bounds.top), bounds.bottom)
+      setMarquee({ x0: clipX(origin.x), y0: clipY(origin.y), x1: clipX(current.x), y1: clipY(current.y) })
+      const hits = candidates.filter(entry => boxesIntersect(entry.box, rect)).map(entry => entry.id)
+      const ids = marqueeSelection({ base, startId, hits })
+      applySelection(ids, replaceSelection(ids, selectionRef.current.selected))
+    }
+    const autoScroll = () => {
+      frame = 0
+      if (marqueeRef.current !== gesture) return
+      const bounds = grid.getBoundingClientRect()
+      const step = marqueeAutoScrollStep(lastY, bounds.top, bounds.bottom)
+      if (!step) return
+      const before = grid.scrollTop
+      grid.scrollTop += step
+      if (grid.scrollTop !== before) update()
+      frame = requestAnimationFrame(autoScroll)
+    }
+    const move = (e: PointerEvent) => {
+      if (e.pointerId !== gesture.pointerId || marqueeRef.current !== gesture) return
+      lastX = e.clientX
+      lastY = e.clientY
+      if (!dragging) {
+        if (Math.hypot(lastX - pressX, lastY - pressY) < MARQUEE_DRAG_THRESHOLD_PX) return
+        dragging = true
+      }
+      e.preventDefault()
+      update()
+      if (!frame) frame = requestAnimationFrame(autoScroll)
+    }
+    const up = (e: PointerEvent) => {
+      if (e.pointerId !== gesture.pointerId) return
+      if (frame) cancelAnimationFrame(frame)
+      frame = 0
+      // A sweep that started on a card can end on that same card, and the
+      // click the browser then fires must not reselect it (or Shift-range from
+      // it). A sweep from the background never clicks a card.
+      if (dragging && startCard) suppressCardDragClickRef.current = true
       marqueeRef.current = null
       setMarquee(null)
       window.removeEventListener("pointermove", move)
       window.removeEventListener("pointerup", up)
+      window.removeEventListener("pointercancel", up)
     }
     window.addEventListener("pointermove", move)
     window.addEventListener("pointerup", up)
+    window.addEventListener("pointercancel", up)
   }
   // Batch helpers: every action in the context menu applies to the whole
   // selection once more than one card is marked.
@@ -1541,6 +1639,9 @@ export default function App() {
     if (event.button !== 0 || event.pointerType === "touch" || event.shiftKey) return
     const pressedId = a.id
     if (!pressedId) return
+    // Only a highlighted card drags (task 155): a press on an unselected card
+    // is a marquee, owned by onGridPointerDown.
+    if (!cardIsSelected(pressedId)) return
     const insideStack = Boolean(stackId)
     let dragIds: string[] = []
     let fromStackId = ""
