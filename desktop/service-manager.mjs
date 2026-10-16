@@ -80,7 +80,7 @@ export function shouldAllowSameVersionServiceReplacement({ isPackaged, qaRun, ex
  */
 export async function startMosaService(options = {}) {
   const host = options.host || DEFAULT_HOST;
-  const port = normalizeMosaPort(options.port ?? DEFAULT_MOSA_DESKTOP_PORT, { label: "MOSA desktop port" });
+  const port = normalizeMosaPort(options.port ?? DEFAULT_MOSA_DESKTOP_PORT, { label: "GravityPort desktop port" });
   const libraryDir = options.libraryDir
     ? resolve(options.libraryDir)
     : resolveLibraryLocation({ homeDir: homedir() }).libraryDir;
@@ -260,7 +260,7 @@ export async function startMosaService(options = {}) {
 
 export async function probeMosaService(options = {}) {
   const host = options.host || DEFAULT_HOST;
-  const port = normalizeMosaPort(options.port ?? DEFAULT_MOSA_DESKTOP_PORT, { label: "MOSA desktop port" });
+  const port = normalizeMosaPort(options.port ?? DEFAULT_MOSA_DESKTOP_PORT, { label: "GravityPort desktop port" });
   const libraryDir = options.libraryDir
     ? resolve(options.libraryDir)
     : resolveLibraryLocation({ homeDir: homedir() }).libraryDir;

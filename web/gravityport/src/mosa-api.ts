@@ -172,7 +172,7 @@ export async function requestJson<T>(path: string, {
     if (typeof data.code === "string") (error as Error & { code?: string }).code = data.code
     throw error
   }
-  throw new Error("MOSA session authorization expired")
+  throw new Error("GravityPort session authorization expired")
 }
 
 const e = encodeURIComponent
