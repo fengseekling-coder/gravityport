@@ -43,7 +43,7 @@ const english: Record<string, string> = {
   "上一个素材": "Previous asset", "下一个素材": "Next asset", "弹窗提示": "Asset details",
   "回收站中的素材保留 90 天": "Assets in Trash are kept for 90 days", "没有找到匹配的素材": "No matching assets",
   "素材详情": "Asset details", "关闭素材详情": "Close asset details", "预览当前素材": "Preview current asset",
-  "收藏素材": "Favorite asset", "图片 · 本地素材": "Image · Local asset", "打开预览": "Preview",
+  "收藏素材": "Favorite asset", "打开预览": "Preview",
   "格式": "Format", "尺寸": "Dimensions", "比例": "Ratio", "大小": "Size", "时间": "Added",
   "今天 14:08": "Today, 14:08", "收起": "Collapse", "提示词": "Prompt",
   "复制提示词": "Copy prompt", "提示词已复制": "Prompt copied", "展开提示词": "Show full prompt", "展开用户指令": "Show full instruction",
@@ -82,7 +82,7 @@ const english: Record<string, string> = {
   "标签：": "Tag: ", "完成": "completed", "查看素材": "View asset",
   "加载中": "Loading", "加载失败": "Failed to load",
   "恢复": "Restore", "素材已恢复": "Asset restored", "素材已恢复至素材库": "Asset restored to the library",
-  "视频 · 本地素材": "Video · Local asset", "无提示词记录": "No prompt recorded",
+  "无提示词记录": "No prompt recorded",
   "堆叠": "Stack",
   "模型服务运行中": "Model service is running", "正在安装模型组件": "Installing model package…",
   "模型组件已安装": "Model package installed", "模型组件安装失败": "Model package installation failed",
@@ -255,6 +255,24 @@ const english: Record<string, string> = {
   "当前素材无法拖出到其他应用": "This asset cannot be dragged to another app",
   "一次最多拖出 512 个文件，已带出前 512 个": "Up to 512 files can be dragged at once; the first 512 were included.",
   "已撤销": "Undone",
+  // Task 149: inspector header (kind · source · date), group property tag, and
+  // prompt provenance. The header uses whole-sentence templates so the kind
+  // word stays singular — the bare "图片" key is the filter button's plural.
+  "图片 · {source} · {date}": "Image · {source} · {date}",
+  "视频 · {source} · {date}": "Video · {source} · {date}",
+  "图片 · {source}": "Image · {source}",
+  "视频 · {source}": "Video · {source}",
+  "ChatGPT 网页版": "ChatGPT Web",
+  "Gemini 网页版": "Gemini Web",
+  "Flow 网页版": "Flow Web",
+  "Google AI Studio 网页版": "Google AI Studio Web",
+  "手动导入": "Manual import",
+  "未知来源": "Unknown source",
+  "分组": "Group",
+  "网页来源未暴露原始生图提示词": "The web source did not expose the original image-generation prompt",
+  "Gemini 页面可见用户提示词（未验证为实际生图提示词）": "Gemini visible user prompt (not verified as the generation prompt)",
+  "Flow 页面可见提示词（未验证为实际生图提示词）": "Flow provider-visible prompt (not verified as the generation prompt)",
+  "Google AI Studio 页面可见用户提示词（未验证为实际生图提示词）": "Google AI Studio visible user prompt (not verified as the generation prompt)",
 }
 
 export function translate(text: string, language: Language): string {
