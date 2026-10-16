@@ -167,9 +167,16 @@ function flowSource() {
     await confirmTrash();
     await waitFor(() => toastText() === '已移至回收站 ' + (TOTAL - 1) + ' 项，1 项失败',
       'the partial result is announced with real counts');
-    const partialTrashHonest = window.__batchPosts === 2
-      && navSmall('回收站') === String(TOTAL - 1)
-      && toastAction() === '撤销';
+    // Read the toast's action and the POST count right away (the toast times
+    // out); the sidebar trash count arrives with the navigation refetch that
+    // follows, which lags the toast on slow runners — wait for it instead of
+    // sampling once.
+    const partialAction = toastAction();
+    const partialPosts = window.__batchPosts;
+    const trashNavSettled = await waitFor(() => navSmall('回收站') === String(TOTAL - 1),
+      'the sidebar trash count catches up', 20000).then(() => true, () => false);
+    const partialDetail = { posts: partialPosts, action: partialAction, trashNav: navSmall('回收站') };
+    const partialTrashHonest = partialPosts === 2 && trashNavSettled && partialAction === '撤销';
     window.__batchFailAt = -1;
 
     // ── 5) Retry on the survivor: one chunk, the job finishes ──
@@ -181,7 +188,7 @@ function flowSource() {
       'the retry moves the last asset');
     const retryFinished = window.__batchPosts === 3;
 
-    return { selectAll, favoriteChunked, groupChunked, partialTrashHonest, retryFinished,
+    return { selectAll, favoriteChunked, groupChunked, partialTrashHonest, partialDetail, retryFinished,
       selectPages: window.__selectPages, batchPosts: window.__batchPosts };
   })()
   `;
