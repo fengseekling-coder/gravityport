@@ -31,6 +31,10 @@ import {
   type MasonryModel,
 } from "./gallery-window"
 import { readStoredColumns, resolveInitialColumns, writeStoredColumns } from "./gallery-columns"
+import {
+  buildScrollRecord, GalleryScrollMemory, resolveRestoredScrollTop, revealCardScrollTop,
+  type GalleryScrollRecord,
+} from "./gallery-scroll-memory"
 import { deriveEmptyState } from "./empty-state"
 import { describeGroupStats } from "./group-stats"
 import { createResyncOnReconnect } from "./live-sync-resync"
@@ -508,6 +512,23 @@ export default function App() {
   const gridRef = useRef<HTMLDivElement>(null)
   const assetsRef = useRef<MosaAsset[]>([])
   const viewKeyRef = useRef("")
+  // Task 152 scroll restore. committedViewKeyRef is the view key of the cards
+  // actually displayed: the load effect's viewKeyRef flips the moment a switch
+  // starts, while the grid still shows the old view — recording against it
+  // there would file the old cards' position under the new view (browser
+  // clamp-scrolls during the swap would poison it too). liveScrollRef holds
+  // the freshest record of the displayed view; the load effect folds it into
+  // the table when the view changes. pendingScrollRestoreRef is the restore
+  // the next committed load owes: every cross-view switch sets it, a preview
+  // open re-arms it for the close.
+  const scrollMemoryRef = useRef<GalleryScrollMemory>(new GalleryScrollMemory(30))
+  const committedViewKeyRef = useRef("")
+  const liveScrollRef = useRef<{ key: string; record: GalleryScrollRecord } | null>(null)
+  const pendingScrollRestoreRef = useRef<{ viewKey: string; reveal: boolean } | null>(null)
+  const restoringScrollRef = useRef(false)
+  // The bottom-right "back to top" button shows once the gallery is more than
+  // one screen down.
+  const [showToTop, setShowToTop] = useState(false)
   // The view identity the current selection was made in (same key as the
   // load effect's viewKey); a mismatch resets the selection.
   const selectionViewKeyRef = useRef("")
@@ -594,6 +615,34 @@ export default function App() {
     // the user's scrolled pages every time a preview lands.
     const viewKey = JSON.stringify([project, active, debouncedQuery, sortOrder, assetType, stackId])
     const windowRefresh = viewKeyRef.current === viewKey && assetsRef.current.length > GALLERY_PAGE_SIZE
+    // Task 152 scroll restore: a real view switch owes the next committed load
+    // a restore (recorded position, or the top when the view was never
+    // visited). Before the key is overwritten, fold the displayed view's live
+    // record — the last scrolled anchor plus the still-current loaded count
+    // and focused card — into the memory table. Recording keys off the
+    // committed view key, not this one: until the new data commits, the grid
+    // still shows the outgoing view.
+    const isViewSwitch = viewKeyRef.current !== viewKey
+    if (isViewSwitch) {
+      const leavingKey = committedViewKeyRef.current
+      const live = liveScrollRef.current
+      if (leavingKey) {
+        // No live record means the view was never scrolled (it sits at the
+        // top): still remember it, or its focused card is lost on return.
+        const base = live && live.key === leavingKey
+          ? live.record
+          : { anchorId: "", anchorOffset: 0, scrollTop: 0, loaded: 0, selected: "" }
+        // switchProject empties assets before this effect runs; the record's
+        // own loaded count is still the one the leaving view displayed.
+        scrollMemoryRef.current.set(leavingKey, {
+          ...base,
+          loaded: assetsRef.current.length || base.loaded,
+          selected: selectionRef.current.selected,
+        })
+      }
+      liveScrollRef.current = null
+      if (leavingKey) pendingScrollRestoreRef.current = { viewKey, reveal: false }
+    }
     viewKeyRef.current = viewKey
     // Selection is bound to the view it was made in. A project, search,
     // filter, sort or stack change resets it here — before anything loads —
@@ -603,7 +652,11 @@ export default function App() {
     // explicit inspection ("show in library") survives the reset once.
     if (selectionViewKeyRef.current !== viewKey) {
       selectionViewKeyRef.current = viewKey
+      // Task 152: a view remembered with a focused card re-inspects it instead
+      // of falling back to the first card; "show in library" still wins.
       const preserve = pendingInspectRef.current
+        || scrollMemoryRef.current.get(viewKey)?.selected
+        || ""
       pendingInspectRef.current = ""
       // A select-all started in the old view is stale now: drop it so the
       // post-load prune below can seat the new view's implicit single card.
@@ -618,8 +671,11 @@ export default function App() {
       try {
         let page = await fetchAssetPage(buildQuery(), { signal: controller.signal })
         let collected = page.assets
-        if (windowRefresh) {
-          const target = Math.max(assetsRef.current.length, GALLERY_PAGE_SIZE)
+        // Follow-up pages until `target` items are collected — shared by the
+        // same-view window refresh and the scroll restore (a remembered view
+        // must come back with at least the window it was left with, or the
+        // remembered anchor card would not exist yet).
+        const followUpPages = async (target: number) => {
           // A fixed 30-page ceiling silently truncated a 4,249-item loaded
           // gallery to 3,100 items on every same-view SSE refresh. Derive the
           // work budget from the previously loaded window instead, allowing
@@ -651,12 +707,23 @@ export default function App() {
             cursor = page.nextCursor ?? undefined
           }
         }
+        if (windowRefresh) {
+          await followUpPages(Math.max(assetsRef.current.length, GALLERY_PAGE_SIZE))
+        } else if (isViewSwitch) {
+          const remembered = scrollMemoryRef.current.get(viewKey)
+          const target = Math.max(GALLERY_PAGE_SIZE, remembered?.loaded ?? 0)
+          if (target > collected.length) await followUpPages(target)
+        }
         if (controller.signal.aborted) return
         // Cross-page selections outrun the loaded window, so only ids the
         // PREVIOUS window contained can be re-judged against the fresh one:
         // a member that left the view is dropped, off-page members are kept
         // (no information about them changed).
         const previousIds = new Set(assetsRef.current.map(item => item.id))
+        // The displayed view becomes this key only now — scroll recording and
+        // restore consumption key off it, so anything still in flight files
+        // under the outgoing view.
+        committedViewKeyRef.current = viewKey
         setAssets(collected)
         setNextCursor(page.nextCursor)
         setPageTotal(page.total)
@@ -718,6 +785,13 @@ export default function App() {
     if (preview || !pendingViewerReloadRef.current) return
     pendingViewerReloadRef.current = false
     refreshNavigation()
+  }, [preview])
+  // Opening the preview unmounts the grid: re-arm the restore so closing it —
+  // even after the viewer paged and re-focused — returns to the pre-preview
+  // position and only reveals the focused card (task 152).
+  useEffect(() => {
+    if (!preview) return
+    pendingScrollRestoreRef.current = { viewKey: committedViewKeyRef.current, reveal: true }
   }, [preview])
   const refreshNavigation = () => setRefreshKey(value => value + 1)
   const lastMetaProjectRef = useRef("")
@@ -1105,10 +1179,14 @@ export default function App() {
     observer.observe(node)
     return () => observer.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextCursor, loadingMore, loading])
+  }, [nextCursor, loadingMore, loading, preview])
   // The grid is its own scroll container; a scroll-position check makes
   // pagination deterministic even where IntersectionObserver timing is not.
-  // The same handler re-derives the mounted gallery window.
+  // The same handler re-derives the mounted gallery window. preview rides the
+  // dep list like the observers above: the grid remounts on every preview
+  // toggle, and a page pulled from inside the viewer changes nextCursor while
+  // the grid is unmounted — without re-running here, the fresh grid would
+  // keep no pagination listener at all.
   useEffect(() => {
     const grid = gridRef.current
     if (!grid || !nextCursor) return
@@ -1120,7 +1198,7 @@ export default function App() {
     onScroll()
     return () => grid.removeEventListener("scroll", onScroll)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextCursor, loadingMore, loading])
+  }, [nextCursor, loadingMore, loading, preview])
   // ── gallery windowing ──
   // Above the threshold only masonry items near the viewport stay mounted.
   const windowingActive = assets.length > GALLERY_MOUNT_ALL_THRESHOLD
@@ -1178,10 +1256,84 @@ export default function App() {
     ))
   }
   updateGalleryWindowRef.current = updateGalleryWindow
+  // Task 152: capture the displayed view's live position as the user scrolls
+  // (every event: a throttle would drop the final position of a short flick;
+  // recording resumes only after a restore has settled).
+  const recordLiveGalleryScroll = () => {
+    if (restoringScrollRef.current) return
+    const grid = gridRef.current
+    const key = committedViewKeyRef.current
+    if (!grid || !key) return
+    const model = galleryRowModel()
+    if (!model || !model.placements.length) return
+    const record = buildScrollRecord(model, assetsRef.current.map(item => item.id), grid.scrollTop,
+      assetsRef.current.length, selectionRef.current.selected)
+    if (record) liveScrollRef.current = { key, record }
+  }
+  const recordLiveGalleryScrollRef = useRef<() => void>(() => {})
+  recordLiveGalleryScrollRef.current = recordLiveGalleryScroll
+  // Settle an owed restore once the grid displays the target view's data and
+  // the masonry model matches it — in the layout pass, before first paint, so
+  // the restored position is the only one the user ever sees. The virtual
+  // window re-derives from the restored (or revealed) position, so the landing
+  // shows real cards instead of placeholders.
+  const consumeGalleryScrollRestore = () => {
+    const pending = pendingScrollRestoreRef.current
+    const grid = gridRef.current
+    if (!pending || !grid) return
+    if (pending.viewKey !== committedViewKeyRef.current) return
+    const ids = assetsRef.current.map(item => item.id)
+    if (!ids.length) {
+      pendingScrollRestoreRef.current = null
+      return
+    }
+    const model = galleryRowModel()
+    if (!model || model.placements.length !== ids.length) return
+    pendingScrollRestoreRef.current = null
+    const live = liveScrollRef.current
+    // The live record (still scrolling after a restore, or freshly fetched
+    // pages) is fresher than the table entry for the displayed view.
+    const record = live && live.key === pending.viewKey
+      ? live.record
+      : scrollMemoryRef.current.get(pending.viewKey)
+    // The masonry extent (the spacer that carries the real scroll height)
+    // commits one render late: updateGalleryWindow above queued the new
+    // window state inside this same layout pass, and the scroller's full
+    // height — without which the browser clamps any large scrollTop to 0 —
+    // only exists after React's synchronous re-render. Apply the restore in
+    // this frame's animation callback: still before the first paint, so no
+    // top-of-gallery flash ever reaches the screen. The guard stays up until
+    // the callback has written the restored position.
+    restoringScrollRef.current = true
+    requestAnimationFrame(() => {
+      try {
+        if (committedViewKeyRef.current !== pending.viewKey) return
+        // First visit to this view: start at the top explicitly instead of
+        // inheriting whatever the outgoing content left in the scroller.
+        const maxScrollTop = grid.scrollHeight - grid.clientHeight
+        grid.scrollTop = record ? resolveRestoredScrollTop(model, ids, record, grid.clientHeight, maxScrollTop) : 0
+        if (pending.reveal) {
+          // Also when the view sat untouched at the top: a card paged to in
+          // the viewer still has to come into view.
+          const index = ids.indexOf(selectionRef.current.selected)
+          if (index >= 0) grid.scrollTop = revealCardScrollTop(model, index, grid.scrollTop, grid.clientHeight, undefined, maxScrollTop)
+        }
+        // Re-read scrollTop: the browser may have clamped the write.
+        const landed = buildScrollRecord(model, ids, grid.scrollTop, ids.length, selectionRef.current.selected)
+        liveScrollRef.current = landed ? { key: pending.viewKey, record: landed } : null
+        setShowToTop(grid.scrollTop > grid.clientHeight)
+        updateGalleryWindow()
+      } finally {
+        restoringScrollRef.current = false
+      }
+    })
+  }
   useLayoutEffect(() => {
     updateGalleryWindow()
+    consumeGalleryScrollRestore()
     // preview toggles remount the grid, so the window must be re-derived for
-    // the fresh (top-of-gallery) scroll position.
+    // the fresh (top-of-gallery) scroll position — and any restore owed by the
+    // toggle settles before the first paint.
   }, [assets, columns, windowingActive, preview])
   // The observer is bound to the grid element, which remounts when the
   // preview opens/closes: re-run the binding on every preview toggle or the
@@ -1211,6 +1363,19 @@ export default function App() {
     grid.addEventListener("scroll", onScroll, { passive: true })
     return () => grid.removeEventListener("scroll", onScroll)
   }, [preview])
+  // Task 152: the recording listener rides the same element, which remounts
+  // on preview and Pinterest toggles — rebind alongside them.
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
+    const onScroll = () => {
+      recordLiveGalleryScrollRef.current()
+      setShowToTop(grid.scrollTop > grid.clientHeight)
+    }
+    grid.addEventListener("scroll", onScroll, { passive: true })
+    setShowToTop(grid.scrollTop > grid.clientHeight)
+    return () => grid.removeEventListener("scroll", onScroll)
+  }, [preview, pinterestActive])
   // Project switching is a transaction: everything project-scoped reloads
   // through the project-keyed effects, view-scoped state resets first, and a
   // failed load for the new project restores the previous project verbatim.
@@ -2664,8 +2829,10 @@ export default function App() {
     },
     onDoubleClick: () => {
       if (a.stack) {
+        // No selection reset here: the load effect resets the selection on the
+        // view change anyway, and leaving this view first records the cover
+        // card as the focused one so coming back re-inspects it (task 152).
         goTo({ stackId: a.stack.id, stackName: a.stack.name || a.name })
-        applySelection([], "")
         return
       }
       focusAsset(a.id)
@@ -3116,6 +3283,7 @@ export default function App() {
             onBoardCountChange={(count, complete) => setPinterestBoards({ count, complete })}
           />
         ) : (
+          <>
           <div
             ref={gridRef}
             className="asset-grid"
@@ -3245,6 +3413,17 @@ export default function App() {
             )}
             <div ref={sentinelRef} aria-hidden="true" />
           </div>
+          {showToTop && (
+            <button
+              className="gallery-to-top"
+              aria-label={tr("回到顶部")}
+              title={tr("回到顶部")}
+              onClick={() => gridRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+            >
+              <Icon name="to-top" size={16} />
+            </button>
+          )}
+          </>
         )}
       </main>
       {detail && asset && !(pinterestActive && !preview) && (

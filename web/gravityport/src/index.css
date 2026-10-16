@@ -647,7 +647,9 @@ img.black-image {
 }.search input {
   width: 96px;
 }.asset-grid {
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+}.asset-grid::-webkit-scrollbar {
+  display: none;
 }.asset-card:hover {
   box-shadow: inset 0 0 0 1px #ffffff45;
 }.asset-card:hover .black-image {
@@ -3487,4 +3489,26 @@ video.viewer-image {
    while a card drag is live the toast is click-through. */
 body.gp-card-dragging .toast {
   pointer-events: none;
+}
+
+/* Gallery "back to top": floats over the gallery's bottom-right corner. */
+.app .gallery-to-top {
+  position: absolute;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: var(--space-10);
+  height: var(--space-10);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ui-raised);
+  box-shadow: var(--ui-shadow);
+  color: var(--ui-secondary);
+  cursor: pointer;
+  animation: surface-in 200ms var(--ease-out) both;
+}.app .gallery-to-top:hover {
+  color: var(--ui-text);
 }
