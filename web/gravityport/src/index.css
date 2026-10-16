@@ -3208,6 +3208,13 @@ video.viewer-image {
   user-select: none;
 }
 
+/* The selection ring is the gallery's focus indicator; the generic
+   button:focus-visible outline would draw a second ring around a selected
+   card after any key press. */
+.app .asset-card:focus-visible {
+  outline: none;
+}
+
 .app .marquee-rect {
   position: fixed;
   border: 1px solid var(--ui-accent);

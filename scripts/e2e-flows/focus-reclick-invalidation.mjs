@@ -119,7 +119,10 @@ function flowSource(config) {
       && /^版本 1/.test(checkedRowLabel());
 
     // ── Stage B: multi-select A+B focused on A, slow 版本 2, right-click A ──
-    ctrlClick(cardById(config.standaloneId));
+    // Click A, ⌘-click the parent: the inspected card is the implicit
+    // selection, so a ⌘-click adds to it (task 155).
+    cardById(config.standaloneId).click();
+    await waitFor(() => selectedIds().length === 1 && selectedIds()[0] === config.standaloneId, 'A inspected');
     ctrlClick(cardById(config.parentId));
     await waitFor(() => selectedIds().length === 2
       && selectedIds().includes(config.standaloneId) && selectedIds().includes(config.parentId),

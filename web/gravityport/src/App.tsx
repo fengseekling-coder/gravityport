@@ -8,7 +8,7 @@ import { PinterestConnectionCard } from "./PinterestConnectionCard"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, type MenuContext, type MenuEntry } from "./context-menus"
-import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberPaths } from "./library-actions"
+import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberIds, listStackMemberPaths } from "./library-actions"
 import {
   dragIdsForCard, dragGhostCount, pointOutsideWindow, nativeDragPaths,
   createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop,
@@ -1520,12 +1520,15 @@ export default function App() {
     const index = assets.findIndex(a => a.id === id)
     if (event.shiftKey && anchorIndexRef.current >= 0) {
       const [from, to] = [Math.min(anchorIndexRef.current, index), Math.max(anchorIndexRef.current, index)]
-      const range = assets.slice(from, to + 1).filter(a => !a.stack).map(a => a.id)
+      const range = assets.slice(from, to + 1).map(a => a.id)
       applySelection(range, replaceSelection(range, selectionRef.current.selected))
       return
     }
     if (event.metaKey || event.ctrlKey) {
-      const toggled = toggleModifierSelection(selectionRef.current.selectedIds, selectionRef.current.selected, id)
+      // The inspected card is the implicit selection: the first ⌘-click adds
+      // to it instead of replacing it.
+      const { selectedIds: current, selected: focused } = selectionRef.current
+      const toggled = toggleModifierSelection(logicalSelection(current, focused), focused, id)
       applySelection(toggled.selectedIds, toggled.selected)
       anchorIndexRef.current = index
       return
@@ -1618,7 +1621,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading])
   // Marquee selection: a drag that starts on the grid background or on an
-  // unselected card selects every plain card whose box intersects the rubber
+  // unselected card selects every card (stacks included) whose box hits the rubber
   // band; a press on a highlighted card drags the selection instead (task 155:
   // left mouse only, no modifier needed). Shift-drag starts an additive
   // marquee even on a selected card. Near the grid's top or bottom edge the
@@ -1642,7 +1645,7 @@ export default function App() {
     const pressX = event.clientX
     const pressY = event.clientY
     const base = event.shiftKey ? logicalSelection(selectionRef.current.selectedIds, selectionRef.current.selected) : []
-    const startId = startCard && !startCard.querySelector(".stack-mark") ? startCard.dataset.assetId || "" : ""
+    const startId = startCard?.dataset.assetId || ""
     const toContent = (clientX: number, clientY: number) => {
       const bounds = grid.getBoundingClientRect()
       return {
@@ -1673,7 +1676,7 @@ export default function App() {
       }
       const mounted = Array.from(grid.querySelectorAll<HTMLElement>(".asset-card:not(.asset-card-virtual-placeholder)"))
       if (key === items) {
-        candidates = mounted.filter(node => !node.querySelector(".stack-mark") && node.dataset.assetId)
+        candidates = mounted.filter(node => node.dataset.assetId)
           .map(node => ({ id: node.dataset.assetId!, box: domBox(node) }))
         return
       }
@@ -1692,7 +1695,7 @@ export default function App() {
         dx = box.left - boxes[anchorIndex].left
         dy = box.top - boxes[anchorIndex].top
       }
-      candidates = items.flatMap((a, index) => a.stack || !a.id ? [] : [{
+      candidates = items.flatMap((a, index) => !a.id ? [] : [{
         id: a.id,
         box: { left: boxes[index].left + dx, top: boxes[index].top + dy, right: boxes[index].right + dx, bottom: boxes[index].bottom + dy },
       }])
@@ -1757,6 +1760,17 @@ export default function App() {
   const selectionIds = logicalSelection(selectedIds, selected)
   const selectionSet = new Set(selectionIds)
   const batchIds = selectionIds
+  // Root-gallery stack cards in a batch, keyed by their cover asset id. Inside
+  // a stack view every card is a plain member.
+  const splitSelectionStacks = (ids: string[]) => {
+    const plainIds: string[] = []
+    const stackIds: string[] = []
+    for (const id of ids) {
+      const stack = stackId ? undefined : assetsRef.current.find(item => item.id === id)?.stack?.id
+      if (stack) { if (!stackIds.includes(stack)) stackIds.push(stack) } else plainIds.push(id)
+    }
+    return { plainIds, stackIds }
+  }
   const clearSelectionAndReload = () => { clearSelection(); refreshNavigation() }
   // ─── Card dragging (task 146): press a card and move ≥8px to drag. Drop on
   // ─── another card to build/join a stack (6s undo), on a sidebar group row /
@@ -2138,7 +2152,9 @@ export default function App() {
         !settings && !deleting && selectionIds.length > 0 && active !== "回收站"
       )
         setDeleting(true)
-      if ((e.metaKey || e.ctrlKey) && (e.key === "x" || e.key === "X") && selectionIds.length) {
+      // Stack cards cannot be cut (the menu greys 剪切 out for them too).
+      if ((e.metaKey || e.ctrlKey) && (e.key === "x" || e.key === "X") && selectionIds.length
+        && !splitSelectionStacks(selectionIds).stackIds.length) {
         e.preventDefault()
         cutIdsRef.current = [...selectionIds]
         notify("已剪切")
@@ -2258,12 +2274,17 @@ export default function App() {
     // The selection is bound to the current view (reset on view change,
     // pruned on same-view refresh), so it is a legitimate batch target even
     // when it spans pages that are not loaded into the grid.
-    const ids = selectionIds
-    if (!ids.length) return
+    const selection = selectionIds
+    if (!selection.length) return
     // The undo restores against the project the deletion ran in, even if the
     // user has switched projects by the time the button is pressed.
     const originProject = asset?.project_id ?? project
     try {
+      // A stack card in the selection stands for the whole stack: trash every
+      // member (as the single-stack menu does), so undo restores all of them.
+      const { plainIds, stackIds } = splitSelectionStacks(selection)
+      const memberIds = (await Promise.all(stackIds.map(id => listStackMemberIds(originProject, id)))).flat()
+      const ids = [...new Set([...plainIds, ...memberIds])]
       const outcome = await moveAssetsToTrash(originProject, ids)
       setDeleting(false)
       setPreview(false)
@@ -2510,7 +2531,27 @@ export default function App() {
   // the trash menu's flat add-to-group, which still needs the sidebar group).
   const assignSelectionToGroup = (name: string) => {
     if (!asset) return
-    setAssetsGroup(asset.project_id, [...batchIds], name)
+    const targetProject = asset.project_id
+    const { plainIds, stackIds } = splitSelectionStacks(batchIds)
+    // Stack cards move as whole stacks (the stack's own group endpoint); the
+    // outcome counts one per stack, like a plain card.
+    const assignStacks = async () => {
+      let failed = 0
+      let firstError = ""
+      for (const id of stackIds) {
+        try { await assignStackToGroup(targetProject, id, name) } catch (error) { failed += 1; firstError ||= errorMessage(error) }
+      }
+      return { succeeded: stackIds.length - failed, failed, firstError }
+    }
+    Promise.all([
+      plainIds.length ? setAssetsGroup(targetProject, plainIds, name) : Promise.resolve({ succeeded: 0, failed: 0, firstError: "" }),
+      assignStacks(),
+    ])
+      .then(([plain, stacks]) => ({
+        succeeded: plain.succeeded + stacks.succeeded,
+        failed: plain.failed + stacks.failed,
+        firstError: plain.firstError || stacks.firstError,
+      }))
       .then(outcome => {
         if (!outcome.succeeded) { notify(outcome.firstError || tr(name ? "添加分组失败" : "移除分组失败")); return }
         setSelectedIds([])

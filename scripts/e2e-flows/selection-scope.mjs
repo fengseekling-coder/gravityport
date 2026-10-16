@@ -97,8 +97,8 @@ function selectionScopeSource(config) {
 
     await waitFor(() => plain().length === 3, 'three seeded cards');
 
-    // ── 1) ctrl-select two cards, then search: the hidden selection resets ──
-    clickCard(cardForId(config.alphaId), { ctrlKey: true });
+    // ── 1) select two cards, then search: the hidden selection resets ──
+    clickCard(cardForId(config.alphaId));
     clickCard(cardForId(config.betaId), { ctrlKey: true });
     await waitFor(() => selectedIds().length === 2, 'two selected rings');
     const multiSelected = selectedIds().length;
@@ -141,12 +141,10 @@ function selectionScopeSource(config) {
     await waitFor(() => plain().length === 2, 'back on the default project');
 
     // ── 4) Same-view refresh: prunes exactly the member that left ──
-    // A plain click normalizes the inspector, then ctrl-clicks build the
-    // two-card set deterministically (a ctrl-click composes on selectedIds,
-    // which a plain click leaves empty).
+    // A plain click normalizes the inspector, then a ctrl-click adds beta to
+    // the inspected alpha (the implicit selection, task 155).
     clickCard(cardForId(config.alphaId));
     await waitFor(() => selectedIds().length === 1 && selectedIds()[0] === config.alphaId, 'alpha singly selected');
-    clickCard(cardForId(config.alphaId), { ctrlKey: true });
     clickCard(cardForId(config.betaId), { ctrlKey: true });
     await waitFor(() => selectedIds().length === 2, 'two rings again');
     // Externally trash beta; the SSE-driven same-view refresh must drop it

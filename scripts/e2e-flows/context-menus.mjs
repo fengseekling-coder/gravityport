@@ -275,7 +275,9 @@ function contextMenusSource(config) {
 
     // ── 7) Multi-select two loose assets -> 堆叠所选: new stack server-side ──
     await step('stack selected', async () => {
-      cardFor(config.looseIds[1]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+      // The inspected card is the implicit selection (task 155): click the
+      // first card, ⌘-click the second.
+      cardFor(config.looseIds[1]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       cardFor(config.looseIds[2]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
       await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 2, 'two cards selected');
       await openMenu(cardFor(config.looseIds[1]));

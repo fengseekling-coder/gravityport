@@ -231,9 +231,10 @@ function trashUndoImportSource(config) {
       }
     }
     async function moveToTrash(ids) {
-      // Proven multi-select grammar (multi-select flow): modifier-click every
-      // card, wait for the selected rings, then the menu acts on the batch.
-      for (const id of ids) clickCard(id, { ctrlKey: true });
+      // Proven multi-select grammar (multi-select flow): click the first card,
+      // modifier-click the rest, wait for the selected rings, then the menu
+      // acts on the batch.
+      ids.forEach((id, index) => clickCard(id, index ? { ctrlKey: true } : {}));
       await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === ids.length,
         'selection rings for ' + ids.length + ' cards');
       await contextMenuOn(card(ids[ids.length - 1]), '移至回收站').then((item) => item.click());
@@ -300,7 +301,7 @@ function trashUndoImportSource(config) {
     const restorePair = expireTrio.slice(0, 2);
     const permanentVictim = expireTrio[2];
     await step('restore 2 via the trash menu', async () => {
-      clickCard(restorePair[0], { ctrlKey: true });
+      clickCard(restorePair[0]);
       clickCard(restorePair[1], { ctrlKey: true });
       await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 2, 'two rings in the trash view');
       await contextMenuOn(card(restorePair[1]), '恢复 2 个素材').then((item) => item.click());

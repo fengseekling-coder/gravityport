@@ -102,7 +102,10 @@ function flowSource(config) {
 
     // Multi-select A + B, ending on the parent so the inspector shows the
     // 版本 rows: the batch selection is {A, parent}, focus is the parent.
-    ctrlClick(cardById(config.standaloneAId));
+    // Click A, ⌘-click the parent (a ⌘-click adds to the inspected card,
+    // task 155).
+    cardById(config.standaloneAId).click();
+    await waitFor(() => selectedIds().length === 1 && selectedIds()[0] === config.standaloneAId, 'A inspected');
     ctrlClick(cardById(config.parentId));
     await waitFor(() => selectedIds().length === 2
       && selectedIds().includes(config.standaloneAId) && selectedIds().includes(config.parentId),
