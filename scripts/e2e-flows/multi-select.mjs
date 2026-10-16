@@ -94,19 +94,28 @@ function multiSelectSource() {
     allNav.click();
     await waitFor(() => plain().length === 3, 'three back in the all view');
 
-    // Marquee: drag across the grid background covering the first two cards.
+    // Marquee: press in the gutter between the second and third card of the
+    // first row (found by real hit-testing, so a card covering the gutter
+    // fails here) and sweep left over the first two cards.
     const grid = document.querySelector('.asset-grid');
-    const firstBox = plain()[0].getBoundingClientRect();
-    const secondBox = plain()[1].getBoundingClientRect();
-    const x0 = firstBox.left + firstBox.width / 2;
-    const y0 = firstBox.top + firstBox.height / 2;
-    const x1 = secondBox.left + secondBox.width / 2;
-    const y1 = secondBox.bottom + 40;
+    const row = plain().map((card) => card.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+    if (row.length !== 3 || row.some((box) => Math.abs(box.top - row[0].top) > 1)) {
+      throw new Error('marquee fixture expects three cards in one row: ' + JSON.stringify(row.map((box) => [box.left, box.top])));
+    }
+    const gutter = row[2].left - row[1].right;
+    const x0 = (row[1].right + row[2].left) / 2;
+    const y0 = row[1].top + row[1].height / 2;
+    const x1 = row[0].left + row[0].width / 2;
+    const y1 = row[0].bottom + 40;
+    const pressed = document.elementFromPoint(x0, y0);
+    if (Math.round(gutter) !== 8 || !grid.contains(pressed) || pressed.closest('.asset-card')) {
+      throw new Error('gallery gutter is not an 8px blank strip: ' + JSON.stringify({ gutter, pressed: pressed?.className || pressed?.tagName }));
+    }
     // A leftover native selection over the cards must not survive the marquee
     // (the browser paints it in DOM order, unrelated to the masonry).
     window.getSelection().selectAllChildren(grid);
     const nativeSelectionPlanted = !window.getSelection().isCollapsed;
-    grid.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7, button: 0, clientX: x0, clientY: y0 }));
+    pressed.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 7, button: 0, clientX: x0, clientY: y0 }));
     window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, pointerId: 7, clientX: x1, clientY: y1 }));
     await sleep(120);
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: 7, clientX: x1, clientY: y1 }));

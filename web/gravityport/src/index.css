@@ -547,7 +547,7 @@ img.black-image {
   }.details {
     width: 260px;
   }.asset-grid {
-    gap: 4px;
+    gap: var(--space-2);
   }
 }
 
@@ -1004,7 +1004,8 @@ img.black-image {
 }.search input {
   font-size: 12px;
 }.asset-grid {
-  gap: var(--space-1);
+  /* 8px gutters leave room to start a marquee between cards. */
+  gap: var(--space-2);
   grid-auto-rows: max-content;
   align-content: start;
   align-items: start;
