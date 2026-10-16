@@ -3,6 +3,9 @@ import Icon from "./Icon"
 import ToolbarSelect from "./ToolbarSelect"
 import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
+import { PinterestView } from "./PinterestView"
+import { PinterestConnectionCard } from "./PinterestConnectionCard"
+import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, type MenuContext, type MenuEntry } from "./context-menus"
 import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberPaths } from "./library-actions"
@@ -383,6 +386,19 @@ export default function App() {
   const [selected, setSelected] = useState("")
   const [settings, setSettings] = useState(false)
   const [settingTab, setSettingTab] = useState("常规与外观")
+  // Sidebar Pinterest count = boards loaded by PinterestView (null until the
+  // view has reported, or after a disconnect).
+  const [pinterestBoards, setPinterestBoards] = useState<{ count: number; complete: boolean } | null>(null)
+  // A connect/disconnect from Settings remounts PinterestView so it rereads
+  // the status instead of showing boards of an account that is gone.
+  const [pinterestViewKey, setPinterestViewKey] = useState(0)
+  const pinterestConnectedRef = useRef<boolean | null>(null)
+  const onPinterestStatus = (status: PinterestStatus) => {
+    const connected = status.connected && !status.needsReconnect
+    if (pinterestConnectedRef.current !== null && pinterestConnectedRef.current !== connected) setPinterestViewKey(k => k + 1)
+    pinterestConnectedRef.current = connected
+    if (!connected) setPinterestBoards(null)
+  }
   const [preferences] = useState(loadPreferences)
   const [appearance, setAppearance] = useState<string>(preferences.appearance)
   const [cardInfo, setCardInfo] = useState(preferences.cardInfo)
@@ -542,7 +558,10 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [query])
   const scope: Scope = active === "收藏" ? "favorite" : active === "待整理" ? "unorganized" : active === "回收站" ? "trash" : "all"
-  const source = active.startsWith("source:") ? active.slice(7) : active === "Pinterest" ? "pinterest" : undefined
+  // The Pinterest row browses the user's live boards (PinterestView), not
+  // local assets; the gallery underneath stays mounted but out of reach.
+  const pinterestActive = active === "Pinterest"
+  const source = active.startsWith("source:") ? active.slice(7) : undefined
   const group = active.startsWith("group:") ? active.slice(6) : undefined
   const mediaKind = assetType === "image" ? "img" : assetType === "video" ? "video" : "all"
   const buildQuery = (cursor?: string): AssetQuery => ({
@@ -1837,6 +1856,9 @@ export default function App() {
       // prompt editor, ⌘A in the search field and typing anywhere must never
       // trigger a gallery shortcut.
       if (isEditableTarget(e.target)) return
+      // The Pinterest view hides the gallery: ⌘A then Delete there must not
+      // select and trash library assets nobody can see.
+      if (pinterestActive) return
       if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
         e.preventDefault()
         void selectAllAcrossPages()
@@ -2605,7 +2627,7 @@ export default function App() {
                   {i === 0
                     ? navigation?.total ?? 0
                     : i === 1
-                      ? navigation?.sourceTypes.find(s => s[0] === "pinterest")?.[1] ?? 0
+                      ? pinterestBoards ? `${pinterestBoards.count}${pinterestBoards.complete ? "" : "+"}` : ""
                       : i === 2
                         ? navigation?.unorganized ?? 0
                         : i === 3
@@ -2911,11 +2933,11 @@ export default function App() {
       <main
         className={`workspace ${preview ? "preview-open" : ""}`}
         onDragOver={event => {
-          if (preview || settings || active === "回收站") return
+          if (preview || settings || active === "回收站" || pinterestActive) return
           event.preventDefault()
         }}
         onDrop={event => {
-          if (preview || settings || active === "回收站") return
+          if (preview || settings || active === "回收站" || pinterestActive) return
           event.preventDefault()
           importDroppedFiles(event.dataTransfer)
         }}
@@ -2952,7 +2974,7 @@ export default function App() {
                   <Icon name="info" size={16} />
                   {tr(detail ? "隐藏详情" : "显示详情")}</button>
               </>
-            ) : (
+            ) : pinterestActive ? null : (
               <>
                 {active === "回收站" && (navigation?.trash ?? 0) > 0 && (
                   <button className="toolbar-empty-trash" onClick={() => setEmptyTrashConfirm(true)}>
@@ -2979,6 +3001,13 @@ export default function App() {
         </header>
         {preview ? (
           <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} onNavigate={navigateAsset} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} message={toast?.text ?? ""} />
+        ) : pinterestActive ? (
+          <PinterestView
+            key={pinterestViewKey}
+            language={language}
+            onOpenSettings={() => { setSettingTab("连接"); setSettings(true) }}
+            onBoardCountChange={(count, complete) => setPinterestBoards({ count, complete })}
+          />
         ) : (
           <div
             ref={gridRef}
@@ -3111,7 +3140,7 @@ export default function App() {
           </div>
         )}
       </main>
-      {detail && asset && (
+      {detail && asset && !(pinterestActive && !preview) && (
         <aside className="details">
           <div className="detail-heading">
             <strong>{tr("素材详情")}</strong>
@@ -3640,7 +3669,7 @@ export default function App() {
                 ["常规与外观", "sun"],
                 ["存储", "folder"],
                 ["模型", "grid"],
-                ["MCP", "link"],
+                ["连接", "link"],
                 ["关于", "info"],
               ].map(([label, icon]) => (
                 <button
@@ -3782,17 +3811,8 @@ export default function App() {
                   <div className="settings-note"><p>{tr("连接模型服务后即可启用。")}</p></div>
                 </>
                 )
-              ) : settingTab === "MCP" ? (
-                <>
-                  <section className="settings-section integration-card">
-                      <div className="model-symbol"><span className="brand-icon" aria-hidden="true" /></div>
-                      <div className="integration-copy">
-                        <div className="integration-title"><strong>Pinterest</strong><span>{tr("未连接")}</span></div>
-                        <p className="integration-description">{tr("连接 Pinterest MCP 后，可同步收藏与画板。")}</p>
-                      </div>
-                      <button className="neutral-button" onClick={() => notify("尚未接入 Pinterest MCP 服务，暂时无法连接")}>{tr("连接")}</button>
-                  </section>
-                </>
+              ) : settingTab === "连接" ? (
+                <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
               ) : (
                 <>
                   <section className="settings-section about-summary">
