@@ -53,6 +53,20 @@ describe("marqueeAutoScrollStep", () => {
   });
 });
 
+describe("marqueeAutoScrollDelta", () => {
+  it("scrolls one tick's worth on time, and for the time that actually passed", () => {
+    assert.equal(marquee.marqueeAutoScrollDelta(10, 16), 10);
+    assert.equal(marquee.marqueeAutoScrollDelta(10, 32), 20);
+    assert.equal(marquee.marqueeAutoScrollDelta(-10, 32), -20);
+  });
+  it("never moves less than one tick or more than four", () => {
+    assert.equal(marquee.marqueeAutoScrollDelta(10, 0), 10);
+    assert.equal(marquee.marqueeAutoScrollDelta(10, 1000), 40);
+    assert.equal(marquee.marqueeAutoScrollDelta(10, Number.NaN), 10);
+    assert.equal(marquee.marqueeAutoScrollDelta(0, 32), 0);
+  });
+});
+
 describe("masonryCardBoxes", () => {
   it("matches the masonry placement formula, including the gap", () => {
     const model = galleryWindow.buildMasonryModel([1, 1, 1, 2], 3, 100, 8, { spanWide: true });

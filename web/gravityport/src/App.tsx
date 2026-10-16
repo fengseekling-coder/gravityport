@@ -18,7 +18,7 @@ import { runImport, collectDroppedFiles } from "./import-pipeline"
 import { trashRemainingDays } from "./trash-ui"
 import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
-import { boxFromPoints, boxesIntersect, marqueeAutoScrollStep, marqueeSelection, masonryCardBoxes, MARQUEE_DRAG_THRESHOLD_PX, type Box } from "./marquee"
+import { boxFromPoints, boxesIntersect, marqueeAutoScrollDelta, marqueeAutoScrollStep, marqueeSelection, masonryCardBoxes, MARQUEE_AUTO_SCROLL_TICK_MS, MARQUEE_DRAG_THRESHOLD_PX, type Box } from "./marquee"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
@@ -1489,7 +1489,8 @@ export default function App() {
     let dragging = false
     let lastX = pressX
     let lastY = pressY
-    let frame = 0
+    let timer = 0
+    let lastTick = 0
     let candidates: { id: string; box: Box }[] = []
     let candidatesKey: unknown = null
     const refreshCandidates = () => {
@@ -1544,15 +1545,17 @@ export default function App() {
       applySelection(ids, replaceSelection(ids, selectionRef.current.selected))
     }
     const autoScroll = () => {
-      frame = 0
+      timer = 0
       if (marqueeRef.current !== gesture) return
       const bounds = grid.getBoundingClientRect()
       const step = marqueeAutoScrollStep(lastY, bounds.top, bounds.bottom)
       if (!step) return
+      const now = performance.now()
       const before = grid.scrollTop
-      grid.scrollTop += step
+      grid.scrollTop += marqueeAutoScrollDelta(step, lastTick ? now - lastTick : MARQUEE_AUTO_SCROLL_TICK_MS)
+      lastTick = now
       if (grid.scrollTop !== before) update()
-      frame = requestAnimationFrame(autoScroll)
+      timer = window.setTimeout(autoScroll, MARQUEE_AUTO_SCROLL_TICK_MS)
     }
     const move = (e: PointerEvent) => {
       if (e.pointerId !== gesture.pointerId || marqueeRef.current !== gesture) return
@@ -1564,12 +1567,12 @@ export default function App() {
       }
       e.preventDefault()
       update()
-      if (!frame) frame = requestAnimationFrame(autoScroll)
+      if (!timer) { lastTick = 0; timer = window.setTimeout(autoScroll, MARQUEE_AUTO_SCROLL_TICK_MS) }
     }
     const up = (e: PointerEvent) => {
       if (e.pointerId !== gesture.pointerId) return
-      if (frame) cancelAnimationFrame(frame)
-      frame = 0
+      if (timer) window.clearTimeout(timer)
+      timer = 0
       // A sweep that started on a card can end on that same card, and the
       // click the browser then fires must not reselect it (or Shift-range from
       // it). A sweep from the background never clicks a card.

@@ -9,7 +9,7 @@ import type { MasonryModel } from "./gallery-window"
 export const MARQUEE_DRAG_THRESHOLD_PX = 4
 /** Distance from the grid's top/bottom edge where a sweep auto-scrolls. */
 export const MARQUEE_AUTO_SCROLL_EDGE_PX = 48
-/** Auto-scroll speed per frame at the very edge (or beyond it). */
+/** Auto-scroll speed per 16ms tick at the very edge (or beyond it). */
 export const MARQUEE_AUTO_SCROLL_MAX_PX = 24
 
 export type Box = { left: number; top: number; right: number; bottom: number }
@@ -34,6 +34,19 @@ export function marqueeAutoScrollStep(
   if (y < top + edge) return -ramp(top + edge - y)
   if (y > bottom - edge) return ramp(y - (bottom - edge))
   return 0
+}
+
+/** Auto-scroll ticks on a timer, not requestAnimationFrame: a hidden or
+ * occluded window may never run frames. Each tick scrolls for the time that
+ * actually passed (at least one tick, at most four), so the speed does not
+ * depend on the refresh rate or on timer throttling. */
+export const MARQUEE_AUTO_SCROLL_TICK_MS = 16
+
+export function marqueeAutoScrollDelta(step: number, elapsedMs: number): number {
+  if (!step || !Number.isFinite(step)) return 0
+  const ms = Number.isFinite(elapsedMs) ? elapsedMs : MARQUEE_AUTO_SCROLL_TICK_MS
+  const clamped = Math.min(Math.max(ms, MARQUEE_AUTO_SCROLL_TICK_MS), MARQUEE_AUTO_SCROLL_TICK_MS * 4)
+  return Math.round(step * clamped / MARQUEE_AUTO_SCROLL_TICK_MS)
 }
 
 /** Every card's box relative to the masonry origin, for a column unit `unit`
