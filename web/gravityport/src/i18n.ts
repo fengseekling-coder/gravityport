@@ -9,8 +9,6 @@ const english: Record<string, string> = {
   "请输入标签名称": "Enter a tag name.", "标签已存在": "This tag already exists.",
   "标签无法保存，仅在当前会话生效": "Tags could not be saved. Changes apply to this session only.",
   "未连接": "Not connected", "连接": "Connect",
-  "尚未接入 Pinterest MCP 服务，暂时无法连接": "Pinterest MCP is not configured. Connection is currently unavailable.",
-  "连接 Pinterest MCP 后，可同步收藏与画板。": "Connect Pinterest MCP to sync saved pins and boards.",
   "本次更新": "What’s new", "演示版说明": "Demo notes",
   "新增中英文切换，语言与外观偏好自动保存。": "Switch between Chinese and English, with language and appearance preferences saved automatically.",
   "统一图标、配色与控件样式，精简设置布局。": "Unified icons, colors, and controls, with a simpler settings layout.",

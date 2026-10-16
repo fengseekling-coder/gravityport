@@ -248,9 +248,15 @@ function firstStageSource(config) {
       return linked && !pairStillSuggested;
     }, '确认关系写入接口且该候选消失');
     const confirmAddedRelation = true;
-    const confirmedCardGone = await waitFor(() => {
+    // Re-read the assets on every poll: the snapshot above can predate the
+    // thumbnails (slow runners), and the re-rendered card then shows a
+    // thumbnail URL the snapshot never had.
+    const confirmedCardGone = await waitFor(async () => {
       const list = Array.from(region().querySelectorAll('.generation-candidate-card'));
-      return list.length === 1 && srcsAre(pairSrcs(list[0]), [downstream, downstream4]);
+      if (list.length !== 1) return false;
+      const srcs = pairSrcs(list[0]);
+      const [fresh3, fresh4] = await Promise.all([assetJson(config.asset3Id), assetJson(config.asset4Id)]);
+      return srcsAre(srcs, [fresh3, fresh4]);
     }, '已确认的候选卡消失，只剩 4←3');
 
     // Dismiss the remaining 4←3 candidate: it leaves the screen and the API

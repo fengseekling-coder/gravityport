@@ -14,6 +14,7 @@ import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
+import { openExternalLinkOutcome } from "./open-external-link.mjs";
 import { mosaClientTokenFingerprint, resolveAllowedFolderPath } from "../lib/server-security.js";
 import { isUrlLikePath } from "../lib/path-safety.mjs";
 import { copyLibraryForRelocation, validateRelocationTarget } from "../lib/library-relocation.mjs";
@@ -995,6 +996,36 @@ function registerIPC() {
       return { ok: true };
     } catch (error) {
       console.warn(`[MOSA] unable to open download page: ${error?.message || error}`);
+      return { ok: false };
+    }
+  });
+
+  ipcMain.handle("open-pinterest-authorize", async (event, url) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:" || parsed.hostname !== "www.pinterest.com" || parsed.pathname !== "/oauth/") {
+        return { ok: false };
+      }
+      await shell.openExternal(url);
+      return { ok: true };
+    } catch (error) {
+      console.warn(`[MOSA] unable to open Pinterest authorize page: ${error?.message || error}`);
+      return { ok: false };
+    }
+  });
+
+  // 任务 147:打开 Pinterest Pin / 外链的普通网址(窗口 setWindowOpenHandler 全拒,
+  // 渲染层没有别的出站通道);只认主窗口,URL 校验在 open-external-link.mjs。
+  ipcMain.handle("open-external-link", async (event, url) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+    if (!openExternalLinkOutcome(url).ok) return { ok: false };
+    try {
+      await shell.openExternal(url);
+      return { ok: true };
+    } catch (error) {
+      console.warn(`[MOSA] unable to open external link: ${error?.message || error}`);
       return { ok: false };
     }
   });

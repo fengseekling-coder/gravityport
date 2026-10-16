@@ -2966,21 +2966,6 @@ img.black-image {
   line-height: var(--space-4);
   font-weight: var(--settings-weight-regular);
   color: var(--ui-muted);
-}.app .settings-modal .integration-description {
-  margin: 0;
-  padding: 0;
-  font-size: var(--settings-text-size);
-  line-height: var(--settings-text-line);
-  font-weight: var(--settings-weight-regular);
-  color: var(--ui-muted);
-}.app .settings-modal .integration-card {
-  display: grid;
-  grid-template-columns: var(--space-8) minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4);
-}.app .integration-copy {
-  min-width: 0;
 }.app-logo {
   display: block;
   width: var(--space-10);
@@ -2990,24 +2975,6 @@ img.black-image {
   font-size: var(--space-4);
   line-height: var(--settings-text-line);
   font-weight: var(--settings-weight-label);
-}.app .integration-card .brand-icon {
-  width: var(--space-8);
-  height: var(--space-8);
-}.app .integration-title {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0 var(--space-3);
-}.app .settings-modal .integration-title strong {
-  font-size: var(--space-4);
-  line-height: var(--settings-text-line);
-  font-weight: var(--settings-weight-label);
-  color: var(--ui-text);
-}.app .settings-modal .integration-title > span {
-  font-size: var(--settings-text-size);
-  line-height: var(--settings-text-line);
-  font-weight: var(--settings-weight-regular);
-  color: var(--ui-muted);
 }/*Image viewer: quiet chrome, real-size canvas, and one compact zoom bar.*/
 
 .app .viewer-title {

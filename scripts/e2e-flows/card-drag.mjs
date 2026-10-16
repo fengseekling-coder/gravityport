@@ -191,13 +191,23 @@ function cardDragSource(config) {
       }
       throw new Error('gallery layout never stabilized');
     }
-    // The sidebar-drop and stack-drop paths clear the selection on success, so
-    // the next multi-select must start from a known empty baseline — otherwise
+    // The next multi-select must start from a known empty baseline, otherwise
     // the modifier-clicks toggle against whatever survived from the last step.
-    async function resetSelection() {
-      if (!selectedIds().length) return;
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      await waitFor(() => !selectedIds().length, 'selection cleared');
+    // An empty selection is not sticky: every gallery reload (a stack drop
+    // refreshes the view) re-lands the implicit selection on the first card,
+    // and on slow runners that reload can finish after the Escape. So press
+    // Escape again whenever a card is marked, until empty holds for 3 reads.
+    async function resetSelection(timeoutMs = 20000) {
+      const deadline = Date.now() + timeoutMs;
+      let emptyReads = 0;
+      while (Date.now() < deadline) {
+        if (selectedIds().length) {
+          emptyReads = 0;
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        } else if (++emptyReads >= 3) return;
+        await sleep(120);
+      }
+      throw new Error('selection never stayed cleared: ' + JSON.stringify(selectedIds()));
     }
     // A drag whose drop lands on nothing (the gallery can still relayout
     // behind a finished wait) is exactly what a real user does next: drag
@@ -205,11 +215,16 @@ function cardDragSource(config) {
     // and only accept the server state — never the UI.
     async function dragWithRetry(fromEl, targetEl, offset, serverCheck, label, attempts = 3) {
       let lastError;
+      const wantSel = JSON.stringify([config.looseIds[2], config.looseIds[3]].sort());
       for (let attempt = 1; attempt <= attempts; attempt++) {
         await resetSelection();
         cmdClick(cardFor(config.looseIds[2]));
         cmdClick(cardFor(config.looseIds[3]));
-        await waitFor(() => selectedIds().length === 2, 'C+D selected (attempt ' + attempt + ')');
+        // A reload landing between the reset and the clicks adds the implicit
+        // first card; that is a wrong start, so it counts as a retry too.
+        try {
+          await waitFor(() => JSON.stringify(selectedIds().slice().sort()) === wantSel, 'C+D selected (attempt ' + attempt + ')', 3000);
+        } catch (error) { lastError = error; retries.push(label + ' attempt ' + attempt + ' (selection)'); continue; }
         const base = targetEl && targetEl() ? centerOf(targetEl()) : null;
         if (!base) throw new Error('retry drag target missing: ' + label);
         const toPoint = { x: base.x + (offset ? offset.x : 0), y: base.y + (offset ? offset.y : 0) };
@@ -418,9 +433,19 @@ function cardDragSource(config) {
         }, 'C and D join the group');
       // The sidebar drop cleared the selection (a retry may have left C+D
       // marked), so start from the empty baseline and ⌘-click C alone.
-      await resetSelection();
-      cmdClick(cardFor(config.looseIds[2]));
-      await waitFor(() => JSON.stringify(selectedIds()) === JSON.stringify([config.looseIds[2]]), 'only C selected');
+      // Same re-land race as in dragWithRetry: if a reload marks the first
+      // card between the reset and the click, start over.
+      for (let pick = 1; ; pick++) {
+        await resetSelection();
+        cmdClick(cardFor(config.looseIds[2]));
+        try {
+          await waitFor(() => JSON.stringify(selectedIds()) === JSON.stringify([config.looseIds[2]]), 'only C selected', 3000);
+          break;
+        } catch (error) {
+          if (pick >= 3) throw error;
+          retries.push('only C selected attempt ' + pick);
+        }
+      }
       await dragTo(cardFor(config.looseIds[2]), centerOf(ungroupRow()), { trackEl: () => ungroupRow() });
       await waitForApi(async () => {
         const c = await assetById(config.looseIds[2]);
