@@ -438,6 +438,16 @@ function pageSource({ coverId, groupName }) {
     assertSamePosition(p6before, p6after, 'Pinterest round-trip');
     result.pinterest = { before: p6before, after: p6after, failed: false };
 
+    // ── step 7: no scrollbar, and the bottom-right back-to-top button ──
+    const g7 = grid();
+    const scrollbarWidth = g7.offsetWidth - g7.clientWidth;
+    if (scrollbarWidth !== 0) throw new Error('gallery still reserves a scrollbar: ' + scrollbarWidth + 'px');
+    if (!(g7.scrollTop > g7.clientHeight)) await scrollTo(2 * g7.clientHeight, 'deep for back-to-top');
+    const toTop = await waitFor(() => document.querySelector('.gallery-to-top'), 'back-to-top button shows');
+    toTop.click();
+    await waitFor(() => grid().scrollTop === 0 && !document.querySelector('.gallery-to-top'), 'back-to-top reaches 0 and hides');
+    result.backToTop = { scrollbarWidth, failed: false };
+
     return result;
   })()
   `;

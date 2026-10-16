@@ -8,6 +8,7 @@ const glyphs: Record<string, ReactNode> = {
   left: <path d="m14.5 5.5-6.5 6.5 6.5 6.5" />,
   right: <path d="m9.5 5.5 6.5 6.5-6.5 6.5" />,
   down: <path d="m5.5 9 6.5 6.5L18.5 9" />,
+  "to-top": <path d="M6 5h12M12 9v10M7.5 13.5 12 9l4.5 4.5" />,
   close: <path d="m6.5 6.5 11 11M6.5 17.5l11-11" />,
   plus: <path d="M12 5v14M5 12h14" />,
   minus: <path d="M5 12h14" />,

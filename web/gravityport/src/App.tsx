@@ -533,6 +533,9 @@ export default function App() {
   const liveScrollRef = useRef<{ key: string; record: GalleryScrollRecord } | null>(null)
   const pendingScrollRestoreRef = useRef<{ viewKey: string; reveal: boolean } | null>(null)
   const restoringScrollRef = useRef(false)
+  // The bottom-right "back to top" button shows once the gallery is more than
+  // one screen down.
+  const [showToTop, setShowToTop] = useState(false)
   // The view identity the current selection was made in (same key as the
   // load effect's viewKey); a mismatch resets the selection.
   const selectionViewKeyRef = useRef("")
@@ -1324,6 +1327,7 @@ export default function App() {
         // Re-read scrollTop: the browser may have clamped the write.
         const landed = buildScrollRecord(model, ids, grid.scrollTop, ids.length, selectionRef.current.selected)
         liveScrollRef.current = landed ? { key: pending.viewKey, record: landed } : null
+        setShowToTop(grid.scrollTop > grid.clientHeight)
         updateGalleryWindow()
       } finally {
         restoringScrollRef.current = false
@@ -1370,8 +1374,12 @@ export default function App() {
   useEffect(() => {
     const grid = gridRef.current
     if (!grid) return
-    const onScroll = () => recordLiveGalleryScrollRef.current()
+    const onScroll = () => {
+      recordLiveGalleryScrollRef.current()
+      setShowToTop(grid.scrollTop > grid.clientHeight)
+    }
     grid.addEventListener("scroll", onScroll, { passive: true })
+    setShowToTop(grid.scrollTop > grid.clientHeight)
     return () => grid.removeEventListener("scroll", onScroll)
   }, [preview, pinterestActive])
   // Project switching is a transaction: everything project-scoped reloads
@@ -3178,6 +3186,7 @@ export default function App() {
             onBoardCountChange={(count, complete) => setPinterestBoards({ count, complete })}
           />
         ) : (
+          <>
           <div
             ref={gridRef}
             className="asset-grid"
@@ -3307,6 +3316,17 @@ export default function App() {
             )}
             <div ref={sentinelRef} aria-hidden="true" />
           </div>
+          {showToTop && (
+            <button
+              className="gallery-to-top"
+              aria-label={tr("回到顶部")}
+              title={tr("回到顶部")}
+              onClick={() => gridRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+            >
+              <Icon name="to-top" size={16} />
+            </button>
+          )}
+          </>
         )}
       </main>
       {detail && asset && !(pinterestActive && !preview) && (
