@@ -189,3 +189,28 @@ export function promptNotice(asset: MosaAsset): PromptNotice {
 
   return null
 }
+
+/** Named aspect ratios the inspector prefers, written width:height. */
+const NAMED_RATIOS: ReadonlyArray<readonly [number, number]> = [
+  [1, 1], [4, 5], [5, 4], [3, 4], [4, 3], [2, 3], [3, 2],
+  [9, 16], [16, 9], [1, 2], [2, 1], [9, 21], [21, 9],
+]
+/** How far (relative) a size may sit from a named ratio and still take its name. */
+export const RATIO_NAME_TOLERANCE = 0.01
+
+/** Inspector 比例 label, width first: the closest named ratio within
+ * RATIO_NAME_TOLERANCE (941×1672 → "9:16", 1920×1080 → "16:9"); otherwise the
+ * shorter side normalized to 1 ("1:1.52" portrait, "1.56:1" landscape). */
+export function aspectRatioLabel(width: number, height: number): string {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 1 || height <= 1) return "—"
+  const actual = width / height
+  let best: readonly [number, number] | null = null
+  let bestError = Infinity
+  for (const named of NAMED_RATIOS) {
+    const error = Math.abs(actual / (named[0] / named[1]) - 1)
+    if (error <= RATIO_NAME_TOLERANCE && error < bestError) { best = named; bestError = error }
+  }
+  if (best) return `${best[0]}:${best[1]}`
+  const trim = (value: string) => value.replace(/\.?0+$/, "")
+  return width >= height ? `${trim(actual.toFixed(2))}:1` : `1:${trim((height / width).toFixed(2))}`
+}

@@ -23,7 +23,7 @@ import { isEditableTarget } from "./keyboard"
 import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
 import { computeConversationRounds, conversationRoundRows, roundLine } from "./conversation-rounds"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
-import { describeSource, promptNotice, resolveReferences } from "./inspector-info"
+import { aspectRatioLabel, describeSource, promptNotice, resolveReferences } from "./inspector-info"
 import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, removeTagFromStored, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
@@ -110,14 +110,6 @@ function humanSize(bytes: number | null): string {
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
-}
-
-function ratioText(width: number, height: number): string {
-  if (!width || !height || width <= 1 || height <= 1) return "—"
-  const trim = (value: string) => value.replace(/\.?0+$/, "")
-  // Design convention normalizes the shorter side to 1: "1:1.52" portrait,
-  // "1.56:1" landscape.
-  return width >= height ? `${trim((width / height).toFixed(2))}:1` : `1:${trim((height / width).toFixed(2))}`
 }
 
 /** Inspector header line "kind · source · date". Whole-sentence templates keep
@@ -3359,7 +3351,7 @@ export default function App() {
               {[
                 ["格式", asset.format || "—"],
                 ["尺寸", asset.width > 1 && asset.height > 1 ? `${asset.width} × ${asset.height}` : "—"],
-                ["比例", ratioText(asset.width, asset.height)],
+                ["比例", aspectRatioLabel(asset.width, asset.height)],
                 ["大小", humanSize(asset.size_bytes)],
               ].map(([label, value]) => (
                 <span className="property-tag" key={label} title={`${tr(label)}: ${tr(value)}`} aria-label={`${tr(label)}: ${tr(value)}`}>{tr(value)}</span>
