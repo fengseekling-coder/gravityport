@@ -91,7 +91,7 @@ export async function run(ctx) {
     if (favorites.length) throw new Error(`unexpected favorites: ${JSON.stringify(favorites.map(a => a.id))}`);
     const trash = (await ctx.api(server.origin, "GET", "/api/assets?project=default&trash=1&limit=250")).assets || [];
     if (trash.length) throw new Error(`unexpected trash: ${JSON.stringify(trash.map(a => a.id))}`);
-    return { steps: result.steps || 0, dropGroup, orderStackId, finalStackId };
+    return { steps: result.steps || 0, retries: result.retries || [], dropGroup, orderStackId, finalStackId };
   } finally {
     await server.stop();
   }
@@ -103,6 +103,8 @@ function cardDragSource(config) {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const steps = [];
     const failedSteps = [];
+    // Re-drags are allowed but never silent: every one lands in the result.
+    const retries = [];
     async function step(name, action) {
       try {
         const detail = await action();
@@ -214,7 +216,7 @@ function cardDragSource(config) {
         await dragTo(fromEl, toPoint, { trackEl: targetEl });
         try {
           return await waitForApi(serverCheck, label + ' (attempt ' + attempt + ')', 3000);
-        } catch (error) { lastError = error; }
+        } catch (error) { lastError = error; retries.push(label + ' attempt ' + attempt); }
       }
       throw lastError;
     }
@@ -573,6 +575,6 @@ function cardDragSource(config) {
     });
 
     if (failedSteps.length) throw new Error('failed steps: ' + JSON.stringify(failedSteps));
-    return { steps: steps.length, finalStackId: config.finalStackId, seedShown: config.seedShown || [] };
+    return { steps: steps.length, retries, finalStackId: config.finalStackId, seedShown: config.seedShown || [] };
   })()`;
 }
