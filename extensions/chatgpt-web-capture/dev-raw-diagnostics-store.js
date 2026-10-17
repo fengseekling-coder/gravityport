@@ -35,9 +35,23 @@ export function idsToEvict(summaries, {
   return [...drop];
 }
 
+/** Identity of a round record: one record per conversation + assistant
+ *  message. Re-records of the same round replace the stored one instead of
+ *  appending a duplicate. */
+export function devRawRecordKey(record) {
+  const conversationId = String(record?.conversationId || "").trim();
+  const assistantMessageId = String(record?.assistantMessageId || "").trim();
+  if (!conversationId || !assistantMessageId) return "";
+  return `${conversationId}\u0000${assistantMessageId}`;
+}
+
 function recordSummary(record, bytes) {
   const images = Array.isArray(record?.images) ? record.images : [];
+  const frames = Array.isArray(record?.frames) ? record.frames : [];
   return {
+    conversationId: String(record?.conversationId || ""),
+    assistantMessageId: String(record?.assistantMessageId || ""),
+    frameCount: frames.length,
     control: record?.control === true,
     missingPrompt: images.some((image) => (image?.promptStatus || "not-available") === "not-available"),
     bytes,
@@ -62,19 +76,41 @@ export function createMemoryStore() {
   let nextId = 1;
   const records = new Map(); // id -> record
   const summaries = new Map(); // id -> { ...recordSummary, recordedAt }
+  const keyIndex = new Map(); // recordKey -> id
+
+  function frameCountOf(record) {
+    return Array.isArray(record?.frames) ? record.frames.length : 0;
+  }
 
   return {
     async addRecord(record) {
+      const key = devRawRecordKey(record);
+      const existingId = key ? keyIndex.get(key) : undefined;
+      if (existingId && summaries.has(existingId)) {
+        // One record per conversation + assistant message. The version with
+        // the richer frame set wins; an equal or poorer re-record — the same
+        // conversation reopened, say — changes nothing.
+        if ((Number(summaries.get(existingId).frameCount) || 0) >= frameCountOf(record)) {
+          return { id: existingId, count: records.size, replaced: false };
+        }
+        records.delete(existingId);
+        summaries.delete(existingId);
+        keyIndex.delete(key);
+      }
       const id = nextId;
       nextId += 1;
       const bytes = recordBytes(record);
       records.set(id, record);
       summaries.set(id, { ...recordSummary(record, bytes), recordedAt: record?.recordedAt || "" });
-      for (const evictId of idsToEvict([...summaries.entries()].map(([key, value]) => ({ id: key, bytes: value.bytes })))) {
+      if (key) keyIndex.set(key, id);
+      for (const evictId of idsToEvict([...summaries.entries()].map(([summaryId, value]) => ({ id: summaryId, bytes: value.bytes })))) {
         records.delete(evictId);
         summaries.delete(evictId);
+        for (const [mappedKey, mappedId] of [...keyIndex]) {
+          if (mappedId === evictId) keyIndex.delete(mappedKey);
+        }
       }
-      return { id, count: records.size };
+      return { id, count: records.size, replaced: Boolean(existingId) };
     },
 
     async listRecords({ afterId = 0, limit = 10 } = {}) {
@@ -164,6 +200,18 @@ export function createIdbStore({ databaseName = DEV_RAW_DB_NAME } = {}) {
       const db = await openDb();
       try {
         const bytes = recordBytes(record);
+        // One record per conversation + assistant message: the richer frame
+        // set wins, an equal or poorer re-record changes nothing.
+        const summariesBefore = await readAllSummaries(db);
+        const key = devRawRecordKey(record);
+        const existing = key
+          ? summariesBefore.find((entry) => (
+            `${String(entry?.conversationId || "")}\u0000${String(entry?.assistantMessageId || "")}` === key))
+          : null;
+        const frameCount = Array.isArray(record?.frames) ? record.frames.length : 0;
+        if (existing && (Number(existing.frameCount) || 0) >= frameCount) {
+          return { id: Number(existing.id), count: summariesBefore.length, replaced: false };
+        }
         const id = await new Promise((resolve, reject) => {
           const tx = db.transaction([DEV_RAW_RECORDS_STORE, DEV_RAW_SUMMARIES_STORE], "readwrite");
           const store = tx.objectStore(DEV_RAW_RECORDS_STORE);
@@ -183,8 +231,9 @@ export function createIdbStore({ databaseName = DEV_RAW_DB_NAME } = {}) {
           tx.onabort = () => reject(tx.error || new Error("dev raw diagnostics write aborted"));
           tx.onerror = () => reject(tx.error || new Error("dev raw diagnostics write failed"));
         });
-        await deleteIds(db, idsToEvict((await readAllSummaries(db)).map((entry) => ({ id: entry.id, bytes: entry.bytes }))));
-        return { id, count: (await readAllSummaries(db)).length };
+        const stale = existing ? [Number(existing.id)] : [];
+        await deleteIds(db, [...stale, ...idsToEvict((await readAllSummaries(db)).map((entry) => ({ id: entry.id, bytes: entry.bytes })))]);
+        return { id, count: (await readAllSummaries(db)).length, replaced: Boolean(existing) };
       } finally {
         db.close();
       }

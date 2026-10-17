@@ -46,7 +46,7 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.31");
+  assert.equal(manifest.version, "0.15.32");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -245,7 +245,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.31");
+  assert.equal(manifest.version, "0.15.32");
   // Storage keys and the pairing product identifier stay "mosa" so old
   // extensions keep working with the renamed App and vice versa.
   assert.match(backgroundSource, /if \(identity\?\.product !== "mosa"\) continue;/);
@@ -1843,7 +1843,7 @@ test("binds prompt and asset when one image call splits them across nested reque
 });
 
 test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.31");
+  assert.equal(manifest.version, "0.15.32");
   assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
   assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
   assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);
@@ -2157,6 +2157,205 @@ test("does not borrow a request Prompt from a call to another tool", async () =>
   const output = harness.events.find((event) => event.type === "generation-meta" && event.payload?.assetId === "file-other-tool");
   assert.ok(output);
   assert.equal(output.payload.generationRequestPrompt, "");
+});
+
+// ---- Async ghostrider turns: the caption lives on hidden tool messages ----
+//
+// In an async image turn the visible message shows the images with blank
+// dalle.prompt while a hidden gpt-5-4 submessage carries each image together
+// with its "Model caption:". The caption must reach the displayed image by
+// its own asset_pointer file id (or gen_id), in either arrival order, and the
+// blank prompt of the visible message must never erase it.
+
+const ASYNC_CAPTION_A = "Model caption: A flat vector turnaround sheet of a round mascot, three evenly spaced views, thick outlines, plain white background, children's book style.";
+const ASYNC_CAPTION_B = "Model caption: A flat vector sticker sheet of a round mascot waving, bold outlines, pastel palette, plain background.";
+const ASYNC_REQUEST_PROMPT_A = "Create a clean character turnaround sheet for a small round mascot: three views, flat vector, white background.";
+const ASYNC_REQUEST_PROMPT_B = "Create a clean sticker sheet for a small round mascot waving: flat vector, pastel palette, bold outlines.";
+
+function asyncTurnUpdate(message) {
+  return JSON.stringify({
+    type: "conversation-update",
+    payload: { conversation_id: "conversation-test", update_type: "add-messages", update_content: { messages: [message] } },
+  });
+}
+
+function asyncImagePart(fileId, genId) {
+  return {
+    content_type: "image_asset_pointer",
+    asset_pointer: `sediment://${fileId}`,
+    mime_type: "image/png",
+    size_bytes: 1280833,
+    width: 1448,
+    height: 1086,
+    metadata: {
+      dalle: { gen_id: genId, prompt: "", serialization_title: "DALL-E generation metadata" },
+      generation: { gen_id: genId, serialization_title: "Image Generation metadata" },
+    },
+  };
+}
+
+function asyncHiddenCall() {
+  return asyncTurnUpdate({
+    id: "msg-async-call",
+    author: { role: "assistant", name: null, metadata: {} },
+    recipient: "t2uay3k.sj1i4kz",
+    content: {
+      content_type: "code",
+      language: "json",
+      response_format_name: "t2uay3k.sj1i4kz",
+      text: JSON.stringify({ batch_requests: [
+        { prompt: ASYNC_REQUEST_PROMPT_A, aspect_ratio: "4:3", referenced_image_ids: [], transparent_background: false },
+        { prompt: ASYNC_REQUEST_PROMPT_B, aspect_ratio: "4:3", referenced_image_ids: [], transparent_background: false },
+      ] }),
+    },
+    status: "finished_successfully",
+    metadata: { is_visually_hidden_from_conversation: true, message_type: "next", model_slug: "gpt-5-4-thinking", turn_exchange_id: "turn-async" },
+  });
+}
+
+function asyncHiddenReturn({ id, fileId, genId, caption, parentId }) {
+  return asyncTurnUpdate({
+    id,
+    author: { role: "tool", name: "t2uay3k.sj1i4kz", metadata: {} },
+    recipient: "all",
+    content: { content_type: "multimodal_text", parts: [asyncImagePart(fileId, genId), caption] },
+    status: "finished_successfully",
+    metadata: {
+      is_visually_hidden_from_conversation: true,
+      image_gen_title: "Generated image",
+      message_type: "next",
+      model_slug: "gpt-5-4-thinking",
+      parent_id: parentId,
+      turn_exchange_id: "turn-async",
+    },
+  });
+}
+
+function asyncVisibleMessage(parts, { status = "finished_successfully" } = {}) {
+  return asyncTurnUpdate({
+    id: "msg-async-visible",
+    author: { role: "tool", name: "t2uay3k.sj1i4kz", metadata: {} },
+    recipient: "all",
+    content: { content_type: "multimodal_text", parts },
+    status,
+    metadata: {
+      async_source: "saserver-example:ghostrider-user-example__00000000-0000-0000-0000-00000000example",
+      ghostrider: { status: status === "finished_successfully" ? "final" : "intermediate", is_feature_trial: false },
+      turn_exchange_id: "turn-async",
+    },
+  });
+}
+
+function asyncVisibleFrames({ order }) {
+  const visibleEmpty = asyncVisibleMessage([], { status: "in_progress" });
+  const visibleOne = asyncVisibleMessage([asyncImagePart("file-async-a", "gen-async-a")], { status: "in_progress" });
+  const visibleBoth = asyncVisibleMessage([asyncImagePart("file-async-a", "gen-async-a"), asyncImagePart("file-async-b", "gen-async-b")]);
+  const hiddenCall = asyncHiddenCall();
+  const hiddenReturnA = asyncHiddenReturn({ id: "msg-async-return-a", fileId: "file-async-a", genId: "gen-async-a", caption: ASYNC_CAPTION_A, parentId: "msg-async-call" });
+  const hiddenReturnB = asyncHiddenReturn({ id: "msg-async-return-b", fileId: "file-async-b", genId: "gen-async-b", caption: ASYNC_CAPTION_B, parentId: "msg-async-return-a" });
+  // Real order: the displayed message streams its placeholders first, the
+  // hidden call and returns follow. Reverse: the hidden evidence is already
+  // on record when the displayed message arrives.
+  return order === "visible-first"
+    ? [visibleEmpty, visibleOne, visibleBoth, hiddenCall, hiddenReturnA, hiddenReturnB, visibleBoth]
+    : [visibleEmpty, hiddenCall, hiddenReturnA, hiddenReturnB, visibleOne, visibleBoth];
+}
+
+async function feedAsyncTurn(order) {
+  const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} });
+  for (const frame of asyncVisibleFrames({ order })) await harness.socketFrame(frame);
+  return harness;
+}
+
+for (const order of ["hidden-first", "visible-first"]) {
+  test(`adopts hidden worker captions onto the displayed images by file id (${order})`, async () => {
+    const harness = await feedAsyncTurn(order);
+    const metas = harness.events.filter((event) => event.type === "generation-meta").map((event) => event.payload);
+
+    // Only the two captions ever surface as prompts; the blank dalle.prompt
+    // values and the raw batch JSON never do.
+    const prompts = new Set(metas.filter((meta) => meta.prompt).map((meta) => meta.prompt));
+    assert.deepEqual([...prompts].sort(), [ASYNC_CAPTION_A, ASYNC_CAPTION_B].sort());
+
+    // The displayed message's own events carry the captions — a consumer that
+    // only knows the visible message id still gets each image's caption.
+    for (const [fileId, caption] of [["file-async-a", ASYNC_CAPTION_A], ["file-async-b", ASYNC_CAPTION_B]]) {
+      const adopted = metas.find((meta) => meta.messageId === "msg-async-visible"
+        && meta.assetId === fileId
+        && meta.promptStatus === "visible-caption"
+        && meta.prompt === caption);
+      assert.ok(adopted, `the displayed message's event for ${fileId} must adopt its caption`);
+      assert.equal(adopted.promptScope, "output");
+      assert.equal(adopted.isGeneration, true);
+    }
+
+    // No request Prompt may be guessed in a two-entry batch turn.
+    for (const meta of metas) assert.equal(meta.generationRequestPrompt || "", "");
+
+    const registry = createGenerationRegistryHarness();
+    for (const meta of metas) registry.remember(meta);
+    for (const [fileId, caption] of [["file-async-a", ASYNC_CAPTION_A], ["file-async-b", ASYNC_CAPTION_B]]) {
+      const resolved = registry.resolvedForImage("", { assetId: fileId });
+      assert.ok(resolved, `${fileId} must resolve`);
+      assert.equal(resolved.prompt, caption);
+      assert.equal(resolved.promptStatus, "visible-caption");
+      assert.equal(resolved.isGeneration, true);
+    }
+  });
+}
+
+test("keeps a single-entry batch request Prompt beside the hidden caption", async () => {
+  const call = asyncTurnUpdate({
+    id: "msg-async-single-call",
+    author: { role: "assistant", name: null, metadata: {} },
+    recipient: "t2uay3k.sj1i4kz",
+    content: {
+      content_type: "code",
+      language: "json",
+      text: JSON.stringify({ batch_requests: [
+        { prompt: ASYNC_REQUEST_PROMPT_A, aspect_ratio: "4:3", referenced_image_ids: [], transparent_background: false },
+      ] }),
+    },
+    status: "finished_successfully",
+    metadata: { is_visually_hidden_from_conversation: true, model_slug: "gpt-5-4-thinking", turn_exchange_id: "turn-async-single" },
+  });
+  const hiddenReturn = asyncHiddenReturn({
+    id: "msg-async-single-return",
+    fileId: "file-async-single",
+    genId: "gen-async-single",
+    caption: ASYNC_CAPTION_A,
+    parentId: "msg-async-single-call",
+  });
+  const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} });
+  for (const frame of [call, hiddenReturn]) await harness.socketFrame(frame);
+
+  const metas = harness.events.filter((event) => event.type === "generation-meta").map((event) => event.payload);
+  const captioned = metas.find((meta) => meta.prompt === ASYNC_CAPTION_A);
+  assert.ok(captioned);
+  assert.equal(captioned.promptStatus, "visible-caption");
+  assert.equal(captioned.generationRequestPrompt, ASYNC_REQUEST_PROMPT_A, "an unambiguous single-entry batch names its request Prompt");
+});
+
+test("does not adopt a Model caption pasted into a hidden user message", async () => {
+  // A hidden user turn (tool telemetry, pasted snippets) is not provider
+  // output; its caption-looking text must stay inert even for the same file id.
+  const pasted = "Model caption: Cute pastel kawaii illustration scene with a soft pink background, rounded characters, gentle lighting and a clean poster layout.";
+  const hiddenUser = asyncTurnUpdate({
+    id: "msg-hidden-user",
+    author: { role: "user", name: null, metadata: {} },
+    content: { content_type: "text", parts: [pasted] },
+    metadata: { is_visually_hidden_from_conversation: true },
+  });
+  const visibleImage = asyncVisibleMessage([asyncImagePart("file-async-a", "gen-async-a")]);
+  const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} });
+  for (const frame of [hiddenUser, visibleImage]) await harness.socketFrame(frame);
+
+  const metas = harness.events.filter((event) => event.type === "generation-meta").map((event) => event.payload);
+  assert.equal(metas.some((meta) => meta.prompt === pasted), false, "the pasted caption is never a prompt");
+  const registry = createGenerationRegistryHarness();
+  for (const meta of metas) registry.remember(meta);
+  const resolved = registry.resolvedForImage("", { assetId: "file-async-a" });
+  assert.equal(resolved?.prompt || "", "", "no caption may reach the image from a user message");
 });
 
 test("does not treat a pasted Model caption in a user message as a generation caption", async () => {
@@ -3580,8 +3779,12 @@ test("batch_requests with 4 entries leaves the request prompt empty instead of g
     assert.ok(!(meta.prompt || "").includes("batch_requests"), "the raw batch JSON must never become a prompt");
   }
   const captions = metas.filter((meta) => meta.prompt).map((meta) => meta.prompt);
-  assert.equal(captions.length, 4, "exactly the four tool captions survive as prompts");
-  assert.deepEqual(new Set(captions).size, 4, "all four captions stay distinct");
+  // The captions may surface on the tool messages and, adopted by image id,
+  // on the final gallery message — but never any text beyond those four.
+  assert.deepEqual(new Set(captions).size, 4, "exactly the four tool captions survive as prompts");
+  for (const caption of captions) {
+    assert.ok(BATCH_FILES.some(([, known]) => known === caption), "no caption beyond the four tool captions may appear");
+  }
 });
 
 test("content-side blob-asset validation drops cross-origin urls and malformed ids", () => {
