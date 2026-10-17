@@ -611,22 +611,11 @@
     if (message?.content?.content_type !== "code" || typeof message.content.text !== "string") return;
     const callId = typeof message.id === "string" ? message.id : "";
     const args = parseStructuredJson(message.content.text);
-    if (!callId || !args || Array.isArray(args)) return;
-    // Async image turns call the generator with several batched requests and
-    // no per-image identity. Only a single-entry batch names its image
-    // unambiguously; a multi-entry batch must stay unnamed rather than be
-    // matched to an image by position.
-    let namedArgs = args;
-    if (typeof args.prompt !== "string" && Array.isArray(args.batch_requests)) {
-      const named = args.batch_requests.filter((entry) => entry && typeof entry.prompt === "string");
-      if (named.length !== 1) return;
-      namedArgs = named[0];
-    }
-    if (typeof namedArgs.prompt !== "string") return;
+    if (!callId || !args || Array.isArray(args) || typeof args.prompt !== "string") return;
     const recipient = String(message.recipient || "");
     const imageTool = /(dall[-_.]?e|image[_ .-]?(gen|generation)|text2im|imagegen)/i.test(recipient)
-      || Object.keys(namedArgs).some((key) => IMAGE_TOOL_ARGUMENT_KEYS.has(key));
-    const prompt = cleanPrompt(namedArgs.prompt);
+      || Object.keys(args).some((key) => IMAGE_TOOL_ARGUMENT_KEYS.has(key));
+    const prompt = cleanPrompt(args.prompt);
     if (!imageTool || !prompt || prompt.length > 12000) return;
     imageToolCalls.delete(callId);
     imageToolCalls.set(callId, {
@@ -690,50 +679,6 @@
     if (!node || typeof node !== "object" || Array.isArray(node)) return false;
     const message = node.message && typeof node.message === "object" ? node.message : node;
     return Boolean(message?.content && (message?.id || message?.author || message?.metadata));
-  }
-
-  // A hidden image-tool return carries its Model caption next to the image,
-  // while the very same image (same asset_pointer file id, same dalle gen_id)
-  // is displayed inside a different, visible message — in async turns the
-  // hidden messages exist only in the live stream. Keep caption candidates by
-  // image identity so the message that displays the image without a prompt can
-  // adopt the caption its generation already produced, in either arrival
-  // order. Only candidates that passed visibleCaptionCandidate inside a
-  // message owning the image are stored, and only under that image's own ids.
-  const MAX_CAPTION_TRANSFERS = 256;
-  const captionTransfers = new Map();
-
-  function captionTransferKey(conversationId, imageId) {
-    const conversation = String(conversationId || "").trim();
-    const id = String(imageId || "").trim();
-    return conversation && id ? `${conversation}\u0000${id}` : "";
-  }
-
-  function rememberCaptionForImage(conversationId, imageId, candidate) {
-    const key = captionTransferKey(conversationId, imageId);
-    if (!key || !candidate?.text) return;
-    if (!captionTransfers.has(key)) {
-      captionTransfers.set(key, candidate);
-      while (captionTransfers.size > MAX_CAPTION_TRANSFERS) {
-        captionTransfers.delete(captionTransfers.keys().next().value);
-      }
-    }
-  }
-
-  function rememberNativeCaption(conversationId, imageId, candidate) {
-    // Only this message's own visible caption is transferable evidence; a
-    // caption adopted from another message must not propagate further.
-    if (candidate?.promptSource !== "message-visible-caption") return;
-    rememberCaptionForImage(conversationId, imageId, candidate);
-  }
-
-  function transferredCaptionForImage(conversationId, ...imageIds) {
-    for (const imageId of imageIds) {
-      const key = captionTransferKey(conversationId, imageId);
-      const candidate = key ? captionTransfers.get(key) : null;
-      if (candidate) return candidate;
-    }
-    return null;
   }
 
   /** Emit a tightly bound pair. Empty prompt is allowed for an image-only event. */
@@ -1077,13 +1022,8 @@
 
         for (const output of unit.outputs.values()) {
           const outputPrompt = selectPrompt(output.prompts);
-          const transferred = outputPrompt || sharedPrompt
-            ? null
-            : transferredCaptionForImage(context.conversationId, output.assetId, unit.generationCallId);
-          const selected = outputPrompt || sharedPrompt || transferred;
-          const outputScoped = Boolean(outputPrompt)
-            || (selected === captionFallback && unit.outputs.size === 1)
-            || Boolean(transferred);
+          const selected = outputPrompt || sharedPrompt;
+          const outputScoped = Boolean(outputPrompt) || (selected === captionFallback && unit.outputs.size === 1);
           emitPair(selected?.text || "", output.imageUrl, {
             assetId: output.assetId,
             conversationId: context.conversationId,
@@ -1102,8 +1042,6 @@
             via: "message-generation-unit",
             isGeneration: true,
           });
-          rememberNativeCaption(context.conversationId, output.assetId, selected);
-          rememberNativeCaption(context.conversationId, unit.generationCallId, selected);
           emitted += 1;
         }
 
@@ -1314,10 +1252,7 @@
       });
     }
     for (const assetId of assetIds) {
-      const transferred = boundPrompt ? null
-        : transferredCaptionForImage(context.conversationId, assetId, onlyGenerationCallId);
-      const caption = transferred || boundPrompt;
-      emitPair(caption?.text || "", "", {
+      emitPair(boundPrompt?.text || "", "", {
         assetId,
         conversationId: context.conversationId,
         messageId: context.messageId,
@@ -1325,19 +1260,17 @@
         providerToolCallId: onlyToolCallId,
         providerGenerationCallId: onlyGenerationCallId,
         providerResponseId: context.responseId,
-        promptStatus: caption?.promptStatus || "not-available",
-        promptSource: caption?.promptSource || "",
-        promptPriority: caption?.priority || 0,
-        promptScope: transferred ? "output" : boundPrompt ? (assetIds.size + imageUrls.size > 1 ? "attempt" : "output") : "",
+        promptStatus: boundPrompt?.promptStatus || "not-available",
+        promptSource: boundPrompt?.promptSource || "",
+        promptPriority: boundPrompt?.priority || 0,
+        promptScope: boundPrompt ? (assetIds.size + imageUrls.size > 1 ? "attempt" : "output") : "",
         generationStatus: messageGenerationStatus,
         model,
         generationRequestPrompt: requestPrompt,
         via: "message-metadata-asset",
-        isGeneration: toolOwnedGeneration || caption?.promptStatus === "generation-tool-prompt" || caption?.promptStatus === "visible-caption",
+        isGeneration: toolOwnedGeneration || boundPrompt?.promptStatus === "generation-tool-prompt" || boundPrompt?.promptStatus === "visible-caption",
       });
-      rememberNativeCaption(context.conversationId, assetId, boundPrompt);
     }
-    rememberNativeCaption(context.conversationId, onlyGenerationCallId, boundPrompt);
     if (boundPrompt && !imageUrls.size && !assetIds.size) {
       emitPair(boundPrompt.text, "", {
         conversationId: context.conversationId,
