@@ -115,7 +115,7 @@ export function canUpdateDistribution(currentDistribution, targetDistribution) {
 }
 
 function cleanNote(value) {
-  return typeof value === "string" ? value.trim().slice(0, 1200) : "";
+  return typeof value === "string" ? value.trim().slice(0, 3000) : "";
 }
 
 function parseBuildIdentity(value) {

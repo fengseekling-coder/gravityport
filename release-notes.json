@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "unreleased": {
+    "zh": ["设置 →「关于」里能看到这个版本更新了什么；有新版本时，会先列出新版本的更新内容。"],
+    "en": ["Settings → About now lists what changed in this version, and shows what's new in the next version when an update is available."]
+  },
+  "releases": [
+    {
+      "version": "0.2.1-rc.34",
+      "date": "2026-09-24",
+      "zh": ["修复 Windows 更新助手在成功完成后未显式退出的问题，提升更新流程稳定性。"],
+      "en": ["Fix the Windows update helper to exit explicitly after a successful update, improving update reliability."]
+    }
+  ]
+}
