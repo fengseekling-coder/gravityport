@@ -44,15 +44,3 @@ SigLIP2 SentencePiece tokenization inside the optional visual inference worker u
 - Runtime role: consumes the tokenizer files pinned in the model pack manifest to produce the fixed-length token ids the visual model expects.
 
 The Apache License 2.0 text is available in the upstream repository at <https://github.com/huggingface/tokenizers/blob/main/LICENSE>.
-
-## Lexend Deca (font)
-
-GravityPort bundles the **Lexend Deca** variable typeface (weight axis 100–900, latin and latin-ext subsets) as its UI font. The font files are served locally from `web/app/fonts/` so the app works fully offline.
-
-- Project: The Lexend Project Authors
-- Distribution: `@fontsource-variable/lexend-deca` (Fontsource, v5.3.0)
-- Upstream license: SIL Open Font License, Version 1.1
-- Files: `web/app/fonts/lexend-deca-latin-wght-normal.woff2`, `web/app/fonts/lexend-deca-latin-ext-wght-normal.woff2`
-- License text: `web/app/fonts/OFL.txt`
-
-The SIL Open Font License 1.1 text is available in the upstream repository at <https://github.com/googlefonts/lexend/blob/main/OFL.txt>.
