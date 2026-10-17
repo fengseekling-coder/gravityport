@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose a focused MOSA improvement
+description: Propose a focused GravityPort improvement
 title: "[Feature]: "
 body:
   - type: markdown
@@ -13,7 +13,7 @@ body:
       options:
         - label: I searched existing Issues and Discussions.
           required: true
-        - label: This request stays within MOSA's local-first creative-memory scope.
+        - label: This request stays within GravityPort's local-first creative-memory scope.
           required: true
   - type: textarea
     id: problem

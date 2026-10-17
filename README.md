@@ -1,37 +1,39 @@
-# MOSA
+# GravityPort
+
+GravityPort was previously called MOSA. Existing installs keep their library folder, settings, and command names.
 
 > **Local visual memory for AI creation.**
 > 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
 
-MOSA is a local-first library for AI-generated images, videos, Prompts, provenance, and version history. It keeps creative output from Codex, Grok Build CLI, Cowart, and an optional Web Capture extension for ChatGPT, Gemini, Flow, and Google AI Studio in one library on your own computer.
+GravityPort is a local-first library for AI-generated images, videos, Prompts, provenance, and version history. It keeps creative output from Codex, Grok Build CLI, Cowart, and an optional Web Capture extension for ChatGPT, Gemini, Flow, and Google AI Studio in one library on your own computer.
 
-**Local-first · Prompt & provenance · Version history · No MOSA cloud account**
+**Local-first · Prompt & provenance · Version history · No GravityPort cloud account**
 
 [Quick start](#quick-start) · [Downloads](#downloads) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
 
 ## Downloads
 
-Download the current MOSA packages from the [official download page](https://mosa.azhuilab.com/#download). The page and its [release manifest](https://mosa.azhuilab.com/releases/latest.json) are the source of truth for newer versions, package sizes, and SHA-256 values. These links intentionally stay version-neutral so publishing a new package does not require another README edit.
+Download the current GravityPort packages from the [official download page](https://mosa.azhuilab.com/#download). The page and its [release manifest](https://mosa.azhuilab.com/releases/latest.json) are the source of truth for newer versions, package sizes, and SHA-256 values. These links intentionally stay version-neutral so publishing a new package does not require another README edit.
 
 | Package | Platform | Download | Update source |
 | --- | --- | --- | --- |
-| MOSA Desktop | macOS arm64 | [Download latest package](https://mosa.azhuilab.com/#download) | Official page resolves the current package from the release manifest |
-| MOSA Desktop | Windows x64 | [Download latest package](https://mosa.azhuilab.com/#download) | Official page resolves the current package from the release manifest |
-| MOSA Web Capture | Chrome / Chromium | [Download latest package](https://mosa.azhuilab.com/#download) · [Install guide](https://mosa.azhuilab.com/guide/) | Official page maintains the current developer-mode ZIP; not a signed CRX |
+| GravityPort Desktop | macOS arm64 | [Download latest package](https://mosa.azhuilab.com/#download) | Official page resolves the current package from the release manifest |
+| GravityPort Desktop | Windows x64 | [Download latest package](https://mosa.azhuilab.com/#download) | Official page resolves the current package from the release manifest |
+| GravityPort Web Capture | Chrome / Chromium | [Download latest package](https://mosa.azhuilab.com/#download) · [Install guide](https://mosa.azhuilab.com/guide/) | Official page maintains the current developer-mode ZIP; not a signed CRX |
 
-Desktop distributables are hosted outside Git history because of their size. macOS is distributed as a DMG with `MOSA.app` and an `Applications` shortcut; Windows remains a portable ZIP while its installer work is still in progress. The official page is the canonical download entry for all packages; versioned filenames and package metadata may change there without requiring a source repository commit.
+Desktop distributables are hosted outside Git history because of their size. macOS is distributed as a DMG with `GravityPort.app` and an `Applications` shortcut; Windows remains a portable ZIP while its installer work is still in progress. The official page is the canonical download entry for all packages; versioned filenames and package metadata may change there without requiring a source repository commit.
 
-## Why MOSA
+## Why GravityPort
 
 An image alone rarely tells you how to use it again. The Prompt may be in another conversation, the source tool may be forgotten, and the version you actually want may be buried among near-duplicates.
 
-MOSA reconnects each asset with the context that makes it reusable: its available Prompt, generation source, provenance, and version history. The library remains under your control on your machine.
+GravityPort reconnects each asset with the context that makes it reusable: its available Prompt, generation source, provenance, and version history. The library remains under your control on your machine.
 
 ## What you can do
 
 ### Keep the context with the asset
 
-Archive generated images and videos together with their available Prompt, source, model or tool context, timestamps, and provenance. MOSA records when a Prompt is unavailable instead of inventing one.
+Archive generated images and videos together with their available Prompt, source, model or tool context, timestamps, and provenance. GravityPort records when a Prompt is unavailable instead of inventing one.
 
 ### Find the work you want
 
@@ -43,18 +45,18 @@ Save a recipe, create a new version, inspect the version tree. Your next iterati
 
 ## Fits into your workflow
 
-| You create in | MOSA keeps |
+| You create in | GravityPort keeps |
 | --- | --- |
 | **Codex Desktop** | Generated images and the matching local generation context when available |
 | **ChatGPT, Gemini, Flow, or Google AI Studio in Chrome** | Optional visible web-generated images and conservative page-scoped context through the local extension |
 | **Grok Build CLI** | Images and videos from local sessions, with matched tool context when available |
 | **Cowart** | Approved canvas snapshots archived from Cowart into the library |
 
-MOSA does not generate media or replace any of these tools. It is the place where their visual output becomes a reusable body of work.
+GravityPort does not generate media or replace any of these tools. It is the place where their visual output becomes a reusable body of work.
 
 ## Quick start
 
-MOSA currently starts from source as a local service on `127.0.0.1:43517`.
+GravityPort currently starts from source as a local service on `127.0.0.1:43517`.
 
 ```bash
 git clone https://github.com/fengseekling-coder/mosa.git
@@ -70,7 +72,7 @@ Requirements for source use: Node.js 22 or newer and npm. Desktop development is
 
 ## Desktop app
 
-The Electron desktop shell uses the same MOSA Web UI and local runtime on both supported desktop targets:
+The Electron desktop shell uses the same GravityPort Web UI and local runtime on both supported desktop targets:
 
 ```bash
 npm ci
@@ -83,28 +85,28 @@ npm run desktop:make
 npm run desktop:package:windows
 ```
 
-Desktop packaging is pinned to Node.js 22.x because the current Electron Forge/Packager toolchain is not reliable under Node.js 24. The repository includes `.nvmrc` and `.node-version` for Node `22.23.1`; packaging commands fail fast with a clear message on any other Node major. Local development and the MOSA runtime still support Node.js 22 or newer.
+Desktop packaging is pinned to Node.js 22.x because the current Electron Forge/Packager toolchain is not reliable under Node.js 24. The repository includes `.nvmrc` and `.node-version` for Node `22.23.1`; packaging commands fail fast with a clear message on any other Node major. Local development and the GravityPort runtime still support Node.js 22 or newer.
 
 Current desktop status:
 
 | Target | Status | Verified in the current development cycle |
 | --- | --- | --- |
 | macOS arm64 | DMG distribution target | Electron shell, local runtime, packaged smoke path, native dependencies, drag-to-Applications distribution |
-| Windows 10/11 x64 | **Preview / testing** | `MOSA.exe` startup, SQLite, Sharp, library UI, Inspector, and automatic Codex collection on a real Windows machine |
+| Windows 10/11 x64 | **Preview / testing** | `GravityPort.exe` startup, SQLite, Sharp, library UI, Inspector, and automatic Codex collection on a real Windows machine |
 
 The Windows target keeps the shared renderer and runtime code, uses Windows-native `better-sqlite3` and Sharp binaries, and hides Electron's native application menu bar while retaining menu accelerators. `desktop:release:windows` is the Preview/RC portable-release path and may remain unsigned; `desktop:release:windows:production` is the explicit Authenticode path and fails closed without a signing source plus pinned signer thumbprint. Both tracks verify the signed release manifest, artifact size/SHA-256, and the relaunched build identity before committing replacement; Production additionally verifies every executable/native payload signature. Grok and Cowart source discovery on Windows and a conventional installer remain separate release work.
 
-When the configured port already serves the same MOSA library, the desktop app attaches to it and leaves it running on Quit. Otherwise, it starts and owns a local runtime, which stops cleanly when the app quits. MOSA never terminates an unverified listener or a service for a different library.
+When the configured port already serves the same GravityPort library, the desktop app attaches to it and leaves it running on Quit. Otherwise, it starts and owns a local runtime, which stops cleanly when the app quits. GravityPort never terminates an unverified listener or a service for a different library.
 
-> **Project status:** RC distribution uses an explicit **Preview** track: `npm run desktop:release` on macOS and `npm run desktop:release:windows` on Windows require immutable remote source provenance plus the signed MOSA release manifest but do not require Apple Developer or Authenticode credentials. A separate **Production** track (`desktop:release:production` / `desktop:release:windows:production`) adds Developer ID + notarization or Authenticode and fails closed when those credentials are absent. A conventional Windows installer is still future work.
+> **Project status:** RC distribution uses an explicit **Preview** track: `npm run desktop:release` on macOS and `npm run desktop:release:windows` on Windows require immutable remote source provenance plus the signed GravityPort release manifest but do not require Apple Developer or Authenticode credentials. A separate **Production** track (`desktop:release:production` / `desktop:release:windows:production`) adds Developer ID + notarization or Authenticode and fails closed when those credentials are absent. A conventional Windows installer is still future work.
 
 ## Local by design
 
-- MOSA is a local Web UI bound to loopback; it is not a cloud service and must not be exposed through a public port or reverse proxy.
+- GravityPort is a local Web UI bound to loopback; it is not a cloud service and must not be exposed through a public port or reverse proxy.
 - It reads only its configured Codex, Grok, and approved Cowart locations. It does not scan Downloads, Desktop, or arbitrary image folders.
-- Web Capture is optional. Packaged Desktop provisions its local ingest Token and fixed approved extension origins automatically; a standalone `npm start` runtime keeps capture disabled until those values are configured explicitly. The extension sends captured image bytes and page provenance only to the configured local MOSA address. ChatGPT retains message-scoped context when available; Gemini, Flow, and Google AI Studio retain only narrowly associated visible user Prompt text when it can be safely matched and mark it unverified.
+- Web Capture is optional. Packaged Desktop provisions its local ingest Token and fixed approved extension origins automatically; a standalone `npm start` runtime keeps capture disabled until those values are configured explicitly. The extension sends captured image bytes and page provenance only to the configured local GravityPort address. ChatGPT retains message-scoped context when available; Gemini, Flow, and Google AI Studio retain only narrowly associated visible user Prompt text when it can be safely matched and mark it unverified.
 - Eligible reference images are stored as private, content-hash-deduplicated generation-record attachments, not ordinary gallery assets.
-- MOSA adds no AI model, remote sync, embedding search, or automatic upload of your library.
+- GravityPort adds no AI model, remote sync, embedding search, or automatic upload of your library.
 - Packaged desktop builds send minimal anonymous install/activity metadata through a separate bodyless request to the same first-party release endpoint used for update metadata. This contains only a random installation ID, version, platform, architecture, and first-launch/daily-active event. It is not exposed as an in-app preference, manual update checks do not create extra activity reports, and the request never includes assets, Prompts, or local paths. See [PRIVACY.md](PRIVACY.md).
 
 See [PRIVACY.md](PRIVACY.md) for the full data boundary and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
@@ -121,16 +123,16 @@ See [PRIVACY.md](PRIVACY.md) for the full data boundary and [SECURITY.md](SECURI
 - [Contributing guide](CONTRIBUTING.md): development workflow, checks, and privacy requirements.
 - [Support guide](SUPPORT.md): questions, bug reports, and feature requests.
 - [Changelog](CHANGELOG.md): user-visible changes and release status.
-- [Third-party notices](THIRD_PARTY_NOTICES.md): upstream projects that materially informed MOSA's design or implementation.
+- [Third-party notices](THIRD_PARTY_NOTICES.md): upstream projects that materially informed GravityPort's design or implementation.
 
 ## License
 
-MOSA is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+GravityPort is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE).
 
 - Noncommercial personal, educational, research, hobby, modification, and distribution uses are permitted under the license terms.
 - Commercial use, paid services, client delivery, commercial platform integration, or other anticipated commercial applications require a separate written license from the copyright holder. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
 - Redistributions must preserve the license terms and required copyright notice.
 
-MOSA is source-available software, not OSI-approved open-source software.
+GravityPort is source-available software, not OSI-approved open-source software.
 
-Third-party attribution is documented separately in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and does not change MOSA's own license terms.
+Third-party attribution is documented separately in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and does not change GravityPort's own license terms.

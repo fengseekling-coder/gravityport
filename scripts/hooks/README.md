@@ -1,4 +1,4 @@
-# MOSA Git Hooks
+# GravityPort Git Hooks
 
 Version-controlled git hooks. Hooks in this directory are tracked so they survive
 clones and can be reviewed, unlike `.git/hooks/` which is local-only.

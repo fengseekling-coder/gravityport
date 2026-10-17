@@ -1,6 +1,6 @@
 # 右键菜单功能说明
 
-MOSA 现已支持完整的右键菜单功能，为导航栏和素材库提供快捷操作入口。
+GravityPort 现已支持完整的右键菜单功能，为导航栏和素材库提供快捷操作入口。
 
 ## 功能概览
 
@@ -61,7 +61,7 @@ MOSA 现已支持完整的右键菜单功能，为导航栏和素材库提供快
 
 ### 视觉风格
 - 跟随系统主题（浅色/深色模式）
-- 使用 MOSA V2 设计令牌
+- 使用 GravityPort V2 设计令牌
 - 圆角卡片风格（12px 圆角）
 - 浮动阴影效果
 
@@ -110,7 +110,7 @@ app/
 - 错误处理和反馈
 
 ### API 集成
-所有菜单操作通过现有的 MOSA API 实现：
+所有菜单操作通过现有的 GravityPort API 实现：
 - `/api/assets/:projectId/:assetId` - 更新素材
 - `/api/assets/:projectId/:assetId/restore` - 从回收站还原素材
 - `/api/assets/:projectId/:assetId/permanent` - 永久删除回收站素材
@@ -148,13 +148,13 @@ app/
 
 ## 支持范围
 
-这份文档只描述当前仓库已经实现并受测试覆盖的右键菜单行为。MOSA Desktop 的 Electron 界面是主要支持面；源码 Web UI 复用同一菜单模块，但仓库目前没有维护 Chrome、Firefox、Safari 的独立版本兼容矩阵，因此不在这里承诺未经持续验证的浏览器最低版本。
+这份文档只描述当前仓库已经实现并受测试覆盖的右键菜单行为。GravityPort Desktop 的 Electron 界面是主要支持面；源码 Web UI 复用同一菜单模块，但仓库目前没有维护 Chrome、Firefox、Safari 的独立版本兼容矩阵，因此不在这里承诺未经持续验证的浏览器最低版本。
 
 未来功能和尚未实现的菜单想法应放到 GitHub Issues / Discussions，而不是混入当前功能说明。
 
 ## 相关文档
 
-- [MOSA 使用指南](guide.zh-CN.md)
+- [GravityPort 使用指南](guide.zh-CN.md)
 - [运维与恢复说明](operations.md)
 - [项目概览](../README.md)
 

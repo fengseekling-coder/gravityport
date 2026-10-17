@@ -1,4 +1,4 @@
-# MOSA 系统架构
+# GravityPort 系统架构
 
 本文档描述仓库当前实现，而不是未来重构方案。产品版本以根目录
 `package.json` 的 `version` 字段为唯一权威，不在本文档重复硬编码。运行时要求 Node.js
@@ -7,14 +7,14 @@
 
 ## 1. 系统定位
 
-MOSA 是一个本地优先的创意资产库。它把图像和视频原件、可获得的 Prompt、
+GravityPort 是一个本地优先的创意资产库。它把图像和视频原件、可获得的 Prompt、
 生成工具上下文、来源信息、标签和版本历史保存在本地，提供浏览、搜索、归档
-和版本化的能力。MOSA 不生成媒体、不提供云端同步，也不把
+和版本化的能力。GravityPort 不生成媒体、不提供云端同步，也不把
 素材库自动上传到远端服务。
 
 默认服务只绑定 `127.0.0.1`。浏览器扩展是可选集成：独立 `npm start` Runtime
 只有在显式配置本地 ingest Token 和允许的扩展 origin 后才启用；Packaged Desktop
-会在本地自动生成 Token，并只授权固定的 MOSA 扩展 origin 完成配对。
+会在本地自动生成 Token，并只授权固定的 GravityPort 扩展 origin 完成配对。
 
 ## 2. 运行时分层
 
@@ -27,7 +27,7 @@ MOSA 是一个本地优先的创意资产库。它把图像和视频原件、可
                 │ HTTP              │ HTTP              │ JSON-RPC/stdio
                 ▼                   ▼                   ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ MOSA 本地运行时                                              │
+│ GravityPort 本地运行时                                       │
 │  server.mjs → lib/mosa-runtime.mjs                           │
 │  Node node:http、静态资源处理、API 分发、运行时锁和安全边界   │
 └───────────────┬──────────────────┬──────────────────┬────────┘
@@ -107,7 +107,7 @@ loopback origin 检查、运行时锁和桥接生命周期。服务启动时监�
 
 生成事件独立于去重后的 Asset：同一媒体内容可以对应多次生成事件。生成关系连接
 Generation Event，而不是复用 `parent_asset_id`。普通 HTTP/MCP 调用方只能声明
-`user_confirmed`、`observed` 或 `inferred`；`provider_verified` 保留给 MOSA 直接
+`user_confirmed`、`observed` 或 `inferred`；`provider_verified` 保留给 GravityPort 直接
 观察到官方 provider 响应的受信集成。
 
 资产检视器通过 `GET /api/assets/:project/:asset/generation-history` 读取与当前素材
@@ -204,7 +204,7 @@ Electron 启动时由 `desktop/service-manager.mjs` 探测
 - 正常桌面升级遇到同库的已验证旧版本时：先受控退出旧 owner，再由当前桌面
   进程接管同一端口和 Library；如果另一个进程抢先成为 owner，只接受完整构建
   身份与当前版本完全一致的服务，否则 fail-closed。
-- 端口被其他服务占用，或 MOSA 服务使用了不同库：报告冲突，不替换或终止
+- 端口被其他服务占用，或 GravityPort 服务使用了不同库：报告冲突，不替换或终止
   原服务。
 
 Web UI 启动时同时读取 `/api/health` 与静态 `build-identity.json`，在加载图库
@@ -255,7 +255,7 @@ SQLite 数据库路径为 `<库目录>/mosa.db`（默认库目录按上文
 迁移完成的库使用如下逻辑布局（`$HOME` 只是示例根目录）：
 
 ```text
-$HOME/MOSA Library/
+$HOME/GravityPort Library/
 ├── mosa.db
 ├── assets/<project-id>/       原始媒体和衍生文件
 ├── .web-capture-tmp/          网页捕获暂存区
@@ -276,12 +276,12 @@ HTTP 读取路径由 `lib/mosa-runtime.mjs` 实现：
 /library/:project/references/:file     Web Capture 引用附件
 ```
 
-迁移和维护通过 `bin/mosa.mjs` 提供：
+迁移和维护通过 `bin/mosa.mjs` 提供（命令名用 `gravityport`，`mosa` 仍可用）：
 
 ```text
-mosa migrate [--dry-run] [--resume] [--library <path>]
-mosa verify [--library <path>]
-mosa thumbnails <rebuild|repair> [--library <path>]
+gravityport migrate [--dry-run] [--resume] [--library <path>]
+gravityport verify [--library <path>]
+gravityport thumbnails <rebuild|repair> [--library <path>]
 ```
 
 ## 6. API 边界
@@ -325,22 +325,22 @@ Codex 自动收录是双来源模型，而不是只靠一个图片目录：
 - **会话来源**：同时监听 `<CODEX_HOME>/sessions`。`lib/codex-session-index.ts` 对 JSONL
   维护进程内字节游标；首次读取完整文件，后续只读取新增的完整行。若
   `image_generation_call` / `image_generation_end` 携带图片 `result`，但标准
-  `generated_images` 文件不存在，MOSA 可以从 session 恢复图片，不会因为 Codex
+  `generated_images` 文件不存在，GravityPort 可以从 session 恢复图片，不会因为 Codex
   某次未落盘而漏收。
 
 标准文件始终优先。只有标准图片不可用时才启用 session result 恢复。
 `lib/codex-session-recovery.ts` 会先限制事件与图片体积、校验 base64 并按二进制签名
-识别真实图片格式，再写入 MOSA 私有临时目录；素材库完成 copy 后立即删除临时文件。
+识别真实图片格式，再写入 GravityPort 私有临时目录；素材库完成 copy 后立即删除临时文件。
 session 中的任意 `saved_path` 不会因此成为新的受信任文件根。恢复出来的素材继续走
 与标准文件相同的 automatic-ingest suppression、内容哈希、像素哈希和资产创建链。
 
-图片目录和 session 目录都使用 watcher；watcher 不可用时由轮询兜底。MOSA 不会为了
+图片目录和 session 目录都使用 watcher；watcher 不可用时由轮询兜底。GravityPort 不会为了
 监听而创建 Codex 的 `sessions` 目录，Codex 后续创建目录后轮询会自动重新挂载 watcher。
 找不到可靠 Prompt 时明确记录不可用，不会凭空生成 Prompt。
 
-MOSA 不把 Codex 的 workspace、Documents、Desktop、Downloads 或任意项目目录当作
+GravityPort 不把 Codex 的 workspace、Documents、Desktop、Downloads 或任意项目目录当作
 默认素材扫描根。若用户确实修改了 Codex 本身的存储根，应配置 Codex 官方的
-`CODEX_HOME`；MOSA 会跟随同一个根，而不是另外发明一套默认目录。
+`CODEX_HOME`；GravityPort 会跟随同一个根，而不是另外发明一套默认目录。
 
 ### 7.2 Grok Build CLI
 
@@ -355,14 +355,14 @@ MOSA 不把 Codex 的 workspace、Documents、Desktop、Downloads 或任意项�
 `lib/cowart-canvas-discovery.ts` 可从近期 Codex 会话发现 Cowart 项目；
 `lib/cowart-bridge-manager.ts` 管理主画布和已注册外部项目；
 
-默认管理画布目录为 `<CODEX_HOME>/cowart-data/mosa`，MOSA 自己的 Cowart registry
+默认管理画布目录为 `<CODEX_HOME>/cowart-data/mosa`，GravityPort 自己的 Cowart registry
 默认为 `<CODEX_HOME>/mosa/cowart-projects.json`。外部画布必须通过路径、
 目录标记、非 symlink 和项目内边界校验；不可信条目可以移除，但不会启动 watcher。
 
 ### 7.4 Web Capture
 
 `extensions/chatgpt-web-capture/` 是可选浏览器扩展，当前 provider 为 ChatGPT、
-Gemini、Flow 和 Google AI Studio。扩展只向配置的本地 MOSA 地址发送捕获的图像
+Gemini、Flow 和 Google AI Studio。扩展只向配置的本地 GravityPort 地址发送捕获的图像
 字节和页面来源；服务端 `lib/web-capture-ingest.ts` 使用 `sharp` 校验格式、
 尺寸、像素数和 MIME，并用 SHA-256 去重。
 
@@ -397,12 +397,12 @@ Token 写入公共文档、日志或仓库：
 | `CODEX_GENERATED_IMAGES_DIR` | Codex 生成图片目录覆盖 |
 | `CODEX_SESSIONS_DIR` | Codex 会话目录覆盖 |
 | `GROK_SESSIONS_DIR` | Grok 会话目录覆盖 |
-| `COWART_MOSA_CANVAS_DIR` | MOSA 管理画布目录覆盖 |
+| `COWART_MOSA_CANVAS_DIR` | GravityPort 管理画布目录覆盖 |
 | `MOSA_DISABLE_BRIDGES` | 禁用指定桥接的逗号分隔列表 |
 | `MOSA_WEB_CAPTURE_TOKEN` | 启用网页捕获的本地 Token |
 | `MOSA_WEB_CAPTURE_ORIGINS` | 网页捕获允许的扩展 origin 列表 |
 
-MOSA 只读取已配置的 Codex、Grok 和 Cowart 位置；不会把 Downloads、Desktop、
+GravityPort 只读取已配置的 Codex、Grok 和 Cowart 位置；不会把 Downloads、Desktop、
 Documents 或任意项目图片目录作为默认扫描根。导入路径、画布路径、外部来源和
 打开文件夹操作均经过边界
 校验；运行时隔离检查在写入库或监听端口前失败即停止。请把 Prompt、会话 ID、
