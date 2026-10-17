@@ -148,6 +148,36 @@ async function main() {
     checks.push({ name: "real wheel scrolls the gallery", pass: scrolled.scrollTop > 0 && scrolled.scrollHeight > scrolled.clientHeight, evidence: scrolled });
     if (!(scrolled.scrollTop > 0)) throw new Error(`real wheel did not scroll: ${JSON.stringify(scrolled)}`);
 
+    // 4. Real click on a toolbar control still lands inside the drag row.
+    const sort = await session.evaluate(`(() => {
+      const r = document.querySelector('.toolbar .toolbar-select[aria-label="排序"]').getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`);
+    execFileSync(helperBin, ["click", String(child.pid), String(sort.x), String(sort.y)], { stdio: ["ignore", "pipe", "pipe"] });
+    await sleep(800);
+    const sortAfter = await session.evaluate(`Boolean(document.querySelector(".toolbar-select-menu"))`);
+    checks.push({ name: "real click opens a toolbar menu", pass: sortAfter, evidence: { menuOpen: sortAfter } });
+    if (!sortAfter) throw new Error("real click on the toolbar sort control did not open its menu — the drag row is eating control clicks");
+    await session.evaluate(`document.querySelector('.toolbar .toolbar-select[aria-label="排序"]').click(); "closed"`);
+    await sleep(400);
+
+    // 5. Real drag on the empty toolbar strip moves the window (the page
+    // covers the hiddenInset titlebar, so this is the only way to move it).
+    const strip = await session.evaluate(`(() => {
+      const left = document.querySelector(".toolbar-left").getBoundingClientRect();
+      const right = document.querySelector(".toolbar-right").getBoundingClientRect();
+      const x = (left.right + right.left) / 2, y = left.y + left.height / 2;
+      return { x, y, target: document.elementFromPoint(x, y)?.className || "" };
+    })()`);
+    if (strip.target !== "toolbar") throw new Error(`no empty toolbar strip to drag: ${JSON.stringify(strip)}`);
+    const before = await session.evaluate(`({ x: window.screenX, y: window.screenY })`);
+    execFileSync(helperBin, ["drag", String(child.pid), String(strip.x), String(strip.y), "120", "60"], { stdio: ["ignore", "pipe", "pipe"] });
+    await sleep(800);
+    const after = await session.evaluate(`({ x: window.screenX, y: window.screenY })`);
+    const moved = { before, after };
+    checks.push({ name: "real drag on the toolbar moves the window", pass: after.x - before.x >= 100 && after.y - before.y >= 40, evidence: moved });
+    if (!(after.x - before.x >= 100 && after.y - before.y >= 40)) throw new Error(`real toolbar drag did not move the window: ${JSON.stringify(moved)}`);
+
     console.log(JSON.stringify({ ok: true, checks }, null, 2));
   } finally {
     if (child) await stopChild(child);
@@ -220,7 +250,7 @@ guard AXIsProcessTrusted() else {
 
 let args = CommandLine.arguments
 guard args.count >= 3, let pid = pid_t(args[2]) else {
-  fail("usage: realinput bounds|click|scroll <pid> [x y [ticks]]")
+  fail("usage: realinput bounds|click|scroll|drag <pid> [x y [ticks|dx dy]]")
 }
 
 func postClick(_ point: CGPoint) {
@@ -293,6 +323,19 @@ case "scroll":
     usleep(60_000)
   }
   print("scrolled \\(point)")
+case "drag":
+  guard args.count >= 7, let x = Double(args[3]), let y = Double(args[4]), let dx = Double(args[5]), let dy = Double(args[6]) else { fail("drag needs x y dx dy") }
+  let start = CGPoint(x: bounds.minX + CGFloat(x), y: bounds.minY + CGFloat(y))
+  CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: start, mouseButton: .left)?.post(tap: .cghidEventTap)
+  usleep(120_000)
+  var end = start
+  for step in 1...12 {
+    end = CGPoint(x: start.x + CGFloat(dx) * CGFloat(step) / 12, y: start.y + CGFloat(dy) * CGFloat(step) / 12)
+    CGEvent(mouseEventSource: nil, mouseType: .leftMouseDragged, mouseCursorPosition: end, mouseButton: .left)?.post(tap: .cghidEventTap)
+    usleep(30_000)
+  }
+  CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left)?.post(tap: .cghidEventTap)
+  print("dragged \\(start) -> \\(end)")
 default:
   fail("unknown command \\(args[1])")
 }

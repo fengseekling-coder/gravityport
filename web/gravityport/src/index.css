@@ -3250,6 +3250,20 @@ video.viewer-image {
   white-space: nowrap;
 }
 
+/* The page covers the hiddenInset titlebar, so without a drag region the
+   window cannot be moved. Only the three 56px top rows drag; every control in
+   them and every overlay that can cover them opts out. Never put a drag region
+   on a document the window navigates away from (task 127). */
+.app.native-darwin :is(.brandbar, .toolbar, .detail-heading) {
+  -webkit-app-region: drag;
+}
+.app.native-darwin :is(.brandbar, .toolbar, .detail-heading) :is(button, input, select, textarea, a, label, [role="button"], .column-control),
+.modal-layer, .group-dialog-backdrop, .group-menu-dismiss, .group-manage-menu,
+.context-menu, .toolbar-select-menu, .column-popover, .toast,
+.pinterest-detail-backdrop, .pinterest-confirm-backdrop {
+  -webkit-app-region: no-drag;
+}
+
 /* Task 137: context menu separators, headings and submenus. The separator is
    a real <div> now, so the button-sized .menu-divider rules above are
    neutralized for it (higher specificity, additive only). */

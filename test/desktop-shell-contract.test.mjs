@@ -30,12 +30,13 @@ describe("desktop shell contract", () => {
     assert.doesNotMatch(source, /app-region/i);
   });
 
-  it("GravityPort stylesheet declares no window drag region", async () => {
+  it("GravityPort drags only from the macOS top rows", async () => {
     const source = await readFile(join(repositoryRoot, "web", "gravityport", "src", "index.css"), "utf8");
-    // The React app renders in a hiddenInset window whose native titlebar
-    // strip already drags. If a CSS drag region is ever reintroduced here it
-    // must come with a documented region-recompute story; until then, none.
-    assert.doesNotMatch(source, /app-region/i);
+    // The page covers the hiddenInset titlebar, so the window needs a CSS drag
+    // region to be movable at all. Keep it to the native-darwin top rows; any
+    // other drag declaration risks swallowing real clicks.
+    const rules = [...source.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{[^{}]*app-region:\s*drag/gi)].map(match => match[1].trim());
+    assert.deepEqual(rules, [".app.native-darwin :is(.brandbar, .toolbar, .detail-heading)"]);
   });
 
   it("GravityPort renders no simulated window control buttons", async () => {
