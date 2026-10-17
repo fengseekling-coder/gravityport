@@ -3004,14 +3004,14 @@ export default function App() {
                   size={16}
                 />}
                 <span>{tr(label)}</span>
-                {/* Pinterest stays in Trial access (1,000 calls a day shared by
-                    every user) until Standard access is approved. */}
-                {i === 1 && <sup className="nav-soon">{tr("暂未开放")}</sup>}
                 <small>
                   {i === 0
                     ? navigation?.total ?? 0
                     : i === 1
-                      ? pinterestBoards ? `${pinterestBoards.count}${pinterestBoards.complete ? "" : "+"}` : ""
+                      // Pinterest stays in Trial access (1,000 calls a day shared
+                      // by every user) until Standard access is approved, so the
+                      // count slot says so until boards have been loaded.
+                      ? pinterestBoards ? `${pinterestBoards.count}${pinterestBoards.complete ? "" : "+"}` : <span className="nav-soon">{tr("暂未开放")}</span>
                       : i === 2
                         ? navigation?.unorganized ?? 0
                         : i === 3

@@ -50,7 +50,7 @@ function pinterestEntrySource() {
       && !document.querySelector('.details');
     if (!galleryHidden) throw new Error('gallery chrome still shown in the Pinterest view');
     const sidebarCount = navButton('Pinterest').querySelector('small')?.textContent ?? null;
-    if (sidebarCount !== '') throw new Error('Pinterest row should show no count before boards load: ' + JSON.stringify(sidebarCount));
+    if (sidebarCount !== '暂未开放') throw new Error('Pinterest row should say 暂未开放 in the count slot before boards load: ' + JSON.stringify(sidebarCount));
 
     // ⌘A then Delete in the Pinterest view must not select or trash the
     // hidden gallery's assets.

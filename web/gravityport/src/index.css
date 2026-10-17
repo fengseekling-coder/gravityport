@@ -2049,20 +2049,9 @@ img.black-image {
 }.sidebar .nav-row .brand-icon {
   display: block;
 }.sidebar .nav-row .nav-soon {
-  /*Superscript note hugging the Pinterest label: pull it back over the row gap and lift it to the top right.*/
-  align-self: flex-start;
-  margin: 7px 0 0 calc(2px - var(--space-2));
-  font-size: 10px;
-  font-weight: 400;
-  line-height: 12px;
-  color: var(--ink-tertiary);
+  /*Sits in the count slot: right-aligned with the counts, centred on the label.*/
+  font-size: 11px;
   white-space: nowrap;
-  position: static;
-}
-
-@media (max-width: 480px) {.sidebar .nav-row .nav-soon {
-    display: none;
-  }
 }.ui-icon--16 {
   --icon-size: 16px;
 }.ui-icon--24 {
