@@ -1,4 +1,4 @@
-# MOSA Contributor Instructions
+# GravityPort Contributor Instructions
 
 ## Repository Boundary
 
@@ -15,7 +15,7 @@
 
 ## Licensing
 
-- MOSA is source-available under the root `LICENSE` using `PolyForm-Noncommercial-1.0.0`; do not describe it as OSI-approved open-source software.
+- GravityPort is source-available under the root `LICENSE` using `PolyForm-Noncommercial-1.0.0`; do not describe it as OSI-approved open-source software.
 - Preserve the root `LICENSE`, its `Required Notice`, the README license summary, `COMMERCIAL-LICENSE.md`, and the root package license metadata when changing public files.
 - Do not grant, imply, or document commercial-use permission without the copyright holder's separate written authorization.
 - Keep third-party dependency licenses unchanged; project licensing metadata and dependency licensing metadata are separate scopes.

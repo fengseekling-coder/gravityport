@@ -1,8 +1,8 @@
-# Contributing to MOSA
+# Contributing to GravityPort
 
-MOSA welcomes focused bug fixes, tests, documentation improvements, and narrowly scoped feature proposals.
+GravityPort welcomes focused bug fixes, tests, documentation improvements, and narrowly scoped feature proposals.
 
-MOSA is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE), not an OSI-approved open-source project. By submitting a contribution, you confirm that you have the right to provide it and agree that it may be distributed under the repository license. A contribution does not grant commercial-use rights.
+GravityPort is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE), not an OSI-approved open-source project. By submitting a contribution, you confirm that you have the right to provide it and agree that it may be distributed under the repository license. A contribution does not grant commercial-use rights.
 
 ## Before You Start
 

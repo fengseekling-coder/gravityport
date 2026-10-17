@@ -1,10 +1,10 @@
 # Third-party notices
 
-This file records upstream projects that materially informed MOSA's design or implementation. It is separate from MOSA's own license terms.
+This file records upstream projects that materially informed GravityPort's design or implementation. It is separate from GravityPort's own license terms.
 
 ## APSAL Open
 
-MOSA's recipe snapshot model was informed by the immutable, reproducible creative-record concepts in **APSAL Open**.
+GravityPort's recipe snapshot model was informed by the immutable, reproducible creative-record concepts in **APSAL Open**.
 
 - Project: `henyjone/apsal-open`
 - Reference release: `v0.14.0`
@@ -13,17 +13,17 @@ MOSA's recipe snapshot model was informed by the immutable, reproducible creativ
 - Upstream author: HenyJone / APSAL Open
 - Source: <https://github.com/henyjone/apsal-open/tree/v0.14.0>
 
-The influence is at the design level. In MOSA, the resulting recipe snapshot system records a frozen generation recipe with content-derived identity, Prompt and recipe digests, normalized reference declarations, provenance, and change lineage. The current MOSA implementation lives in `lib/recipe-snapshot.ts` and the corresponding storage/API layers.
+The influence is at the design level. In GravityPort, the resulting recipe snapshot system records a frozen generation recipe with content-derived identity, Prompt and recipe digests, normalized reference declarations, provenance, and change lineage. The current GravityPort implementation lives in `lib/recipe-snapshot.ts` and the corresponding storage/API layers.
 
-MOSA does not vendor, bundle, execute, or depend on APSAL Open source code. No APSAL source files are distributed as part of MOSA. MOSA's own source remains licensed under the repository's [PolyForm Noncommercial License 1.0.0](LICENSE); this notice does not relicense MOSA under Apache-2.0.
+GravityPort does not vendor, bundle, execute, or depend on APSAL Open source code. No APSAL source files are distributed as part of GravityPort. GravityPort's own source remains licensed under the repository's [PolyForm Noncommercial License 1.0.0](LICENSE); this notice does not relicense GravityPort under Apache-2.0.
 
-APSAL contains substantially broader authoring, protocol, registry, packaging, and Studio functionality. This notice should not be read as claiming those systems are part of MOSA.
+APSAL contains substantially broader authoring, protocol, registry, packaging, and Studio functionality. This notice should not be read as claiming those systems are part of GravityPort.
 
 The upstream Apache License 2.0 text is available in APSAL Open's tagged source at <https://github.com/henyjone/apsal-open/blob/v0.14.0/LICENSE>.
 
 ## ONNX Runtime (onnxruntime-node)
 
-The optional MOSA Visual Pack executes its verified model through **onnxruntime-node**, the official Node.js binding for ONNX Runtime. This dependency is distributed with the optional visual pack rather than the core `MOSA.app` bundle.
+The optional GravityPort Visual Pack executes its verified model through **onnxruntime-node**, the official Node.js binding for ONNX Runtime. This dependency is distributed with the optional visual pack rather than the core `GravityPort.app` bundle.
 
 - Project: `microsoft/onnxruntime`
 - Dependency: `onnxruntime-node` (^1.30.0)
@@ -35,7 +35,7 @@ The MIT license text is available in the upstream repository at <https://github.
 
 ## Hugging Face Tokenizers (@huggingface/tokenizers)
 
-SigLIP2 SentencePiece tokenization inside the optional visual inference worker uses **@huggingface/tokenizers**, the JavaScript tokenizer package published by Hugging Face. This dependency is distributed with the optional visual pack rather than the core `MOSA.app` bundle.
+SigLIP2 SentencePiece tokenization inside the optional visual inference worker uses **@huggingface/tokenizers**, the JavaScript tokenizer package published by Hugging Face. This dependency is distributed with the optional visual pack rather than the core `GravityPort.app` bundle.
 
 - Project: `huggingface/tokenizers` (JavaScript distribution)
 - Dependency: `@huggingface/tokenizers` (^0.2.0)
@@ -47,7 +47,7 @@ The Apache License 2.0 text is available in the upstream repository at <https://
 
 ## Lexend Deca (font)
 
-MOSA / GravityPort bundles the **Lexend Deca** variable typeface (weight axis 100–900, latin and latin-ext subsets) as its UI font. The font files are served locally from `web/app/fonts/` so the app works fully offline.
+GravityPort bundles the **Lexend Deca** variable typeface (weight axis 100–900, latin and latin-ext subsets) as its UI font. The font files are served locally from `web/app/fonts/` so the app works fully offline.
 
 - Project: The Lexend Project Authors
 - Distribution: `@fontsource-variable/lexend-deca` (Fontsource, v5.3.0)

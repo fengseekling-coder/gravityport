@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible MOSA defect without private user data
+description: Report a reproducible GravityPort defect without private user data
 title: "[Bug]: "
 body:
   - type: markdown
@@ -20,7 +20,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: MOSA version or commit
+      label: GravityPort version or commit
       placeholder: v0.2.0 or commit SHA
     validations:
       required: true
