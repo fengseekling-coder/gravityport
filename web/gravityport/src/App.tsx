@@ -3120,7 +3120,7 @@ export default function App() {
               try {
                 const link = document.createElement("a")
                 link.href = url
-                link.download = `mosa-group-${name.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "group"}.json`
+                link.download = `gravityport-group-${name.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "group"}.json`
                 document.body.appendChild(link)
                 link.click()
                 link.remove()

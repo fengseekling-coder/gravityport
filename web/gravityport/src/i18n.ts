@@ -118,7 +118,7 @@ const english: Record<string, string> = {
   "已添加到分组": "Added to group", "已从分组移除": "Removed from group",
   "已剪切": "Cut", "已粘贴到堆叠": "Pasted into stack", "已移出堆叠": "Moved out of the stack",
   "复制图片失败": "Couldn't copy the image", "不支持复制的素材类型": "This asset type can't be copied",
-  "重试": "Retry", "加载更多": "Load more", "此操作尚未接入 MOSA 服务": "This action isn't connected to MOSA yet.",
+  "重试": "Retry", "加载更多": "Load more",
   "恢复素材": "Restore asset", "构建": "Build", "正式版": "Production",
   "取消收藏": "Remove from Favorites", "复制失败": "Copy failed", "存储类型": "Storage type",
   "构建信息": "Build info", "素材": "assets",
