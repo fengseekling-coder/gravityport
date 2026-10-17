@@ -2048,6 +2048,21 @@ img.black-image {
   mask: url("/assets/pinterest.svg") center / contain no-repeat;
 }.sidebar .nav-row .brand-icon {
   display: block;
+}.sidebar .nav-row .nav-soon {
+  /*Superscript note hugging the Pinterest label: pull it back over the row gap and lift it to the top right.*/
+  align-self: flex-start;
+  margin: 7px 0 0 calc(2px - var(--space-2));
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 12px;
+  color: var(--ink-tertiary);
+  white-space: nowrap;
+  position: static;
+}
+
+@media (max-width: 480px) {.sidebar .nav-row .nav-soon {
+    display: none;
+  }
 }.ui-icon--16 {
   --icon-size: 16px;
 }.ui-icon--24 {
@@ -2685,6 +2700,11 @@ img.black-image {
 }.app .release-notes li::marker {
   color: var(--ui-muted);
   font-size: 8px;
+}.app .release-meta {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  line-height: var(--space-5);
+  color: var(--ui-muted);
 }.app .about-summary > :not(.about-symbol) {
   grid-column: 2;
 }.app .about-summary .about-update {
@@ -2956,6 +2976,12 @@ img.black-image {
   letter-spacing: 0;
   color: var(--ui-muted);
 }.app .settings-modal .settings-nav h2 {
+  font-size: var(--settings-text-size);
+  line-height: var(--settings-text-line);
+  font-weight: var(--settings-weight-regular);
+  letter-spacing: 0;
+  color: var(--ui-muted);
+}.app .settings-modal .release-meta {
   font-size: var(--settings-text-size);
   line-height: var(--settings-text-line);
   font-weight: var(--settings-weight-regular);

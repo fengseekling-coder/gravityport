@@ -16,6 +16,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { computeRuntimeFingerprint, computeUiFingerprint } from "../lib/build-identity.mjs";
+import { readReleaseNotes, notesForVersion } from "../lib/release-notes.mjs";
 import { desktopDistributionFromEnvironment } from "../lib/release-distribution.mjs";
 import { releaseManifestTrustFromEnvironment } from "../lib/release-manifest-signature.mjs";
 
@@ -48,9 +49,18 @@ if (runtimeFingerprint === "unknown") {
   throw new Error("Cannot compute MOSA runtime fingerprint: server/runtime files are missing or unreadable.");
 }
 
+// --- release notes gate -----------------------------------------------
+// A shipped build must carry the user-facing notes for its own version; the
+// About page bundles them from release-notes.json at build time. Development
+// builds only validate the file's format so typos surface before release.
+const distribution = desktopDistributionFromEnvironment(process.env);
+const releaseNotes = readReleaseNotes(join(root, "release-notes.json"));
+if (distribution !== "development" && !notesForVersion(releaseNotes, productVersion)) {
+  throw new Error(`release-notes.json 缺少 ${productVersion} 的更新说明`);
+}
+
 // --- Write identity ---------------------------------------------------
 const releaseManifestTrust = releaseManifestTrustFromEnvironment(process.env);
-const distribution = desktopDistributionFromEnvironment(process.env);
 const identity = {
   productVersion,
   gitSha,

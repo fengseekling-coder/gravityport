@@ -51,6 +51,7 @@ import {
   recordUpdateCheck,
   type UpdateUiState,
 } from "./app-lifecycle"
+import { buildReleaseNoteBlocks } from "./release-notes-view"
 import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus, fetchSimilarAssets,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
@@ -2818,12 +2819,12 @@ export default function App() {
     if (!api?.downloadAndInstallUpdate) return
     if (updateState.phase === "downloading") return
     if (updateState.phase !== "available") return
-    setUpdateState({ phase: "downloading", percent: 0, latestVersion: updateState.latestVersion, publishedAt: updateState.publishedAt, canInstallInApp: updateState.canInstallInApp })
+    setUpdateState({ phase: "downloading", percent: 0, latestVersion: updateState.latestVersion, publishedAt: updateState.publishedAt, canInstallInApp: updateState.canInstallInApp, notes: updateState.notes })
     try {
       await api.downloadAndInstallUpdate()
     } catch (error) {
       setUpdateState(current => current.phase === "downloading"
-        ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false }
+        ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false, notes: current.notes }
         : current)
       notify(tr("更新失败，请稍后重试"))
     }
@@ -2831,7 +2832,7 @@ export default function App() {
   const cancelUpdateDownload = () => {
     desktopAPI()?.cancelUpdateDownload?.()
     setUpdateState(current => current.phase === "downloading"
-      ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false }
+      ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false, notes: current.notes }
       : current)
   }
   const openDownloadPage = () => {
@@ -3003,6 +3004,9 @@ export default function App() {
                   size={16}
                 />}
                 <span>{tr(label)}</span>
+                {/* Pinterest stays in Trial access (1,000 calls a day shared by
+                    every user) until Standard access is approved. */}
+                {i === 1 && <sup className="nav-soon">{tr("暂未开放")}</sup>}
                 <small>
                   {i === 0
                     ? navigation?.total ?? 0
@@ -4259,14 +4263,35 @@ export default function App() {
                       return <button className="neutral-button about-update" onClick={checkForUpdates} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
                     })()}
                   </section>
-                  <section className="settings-section release-notes" aria-labelledby="release-notes-title">
-                    <div className="release-heading"><h4 id="release-notes-title">{tr("本次更新")}</h4><span>{tr("构建信息")}</span></div>
-                    <ul>
-                      <li>{tr("版本")} {health?.productVersion || "—"}</li>
-                      <li>{tr("构建")} {health?.gitSha ? health.gitSha.slice(0, 7) : "—"}</li>
-                      <li>{health?.distribution === "development" ? tr("开发版") : tr("正式版")}</li>
-                    </ul>
-                  </section>
+                  {(() => {
+                    const blocks = buildReleaseNoteBlocks({
+                      productVersion: health?.productVersion || "",
+                      distribution: health?.distribution || "",
+                      language,
+                      t: tr,
+                      updateState,
+                    })
+                    return (
+                      <>
+                        {blocks.map((block, index) => (
+                          <section key={`${index}-${block.title}`} className="settings-section release-notes" aria-label={block.title}>
+                            <div className="release-heading">
+                              <h4>{block.title}</h4>
+                              {block.date ? <span>{block.date}</span> : null}
+                            </div>
+                            <ul>
+                              {block.lines.map((line, lineIndex) => <li key={lineIndex}>{line}</li>)}
+                            </ul>
+                          </section>
+                        ))}
+                        <section className="settings-section release-notes">
+                          <p className="release-meta">
+                            {tr("版本")} {health?.productVersion || "—"} · {tr("构建")} {health?.gitSha ? health.gitSha.slice(0, 7) : "—"} · {health?.distribution === "development" ? tr("开发版") : tr("正式版")}
+                          </p>
+                        </section>
+                      </>
+                    )
+                  })()}
                 </>
               )}
               </div>
