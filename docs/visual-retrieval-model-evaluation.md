@@ -2,23 +2,23 @@
 
 Status: evaluation gate, not a shipping-model commitment.
 
-MOSA's current text search already covers explicit keywords, supported Chinese conversational phrasing, and a small audited design vocabulary. The remaining retrieval gap is pixel-grounded intent: composition, subject position, color placement, and other facts that are not present in Prompt or metadata.
+GravityPort's current text search already covers explicit keywords, supported Chinese conversational phrasing, and a small audited design vocabulary. The remaining retrieval gap is pixel-grounded intent: composition, subject position, color placement, and other facts that are not present in Prompt or metadata.
 
 ## Default product runtime
 
-The default product architecture is **MOSA-local**, not Ollama. The desktop app owns discovery and verification of optional model packs under Electron `userData`, exposes their state in Settings, and keeps installation/enabled/runtime-readiness as separate states. A verified model pack does not become usable until MOSA also has a compatible trusted local inference runtime.
+The default product architecture is **GravityPort-local**, not Ollama. The desktop app owns discovery and verification of optional model packs under Electron `userData`, exposes their state in Settings, and keeps installation/enabled/runtime-readiness as separate states. A verified model pack does not become usable until GravityPort also has a compatible trusted local inference runtime.
 
 Ollama is not part of the default dependency chain and the normal UI must not instruct users to install or start it. A future external-provider integration may be added for advanced users, but it must implement the same pinned `encodeImage` / `encodeText` contract and cannot weaken model-id/revision/dimension checks.
 
-When no model pack is installed, the rest of MOSA runs normally. When a pack exists but no compatible local runtime is present, Settings reports that state explicitly rather than pretending visual search is available.
+When no model pack is installed, the rest of GravityPort runs normally. When a pack exists but no compatible local runtime is present, Settings reports that state explicitly rather than pretending visual search is available.
 
 ## Product constraints
 
-Any model considered for MOSA visual retrieval must satisfy all of these constraints before product integration:
+Any model considered for GravityPort visual retrieval must satisfy all of these constraints before product integration:
 
 - Local inference after installation of an optional model pack. User assets must not be uploaded for retrieval.
 - Model weights and runtime must be legally usable for product development and potential commercial distribution. A strong benchmark score cannot override a restrictive model license.
-- The base MOSA desktop package must not silently grow by hundreds of megabytes. Model packs should remain optional and live outside the user's asset library so normal library backup/restore does not duplicate model weights.
+- The base GravityPort desktop package must not silently grow by hundreds of megabytes. Model packs should remain optional and live outside the user's asset library so normal library backup/restore does not duplicate model weights.
 - Image embeddings are computed in the background. The renderer must not own a long-running inference loop.
 - Query and indexing results must use the same pinned model/version and preprocessing configuration. A model update requires an embedding-version migration rather than mixing vector spaces.
 - Missing or stale image embeddings must degrade to existing lexical search instead of hiding assets.
@@ -155,7 +155,7 @@ The first implementation should prefer exact search until scale proves otherwise
 npm run benchmark:vector-search
 ```
 
-The benchmark uses 50,000 normalized 512-dimensional vectors by default. It measures only Top-K vector scanning, not model encoding. If exact search remains within the interaction budget, MOSA avoids an ANN index, another native dependency, and index-rebuild complexity in the first release.
+The benchmark uses 50,000 normalized 512-dimensional vectors by default. It measures only Top-K vector scanning, not model encoding. If exact search remains within the interaction budget, GravityPort avoids an ANN index, another native dependency, and index-rebuild complexity in the first release.
 
 Environment overrides:
 
@@ -166,7 +166,7 @@ MOSA_VECTOR_BENCH_ASSETS=100000 MOSA_VECTOR_BENCH_DIMENSION=768 npm run benchmar
 ## Integration sequence after a candidate passes
 
 1. Pin the model, tokenizer/preprocessor, conversion revision, checksums, and license notice in a model-pack manifest.
-2. Keep model weights in desktop `userData`, not in `MOSA Library`.
+2. Keep model weights in desktop `userData`, not in `GravityPort Library`.
 3. Add a background embedding worker and versioned SQLite embedding metadata.
 4. Backfill image embeddings incrementally with pause/resume and thermal/battery awareness.
 5. Encode only the query at search time, then exact-scan normalized vectors.
@@ -177,7 +177,7 @@ Do not implement automatic model downloads until licensing, checksum verificatio
 
 ## Visual relationship engine boundary
 
-The product integration is model-neutral. Visual embeddings are derived cache data stored under Electron `userData`, namespaced by library path and pinned model id/revision/dimension. They do not live in `MOSA Library` and are not part of normal library backup.
+The product integration is model-neutral. Visual embeddings are derived cache data stored under Electron `userData`, namespaced by library path and pinned model id/revision/dimension. They do not live in `GravityPort Library` and are not part of normal library backup.
 
 The first relationship surfaces are intentionally advisory:
 
@@ -186,13 +186,13 @@ The first relationship surfaces are intentionally advisory:
 - version candidates;
 - Stack candidates.
 
-Candidates return their similarity score, explicit provisional thresholds, and whether MOSA already knows a direct version relation. They never automatically merge assets, create a Stack, or modify version lineage. The current provisional similarity thresholds are `0.985` for near-duplicate candidates, `0.94` for version candidates, and `0.90` for Stack candidates. These values must be recalibrated on the eventual production model and a broader evaluation corpus before release.
+Candidates return their similarity score, explicit provisional thresholds, and whether GravityPort already knows a direct version relation. They never automatically merge assets, create a Stack, or modify version lineage. The current provisional similarity thresholds are `0.985` for near-duplicate candidates, `0.94` for version candidates, and `0.90` for Stack candidates. These values must be recalibrated on the eventual production model and a broader evaluation corpus before release.
 
 Runtime API contracts are stable even without a model pack: `/api/visual/status` reports the feature as unavailable, while model-dependent relationship requests fail explicitly instead of altering normal library behavior.
 
-The embedding build path is also model-neutral. A background worker accepts any provider exposing `encodeImage`, skips embeddings that are already current for the pinned model/content hash, records only derived vectors, contains per-asset failures, and supports pause/resume/stop semantics. Deleted or otherwise stale asset ids can be pruned from the derived index without touching the source library. This keeps the future model runtime isolated from MOSA's source-of-truth asset store.
+The embedding build path is also model-neutral. A background worker accepts any provider exposing `encodeImage`, skips embeddings that are already current for the pinned model/content hash, records only derived vectors, contains per-asset failures, and supports pause/resume/stop semantics. Deleted or otherwise stale asset ids can be pruned from the derived index without touching the source library. This keeps the future model runtime isolated from GravityPort's source-of-truth asset store.
 
-Image and text inference share one validated provider contract. The provider must expose both `encodeImage` and `encodeText`, and its model id, revision, and embedding dimension must exactly match the relationship index. MOSA rejects a mismatched vector space instead of comparing embeddings produced by different models. Provider startup is lazy and provider shutdown is owned by the runtime lifecycle.
+Image and text inference share one validated provider contract. The provider must expose both `encodeImage` and `encodeText`, and its model id, revision, and embedding dimension must exactly match the relationship index. GravityPort rejects a mismatched vector space instead of comparing embeddings produced by different models. Provider startup is lazy and provider shutdown is owned by the runtime lifecycle.
 
 With a compatible provider configured, `/api/visual/search?q=...` performs text-to-image retrieval against the same versioned image vectors used by image-to-image similarity. The existing lexical search remains independent; visual text search is an optional capability and does not replace explicit Prompt/tag matches.
 
@@ -201,7 +201,7 @@ With a compatible provider configured, `/api/visual/search?q=...` performs text-
 The optional Visual Pack is self-contained: it carries the pinned SigLIP2 model,
 ONNX Runtime through `onnxruntime-node` (MIT), and
 `@huggingface/tokenizers` (Apache-2.0) for SentencePiece tokenization. These
-visual-only runtime dependencies are deliberately excluded from `MOSA.app`, so
+visual-only runtime dependencies are deliberately excluded from `GravityPort.app`, so
 users who never enable local visual search do not pay the ONNX Runtime install
 size. Inference still runs in a dedicated forked child process
 (`lib/visual-inference-worker-entry.mjs`) reached only through
@@ -218,14 +218,16 @@ local runtime, with every model/runtime file digested into the manifest:
 node scripts/build-visual-model-pack.mjs --source <downloaded-files-dir> \
   --runtime-target darwin-arm64 \
   --output "$HOME/Library/Application Support/mosa/visual-model-packs/siglip2-base-patch16-224"
-npm exec mosa -- visual-model-verify --from "$HOME/Library/Application Support/mosa/visual-model-packs/siglip2-base-patch16-224"
+npm exec gravityport -- visual-model-verify --from "$HOME/Library/Application Support/mosa/visual-model-packs/siglip2-base-patch16-224"
 ```
 
+The examples use the `gravityport` command name; the legacy `mosa` name still works and points at the same `bin/mosa.mjs` entry.
+
 Use `--runtime-target win32-x64` for the Windows pack. `--model-only` remains a
-development/evaluation escape hatch; a production packaged MOSA build requires
+development/evaluation escape hatch; a production packaged GravityPort build requires
 the runtime-bearing pack before visual search can become ready.
 
-Packaged MOSA also supports an explicit one-click Settings flow. The renderer
+Packaged GravityPort also supports an explicit one-click Settings flow. The renderer
 cannot supply a URL or filesystem destination. The main process reads the same
 first-party release feed used by application updates, selects only the entry
 matching the current platform/architecture, and downloads files only from:
@@ -238,7 +240,7 @@ manifest is verified, each model/runtime file is downloaded into a private
 and SHA-256 before installation. Installation checks free disk space first,
 uses an atomic directory swap for the selected revision, preserves the previous
 working revision on failure, and selects the new revision only after
-`verifyVisualModelPack()` passes. MOSA restarts after a successful install so
+`verifyVisualModelPack()` passes. GravityPort restarts after a successful install so
 the library runtime starts against one coherent model identity. Older revisions
 of the same model are cleaned after the new process has started. Removing the
 pack first disables/stops visual inference, removes the optional pack and the
@@ -284,12 +286,12 @@ installed pack; without it the test skips so CI stays offline.
 
 ## Offline model-pack verification
 
-Candidate weights that already exist locally can be arranged as a MOSA visual model pack and verified without network access:
+Candidate weights that already exist locally can be arranged as a GravityPort visual model pack and verified without network access:
 
 ```bash
-npm exec mosa -- visual-model-verify --from /absolute/path/to/model-pack
+npm exec gravityport -- visual-model-verify --from /absolute/path/to/model-pack
 ```
 
 The pack root contains `model-pack.json` with schema `mosa.visual-model-pack/1`. The manifest pins an id, revision, `image-text-embedding` model type, embedding dimension, product-use license declaration, preprocessing metadata, the runtime provider/version/platform/architecture, and every model/runtime file's relative path, role, byte size, and SHA-256 digest. Verification rejects absolute/traversal paths, duplicate entries, symlinks, size mismatches, hash mismatches, missing license fields, unconfirmed product use, unsupported or host-mismatched runtime targets, runtime-package version drift, and first-stage packs above 512 MiB.
 
-Verified packs are intended to live under `<Electron userData>/visual-model-packs`, not under `MOSA Library`. The library therefore remains portable and its backup does not silently duplicate model weights.
+Verified packs are intended to live under `<Electron userData>/visual-model-packs`, not under `GravityPort Library`. The library therefore remains portable and its backup does not silently duplicate model weights.

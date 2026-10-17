@@ -22,11 +22,11 @@ Unacceptable behavior includes:
 
 Maintainers may edit, hide, reject, or remove contributions and may temporarily or permanently restrict participation when behavior violates these standards.
 
-Report conduct concerns privately to [fengseekling@gmail.com](mailto:fengseekling@gmail.com) with the subject `[MOSA Conduct]`. Include links or screenshots needed to understand the incident, but minimize unrelated personal data. Reports will be reviewed as privately as practical.
+Report conduct concerns privately to [fengseekling@gmail.com](mailto:fengseekling@gmail.com) with the subject `[GravityPort Conduct]`. Include links or screenshots needed to understand the incident, but minimize unrelated personal data. Reports will be reviewed as privately as practical.
 
 ## Scope
 
-This policy applies in repository Issues, Pull Requests, Discussions, and other spaces where a participant is representing MOSA.
+This policy applies in repository Issues, Pull Requests, Discussions, and other spaces where a participant is representing GravityPort.
 
 ## Attribution
 

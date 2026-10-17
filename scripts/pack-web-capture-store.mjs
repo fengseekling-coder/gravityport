@@ -16,12 +16,12 @@ if (!/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(version)) {
   throw new Error(`Invalid extension version: ${version || "<empty>"}`);
 }
 const outputDir = resolve(root, "out/store");
-const outputZip = resolve(outputDir, `MOSA-Web-Capture-${version}-Chrome-Web-Store.zip`);
+const outputZip = resolve(outputDir, `GravityPort-Web-Capture-${version}-Chrome-Web-Store.zip`);
 await mkdir(outputDir, { recursive: true });
 
 const staging = await mkdtemp(resolve(tmpdir(), "mosa-web-capture-store-"));
 const localTestStaging = await mkdtemp(resolve(tmpdir(), "mosa-web-capture-local-test-"));
-const localTestZip = resolve(outputDir, `MOSA-Web-Capture-${version}-Local-Test.zip`);
+const localTestZip = resolve(outputDir, `GravityPort-Web-Capture-${version}-Local-Test.zip`);
 const runtimeFiles = [
   "background.js",
   "content.css",

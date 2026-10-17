@@ -1,6 +1,6 @@
 # Security Policy
 
-MOSA reads local creative assets, Prompt and provenance records, and selected local tool-session data. Security reports are handled privately.
+GravityPort reads local creative assets, Prompt and provenance records, and selected local tool-session data. Security reports are handled privately.
 
 ## Supported Versions
 
@@ -18,7 +18,7 @@ Do not open a public Issue for a suspected vulnerability.
 Use one of these private channels:
 
 1. [GitHub private vulnerability reporting](https://github.com/fengseekling-coder/mosa/security/advisories/new)
-2. Email [fengseekling@gmail.com](mailto:fengseekling@gmail.com) with the subject `[MOSA Security]`
+2. Email [fengseekling@gmail.com](mailto:fengseekling@gmail.com) with the subject `[GravityPort Security]`
 
 Include the affected version or commit, impact, reproduction steps, and a minimal proof of concept. Remove real Prompts, user assets, Tokens, cookies, credentials, local absolute paths, and other private data before sending.
 
@@ -26,8 +26,8 @@ The maintainer will acknowledge the report, assess its scope, and coordinate dis
 
 ## Security Boundaries
 
-- MOSA is designed for loopback use on `127.0.0.1`. Public ports, reverse proxies, shared-host deployment, and untrusted multi-user access are unsupported.
-- A standalone runtime started with `npm start` keeps Web Capture disabled unless `MOSA_WEB_CAPTURE_TOKEN` and an approved extension origin are explicitly configured. Packaged Desktop generates and stores its own random local Token and authorizes only the fixed MOSA extension origins used by the desktop pairing flow. Treat every Web Capture Token as a local secret.
+- GravityPort is designed for loopback use on `127.0.0.1`. Public ports, reverse proxies, shared-host deployment, and untrusted multi-user access are unsupported.
+- A standalone runtime started with `npm start` keeps Web Capture disabled unless `MOSA_WEB_CAPTURE_TOKEN` and an approved extension origin are explicitly configured. Packaged Desktop generates and stores its own random local Token and authorizes only the fixed GravityPort extension origins used by the desktop pairing flow. Treat every Web Capture Token as a local secret.
 - Browser-extension origins, input envelopes, declared MIME types, decoded image bytes, file sizes, and pixel counts must be validated before ingest.
 - Codex, Grok, and Cowart source roots are explicit allowlists. Do not widen them to work around an import failure.
 - Imported media, Prompt text, provenance, page URLs, and session identifiers are private user data by default.
@@ -37,5 +37,5 @@ See [PRIVACY.md](PRIVACY.md) and [docs/operations.md](docs/operations.md) for th
 ## Out of Scope
 
 - Vulnerabilities in Codex, Chrome, ChatGPT, Grok, Cowart, tldraw, Node.js, or operating-system components should be reported to their respective maintainers.
-- Findings that require exposing MOSA to a public interface, disabling documented validation, or granting an attacker local filesystem access are outside the supported deployment model, though defense-in-depth reports are still welcome.
+- Findings that require exposing GravityPort to a public interface, disabling documented validation, or granting an attacker local filesystem access are outside the supported deployment model, though defense-in-depth reports are still welcome.
 - This project does not currently operate a paid bug-bounty program.
