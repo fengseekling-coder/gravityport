@@ -38,7 +38,10 @@
   const CONTROL_SAMPLE_RATE = 0.1;
   const MASK_PLACEHOLDER = "[masked]";
   const SENSITIVE_KEY_RE = /token|authorization|cookie|secret|password|signature|^sig$|session/i;
-  const URL_IN_TEXT_RE = /\bhttps?:\/\/[^\s"'`<>\\]+/g;
+  // wss?:// is matched beside https?:// so a WebSocket endpoint URL recorded in
+  // a response body (celsius ws/user's websocket_url and its verify= token)
+  // loses its query values exactly like ordinary http links.
+  const URL_IN_TEXT_RE = /\b(?:https?|wss?):\/\/[^\s"'`<>\\]+/g;
   const MODEL_KEY_NAMES = new Set(["model_slug", "default_model_slug", "resolved_model_slug"]);
   const MAX_MODELS = 32;
   const MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024;
@@ -50,6 +53,18 @@
   const MAX_BLOB_BYTES_FOR_META = 30 * 1024 * 1024;
   // Frames seen before the URL carries a conversation id (a brand-new chat).
   const UNROUTED_KEY = "__unrouted__";
+  // A round is only worth recording for images the live stream (sse lines and
+  // WebSocket messages) actually delivered in this page session; images that
+  // merely reappear in archived conversation HTTP are history, not evidence.
+  const LIVE_FILE_ID_RE = /\bfile[-_][A-Za-z0-9][A-Za-z0-9._-]*/gi;
+  const MAX_LIVE_FILE_IDS = 512;
+  // Frames naming one of this round's messages — or sharing a turn id with
+  // them — belong to the round. Identical frames within a second (the same
+  // WebSocket message delivered repeatedly) are kept once.
+  const FRAME_DUPE_WINDOW_MS = 1000;
+  const FRAME_PARSE_MAX_CHARS = 4_000_000;
+  const FRAME_MESSAGE_ID_KEYS = ["message_id", "assistant_message_id"];
+  const FRAME_TURN_ID_KEYS = ["turn_exchange_id", "working_turn_id"];
 
   const encoder = new TextEncoder();
   function byteLengthOf(value) {
@@ -169,7 +184,7 @@
     if (!key) return null;
     let state = conversations.get(key);
     if (!state) {
-      state = { frames: [], bytes: 0, models: new Set(), userMessage: null, imageMeta: new Map() };
+      state = { frames: [], bytes: 0, models: new Set(), userMessage: null, imageMeta: new Map(), liveFileIds: new Set() };
       conversations.set(key, state);
       while (conversations.size > MAX_CONVERSATIONS) {
         const oldest = conversations.keys().next().value;
@@ -178,6 +193,18 @@
       }
     }
     return state;
+  }
+
+  /** File ids seen in live sse/ws-in traffic of this conversation. Archive
+   *  HTTP bodies never feed this set, so a re-opened conversation's historical
+   *  images cannot trigger a round. */
+  function noteLiveFileIds(state, text) {
+    if (!state) return;
+    const found = String(text ?? "").match(LIVE_FILE_ID_RE) || [];
+    for (const id of found) state.liveFileIds.add(id);
+    while (state.liveFileIds.size > MAX_LIVE_FILE_IDS) {
+      state.liveFileIds.delete(state.liveFileIds.keys().next().value);
+    }
   }
 
   function dropOldestFrame(state) {
@@ -253,6 +280,7 @@
     try {
       const masked = maskRawText(line);
       harvestModels(conversationId, /^data:\s?([\s\S]+)$/.exec(String(line || "").trim())?.[1] || "");
+      noteLiveFileIds(conversationState(conversationId), line);
       return pushFrame(conversationId, {
         source: "sse",
         method: String(meta?.method || ""),
@@ -288,6 +316,7 @@
       if (!text) return false;
       const masked = prepareSocketText(text);
       harvestModels(conversationId, masked);
+      noteLiveFileIds(conversationState(conversationId), text);
       return pushFrame(conversationId, { source: direction === "ws-out" ? "ws-out" : "ws-in", message: masked });
     } catch {
       return false;
@@ -631,7 +660,11 @@
         model: "",
       };
       image.generationId = payload.generationId || image.generationId;
-      image.promptStatus = payload.promptStatus || image.promptStatus;
+      // A later event without a prompt must never erase a recognized one —
+      // emissions for the same image arrive in both orders.
+      image.promptStatus = payload.promptStatus && payload.promptStatus !== "not-available"
+        ? payload.promptStatus
+        : image.promptStatus;
       image.promptLength = Number(payload.promptLength) || image.promptLength || 0;
       image.model = payload.model || image.model;
       round.images.set(fileId, image);
@@ -712,11 +745,133 @@
     record.truncatedFrames = truncatedFrames;
   }
 
+  // ---- Frame attribution -------------------------------------------------
+  // A round must only carry frames that belong to its own messages. Frames are
+  // parsed once for the message ids they name and the turn ids they carry; a
+  // frame joins a round when it names the round's assistant or user message,
+  // when it shares a turn id with such a frame, or when it names nothing at
+  // all. A frame naming a different message never joins: a record with frames
+  // of the wrong message is worse than a sparse one.
+
+  function parseFramePayload(text) {
+    const raw = String(text ?? "");
+    if (!raw || raw.length > FRAME_PARSE_MAX_CHARS) return null;
+    let candidate = raw.trim();
+    const dataMatch = /^data:\s?([\s\S]+)$/.exec(candidate);
+    if (dataMatch) candidate = dataMatch[1].trim();
+    if (candidate.length < 2 || !(candidate.startsWith("{") || candidate.startsWith("["))) return null;
+    try {
+      const parsed = JSON.parse(candidate);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function collectFrameIds(value, ids, depth) {
+    if (!value || typeof value !== "object" || depth > 12 || ids.messages.size > 64) return;
+    if (Array.isArray(value)) {
+      for (const item of value) collectFrameIds(item, ids, depth + 1);
+      return;
+    }
+    // A message-shaped node: content plus an id plus role metadata. Plain
+    // "id" fields on other objects (gizmos, stores) are not message ids, and
+    // parent_id references deliberately never count.
+    if (typeof value.id === "string" && value.id
+      && value.content && (value.author || value.metadata || value.recipient)) {
+      ids.messages.add(value.id);
+    }
+    for (const key of FRAME_MESSAGE_ID_KEYS) {
+      if (typeof value[key] === "string" && value[key]) ids.messages.add(value[key]);
+    }
+    for (const key of FRAME_TURN_ID_KEYS) {
+      if (typeof value[key] === "string" && value[key]) ids.turns.add(value[key]);
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (child && typeof child === "object") {
+        collectFrameIds(child, ids, depth + 1);
+      } else if (key === "body" && typeof child === "string" && child) {
+        // WebSocket envelopes keep their SSE payload decoded in `body`.
+        for (const line of child.split("\n")) {
+          const parsed = parseFramePayload(line);
+          if (parsed) collectFrameIds(parsed, ids, depth + 1);
+        }
+      }
+    }
+  }
+
+  function frameIdentity(frame) {
+    let identity = frame.__frameIdentity;
+    if (identity) return identity;
+    const text = frame.source === "sse"
+      ? String(frame.line || "")
+      : frame.source === "http"
+        ? String(frame.body || frame.bodyPreview || "")
+        : String(frame.message || "");
+    const ids = { messages: new Set(), turns: new Set() };
+    const parsed = parseFramePayload(text);
+    if (parsed) {
+      collectFrameIds(parsed, ids, 0);
+    } else {
+      for (const line of text.split("\n")) {
+        const parsedLine = parseFramePayload(line);
+        if (parsedLine) collectFrameIds(parsedLine, ids, 0);
+      }
+    }
+    identity = { messages: ids.messages, turns: ids.turns };
+    Object.defineProperty(frame, "__frameIdentity", { value: identity, enumerable: false });
+    return identity;
+  }
+
+  function frameDedupeText(frame) {
+    if (frame.source === "http") {
+      return JSON.stringify([frame.method, frame.path, frame.status, frame.contentType, frame.body || frame.bodyPreview || ""]);
+    }
+    return String(frame.line || frame.message || "");
+  }
+
+  function attributedRoundFrames(frames, round) {
+    const seedTurnIds = new Set();
+    for (const frame of frames) {
+      const identity = frameIdentity(frame);
+      if (identity.messages.has(round.assistantMessageId)
+        || (round.userMessageId && identity.messages.has(round.userMessageId))) {
+        for (const turnId of identity.turns) seedTurnIds.add(turnId);
+      }
+    }
+    const selected = [];
+    const seen = new Map();
+    for (const frame of frames) {
+      const identity = frameIdentity(frame);
+      const attributed = identity.messages.has(round.assistantMessageId)
+        || (round.userMessageId && identity.messages.has(round.userMessageId))
+        || (identity.messages.size === 0 && identity.turns.size === 0)
+        || [...identity.turns].some((turnId) => seedTurnIds.has(turnId));
+      if (!attributed) continue;
+      const key = `${frame.source}\u0000${frameDedupeText(frame)}`;
+      const previousT = seen.get(key);
+      if (previousT !== undefined && frame.t - previousT <= FRAME_DUPE_WINDOW_MS) continue;
+      seen.set(key, frame.t);
+      selected.push(frame);
+    }
+    return selected;
+  }
+
   function finalizeRound(round) {
     try {
       if (round.timerId !== undefined) timerClear(round.timerId);
       round.timerId = undefined;
-      const images = [...round.images.values()];
+      const liveFileIds = new Set();
+      for (const bucketKey of [round.conversationId, api.UNROUTED_KEY]) {
+        const bucket = conversations.get(bucketKey);
+        if (bucket?.liveFileIds) {
+          for (const fileId of bucket.liveFileIds) liveFileIds.add(fileId);
+        }
+      }
+      // Only images the live stream delivered in this page session count;
+      // historical images surfacing again through archived conversation HTTP
+      // must not flood the store with rounds that have no live frames.
+      const images = [...round.images.values()].filter((image) => liveFileIds.has(image.fileId));
       if (!images.length) return;
       const missingPrompt = images.some((image) => (image.promptStatus || "not-available") === "not-available");
       const control = !missingPrompt && api.__randomSource() < CONTROL_SAMPLE_RATE;
@@ -725,10 +880,11 @@
       const state = conversations.get(round.conversationId);
       const inWindow = (frame) => frame.t >= round.windowStart && frame.t <= end;
       const unrouted = round.conversationId !== UNROUTED_KEY ? conversations.get(UNROUTED_KEY) : null;
-      const frames = [
+      const buffered = [
         ...(state ? state.frames.filter(inWindow) : []),
         ...(unrouted ? unrouted.frames.filter(inWindow) : []),
       ].sort((a, b) => a.t - b.t);
+      const frames = attributedRoundFrames(buffered, round);
       const record = {
         recordedAt: new Date(end).toISOString(),
         conversationId: round.conversationId,
@@ -784,6 +940,7 @@
   api.MAX_IMAGE_META_BYTES = MAX_IMAGE_META_BYTES;
   api.ROUND_FINALIZE_DELAY_MS = ROUND_FINALIZE_DELAY_MS;
   api.CONTROL_SAMPLE_RATE = CONTROL_SAMPLE_RATE;
+  api.FRAME_DUPE_WINDOW_MS = FRAME_DUPE_WINDOW_MS;
 
   globalThis.MosaDevRawDiagnostics = api;
 })();

@@ -523,6 +523,213 @@ test("per-round: four images under one assistant message become exactly one reco
   assert.equal(records[0].assistantMessageId, "message-quad");
 });
 
+test("archive-only images stay unrecorded until the live stream carries them", async () => {
+  // Reopening a conversation replays its stored JSON through the same hook;
+  // those historical images must not flood the store with rounds that have no
+  // live frames behind them.
+  const archivedMessage = {
+    id: "message-archived",
+    author: { role: "tool", name: "image_gen.text2im" },
+    content: {
+      content_type: "multimodal_text",
+      parts: [{
+        content_type: "image_asset_pointer",
+        asset_pointer: "sediment://file-archived",
+        metadata: { dalle: { gen_id: "gen-archived", prompt: "" } },
+      }],
+    },
+    metadata: { turn_exchange_id: "turn-archived", image_gen_title: "Generated image" },
+  };
+  let archiveRequests = 0;
+  const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} }, "conversation-test", {
+    respond: (url) => {
+      if (String(url).includes("/backend-api/conversations/conversation-test")) {
+        archiveRequests += 1;
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => (String(name).toLowerCase() === "content-type" ? "application/json" : null) },
+          clone: () => ({ json: async () => ({ conversation_id: "conversation-test", mapping: {}, messages: [archivedMessage] }) }),
+          json: async () => ({ conversation_id: "conversation-test", mapping: {}, messages: [archivedMessage] }),
+        };
+      }
+      return null;
+    },
+  });
+  await enableDevRaw(harness);
+  const clock = fakeTimers(harness.devRaw);
+  harness.devRaw.__randomSource = () => 0.99;
+
+  await harness.harvest({ method: "GET" }, "https://chatgpt.com/backend-api/conversations/conversation-test");
+  assert.equal(archiveRequests, 1);
+  assert.ok(harness.events.some((event) => (
+    event.type === "generation-meta" && event.payload?.assetId === "file-archived"
+  )), "the hook still binds the historical image");
+  clock.advance(30_000);
+  assert.equal(devRawRecords(harness).length, 0, "an archive-only image never triggers a record");
+
+  // The same image delivered by the live stream does.
+  await harness.socketFrame(JSON.stringify({
+    conversation_id: "conversation-test",
+    message: {
+      ...archivedMessage,
+      metadata: { ...archivedMessage.metadata, model_slug: "gpt-5-6-thinking" },
+    },
+  }));
+  clock.advance(30_000);
+  const records = devRawRecords(harness);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].assistantMessageId, "message-archived");
+  assert.deepEqual(JSON.parse(JSON.stringify(records[0].images)), [{
+    fileId: "file-archived",
+    generationId: "gen-archived",
+    promptStatus: "not-available",
+    promptLength: 0,
+    model: "gpt-5-6-thinking",
+  }]);
+});
+
+test("rounds: frames stay with their own assistant message", () => {
+  const api = createDevRawApi();
+  const timers = fakeTimers(api);
+  api.__randomSource = () => 0.99;
+  api.setEnabled(true);
+  const records = [];
+  api.onRecord = (value) => records.push(value);
+
+  const frameFor = (messageId, turnId, fileId, withCaption) => JSON.stringify({
+    update_content: {
+      messages: [{
+        message: {
+          id: messageId,
+          author: { role: "tool", name: "t2uay3k.sj1i4kz" },
+          content: {
+            content_type: "multimodal_text",
+            parts: [
+              { content_type: "image_asset_pointer", asset_pointer: `sediment://${fileId}`, metadata: { dalle: { gen_id: `gen-${fileId}`, prompt: "" } } },
+              ...(withCaption ? [`Model caption: A flat vector study sheet for a round mascot with thick outlines and a plain background.`] : []),
+            ],
+          },
+          metadata: { turn_exchange_id: turnId },
+        },
+      }],
+    },
+  });
+  api.recordSocketMessage("conversation-attr", "ws-in", frameFor("message-own", "turn-own", "file-own", false));
+  api.recordSocketMessage("conversation-attr", "ws-in", frameFor("message-other", "turn-other", "file-other", true));
+
+  api.noteImage({
+    conversationId: "conversation-attr",
+    assistantMessageId: "message-own",
+    fileId: "file-own",
+    promptStatus: "not-available",
+    model: "",
+  });
+  timers.advance(api.ROUND_FINALIZE_DELAY_MS + 1);
+
+  assert.equal(records.length, 1, "only the prompt-less own round is recorded");
+  const record = records[0];
+  assert.equal(record.assistantMessageId, "message-own");
+  const frameTexts = record.frames.map((frame) => frame.message || frame.line || "").join("\n");
+  assert.ok(frameTexts.includes("message-own"), "the round keeps its own frames");
+  assert.ok(!frameTexts.includes("message-other"), "frames of another message never join");
+  assert.ok(!frameTexts.includes("turn-other"), "not even via their turn ids");
+});
+
+test("rounds: the same WebSocket frame delivered repeatedly is kept once", () => {
+  const api = createDevRawApi();
+  const timers = fakeTimers(api);
+  api.__randomSource = () => 0.99;
+  api.setEnabled(true);
+  const records = [];
+  api.onRecord = (value) => records.push(value);
+
+  const duplicate = JSON.stringify({
+    update_content: {
+      messages: [{
+        message: {
+          id: "message-dup",
+          author: { role: "tool", name: "t2uay3k.sj1i4kz" },
+          content: {
+            content_type: "multimodal_text",
+            parts: [{ content_type: "image_asset_pointer", asset_pointer: "sediment://file-dup", metadata: { dalle: { gen_id: "gen-dup", prompt: "" } } }],
+          },
+          metadata: { turn_exchange_id: "turn-dup", model_slug: "gpt-5-6-thinking" },
+        },
+      }],
+    },
+  });
+  const distinct = JSON.stringify({
+    update_content: {
+      messages: [{
+        message: {
+          id: "message-dup-status",
+          author: { role: "tool", name: "t2uay3k.sj1i4kz" },
+          content: { content_type: "text", parts: ["Generated images from the last model call were saved at /mnt/data."] },
+          metadata: { turn_exchange_id: "turn-dup" },
+        },
+      }],
+    },
+  });
+  api.recordSocketMessage("conversation-dup", "ws-in", duplicate);
+  timers.advance(200);
+  api.recordSocketMessage("conversation-dup", "ws-in", duplicate);
+  timers.advance(200);
+  api.recordSocketMessage("conversation-dup", "ws-in", duplicate);
+  timers.advance(500);
+  api.recordSocketMessage("conversation-dup", "ws-in", distinct);
+
+  api.noteImage({
+    conversationId: "conversation-dup",
+    assistantMessageId: "message-dup",
+    fileId: "file-dup",
+    promptStatus: "not-available",
+    model: "gpt-5-6-thinking",
+  });
+  timers.advance(api.ROUND_FINALIZE_DELAY_MS + 1);
+
+  assert.equal(records.length, 1);
+  const imageFrames = records[0].frames.filter((frame) => (frame.message || "").includes("message-dup\""));
+  assert.equal(imageFrames.length, 1, "three identical frames within a second collapse to one");
+  assert.ok(records[0].frames.some((frame) => (frame.message || "").includes("message-dup-status")), "a different frame still joins");
+});
+
+test("masking: websocket_url query values lose their values, verify included", () => {
+  const api = createDevRawApi();
+  const masked = api.maskRawText(JSON.stringify({
+    websocket_url: "wss://ws.example.com/backend-api/celsius/ws/user?verify=SECRETVERIFY&rid=7&v=2",
+  }));
+  assert.ok(masked.includes("wss://ws.example.com/backend-api/celsius/ws/user?verify&rid&v"), "query keys survive");
+  assert.ok(!masked.includes("SECRETVERIFY"), "the verify token is gone");
+});
+
+test("store: one record per conversation + assistant message, richer frames win", async () => {
+  const store = createMemoryStore();
+  const record = (frames, messageId = "message-reopen") => ({
+    recordedAt: "2026-10-17T10:00:00Z",
+    conversationId: "conversation-reopen",
+    assistantMessageId: messageId,
+    images: [{ fileId: "file-reopen", promptStatus: "not-available" }],
+    frames: frames.map((marker) => ({ t: 1700000000000, source: "sse", line: `data: {"marker":"${marker}"}` })),
+  });
+
+  await store.addRecord(record(["a", "b", "c"]));
+  await store.addRecord(record(["a", "b", "c"]));
+  await store.addRecord(record(["a", "b"]));
+  let stats = await store.statsRecords();
+  assert.equal(stats.count, 1, "three re-records of the same round stay one record");
+
+  await store.addRecord(record(["a", "b", "c", "d", "e"]));
+  stats = await store.statsRecords();
+  assert.equal(stats.count, 1, "the richer re-record replaces the poorer one");
+  const page = await store.listRecords({ limit: 10 });
+  assert.equal(page.records[0].frames.length, 5);
+
+  await store.addRecord(record(["x"], "message-unrelated"));
+  stats = await store.statsRecords();
+  assert.equal(stats.count, 2, "a different assistant message is its own record");
+});
+
 test("HTTP: GET and POST backend-api exchanges are recorded with query keys only, masked bodies, and no headers", async () => {
   const httpBody = {
     access_token: "TOPSECRET",
@@ -611,8 +818,10 @@ test("limits: the buffer evicts at 3000 frames and 10 minutes; the record budget
   assert.equal(api.debugState().bufferedFrames("conversation-test"), api.MAX_BUFFER_FRAMES, "3000-frame cap");
 
   // TTL eviction: frames older than 10 minutes fall off on the next push.
+  // The fresh line also puts the round's image on the live-frames radar —
+  // only images the live stream delivered may trigger a record.
   tick += api.BUFFER_TTL_MS + 1;
-  api.recordSseLine("conversation-test", { method: "POST", path: "/backend-api/f/conversation" }, "data: {\"fresh\":true}");
+  api.recordSseLine("conversation-test", { method: "POST", path: "/backend-api/f/conversation" }, "data: {\"fresh\":true,\"file_id\":\"file-big\"}");
   assert.equal(api.debugState().bufferedFrames("conversation-test"), 1);
 
   // Record budget: twelve ~1.5 MiB bodies exceed the 8 MiB record cap.
@@ -812,7 +1021,7 @@ test("disabling the switch drops buffers and pending rounds immediately", async 
 });
 
 test("options page: the diagnostics panel only exists behind options.html#dev", () => {
-  assert.equal(manifest.version, "0.15.31");
+  assert.equal(manifest.version, "0.15.32");
   assert.ok(manifest.permissions.includes("unlimitedStorage"));
   assert.ok(backgroundSource.includes("chrome.runtime.getManifest().version"),
     "the background stamps stored records with the extension version");
@@ -840,8 +1049,9 @@ test("rounds: frames from a brand-new chat (no conversation id in the URL yet) a
   api.recordSseLine("conversation-new", sse, 'data: {"message":{"metadata":{"model_slug":"gpt-5-4"}}}');
   timers.advance(5 * 60 * 1000);
 
-  // The new turn starts before the URL carries /c/<id>.
-  api.recordSseLine(api.UNROUTED_KEY, sse, 'data: {"message":{"metadata":{"model_slug":"gpt-6-thinking"},"content":{"parts":["unrouted-early"]}}}');
+  // The new turn starts before the URL carries /c/<id>. Its frames carry the
+  // image's file id, so the round counts as a live delivery.
+  api.recordSseLine(api.UNROUTED_KEY, sse, 'data: {"message":{"metadata":{"model_slug":"gpt-6-thinking"},"content":{"parts":["unrouted-early"]},"file_id":"file-new"}}');
   timers.advance(1000);
   api.noteUserMessage("conversation-new", "message-user");
   api.recordSseLine("conversation-new", sse, 'data: {"tool":{"prompt":null}}');
