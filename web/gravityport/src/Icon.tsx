@@ -28,6 +28,7 @@ const glyphs: Record<string, ReactNode> = {
   sun: <><circle cx="12" cy="12" r="3.5" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.5 5.5 7 7M17 17l1.5 1.5M5.5 18.5 7 17M17 7l1.5-1.5" /></>,
   globe: <><circle cx="12" cy="12" r="8" /><ellipse cx="12" cy="12" rx="3.5" ry="8" /><path d="M4 12h16" /></>,
   info: <><circle cx="12" cy="12" r="8" /><path d="M12 11v5M12 8h.01" /></>,
+  message: <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v6a2.5 2.5 0 0 1-2.5 2.5H12l-4.5 3.5v-3.5h-1A2.5 2.5 0 0 1 4 13.5Z" />,
   user: <><circle cx="12" cy="8" r="3.5" /><path d="M5 20v-1a7 7 0 0 1 14 0v1" /></>,
   check: <path d="m5 12 4.5 4.5L19 7" />,
   enter: <path d="M19 5v8H5m5-5-5 5 5 5" />,

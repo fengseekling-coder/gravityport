@@ -277,6 +277,31 @@ const english: Record<string, string> = {
   "Gemini 页面可见用户提示词（未验证为实际生图提示词）": "Gemini visible user prompt (not verified as the generation prompt)",
   "Flow 页面可见提示词（未验证为实际生图提示词）": "Flow provider-visible prompt (not verified as the generation prompt)",
   "Google AI Studio 页面可见用户提示词（未验证为实际生图提示词）": "Google AI Studio visible user prompt (not verified as the generation prompt)",
+  // Task 158: settings feedback page. Error-copy keys mirror the route codes
+  // in feedback-api.ts (FEEDBACK_OFFLINE / _RATE_LIMITED / _TOO_LARGE /
+  // _INVALID, plus the generic fallback).
+  "反馈": "Feedback",
+  "反馈类型": "Feedback type",
+  "反馈内容": "Feedback",
+  "联系方式": "Contact",
+  "问题": "Bug",
+  "建议": "Idea",
+  "其他": "Other",
+  "遇到了什么问题，或者希望加什么功能？": "What went wrong, or what would you like to see?",
+  "邮箱或其他联系方式（可选），方便我们回复你": "Email or other contact (optional), so we can get back to you",
+  "附上诊断日志": "Include diagnostic log",
+  "查看内容": "View contents",
+  "暂时没有日志": "No diagnostics yet",
+  "同时会附上：{summary}": "Also included automatically: {summary}",
+  "已写 {count} / 5000": "{count} / 5000",
+  "发送": "Send",
+  "发送中…": "Sending…",
+  "已收到，谢谢你的反馈。": "Received — thank you for your feedback.",
+  "发送失败：连不上服务器，请检查网络后重试。": "Couldn't reach the server. Check your connection and try again.",
+  "发送得太频繁了，请稍后再试。": "Too many submissions. Please try again later.",
+  "内容太长了，请去掉诊断日志或删减内容后重试。": "Feedback is too large. Remove the diagnostic log or shorten it.",
+  "内容不符合要求，请检查后重试。": "Something in the form isn't valid. Please check and try again.",
+  "发送失败，请稍后再试。": "Couldn't send feedback. Please try again later.",
 }
 
 export function translate(text: string, language: Language): string {
