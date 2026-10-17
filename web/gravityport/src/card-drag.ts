@@ -97,6 +97,47 @@ export function stackMemberPaths(members: { id?: string; imagePath?: string }[])
   return paths;
 }
 
+/** One dragged card on its way out of the window: a plain card's file, or a
+ *  root-gallery stack card whose members are fetched on demand. */
+export type DragOutUnit = { kind: "asset"; path: string } | { kind: "stack"; stackId: string };
+
+/**
+ * File paths for a system drag of a mixed selection, in selection order with
+ * each stack expanded in place (its members in stack order). Duplicate paths
+ * collapse, empty ones are skipped. Stack members are fetched a few stacks at
+ * a time and the walk stops as soon as more than `limit` paths are known, so a
+ * select-all over a huge library never fetches every stack; `overLimit` says
+ * the result was cut to the first `limit`.
+ */
+export async function collectDragOutPaths(
+  units: DragOutUnit[],
+  fetchStackPaths: (stackId: string) => Promise<string[]>,
+  { limit = 512, concurrency = 4 }: { limit?: number; concurrency?: number } = {}
+): Promise<{ paths: string[]; overLimit: boolean }> {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string) => {
+    const path = String(value || "").trim();
+    if (!path || seen.has(path)) return;
+    seen.add(path);
+    paths.push(path);
+  };
+  let index = 0;
+  while (index < units.length && paths.length <= limit) {
+    const chunk: DragOutUnit[] = [];
+    let stacks = 0;
+    while (index < units.length && (units[index].kind !== "stack" || stacks < concurrency)) {
+      if (units[index].kind === "stack") stacks += 1;
+      chunk.push(units[index]);
+      index += 1;
+    }
+    const lists = await Promise.all(chunk.map((unit) => unit.kind === "stack" ? fetchStackPaths(unit.stackId) : Promise.resolve([unit.path])));
+    for (const list of lists) for (const path of list) add(path);
+  }
+  const overLimit = paths.length > limit;
+  return { paths: overLimit ? paths.slice(0, limit) : paths, overLimit };
+}
+
 /** What actually happened when a root-gallery card drop landed. */
 export type StackDropRecord = {
   kind: "created-stack" | "added-to-stack";

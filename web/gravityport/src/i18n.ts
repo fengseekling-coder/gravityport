@@ -251,6 +251,9 @@ const english: Record<string, string> = {
   // Task 146: card dragging (drag to another app / groups / stacks, reorder)
   "已把 {count} 个素材移到「{group}」": "Moved {count} assets to “{group}”",
   "已把 {count} 个素材移出分组": "Removed {count} assets from their group",
+  // Task 156: a dragged selection with stack cards (one per card or stack)
+  "已把 {count} 项移到「{group}」": "Moved {count} items to “{group}”",
+  "已把 {count} 项移出分组": "Removed {count} items from their group",
   "已向堆叠加入 {count} 项素材": "Added {count} assets",
   "堆叠内容已发生变化，已刷新，请重新拖动排序": "The stack changed while you were reordering it. It has been refreshed; drag again.",
   "当前素材无法拖出到其他应用": "This asset cannot be dragged to another app",
