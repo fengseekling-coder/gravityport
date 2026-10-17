@@ -106,11 +106,41 @@ On Google AI Studio (`aistudio.google.com`), it may additionally capture only th
 
 On Flow (`labs.google` / `flow.google.com`), it also may capture the one visible Prompt card structurally associated with a visible generated-image group, but only when the card has a unique nearby `Reuse Prompt` control. This text is marked `provider-visible-prompt`, is not verified as the prompt actually used for generation, and is never collected from an input, editor, hidden content, cookies, credentials, or the page as a whole.
 
+## Pinterest connection (not yet available)
+
+GravityPort Desktop can optionally connect to your Pinterest account so you can browse your own boards and Pins inside the app. The feature is implemented but not yet available: the sidebar entry stays marked as unavailable until Pinterest approves production API access, and GravityPort does not access Pinterest at all until you connect.
+
+Once connected, the app reads the following through the official Pinterest API with read-only scopes: your Pinterest username; the name, description, Pin count, and cover of your boards, including secret boards; and the title, description, link, and image addresses of the Pins on those boards. This content is shown live on your computer only. It is not saved into the GravityPort library and is not uploaded to GravityPort-operated servers. To avoid repeated requests, the app keeps responses in an in-memory cache for at most 5 minutes and clears it when you disconnect or quit the app. Pin images load directly from Pinterest.
+
+Access tokens are stored only on your computer, as an atomically written, permission-restricted (mode 0600) file in Electron's local `userData` directory. During authorization, the GravityPort-operated service only forwards the authorization code or refresh token, together with the app secret, to Pinterest to obtain tokens, and returns the result directly to your computer; the app itself never holds the app secret. The service does not store authorization codes or tokens and does not write them to logs.
+
+You can disconnect Pinterest at any time in GravityPort settings, which deletes the token file stored on your computer. You can also revoke GravityPort's access under the authorized apps in your Pinterest account settings.
+
+## Feedback
+
+The app never collects feedback in the background: feedback is submitted only when you press **Send** on the feedback page in GravityPort settings. The app forwards one request to the first-party feedback collection service at `https://mosa.azhuilab.com/api/feedback`.
+
+When you press **Send**, the app submits:
+
+- the feedback text you wrote (at most 5000 characters);
+- a contact address you optionally fill in, used only to reply to you (at most 200 characters);
+- the interface language (Chinese or English);
+- app version, operating system and CPU architecture type;
+- if you tick **Include diagnostic log** (unticked by default), the app's recent runtime log.
+
+The diagnostic log is a bounded in-memory ring buffer of the local service's recent warnings, errors, and informational lines. You can review its full content in the app before sending — what you see is exactly what is sent. Usernames in library and home file paths, tokens and other long secrets, and email addresses are masked, and any line that might contain prompt or instruction text is removed entirely. The text is redacted again when the request is submitted, and the submission is capped in size.
+
+The app does not send and does not store with the feedback: the installation ID, your assets, prompts, or the library location. The local log records only the outcome status of a submission, never its content.
+
+On the server, feedback is stored in a private directory on the collection service and is visible only to the developer through a logged-in admin page; it is used only to reply to you and to improve the product, not for advertising, and is never shared with third parties. The server does not store IP addresses — an IP is used only in memory, temporarily, to prevent submission abuse. To have feedback you sent deleted, write to [fengseekling@gmail.com](mailto:fengseekling@gmail.com) and mention roughly when you sent it.
+
 ## Network Boundary
 
 The GravityPort service binds to `127.0.0.1` and is not designed for public exposure. GravityPort does not add remote synchronization. The desktop shell's only GravityPort-operated analytics signal is the bounded usage metadata sent through the separate HTTPS request described above.
 
-Codex, ChatGPT, Grok, Cowart, Chrome, and any AI or image-generation provider used before an asset reaches GravityPort are separate products. Their own network behavior and privacy policies still apply.
+The outbound connections described in the sections above are: the update, usage, and Visual Pack endpoints under `mosa.azhuilab.com`; the Pinterest authorization relay under `mosa.azhuilab.com` together with Pinterest's own authorization and API endpoints when you connect Pinterest; and the feedback collection service when you press **Send** on the feedback page. None of them carries your library contents, and Pinterest browsing results are not sent anywhere by GravityPort.
+
+Codex, ChatGPT, Grok, Cowart, Chrome, Pinterest, and any AI or image-generation provider used before an asset reaches GravityPort are separate products. Their own network behavior and privacy policies still apply.
 
 ## User Control
 
@@ -118,6 +148,8 @@ Codex, ChatGPT, Grok, Cowart, Chrome, and any AI or image-generation provider us
 - `MOSA_LIBRARY_DIR` remains an explicit runtime override. When it is set, it takes precedence over the saved desktop location and the in-app move control is disabled.
 - Disable web capture by leaving `MOSA_WEB_CAPTURE_TOKEN` unset and disabling or removing the extension.
 - Disable a source bridge by not configuring or running the corresponding source tool.
+- Pinterest stays disconnected until you connect it in Settings → Connect; disconnecting deletes the tokens stored on your computer, and until then GravityPort never accesses Pinterest.
+- Nothing is submitted through the feedback page until you press **Send** there; leaving **Include diagnostic log** unticked sends no log.
 - Back up the library before migration, repair, or manual removal.
 - Do not commit the library, Tokens, Prompts, session records, or generated media to the source repository.
 

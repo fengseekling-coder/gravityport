@@ -35,13 +35,25 @@ GravityPort reconnects each asset with the context that makes it reusable: its a
 
 Archive generated images and videos together with their available Prompt, source, model or tool context, timestamps, and provenance. GravityPort records when a Prompt is unavailable instead of inventing one.
 
-### Find the work you want
+### Organize by drag and drop
 
-Search and browse one local library with thumbnails, previews, tags, favorites, and provenance. Originals stay intact; previews and thumbnails are generated for the library experience.
+Browse and search one gallery with adjustable column counts, marquee selection, and multi-select. Drag cards onto a sidebar group to file them, onto another card to build or join a stack, inside a stack to reorder it, or out of the window to hand the files to another app. A stack built or joined by drag can be undone for a few seconds.
 
-### Continue without starting over
+### Iterate on the version tree
 
-Save a recipe, create a new version, inspect the version tree. Your next iteration starts from context, not from a mystery image.
+The Inspector shows each asset's version tree, with generations from a ChatGPT conversation grouped by conversation round so you can see how the image evolved turn by turn. Any two versions in a family can be compared side by side.
+
+### Recover deleted work
+
+Removed assets move to Trash, where they are kept for 90 days with a per-asset countdown. Right after a deletion an undo button offers to reverse it; Trash has its own menu for restoring, deleting permanently, and emptying.
+
+### Send feedback from Settings
+
+Settings → Feedback collects bug reports and ideas, optionally with a diagnostic log that is redacted and shown to you in full before it is sent.
+
+### Pinterest (not yet available)
+
+A Pinterest connection that would let you browse your own boards and Pins from the sidebar is implemented but not yet available: it stays disabled until Pinterest approves production API access.
 
 ## Fits into your workflow
 
@@ -52,7 +64,7 @@ Save a recipe, create a new version, inspect the version tree. Your next iterati
 | **Grok Build CLI** | Images and videos from local sessions, with matched tool context when available |
 | **Cowart** | Approved canvas snapshots archived from Cowart into the library |
 
-GravityPort does not generate media or replace any of these tools. It is the place where their visual output becomes a reusable body of work.
+Whatever the source, everything lands in the same local gallery with groups, stacks, Trash with undo, and the version tree. GravityPort does not generate media or replace any of these tools.
 
 ## Quick start
 

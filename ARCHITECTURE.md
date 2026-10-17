@@ -22,7 +22,7 @@ GravityPort 是一个本地优先的创意资产库。它把图像和视频原�
 ┌──────────────────────────────────────────────────────────────┐
 │ 客户端                                                      │
 │  浏览器静态 UI         Electron 桌面壳        MCP stdio 客户端 │
-│  app/index.html        desktop/main.mjs       Codex 等工具   │
+│  web/gravityport/dist  desktop/main.mjs       Codex 等工具   │
 └───────────────┬──────────────────┬──────────────────┬────────┘
                 │ HTTP              │ HTTP              │ JSON-RPC/stdio
                 ▼                   ▼                   ▼
@@ -46,28 +46,27 @@ GravityPort 是一个本地优先的创意资产库。它把图像和视频原�
 
 ### 2.1 客户端
 
-只有一份 UI 树，全部为原生浏览器模块，不依赖前端打包器或组件运行时：
+只有一份 UI：`web/gravityport/` 是 React + Vite 的界面源码。`src/` 下
+`App.tsx` 负责页面状态、事件绑定、导航和 API 调用；画廊窗口化、选择、
+拖拽、右键菜单、回收站、版本树、滚动记忆、偏好等逻辑拆分为同目录下的
+纯逻辑模块（可独立编译测试），界面组件和样式在 `src/` 与 `index.css`。
+界面以中文文案为源，英文对照在 `src/i18n.ts`。
 
-- `web/app/` — 浏览器端与桌面端共用的 UI，由 `server.mjs`
-  （`lib/mosa-runtime.mjs` 默认 appDir）经同源静态服务提供。
+`npm run build` 先由 Vite 把源码构建到 `web/gravityport/dist/`，再由
+`scripts/write-build-identity.mjs` 在该目录写入 `build-identity.json`。
+本地运行时经同源静态服务提供这个目录（`lib/mosa-runtime.mjs` 的默认
+appDir 就是 `web/gravityport/dist`）；服务运行前必须先完成构建。
 
-该树内部：
-
-- `index.html` 提供 DOM 结构和入口。
-- `app.mjs` 负责页面状态、事件绑定、导航和 API 调用。
-- `api-client.mjs` 封装服务请求；其他 `*.mjs` 提供查看器、上下文
-  菜单、确认框、Toast、国际化、主题和检查器等模块。
-- `styles.css` 提供全部界面样式。
-- `theme-init.mjs` 在首屏前应用主题；`index.html` 通过同源静态服务加载
-  模块和样式。
-
-树内全部文件都会进入 `uiFingerprint`（`lib/build-identity.mjs` 对
-appDir 下除 `build-identity.json` 外的每个文件取哈希），并被
-`scripts/check-dead-code.mjs` 扫描：UI 树文件必须被 git 跟踪。
+`uiFingerprint` 以 `lib/build-identity.mjs` 的 `computeUiFingerprint()`
+计算：对 appDir 下除 `build-identity.json` 外的每一个文件，把相对路径和
+文件内容一起做 SHA-256，没有扩展名白名单；因此 dist 中任何可被静态服务
+交付的文件变化都会改变构建身份。源码侧另有 `scripts/check-dead-code.mjs`
+约束：`web/gravityport/src` 下的模块必须被 git 跟踪且可从入口到达。
 
 Electron 桌面壳由 `desktop/main.mjs`、`desktop/preload.cjs` 和
-`desktop/service-manager.mjs` 组成。它与浏览器端共用同一份 `web/app/` UI
-（打包进应用，forge 包内唯一 UI 路径），并通过受限的
+`desktop/service-manager.mjs` 组成。它与浏览器端共用同一份
+`web/gravityport/dist` 构建产物（打包进应用，forge 包内唯一 UI 路径），
+并通过受限的
 preload API 处理桌面能力（例如文件导入暂存、在系统文件管理器中定位原件、通知和受控更新）；业务数据
 仍由同一个本地 HTTP 运行时提供。
 
@@ -87,6 +86,7 @@ preload API 处理桌面能力（例如文件导入暂存、在系统文件管�
 - `lib/api/generation-routes.mjs`：生成事件、生成关系、单次 lineage 查询，以及资产详情所需的聚合生成历史。
 - `lib/api/library-routes.mjs`：项目、分组、库路径和受限文件夹操作。
 - `lib/api/bridge-routes.mjs`：健康检查、桥接状态、网页捕获和 Cowart 画布。
+- `lib/api/visual-routes.mjs`、`lib/api/pinterest-routes.mjs`、`lib/api/feedback-routes.mjs`：本地视觉检索、Pinterest 连接和设置反馈。
 - `lib/http-response.mjs`：JSON 请求体读取、响应和 HTTP 错误处理。
 
 同一运行时还负责静态 UI、`/library/` 下的原图和衍生图读取、内容安全策略、
@@ -126,7 +126,7 @@ Relation 写入 `user_confirmed` 边，被否决的候选会持久化为 dismiss
 ## 3. 仓库模块与构建
 
 ```text
-app/                     原生模块 UI、HTML 和 CSS
+web/gravityport/          React 界面源码（src/）与 Vite 构建产物（dist/）
 server.mjs               本地 Web 服务 CLI 入口
 lib/mosa-runtime.mjs     HTTP 运行时编排和静态资源服务
 lib/api-routes.mjs       API 总分发
@@ -143,11 +143,14 @@ scripts/                 构建、启动、迁移、验证和 QA 脚本
 test/                    Node 测试和契约测试
 ```
 
-根目录 `tsconfig.json` 将 `lib/**/*.ts` 编译为 ES2022/Node16 模块。
-`npm run build` 先运行 TypeScript 编译，再由
-`scripts/write-build-identity.mjs` 写入构建身份。运行服务、MCP 或桌面壳前，
+根目录 `tsconfig.json` 将 `lib/**/*.ts` 编译为 ES2022/Node16 模块；
+`web/gravityport` 用 Vite 构建 React 界面。
+`npm run build` 先构建 GravityPort UI 到 `web/gravityport/dist`
+（`scripts/build-gravityport-ui.mjs`），再运行 TypeScript 编译，最后由
+`scripts/write-build-identity.mjs` 把构建身份写入 dist 的
+`build-identity.json`。运行服务、MCP 或桌面壳前，
 必须让对应的构建步骤完成；源码中的 TypeScript 文件是修改入口，编译生成的
-JS 和声明文件不是独立的架构层。
+JS、声明文件和 dist 产物不是独立的架构层。
 
 可确认的本地脚本入口：
 
@@ -304,6 +307,16 @@ gravityport thumbnails <rebuild|repair> [--library <path>]
 | `/api/ingest/web-capture`、`/api/ingest/web-capture-metadata`、`/api/ingest/web-capture-binary`、`/api/ingest/web-capture-upload/*` | 通过统一 Token/origin 策略接收网页捕获、元数据补全、二进制和分块上传 |
 | `/api/cowart-canvases` | 列出、注册和移除受信任的 Cowart 画布 |
 
+| `/api/trash` | 回收站：清空指定项目的回收站；单条恢复/永久删除走 `/api/assets/:project/:asset/restore|permanent` |
+| `/api/asset-stacks/move` | 在堆叠之间批量搬移素材（剪切/粘贴与拖拽落点共用） |
+| `/api/import/stage` | 导入暂存：桌面导入管线写入/清理暂存区，`/api/assets/import-batch` 分批入库 |
+| `/api/feedback/diagnostics`、`/api/feedback/submit` | 设置反馈页：读取脱敏诊断日志预览；校验并转发一条反馈到收集服务 |
+| `/api/pinterest/connect|callback|status|boards|disconnect` | Pinterest 连接：本机 OAuth 回调、连接状态、画板/Pin 浏览与断开 |
+| `/api/visual/search|index|status` | 本地视觉检索：相似图搜索、索引构建与模型/索引状态 |
+| `/api/ingest/web-capture-turn-bindings` | 采集插件上报对话结构（消息号与轮次绑定），供版本树按对话轮次显示 |
+| `/api/generation-message-bindings` | 生成记录补齐消息号与轮次的服务端写入接口 |
+| `/api/web-capture/pair|retry` | 扩展配对（桌面版自动发放 Token）与重试请求计数下发 |
+
 所有普通 API 请求保持同源/loopback 边界。Web Capture 的预检和跨 origin 请求
 只有在 origin 位于显式允许列表时才放行；请求仍须提供 ingest Token。响应还
 设置 CSP、`nosniff` 和同源资源策略等安全头。
@@ -401,6 +414,9 @@ Token 写入公共文档、日志或仓库：
 | `MOSA_DISABLE_BRIDGES` | 禁用指定桥接的逗号分隔列表 |
 | `MOSA_WEB_CAPTURE_TOKEN` | 启用网页捕获的本地 Token |
 | `MOSA_WEB_CAPTURE_ORIGINS` | 网页捕获允许的扩展 origin 列表 |
+| `MOSA_DISABLE_TELEMETRY` | 设为 `1` 时桌面壳不发匿名使用统计（见 PRIVACY.md） |
+| `MOSA_FEEDBACK_URL` | 反馈收集服务地址覆盖（默认 `https://mosa.azhuilab.com/api/feedback`） |
+| `MOSA_FEEDBACK_TIMEOUT_MS` | 反馈转发超时毫秒数（默认 15000） |
 
 GravityPort 只读取已配置的 Codex、Grok 和 Cowart 位置；不会把 Downloads、Desktop、
 Documents 或任意项目图片目录作为默认扫描根。导入路径、画布路径、外部来源和
