@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { parseUpdateManifest } from "../desktop/update-service.mjs";
 import { createReleaseManifestTrust, verifyReleaseManifestSignature } from "../lib/release-manifest-signature.mjs";
-import { prepareDesktopReleaseManifest } from "../scripts/prepare-desktop-release-manifest.mjs";
+import { prepareDesktopReleaseManifest, resolveManifestNotes } from "../scripts/prepare-desktop-release-manifest.mjs";
 import { removeTestPath } from "./test-cleanup.mjs";
 
 async function fixtureArtifacts(version) {
@@ -380,6 +380,80 @@ test("release manifest requires and pins the production Windows signer thumbprin
       }),
       /signerThumbprint is invalid/,
     );
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Notes from release-notes.json (task 164)
+// ---------------------------------------------------------------------------
+
+test("resolveManifestNotes fills missing languages from release-notes.json, one bullet per sentence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-release-notes-source-"));
+  try {
+    const sourcePath = join(root, "release-notes.json");
+    await writeFile(sourcePath, JSON.stringify({
+      schema: 1,
+      unreleased: { zh: ["占位"], en: ["Placeholder"] },
+      releases: [
+        { version: "0.4.0", date: "2026-10-17", zh: ["第一条说明", "第二条说明"], en: ["First note", "Second note"] },
+      ],
+    }), "utf8");
+    assert.deepEqual(
+      resolveManifestNotes({ version: "0.4.0", releaseNotesPath: sourcePath }),
+      { zh: "• 第一条说明\n• 第二条说明", en: "• First note\n• Second note" },
+    );
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveManifestNotes prefers explicit CLI notes and never reads the file for them", async () => {
+  assert.deepEqual(
+    resolveManifestNotes({ notesZh: "手写中文", notesEn: "Handwritten English", version: "9.9.9", releaseNotesPath: join(tmpdir(), "mosa-no-such-release-notes.json") }),
+    { zh: "手写中文", en: "Handwritten English" },
+  );
+});
+
+test("resolveManifestNotes fails with the gate error when the version has no entry", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-release-notes-source-"));
+  try {
+    const sourcePath = join(root, "release-notes.json");
+    await writeFile(sourcePath, JSON.stringify({
+      schema: 1,
+      unreleased: { zh: ["占位"], en: ["Placeholder"] },
+      releases: [{ version: "0.4.0", date: "2026-10-17", zh: ["说明"], en: ["Note"] }],
+    }), "utf8");
+    assert.throws(
+      () => resolveManifestNotes({ version: "0.5.0", releaseNotesPath: sourcePath }),
+      /release-notes\.json 缺少 0\.5\.0 的更新说明/,
+    );
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
+});
+
+test("release manifest keeps 2500-character notes intact on write and on parse", async () => {
+  const version = "0.2.1-rc.34";
+  const files = await fixtureArtifacts(version);
+  const zh = "中文更新说明。".repeat(400).slice(0, 2500);
+  const en = "Long release note. ".repeat(200).slice(0, 2500);
+  try {
+    assert.equal(zh.length, 2500);
+    assert.equal(en.length, 2500);
+    const result = await prepareDesktopReleaseManifest({
+      version,
+      macArtifactPath: files.mac,
+      ...signingOptions(version),
+      publishedAt: "2026-10-17T01:00:00Z",
+      notes: { zh, en },
+    });
+    assert.equal(result.notes.zh, zh);
+    assert.equal(result.notes.en, en);
+    const parsed = parseUpdateManifest(result);
+    assert.equal(parsed.notes.zh, zh);
+    assert.equal(parsed.notes.en, en);
   } finally {
     await removeTestPath(files.root, { recursive: true, force: true });
   }

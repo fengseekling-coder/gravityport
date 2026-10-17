@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parseUpdateManifest, macosUpdateFileNameForAppName, windowsUpdateFileNameForPayloadExeName, MACOS_TEAM_IDENTIFIER_PATTERN, MACOS_UPDATE_APP_NAMES, WINDOWS_UPDATE_EXE_NAMES, WINDOWS_SIGNER_THUMBPRINT_PATTERN } from "../desktop/update-service.mjs";
 import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
+import { formatNotesText, notesForVersion, readReleaseNotes } from "../lib/release-notes.mjs";
 import {
   normalizeReleaseManifestTrust,
   releaseManifestPrivateKeyFromEnvironment,
@@ -144,12 +145,31 @@ function normalizePublishedAt(value) {
 }
 
 function normalizeRequiredNotes(value) {
-  const zh = typeof value?.zh === "string" ? value.zh.trim().slice(0, 1200) : "";
-  const en = typeof value?.en === "string" ? value.en.trim().slice(0, 1200) : "";
+  const zh = typeof value?.zh === "string" ? value.zh.trim().slice(0, 3000) : "";
+  const en = typeof value?.en === "string" ? value.en.trim().slice(0, 3000) : "";
   if (!zh || !en) {
     throw new Error("Release notes are required: notes.zh and notes.en must both be non-empty.");
   }
   return { zh, en };
+}
+
+/**
+ * Notes for the manifest: explicit --notes-* values win (the website release
+ * script keeps passing them); any language they leave empty is filled from
+ * release-notes.json, the single source of release notes. A version without
+ * an entry there fails the run so a release never ships without its notes.
+ */
+export function resolveManifestNotes({ notesZh = "", notesEn = "", version, releaseNotesPath = "" } = {}) {
+  const zh = String(notesZh || "").trim();
+  const en = String(notesEn || "").trim();
+  if (zh && en) return { zh, en };
+  const data = readReleaseNotes(releaseNotesPath ? resolve(String(releaseNotesPath)) : undefined);
+  const entry = notesForVersion(data, version);
+  if (!entry) throw new Error(`release-notes.json 缺少 ${version} 的更新说明`);
+  return {
+    zh: zh || formatNotesText(entry.zh),
+    en: en || formatNotesText(entry.en),
+  };
 }
 
 function normalizeBuildIdentity(value, version) {
@@ -188,7 +208,7 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.version || !args.output) {
-    throw new Error("Usage: prepare-desktop-release-manifest.mjs --version <version> --output <latest.json> [--previous <latest.json>] [--mac <zip>] [--mac-app-name <MOSA.app|GravityPort.app>] [--mac-team-identifier <10-char id>] [--windows <zip>] [--windows-payload-exe-name <MOSA.exe|GravityPort.exe>] [--windows-signer-thumbprint <40-char id>] [--published-at <ISO>] [--notes-zh <text>] [--notes-en <text>]");
+    throw new Error("Usage: prepare-desktop-release-manifest.mjs --version <version> --output <latest.json> [--previous <latest.json>] [--mac <zip>] [--mac-app-name <MOSA.app|GravityPort.app>] [--mac-team-identifier <10-char id>] [--windows <zip>] [--windows-payload-exe-name <MOSA.exe|GravityPort.exe>] [--windows-signer-thumbprint <40-char id>] [--published-at <ISO>] [--notes-zh <text>] [--notes-en <text>] [--release-notes <release-notes.json>]");
   }
   const previousManifest = args.previous ? JSON.parse(await readFile(resolve(args.previous), "utf8")) : null;
   const projectRoot = new URL("..", import.meta.url);
@@ -206,7 +226,12 @@ async function main() {
     signingPrivateKey,
     previousManifest,
     publishedAt: args["published-at"] || new Date().toISOString(),
-    notes: { zh: args["notes-zh"] || "", en: args["notes-en"] || "" },
+    notes: resolveManifestNotes({
+      notesZh: args["notes-zh"] || "",
+      notesEn: args["notes-en"] || "",
+      version: args.version,
+      releaseNotesPath: args["release-notes"] || "",
+    }),
   });
   const output = resolve(args.output);
   await writeFile(output, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

@@ -80,13 +80,14 @@ export type UpdateCheckResult = {
   latestVersion?: string
   publishedAt?: string
   reason?: string
+  notes?: { zh?: string; en?: string }
 }
 
 export type UpdateUiState =
   | { phase: "idle" | "checking" }
   | { phase: "current" }
-  | { phase: "available"; latestVersion: string; publishedAt: string; canInstallInApp: boolean }
-  | { phase: "downloading"; percent: number; latestVersion?: string; publishedAt?: string; canInstallInApp?: boolean }
+  | { phase: "available"; latestVersion: string; publishedAt: string; canInstallInApp: boolean; notes?: { zh?: string; en?: string } }
+  | { phase: "downloading"; percent: number; latestVersion?: string; publishedAt?: string; canInstallInApp?: boolean; notes?: { zh?: string; en?: string } }
   | { phase: "unavailable"; reason: "install-location-unsupported" }
   | { phase: "error" | "disabled" }
 
@@ -140,6 +141,7 @@ export function mapUpdateResult(result: UpdateCheckResult): UpdateUiState {
         latestVersion: String(result.latestVersion ?? "").replace(/^v/i, ""),
         publishedAt: String(result.publishedAt ?? ""),
         canInstallInApp: result.canInstallInApp === true,
+        notes: sanitizeUpdateNotes(result.notes),
       };
     }
     return { phase: "current" };
@@ -154,6 +156,15 @@ export function mapUpdateResult(result: UpdateCheckResult): UpdateUiState {
     return { phase: "disabled" };
   }
   return { phase: "error" };
+}
+
+/** Keeps only string-valued notes languages; drops the field when both are absent. */
+function sanitizeUpdateNotes(notes: UpdateCheckResult["notes"]): { zh?: string; en?: string } | undefined {
+  if (!notes || typeof notes !== "object") return undefined;
+  const zh = typeof notes.zh === "string" && notes.zh.trim() ? notes.zh : undefined;
+  const en = typeof notes.en === "string" && notes.en.trim() ? notes.en : undefined;
+  if (!zh && !en) return undefined;
+  return { ...(zh ? { zh } : {}), ...(en ? { en } : {}) };
 }
 
 /** Translates a Chinese source string and fills its named placeholders. */

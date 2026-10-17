@@ -95,15 +95,15 @@ Publishing a macOS in-app update therefore requires uploading the generated upda
 
 The release monitor must not construct `latest.json` with its own schema. Use `scripts/prepare-desktop-release-manifest.mjs` as the canonical manifest writer. Release builds must be created with `MOSA_RELEASE_MANIFEST_PUBLIC_KEY` (or `_FILE`) so the public Ed25519 key and key id are pinned into `app/build-identity.json`; manifest publishing separately requires `MOSA_RELEASE_MANIFEST_PRIVATE_KEY` (or `_FILE`). Keep the private key outside the repository and deployment web root. `MOSA_RELEASE_DISTRIBUTION=preview|production` is also bound into build identity and the signed manifest. Downgrading a Production install back to Preview stays blocked; Preview installs may cross into Production because that bridge is what lets existing users adopt the Developer-ID-signed release in place (the manifest's `platforms.macos.teamIdentifier`, required for production, keeps that trust anchored to the signed manifest). Pass `--mac-app-name GravityPort.app` (and, for production builds, `--mac-team-identifier <10-char id>`) to publish the renamed package. The writer computes artifact byte sizes/SHA-256 from the real files, binds Git/UI/runtime/distribution identity, preserves the current `visualPacks` declaration, signs the complete manifest, verifies its own signature with the packaged public key, and then passes it through the production parser. Every release must also come from a clean commit carrying `v<version>`, reachable from a remote branch, with the exact tag already pushed to `origin`.
 
-Example for a macOS-only rc release while preserving the current Visual Pack declaration:
+User-facing release notes live in `release-notes.json` at the repository root, the single source for every surface that shows them. `unreleased` collects one short sentence per user-visible change, in Chinese and English, as changes merge; development builds show it on Settings → About as "Next version (in development)". To release, move `unreleased` into a new first entry of `releases` with the exact `version` and the release `date`, and leave `unreleased` empty. Non-development builds (`MOSA_RELEASE_DISTRIBUTION=preview|production`) refuse to build without an entry for their own `package.json` version, and the About page bundles that entry so it can show what changed without going online. The manifest writer fills `notes.zh` / `notes.en` from the same entry, one `• ` line per sentence, unless `--notes-zh` / `--notes-en` are passed explicitly; `--release-notes <path>` points it at another file. Each release also gets a GitHub Release with the same notes, marked Latest.
+
+Example for a macOS-only rc release while preserving the current Visual Pack declaration (notes come from `release-notes.json`):
 
 ```bash
 node scripts/prepare-desktop-release-manifest.mjs \
   --version 0.2.1-rc.16 \
   --previous /path/to/current/latest.json \
   --mac out/make/update/darwin/arm64/GravityPort-darwin-arm64-0.2.1-rc.16.zip \
-  --notes-zh "<最终中文发布说明>" \
-  --notes-en "<final English release notes>" \
   --output /path/to/staging/latest.json
 ```
 

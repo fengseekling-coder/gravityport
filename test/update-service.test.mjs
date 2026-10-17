@@ -40,6 +40,16 @@ test("update manifest keeps only bounded release metadata", () => {
   assert.equal(MOSA_DOWNLOAD_PAGE_URL, "https://mosa.azhuilab.com/");
 });
 
+test("update manifest parses itemized notes up to 3000 characters without truncation", () => {
+  const zh = "• 第一条\n• 第二条\n".repeat(120).trim();
+  const en = "• First\n• Second\n".repeat(150).trim();
+  assert.ok(zh.length > 1200 && zh.length <= 3000, `zh note should sit in the raised window, got ${zh.length}`);
+  assert.ok(en.length > 1200 && en.length <= 3000, `en note should sit in the raised window, got ${en.length}`);
+  const parsed = parseUpdateManifest({ version: "0.3.0", notes: { zh, en } });
+  assert.equal(parsed.notes.zh, zh);
+  assert.equal(parsed.notes.en, en);
+});
+
 test("anonymous usage tagging keeps the update origin and path fixed", () => {
   const url = new URL(buildUpdateFeedUrl({
     event: "daily_active",

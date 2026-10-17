@@ -2700,6 +2700,11 @@ img.black-image {
 }.app .release-notes li::marker {
   color: var(--ui-muted);
   font-size: 8px;
+}.app .release-meta {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  line-height: var(--space-5);
+  color: var(--ui-muted);
 }.app .about-summary > :not(.about-symbol) {
   grid-column: 2;
 }.app .about-summary .about-update {
@@ -2971,6 +2976,12 @@ img.black-image {
   letter-spacing: 0;
   color: var(--ui-muted);
 }.app .settings-modal .settings-nav h2 {
+  font-size: var(--settings-text-size);
+  line-height: var(--settings-text-line);
+  font-weight: var(--settings-weight-regular);
+  letter-spacing: 0;
+  color: var(--ui-muted);
+}.app .settings-modal .release-meta {
   font-size: var(--settings-text-size);
   line-height: var(--settings-text-line);
   font-weight: var(--settings-weight-regular);
