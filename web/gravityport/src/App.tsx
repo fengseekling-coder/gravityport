@@ -12,6 +12,7 @@ import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAsse
 import {
   dragIdsForCard, dragGhostCount, pointOutsideWindow, nativeDragPaths,
   createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop,
+  collectDragOutPaths, type DragOutUnit,
   type StackUndoPlan,
 } from "./card-drag"
 import { runImport, collectDroppedFiles, excludeLibraryFiles } from "./import-pipeline"
@@ -135,19 +136,20 @@ type CardDragGesture = {
   startX: number; startY: number; lastX: number; lastY: number
   pressedId: string
   dragIds: string[]
-  /** Set when the pressed card is a root-gallery stack card: the whole stack
-   *  travels as one unit (to the sidebar or out of the window). */
-  fromStackId: string
+  /** Root-gallery stack cards among the dragged cards (their stack ids): each
+   *  stack travels as one unit, to the sidebar or out of the window. */
+  stackIds: string[]
   insideStack: boolean
   dragging: boolean
-  /** True while a stack hand-off waits for its member paths to finish loading. */
+  /** True while a hand-off with stacks waits for their member paths. */
   awaitingPaths: boolean
   frame: number | null
   pathsOverLimit: boolean
   nativeController: ReturnType<typeof createNativeDragController>
   membersAbort: AbortController | null
-  membersPromise: Promise<string[]> | null
+  membersPromise: Promise<{ paths: string[]; overLimit: boolean }> | null
 }
+type CardDragFinish = { dragIds: string[]; pressedId: string; stackIds: string[]; insideStack: boolean }
 
 type CardDropTarget = { cardId: string; placement: "before" | "after"; mode: "stack-target" | "reorder" }
 type CardSideTarget = { kind: "group"; name: string } | { kind: "ungrouped" }
@@ -1537,10 +1539,17 @@ export default function App() {
     applySelection([], id)
     setDetail(true)
   }
+  // Select-all takes stack cards too: a root-gallery stack card stands for
+  // the whole stack in every batch action (splitSelectionStacks).
   const selectAllLoaded = () => {
-    const ids = assets.filter(a => !a.stack).map(a => a.id)
+    const ids = assets.map(a => a.id).filter(Boolean)
     applySelection(ids, replaceSelection(ids, selectionRef.current.selected))
   }
+  // What a cross-page select-all learned about the cards it fetched but the
+  // grid has not loaded: which ids are stack covers (and of which stack), and
+  // each card's file path for a drag out of the window. Bound to the view it
+  // was fetched in; a loaded card always wins over this snapshot.
+  const selectAllPagesRef = useRef<{ viewKey: string; stackOf: Map<string, string>; pathOf: Map<string, string> } | null>(null)
   // Cross-page select-all: when the view still has unloaded pages, the whole
   // filtered result is fetched (250 per page, like the previous gallery) and
   // selected in one commit. Any selection change, view change or Escape
@@ -1568,6 +1577,8 @@ export default function App() {
     try {
       const collected: string[] = []
       const seen = new Set<string>()
+      const stackOf = new Map<string, string>()
+      const pathOf = new Map<string, string>()
       let cursor: string | undefined
       // The page cap bounds the fetch. When the loop exits with pages still
       // outstanding, the commit below must announce a truncated selection —
@@ -1582,9 +1593,11 @@ export default function App() {
         if (controller.signal.aborted || viewKeyRef.current !== requestViewKey
           || selectionRevisionRef.current !== startRevision) return
         for (const item of page.assets) {
-          if (item.stack || seen.has(item.id)) continue
+          if (!item.id || seen.has(item.id)) continue
           seen.add(item.id)
           collected.push(item.id)
+          if (item.stack?.id && !stackId) stackOf.set(item.id, item.stack.id)
+          if (item.image_path) pathOf.set(item.id, item.image_path)
         }
         setToast({ text: `${tr("正在全选")} ${collected.length}${page.total ? ` / ${page.total}` : "…"}` })
         morePages = Boolean(page.nextCursor)
@@ -1594,6 +1607,7 @@ export default function App() {
       if (controller.signal.aborted || viewKeyRef.current !== requestViewKey
         || selectionRevisionRef.current !== startRevision) return
       if (collected.length) {
+        selectAllPagesRef.current = { viewKey: requestViewKey, stackOf, pathOf }
         applySelection(collected, replaceSelection(collected, selectionRef.current.selected))
         setToast({ text: (morePages
           ? tr("结果过大，已选前 N 项")
@@ -1761,15 +1775,54 @@ export default function App() {
   const selectionSet = new Set(selectionIds)
   const batchIds = selectionIds
   // Root-gallery stack cards in a batch, keyed by their cover asset id. Inside
-  // a stack view every card is a plain member.
+  // a stack view every card is a plain member. Ids a cross-page select-all
+  // picked up beyond the loaded pages resolve through its snapshot.
+  const pagesSnapshot = () => {
+    const snapshot = selectAllPagesRef.current
+    return snapshot && snapshot.viewKey === viewKeyRef.current ? snapshot : null
+  }
+  const stackOfCard = () => {
+    const loaded = new Map(assetsRef.current.map(item => [item.id, item]))
+    const stackOf = pagesSnapshot()?.stackOf
+    return (id: string): string => {
+      if (stackId) return ""
+      const item = loaded.get(id)
+      return item ? item.stack?.id || "" : stackOf?.get(id) || ""
+    }
+  }
   const splitSelectionStacks = (ids: string[]) => {
     const plainIds: string[] = []
     const stackIds: string[] = []
+    const stackOf = stackOfCard()
     for (const id of ids) {
-      const stack = stackId ? undefined : assetsRef.current.find(item => item.id === id)?.stack?.id
+      const stack = stackOf(id)
       if (stack) { if (!stackIds.includes(stack)) stackIds.push(stack) } else plainIds.push(id)
     }
     return { plainIds, stackIds }
+  }
+  // Group assignment for a batch: plain cards in one request, each stack card
+  // through the stack's own endpoint (all members follow). The outcome counts
+  // one per stack, like a plain card.
+  const assignBatchToGroup = async (targetProject: string, ids: string[], name: string) => {
+    const { plainIds, stackIds } = splitSelectionStacks(ids)
+    const assignStacks = async () => {
+      let failed = 0
+      let firstError = ""
+      for (const id of stackIds) {
+        try { await assignStackToGroup(targetProject, id, name) } catch (error) { failed += 1; firstError ||= errorMessage(error) }
+      }
+      return { succeeded: stackIds.length - failed, failed, firstError }
+    }
+    const [plain, stacks] = await Promise.all([
+      plainIds.length ? setAssetsGroup(targetProject, plainIds, name) : Promise.resolve({ succeeded: 0, failed: 0, firstError: "" }),
+      assignStacks(),
+    ])
+    return {
+      succeeded: plain.succeeded + stacks.succeeded,
+      failed: plain.failed + stacks.failed,
+      firstError: plain.firstError || stacks.firstError,
+      stackCount: stackIds.length,
+    }
   }
   const clearSelectionAndReload = () => { clearSelection(); refreshNavigation() }
   // ─── Card dragging (task 146): press a card and move ≥8px to drag. Drop on
@@ -1787,7 +1840,7 @@ export default function App() {
   const cardDragMoveRef = useRef<(event: PointerEvent) => void>(() => {})
   const cardDragUpRef = useRef<(event: PointerEvent) => void>(() => {})
   const cardDragCancelRef = useRef<(drag: CardDragGesture) => void>(() => {})
-  const cardDragFinishRef = useRef<(drop: CardDropTarget | null, side: CardSideTarget | null, gesture: { dragIds: string[]; pressedId: string; fromStackId: string; insideStack: boolean }) => void>(() => {})
+  const cardDragFinishRef = useRef<(drop: CardDropTarget | null, side: CardSideTarget | null, gesture: CardDragFinish) => void>(() => {})
   const [cardDropTarget, setCardDropTarget] = useState<CardDropTarget | null>(null)
   const [cardDropSide, setCardDropSide] = useState<CardSideTarget | null>(null)
   const [cardDragGhost, setCardDragGhost] = useState<{ src: string; count: number } | null>(null)
@@ -1825,45 +1878,51 @@ export default function App() {
     // is a marquee, owned by onGridPointerDown.
     if (!cardIsSelected(pressedId)) return
     const insideStack = Boolean(stackId)
-    let dragIds: string[] = []
-    let fromStackId = ""
-    if (insideStack || a.stack?.id) {
-      // Inside a stack every card is a reorder candidate; a root-gallery stack
-      // card drags its whole stack as one unit (never as just its cover).
-      dragIds = [pressedId]
-      fromStackId = insideStack ? "" : a.stack!.id
-    } else {
-      dragIds = dragIdsForCard(new Set(selectionIds), pressedId)
-      // A mixed selection (plain cards + a stack card) is not draggable, as in
-      // the legacy gallery.
-      if (dragIds.some(id => assetsRef.current.find(item => item.id === id)?.stack?.id)) return
-    }
+    // Inside a stack every card is a reorder candidate. In the root gallery
+    // the whole selection drags; each stack card in it stands for its whole
+    // stack (never just its cover).
+    const dragIds = insideStack ? [pressedId] : dragIdsForCard(new Set(selectionIds), pressedId)
+    const stackOf = stackOfCard()
+    const stackIds = insideStack ? [] : [...new Set(dragIds.map(stackOf).filter(Boolean))]
     const nativeController = createNativeDragController({
       api: desktopAPI(),
       onError: () => notify(tr("当前素材无法拖出到其他应用")),
     })
     let pathsOverLimit = false
     let membersAbort: AbortController | null = null
-    let membersPromise: Promise<string[]> | null = null
-    if (fromStackId) {
-      // Start fetching the stack's member paths on press (all pages, stack
-      // order, deduplicated) so leaving the window never waits on the network
-      // longer than it must; the gesture is abandoned silently if the button
-      // is released while the fetch is still running.
-      membersAbort = new AbortController()
-      membersPromise = listStackMemberPaths(project, fromStackId, membersAbort.signal)
-        .then(members => stackMemberPaths(members))
-      membersPromise.catch(() => {})
-    } else if (nativeController.supported()) {
-      const paths = nativeDragPaths(assetsRef.current, dragIds)
-      if (paths.length > NATIVE_DRAG_MAX_FILES) { paths.length = NATIVE_DRAG_MAX_FILES; pathsOverLimit = true }
-      nativeController.begin(dragIds, paths)
+    let membersPromise: Promise<{ paths: string[]; overLimit: boolean }> | null = null
+    if (nativeController.supported()) {
+      // Paths in selection order; cards a cross-page select-all fetched but
+      // the grid has not loaded come from its snapshot.
+      const loaded = new Map(assetsRef.current.map(item => [item.id, item]))
+      const pathOf = pagesSnapshot()?.pathOf
+      const pathOfCard = (id: string) => loaded.get(id)?.image_path || pathOf?.get(id) || ""
+      if (stackIds.length) {
+        const units: DragOutUnit[] = dragIds.map(id => {
+          const stack = stackOf(id)
+          return stack ? { kind: "stack", stackId: stack } : { kind: "asset", path: pathOfCard(id) }
+        })
+        // Start fetching the stacks' member paths on press (all pages, stack
+        // order, deduplicated) so leaving the window never waits on the
+        // network longer than it must; the gesture is abandoned silently if
+        // the button is released while the fetch is still running.
+        const abort = new AbortController()
+        membersAbort = abort
+        membersPromise = collectDragOutPaths(units,
+          id => listStackMemberPaths(project, id, abort.signal).then(members => stackMemberPaths(members)),
+          { limit: NATIVE_DRAG_MAX_FILES })
+        membersPromise.catch(() => {})
+      } else {
+        const paths = nativeDragPaths(dragIds.map(id => ({ id, image_path: pathOfCard(id) })), dragIds)
+        if (paths.length > NATIVE_DRAG_MAX_FILES) { paths.length = NATIVE_DRAG_MAX_FILES; pathsOverLimit = true }
+        nativeController.begin(dragIds, paths)
+      }
     }
     cardDragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX, startY: event.clientY,
       lastX: event.clientX, lastY: event.clientY,
-      pressedId, dragIds, fromStackId, insideStack,
+      pressedId, dragIds, stackIds, insideStack,
       dragging: false, awaitingPaths: false, frame: null, pathsOverLimit,
       nativeController, membersAbort, membersPromise,
     }
@@ -1875,22 +1934,21 @@ export default function App() {
     const controller = drag.nativeController
     if (drag.awaitingPaths) return true
     if (!controller.supported() || !pointOutsideWindow(event, window)) return false
-    if (!drag.fromStackId) {
+    if (!drag.stackIds.length) {
       if (!controller.startIfOutside(event, window)) return false
       if (drag.pathsOverLimit) notify(tr("一次最多拖出 512 个文件，已带出前 512 个"))
       cancelCardDrag(drag)
       suppressCardDragClickRef.current = true
       return true
     }
-    // Stack hand-off: wait for the member paths (prefetch started on press);
-    // a release during the wait aborts the fetch and the gesture quietly.
+    // Hand-off with stacks: wait for the member paths (prefetch started on
+    // press); a release during the wait aborts the fetch and the gesture
+    // quietly.
     drag.awaitingPaths = true
     clearCardDragVisuals()
-    drag.membersPromise?.then(paths => {
+    drag.membersPromise?.then(({ paths, overLimit }) => {
       if (cardDragRef.current !== drag) return
-      const overLimit = paths.length > NATIVE_DRAG_MAX_FILES
-      const slice = overLimit ? paths.slice(0, NATIVE_DRAG_MAX_FILES) : paths
-      if (!slice.length || !controller.begin([drag.fromStackId], slice) || !controller.startIfOutside(event, window)) {
+      if (!paths.length || !controller.begin(drag.dragIds, paths) || !controller.startIfOutside(event, window)) {
         notify(tr("当前素材无法拖出到其他应用"))
       } else if (overLimit) {
         notify(tr("一次最多拖出 512 个文件，已带出前 512 个"))
@@ -1928,7 +1986,8 @@ export default function App() {
       return
     }
     setSideDrop(null)
-    if (drag.fromStackId) { setCardDrop(null); return }
+    // A drag carrying stacks never lands on another card (no stack merging).
+    if (drag.stackIds.length) { setCardDrop(null); return }
     const card = cardElementAt(x, y)
     if (!card) { setCardDrop(null); return }
     const cardId = card.getAttribute("data-asset-id") || ""
@@ -1956,7 +2015,7 @@ export default function App() {
       const pressed = assetsRef.current.find(item => item.id === drag.pressedId)
       setCardDragGhost({
         src: pressed?.thumbnail_url || "",
-        count: dragGhostCount(drag.fromStackId ? { stackId: drag.fromStackId } : { assetIds: drag.dragIds }),
+        count: dragGhostCount({ assetIds: drag.dragIds }),
       })
     }
     if (handOffToNativeDrag(drag, event)) return
@@ -1974,7 +2033,7 @@ export default function App() {
     const completed = drag.dragging && !drag.awaitingPaths
     const drop = dropRef.current
     const side = sideDropRef.current
-    const gesture = { dragIds: [...drag.dragIds], pressedId: drag.pressedId, fromStackId: drag.fromStackId, insideStack: drag.insideStack }
+    const gesture: CardDragFinish = { dragIds: [...drag.dragIds], pressedId: drag.pressedId, stackIds: [...drag.stackIds], insideStack: drag.insideStack }
     cancelCardDrag(drag)
     if (!completed) return
     suppressCardDragClickRef.current = true
@@ -2027,13 +2086,25 @@ export default function App() {
       refreshCurrentView()
     } catch (error) { notify(errorMessage(error)) }
   }
-  const runSideDrop = async (side: CardSideTarget, gesture: { dragIds: string[]; fromStackId: string }) => {
+  const runSideDrop = async (side: CardSideTarget, gesture: CardDragFinish) => {
     const groupName = side.kind === "group" ? side.name : ""
     cardDragMutationRef.current = true
     try {
-      if (gesture.fromStackId) {
-        await assignStackToGroup(project, gesture.fromStackId, groupName)
+      if (gesture.dragIds.length === 1 && gesture.stackIds.length === 1) {
+        await assignStackToGroup(project, gesture.stackIds[0], groupName)
         notify(groupName ? fillNamed("堆叠已移动到「{group}」", { group: groupName }) : tr("堆叠已移出分组"))
+      } else if (gesture.stackIds.length) {
+        // A selection with stacks: every stack moves whole, plain cards as
+        // themselves; the count is one per card, like the menu's batch.
+        const outcome = await assignBatchToGroup(project, gesture.dragIds, groupName)
+        if (!outcome.succeeded) { notify(outcome.firstError || tr(groupName ? "添加分组失败" : "移除分组失败")); return }
+        notify(outcome.failed
+          ? (groupName
+              ? tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+              : tr("已从分组移除 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+          : groupName
+            ? fillNamed("已把 {count} 项移到「{group}」", { count: outcome.succeeded, group: groupName })
+            : fillNamed("已把 {count} 项移出分组", { count: outcome.succeeded }))
       } else {
         const outcome = await setAssetsGroup(project, gesture.dragIds, groupName)
         if (!outcome.succeeded) { notify(outcome.firstError || tr(groupName ? "添加分组失败" : "移除分组失败")); return }
@@ -2046,8 +2117,8 @@ export default function App() {
     } catch (error) { notify(errorMessage(error)) }
     finally { cardDragMutationRef.current = false }
   }
-  const runRootStackDrop = async (drop: CardDropTarget, gesture: { dragIds: string[]; fromStackId: string }) => {
-    if (!drop.cardId || gesture.dragIds.includes(drop.cardId)) return
+  const runRootStackDrop = async (drop: CardDropTarget, gesture: CardDragFinish) => {
+    if (!drop.cardId || gesture.stackIds.length || gesture.dragIds.includes(drop.cardId)) return
     // Dropping a multi-selection back onto one of its own members is a common
     // tiny mouse-jitter path — treat it as a no-op instead of surprising the
     // user with a new stack.
@@ -2451,7 +2522,7 @@ export default function App() {
       target: "asset",
       scope: active === "回收站" ? "trash" : "all",
       selectionCount: ids.length,
-      selectionHasStacks: loaded.some(entry => entry.stack),
+      selectionHasStacks: splitSelectionStacks(ids).stackIds.length > 0,
       anyGrouped: ids.length > 1
         ? loaded.some(entry => Boolean(entry.group)) || loaded.length !== ids.length
         : Boolean(clicked.group),
@@ -2531,27 +2602,7 @@ export default function App() {
   // the trash menu's flat add-to-group, which still needs the sidebar group).
   const assignSelectionToGroup = (name: string) => {
     if (!asset) return
-    const targetProject = asset.project_id
-    const { plainIds, stackIds } = splitSelectionStacks(batchIds)
-    // Stack cards move as whole stacks (the stack's own group endpoint); the
-    // outcome counts one per stack, like a plain card.
-    const assignStacks = async () => {
-      let failed = 0
-      let firstError = ""
-      for (const id of stackIds) {
-        try { await assignStackToGroup(targetProject, id, name) } catch (error) { failed += 1; firstError ||= errorMessage(error) }
-      }
-      return { succeeded: stackIds.length - failed, failed, firstError }
-    }
-    Promise.all([
-      plainIds.length ? setAssetsGroup(targetProject, plainIds, name) : Promise.resolve({ succeeded: 0, failed: 0, firstError: "" }),
-      assignStacks(),
-    ])
-      .then(([plain, stacks]) => ({
-        succeeded: plain.succeeded + stacks.succeeded,
-        failed: plain.failed + stacks.failed,
-        firstError: plain.firstError || stacks.firstError,
-      }))
+    assignBatchToGroup(asset.project_id, batchIds, name)
       .then(outcome => {
         if (!outcome.succeeded) { notify(outcome.firstError || tr(name ? "添加分组失败" : "移除分组失败")); return }
         setSelectedIds([])
@@ -3230,7 +3281,7 @@ export default function App() {
               createGroup(project, name)
                 .then(() => {
                   if (target.target === "stack" && target.targetStackId) return assignStackToGroup(project, target.targetStackId, name).then(() => {})
-                  return setAssetsGroup(project, [...batchIds], name).then(outcome => {
+                  return assignBatchToGroup(project, [...batchIds], name).then(outcome => {
                     if (!outcome.succeeded) throw new Error(outcome.firstError || tr("添加分组失败"))
                   })
                 })
