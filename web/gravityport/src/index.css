@@ -3519,3 +3519,155 @@ body.gp-card-dragging .toast {
 }.app .gallery-to-top:hover {
   color: var(--ui-text);
 }
+
+/* Settings → 反馈 (task 158): the whole form lives inside the scrolling
+   settings page; the modal keeps its CSS-governed size and nothing here may
+   force horizontal overflow, even at narrow windows. */
+.app .feedback-section {
+  display: flex;
+  flex-direction: column;
+}.app .feedback-kind-row {
+  display: flex;
+  gap: var(--space-2);
+}.app .feedback-kind-option {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ui-secondary);
+  font-size: 12px;
+  line-height: var(--space-4);
+  cursor: pointer;
+}.app .feedback-kind-option:hover {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}.app .feedback-kind-option.chosen {
+  color: var(--ui-text);
+  font-weight: 500;
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}.app .feedback-kind-option:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}.app .feedback-message {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  margin-top: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--space-4);
+  resize: vertical;
+  box-sizing: border-box;
+}.app .feedback-message::placeholder,
+.app .feedback-contact::placeholder {
+  color: var(--ui-muted);
+}.app .feedback-message:focus-visible,
+.app .feedback-contact:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}.app .feedback-message-foot {
+  display: flex;
+  justify-content: flex-end;
+  min-height: var(--space-4);
+  margin-top: var(--space-1);
+}.app .feedback-counter {
+  font-size: 12px;
+  line-height: var(--space-4);
+  color: var(--ui-muted);
+  font-variant-numeric: tabular-nums;
+}.app .feedback-contact {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--space-4);
+  box-sizing: border-box;
+}.app .feedback-log-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}.app .feedback-log-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  line-height: var(--space-4);
+  color: var(--ui-text);
+  cursor: pointer;
+}.app .feedback-log-toggle input {
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: 0;
+  accent-color: var(--ui-accent);
+  flex-shrink: 0;
+}.app .feedback-log-view-button {
+  border: 0;
+  background: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-small);
+  color: var(--ui-secondary);
+  font-size: 12px;
+  line-height: var(--space-4);
+  cursor: pointer;
+  white-space: nowrap;
+}.app .feedback-log-view-button:hover {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}.app .feedback-log-view-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}.app .feedback-log-view {
+  margin: var(--space-2) 0 0;
+  max-height: 168px;
+  overflow: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: var(--ui-inset);
+  color: var(--ui-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}.app .feedback-auto-note {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  line-height: var(--space-4);
+  color: var(--ui-muted);
+  overflow-wrap: anywhere;
+}.app .feedback-status {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  line-height: var(--space-4);
+}.app .feedback-success {
+  color: var(--ui-accent);
+}.app .feedback-error {
+  color: var(--ui-danger);
+}.app .feedback-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}.app .feedback-send {
+  min-width: 88px;
+}.app .feedback-send:disabled {
+  opacity: .4;
+  cursor: default;
+}

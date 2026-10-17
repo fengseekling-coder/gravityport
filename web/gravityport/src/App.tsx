@@ -5,6 +5,7 @@ import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
 import { PinterestView } from "./PinterestView"
 import { PinterestConnectionCard } from "./PinterestConnectionCard"
+import { FeedbackPanel } from "./FeedbackPanel"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, type MenuContext, type MenuEntry } from "./context-menus"
@@ -4069,6 +4070,7 @@ export default function App() {
                 ["存储", "folder"],
                 ["模型", "grid"],
                 ["连接", "link"],
+                ["反馈", "message"],
                 ["关于", "info"],
               ].map(([label, icon]) => (
                 <button
@@ -4212,6 +4214,8 @@ export default function App() {
                 )
               ) : settingTab === "连接" ? (
                 <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
+              ) : settingTab === "反馈" ? (
+                <FeedbackPanel language={language} />
               ) : (
                 <>
                   <section className="settings-section about-summary">

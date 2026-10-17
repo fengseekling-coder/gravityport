@@ -211,12 +211,17 @@ function createFlowContext(flowName) {
     // finally block; start again with the same dirs to verify persistence.
     // `{ libraryDir }` runs the server against a different library directory
     // (health check included) — used by the library-relocation flow.
-    async startServer({ libraryDir: libraryDirOverride } = {}) {
+    // `{ env }` adds flow-specific variables on top of the QA environment
+    // (e.g. MOSA_FEEDBACK_URL pointing at a flow-owned fake service).
+    async startServer({ libraryDir: libraryDirOverride, env: extraEnv } = {}) {
       const activeLibraryDir = libraryDirOverride || dirs.libraryDir;
       const port = await freePort();
       const child = spawn(process.execPath, ["server.mjs"], {
         cwd: rootDir,
-        env: qaEnvironment({ portVariable: "MOSA_PORT", port, userData: dirs.userDataDir, library: activeLibraryDir }),
+        env: {
+          ...qaEnvironment({ portVariable: "MOSA_PORT", port, userData: dirs.userDataDir, library: activeLibraryDir }),
+          ...(extraEnv || {}),
+        },
         stdio: ["ignore", "pipe", "pipe"],
       });
       const stderr = collect(child.stderr);
