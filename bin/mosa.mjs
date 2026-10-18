@@ -101,7 +101,7 @@ async function runVisualModelVerify(values) {
 async function runThumbnails(values) {
   const action = values.shift();
   if (!new Set(["rebuild", "repair"]).has(action)) {
-    console.error("Usage: mosa thumbnails <rebuild|repair> [--library <path>]");
+    console.error("Usage: gravityport thumbnails <rebuild|repair> [--library <path>]");
     process.exitCode = 1;
     return;
   }

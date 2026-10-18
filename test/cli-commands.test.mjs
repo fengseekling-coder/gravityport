@@ -67,7 +67,7 @@ test("thumbnails requires rebuild or repair as its sub-action", async () => {
   for (const args of [["thumbnails"], ["thumbnails", "compress"]]) {
     const result = runMosaCli([...args, "--library", env.MOSA_LIBRARY_DIR], { env });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /Usage: mosa thumbnails <rebuild\|repair>/);
+    assert.match(result.stderr, /Usage: gravityport thumbnails <rebuild\|repair>/);
     assert.equal(result.stdout, "");
   }
 });

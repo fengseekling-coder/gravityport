@@ -2192,7 +2192,7 @@ async function waitForServerPort(server) {
   let buffer = "";
   for await (const chunk of server.stdout) {
     buffer += chunk.toString("utf8");
-    const match = buffer.match(/MOSA: http:\/\/127\.0\.0\.1:(\d+)/);
+    const match = buffer.match(/GravityPort: http:\/\/127\.0\.0\.1:(\d+)/);
     if (match) return Number(match[1]);
   }
   throw new Error(`Server exited before printing port: ${buffer}`);

@@ -79,7 +79,7 @@ function waitForServer(child) {
     const timer = setTimeout(() => reject(new Error(`Timed out waiting for server startup: ${output}`)), 10_000);
     const onOutput = (chunk) => {
       output += chunk.toString();
-      const match = output.match(/MOSA: (http:\/\/127\.0\.0\.1:\d+)/);
+      const match = output.match(/GravityPort: (http:\/\/127\.0\.0\.1:\d+)/);
       if (match) {
         clearTimeout(timer);
         resolveUrl(match[1]);

@@ -34,11 +34,11 @@ try {
   throw err;
 }
 if (process.stdout.isTTY) {
-  console.log(`MOSA: ${runtime.url}/#mosa-client-token=${encodeURIComponent(runtime.clientToken)}`);
+  console.log(`GravityPort: ${runtime.url}/#mosa-client-token=${encodeURIComponent(runtime.clientToken)}`);
 } else {
   // Redirected output (service logs, .mosa-server.log) must not persist the
   // management capability. The URL is still delivered interactively.
-  console.log(`MOSA: ${runtime.url} (client token handoff suppressed in redirected output)`);
+  console.log(`GravityPort: ${runtime.url} (client token handoff suppressed in redirected output)`);
 }
 
 let shutdownPromise = null;

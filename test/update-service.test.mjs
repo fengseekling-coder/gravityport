@@ -37,7 +37,7 @@ test("update manifest keeps only bounded release metadata", () => {
     windowsArtifact: null,
   });
   assert.equal(MOSA_UPDATE_FEED_URL, "https://mosa.azhuilab.com/releases/gravityport/latest.json");
-  assert.equal(MOSA_DOWNLOAD_PAGE_URL, "https://mosa.azhuilab.com/");
+  assert.equal(MOSA_DOWNLOAD_PAGE_URL, "https://gravityport.azhuilab.com/#download");
 });
 
 test("update manifest parses itemized notes up to 3000 characters without truncation", () => {
