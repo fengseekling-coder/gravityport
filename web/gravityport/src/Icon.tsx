@@ -23,6 +23,7 @@ const glyphs: Record<string, ReactNode> = {
   link: <><path d="m9 8 2-2a4.2 4.2 0 0 1 6 6l-2 2M15 16l-2 2a4.2 4.2 0 0 1-6-6l2-2M9 15l6-6" /></>,
   image: <><rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9" r="1.5" /><path d="m4 17 5-5 4 4 3-3 4 4" /></>,
   external: <><path d="M14 4h6v6M20 4l-9 9M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" /></>,
+  play: <path d="M8.5 5.8v12.4a.8.8 0 0 0 1.2.7l9.6-6.2a.8.8 0 0 0 0-1.4L9.7 5.1a.8.8 0 0 0-1.2.7Z" />,
   expand: <path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5" />,
   // Task 177: viewer fullscreen — corners stretch outward to enter, inward to exit.
   fullscreen: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,

@@ -298,6 +298,25 @@ function columnsStorage(): { getItem: (key: string) => string | null; setItem: (
   try { return window.localStorage } catch { return { getItem: () => null, setItem: () => {} } }
 }
 
+// Videos never get a generated thumbnail (the app ships no frame extractor),
+// so their thumbnail_url falls back to the mp4 itself and an <img> shows a
+// broken icon. Let the browser paint an early frame of the video instead.
+const VIDEO_URL_PATTERN = /\.(?:mp4|mov|webm|m4v)(?:[?#].*)?$/i
+function isVideoUrl(url: string | null | undefined): boolean {
+  return !!url && VIDEO_URL_PATTERN.test(url)
+}
+
+function ThumbMedia({ src, ...img }: { src: string } & React.ImgHTMLAttributes<HTMLImageElement>) {
+  if (isVideoUrl(src)) {
+    return <video className={img.className} src={src.includes("#") ? src : `${src}#t=0.1`} muted playsInline preload="metadata" tabIndex={-1} aria-hidden="true" draggable={false} />
+  }
+  return <img src={src} {...img} />
+}
+
+function VideoMark() {
+  return <span className="video-mark"><Icon name="play" size={12} /></span>
+}
+
 // Task 148: one row renderer shared by the version-tree list above and every
 // block of the expanded 「查看」 region below. The list rows keep the exact DOM
 // they had before the extraction (the version-history e2e drives it).
@@ -327,7 +346,7 @@ function InspectorRow(spec: InspectorRowSpec) {
   const row = (
     <>
       <i className={spec.emptyThumb ? "row-thumb-empty" : undefined}>
-        {!spec.emptyThumb && spec.thumbnailUrl ? <img src={spec.thumbnailUrl} alt="" loading="lazy" /> : null}
+        {!spec.emptyThumb && spec.thumbnailUrl ? <ThumbMedia src={spec.thumbnailUrl} alt="" loading="lazy" /> : null}
       </i>
       <span>{spec.title}<small>{spec.detail || ""}</small></span>
       {spec.showChevron === false ? null : <Icon name="right" size={11} />}
@@ -349,7 +368,7 @@ function InspectorRow(spec: InspectorRowSpec) {
 // rows; records that resolve to no asset render the gray placeholder frame.
 function RelationThumb({ display, onClick, label }: { display: GenerationDisplay; onClick?: () => void; label?: string }) {
   const thumb = display.known && display.asset
-    ? <i>{display.asset.thumbnail_url ? <img src={display.asset.thumbnail_url} alt="" loading="lazy" /> : null}</i>
+    ? <i>{display.asset.thumbnail_url ? <ThumbMedia src={display.asset.thumbnail_url} alt="" loading="lazy" /> : null}</i>
     : <i className="row-thumb-empty" />
   if (!onClick) return <span className="relation-thumb-frame">{thumb}</span>
   return <button className="relation-thumb-link" title={label} aria-label={label} onClick={onClick}>{thumb}</button>
@@ -3445,7 +3464,8 @@ export default function App() {
                     style={{ aspectRatio: `${a.width} / ${a.height}` }}
                     {...cardEventHandlers(a)}
                   >
-                    {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
+                    {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
+                    {a.mediaKind === "video" && <VideoMark />}
                     {a.stack && (
                       <span className="stack-mark">
                         <Icon name="layers" size={12} />
@@ -3478,7 +3498,8 @@ export default function App() {
                   style={placementStyle(globalIndex)}
                   {...cardEventHandlers(a)}
                 >
-                  {a.thumbnail_url ? <img className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={galleryImageSizes(model.placements[globalIndex]?.width ?? model.columnWidth)} alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
+                  {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={galleryImageSizes(model.placements[globalIndex]?.width ?? model.columnWidth)} alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
+                  {a.mediaKind === "video" && <VideoMark />}
                   {a.stack && (
                     <span className="stack-mark">
                       <Icon name="layers" size={12} />
@@ -3558,7 +3579,7 @@ export default function App() {
             </button>
           </div>
           <div className="asset-summary">
-            <button className="summary-image" aria-label={tr("预览当前素材")} onClick={() => setPreview(true)}>{asset.thumbnail_url ? <img src={asset.thumbnail_url} alt="" /> : null}<Icon name="expand" /></button>
+            <button className="summary-image" aria-label={tr("预览当前素材")} onClick={() => setPreview(true)}>{asset.thumbnail_url ? <ThumbMedia src={asset.thumbnail_url} alt="" /> : null}{asset.mediaKind === "video" && <VideoMark />}<Icon name="expand" /></button>
             <div className="asset-meta">
               <div className="asset-title">
                 <span className="asset-name" title={asset.name}>{asset.name}</span>
@@ -4444,7 +4465,7 @@ export default function App() {
       {cardDragGhost && (
         <div className="card-drag-ghost" ref={ghostRef} aria-hidden="true">
           {cardDragGhost.src
-            ? <img src={cardDragGhost.src} alt="" draggable={false} />
+            ? <ThumbMedia src={cardDragGhost.src} alt="" draggable={false} />
             : <span className="card-drag-ghost-fallback" />}
           {cardDragGhost.count > 1 && <span className="card-drag-ghost-count">{cardDragGhost.count}</span>}
         </div>
