@@ -3126,6 +3126,20 @@ img.black-image {
   box-shadow: var(--ui-shadow);
   pointer-events: none;
 }
+/* Task 177: in-app viewer fullscreen — sidebar, toolbar and Inspector collapse
+   and the viewer fills the window. Deliberately not the OS fullscreen: the
+   window itself, its macOS traffic lights and the menu bar stay untouched. The
+   single grid column must out-rank .app:has(> .details), whose third column
+   keeps matching while .details is merely hidden. */
+.app.viewer-fullscreen {
+  grid-template-columns: minmax(0, 1fr);
+}.app.viewer-fullscreen .sidebar,
+.app.viewer-fullscreen .toolbar,
+.app.viewer-fullscreen .details {
+  display: none;
+}.app.viewer-fullscreen .workspace {
+  padding: 0;
+}
 
 @media (max-width: 1000px) {.app .viewer-controls button > span {
     display: none;

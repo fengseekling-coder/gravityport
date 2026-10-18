@@ -441,6 +441,10 @@ export default function App() {
   const [tagError, setTagError] = useState("")
   const [expandedRelated, setExpandedRelated] = useState(false)
   const [preview, setPreview] = useState(false)
+  // Task 177: in-app viewer fullscreen (window stays a window — the OS
+  // fullscreen API is deliberately untouched). Never persisted: it resets
+  // whenever the viewer closes.
+  const [viewerFullscreen, setViewerFullscreen] = useState(false)
   // The context menu carries its target with it: stack menus act on the
   // right-clicked stack without touching the selection, so the handlers read
   // the menu state instead of guessing from the focused asset.
@@ -2204,6 +2208,9 @@ export default function App() {
         if (renameNoticeOpen) dismissRenameNotice()
         else if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
+        // Fullscreen sits above the viewer in the chain: Esc first leaves the
+        // in-app fullscreen, and only a second Esc closes the viewer itself.
+        else if (viewerFullscreen) setViewerFullscreen(false)
         else if (settings) setSettings(false)
         else if (preview) setPreview(false)
         else if (selectedIds.length || selected) applySelection([], "")
@@ -2243,7 +2250,13 @@ export default function App() {
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, deleting, menu, assets, asset, stackId, active, language, selectedIds, selected, selectionIds])
+  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds])
+  // Fullscreen belongs to the open viewer, never outlives it: the back button,
+  // Esc, a view switch, a project switch or a deleted asset all close the
+  // viewer through setPreview(false), and the next viewer opens windowed.
+  useEffect(() => {
+    if (!preview) setViewerFullscreen(false)
+  }, [preview])
   // Local file import through the staged pipeline (task 130): 40-file batches
   // of stage → create → cleanup, optional target stack and group, live
   // progress in the toast.
@@ -2967,7 +2980,7 @@ export default function App() {
   return (
     <div
       ref={appRef}
-      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass}`}
+      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass} ${preview && viewerFullscreen ? "viewer-fullscreen" : ""}`}
       onClick={() => menu && setMenu(null)}
     >
       <aside className="sidebar">
@@ -3384,7 +3397,7 @@ export default function App() {
           </div>
         </header>
         {preview ? (
-          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} onNavigate={navigateAsset} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} message={toast?.text ?? ""} />
+          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} message={toast?.text ?? ""} />
         ) : pinterestActive ? (
           <PinterestView
             key={pinterestViewKey}
