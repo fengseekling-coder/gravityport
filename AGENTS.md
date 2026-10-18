@@ -3,7 +3,7 @@
 ## Repository Boundary
 
 - Keep source code, tests, public documentation, and reproducible configuration in this repository.
-- Do not commit user libraries, generated media, prompts, metadata exports, session logs, canvas data, deployment snapshots, screenshots, or local paths.
+- Do not commit user libraries, generated media, prompts, metadata exports, session logs, canvas data, deployment snapshots, screenshots, or local paths. Product screenshots endorsed by the maintainer and stored under `docs/images/` are the one exception; every other screenshot stays out.
 - Keep third-party plugin code outside this repository. Integrations must use configured paths rather than hard-coded machine-specific locations.
 - Keep one-off implementation summaries, delivery reports, restart instructions, and manual test checklists out of the repository root. Fold durable user guidance into the relevant document under `docs/`; leave transient work records outside the checkout.
 
