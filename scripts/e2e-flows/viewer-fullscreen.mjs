@@ -45,6 +45,7 @@ export async function run(ctx) {
     if (result?.opened !== true) problems.push("viewer opened with 全屏 button unpressed");
     if (result?.entered !== true) problems.push("fullscreen entered (chrome hidden, viewer fills window, arrows/controls kept)");
     if (!(result?.afterFs > result?.before)) problems.push(`image grew in fullscreen (${result?.before} -> ${result?.afterFs})`);
+    if (result?.zoomKeepsSize !== true) problems.push(`1:1 keeps the full 1600x900 image box (${JSON.stringify(result?.zoomSize)})`);
     if (result?.pageKeptFullscreen !== true) problems.push("arrow navigation stayed inside fullscreen");
     if (result?.escExitedFullscreenOnly !== true) problems.push("first Esc left fullscreen but kept the viewer");
     if (result?.secondEscClosedViewer !== true) problems.push("second Esc closed the viewer");
@@ -136,6 +137,20 @@ function fullscreenSource() {
       && visible('.viewer-previous') && visible('.viewer-next') && visible('.viewer-controls')
       && fsButton('退出全屏')?.getAttribute('aria-pressed') === 'true';
 
+    // 1:1 inside fullscreen: the 1600x900 fixture is wider than the window, so
+    // the image box must keep its full 1600x900 size and overflow the stage.
+    // Tailwind's preflight caps img/video at max-width: 100%, which squeezed
+    // the box to the stage width while its height kept growing, so the picture
+    // shrank inside a tall box with black bands (task 179).
+    controlsButtons().find((b) => b.textContent.trim() === '1:1').click();
+    await waitFor(() => (document.querySelector('.viewer-controls output')?.textContent || '') === '100%', 'zoomed to 1:1');
+    await sleep(100);
+    const zoomRect = imageRect();
+    const zoomKeepsSize = Math.abs(zoomRect.width - 1600) <= 2 && Math.abs(zoomRect.height - 900) <= 2;
+    const zoomSize = [Math.round(zoomRect.width), Math.round(zoomRect.height)];
+    controlsButtons().find((b) => b.textContent.trim() === '适合窗口').click();
+    await waitFor(() => (document.querySelector('.viewer-controls output')?.textContent || '') !== '100%', 'back to fit');
+
     // Paging inside fullscreen stays fullscreen (the toolbar title is display:
     // none but still in the DOM, so its text is readable).
     const titleBefore = document.querySelector('.viewer-title span')?.textContent || '';
@@ -188,7 +203,7 @@ function fullscreenSource() {
       opened, entered, pageKeptFullscreen, escExitedFullscreenOnly, secondEscClosedViewer,
       reopenWindowed, buttonExitRestores, englishLabels,
       osCalls: window.__fsCalls, fullscreenElement: document.fullscreenElement,
-      before, afterFs,
+      before, afterFs, zoomKeepsSize, zoomSize,
     };
   })()
   `;

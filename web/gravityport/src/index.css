@@ -3168,6 +3168,11 @@ img.black-image {
   z-index: 1;
 }img.viewer-image,
 video.viewer-image {
+  /* The viewer sizes the media box itself (width/height x zoom); Tailwind's
+     preflight max-width: 100% would squeeze a zoomed box to the stage width
+     while its height kept growing, leaving black bands around the picture. */
+  max-width: none;
+  max-height: none;
   object-fit: contain;
   background: #000;
 }.stack-mark {
