@@ -59,7 +59,7 @@ At startup, the desktop shell verifies the service identity and library path. Or
 
 On macOS, closing the last window keeps the Desktop-owned runtime available so the app can be reopened from the Dock; an explicit application quit stops an owned runtime and releases its library lock. On Windows, closing the last window quits the app because GravityPort does not expose a tray re-entry point; an owned runtime is stopped through the same graceful shutdown path.
 
-Windows 10/11 x64 is currently a **Preview / testing** target. A real Windows-machine smoke cycle has verified application startup, SQLite, Sharp, the shared library/Inspector UI, and automatic Codex collection. The Windows shell keeps the native title bar but hides Electron's visible application menu row; the underlying menu remains installed so keyboard accelerators continue to work. Grok and Cowart Windows source discovery remain unverified until their real local source layouts are confirmed.
+Windows 10/11 x64 is currently a **Preview / testing** target. A real Windows-machine smoke cycle on an earlier build verified application startup, SQLite, Sharp, the library/Inspector UI, and automatic Codex collection; the redesigned interface has not been re-verified on Windows hardware yet. The Windows shell keeps the native title bar but hides Electron's visible application menu row; the underlying menu remains installed so keyboard accelerators continue to work. Grok and Cowart Windows source discovery remain unverified until their real local source layouts are confirmed.
 
 Package names, distribution tracks, code signing, in-app update verification, and release publishing are maintainer topics; see [releasing.md](releasing.md).
 
