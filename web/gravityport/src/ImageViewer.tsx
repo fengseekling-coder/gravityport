@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react"
 import Icon from "./Icon"
 import { translate, type Language } from "./i18n"
 
+const CONTROLS_IDLE_MS = 2000
+
 export default function ImageViewer({ width, height, src, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, message }: {
   width: number; height: number; src?: string; isVideo?: boolean; language: Language; disabled: boolean
   fullscreen: boolean
@@ -16,6 +18,23 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
   const [manualScale, setManualScale] = useState<number | null>(null)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
+  // The zoom bar floats over the picture and fades out after the pointer rests
+  // for CONTROLS_IDLE_MS; any pointer movement, wheel zoom or zoom key brings
+  // it back. It never fades while the pointer is on it or it holds focus.
+  const [controlsIdle, setControlsIdle] = useState(false)
+  const idleTimer = useRef<number | null>(null)
+  const pointerOnControls = useRef(false)
+  const revealControls = () => {
+    setControlsIdle(false)
+    if (idleTimer.current !== null) window.clearTimeout(idleTimer.current)
+    idleTimer.current = window.setTimeout(() => {
+      if (!pointerOnControls.current) setControlsIdle(true)
+    }, CONTROLS_IDLE_MS)
+  }
+  useEffect(() => {
+    revealControls()
+    return () => { if (idleTimer.current !== null) window.clearTimeout(idleTimer.current) }
+  }, [])
   const tr = (text: string) => translate(text, language)
   const fitScale = Math.max(.01, Math.min((size.width - 48) / width, (size.height - 32) / height, 1))
   const scale = manualScale ?? fitScale
@@ -48,6 +67,7 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
       const rect = element.getBoundingClientRect()
       const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size.height : 1)
       zoomTo(scale * Math.exp(-delta * .002), { x: event.clientX - rect.left - rect.width / 2, y: event.clientY - rect.top - rect.height / 2 })
+      revealControls()
     }
     element.addEventListener("wheel", wheel, { passive: false })
     return () => element.removeEventListener("wheel", wheel)
@@ -64,12 +84,13 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
       else if (event.key === "1") zoomTo(1)
       else return
       event.preventDefault()
+      revealControls()
     }
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
   }, [scale, pan, size, disabled, onNavigate])
   const pannable = width * scale > size.width || height * scale > size.height
-  return <div className="image-viewer">
+  return <div className="image-viewer" onPointerMove={revealControls}>
     <div ref={stage} className={`viewer-stage ${pannable ? "pannable" : ""} ${dragging ? "dragging" : ""}`} aria-label={tr("图片预览")} onDoubleClick={() => manualScale === null ? zoomTo(1) : fit()}
       onContextMenu={event => { event.preventDefault(); onContextMenu(event.clientX, event.clientY) }}
       onPointerDown={event => {
@@ -93,7 +114,9 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
     </div>
     <button className="viewer-nav viewer-previous" aria-label={tr("上一个素材")} onClick={() => onNavigate(-1)}><Icon name="left" size={24} /></button>
     <button className="viewer-nav viewer-next" aria-label={tr("下一个素材")} onClick={() => onNavigate(1)}><Icon name="right" size={24} /></button>
-    <div className="viewer-controls" role="group" aria-label={tr("缩放控制")}>
+    <div className={`viewer-controls ${controlsIdle ? "is-idle" : ""}`} role="group" aria-label={tr("缩放控制")}
+      onPointerEnter={() => { pointerOnControls.current = true; setControlsIdle(false) }}
+      onPointerLeave={() => { pointerOnControls.current = false; revealControls() }}>
       <button aria-label={tr("缩小")} title={tr("缩小")} disabled={scale <= .05} onClick={() => zoomTo(scale / 1.25)}><Icon name="minus" size={16} /></button>
       <output aria-live="polite">{Math.round(scale * 100)}%</output>
       <button aria-label={tr("放大")} title={tr("放大")} disabled={scale >= 4} onClick={() => zoomTo(scale * 1.25)}><Icon name="plus" size={16} /></button>

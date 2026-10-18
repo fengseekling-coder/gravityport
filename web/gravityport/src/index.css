@@ -3027,7 +3027,7 @@ img.black-image {
   position: relative;
 }.app .viewer-stage {
   position: absolute;
-  inset: 0 0 64px;
+  inset: 0;
   overflow: hidden;
   user-select: none;
   touch-action: none;
@@ -3081,6 +3081,16 @@ img.black-image {
   border-radius: var(--radius-control);
   background: var(--ui-panel);
   box-shadow: 0 2px 8px #0000000c;
+  z-index: 2;
+  transition: opacity 200ms ease;
+}.app .viewer-controls.is-idle:not(:focus-within) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {.app .viewer-controls {
+    transition: none;
+  }
 }.app .viewer-controls button {
   min-width: var(--space-8);
   height: var(--space-8);

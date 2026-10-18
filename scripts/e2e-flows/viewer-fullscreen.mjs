@@ -51,6 +51,7 @@ export async function run(ctx) {
     if (result?.secondEscClosedViewer !== true) problems.push("second Esc closed the viewer");
     if (result?.reopenWindowed !== true) problems.push("reopened viewer starts windowed");
     if (result?.buttonExitRestores !== true) problems.push("退出全屏 button restored the chrome");
+    if (result?.controlsAutoHide !== true) problems.push("viewer stage reaches the bottom edge and the zoom bar fades out and back");
     if (result?.englishLabels !== true) problems.push("English labels Full screen / Exit full screen");
     if (result?.osCalls !== 0) problems.push(`fake setWindowFullScreen called ${result?.osCalls} times`);
     if (result?.fullscreenElement !== null) problems.push("document.fullscreenElement not null");
@@ -181,6 +182,17 @@ function fullscreenSource() {
     await waitFor(() => !isFullscreenClass() && visible('.sidebar') && visible('.toolbar') && visible('.details'), '退出全屏 restored the chrome');
     const buttonExitRestores = Boolean(document.querySelector('.image-viewer'));
 
+    // The zoom bar floats over the picture (the stage runs to the viewer's
+    // bottom edge), fades out once the pointer rests for 2s, and comes back on
+    // the next pointer movement.
+    const stageRect = document.querySelector('.viewer-stage').getBoundingClientRect();
+    const stageFillsViewer = Math.abs(stageRect.bottom - viewerRect().bottom) <= 1;
+    const controls = () => document.querySelector('.viewer-controls');
+    await waitFor(() => controls()?.classList.contains('is-idle') && getComputedStyle(controls()).opacity === '0', 'zoom bar faded after the pointer rested', 6000);
+    document.querySelector('.image-viewer').dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 200, clientY: 200 }));
+    await waitFor(() => !controls()?.classList.contains('is-idle'), 'zoom bar back on pointer movement');
+    const controlsAutoHide = stageFillsViewer;
+
     // English labels: switch the interface language in Settings while the
     // viewer stays open behind the dialog.
     document.querySelector('.user-button').click();
@@ -201,7 +213,7 @@ function fullscreenSource() {
 
     return {
       opened, entered, pageKeptFullscreen, escExitedFullscreenOnly, secondEscClosedViewer,
-      reopenWindowed, buttonExitRestores, englishLabels,
+      reopenWindowed, buttonExitRestores, controlsAutoHide, englishLabels,
       osCalls: window.__fsCalls, fullscreenElement: document.fullscreenElement,
       before, afterFs, zoomKeepsSize, zoomSize,
     };
