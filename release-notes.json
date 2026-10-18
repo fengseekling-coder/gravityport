@@ -1,40 +1,16 @@
 {
   "schema": 1,
   "unreleased": {
-    "zh": [
-      "MOSA 更名为 GravityPort：应用、浏览器扩展和命令行都换了新名字，素材库、设置和扩展配对原样保留。",
-      "全新界面：画廊、检视器和设置整体重做，层级更清楚。",
-      "拖拽整理：把卡片拖到侧栏分组归类，拖到另一张卡上合成堆叠，堆叠里可以拖动排序，也能直接拖出应用；拖错了可以撤销。",
-      "回收站：删除后可以马上撤销；回收站里的素材保留 90 天并显示剩余天数，可以恢复、永久删除或一键清空。",
-      "版本树按 ChatGPT 对话的轮次分组，展开就能看到每一轮生成的缩略图。",
-      "设置里新增「反馈」：直接把问题或建议发给我们，可以选择附上已脱敏的诊断日志，发送前能看到全文。",
-      "设置 →「关于」里能看到这个版本更新了什么；有新版本时，会先列出新版本的更新内容。",
-      "从检视器或堆叠返回画廊时，会回到原来的位置；长列表多了「回到顶部」按钮。",
-      "框选更顺手：可以从空白处开始框选，按住 Shift 加选，拖到窗口边缘会自动滚动；⌘A 和多选拖动都包括堆叠。",
-      "画廊里的横图排得更整齐，不再留下大块空白。",
-      "检视器头部显示类型、来源和日期；标签改成纯文字；比例直接显示 16:9、9:16 这样的名字。",
-      "搜索只匹配你看得见的内容，比如文件名、提示词、标签和分组，结果更准。",
-      "macOS 上可以按住窗口顶部拖动窗口。",
-      "修复：把素材库里的图拖出去再拖回来，不会再重复导入一份。"
-    ],
-    "en": [
-      "MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.",
-      "A new interface: the gallery, Inspector, and Settings are redesigned with a clearer layout.",
-      "Drag to organize: drop cards on a sidebar group, onto another card to build a stack, reorder inside a stack, or drag them out of the app. Mistakes can be undone.",
-      "Trash: deletions can be undone right away, trashed items are kept for 90 days with the days left shown, and you can restore, delete forever, or empty the Trash.",
-      "The version tree groups ChatGPT images by conversation round, with thumbnails for every round when expanded.",
-      "Settings has a new Feedback page for sending problems or ideas straight to us, with an optional redacted diagnostic log you can read before sending.",
-      "Settings → About now lists what changed in this version, and shows what's new in the next version when an update is available.",
-      "Going back to the gallery from the Inspector or a stack returns to where you were, and long lists get a Back to top button.",
-      "Smoother marquee selection: start from empty space, hold Shift to add, and the gallery scrolls when you reach the window edge. ⌘A and multi-card drags include stacks.",
-      "Wide images line up more evenly in the gallery instead of leaving large gaps.",
-      "The Inspector header shows kind, source, and date; tags are plain text; aspect ratios use familiar names like 16:9 and 9:16.",
-      "Search matches only what you can see, such as file names, prompts, tags, and groups, so results are more accurate.",
-      "On macOS, drag the top of the window to move it.",
-      "Fixed: dragging a library image out and back in no longer imports a duplicate."
-    ]
+    "zh": [],
+    "en": []
   },
   "releases": [
+    {
+      "version": "0.3.0-rc.1",
+      "date": "2026-10-18",
+      "zh": ["MOSA 更名为 GravityPort：应用、浏览器扩展和命令行都换了新名字，素材库、设置和扩展配对原样保留。", "全新界面：画廊、检视器和设置整体重做，层级更清楚。", "拖拽整理：把卡片拖到侧栏分组归类，拖到另一张卡上合成堆叠，堆叠里可以拖动排序，也能直接拖出应用；拖错了可以撤销。", "回收站：删除后可以马上撤销；回收站里的素材保留 90 天并显示剩余天数，可以恢复、永久删除或一键清空。", "版本树按 ChatGPT 对话的轮次分组，展开就能看到每一轮生成的缩略图。", "设置里新增「反馈」：直接把问题或建议发给我们，可以选择附上已脱敏的诊断日志，发送前能看到全文。", "设置 →「关于」里能看到这个版本更新了什么；有新版本时，会先列出新版本的更新内容。", "从检视器或堆叠返回画廊时，会回到原来的位置；长列表多了「回到顶部」按钮。", "框选更顺手：可以从空白处开始框选，按住 Shift 加选，拖到窗口边缘会自动滚动；⌘A 和多选拖动都包括堆叠。", "画廊里的横图排得更整齐，不再留下大块空白。", "检视器头部显示类型、来源和日期；标签改成纯文字；比例直接显示 16:9、9:16 这样的名字。", "搜索只匹配你看得见的内容，比如文件名、提示词、标签和分组，结果更准。", "macOS 上可以按住窗口顶部拖动窗口。", "修复：把素材库里的图拖出去再拖回来，不会再重复导入一份。"],
+      "en": ["MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.", "A new interface: the gallery, Inspector, and Settings are redesigned with a clearer layout.", "Drag to organize: drop cards on a sidebar group, onto another card to build a stack, reorder inside a stack, or drag them out of the app. Mistakes can be undone.", "Trash: deletions can be undone right away, trashed items are kept for 90 days with the days left shown, and you can restore, delete forever, or empty the Trash.", "The version tree groups ChatGPT images by conversation round, with thumbnails for every round when expanded.", "Settings has a new Feedback page for sending problems or ideas straight to us, with an optional redacted diagnostic log you can read before sending.", "Settings → About now lists what changed in this version, and shows what's new in the next version when an update is available.", "Going back to the gallery from the Inspector or a stack returns to where you were, and long lists get a Back to top button.", "Smoother marquee selection: start from empty space, hold Shift to add, and the gallery scrolls when you reach the window edge. ⌘A and multi-card drags include stacks.", "Wide images line up more evenly in the gallery instead of leaving large gaps.", "The Inspector header shows kind, source, and date; tags are plain text; aspect ratios use familiar names like 16:9 and 9:16.", "Search matches only what you can see, such as file names, prompts, tags, and groups, so results are more accurate.", "On macOS, drag the top of the window to move it.", "Fixed: dragging a library image out and back in no longer imports a duplicate."]
+    },
     {
       "version": "0.2.1-rc.34",
       "date": "2026-09-24",
