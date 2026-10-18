@@ -47,8 +47,8 @@ const DEAD_FILE_EXCEPTION_PATTERNS = [/^scripts\/e2e-flows\/[^_/][^/]*\.mjs$/];
 const DEAD_EXPORT_EXCEPTIONS = new Set();
 const DEAD_CSS_EXCEPTIONS = new Set();
 // Classes whose numeric suffix is built through an intermediate variable
-// (web/app/inspector-markup.mjs: `const depthClass = `generation-depth-${...}``),
-// which the class-attribute interpolation check cannot see.
+// (e.g. `const depthClass = `generation-depth-${...}``), which the
+// class-attribute interpolation check cannot see.
 const DEAD_CSS_EXCEPTION_PREFIXES = [];
 
 const DECLARATION_EXPORT_RE = /export\s+(?:async\s+)?(?:function\s*\*?|const|let|var|(?:abstract\s+)?class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g;
