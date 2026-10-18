@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-[![CI](https://github.com/fengseekling-coder/mosa/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/mosa/actions/workflows/ci.yml)
+[![CI](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#下载)
 
@@ -97,8 +97,8 @@ Grok 和 Cowart 来源在 Windows 上的发现，以及常规的 Windows 安装�
 面向开发，或在不安装桌面壳的情况下把 GravityPort 当作本地 Web 应用运行。需要 Node.js 22 或更新版本和 npm。
 
 ```bash
-git clone https://github.com/fengseekling-coder/mosa.git
-cd mosa
+git clone https://github.com/fengseekling-coder/gravityport.git
+cd gravityport
 npm ci      # 安装依赖并构建界面
 npm start   # 在 127.0.0.1:43517 启动本地服务
 ```

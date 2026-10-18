@@ -17,7 +17,7 @@ Do not open a public Issue for a suspected vulnerability.
 
 Use one of these private channels:
 
-1. [GitHub private vulnerability reporting](https://github.com/fengseekling-coder/mosa/security/advisories/new)
+1. [GitHub private vulnerability reporting](https://github.com/fengseekling-coder/gravityport/security/advisories/new)
 2. Email [fengseekling@gmail.com](mailto:fengseekling@gmail.com) with the subject `[GravityPort Security]`
 
 Include the affected version or commit, impact, reproduction steps, and a minimal proof of concept. Remove real Prompts, user assets, Tokens, cookies, credentials, local absolute paths, and other private data before sending.

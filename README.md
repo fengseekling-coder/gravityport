@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-[![CI](https://github.com/fengseekling-coder/mosa/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/mosa/actions/workflows/ci.yml)
+[![CI](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#downloads)
 
@@ -97,8 +97,8 @@ Grok and Cowart source discovery on Windows and a conventional Windows installer
 For development, or to run GravityPort as a local web app without the desktop shell. Requires Node.js 22 or newer and npm.
 
 ```bash
-git clone https://github.com/fengseekling-coder/mosa.git
-cd mosa
+git clone https://github.com/fengseekling-coder/gravityport.git
+cd gravityport
 npm ci      # installs dependencies and builds the UI
 npm start   # starts the local service on 127.0.0.1:43517
 ```

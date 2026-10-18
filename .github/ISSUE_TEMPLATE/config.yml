@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions and setup help
-    url: https://github.com/fengseekling-coder/mosa/discussions/categories/q-a
+    url: https://github.com/fengseekling-coder/gravityport/discussions/categories/q-a
     about: Ask usage and setup questions in GitHub Discussions.
   - name: Security vulnerability
-    url: https://github.com/fengseekling-coder/mosa/security/advisories/new
+    url: https://github.com/fengseekling-coder/gravityport/security/advisories/new
     about: Report vulnerabilities privately. Do not open a public Issue.
   - name: Commercial licensing
-    url: https://github.com/fengseekling-coder/mosa/blob/main/COMMERCIAL-LICENSE.md
+    url: https://github.com/fengseekling-coder/gravityport/blob/main/COMMERCIAL-LICENSE.md
     about: Read the process for requesting separate written authorization.

@@ -70,8 +70,8 @@ Desktop 的“设置 → 模型”里的「本地视觉搜索」可以安装、�
 以下命令从源码启动开发/本地服务，默认地址为 `http://127.0.0.1:43517`：
 
 ```bash
-git clone https://github.com/fengseekling-coder/mosa.git
-cd mosa
+git clone https://github.com/fengseekling-coder/gravityport.git
+cd gravityport
 npm ci
 npm test
 npm start
