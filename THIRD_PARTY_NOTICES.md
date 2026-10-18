@@ -1,6 +1,6 @@
 # Third-party notices
 
-This file records upstream projects that materially informed GravityPort's design or implementation. It is separate from GravityPort's own license terms.
+This file records upstream projects that materially informed GravityPort's design or implementation, and third-party models or runtimes that GravityPort redistributes in its optional packs. It is separate from GravityPort's own license terms.
 
 ## APSAL Open
 
@@ -20,6 +20,17 @@ GravityPort does not vendor, bundle, execute, or depend on APSAL Open source cod
 APSAL contains substantially broader authoring, protocol, registry, packaging, and Studio functionality. This notice should not be read as claiming those systems are part of GravityPort.
 
 The upstream Apache License 2.0 text is available in APSAL Open's tagged source at <https://github.com/henyjone/apsal-open/blob/v0.14.0/LICENSE>.
+
+## SigLIP2 Base model (optional Visual Pack)
+
+The optional GravityPort Visual Pack redistributes the **SigLIP2 Base** image-text model by Google in the int8 ONNX conversion published by the onnx-community project. GravityPort downloads it only when the user installs the Visual Pack, and runs it locally.
+
+- Model: `google/siglip2-base-patch16-224`
+- Redistributed conversion: `onnx-community/siglip2-base-patch16-224-ONNX`, revision `ba1f3b0843f24bc5417d38e19c37b287d719b2f4`
+- Files: `onnx/model_int8.onnx` and the tokenizer files pinned by SHA-256 in `scripts/build-visual-model-pack.mjs`
+- Upstream license: Apache License 2.0
+- Source: <https://huggingface.co/google/siglip2-base-patch16-224>
+- Runtime role: produces the image and text embeddings behind local visual search; the pack manifest records the license id and source for every published pack.
 
 ## ONNX Runtime (onnxruntime-node)
 

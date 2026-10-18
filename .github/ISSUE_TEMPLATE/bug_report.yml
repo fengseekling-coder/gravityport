@@ -21,7 +21,29 @@ body:
     id: version
     attributes:
       label: GravityPort version or commit
-      placeholder: v0.2.0 or commit SHA
+      description: The desktop app shows its version in Settings → About. For a source checkout, use the commit SHA.
+      placeholder: 0.2.1-rc.34 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - Windows 10/11 x64
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run GravityPort?
+      options:
+        - Desktop app downloaded from the official site
+        - Desktop app built from source
+        - Source checkout (npm start / web UI)
+        - MCP server or CLI
     validations:
       required: true
   - type: dropdown
@@ -29,12 +51,16 @@ body:
     attributes:
       label: Area
       options:
-        - Local service or Web UI
+        - Gallery, Inspector, or Settings UI
+        - Desktop install, startup, or updates
         - Codex collection
         - ChatGPT web capture
+        - Gemini, Flow, or Google AI Studio web capture
         - Grok collection
-        - Cowart collection or insertion
-        - SQLite migration, search, or derivatives
+        - Cowart collection
+        - Local visual search (Visual Pack)
+        - MCP server or CLI
+        - Library storage, migration, backup, or search
         - Documentation
         - Other
     validations:
@@ -62,5 +88,5 @@ body:
     id: checks
     attributes:
       label: Relevant sanitized output
-      description: Include only the smallest useful error or status output.
+      description: Include only the smallest useful error or status output. In the desktop app, Settings → Feedback → "Include diagnostic log" lets you view the redacted log first.
       render: shell

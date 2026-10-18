@@ -99,6 +99,7 @@ loopback origin 检查、运行时锁和桥接生命周期。服务启动时监�
 不创建额外的 HTTP 端口。当前工具覆盖：
 
 - `asset_create`、`asset_list`、`asset_get`
+- `asset_search`（文本、时间范围与可选的本地视觉检索组合）、`asset_provenance_export`（导出脱敏 provenance bundle 与未签名的 C2PA assertion payload）
 - `asset_update_metadata`、`asset_attach_prompt`
 - `asset_archive`、`asset_duplicate`
 - `asset_version_create`、`asset_version_history`、`asset_recipe_history`
@@ -122,6 +123,22 @@ Relation 写入 `user_confirmed` 边，被否决的候选会持久化为 dismiss
 弹回。公共管理面可以创建、修改或删除非 `provider_verified` 关系，官方验证关系保持只读。
 
 服务声明的 MCP server version 为 `0.2.0`；产品版本仍以 `package.json` 为准。
+
+### 2.4 可选的本地视觉检索
+
+本地视觉检索由可选的 Visual Pack 提供：固定版本的 SigLIP2 Base（ONNX int8）模型、
+`onnxruntime-node` 与 `@huggingface/tokenizers`。这些依赖不打进桌面主包，而是安装在
+Electron `userData` 下，由 `desktop/visual-model-manager.mjs` 和
+`desktop/visual-pack-installer.mjs` 负责发现、下载、逐文件校验和启停。
+
+推理运行在独立子进程中（`lib/visual-inference-worker-entry.mjs`），主运行时只通过
+`lib/visual-inference-client.mjs` 与它通信：有界请求队列、单请求超时、崩溃检测，
+失败时明确报告不可用，而不是返回错误结果。`lib/visual-embedding-*.mjs` 在后台按内容
+hash 增量建立 embedding 索引，`lib/visual-relationship-*.mjs` 提供相似图、近似重复和
+版本/堆叠候选；候选只作建议，不会自动修改素材组织或 provenance。HTTP 入口是
+`lib/api/visual-routes.mjs`，检视器的「相关推荐」和 MCP `asset_search` 的 `visual: true`
+都使用这套索引。未安装 Visual Pack 时，其余功能照常工作。模型选型与准入标准见
+[docs/visual-retrieval-model-evaluation.md](docs/visual-retrieval-model-evaluation.md)。
 
 ## 3. 仓库模块与构建
 
@@ -162,7 +179,7 @@ npm run desktop:package   Forge 打包 macOS arm64 应用目录
 npm run desktop:make      Forge 打包 macOS arm64 应用并生成 DMG
 npm run desktop:package:windows  Forge 打包 Windows 10/11 x64 应用目录
 npm run desktop:make:windows     Forge 生成 Windows x64 ZIP（开发产物）
-npm run build             编译 TypeScript 并写入构建身份
+npm run build             构建 UI、编译 TypeScript 并写入构建身份
 ```
 
 `desktop/forge.config.mjs` 以目标平台驱动 Electron Forge、原生模块解包和依赖
@@ -279,11 +296,15 @@ HTTP 读取路径由 `lib/mosa-runtime.mjs` 实现：
 /library/:project/references/:file     Web Capture 引用附件
 ```
 
-迁移和维护通过 `bin/mosa.mjs` 提供（命令名用 `gravityport`，`mosa` 仍可用）：
+迁移、备份和维护通过 `bin/mosa.mjs` 提供（命令名用 `gravityport`，`mosa` 仍可用）：
 
 ```text
-gravityport migrate [--dry-run] [--resume] [--library <path>]
+gravityport migrate [--library <path>] [--from <legacy-assets>] [--dry-run] [--resume]
 gravityport verify [--library <path>]
+gravityport backup [--library <path>] --to <backup-dir>
+gravityport backup-verify --from <backup-dir>
+gravityport restore --from <backup-dir> --to <empty-library-dir>
+gravityport visual-model-verify --from <model-pack-dir>
 gravityport thumbnails <rebuild|repair> [--library <path>]
 ```
 
@@ -306,7 +327,6 @@ gravityport thumbnails <rebuild|repair> [--library <path>]
 | `/api/bridges`、`/api/web-capture` | Codex、Grok、Cowart、Web Capture 和 discovery 状态 |
 | `/api/ingest/web-capture`、`/api/ingest/web-capture-metadata`、`/api/ingest/web-capture-binary`、`/api/ingest/web-capture-upload/*` | 通过统一 Token/origin 策略接收网页捕获、元数据补全、二进制和分块上传 |
 | `/api/cowart-canvases` | 列出、注册和移除受信任的 Cowart 画布 |
-
 | `/api/trash` | 回收站：清空指定项目的回收站；单条恢复/永久删除走 `/api/assets/:project/:asset/restore|permanent` |
 | `/api/asset-stacks/move` | 在堆叠之间批量搬移素材（剪切/粘贴与拖拽落点共用） |
 | `/api/import/stage` | 导入暂存：桌面导入管线写入/清理暂存区，`/api/assets/import-batch` 分批入库 |
@@ -414,6 +434,8 @@ Token 写入公共文档、日志或仓库：
 | `MOSA_DISABLE_BRIDGES` | 禁用指定桥接的逗号分隔列表 |
 | `MOSA_WEB_CAPTURE_TOKEN` | 启用网页捕获的本地 Token |
 | `MOSA_WEB_CAPTURE_ORIGINS` | 网页捕获允许的扩展 origin 列表 |
+| `MOSA_WEB_CAPTURE_PAIR` | 设为 `auto` 时，独立 `npm start` Runtime 也允许扩展静默配对（默认关闭，桌面版始终自动配对） |
+| `MOSA_C2PATOOL_PATH` | C2PA 导出使用的 `c2patool` 路径覆盖（见 operations.md） |
 | `MOSA_DISABLE_TELEMETRY` | 设为 `1` 时桌面壳不发匿名使用统计（见 PRIVACY.md） |
 | `MOSA_FEEDBACK_URL` | 反馈收集服务地址覆盖（默认 `https://mosa.azhuilab.com/api/feedback`） |
 | `MOSA_FEEDBACK_TIMEOUT_MS` | 反馈转发超时毫秒数（默认 15000） |
