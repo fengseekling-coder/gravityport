@@ -923,7 +923,7 @@ async function waitForServerPort(server) {
     const timer = setTimeout(() => finish(new Error("Timed out waiting for MOSA server startup.")), 5000);
     const onOutput = (chunk) => {
       output += chunk;
-      const match = /MOSA: http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
+      const match = /GravityPort: http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
       if (match) finish(null, Number(match[1]));
     };
     const onErrorOutput = (chunk) => { errorOutput += chunk; };

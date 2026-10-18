@@ -1,27 +1,38 @@
 # GravityPort
 
-GravityPort was previously called MOSA. Existing installs keep their library folder, settings, and command names.
+[![CI](https://github.com/fengseekling-coder/mosa/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/mosa/actions/workflows/ci.yml)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
+[![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#downloads)
 
 > **Local visual memory for AI creation.**
 > 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
 
 GravityPort is a local-first library for AI-generated images, videos, Prompts, provenance, and version history. It keeps creative output from Codex, Grok Build CLI, Cowart, and an optional Web Capture extension for ChatGPT, Gemini, Flow, and Google AI Studio in one library on your own computer.
 
+GravityPort was previously called MOSA. Existing installs keep their library folder, settings, and command names.
+
 **Local-first · Prompt & provenance · Version history · No GravityPort cloud account**
 
-[Quick start](#quick-start) · [Downloads](#downloads) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
+[Downloads](#downloads) · [First launch](#first-launch) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
 
 ## Downloads
 
-Download the current GravityPort packages from the [official download page](https://mosa.azhuilab.com/#download). The page and its [release manifest](https://mosa.azhuilab.com/releases/latest.json) are the source of truth for newer versions, package sizes, and SHA-256 values. These links intentionally stay version-neutral so publishing a new package does not require another README edit.
+Get GravityPort from the [official download page](https://gravityport.azhuilab.com/#download). It always lists the current packages with their sizes and SHA-256 values.
 
-| Package | Platform | Download | Update source |
-| --- | --- | --- | --- |
-| GravityPort Desktop | macOS arm64 | [Download latest package](https://mosa.azhuilab.com/#download) | Official page resolves the current package from the release manifest |
-| GravityPort Desktop | Windows x64 | [Download latest package](https://mosa.azhuilab.com/#download) | Official page resolves the current package from the release manifest |
-| GravityPort Web Capture | Chrome / Chromium | [Download latest package](https://mosa.azhuilab.com/#download) · [Install guide](https://mosa.azhuilab.com/guide/) | Official page maintains the current developer-mode ZIP; not a signed CRX |
+- **GravityPort Desktop for macOS** (Apple Silicon): a DMG. Drag `GravityPort.app` into Applications.
+- **GravityPort Desktop for Windows 10/11** (x64): a portable ZIP. Extract it and run `GravityPort.exe`. Windows is still a Preview / testing target.
+- **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP loaded in developer mode, not a signed CRX. See the [install guide](https://gravityport.azhuilab.com/guide/).
 
-Desktop distributables are hosted outside Git history because of their size. macOS is distributed as a DMG with `GravityPort.app` and an `Applications` shortcut; Windows remains a portable ZIP while its installer work is still in progress. The official page is the canonical download entry for all packages; versioned filenames and package metadata may change there without requiring a source repository commit.
+Installed desktop apps check for updates themselves in **Settings → About**. The [release manifest](https://gravityport.azhuilab.com/releases/gravityport/latest.json) is the machine-readable source for the newest version.
+
+## First launch
+
+Current desktop builds are Preview releases: the macOS app is not notarized by Apple and the Windows app is not code-signed yet, so the system warns you the first time you open them.
+
+- **macOS:** open GravityPort once. When macOS says it can't verify the app, click **Done**, open **System Settings → Privacy & Security**, scroll to **Security**, click **Open Anyway** next to GravityPort, and confirm. macOS remembers the choice. On macOS 14 and earlier you can instead Control-click the app and choose **Open**.
+- **Windows:** if SmartScreen shows "Windows protected your PC", click **More info → Run anyway**.
+
+If you use the Web Capture extension, load it after the desktop app is running; the app pairs with it automatically.
 
 ## Why GravityPort
 
@@ -43,17 +54,19 @@ Browse and search one gallery with adjustable column counts, marquee selection, 
 
 The Inspector shows each asset's version tree, with generations from a ChatGPT conversation grouped by conversation round so you can see how the image evolved turn by turn. Any two versions in a family can be compared side by side.
 
-### Recover deleted work
+### Find images by how they look (optional)
 
-Removed assets move to Trash, where they are kept for 90 days with a per-asset countdown. Right after a deletion an undo button offers to reverse it; Trash has its own menu for restoring, deleting permanently, and emptying.
+Install the optional Visual Pack from **Settings → Model** to turn on local visual search. The Inspector then suggests visually related assets, and the same index powers text-to-image and image-to-image search for the API and MCP. The model runs entirely on your computer: no Python, Ollama, or upload of your library.
 
-### Send feedback from Settings
+### Let AI agents search your library
 
-Settings → Feedback collects bug reports and ideas, optionally with a diagnostic log that is redacted and shown to you in full before it is sent.
+The built-in MCP server (`npm run mcp`) lets Codex and other MCP clients list, search, and record assets, Prompts, versions, and generation history in the same local library. `asset_search` combines text, a time range, and, when the Visual Pack is enabled, visual search. See [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口) for the tool list.
 
-### Pinterest (not yet available)
+### Recover deleted work and back up the library
 
-A Pinterest connection that would let you browse your own boards and Pins from the sidebar is implemented but not yet available: it stays disabled until Pinterest approves production API access.
+Removed assets move to Trash, where they are kept for 90 days with a per-asset countdown. Right after a deletion an undo button offers to reverse it; Trash has its own menu for restoring, deleting permanently, and emptying. For whole-library safety, the `gravityport backup`, `backup-verify`, and `restore` commands create and check verified point-in-time backups.
+
+Settings → Feedback sends bug reports and ideas, optionally with a redacted diagnostic log that you can read in full before sending. A Pinterest connection for browsing your own boards is built but stays unavailable until Pinterest approves production API access.
 
 ## Fits into your workflow
 
@@ -66,28 +79,31 @@ A Pinterest connection that would let you browse your own boards and Pins from t
 
 Whatever the source, everything lands in the same local gallery with groups, stacks, Trash with undo, and the version tree. GravityPort does not generate media or replace any of these tools.
 
-## Quick start
+## Platform status
 
-GravityPort currently starts from source as a local service on `127.0.0.1:43517`.
+| Target | Status |
+| --- | --- |
+| macOS arm64 | Main desktop target. DMG for first install, in-app updates afterwards. |
+| Windows 10/11 x64 | **Preview / testing.** Verified on a real Windows machine: startup, SQLite, Sharp, the library UI, Inspector, and automatic Codex collection. Portable ZIP with in-app updates. |
+
+Grok and Cowart source discovery on Windows and a conventional Windows installer are still to come.
+
+## Run from source
+
+For development, or to run GravityPort as a local web app without the desktop shell. Requires Node.js 22 or newer and npm.
 
 ```bash
 git clone https://github.com/fengseekling-coder/mosa.git
 cd mosa
-npm ci
-npm test
-npm start
+npm ci      # installs dependencies and builds the UI
+npm start   # starts the local service on 127.0.0.1:43517
 ```
 
-Open <http://127.0.0.1:43517>.
+Open <http://127.0.0.1:43517>. Run `npm test` to check your checkout. Codex Desktop and the Cowart plugin are optional integrations; the [Chinese guide](docs/guide.zh-CN.md) covers their setup and the complete source-by-source behavior.
 
-Requirements for source use: Node.js 22 or newer and npm. Desktop development is currently exercised on macOS arm64 and Windows 10/11 x64. Codex Desktop and the Cowart plugin are optional integrations; use the [Chinese guide](docs/guide.zh-CN.md) for their setup and the complete source-by-source behavior.
-
-## Desktop app
-
-The Electron desktop shell uses the same GravityPort Web UI and local runtime on both supported desktop targets:
+The Electron desktop shell uses the same Web UI and local runtime:
 
 ```bash
-npm ci
 npm run desktop:start
 
 # macOS arm64 DMG
@@ -97,20 +113,7 @@ npm run desktop:make
 npm run desktop:package:windows
 ```
 
-Desktop packaging is pinned to Node.js 22.x because the current Electron Forge/Packager toolchain is not reliable under Node.js 24. The repository includes `.nvmrc` and `.node-version` for Node `22.23.1`; packaging commands fail fast with a clear message on any other Node major. Local development and the GravityPort runtime still support Node.js 22 or newer.
-
-Current desktop status:
-
-| Target | Status | Verified in the current development cycle |
-| --- | --- | --- |
-| macOS arm64 | DMG distribution target | Electron shell, local runtime, packaged smoke path, native dependencies, drag-to-Applications distribution |
-| Windows 10/11 x64 | **Preview / testing** | `GravityPort.exe` startup, SQLite, Sharp, library UI, Inspector, and automatic Codex collection on a real Windows machine |
-
-The Windows target keeps the shared renderer and runtime code, uses Windows-native `better-sqlite3` and Sharp binaries, and hides Electron's native application menu bar while retaining menu accelerators. `desktop:release:windows` is the Preview/RC portable-release path and may remain unsigned; `desktop:release:windows:production` is the explicit Authenticode path and fails closed without a signing source plus pinned signer thumbprint. Both tracks verify the signed release manifest, artifact size/SHA-256, and the relaunched build identity before committing replacement; Production additionally verifies every executable/native payload signature. Grok and Cowart source discovery on Windows and a conventional installer remain separate release work.
-
-When the configured port already serves the same GravityPort library, the desktop app attaches to it and leaves it running on Quit. Otherwise, it starts and owns a local runtime, which stops cleanly when the app quits. GravityPort never terminates an unverified listener or a service for a different library.
-
-> **Project status:** RC distribution uses an explicit **Preview** track: `npm run desktop:release` on macOS and `npm run desktop:release:windows` on Windows require immutable remote source provenance plus the signed GravityPort release manifest but do not require Apple Developer or Authenticode credentials. A separate **Production** track (`desktop:release:production` / `desktop:release:windows:production`) adds Developer ID + notarization or Authenticode and fails closed when those credentials are absent. A conventional Windows installer is still future work.
+Desktop packaging needs Node.js 22.x; the repository pins `22.23.1` in `.nvmrc` and `.node-version`, and packaging commands stop with a clear message on any other major. Release tracks, signing, notarization, and manifest publishing are described in the [release guide](docs/releasing.md).
 
 ## Local by design
 
@@ -118,24 +121,33 @@ When the configured port already serves the same GravityPort library, the deskto
 - It reads only its configured Codex, Grok, and approved Cowart locations. It does not scan Downloads, Desktop, or arbitrary image folders.
 - Web Capture is optional. Packaged Desktop provisions its local ingest Token and fixed approved extension origins automatically; a standalone `npm start` runtime keeps capture disabled until those values are configured explicitly. The extension sends captured image bytes and page provenance only to the configured local GravityPort address. ChatGPT retains message-scoped context when available; Gemini, Flow, and Google AI Studio retain only narrowly associated visible user Prompt text when it can be safely matched and mark it unverified.
 - Eligible reference images are stored as private, content-hash-deduplicated generation-record attachments, not ordinary gallery assets.
-- GravityPort adds no AI model, remote sync, embedding search, or automatic upload of your library.
-- Packaged desktop builds send minimal anonymous install/activity metadata through a separate bodyless request to the same first-party release endpoint used for update metadata. This contains only a random installation ID, version, platform, architecture, and first-launch/daily-active event. It is not exposed as an in-app preference, manual update checks do not create extra activity reports, and the request never includes assets, Prompts, or local paths. See [PRIVACY.md](PRIVACY.md).
+- The desktop app ships no AI model. The optional Visual Pack is downloaded only when you install it in Settings, runs locally, and never uploads your library. GravityPort adds no remote sync or automatic upload of your library.
+- Packaged desktop builds send minimal anonymous install/activity metadata through a separate bodyless request to the same first-party release endpoint used for update metadata. This contains only a random installation ID, version, platform, architecture, and first-launch/daily-active event, and never includes assets, Prompts, or local paths. See [PRIVACY.md](PRIVACY.md), which also explains how to turn it off.
 
 See [PRIVACY.md](PRIVACY.md) for the full data boundary and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 ## Documentation
 
-- [中文使用指南](docs/guide.zh-CN.md): setup, sources, local library, search, versions, MCP, and maintenance.
-- [Operations guide](docs/operations.md): migration, verification, bridge health, recovery, and managed local service boundaries.
-- [Architecture](ARCHITECTURE.md): current runtime, storage, and integration layout.
-- [Context menu](docs/context-menu.md): sidebar, card, and empty-grid actions.
-- [Web Capture extension guide](extensions/chatgpt-web-capture/README.md): local setup, permissions, capture behavior, and limitations.
+User guides:
+
+- [中文使用指南](docs/guide.zh-CN.md) (中文): setup, sources, local library, search, versions, MCP, and maintenance.
+- [Context menu](docs/context-menu.md) (中文): sidebar, card, and empty-grid actions.
+- [Web Capture extension guide](extensions/chatgpt-web-capture/README.md) (中文): local setup, permissions, capture behavior, and limitations.
+
+Running and developing GravityPort:
+
+- [Operations guide](docs/operations.md) (English): operating modes, migration, backup, verification, bridge health, and recovery boundaries.
+- [Release guide](docs/releasing.md) (English): distribution tracks, signing, update manifests, release notes, and optional pack publishing.
+- [Architecture](ARCHITECTURE.md) (中文): current runtime, storage, and integration layout.
+- [Contributing guide](CONTRIBUTING.md): development workflow, checks, and privacy requirements.
+
+Policies and history:
+
 - [Privacy policy](PRIVACY.md): data sources, local storage, extension permissions, and network boundaries.
 - [Security policy](SECURITY.md): supported versions and private vulnerability reporting.
-- [Contributing guide](CONTRIBUTING.md): development workflow, checks, and privacy requirements.
 - [Support guide](SUPPORT.md): questions, bug reports, and feature requests.
-- [Changelog](CHANGELOG.md): user-visible changes and release status.
-- [Third-party notices](THIRD_PARTY_NOTICES.md): upstream projects that materially informed GravityPort's design or implementation.
+- [Changelog](CHANGELOG.md) and [Web Capture changelog](extensions/chatgpt-web-capture/CHANGELOG.md): user-visible changes and release status.
+- [Third-party notices](THIRD_PARTY_NOTICES.md): upstream projects and models that GravityPort builds on or redistributes.
 
 ## License
 

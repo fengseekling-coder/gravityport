@@ -5,7 +5,7 @@ import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
 // new feed path; the legacy /releases/latest.json path stays frozen for
 // already-shipped clients and never receives the renamed releases.
 export const MOSA_UPDATE_FEED_URL = "https://mosa.azhuilab.com/releases/gravityport/latest.json";
-export const MOSA_DOWNLOAD_PAGE_URL = "https://mosa.azhuilab.com/";
+export const MOSA_DOWNLOAD_PAGE_URL = "https://gravityport.azhuilab.com/#download";
 
 const UPDATE_MANIFEST_MAX_BYTES = 16 * 1024;
 const VERSION_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;

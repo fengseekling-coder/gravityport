@@ -46,9 +46,28 @@ Desktop 的“设置 → 模型”里的「本地视觉搜索」可以安装、�
 
 删除 Visual Pack 会一并删除本机派生的视觉关系索引，但不会删除或修改原始素材、Prompt、版本记录或溯源数据。
 
-## 本地启动
+## 安装桌面版
 
-以下命令启动开发/本地服务，默认地址为 `http://127.0.0.1:43517`：
+普通使用直接从[官网下载页](https://gravityport.azhuilab.com/#download)下载桌面版即可，不需要源码：
+
+- **macOS（Apple 芯片）**：DMG，把 `GravityPort.app` 拖进「应用程序」。
+- **Windows 10/11 x64**：便携 ZIP，解压后运行 `GravityPort.exe`（目前是 Preview 测试版）。
+- **网页生图扩展（可选）**：开发者模式加载的 ZIP，安装步骤见[官网安装指南](https://gravityport.azhuilab.com/guide/)。
+
+装好后，应用会在「设置 → 关于」里自己检查更新。
+
+### 第一次打开
+
+当前桌面版是 Preview 版本：macOS 版还没有经过 Apple 公证，Windows 版还没有代码签名，所以第一次打开时系统会提示风险。
+
+- **macOS**：先打开一次 GravityPort，看到「无法验证」的提示后点「完成」；然后打开「系统设置 → 隐私与安全性」，在「安全性」一栏找到 GravityPort，点「仍要打开」并确认。之后系统会记住这个选择。macOS 14 及更早版本也可以按住 Control 点按应用，选「打开」。
+- **Windows**：如果 SmartScreen 提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。
+
+要用网页生图扩展的话，先打开桌面版再加载扩展，两者会自动配对。
+
+## 本地启动（源码）
+
+以下命令从源码启动开发/本地服务，默认地址为 `http://127.0.0.1:43517`：
 
 ```bash
 git clone https://github.com/fengseekling-coder/mosa.git
@@ -203,11 +222,20 @@ Cowart 快照可提供画布说明与来源，但不保证具有完整生图 Pro
   revision 差量补齐），不会因单条素材变化重新拉取整个已加载的图库窗口。
 - 下一页预加载失败时，当前图库内容会保留，并停止自动连续重试；用户可以通过
   显示的“加载更多”操作显式重试。
-- **保存当前配方**只更新当前素材，不创建版本。
-- **另存为新版本**必须填写 `version_change`；提供新的 `imagePath` 时保存真实新图，不提供时复制父图作为配方快照。
+- 界面中的版本树和版本对比只用于查看；创建子版本目前通过 MCP 的 `asset_version_create` 或对应的 HTTP 接口完成，必须填写 `version_change`。提供新的图片路径时保存真实新图，不提供时复制父图作为配方快照。
 - 版本历史按稳定深度优先顺序展示，包含归档节点与所有分支。
 
 ## MCP 与接口
+
+MCP 服务从源码目录运行（先执行一次 `npm ci` 完成构建），通过 stdio 通信，不额外占用端口。以 Codex 为例，在 `~/.codex/config.toml` 中加入：
+
+```toml
+[mcp_servers.gravityport]
+command = "node"
+args = ["/absolute/path/to/mosa/mcp/server.mjs"]
+```
+
+其他 MCP 客户端同样填写 `node` 和 `mcp/server.mjs` 的绝对路径即可。MCP 按与桌面版相同的规则查找默认素材库（`~/MOSA Library` 或 `~/GravityPort Library`），但不会读取桌面版保存的自定义位置；如果你在「设置 → 存储」里移动过素材库，请在客户端配置中用 `MOSA_LIBRARY_DIR` 环境变量指定素材库路径。
 
 MCP 工具包括：
 

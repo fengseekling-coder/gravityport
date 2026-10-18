@@ -171,7 +171,7 @@ export function windowsReleasePackagingConfig(env = process.env) {
       continueOnError: false,
       hashes: ["sha256"],
       description: resolveReleaseProduct(env),
-      website: "https://mosa.azhuilab.com/",
+      website: "https://gravityport.azhuilab.com/",
       ...(certificateFile ? { certificateFile } : {}),
       ...(certificatePassword ? { certificatePassword } : {}),
       ...(signToolPath ? { signToolPath } : {}),

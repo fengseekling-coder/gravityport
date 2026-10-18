@@ -4,6 +4,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ## Unreleased
 
+- Web Capture extension 0.15.32: the developer-only raw diagnostics mode (`options.html#dev`) records one round per conversation message instead of near-duplicates, starts a round only for images the live stream actually delivered, keeps only frames that name the round's messages, and strips query values from `wss://` URLs as it already did for `http` ones. Normal capture behavior is unchanged.
 - Settings → About now says what changed: it lists the current version's release notes (on development builds, what is recorded for the next version so far), and when an update is available it adds a "What's new in {version}" block from the update feed above it. `release-notes.json` at the repository root is now the single source of these release notes — release builds fail when the version being built has no entry, and the release manifest writer takes its notes from the file unless notes are passed explicitly (its 1200-character note cap moved to 3000 to fit itemized lists).
 - The Pinterest row in the sidebar shows "Coming soon" where the other rows show their count: Pinterest browsing stays on Pinterest's trial access, whose daily request allowance is shared by every user, until standard access is approved. The row still opens the Pinterest view.
 - Documentation now calls the product GravityPort throughout (README, privacy policy, architecture, operations and Chinese guides, GitHub issue templates, and the contributor/community documents), with a one-line "previously called MOSA" note under the README and Chinese-guide titles. The operations guide documents the `MOSA_RELEASE_PRODUCT` packaging switch with both name sets, points release publishing at `releases/gravityport/latest.json` (the legacy path stays frozen for versions released before the rename), and library/command examples use the `gravityport` CLI name. The Web Capture store package is now built as `GravityPort-Web-Capture-<version>.zip`.
@@ -64,7 +65,6 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 - Thumbnails, medium images and previews are now written atomically. If MOSA is quit, crashes or loses power while generating them, the gallery keeps the previous complete images instead of showing a half-written one.
 - Web Capture extension 0.15.20 keeps the ChatGPT Model caption when one turn generates several images. ChatGPT now shows them as a gallery of `blob:` images that share one message, so the extension could not tell them apart and saved them without a prompt. It now records which ChatGPT file each `blob:` image was downloaded from (reading only the file id, never the signed URL parameters) and binds each image to its own caption. The per-image request prompt stays empty for batched requests, because nothing in the page reliably ties an image to its request. Gallery images the user never clicked are archived too: a proven gallery `blob:` is read straight from the page-local blob bytes, so the lazy thumbnail does not have to load first, and the large view and its thumbnail still archive once.
 - MOSA Desktop now ships the same interface as the web app — the R21 redesign (light theme look, two-column settings dialog, category filter dropdown, Inspector tag overflow with +N, and the keyboard image-preview entry). The duplicated desktop UI copy was removed, so from now on there is a single interface to maintain.
-- MOSA Desktop now pairs the fixed allowlisted MOSA browser extensions automatically in the background. Installing/opening the app and loading the official extension no longer requires a native pairing confirmation dialog or manual Token entry; source/headless runtimes remain opt-in.
 - Web Capture extension 0.15.5 follows Google Flow's migration to its dedicated `flow.google.com` domain. The provider adapter now runs on both the legacy `labs.google/fx` routes and the new host, the background media probe accepts the relocated `media.getMediaUrlRedirect` endpoint (with or without the `/fx` prefix), and the media-host allowlists include the new origin. Failed media probes now back off per media item instead of re-fetching on every scan, and Flow grid-tile Prompt association uses the thumbnail size floor so small natural-size tiles keep their visible Prompt card.
 - Removed the manual Import dialog. Import external images by dragging files or folders into the open gallery (they land in the current group or Stack) or onto a manual group in the sidebar. Pasting an image imports it directly into the current group or Stack. The empty-state Import button, the blank-area "Import asset" context-menu item, and the desktop File → Import menu item (Cmd/Ctrl+N) are gone. Prompt and other metadata are edited afterwards in the Inspector.
 - Fixed tags missing from assets loaded through the gallery list: the Inspector showed no tags, and adding a tag there could erase the asset's existing tags.
@@ -80,6 +80,49 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 - Replaced the "Card density" setting with **Settings → Appearance → Card info (Show / Hide)**. Cards are image-only by default; choosing Show now really displays the title and source/date line under each card and re-lays out the masonry gallery for the taller cards (the old "Info" density had no visible effect but still reserved empty space under every card). The choice is remembered; a previously saved density preference is ignored.
 - "Export Group" no longer writes local file paths, local directories, `/library/...` links or captured web page/media links into the exported JSON, so the file can be shared without revealing your user name or folder structure. Fields are removed by name only (`*_path`, `*_url`, `*_dir`, `path`, `prompt_file`); your library is not changed.
 - MOSA Desktop on macOS now removes leftover `.MOSA-update-*` folders beside `MOSA.app` from failed in-place updates once they are more than 10 minutes old, as it already did on Windows.
+
+## 0.2.1-rc.34 — 2026-09-24 / Release Candidate
+
+- The Windows update helper now exits explicitly after a successful update.
+- Settings no longer re-renders on bursts of background Visual Pack status updates; status changes are collected into one short debounce, and opening Settings always shows fresh status.
+- The SQLite library and the visual relationship index checkpoint their write-ahead log before closing, so an in-place desktop update no longer leaves a stale `-wal` file behind.
+
+## 0.2.1-rc.33 — 2026-09-23 / Release Candidate
+
+- MOSA Desktop now pairs the fixed allowlisted MOSA browser extensions automatically in the background. Installing/opening the app and loading the official extension no longer requires a native pairing confirmation dialog or manual Token entry; source/headless runtimes remain opt-in.
+- Desktop runtime handoff during startup and updates, gallery resizing, and gallery multi-selection are more robust.
+- The Windows updater keeps retrying while files stay locked for longer and hands its console off cleanly.
+
+## 0.2.1-rc.32 — 2026-09-22 / Release Candidate
+
+- Version-only release used to validate the Windows in-app update path from rc.31.
+
+## 0.2.1-rc.31 — 2026-09-22 / Release Candidate
+
+- The Windows updater retries file moves that fail briefly, for example while antivirus or indexing software still holds a file.
+
+## 0.2.1-rc.30 — 2026-09-21 / Release Candidate
+
+- Fixed Windows update ZIP generation on native Windows builders.
+
+## 0.2.1-rc.29 — 2026-09-21 / Release Candidate
+
+- The Windows update helper runs without a visible console window.
+
+## 0.2.1-rc.28 — 2026-09-21 / Release Candidate
+
+- Version-only release used to validate the Windows in-app update path from rc.27.
+
+## 0.2.1-rc.27 — 2026-09-21 / Release Candidate
+
+- Windows in-app updates are more reliable: the portable ZIP keeps its root folder, older flat payloads are still accepted, the updater is started fully detached from the app, and startup/readiness checks stay fail-closed.
+
+## 0.2.1-rc.26 — 2026-09-20 / Release Candidate
+
+- A whole stack can be moved into or out of a manual group.
+- The Inspector can be reopened from a top-bar button after it has been closed.
+- Removed the top-bar Import button; import by dragging files into the gallery.
+- The Windows updater waits for its helper to confirm the handoff before replacing the app.
 
 ## 0.2.1-rc.25 — 2026-09-20 / Release Candidate
 
@@ -136,11 +179,9 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 - Sidebar navigation now clears hidden facets, so switching primary view, source, or group does not keep leftover hidden filters.
 
 ### Inspector / 检视器
--
 - Inspector version history now includes a two-version comparison view for stored media and persisted Prompt/style/theme/ratio/group/category/tag/change-summary fields. It compares existing records only and does not infer missing generation facts.
 
 ### Retrieval foundation / 检索基础
--
 - Added a reproducible retrieval acceptance baseline with enforced lexical cases plus diagnostic conversational, semantic, cross-language, and visual-content probes. This makes the case for any future embedding layer measurable instead of assuming that a model is required.
 - Added conservative Chinese conversational query planning: recognizable phrases such as “找一下之前做过的…” are reduced to design terms that actually exist in the local short-term index before entering the existing strict search path. The acceptance set now guards these supported conversational queries while leaving semantic and visual probes diagnostic.
 - Added an audited design-vocabulary normalization layer for multi-signal paraphrases and cross-language designer terminology. On the current synthetic acceptance probes it closes the measured text-semantic gap without adding a model runtime; visual-content probes remain intentionally unsolved and separate.
