@@ -94,6 +94,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 - Changing the library location now refuses the current folder, a folder inside it (or containing it, including case-only path differences), and any non-empty destination before copying anything, so a relocation can no longer copy a library into itself or delete it afterwards.
 - With an MCP server or CLI writing to the same library at the same time, the first app launch after upgrading no longer occasionally fails to open: the one-time upgrade steps tolerate the concurrent writer and, if one still cannot run, are skipped with a log line and retried on the next open.
 - Thumbnails, medium images, and previews are now written atomically: if the app quits, crashes, or loses power while generating them, the gallery keeps the previous complete image instead of showing a half-written one.
+- Video assets no longer show a broken image in the gallery, the Inspector, the version tree, or the drag preview: videos have no generated thumbnail, so these spots now draw an early frame of the video itself, and gallery cards and the Inspector preview carry a play chip.
 - Fixed tags missing from assets loaded through the gallery list: the Inspector showed no tags, and adding a tag there could erase the asset's existing tags.
 
 ## 0.2.1-rc.34 — 2026-09-24 / Release Candidate
