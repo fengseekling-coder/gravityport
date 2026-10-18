@@ -39,6 +39,16 @@ test("keeps keys referenced from another file", () => {
   assert.deepEqual(unusedKeys, ["模板 {count} 项"]);
 });
 
+test("references from tests, e2e flows, and Markdown docs do not count", () => {
+  const { unusedKeys } = analyze({
+    "test/gravityport-ui.test.mjs": 'group: "已用键",\n',
+    "scripts/e2e-flows/inspector.mjs": 'includes("死键")\n',
+    "docs/guide.zh-CN.md": "「模板 {count} 项」\n",
+    "README.md": "已用键\n",
+  });
+  assert.deepEqual(unusedKeys, ["已用键", "死键", "模板 {count} 项"]);
+});
+
 test("does not count the i18n file itself as a reference", () => {
   const { unusedKeys } = analyze({});
   assert.deepEqual(unusedKeys, ["已用键", "死键", "模板 {count} 项"]);
