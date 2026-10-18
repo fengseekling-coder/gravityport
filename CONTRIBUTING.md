@@ -31,7 +31,7 @@ The default service is local-only at `http://127.0.0.1:43517`. Use sample data o
 - Add regression tests for behavior changes and bug fixes.
 - Preserve filesystem, source-root, canvas-target, Token, origin, MIME, and request-size boundaries.
 - Keep public documentation portable and free of maintainer-specific paths or operational secrets.
-- Update README, the Chinese guide, operations guide, privacy/security policies, and changelog when their contracts change.
+- Update README.md and README.zh-CN.md, the Chinese guide, operations guide, privacy/security policies, and changelog when their contracts change.
 - Keep dependency licenses unchanged. Project license metadata belongs only to the root package entry and project files.
 
 ## Verification

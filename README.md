@@ -1,5 +1,7 @@
 # GravityPort
 
+English | [简体中文](README.zh-CN.md)
+
 [![CI](https://github.com/fengseekling-coder/mosa/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/mosa/actions/workflows/ci.yml)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#downloads)
