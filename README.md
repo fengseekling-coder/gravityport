@@ -11,6 +11,8 @@ English | [简体中文](README.zh-CN.md)
 
 GravityPort is a local-first library for AI-generated images, videos, Prompts, provenance, and version history. It keeps creative output from Codex, Grok Build CLI, Cowart, and an optional Web Capture extension for ChatGPT, Gemini, Flow, and Google AI Studio in one library on your own computer.
 
+![GravityPort gallery with the Inspector open](docs/images/gravityport-app.webp)
+
 GravityPort was previously called MOSA. Existing installs keep their library folder, settings, and command names.
 
 **Local-first · Prompt & provenance · Version history · No GravityPort cloud account**

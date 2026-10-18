@@ -22,6 +22,13 @@ test("version comparison follows semver ordering for MOSA releases", () => {
   assert.throws(() => compareVersions("latest", "0.2.0"), /Invalid MOSA version/);
 });
 
+test("0.3.0 release candidates outrank the occupied 0.2.1 line", () => {
+  // v0.2.1 was tagged while the 0.2.1-rc series continued past it, so releases
+  // continue from 0.3.0 and every 0.2.1 / 0.2.1-rc.34 install must see the update.
+  assert.equal(compareVersions("0.3.0-rc.1", "0.2.1"), 1);
+  assert.equal(compareVersions("0.3.0-rc.1", "0.2.1-rc.34"), 1);
+});
+
 test("update manifest keeps only bounded release metadata", () => {
   assert.deepEqual(parseUpdateManifest({
     version: "v0.3.0",
