@@ -1,5 +1,5 @@
-// 任务 144：检视器「版本树」按对话轮次显示。逻辑整体搬自旧界面
-// ae25a3a:web/app/conversation-rounds.mjs（任务 75 + 返工 1），规则一条不改。
+// 任务 144：检视器「版本树」按对话轮次显示。逻辑整体搬自旧界面的
+// conversation-rounds.mjs（ae25a3a，任务 75 + 返工 1），规则一条不改。
 //
 // 输入是生成历史接口（GET /api/assets/:p/:a/generation-history）的 history：
 // - events + context_events：当前素材所在对话里已收录的全部生成记录（每条有
