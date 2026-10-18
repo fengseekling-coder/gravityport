@@ -45,11 +45,13 @@ export async function run(ctx) {
     if (result?.opened !== true) problems.push("viewer opened with 全屏 button unpressed");
     if (result?.entered !== true) problems.push("fullscreen entered (chrome hidden, viewer fills window, arrows/controls kept)");
     if (!(result?.afterFs > result?.before)) problems.push(`image grew in fullscreen (${result?.before} -> ${result?.afterFs})`);
+    if (result?.zoomKeepsSize !== true) problems.push(`1:1 keeps the full 1600x900 image box (${JSON.stringify(result?.zoomSize)})`);
     if (result?.pageKeptFullscreen !== true) problems.push("arrow navigation stayed inside fullscreen");
     if (result?.escExitedFullscreenOnly !== true) problems.push("first Esc left fullscreen but kept the viewer");
     if (result?.secondEscClosedViewer !== true) problems.push("second Esc closed the viewer");
     if (result?.reopenWindowed !== true) problems.push("reopened viewer starts windowed");
     if (result?.buttonExitRestores !== true) problems.push("退出全屏 button restored the chrome");
+    if (result?.controlsAutoHide !== true) problems.push("viewer stage reaches the bottom edge and the zoom bar fades out and back");
     if (result?.englishLabels !== true) problems.push("English labels Full screen / Exit full screen");
     if (result?.osCalls !== 0) problems.push(`fake setWindowFullScreen called ${result?.osCalls} times`);
     if (result?.fullscreenElement !== null) problems.push("document.fullscreenElement not null");
@@ -136,6 +138,20 @@ function fullscreenSource() {
       && visible('.viewer-previous') && visible('.viewer-next') && visible('.viewer-controls')
       && fsButton('退出全屏')?.getAttribute('aria-pressed') === 'true';
 
+    // 1:1 inside fullscreen: the 1600x900 fixture is wider than the window, so
+    // the image box must keep its full 1600x900 size and overflow the stage.
+    // Tailwind's preflight caps img/video at max-width: 100%, which squeezed
+    // the box to the stage width while its height kept growing, so the picture
+    // shrank inside a tall box with black bands (task 179).
+    controlsButtons().find((b) => b.textContent.trim() === '1:1').click();
+    await waitFor(() => (document.querySelector('.viewer-controls output')?.textContent || '') === '100%', 'zoomed to 1:1');
+    await sleep(100);
+    const zoomRect = imageRect();
+    const zoomKeepsSize = Math.abs(zoomRect.width - 1600) <= 2 && Math.abs(zoomRect.height - 900) <= 2;
+    const zoomSize = [Math.round(zoomRect.width), Math.round(zoomRect.height)];
+    controlsButtons().find((b) => b.textContent.trim() === '适合窗口').click();
+    await waitFor(() => (document.querySelector('.viewer-controls output')?.textContent || '') !== '100%', 'back to fit');
+
     // Paging inside fullscreen stays fullscreen (the toolbar title is display:
     // none but still in the DOM, so its text is readable).
     const titleBefore = document.querySelector('.viewer-title span')?.textContent || '';
@@ -166,6 +182,17 @@ function fullscreenSource() {
     await waitFor(() => !isFullscreenClass() && visible('.sidebar') && visible('.toolbar') && visible('.details'), '退出全屏 restored the chrome');
     const buttonExitRestores = Boolean(document.querySelector('.image-viewer'));
 
+    // The zoom bar floats over the picture (the stage runs to the viewer's
+    // bottom edge), fades out once the pointer rests for 2s, and comes back on
+    // the next pointer movement.
+    const stageRect = document.querySelector('.viewer-stage').getBoundingClientRect();
+    const stageFillsViewer = Math.abs(stageRect.bottom - viewerRect().bottom) <= 1;
+    const controls = () => document.querySelector('.viewer-controls');
+    await waitFor(() => controls()?.classList.contains('is-idle') && getComputedStyle(controls()).opacity === '0', 'zoom bar faded after the pointer rested', 6000);
+    document.querySelector('.image-viewer').dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 200, clientY: 200 }));
+    await waitFor(() => !controls()?.classList.contains('is-idle'), 'zoom bar back on pointer movement');
+    const controlsAutoHide = stageFillsViewer;
+
     // English labels: switch the interface language in Settings while the
     // viewer stays open behind the dialog.
     document.querySelector('.user-button').click();
@@ -186,9 +213,9 @@ function fullscreenSource() {
 
     return {
       opened, entered, pageKeptFullscreen, escExitedFullscreenOnly, secondEscClosedViewer,
-      reopenWindowed, buttonExitRestores, englishLabels,
+      reopenWindowed, buttonExitRestores, controlsAutoHide, englishLabels,
       osCalls: window.__fsCalls, fullscreenElement: document.fullscreenElement,
-      before, afterFs,
+      before, afterFs, zoomKeepsSize, zoomSize,
     };
   })()
   `;
