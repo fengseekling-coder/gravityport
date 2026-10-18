@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react"
 import Icon from "./Icon"
 import { translate, type Language } from "./i18n"
 
-export default function ImageViewer({ width, height, src, isVideo, language, disabled, onNavigate, onContextMenu, message }: {
+export default function ImageViewer({ width, height, src, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, message }: {
   width: number; height: number; src?: string; isVideo?: boolean; language: Language; disabled: boolean
+  fullscreen: boolean
   onNavigate: (direction: number) => void
+  onToggleFullscreen: () => void
   onContextMenu: (x: number, y: number) => void
   message: string
 }) {
@@ -98,6 +100,11 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
       <span className="viewer-divider" />
       <button className={manualScale === null ? "active" : ""} aria-pressed={manualScale === null} onClick={fit} title={tr("适合窗口")}><Icon name="expand" size={16} /><span>{tr("适合窗口")}</span></button>
       <button className={manualScale === 1 ? "active" : ""} aria-pressed={manualScale === 1} title={tr("原始尺寸")} onClick={() => zoomTo(1)}>1:1</button>
+      <span className="viewer-divider" />
+      <button aria-pressed={fullscreen} title={tr(fullscreen ? "退出全屏" : "全屏")} onClick={onToggleFullscreen}>
+        <Icon name={fullscreen ? "fullscreen-exit" : "fullscreen"} size={16} />
+        <span>{tr(fullscreen ? "退出全屏" : "全屏")}</span>
+      </button>
     </div>
     {message && <div className="viewer-event" role="status" aria-live="polite"><Icon name="info" size={16} /><span>{message}</span></div>}
   </div>

@@ -24,6 +24,9 @@ const glyphs: Record<string, ReactNode> = {
   image: <><rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9" r="1.5" /><path d="m4 17 5-5 4 4 3-3 4 4" /></>,
   external: <><path d="M14 4h6v6M20 4l-9 9M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4" /></>,
   expand: <path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5" />,
+  // Task 177: viewer fullscreen — corners stretch outward to enter, inward to exit.
+  fullscreen: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,
+  "fullscreen-exit": <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />,
   inspector: <><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M14 4v16" /></>,
   sun: <><circle cx="12" cy="12" r="3.5" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.5 5.5 7 7M17 17l1.5 1.5M5.5 18.5 7 17M17 7l1.5-1.5" /></>,
   globe: <><circle cx="12" cy="12" r="8" /><ellipse cx="12" cy="12" rx="3.5" ry="8" /><path d="M4 12h16" /></>,

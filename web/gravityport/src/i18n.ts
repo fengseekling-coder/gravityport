@@ -33,6 +33,8 @@ const english: Record<string, string> = {
   "添加分组": "Add group", "新分组": "New group", "用户中心": "Account", "返回": "Back",
   "后退": "Go back", "回到顶部": "Back to top", "前进": "Go forward", "已是最新浏览位置": "You’re at the latest browsing position",
   "删除": "Delete", "适合窗口": "Fit to window",
+  // Task 177: viewer fullscreen button
+  "全屏": "Full screen", "退出全屏": "Exit full screen",
   "素材类型": "Asset type", "全部类型": "All types", "图片": "Images", "视频": "Videos",
   "排序": "Sort", "名称排序": "Name", "最新优先": "Newest first", "搜索素材": "Search assets",
   "上一个素材": "Previous asset", "下一个素材": "Next asset",

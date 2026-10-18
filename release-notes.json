@@ -15,7 +15,8 @@
       "检视器头部显示类型、来源和日期；标签改成纯文字；比例直接显示 16:9、9:16 这样的名字。",
       "搜索只匹配你看得见的内容，比如文件名、提示词、标签和分组，结果更准。",
       "macOS 上可以按住窗口顶部拖动窗口。",
-      "修复：把素材库里的图拖出去再拖回来，不会再重复导入一份。"
+      "修复：把素材库里的图拖出去再拖回来，不会再重复导入一份。",
+      "查看大图时可以全屏，收起侧栏和详情，只留图片。"
     ],
     "en": [
       "MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.",
@@ -31,7 +32,8 @@
       "The Inspector header shows kind, source, and date; tags are plain text; aspect ratios use familiar names like 16:9 and 9:16.",
       "Search matches only what you can see, such as file names, prompts, tags, and groups, so results are more accurate.",
       "On macOS, drag the top of the window to move it.",
-      "Fixed: dragging a library image out and back in no longer imports a duplicate."
+      "Fixed: dragging a library image out and back in no longer imports a duplicate.",
+      "When viewing an image you can now go fullscreen inside the window: the sidebar and details collapse, leaving only the picture."
     ]
   },
   "releases": [
