@@ -27,7 +27,7 @@ Get GravityPort from the [official download page](https://gravityport.azhuilab.c
 - **GravityPort Desktop for Windows 10/11** (x64): a portable ZIP. Extract it and run `GravityPort.exe`. Windows is still a Preview / testing target.
 - **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP loaded in developer mode, not a signed CRX. See the [install guide](https://gravityport.azhuilab.com/guide/).
 
-Installed desktop apps check for updates themselves in **Settings → About**. The [release manifest](https://gravityport.azhuilab.com/releases/gravityport/latest.json) is the machine-readable source for the newest version.
+Installed desktop apps check for updates themselves in **Settings → About**. Until the first release under the GravityPort name ships, the download page still offers the last build released as MOSA.
 
 ## First launch
 
@@ -88,7 +88,7 @@ Whatever the source, everything lands in the same local gallery with groups, sta
 | Target | Status |
 | --- | --- |
 | macOS arm64 | Main desktop target. DMG for first install, in-app updates afterwards. |
-| Windows 10/11 x64 | **Preview / testing.** Verified on a real Windows machine: startup, SQLite, Sharp, the library UI, Inspector, and automatic Codex collection. Portable ZIP with in-app updates. |
+| Windows 10/11 x64 | **Preview / testing.** An earlier build was verified on a real Windows machine (startup, SQLite, Sharp, the library and Inspector, automatic Codex collection); the redesigned interface has not been re-checked on Windows hardware yet. Portable ZIP with in-app updates. |
 
 Grok and Cowart source discovery on Windows and a conventional Windows installer are still to come.
 

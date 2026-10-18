@@ -27,7 +27,7 @@ GravityPort 原名 MOSA。已有安装的素材库位置、设置和命令名都
 - **GravityPort 桌面版 Windows 10/11**（x64）：便携 ZIP。解压后运行 `GravityPort.exe`。Windows 目前是预览 / 测试目标。
 - **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，需要在开发者模式加载，不是签名的 CRX。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
 
-已安装的桌面应用会在 **设置 → 关于** 里自行检查更新。[发布清单](https://gravityport.azhuilab.com/releases/gravityport/latest.json) 是最新版本的机器可读来源。
+已安装的桌面应用会在 **设置 → 关于** 里自行检查更新。第一个以 GravityPort 名义发布的版本推出之前，下载页提供的仍是最后一个以 MOSA 名义发布的版本。
 
 ## 第一次打开
 
@@ -88,7 +88,7 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 | 目标 | 状态 |
 | --- | --- |
 | macOS arm64 | 主桌面目标。首次安装用 DMG，之后走应用内更新。 |
-| Windows 10/11 x64 | **预览 / 测试。** 已在真实 Windows 机器上验证：启动、SQLite、Sharp、素材库界面、检视器和 Codex 自动采集。便携 ZIP，支持应用内更新。 |
+| Windows 10/11 x64 | **预览 / 测试。** 之前的版本在真实 Windows 机器上验证过：启动、SQLite、Sharp、素材库和检视器、Codex 自动采集；换成新界面后还没有在 Windows 真机上重新验证。便携 ZIP，支持应用内更新。 |
 
 Grok 和 Cowart 来源在 Windows 上的发现，以及常规的 Windows 安装器，还在计划中。
 
