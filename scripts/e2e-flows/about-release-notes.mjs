@@ -32,6 +32,10 @@ export async function run(ctx) {
   const server = await ctx.startServer();
   try {
     const notes = JSON.parse(await readFile(join(ctx.rootDir, "release-notes.json"), "utf8"));
+    // Between a release and the next recorded change, `unreleased` is empty and
+    // the dev About page renders the placeholder instead of real lines.
+    const zhDevLines = notes.unreleased.zh.length > 0 ? notes.unreleased.zh : ["还没有记录"];
+    const enDevLines = notes.unreleased.en.length > 0 ? notes.unreleased.en : ["Nothing recorded yet"];
     const status = await ctx.api(server.origin, "GET", "/api/health");
     if (status.distribution !== "development") {
       throw new Error(`this flow asserts the development branch; dist was built as ${status.distribution} — run npm run build without MOSA_RELEASE_DISTRIBUTION first`);
@@ -46,7 +50,7 @@ export async function run(ctx) {
     // Round 1 (zh): the development block plus the demoted meta footnote.
     const zh = await runRound(ctx, server, zhSource(), 'zh');
     assertEqual(zh.titles, ["下个版本（开发中）"], "zh dev block titles");
-    assertEqual(zh.firstLines, notes.unreleased.zh, "zh dev block lines match unreleased.zh");
+    assertEqual(zh.firstLines, zhDevLines, "zh dev block lines match unreleased.zh");
     assertOk(zh.meta.includes(`版本 ${status.productVersion} · 构建 ${sha} · 开发版`), `meta footnote line (got: ${zh.meta})`);
     assertEqual(zh.legacyHeadings, false, "本次更新/构建信息 headings are gone");
     assertOk(zh.paneOverflowFree, `about pane must not overflow horizontally (${zh.paneScrollWidth} <= ${zh.paneClientWidth})`);
@@ -54,7 +58,7 @@ export async function run(ctx) {
     // Round 2 (en): same content in English after switching the language.
     const en = await runRound(ctx, server, englishSource(), 'en');
     assertEqual(en.titles, ["Next version (in development)"], "en dev block titles");
-    assertEqual(en.firstLines, notes.unreleased.en, "en dev block lines match unreleased.en");
+    assertEqual(en.firstLines, enDevLines, "en dev block lines match unreleased.en");
     assertOk(en.meta.includes(`Version ${status.productVersion} · Build ${sha} · Development build`), `en meta footnote line (got: ${en.meta})`);
 
     // Round 3: 720x464 — the dialog keeps its CSS size and the about page
@@ -74,7 +78,7 @@ export async function run(ctx) {
     assertEqual(updated.titles, ["新版本 9.9.9 更新内容", "下个版本（开发中）"], "new-version block above the current one");
     assertEqual(updated.firstLines, ["新版第一句", "新版第二句", "第三行没有符号"], "new-version lines clean bullets and blank lines");
     assertEqual(updated.firstDate, updated.expectedDate, "new-version date formatted for the zh interface");
-    assertEqual(updated.secondLines, notes.unreleased.zh, "current-version block still the dev unreleased lines");
+    assertEqual(updated.secondLines, zhDevLines, "current-version block still the dev unreleased lines");
     return { rounds: 4, updateInjected: true };
   } finally {
     await server.stop();
