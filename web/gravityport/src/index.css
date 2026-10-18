@@ -153,8 +153,8 @@
   background: #000;
   position: absolute;
   inset: 0;
-}/* Real MOSA media replaces the mockup's black placeholders without changing
-   any component dimensions or visual design tokens. */
+}/* Image tiles keep a black backing behind thumbnails and their loading
+   placeholders, without changing component dimensions or design tokens. */
 img.black-image {
   width: 100%;
   height: 100%;
@@ -3138,8 +3138,8 @@ img.black-image {
   }.app .viewer-title > span {
     display: none;
   }
-}/* Real MOSA media integration: framed mockup surfaces are filled with live
-   imagery without changing component dimensions or design tokens. */
+}/* The inspector preview button keeps its frame while the thumbnail fills it,
+   without changing component dimensions or design tokens. */
 .app .summary-image {
   position: relative;
   overflow: hidden;

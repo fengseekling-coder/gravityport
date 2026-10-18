@@ -551,8 +551,8 @@ test("the packaged app keeps the shared web UI tree and its build identity", () 
   assert.equal(isIgnored("/desktop/startup.html"), false);
   assert.equal(isIgnored("/lib/build-identity.mjs"), false);
   assert.equal(isIgnored("/desktop/preload.cjs"), false);
-  // Anything under /web outside web/app must stay out of the desktop bundle,
-  // as must root-level UI copies.
+  // Anything under /web outside web/gravityport must stay out of the desktop
+  // bundle, as must root-level UI copies.
   assert.equal(isIgnored("/web/legacy-ui/index.html"), true);
   assert.equal(isIgnored("/web/notes.md"), true);
   assert.equal(isIgnored("/app/app.mjs"), true);
