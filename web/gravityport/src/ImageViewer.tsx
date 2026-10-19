@@ -17,6 +17,22 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [manualScale, setManualScale] = useState<number | null>(null)
   const [pan, setPan] = useState({ x: 0, y: 0 })
+  // normalizeAsset fills missing dimensions with 1, so a props pair ≤1 means
+  // "size unknown". The media still renders (and still fires load events), and
+  // the real dimensions are read from the element once it decodes, so
+  // fit-scale, pan bounds and the rendered size use them. Known props
+  // dimensions never touch this path.
+  const [probed, setProbed] = useState<{ src: string; width: number; height: number } | null>(null)
+  const propsSizeKnown = width > 1 && height > 1
+  const probedForSrc = !propsSizeKnown && probed && probed.src === src ? probed : null
+  const usedWidth = propsSizeKnown ? width : (probedForSrc?.width || width)
+  const usedHeight = propsSizeKnown ? height : (probedForSrc?.height || height)
+  const probeSize = (element: HTMLImageElement | HTMLVideoElement) => {
+    if (propsSizeKnown || !src) return
+    const measuredWidth = element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth
+    const measuredHeight = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight
+    if (measuredWidth > 0 && measuredHeight > 0) setProbed({ src, width: measuredWidth, height: measuredHeight })
+  }
   const [dragging, setDragging] = useState(false)
   // The zoom bar floats over the picture and fades out after the pointer rests
   // for CONTROLS_IDLE_MS; any pointer movement, wheel zoom or zoom key brings
@@ -36,11 +52,11 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
     return () => { if (idleTimer.current !== null) window.clearTimeout(idleTimer.current) }
   }, [])
   const tr = (text: string) => translate(text, language)
-  const fitScale = Math.max(.01, Math.min((size.width - 48) / width, (size.height - 32) / height, 1))
+  const fitScale = Math.max(.01, Math.min((size.width - 48) / usedWidth, (size.height - 32) / usedHeight, 1))
   const scale = manualScale ?? fitScale
   const clampPan = (x: number, y: number, zoom = scale) => {
-    const maxX = Math.max(0, (width * zoom - size.width) / 2)
-    const maxY = Math.max(0, (height * zoom - size.height) / 2)
+    const maxX = Math.max(0, (usedWidth * zoom - size.width) / 2)
+    const maxY = Math.max(0, (usedHeight * zoom - size.height) / 2)
     return { x: Math.max(-maxX, Math.min(maxX, x)), y: Math.max(-maxY, Math.min(maxY, y)) }
   }
   const renderedPan = clampPan(pan.x, pan.y)
@@ -89,7 +105,7 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
   }, [scale, pan, size, disabled, onNavigate])
-  const pannable = width * scale > size.width || height * scale > size.height
+  const pannable = usedWidth * scale > size.width || usedHeight * scale > size.height
   return <div className="image-viewer" onPointerMove={revealControls}>
     <div ref={stage} className={`viewer-stage ${pannable ? "pannable" : ""} ${dragging ? "dragging" : ""}`} aria-label={tr("图片预览")} onDoubleClick={() => manualScale === null ? zoomTo(1) : fit()}
       onContextMenu={event => { event.preventDefault(); onContextMenu(event.clientX, event.clientY) }}
@@ -107,10 +123,10 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
       onPointerCancel={() => { drag.current = null; setDragging(false) }}
       onLostPointerCapture={() => { drag.current = null; setDragging(false) }}>
       {src && isVideo
-        ? <video className="viewer-image" src={src} controls autoPlay loop style={{ width: width * scale, height: height * scale, transform: `translate(-50%, -50%) translate(${renderedPan.x}px, ${renderedPan.y}px)` }} />
+        ? <video className="viewer-image" src={src} controls autoPlay loop onLoadedMetadata={event => probeSize(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: `translate(-50%, -50%) translate(${renderedPan.x}px, ${renderedPan.y}px)` }} />
         : src
-          ? <img className="viewer-image" src={src} alt="" draggable={false} style={{ width: width * scale, height: height * scale, transform: `translate(-50%, -50%) translate(${renderedPan.x}px, ${renderedPan.y}px)`, objectFit: "contain" }} />
-          : <div className="viewer-image" style={{ width: width * scale, height: height * scale, transform: `translate(-50%, -50%) translate(${renderedPan.x}px, ${renderedPan.y}px)` }} />}
+          ? <img className="viewer-image" src={src} alt="" draggable={false} onLoad={event => probeSize(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: `translate(-50%, -50%) translate(${renderedPan.x}px, ${renderedPan.y}px)`, objectFit: "contain" }} />
+          : <div className="viewer-image" style={{ width: usedWidth * scale, height: usedHeight * scale, transform: `translate(-50%, -50%) translate(${renderedPan.x}px, ${renderedPan.y}px)` }} />}
     </div>
     <button className="viewer-nav viewer-previous" aria-label={tr("上一个素材")} onClick={() => onNavigate(-1)}><Icon name="left" size={24} /></button>
     <button className="viewer-nav viewer-next" aria-label={tr("下一个素材")} onClick={() => onNavigate(1)}><Icon name="right" size={24} /></button>

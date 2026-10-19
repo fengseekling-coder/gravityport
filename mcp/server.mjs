@@ -304,7 +304,7 @@ function toolDefinitions() {
           style: { type: "string" },
           ratio: { type: "string" },
           theme: { type: "string" },
-          business_fields: { type: "object", description: "Stored with the asset but not searchable; put anything that should be findable via search into tags instead." },
+          business_fields: { type: "object", description: "Stored with the asset but not searchable; put anything that should be findable via search into tags instead. Only the keys you pass are merged into the stored object: a key whose value is null is removed, and every other stored key is kept unchanged." },
           tags: { type: "array", items: { type: "string" } },
           favorite: { type: "boolean" },
           group: { type: "string" },

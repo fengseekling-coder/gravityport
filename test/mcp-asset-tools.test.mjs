@@ -170,3 +170,35 @@ test("asset_get and asset_provenance_export carry the stored content and pixel h
   assert.equal(bundleAsset.pixel_sha256, row.pixel_sha256);
   assert.notEqual(bundleAsset.pixel_sha256, "");
 });
+
+test("asset_update_metadata merges business_fields keys, so a partial write keeps recorded dimensions", async (t) => {
+  const { imagePath, server } = await setupServerWithFixture(t);
+  await server.callToolStrict("asset_create", {
+    assetId: "dims-keeper",
+    imagePath,
+    prompt: "partial business fields",
+    business_fields: { width: 1024, height: 768, file_bytes: 12345, auto_archived: true },
+  });
+
+  const updated = await server.callToolStrict("asset_update_metadata", {
+    assetId: "dims-keeper",
+    business_fields: { auto_archived: false },
+  });
+  const fields = updated.structuredContent.asset.business_fields;
+  assert.equal(fields.auto_archived, false, "the named key updates");
+  assert.equal(fields.width, 1024, "a partial write keeps the recorded width");
+  assert.equal(fields.height, 768, "a partial write keeps the recorded height");
+  assert.equal(fields.file_bytes, 12345, "a partial write keeps file_bytes");
+
+  const removed = await server.callToolStrict("asset_update_metadata", {
+    assetId: "dims-keeper",
+    business_fields: { some_key: "temporary" },
+  });
+  assert.equal(removed.structuredContent.asset.business_fields.some_key, "temporary");
+  const deleted = await server.callToolStrict("asset_update_metadata", {
+    assetId: "dims-keeper",
+    business_fields: { some_key: null },
+  });
+  assert.equal(Object.hasOwn(deleted.structuredContent.asset.business_fields, "some_key"), false, "a null value deletes its key");
+  assert.equal(deleted.structuredContent.asset.business_fields.width, 1024, "the deletion leaves the dimensions alone");
+});

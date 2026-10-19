@@ -1305,3 +1305,51 @@ test("SQLite one-time FTS cleanup purges legacy trashed-asset rows exactly once"
   assert.equal(ftsRowCount(asset.id), 1, "the guard key prevents a second cleanup pass");
   await third.close();
 });
+
+test("updateMetadata merges business_fields key-by-key and never drops recorded dimensions", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-business-fields-merge-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const sourcePath = join(projectRoot, "generated-images", "bf-merge.png");
+  await mkdir(join(projectRoot, "generated-images"), { recursive: true });
+  await writeFile(sourcePath, ONE_PIXEL_PNG);
+  const store = createSqliteAssetStore({
+    projectRoot,
+    managerDir: join(projectRoot, "mosa"),
+    libraryDir: join(root, "library"),
+  });
+  t.after(() => store.close());
+
+  await store.createAsset({
+    assetId: "bf-merge",
+    imagePath: sourcePath,
+    prompt: "dimension keeper",
+    business_fields: { width: 1024, height: 768, file_bytes: 12345, auto_archived: true },
+  });
+
+  // A partial patch keeps every key it did not mention — the recorded
+  // dimensions survive a writer that only names its own fields.
+  const partial = await store.updateMetadata("default", "bf-merge", { business_fields: { auto_archived: false } });
+  assert.equal(partial.business_fields.auto_archived, false);
+  assert.equal(partial.business_fields.width, 1024);
+  assert.equal(partial.business_fields.height, 768);
+  assert.equal(partial.business_fields.file_bytes, 12345);
+
+  // A null value deletes exactly its key and nothing else.
+  const deleted = await store.updateMetadata("default", "bf-merge", { business_fields: { some_key: null } });
+  assert.equal(Object.hasOwn(deleted.business_fields, "some_key"), false);
+  assert.equal(deleted.business_fields.width, 1024);
+  assert.equal(deleted.business_fields.file_bytes, 12345);
+  assert.equal(deleted.business_fields.auto_archived, false);
+
+  // Absent, null, or non-object business_fields leaves the stored object
+  // untouched; there is no whole-column clear through updateMetadata.
+  const absent = await store.updateMetadata("default", "bf-merge", { rating: 3 });
+  assert.equal(absent.business_fields.width, 1024);
+  const nullPatch = await store.updateMetadata("default", "bf-merge", { business_fields: null });
+  assert.equal(nullPatch.business_fields.width, 1024);
+  assert.equal(nullPatch.business_fields.auto_archived, false);
+  const arrayPatch = await store.updateMetadata("default", "bf-merge", { business_fields: ["not", "an", "object"] });
+  assert.equal(arrayPatch.business_fields.width, 1024);
+  assert.equal(Object.hasOwn(arrayPatch.business_fields, "some_key"), false);
+});

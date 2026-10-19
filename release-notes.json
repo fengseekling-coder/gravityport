@@ -17,7 +17,8 @@
       "macOS 上可以按住窗口顶部拖动窗口。",
       "修复：把素材库里的图拖出去再拖回来，不会再重复导入一份。",
       "查看大图时可以全屏，收起侧栏和详情，只留图片。",
-      "修复：视频卡片不再显示破图，画廊和详情里显示视频画面，右上角有播放标记。"
+      "修复：视频卡片不再显示破图，画廊和详情里显示视频画面，右上角有播放标记。",
+      "修复：少数图片缩略图比例不对、点开大图是空白。"
     ],
     "en": [
       "MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.",
@@ -35,7 +36,8 @@
       "On macOS, drag the top of the window to move it.",
       "Fixed: dragging a library image out and back in no longer imports a duplicate.",
       "When viewing an image you can now go fullscreen inside the window: the sidebar and details collapse, leaving only the picture.",
-      "Fixed: video cards no longer show a broken image; the gallery and details show a frame from the video with a play badge."
+      "Fixed: video cards no longer show a broken image; the gallery and details show a frame from the video with a play badge.",
+      "Fixed: a few images showed a wrong thumbnail ratio or a blank large view."
     ]
   },
   "releases": [
