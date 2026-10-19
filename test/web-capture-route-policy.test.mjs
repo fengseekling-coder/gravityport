@@ -12,6 +12,7 @@ test("web capture route policy includes metadata completion and chunked upload r
     "/api/ingest/web-capture-status",
     "/api/ingest/web-capture-session-title",
     "/api/ingest/web-capture-turn-bindings",
+    "/api/ingest/web-capture-desktop-sync",
     "/api/ingest/web-capture-upload/begin",
     "/api/ingest/web-capture-upload/chunk",
     "/api/ingest/web-capture-upload/commit",

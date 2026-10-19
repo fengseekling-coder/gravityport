@@ -164,6 +164,7 @@ function senderAllowedForMessage(message, sender) {
   if (!context) return false;
   if (message.type === "mosa.fetchImage") return context.provider === "chatgpt";
   if (message.type === "mosa.reportSessionTitle") return context.provider === "chatgpt";
+  if (message.type === "mosa.desktopSyncDone") return context.provider === "chatgpt";
   if (message.type === "mosa.reportConversationTurns") return context.provider === "chatgpt";
   // DEV-ONLY(128): remove before release (records come from the ChatGPT tab).
   if (message.type === "mosa.devRawDiagnostics.record") return context.provider === "chatgpt";
@@ -329,11 +330,15 @@ function reportCaptureQueueStatus() {
     const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-status`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify(await captureQueueStatusSnapshot()),
+      // desktopSync: this worker can open ChatGPT desktop-app conversations
+      // (only offered while auto capture is on).
+      body: JSON.stringify({ ...(await captureQueueStatusSnapshot()), desktopSync: settings.autoCapture === true }),
       cache: "no-cache",
     }, 3_000);
     if (!response.ok) return { reported: false, retryRequested: false };
     const body = await response.json().catch(() => ({}));
+    const desktopConversations = Array.isArray(body?.chatgptDesktopConversations) ? body.chatgptDesktopConversations : [];
+    if (desktopConversations.length && settings.autoCapture === true) void runDesktopSync(desktopConversations);
     const retryRequestId = Math.max(0, Number(body?.retryRequestId || 0));
     const retryRequested = retryRequestId > lastSeenRetryRequestId;
     lastSeenRetryRequestId = Math.max(lastSeenRetryRequestId, retryRequestId);
@@ -660,6 +665,126 @@ function drainCaptureQueue() {
   return queueDrainPromise;
 }
 
+// ChatGPT desktop-app conversations. The desktop app never writes its chat
+// images to disk; GravityPort only knows which conversation the user just used
+// and hands its id over in the status reply. The worker first reads the
+// conversation with the browser's own ChatGPT session and, only when it holds
+// a generated image, opens it in a minimized, unfocused window so the normal
+// page pipeline captures it. The page reports back when its capture work has
+// settled, and the window is closed. One window at a time; ids left over are
+// handed out again by GravityPort after their lease expires.
+const DESKTOP_SYNC_JOB_KEY = "mosaDesktopSyncJobV1";
+const DESKTOP_SYNC_HASH = "#gravityport-desktop-sync";
+const DESKTOP_SYNC_JOB_MAX_MS = 150_000;
+const DESKTOP_CONVERSATION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/;
+let desktopSyncRun;
+
+async function readDesktopSyncJob() {
+  const stored = await chrome.storage.session.get(DESKTOP_SYNC_JOB_KEY).catch(() => ({}));
+  const job = stored?.[DESKTOP_SYNC_JOB_KEY];
+  return job && typeof job === "object" ? job : null;
+}
+
+async function reportDesktopSyncOutcome(conversationId, outcome) {
+  const settings = await getSettings();
+  const token = String(settings.mosaToken || "").trim();
+  if (!token) return;
+  const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
+  await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-desktop-sync`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ conversationId, outcome }),
+    cache: "no-cache",
+  }, 3_000).catch(() => {});
+}
+
+async function finishDesktopSyncJob(job, outcome) {
+  const current = await readDesktopSyncJob();
+  if (!current || current.conversationId !== job.conversationId || current.windowId !== job.windowId) return;
+  await chrome.storage.session.remove(DESKTOP_SYNC_JOB_KEY).catch(() => {});
+  if (Number.isInteger(job.windowId)) await chrome.windows.remove(job.windowId).catch(() => {});
+  await reportDesktopSyncOutcome(job.conversationId, outcome);
+}
+
+/** True when the conversation holds a non-user image part; null when it could not be read. */
+function conversationHasGeneratedImage(conversation) {
+  const mapping = conversation?.mapping;
+  if (!mapping || typeof mapping !== "object") return null;
+  for (const node of Object.values(mapping)) {
+    const message = node?.message;
+    if (!message || message.author?.role === "user") continue;
+    const parts = Array.isArray(message.content?.parts) ? message.content.parts : [];
+    if (parts.some((part) => part && typeof part === "object" && part.content_type === "image_asset_pointer")) return true;
+  }
+  return false;
+}
+
+// The conversation endpoint answers 404 to cookies alone; like the page, ask
+// the session endpoint for this login's bearer first. The bearer is used for
+// this one read only: never stored, never sent anywhere but chatgpt.com.
+async function desktopConversationHasImage(conversationId) {
+  try {
+    const sessionResponse = await fetchWithTimeout("https://chatgpt.com/api/auth/session", { credentials: "include", cache: "no-store" }, 10_000);
+    if (!sessionResponse.ok) return null;
+    const bearer = String((await sessionResponse.json())?.accessToken || "");
+    if (!bearer) return null;
+    const response = await fetchWithTimeout(
+      `https://chatgpt.com/backend-api/conversation/${encodeURIComponent(conversationId)}`,
+      { credentials: "include", cache: "no-store", headers: { authorization: `Bearer ${bearer}` } },
+      15_000,
+    );
+    if (!response.ok) return null;
+    return conversationHasGeneratedImage(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+async function expireDesktopSyncJob() {
+  const job = await readDesktopSyncJob();
+  if (job && Date.now() - Number(job.openedAt || 0) > DESKTOP_SYNC_JOB_MAX_MS) await finishDesktopSyncJob(job, "timeout");
+}
+
+function runDesktopSync(conversationIds) {
+  if (desktopSyncRun) return desktopSyncRun;
+  desktopSyncRun = (async () => {
+    await expireDesktopSyncJob();
+    for (const raw of conversationIds) {
+      const conversationId = String(raw || "").trim();
+      if (!DESKTOP_CONVERSATION_ID_RE.test(conversationId)) continue;
+      if (await readDesktopSyncJob()) return;
+      const hasImage = await desktopConversationHasImage(conversationId);
+      if (hasImage === false) {
+        await reportDesktopSyncOutcome(conversationId, "no-images");
+        continue;
+      }
+      // Unknown (the read failed) still opens the page: it is the only way left.
+      const window = await chrome.windows.create({
+        url: `https://chatgpt.com/c/${encodeURIComponent(conversationId)}${DESKTOP_SYNC_HASH}`,
+        focused: false,
+        state: "minimized",
+      }).catch(() => null);
+      const tabId = window?.tabs?.[0]?.id;
+      if (!window || !Number.isInteger(tabId)) {
+        await reportDesktopSyncOutcome(conversationId, "failed");
+        continue;
+      }
+      await chrome.storage.session.set({
+        [DESKTOP_SYNC_JOB_KEY]: { conversationId, windowId: window.id, tabId, openedAt: Date.now() },
+      });
+      return;
+    }
+  })().catch(() => {}).finally(() => { desktopSyncRun = undefined; });
+  return desktopSyncRun;
+}
+
+chrome.windows?.onRemoved?.addListener((windowId) => {
+  void readDesktopSyncJob().then((job) => {
+    if (job && job.windowId === windowId) return finishDesktopSyncJob(job, "failed");
+    return undefined;
+  });
+});
+
 chrome.runtime.onStartup?.addListener(() => { void drainCaptureQueue(); });
 chrome.runtime.onInstalled?.addListener(() => {
   chrome.alarms?.create?.(CAPTURE_QUEUE_ALARM, { periodInMinutes: 1 });
@@ -667,6 +792,7 @@ chrome.runtime.onInstalled?.addListener(() => {
 });
 chrome.alarms?.onAlarm?.addListener((alarm) => {
   if (alarm?.name === CAPTURE_QUEUE_ALARM) {
+    void expireDesktopSyncJob();
     void reportCaptureQueueStatus().finally(() => drainCaptureQueue());
   }
 });
@@ -689,6 +815,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         error: error instanceof Error ? error.message : String(error),
       }));
     return true;
+  }
+
+  if (message.type === "mosa.desktopSyncDone") {
+    // Only the tab this worker opened for the current job may close it.
+    void readDesktopSyncJob().then((job) => {
+      if (!job || job.tabId !== sender.tab?.id) return undefined;
+      return finishDesktopSyncJob(job, message.payload?.timedOut ? "timeout" : "captured");
+    });
+    sendResponse({ ok: true });
+    return false;
   }
 
   if (message.type === "mosa.reportSessionTitle") {

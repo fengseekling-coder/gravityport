@@ -46,7 +46,7 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.32");
+  assert.equal(manifest.version, "0.15.33");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -245,7 +245,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.32");
+  assert.equal(manifest.version, "0.15.33");
   // Storage keys and the pairing product identifier stay "mosa" so old
   // extensions keep working with the renamed App and vice versa.
   assert.match(backgroundSource, /if \(identity\?\.product !== "mosa"\) continue;/);
@@ -1843,7 +1843,7 @@ test("binds prompt and asset when one image call splits them across nested reque
 });
 
 test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.32");
+  assert.equal(manifest.version, "0.15.33");
   assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
   assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
   assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);
@@ -4943,4 +4943,80 @@ test("rapid reads of one conversation collapse into the single newest snapshot",
   await context.report({ ...TURN_REPORT_FIXTURE, turnCount: 6 });
   await new Promise((resolve) => setTimeout(resolve, 40));
   assert.equal(requests.length, 2, "a read after the window opens a new one");
+});
+
+test("background opens a ChatGPT desktop conversation only when it holds a generated image, then closes it", async () => {
+  const functionSource = (name) => new RegExp(`(?:async )?function ${name}\\([\\s\\S]*?\\n}\\n`).exec(backgroundSource)?.[0];
+  const names = ["readDesktopSyncJob", "reportDesktopSyncOutcome", "finishDesktopSyncJob", "conversationHasGeneratedImage",
+    "desktopConversationHasImage", "expireDesktopSyncJob", "runDesktopSync", "normalizeBaseUrl"];
+  const source = names.map(functionSource);
+  assert.ok(source.every(Boolean), "desktop sync helpers must be extractable");
+  const constants = /const DESKTOP_SYNC_JOB_KEY[\s\S]*?let desktopSyncRun;\n/.exec(backgroundSource)?.[0];
+  assert.ok(constants);
+
+  const conversations = {
+    "aaaaaaaa-0000-0000-0000-000000000001": { mapping: { u: { message: { author: { role: "user" }, content: { parts: [{ content_type: "image_asset_pointer" }] } } } } },
+    "aaaaaaaa-0000-0000-0000-000000000002": { mapping: { u: { message: { author: { role: "user" }, content: { parts: ["画一只苹果"] } } }, t: { message: { author: { role: "tool" }, content: { parts: [{ content_type: "image_asset_pointer", asset_pointer: "sediment://file_1" }] } } } } },
+  };
+  const acks = [];
+  const created = [];
+  const removed = [];
+  const session = {};
+  const context = {
+    URL,
+    DEFAULTS: { mosaBaseUrl: "http://127.0.0.1:43517" },
+    getSettings: async () => ({ mosaBaseUrl: "http://127.0.0.1:43517", mosaToken: "token-test" }),
+    fetchWithTimeout: async (url, init) => {
+      if (url === "https://chatgpt.com/api/auth/session") {
+        return new Response(JSON.stringify({ accessToken: "session-bearer" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.startsWith("https://chatgpt.com/backend-api/conversation/")) {
+        assert.equal(init.headers.authorization, "Bearer session-bearer");
+        const id = decodeURIComponent(url.split("/").pop());
+        return conversations[id]
+          ? new Response(JSON.stringify(conversations[id]), { status: 200, headers: { "content-type": "application/json" } })
+          : new Response("{}", { status: 401 });
+      }
+      assert.ok(url.startsWith("http://127.0.0.1:43517/"), "only acks go to GravityPort");
+      assert.doesNotMatch(String(init.body), /session-bearer/);
+      acks.push(JSON.parse(init.body));
+      return new Response("{}", { status: 200 });
+    },
+    chrome: {
+      storage: { session: {
+        get: async (key) => (key in session ? { [key]: session[key] } : {}),
+        set: async (value) => { Object.assign(session, value); },
+        remove: async (key) => { delete session[key]; },
+      } },
+      windows: {
+        create: async (options) => { created.push(options); return { id: 70 + created.length, tabs: [{ id: 90 + created.length }] }; },
+        remove: async (windowId) => { removed.push(windowId); },
+      },
+    },
+    Date,
+  };
+  vm.runInNewContext(`${constants}\n${source.join("\n")}\nthis.runDesktopSync = runDesktopSync; this.readDesktopSyncJob = readDesktopSyncJob; this.finishDesktopSyncJob = finishDesktopSyncJob;`, context);
+
+  // A user-uploaded image is not a generated one: acknowledged without a window.
+  await context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000001", "../bad"]);
+  assert.deepEqual(acks, [{ conversationId: "aaaaaaaa-0000-0000-0000-000000000001", outcome: "no-images" }]);
+  assert.equal(created.length, 0);
+
+  // A generated image opens one minimized, unfocused window with the sync marker.
+  await context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000002", "aaaaaaaa-0000-0000-0000-000000000003"]);
+  assert.equal(created.length, 1, "one window at a time; the rest wait for the next hand-out");
+  assert.deepEqual({ ...created[0] }, {
+    url: "https://chatgpt.com/c/aaaaaaaa-0000-0000-0000-000000000002#gravityport-desktop-sync",
+    focused: false,
+    state: "minimized",
+  });
+  const job = await context.readDesktopSyncJob();
+  assert.equal(job.tabId, 91);
+
+  // An unreadable conversation (401) still gets a window once the slot frees.
+  await context.finishDesktopSyncJob(job, "captured");
+  assert.deepEqual(removed, [71]);
+  assert.deepEqual(acks.at(-1), { conversationId: "aaaaaaaa-0000-0000-0000-000000000002", outcome: "captured" });
+  await context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000003"]);
+  assert.equal(created.length, 2);
 });
