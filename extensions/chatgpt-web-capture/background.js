@@ -330,9 +330,12 @@ function reportCaptureQueueStatus() {
     const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-status`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      // desktopSync: this worker can open ChatGPT desktop-app conversations
-      // (only offered while auto capture is on).
-      body: JSON.stringify({ ...(await captureQueueStatusSnapshot()), desktopSync: settings.autoCapture === true }),
+      // desktopSync: this worker can take a ChatGPT desktop-app conversation
+      // now — auto capture is on and no sync window is open.
+      body: JSON.stringify({
+        ...(await captureQueueStatusSnapshot()),
+        desktopSync: settings.autoCapture === true && !(await readDesktopSyncJob()),
+      }),
       cache: "no-cache",
     }, 3_000);
     if (!response.ok) return { reported: false, retryRequested: false };

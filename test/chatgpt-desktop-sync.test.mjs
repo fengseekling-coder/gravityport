@@ -15,52 +15,79 @@ const CONVERSATION_A = "6ad67be1-c980-83e8-8645-a7c40099f1ca";
 const CONVERSATION_B = "6ad67be1-c980-83e8-8645-a7c40099f1cb";
 const ACCOUNT_KEY = JSON.stringify(["user-test", "account-test"]);
 
-function globalState({ bindings = {}, active = [], history = [] } = {}) {
+// prompts: conversation id -> id of the last prompt message sent there.
+function globalState({ bindings = {}, prompts = {} } = {}) {
   return {
     "electron-persisted-atom-state": {
       "client-thread-bindings-v1": bindings,
-      "chatgpt-conversation-resume-tokens-v1": Object.fromEntries(active.map((id) => [JSON.stringify([ACCOUNT_KEY, id]), "token"])),
-      "prompt-history": { "chatgpt-global": history, global: [{ markdown: "codex prompt" }] },
+      "chatgpt-conversation-resume-tokens-v1": Object.fromEntries(Object.entries(prompts).map(([id, promptMessageId]) => [
+        JSON.stringify([ACCOUNT_KEY, id]),
+        { token: "resume-secret", promptMessageId, expiresAtMs: 1, turnTraceId: "trace" },
+      ])),
+      "prompt-history": { "chatgpt-global": [{ markdown: "一只蓝色玻璃苹果" }] },
     },
   };
 }
 
-test("desktop chat signals keep only ChatGPT bindings, the open conversation, and a prompt hash", () => {
+test("desktop chat signals keep only ChatGPT bindings and a hash of each conversation's last prompt id", () => {
   const signals = readDesktopChatSignals(globalState({
     bindings: {
       "local-chatgpt:a": CONVERSATION_A,
       "client-new-thread:b": CONVERSATION_B,
       "local-chatgpt:bad": "../../etc",
     },
-    active: [CONVERSATION_A],
-    history: [{ markdown: "一只蓝色玻璃苹果" }],
+    prompts: { [CONVERSATION_A]: "msg-1", "../bad": "msg-2" },
   }));
   assert.deepEqual(signals.bindings, [CONVERSATION_A]);
-  assert.deepEqual(signals.active, [CONVERSATION_A]);
-  assert.match(signals.promptSignature, /^[0-9a-f]{32}$/);
-  assert.doesNotMatch(JSON.stringify(signals), /苹果/);
-  assert.deepEqual(readDesktopChatSignals({}), { bindings: [], active: [], promptSignature: "" });
+  assert.deepEqual(Object.keys(signals.promptMarks), [CONVERSATION_A]);
+  assert.match(signals.promptMarks[CONVERSATION_A], /^[0-9a-f]{32}$/);
+  assert.doesNotMatch(JSON.stringify(signals), /苹果|resume-secret|msg-1/);
+  assert.deepEqual(readDesktopChatSignals({}), { bindings: [], promptMarks: {} });
 });
 
-test("first observation catches up existing chats once; later only new chats and sent prompts count", () => {
-  const first = applyDesktopChatSignals(null, { bindings: [CONVERSATION_A], active: [], promptSignature: "p1" }, 1_000);
+test("only a newly bound conversation or a new prompt in that same conversation counts as activity", () => {
+  const signals = (prompts) => readDesktopChatSignals(globalState({
+    bindings: { "local-chatgpt:a": CONVERSATION_A, "local-chatgpt:b": CONVERSATION_B },
+    prompts,
+  }));
+  const first = applyDesktopChatSignals(null, signals({ [CONVERSATION_A]: "a-1" }), 1_000);
   assert.equal(first.conversations[CONVERSATION_A].activityAt, 1_000);
+  assert.equal(first.conversations[CONVERSATION_B].activityAt, 1_000);
   assert.deepEqual(pendingDesktopConversations(first, 1_000 + 89_999), []);
-  assert.deepEqual(pendingDesktopConversations(first, 1_000 + 90_000), [CONVERSATION_A]);
+  assert.deepEqual(pendingDesktopConversations(first, 1_000 + 90_000), [CONVERSATION_A], "one conversation per hand-out");
 
-  const synced = { ...first, conversations: { [CONVERSATION_A]: { ...first.conversations[CONVERSATION_A], syncedAt: 1_000 } } };
-  const unchanged = applyDesktopChatSignals(synced, { bindings: [CONVERSATION_A], active: [CONVERSATION_A], promptSignature: "p1" }, 5_000);
+  const synced = {
+    ...first,
+    conversations: Object.fromEntries(Object.entries(first.conversations).map(([id, entry]) => [id, { ...entry, syncedAt: 1_000 }])),
+  };
+  const unchanged = applyDesktopChatSignals(synced, signals({ [CONVERSATION_A]: "a-1" }), 5_000);
   assert.deepEqual(pendingDesktopConversations(unchanged, 500_000), []);
 
-  const sent = applyDesktopChatSignals(unchanged, { bindings: [CONVERSATION_A, CONVERSATION_B], active: [CONVERSATION_A], promptSignature: "p2" }, 6_000);
-  assert.equal(sent.conversations[CONVERSATION_A].activityAt, 6_000);
-  assert.equal(sent.conversations[CONVERSATION_B].activityAt, 6_000);
-  assert.deepEqual(pendingDesktopConversations(sent, 200_000).sort(), [CONVERSATION_A, CONVERSATION_B].sort());
+  // A prompt sent in B leaves A alone, even though A still has a resume entry.
+  const sentInB = applyDesktopChatSignals(unchanged, signals({ [CONVERSATION_A]: "a-1", [CONVERSATION_B]: "b-1" }), 6_000);
+  assert.equal(sentInB.conversations[CONVERSATION_A].activityAt, 1_000);
+  assert.equal(sentInB.conversations[CONVERSATION_B].activityAt, 6_000);
+  assert.deepEqual(pendingDesktopConversations(sentInB, 200_000), [CONVERSATION_B]);
 
-  // No open conversation: a sent prompt is attributed to the newest binding.
-  const fallback = applyDesktopChatSignals(sent, { bindings: [CONVERSATION_A, CONVERSATION_B], active: [], promptSignature: "p3" }, 7_000);
-  assert.equal(fallback.conversations[CONVERSATION_B].activityAt, 7_000);
-  assert.equal(fallback.conversations[CONVERSATION_A].activityAt, 6_000);
+  const sentInA = applyDesktopChatSignals(sentInB, signals({ [CONVERSATION_A]: "a-2", [CONVERSATION_B]: "b-1" }), 7_000);
+  assert.equal(sentInA.conversations[CONVERSATION_A].activityAt, 7_000);
+  assert.equal(sentInA.conversations[CONVERSATION_B].activityAt, 6_000);
+});
+
+test("entries written before prompt marks only record the mark instead of resyncing", () => {
+  const legacy = {
+    version: 1,
+    initialized: true,
+    promptSignature: "old",
+    conversations: { [CONVERSATION_A]: { activityAt: 1_000, syncedAt: 1_000, attempts: 0, leaseUntil: 0 } },
+  };
+  const next = applyDesktopChatSignals(legacy, readDesktopChatSignals(globalState({
+    bindings: { "local-chatgpt:a": CONVERSATION_A },
+    prompts: { [CONVERSATION_A]: "a-1" },
+  })), 9_000);
+  assert.equal(next.conversations[CONVERSATION_A].activityAt, 1_000);
+  assert.match(next.conversations[CONVERSATION_A].promptMark, /^[0-9a-f]{32}$/);
+  assert.equal("promptSignature" in next, false);
 });
 
 test("desktop sync tracker leases, acknowledges, retries and persists across restarts", async (t) => {
@@ -75,7 +102,7 @@ test("desktop sync tracker leases, acknowledges, retries and persists across res
     await utimes(globalStatePath, mtimeSeconds, mtimeSeconds);
   };
 
-  await write(globalState({ bindings: { "local-chatgpt:a": CONVERSATION_A }, history: [{ markdown: "one" }] }), 100);
+  await write(globalState({ bindings: { "local-chatgpt:a": CONVERSATION_A }, prompts: { [CONVERSATION_A]: "a-1" } }), 100);
   const sync = createChatgptDesktopSync({ globalStatePath, statePath, now, pollMs: 60_000, quietMs: 90_000, leaseMs: 300_000 });
   await sync.poll();
   assert.deepEqual(sync.claimPending(), []);
@@ -92,14 +119,14 @@ test("desktop sync tracker leases, acknowledges, retries and persists across res
 
   const persisted = JSON.parse(await readFile(statePath, "utf8"));
   assert.equal(persisted.conversations[CONVERSATION_A].syncedAt, 1_000);
-  assert.doesNotMatch(JSON.stringify(persisted), /one/);
+  assert.doesNotMatch(JSON.stringify(persisted), /a-1|resume-secret|苹果/);
 
-  // After a restart nothing is replayed until the user sends another prompt.
+  // After a restart nothing is replayed until the user sends another prompt there.
   const restarted = createChatgptDesktopSync({ globalStatePath, statePath, now, pollMs: 60_000, quietMs: 90_000 });
   await restarted.poll();
   clock += 200_000;
   assert.deepEqual(restarted.claimPending(), []);
-  await write(globalState({ bindings: { "local-chatgpt:a": CONVERSATION_A }, active: [CONVERSATION_A], history: [{ markdown: "one" }, { markdown: "two" }] }), 200);
+  await write(globalState({ bindings: { "local-chatgpt:a": CONVERSATION_A }, prompts: { [CONVERSATION_A]: "a-2" } }), 200);
   await restarted.poll();
   clock += 90_000;
   assert.deepEqual(restarted.claimPending(), [CONVERSATION_A]);
