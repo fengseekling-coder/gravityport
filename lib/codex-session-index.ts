@@ -243,7 +243,7 @@ function parseSessionLine(state: SessionState, line: Buffer, lineStart: number, 
     for (const part of Array.isArray(message.content) ? message.content : []) {
       const item = asObject(part);
       const text = cleanText(item?.text);
-      if (item?.type === "input_text" && isUserPrompt(text)) state.lastUserPrompt = text;
+      if (item?.type === "input_text" && isUserPrompt(text)) state.lastUserPrompt = stripAttachmentPreamble(text);
     }
     return;
   }
@@ -286,11 +286,12 @@ function extractImageEventPayload(event: Record<string, unknown>): ImageEventPay
   const item = imageEventObject(event);
   if (!item) return null;
   const type = cleanText(item.type);
-  if (type !== "image_generation_end" && type !== "image_generation_call") return null;
-  const rawSavedPath = cleanText(item.saved_path);
+  const extension = isImageGenExtensionItem(item);
+  if (!extension && type !== "image_generation_end" && type !== "image_generation_call") return null;
+  const rawSavedPath = cleanText(item.saved_path || item.savedPath);
   return {
     callId: cleanText(item.call_id || item.id) || null,
-    revisedPrompt: cleanText(item.revised_prompt),
+    revisedPrompt: cleanText(item.revised_prompt || item.revisedPrompt),
     resultAvailable: typeof item.result === "string" && item.result.trim().length > 0,
     savedPath: rawSavedPath && isAbsolute(rawSavedPath) ? resolve(rawSavedPath) : null,
     status: cleanText(item.status) || (type === "image_generation_end" ? "completed" : ""),
@@ -298,9 +299,29 @@ function extractImageEventPayload(event: Record<string, unknown>): ImageEventPay
 }
 
 function imageEventObject(event: Record<string, unknown>): Record<string, unknown> | null {
-  if (event.type === "event_msg" || event.type === "response_item") return asObject(event.payload);
+  if (event.type === "event_msg" || event.type === "response_item") {
+    const payload = asObject(event.payload);
+    // Codex 26.x code mode reports image_gen through a generic item event:
+    // { type: "item_completed", item: { type: "Extension", kind: "image_gen.generation", revisedPrompt, savedPath, result } }.
+    const item = asObject(payload?.item);
+    if (item && isImageGenExtensionItem(item)) return item;
+    return payload;
+  }
   if (event.type === "image_generation_call" || event.type === "image_generation_end") return event;
   return null;
+}
+
+function isImageGenExtensionItem(item: Record<string, unknown>): boolean {
+  return item.type === "Extension" && item.kind === "image_gen.generation";
+}
+
+/** Codex wraps a user turn that carries pasted files in a preamble listing them;
+ * the user's own words follow the "## My request:" heading. */
+function stripAttachmentPreamble(text: string): string {
+  if (!text.startsWith("# Files mentioned by the user")) return text;
+  const marker = text.indexOf("## My request:");
+  if (marker < 0) return text;
+  return text.slice(marker + "## My request:".length).trim() || text;
 }
 
 function mergeSessionImageEvent(previous: CodexSessionImageEvent, next: CodexSessionImageEvent): CodexSessionImageEvent {
