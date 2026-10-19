@@ -2624,6 +2624,43 @@
     }
   }
 
+  // A ChatGPT desktop-app conversation that GravityPort asked the background to
+  // open (minimized, marked by this hash). The page captures as usual; once its
+  // capture work has been quiet for a while, it tells the background, which
+  // closes the window. Read at document_start, before the app rewrites the URL.
+  const DESKTOP_SYNC_HASH = "#gravityport-desktop-sync";
+  const desktopSyncRun = location.hash === DESKTOP_SYNC_HASH;
+  const DESKTOP_SYNC_MIN_MS = 20_000;
+  const DESKTOP_SYNC_QUIET_MS = 10_000;
+  const DESKTOP_SYNC_MAX_MS = 110_000;
+
+  function startDesktopSyncWatch() {
+    const startedAt = Date.now();
+    let lastSignature = "";
+    let lastChangeAt = startedAt;
+    const timer = setInterval(() => {
+      if (contextLost) {
+        clearInterval(timer);
+        return;
+      }
+      const now = Date.now();
+      const signature = `${inFlight.size}|${queuedAutoKeys.size}|${savedIdentityKeys.size}|${savedKeys.size}`;
+      if (signature !== lastSignature) {
+        lastSignature = signature;
+        lastChangeAt = now;
+      }
+      const settled = now - startedAt >= DESKTOP_SYNC_MIN_MS
+        && now - lastChangeAt >= DESKTOP_SYNC_QUIET_MS
+        && inFlight.size === 0;
+      if (!settled && now - startedAt < DESKTOP_SYNC_MAX_MS) return;
+      clearInterval(timer);
+      chrome.runtime.sendMessage({
+        type: "mosa.desktopSyncDone",
+        payload: { conversationId: conversationIdFromUrl(), saved: savedIdentityKeys.size, timedOut: !settled },
+      }).catch(() => {});
+    }, 2_000);
+  }
+
   // Boot. page-hook.js is a document_start MAIN-world content script.
   loadSettings().then(() => {
     syncPageHookCaptureEnabled();
@@ -2632,6 +2669,7 @@
       else document.addEventListener("DOMContentLoaded", startObs, { once: true });
       requestCurrentConversationRefresh(null);
       scheduleScan(true);
+      if (desktopSyncRun) startDesktopSyncWatch();
     }
   });
   document.addEventListener("DOMContentLoaded", () => syncPageHookCaptureEnabled(), { once: true });
