@@ -34,10 +34,10 @@ The optional GravityPort Visual Pack redistributes the **SigLIP2 Base** image-te
 
 ## ONNX Runtime (onnxruntime-node)
 
-The optional GravityPort Visual Pack executes its verified model through **onnxruntime-node**, the official Node.js binding for ONNX Runtime. This dependency is distributed with the optional visual pack rather than the core `GravityPort.app` bundle.
+The optional GravityPort Visual Pack executes its verified model through **onnxruntime-node**, the official Node.js binding for ONNX Runtime. This dependency is distributed with the optional visual pack rather than the core desktop package.
 
 - Project: `microsoft/onnxruntime`
-- Dependency: `onnxruntime-node` (^1.30.0)
+- Dependency: `onnxruntime-node` 1.30.0 (pinned exactly in the pack), together with `onnxruntime-common` 1.30.0 (MIT)
 - Upstream license: MIT License
 - Source: <https://github.com/microsoft/onnxruntime/tree/main/js/node>
 - Runtime role: loads the pinned ONNX graph from the verified model pack under Electron `userData` and runs CPU inference inside a dedicated child process.
@@ -46,12 +46,12 @@ The MIT license text is available in the upstream repository at <https://github.
 
 ## Hugging Face Tokenizers (@huggingface/tokenizers)
 
-SigLIP2 SentencePiece tokenization inside the optional visual inference worker uses **@huggingface/tokenizers**, the JavaScript tokenizer package published by Hugging Face. This dependency is distributed with the optional visual pack rather than the core `GravityPort.app` bundle.
+SigLIP2 SentencePiece tokenization inside the optional visual inference worker uses **@huggingface/tokenizers**, the JavaScript tokenizer package published by Hugging Face. This dependency is distributed with the optional visual pack rather than the core desktop package.
 
-- Project: `huggingface/tokenizers` (JavaScript distribution)
+- Project: `huggingface/tokenizers.js`
 - Dependency: `@huggingface/tokenizers` (^0.2.0)
 - Upstream license: Apache License 2.0
-- Source: <https://github.com/huggingface/tokenizers>
+- Source: <https://github.com/huggingface/tokenizers.js>
 - Runtime role: consumes the tokenizer files pinned in the model pack manifest to produce the fixed-length token ids the visual model expects.
 
-The Apache License 2.0 text is available in the upstream repository at <https://github.com/huggingface/tokenizers/blob/main/LICENSE>.
+The Apache License 2.0 text is available in the upstream repository at <https://github.com/huggingface/tokenizers.js>.

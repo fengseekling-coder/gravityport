@@ -48,9 +48,9 @@ npm run audit
 git diff --check
 ```
 
-The performance test is opt-in and may take longer than the regular suite.
+The performance test is not part of `npm test` and may take longer than the regular suite; CI runs it on Linux.
 
-`npm run check` combines the JavaScript syntax/source checks with a dead-code scan covering unreferenced modules, exported symbols with no consumer, and CSS classes that no tracked markup or script emits. Remove dead code instead of suppressing the check; justified exceptions live in the exception sets at the top of `scripts/check-dead-code.mjs`.
+`npm run check` combines the JavaScript syntax/source checks with a dead-code scan covering unreferenced modules, exported symbols with no consumer, and CSS classes that no tracked markup or script emits, an i18n gate for unused translation keys, and the GravityPort UI TypeScript typecheck. Remove dead code instead of suppressing the check; justified exceptions live in the exception sets at the top of `scripts/check-dead-code.mjs`.
 
 Continuous integration runs the shared lint/check/test/audit suite on Linux, a packaged desktop/E2E lane on macOS arm64, and a Windows x64 lane covering desktop packaging, platform/path contracts, Electron E2E, and packaged smoke. Platform-specific changes must keep shared behavior in common modules and add platform-focused tests only at the OS boundary.
 
