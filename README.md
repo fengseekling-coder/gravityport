@@ -60,7 +60,7 @@ The Inspector shows each asset's version tree, with generations from a ChatGPT c
 
 ### Find images by how they look (optional)
 
-Install the optional Visual Pack from **Settings → Model** to turn on local visual search. The Inspector then suggests visually related assets, and the same index powers text-to-image and image-to-image search for the API and MCP. The model runs entirely on your computer: no Python, Ollama, or upload of your library.
+Install the optional Visual Pack from **Settings → Models** to turn on local visual search. The Inspector then suggests visually related assets, and the same index powers text-to-image and image-to-image search for the API and MCP. The model runs entirely on your computer: no Python, Ollama, or upload of your library.
 
 ### Let AI agents search your library
 
