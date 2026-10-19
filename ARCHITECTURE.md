@@ -16,6 +16,16 @@ GravityPort 是一个本地优先的创意资产库。它把图像和视频原�
 只有在显式配置本地 ingest Token 和允许的扩展 origin 后才启用；Packaged Desktop
 会在本地自动生成 Token，并只授权固定的 GravityPort 扩展 origin 完成配对。
 
+桌面版的出站连接仅限：更新清单与更新包、匿名使用统计、Visual Pack 与 C2PA helper
+下载、用户主动连接时的 Pinterest 授权中转与 Pinterest API，以及用户在设置页点击发送时的
+反馈转发；它们都不携带素材库内容（见 [PRIVACY.md](PRIVACY.md) 的 Network Boundary）。
+
+命名兼容：产品由 MOSA 更名为 GravityPort 后，以下标识有意保留旧名，以兼容现有安装和
+集成：npm 包名与 CLI 别名 `mosa`、`bin/mosa.mjs`、`lib/mosa-runtime.mjs`
+（`startMosaRuntime()`）、所有 `MOSA_*` 环境变量、数据库文件 `mosa.db`、`/api/health`
+返回的 `product: "mosa"`、请求头 `x-mosa-token` / `x-mosa-client-token`，以及 Cowart
+默认路径中的 `mosa` 目录。
+
 ## 2. 运行时分层
 
 ```text
@@ -35,7 +45,8 @@ GravityPort 是一个本地优先的创意资产库。它把图像和视频原�
                 ▼                  ▼                  ▼
         资产存储与 API       桥接与发现          衍生任务 worker
         SQLite/JSON 回退      Codex/Grok/Cowart    sharp 图像处理
-        better-sqlite3        可选 Web Capture     原图不被改写
+        better-sqlite3        ChatGPT 桌面版同步   原图不被改写
+                              可选 Web Capture
                 │
                 ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -61,20 +72,27 @@ appDir 就是 `web/gravityport/dist`）；服务运行前必须先完成构建�
 计算：对 appDir 下除 `build-identity.json` 外的每一个文件，把相对路径和
 文件内容一起做 SHA-256，没有扩展名白名单；因此 dist 中任何可被静态服务
 交付的文件变化都会改变构建身份。源码侧另有 `scripts/check-dead-code.mjs`
-约束：`web/gravityport/src` 下的模块必须被 git 跟踪且可从入口到达。
+门禁：`lib/`、`web/gravityport/src/`、`desktop/`、`mcp/`、`scripts/` 中没有被其他跟踪文件
+引用的模块、没有消费者的导出符号和未被使用的 CSS 类都会让检查失败；`web/gravityport/src`
+下的文件还必须被 git 跟踪或忽略。
 
 Electron 桌面壳由 `desktop/main.mjs`、`desktop/preload.cjs` 和
 `desktop/service-manager.mjs` 组成。它与浏览器端共用同一份
 `web/gravityport/dist` 构建产物（打包进应用，forge 包内唯一 UI 路径），
-并通过受限的
-preload API 处理桌面能力（例如文件导入暂存、在系统文件管理器中定位原件、通知和受控更新）；业务数据
-仍由同一个本地 HTTP 运行时提供。
+并通过受限的 preload API（`window.electronAPI`）处理桌面能力：剪贴板粘贴写入导入暂存区、
+写剪贴板、原生拖出与拖回去重判定、Visual Pack 安装与启停、受控更新的检查/下载/安装、打开
+外链与 Pinterest 授权页、切换库位置和窗口全屏同步。导入成功和可用更新的系统通知由主进程
+直接发出；在系统文件管理器中定位原件走运行时的 `POST /api/open-folder`。业务数据仍由同一个
+本地 HTTP 运行时提供。更新（`update-service.mjs`、`macos-updater.mjs`、
+`windows-updater.mjs`）、匿名统计（`anonymous-usage.mjs`）、扩展配对 Token
+（`web-capture-pairing.mjs`）、Visual Pack（`visual-model-manager.mjs`、
+`visual-pack-installer.mjs`）、C2PA helper 安装和改名提示各在 `desktop/` 下独立成模块。
 
 操作系统差异集中在 `desktop/platform/index.mjs`。当前 adapter 只负责桌面壳
 边界，例如 macOS traffic lights、Windows 原生标题栏/菜单栏策略和窗口生命周期
 钩子；业务逻辑、素材库 UI、HTTP runtime 和存储实现不按平台复制。Windows
 默认隐藏 Electron 原生 application menu 的可见菜单栏，但仍安装 application menu，
-以保留 `Ctrl+N`、`Ctrl+F` 等 accelerator。
+以保留 `Ctrl+F`（搜索）以及编辑、视图菜单中的系统快捷键。
 
 ### 2.2 本地 HTTP 运行时
 
@@ -82,21 +100,26 @@ preload API 处理桌面能力（例如文件导入暂存、在系统文件管�
 `startMosaRuntime()`。运行时使用 Node 内置 `node:http` 创建服务器，使用
 `lib/api-routes.mjs` 将请求分发到：
 
-- `lib/api/asset-routes.mjs`：素材创建、查询、元数据、归档、复制和版本。
+- `lib/api/asset-routes.mjs`：素材创建、导入暂存与批量导入、查询、元数据与精选、收藏、归档、复制、版本、Stack 和回收站。
 - `lib/api/generation-routes.mjs`：生成事件、生成关系、单次 lineage 查询，以及资产详情所需的聚合生成历史。
 - `lib/api/library-routes.mjs`：项目、分组、库路径和受限文件夹操作。
-- `lib/api/bridge-routes.mjs`：健康检查、桥接状态、网页捕获和 Cowart 画布。
+- `lib/api/bridge-routes.mjs`：健康检查、桥接状态、Web Capture 配对与 ingest（含分块上传、状态上报、对话标题与轮次绑定）、ChatGPT 桌面版对话的下发与结果回报，以及 Cowart 画布。
 - `lib/api/visual-routes.mjs`、`lib/api/pinterest-routes.mjs`、`lib/api/feedback-routes.mjs`：本地视觉检索、Pinterest 连接和设置反馈。
 - `lib/http-response.mjs`：JSON 请求体读取、响应和 HTTP 错误处理。
 
 同一运行时还负责静态 UI、`/library/` 下的原图和衍生图读取、内容安全策略、
-loopback origin 检查、运行时锁和桥接生命周期。服务启动时监听
+Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token 校验、运行时锁、
+回收站定时清理和桥接生命周期。服务启动时监听
 `127.0.0.1:43517`；可通过 `MOSA_PORT` 覆盖，端口为 `0` 时由操作系统分配。
 
 ### 2.3 MCP
 
-`mcp/server.mjs` 是独立的 JSON-RPC over stdio MCP 服务。它直接使用资产存储，
-不创建额外的 HTTP 端口。当前工具覆盖：
+`mcp/server.mjs` 是独立的 JSON-RPC over stdio MCP 服务。它直接打开同一资产存储，
+不创建额外的 HTTP 端口：SQLite 库依靠 WAL 与桌面/Web 运行时并存；JSON 兼容库必须独占
+运行时锁，不能与正在运行的 App 同时写入。MCP 只看 `MOSA_LIBRARY_DIR` 和默认库位置，
+不读取桌面版的 `library-location.json`，桌面版改过库位置时需为 MCP 显式设置
+`MOSA_LIBRARY_DIR`。`asset_search` 的 `visual: true` 不在 MCP 进程内推理，而是通过
+`/api/visual/search` 复用正在服务同一库的本地运行时，不可用时退回文本/时间检索。当前工具覆盖：
 
 - `asset_create`、`asset_list`、`asset_get`
 - `asset_search`（文本、时间范围与可选的本地视觉检索组合）、`asset_provenance_export`（导出脱敏 provenance bundle 与未签名的 C2PA assertion payload）
@@ -116,9 +139,10 @@ Generation Event，而不是复用 `parent_asset_id`。普通 HTTP/MCP 调用方
 同一个去重后的 Asset 对应多次独立生成，UI 也不会把它们错误压成一个版本节点。
 聚合结果还会返回同一 provider、同一 conversation 中尚未与当前 lineage 建立关系的
 `context_events`、持久化的 `relation_candidates`，以及这些事件输出素材的轻量
-`output_assets`。ChatGPT Relation Resolver 只生成候选关系：同 conversation、相邻生成、
+`output_assets`。ChatGPT Relation Resolver（`lib/generation-history.mjs` 的
+`resolveGenerationRelationCandidates()`）只生成候选关系：同 conversation、相邻生成、
 修改语义、参考图/provider asset 等信号会形成置信度与 evidence，但不会直接写入版本树。
-候选可以被用户确认、改选其他父版本或标记为“无关联”；确认后才通过 Generation
+候选可以被用户确认或忽略，用户也可以手动添加关系；确认后才通过 Generation
 Relation 写入 `user_confirmed` 边，被否决的候选会持久化为 dismissed，后续解析不会反复
 弹回。公共管理面可以创建、修改或删除非 `provider_verified` 关系，官方验证关系保持只读。
 
@@ -147,7 +171,9 @@ web/gravityport/          React 界面源码（src/）与 Vite 构建产物（di
 server.mjs               本地 Web 服务 CLI 入口
 lib/mosa-runtime.mjs     HTTP 运行时编排和静态资源服务
 lib/api-routes.mjs       API 总分发
-lib/api/*.mjs            素材、库和桥接路由
+lib/api/*.mjs            素材、生成历史、库、桥接/Web Capture、视觉检索、Pinterest 和反馈路由
+lib/pinterest/           Pinterest OAuth、token 存储与 API 客户端
+lib/feedback/            反馈转发配置
 lib/asset-store.mjs      存储选择和 JSON 兼容实现
 lib/sqlite-asset-store.mjs SQLite 实现（better-sqlite3）
 lib/*.mjs                Node 运行时模块
@@ -155,8 +181,10 @@ lib/*.ts                 TypeScript 源码；构建后生成运行时 JS/声明�
 desktop/                 Electron 主进程、preload、服务管理和 Forge 配置
 desktop/platform/        桌面操作系统 adapter（macOS / Windows / generic）
 mcp/server.mjs           MCP stdio 服务
+bin/mosa.mjs             库维护 CLI（gravityport / mosa）
 extensions/              可选 Chrome Web Capture 扩展
 scripts/                 构建、启动、迁移、验证和 QA 脚本
+docs/                    使用、运维、发布和模型评估文档
 test/                    Node 测试和契约测试
 ```
 
@@ -175,8 +203,8 @@ JS、声明文件和 dist 产物不是独立的架构层。
 npm start                 启动 Node 本地服务
 npm run mcp               启动 MCP stdio 服务
 npm run desktop:start     启动 Electron 本地开发壳
-npm run desktop:package   Forge 打包 macOS arm64 应用目录
-npm run desktop:make      Forge 打包 macOS arm64 应用并生成 DMG
+npm run desktop:package   Forge 打包 macOS arm64 应用目录，并运行包校验和打包冒烟测试
+npm run desktop:make      打包 macOS arm64 应用，生成更新 ZIP，并用 scripts/make-macos-dmg.mjs 生成 DMG
 npm run desktop:package:windows  Forge 打包 Windows 10/11 x64 应用目录
 npm run desktop:make:windows     Forge 生成 Windows x64 ZIP（开发产物）
 npm run build             构建 UI、编译 TypeScript 并写入构建身份
@@ -199,14 +227,20 @@ npm run build             构建 UI、编译 TypeScript 并写入构建身份
 
 `startMosaRuntime()` 的主要顺序如下：
 
-1. 解析项目根、库目录、端口、Codex/Grok 会话目录和可选桥接配置。
-2. 先执行运行时隔离检查，再取得该库的运行时锁，避免同一库重复写入。
-3. 选择已完成迁移的 SQLite 库，或使用兼容的 JSON 存储；确保 `default` 项目
-   存在。
-4. 启动 Codex、Grok、Cowart、Cowart discovery 桥接（可按配置禁用），启动
-   持久化衍生任务 worker。
-5. 创建 Node HTTP 服务并监听 loopback，返回 `url`、端口、库目录、存储类型和
-   `stop()`。
+1. 解析项目根、库目录、端口、Codex/Grok/Cowart 来源路径、client token 和可选桥接
+   配置，并冻结本进程的构建身份。
+2. 先执行运行时隔离检查，再取得该库的运行时锁（`<库目录>/.mosa-runtime.lock`），
+   避免同一库重复写入。
+3. 选择存储（见 5.1）并创建库变更流；按宿主配置启动可选的本地视觉运行时，桌面版另外
+   创建 Pinterest 客户端；创建（但不启动）Codex、ChatGPT 桌面版同步、Grok、Cowart、
+   Cowart discovery 桥接和衍生任务 worker，安装每小时一次的回收站清理；确保 `default`
+   项目存在。
+4. 创建 Node HTTP 服务并监听 loopback，返回 `url`、端口、库目录、存储类型、构建身份、
+   `clientToken` 和 `stop()`。
+5. 监听成功后才开始后台工作：约 1 秒后并行启动各桥接（可按 `MOSA_DISABLE_BRIDGES`
+   禁用，单个桥接启动失败只记日志）；约 1.8 秒后执行一次回收站清理、历史孤立衍生文件
+   回收，以及缺失尺寸/缩略图/预览素材的重新入队，三者结束后才启动衍生任务 worker。
+   这些维护失败只记日志，不影响服务可用。
 
 停止时，运行时先停止接受新的长期连接并主动结束 Library SSE 响应，再关闭
 HTTP listener；随后等待 derivative worker 与所有桥接排空正在执行的任务，
@@ -218,7 +252,9 @@ HTTP listener；随后等待 derivative worker 与所有桥接排空正在执行
 Electron 启动时由 `desktop/service-manager.mjs` 探测
 `GET /api/health`（必要时使用库路径和桥接状态兼容探测）：
 
-- 已有服务且产品身份和库目录相同：桌面壳附着到该服务，不拥有它。
+- 已有服务的库目录相同，且完整服务身份一致（`serviceProtocolVersion`、
+  `productVersion`、`gitSha`、`uiFingerprint`、`runtimeFingerprint` 与 client token
+  指纹 `clientAuthFingerprint`）：桌面壳附着到该服务，不拥有它。
 - 没有可附着的服务：桌面壳启动并拥有一个本地运行时，退出时停止自己拥有
   的运行时。
 - 正常桌面升级遇到同库的已验证旧版本时：先受控退出旧 owner，再由当前桌面
@@ -237,18 +273,40 @@ Web UI 启动时同时读取 `/api/health` 与静态 `build-identity.json`，在
 不新建库）；否则 `$HOME/MOSA Library` 里有库就用它，`$HOME/GravityPort Library`
 里有库就用它，两处都没有才在 `$HOME/GravityPort Library` 新建（只有这一条
 允许指向不存在的目录）。如需独立运行时，使用 `MOSA_DESKTOP_PORT` 和
-`MOSA_LIBRARY_DIR` 明确指定。
+`MOSA_LIBRARY_DIR` 明确指定；未设置 `MOSA_DESKTOP_PORT` 时，桌面壳在 `43517`–`43521`
+中探测并回退端口。
+
+桌面版可在「设置 → 存储 → 修改」移动自己拥有的库：先停止运行时，经
+`lib/library-relocation.mjs` 完整复制到空目录（跳过 `.mosa-runtime.lock`），成功后写入
+`library-location.json` 并重启，最后才删除旧目录；设置了 `MOSA_LIBRARY_DIR` 或附着到
+外部服务时不允许移动。macOS 上可选的 Web Capture 后台 supervisor 与桌面壳通过库目录中的
+`.mosa-desktop-starting.json` 交接标记协调，细节见 [docs/operations.md](docs/operations.md)。
+
+### 4.3 桌面更新与匿名统计
+
+`desktop/update-service.mjs` 从 `https://mosa.azhuilab.com/releases/gravityport/latest.json`
+拉取发布清单（禁止重定向），配置了发布公钥时先用 `lib/release-manifest-signature.mjs`
+校验签名，再按版本号和发行通道判断能否更新。`desktop/macos-updater.mjs` /
+`desktop/windows-updater.mjs` 从 `https://mosa.azhuilab.com/downloads/` 下载对应平台的
+更新包，校验 SHA-256 与签名身份（macOS Team ID / Windows 签名证书指纹）后交给分离的
+helper 替换应用并重启。打包版在首次启动和每个统计日各发一次无请求体的 `HEAD` 请求，把
+随机安装 ID、平台、架构和版本附在同一清单地址上作为匿名使用统计
+（`desktop/anonymous-usage.mjs`）；设置 `MOSA_DISABLE_TELEMETRY=1`、QA 运行或未打包的
+开发壳都不会发送。发布流程见 [docs/releasing.md](docs/releasing.md)。
 
 ## 5. 存储与媒体处理
 
 ### 5.1 存储选择
 
-`lib/asset-store.mjs` 的 `createAssetStore()` 在指定库目录中检测已完成的
-SQLite 迁移：
+`lib/asset-store.mjs` 的 `createAssetStore()` 按以下顺序选择存储：
 
-- 已完成迁移时，使用 `lib/sqlite-asset-store.mjs` 和 `better-sqlite3`。
-- 新库或迁移尚未完成时，保留 JSON 兼容存储，以便先检查再迁移；不会因为
-  升级程序而自动删除旧数据。
+- `mosa.db` 存在且迁移状态为已完成：使用 `lib/sqlite-asset-store.mjs` 和 `better-sqlite3`。
+- 数据库缺失但存在 `.sqlite-migration-completed` 标记：报错 `SQLITE_LIBRARY_MISSING`，
+  要求恢复 `mosa.db`，不会退回旧 JSON 快照。
+- `mosa.db` 存在但迁移未完成（可能是中断的迁移）：fail-closed，保持 JSON 兼容存储。
+- 库目录中没有任何旧 JSON 数据的全新库：直接新建 SQLite 库。
+- 其余情况（有旧 JSON 数据且尚未迁移）：保留 JSON 兼容存储，以便先检查再用
+  `gravityport migrate` 迁移；不会因为升级程序而自动删除旧数据。
 
 SQLite 数据库路径为 `<库目录>/mosa.db`（默认库目录按上文
 `resolveLibraryLocation()` 解析，也可由 `MOSA_LIBRARY_DIR` 指定）。SQLite schema 版本以
@@ -260,7 +318,14 @@ SQLite 数据库路径为 `<库目录>/mosa.db`（默认库目录按上文
 - `asset_versions`：父子版本关系和变更摘要。
 - `recipe_snapshots`：不可变的生成配方快照，包括 Prompt、模型、提供方、技能、
   比例、主题、引用和 provenance。
-- `derivative_jobs`：可恢复的预览/缩略图任务。
+- `asset_stacks`、`asset_stack_members`、`auto_stack_exclusions`：手动或按会话自动生成的
+  Stack、成员顺序，以及用户移出自动 Stack 后的排除记录。
+- `generation_events`、`generation_relations`、`generation_relation_candidates`、
+  `generation_conversations`：生成事件、已确认的生成关系、待确认/已忽略的关系候选，以及
+  ChatGPT 对话轮次同步状态（`lib/generation-message-binding.mjs`）。
+- `library_changes`、`pending_derivative_changes`：Library Change Journal
+  （`/api/library-changes` 的数据源）以及把衍生图完成合并为一次修订的暂存表。
+- `derivative_jobs`：可恢复的缩略图/中图/预览任务。
 - `automatic_ingest_suppressions`：用户删除后按内容/像素哈希抑制自动重新收录的
   轻量记录；不保存图片、Prompt 或原始 URL。
 - `migration_issues`、`library_meta`、`schema_migrations`：迁移和 schema 状态。
@@ -270,27 +335,49 @@ SQLite 数据库路径为 `<库目录>/mosa.db`（默认库目录按上文
   最终筛选与排序语义仍由普通资产查询负责。该索引是本地派生数据，不是 embedding
   或语义搜索索引，可由资产元数据重新构建。
 
+进入搜索文本、FTS 和短词索引的字段由 `lib/asset-search-scope.mjs` 白名单决定（Prompt、
+用户原话、provider/model、标签、名称等），路径、哈希和采集内部字段不参与搜索。本地视觉
+索引不写入 `mosa.db`：`lib/visual-relationship-index.mjs` 在 Electron `userData` 下按库
+路径分目录保存。
+
 ### 5.2 文件与衍生物
 
 迁移完成的库使用如下逻辑布局（`$HOME` 只是示例根目录）：
 
 ```text
 $HOME/GravityPort Library/
-├── mosa.db
-├── assets/<project-id>/       原始媒体和衍生文件
-├── .web-capture-tmp/          网页捕获暂存区
-└── legacy-json-backup/        迁移产生的 JSON 备份
+├── mosa.db                         SQLite 数据库（文件名沿用旧名）
+├── .sqlite-migration-completed     迁移完成标记
+├── .mosa-runtime.lock              运行时锁
+├── .mosa-desktop-starting.json     桌面启动/更新交接标记（短时存在）
+├── .chatgpt-desktop-sync.json      ChatGPT 桌面版对话同步状态
+├── .schema-backups/                schema 升级前的数据库备份
+├── assets/
+│   ├── <project-id>/
+│   │   ├── original/               原始媒体
+│   │   ├── thumbnails/             400px WebP 缩略图
+│   │   ├── mediums/                960px WebP 中图
+│   │   └── previews/               1600px WebP 预览
+│   └── import-staging/             浏览器/手动上传暂存区
+├── reference-attachments/          Web Capture 参考图私有附件
+├── .web-capture-tmp/               网页捕获暂存区
+└── legacy-json-backup/             迁移产生的 JSON 备份
 ```
 
-资产原件按内容哈希和安全文件名写入库中；原始图像字节不被预览生成覆盖。
-`lib/derivative-worker.ts` 使用 `sharp` 异步处理图像预览和缩略图，并将任务
-状态写入 SQLite，重启后可继续处理。视频不经过 `sharp` 或转码，按原始媒体
-提供播放。
+资产原件以 `<asset-id><扩展名>` 写入 `assets/<project-id>/original/`（asset id 由净化后的
+文件名加时间戳与随机串组成），复制后重新计算 SHA-256 并与导入前比对；去重依据内容哈希和
+像素哈希。Codex 原件在同一文件系统上优先用硬链接，否则复制。原始字节不被衍生处理覆盖。
+`lib/derivative-worker.ts` 从 SQLite `derivative_jobs` 认领任务，交给独立子进程
+`lib/derivative-processor.ts`（Electron 下为 utilityProcess）用 `sharp` 生成 400px 缩略图、
+960px 中图和 1600px 预览（均为 WebP），同时记录宽高与主色；任务状态持久化，重启后可继续，
+启动维护还会把缺少尺寸、缩略图或预览的旧素材重新入队。视频不经过 `sharp` 或转码，按原始
+媒体提供播放；界面用 `<video preload="metadata">` 显示首帧作为缩略图。
 
 HTTP 读取路径由 `lib/mosa-runtime.mjs` 实现：
 
 ```text
 /library/:project/images/:file         原始媒体
+/library/:project/mediums/:id.webp     图像中图
 /library/:project/previews/:id.webp    图像预览
 /library/:project/thumbnails/:id.webp  图像缩略图
 /library/:project/references/:file     Web Capture 引用附件
@@ -308,6 +395,15 @@ gravityport visual-model-verify --from <model-pack-dir>
 gravityport thumbnails <rebuild|repair> [--library <path>]
 ```
 
+### 5.3 回收站
+
+删除素材只写入 `deleted_at`，移出全文索引和衍生任务，并记录
+`automatic_ingest_suppressions`，防止桥接把同一内容自动收回；仍有未删除子版本的父版本
+不能移入回收站。回收站条目保留 90 天（`TRASH_RETENTION_MS`）：运行时监听后先清理一次，
+之后每小时分批清理过期条目。永久删除（单条、清空回收站或过期清理）先把原件和衍生文件
+移入隐藏的 `.trash-purge-*` 暂存目录，数据库提交后再删除文件；中断的清理在下次运行时
+恢复或完成（`lib/trash-files.mjs`）。
+
 ## 6. API 边界
 
 以下为当前路由分组；具体字段和状态码以 `lib/api/*.mjs` 为准。
@@ -323,23 +419,37 @@ gravityport thumbnails <rebuild|repair> [--library <path>]
 | `/api/assets/:project/:asset/versions` | 读取版本树或创建子版本 |
 | `/api/assets/:project/:asset/recipes` | 读取生成配方快照历史 |
 | `/api/projects`、`/api/groups` | 列出项目、列出或创建分组 |
+| `/api/groups/:name`、`/api/groups/:name/merge`、`/api/groups/:name/stats`、`/api/group-order` | 分组改名/设置、删除、合并、统计与排序 |
+| `/api/assets/:project/:asset/curation`、`/api/assets/:project/:asset/favorite` | 精选标记与精选备注、收藏 |
+| `/api/assets/:project/:asset/generation-history` | 检视器使用的聚合生成历史（见 2.3） |
+| `/api/generations`、`/api/generations/:id/lineage` | 列出或记录 Generation Event；读取单次生成所在的 lineage |
+| `/api/generation-relations`、`/api/generation-relation-candidates` | 创建、修改、删除非 `provider_verified` 的生成关系；把候选标记为 suggested 或 dismissed |
 | `/api/library-path`、`/api/open-folder` | 返回库边界信息；只允许打开受信任的库/来源目录 |
 | `/api/bridges`、`/api/web-capture` | Codex、Grok、Cowart、Web Capture 和 discovery 状态 |
 | `/api/ingest/web-capture`、`/api/ingest/web-capture-metadata`、`/api/ingest/web-capture-binary`、`/api/ingest/web-capture-upload/*` | 通过统一 Token/origin 策略接收网页捕获、元数据补全、二进制和分块上传 |
 | `/api/cowart-canvases` | 列出、注册和移除受信任的 Cowart 画布 |
-| `/api/trash` | 回收站：清空指定项目的回收站；单条恢复/永久删除走 `/api/assets/:project/:asset/restore|permanent` |
+| `/api/trash` | 回收站：清空指定项目的回收站；单条恢复/永久删除走 `/api/assets/:project/:asset/restore` 与 `/api/assets/:project/:asset/permanent` |
 | `/api/asset-stacks/move` | 在堆叠之间批量搬移素材（剪切/粘贴与拖拽落点共用） |
-| `/api/import/stage` | 导入暂存：桌面导入管线写入/清理暂存区，`/api/assets/import-batch` 分批入库 |
+| `/api/import/stage`、`/api/assets/import-batch` | 导入暂存：`POST` 把浏览器/手动上传的文件流式写入 `<库目录>/assets/import-staging/`，`DELETE` 清理暂存文件；`import-batch` 分批入库（桌面粘贴由主进程直接写入 `userData` 暂存区） |
 | `/api/feedback/diagnostics`、`/api/feedback/submit` | 设置反馈页：读取脱敏诊断日志预览；校验并转发一条反馈到收集服务 |
-| `/api/pinterest/connect|callback|status|boards|disconnect` | Pinterest 连接：本机 OAuth 回调、连接状态、画板/Pin 浏览与断开 |
-| `/api/visual/search|index|status` | 本地视觉检索：相似图搜索、索引构建与模型/索引状态 |
+| `/api/pinterest/connect`、`/api/pinterest/callback`、`/api/pinterest/status`、`/api/pinterest/boards`、`/api/pinterest/boards/:id/pins`、`/api/pinterest/disconnect` | Pinterest 连接：本机 OAuth 回调、连接状态、画板/Pin 浏览与断开 |
+| `/api/visual/status`、`/api/visual/search`、`/api/visual/assets/:id/similar`、`/api/visual/assets/:id/candidates`、`/api/visual/index`（DELETE） | 本地视觉检索：模型/索引状态、文本→图像检索（MCP `visual: true` 使用）、相似图（检视器「相关推荐」使用）、版本/堆叠候选、清空当前项目索引；索引由后台 worker 增量建立，没有构建接口 |
 | `/api/ingest/web-capture-turn-bindings` | 采集插件上报对话结构（消息号与轮次绑定），供版本树按对话轮次显示 |
 | `/api/generation-message-bindings` | 生成记录补齐消息号与轮次的服务端写入接口 |
-| `/api/web-capture/pair|retry` | 扩展配对（桌面版自动发放 Token）与重试请求计数下发 |
+| `/api/web-capture/pair`、`/api/web-capture/retry` | 扩展配对（桌面版自动发放 Token）与重试请求计数下发 |
+| `/api/ingest/web-capture-status`、`/api/ingest/web-capture-session-title`、`/api/ingest/web-capture-desktop-sync` | 扩展状态上报（响应中下发重试请求与 ChatGPT 桌面版待同步对话）、对话标题回写 Stack 名称、桌面版对话同步结果回报 |
 
-所有普通 API 请求保持同源/loopback 边界。Web Capture 的预检和跨 origin 请求
-只有在 origin 位于显式允许列表时才放行；请求仍须提供 ingest Token。响应还
-设置 CSP、`nosniff` 和同源资源策略等安全头。
+所有请求先经过 Host 校验：`Host` 必须是 `127.0.0.1`、`localhost` 或 `::1`，且端口等于
+实际监听端口，以阻止 DNS rebinding。普通 API 只接受无 Origin 或同源 loopback Origin；其中
+所有非 GET/HEAD/OPTIONS 的 `/api/*` 管理请求还必须携带运行时 client token：页面脚本用
+`x-mosa-client-token` 头，或使用服务返回 `index.html` 时下发、按端口区分的
+`mosa-browser-client-<port>` Cookie（HttpOnly、SameSite=Strict）。token 来自
+`MOSA_CLIENT_TOKEN`，未设置时每次启动随机生成；桌面版持久化在 `userData` 中。只读 GET
+（健康检查、列表、SSE）不要求 token。Web Capture 路由走另一套边界：预检和跨 origin 请求
+只有在 origin 位于显式允许列表时才放行，且必须提供 ingest Token；`/api/web-capture/pair`
+和扩展 origin 发来的 `/api/health` 只接受允许列表中的扩展 origin。响应统一设置 CSP
+（`img-src` 额外放行 `https://i.pinimg.com` 以显示 Pinterest 图片）、`nosniff` 和同源资源
+策略等安全头。判定逻辑在 `lib/server-security.ts`。
 
 ## 7. 桥接与数据流
 
@@ -356,8 +466,10 @@ Codex 自动收录是双来源模型，而不是只靠一个图片目录：
 - **文件来源**：监听 `<CODEX_HOME>/generated_images`，发现真实落盘图片后按来源路径、
   SHA-256 和像素哈希去重，并从对应 session 补齐 Prompt、模型、call ID 和生成时间。
 - **会话来源**：同时监听 `<CODEX_HOME>/sessions`。`lib/codex-session-index.ts` 对 JSONL
-  维护进程内字节游标；首次读取完整文件，后续只读取新增的完整行。若
-  `image_generation_call` / `image_generation_end` 携带图片 `result`，但标准
+  维护进程内字节游标；首次读取完整文件，后续只读取新增的完整行。识别的生成事件包括
+  `image_generation_call` / `image_generation_end`，以及新版 Codex code mode 写出的
+  `item_completed` 事件（`item.type` 为 `Extension`、`kind` 为 `image_gen.generation`）。
+  若事件携带图片 `result`，但标准
   `generated_images` 文件不存在，GravityPort 可以从 session 恢复图片，不会因为 Codex
   某次未落盘而漏收。
 
@@ -369,7 +481,10 @@ session 中的任意 `saved_path` 不会因此成为新的受信任文件根。�
 
 图片目录和 session 目录都使用 watcher；watcher 不可用时由轮询兜底。GravityPort 不会为了
 监听而创建 Codex 的 `sessions` 目录，Codex 后续创建目录后轮询会自动重新挂载 watcher。
-找不到可靠 Prompt 时明确记录不可用，不会凭空生成 Prompt。
+Prompt 优先取生成事件里的 revised prompt；没有时退回该任务最后一条用户消息（若带有
+Codex 的「# Files mentioned by the user」前缀，只保留 `## My request:` 之后的正文）；两者
+都没有才明确记录为不可用，不会凭空生成 Prompt。会话中稍后出现 revised prompt 时，桥接会
+升级已入库素材的 Prompt。
 
 GravityPort 不把 Codex 的 workspace、Documents、Desktop、Downloads 或任意项目目录当作
 默认素材扫描根。若用户确实修改了 Codex 本身的存储根，应配置 Codex 官方的
@@ -386,7 +501,8 @@ GravityPort 不把 Codex 的 workspace、Documents、Desktop、Downloads 或任�
 
 `lib/cowart-bridge.ts` 归档受信任画布快照中的图像；
 `lib/cowart-canvas-discovery.ts` 可从近期 Codex 会话发现 Cowart 项目；
-`lib/cowart-bridge-manager.ts` 管理主画布和已注册外部项目；
+`lib/cowart-bridge-manager.ts` 管理主画布和已注册外部项目，
+`lib/cowart-project-registry.ts` 读写外部项目注册表。
 
 默认管理画布目录为 `<CODEX_HOME>/cowart-data/mosa`，GravityPort 自己的 Cowart registry
 默认为 `<CODEX_HOME>/mosa/cowart-projects.json`。外部画布必须通过路径、
@@ -395,9 +511,10 @@ GravityPort 不把 Codex 的 workspace、Documents、Desktop、Downloads 或任�
 ### 7.4 Web Capture
 
 `extensions/chatgpt-web-capture/` 是可选浏览器扩展，当前 provider 为 ChatGPT、
-Gemini、Flow 和 Google AI Studio。扩展只向配置的本地 GravityPort 地址发送捕获的图像
-字节和页面来源；服务端 `lib/web-capture-ingest.ts` 使用 `sharp` 校验格式、
-尺寸、像素数和 MIME，并用 SHA-256 去重。
+Gemini、Flow 和 Google AI Studio。扩展只向配置的本地 GravityPort 地址发送捕获的媒体
+字节、页面来源和能安全匹配的 Prompt/对话上下文；服务端 `lib/web-capture-ingest.ts`
+对图像用 `sharp` 校验格式、尺寸、像素数（≤40M 像素、≤15 MiB）和 MIME，对 Flow 与
+Google AI Studio 的视频按容器签名和大小（≤96 MiB，可分块上传）校验，并用 SHA-256 去重。
 
 独立的 `npm start` Web Runtime 使用 Web Capture 时必须同时配置：
 
@@ -406,7 +523,8 @@ Gemini、Flow 和 Google AI Studio。扩展只向配置的本地 GravityPort 地
   `moz-extension://...` origin 列表。
 
 Desktop Runtime 不要求用户手工填写这两个值。Electron 首次启动会在
-`userData` 中生成并持久化随机 Token，默认授权官方固定扩展 origin；扩展会在
+`userData` 中生成并持久化随机 Token，默认授权 GravityPort 的两个固定扩展 origin
+（未打包开发版与 Chrome Web Store 版）；扩展会在
 `43517` 到 `43521` 的本机 discovery 端口中先验证 `/api/health`，再通过仅允许
 该扩展 origin 的配对路由取得 Token。若首选端口被其他程序占用，Desktop 会在
 同一 discovery 端口集合内选择可用端口，且不会终止或替换已有监听进程。
@@ -414,6 +532,48 @@ Desktop Runtime 不要求用户手工填写这两个值。Electron 首次启动�
 ChatGPT 在可用时保留消息范围上下文；其他 provider 只保留能安全匹配的、页面
 可见的局部 Prompt，并明确标为未验证的 provider-visible Prompt。参考图像进入
 独立的私有引用附件存储，不自动成为普通画廊素材。
+
+### 7.5 ChatGPT 桌面版对话
+
+ChatGPT 桌面版（与 Codex 同一个 App）不把聊天中的生成图或聊天文本写到本机，Codex
+桥接和浏览器扩展都看不到它们。`lib/chatgpt-desktop-sync.mjs` 只负责认出“刚用过的
+对话”，图像仍由已配对的 Web Capture 扩展按普通 ChatGPT 页面流程采集：
+
+- 运行时随 Codex 桥接一起启动它（`MOSA_DISABLE_BRIDGES` 含 `codex` 时一并禁用），每
+  10 秒轮询 `<CODEX_HOME>/.codex-global-state.json`，只读取桌面聊天绑定的 ChatGPT 对话号，
+  以及每段对话最后一次提问的消息编号。
+- 新绑定的对话，或最后一次提问编号发生变化的对话，记为“有活动”；首次运行时把已有绑定
+  各标记一次以补采。状态写在 `<库目录>/.chatgpt-desktop-sync.json`，只保存对话号、时间戳、
+  重试计数和提问编号的截断 SHA-256，不读入 Prompt 文本，最多跟踪 200 段。
+- 对话静默 90 秒后，在扩展调用 `POST /api/ingest/web-capture-status` 时随响应下发；只发给
+  声明 `desktopSync: true`（自动入库已开且当前没有同步窗口）的扩展，一次一段，下发后租约
+  5 分钟。
+- 扩展先用浏览器自己的 ChatGPT 登录读取该对话：确认没有生成图就回报 `no-images`；否则在
+  最小化、不抢焦点的窗口中打开 `https://chatgpt.com/c/<对话号>#gravityport-desktop-sync`
+  采集，页面采集安静 10 秒（至少 20 秒、最多 110 秒）后关窗，整段任务 150 秒超时。结果经
+  `POST /api/ingest/web-capture-desktop-sync` 回报 `captured`、`no-images`、`failed` 或
+  `timeout`，每次活动最多尝试 3 次。
+- 这两条路由属于 Web Capture 路由集合，走 ingest Token 与扩展 origin 边界。数据边界见
+  [PRIVACY.md](PRIVACY.md#chatgpt-desktop-app-conversations)。
+
+### 7.6 Pinterest（暂未开放）
+
+`lib/pinterest/` 与 `lib/api/pinterest-routes.mjs` 实现只读的 Pinterest 画板浏览；侧栏入口
+在加载画板前显示「暂未开放」，等待 Pinterest 批准正式 API 访问。客户端只在桌面版创建；
+OAuth 回调地址固定为 `http://localhost:43517/api/pinterest/callback`，运行时不在 43517
+端口时连接返回 `PINTEREST_PORT_MISMATCH`。授权码与 refresh token 经
+`https://mosa.azhuilab.com/api/pinterest/token` 中转换取 token（app secret 不在客户端），
+token 以 0600 权限原子写入 `userData`。画板与 Pin 通过 Pinterest API 实时读取，只在内存
+缓存最多 5 分钟，不写入素材库；Pin 图片直接从 `i.pinimg.com` 加载。
+
+### 7.7 设置反馈
+
+运行时启动时由 `lib/diagnostic-log.mjs` 安装一个有界内存环形日志（最多 400 行 / 120 KB）。
+设置页反馈面板通过 `GET /api/feedback/diagnostics` 预览脱敏后的诊断文本：库路径和主目录
+替换为占位符，Token、长密钥和邮箱被遮蔽，可能含 Prompt 的整行被删除。
+`POST /api/feedback/submit` 在本地校验类型、正文、联系方式和语言，对诊断文本重新脱敏并
+截断，然后只向 `MOSA_FEEDBACK_URL`（默认 `https://mosa.azhuilab.com/api/feedback`）转发
+一次请求；本地日志只记录提交结果状态，不记录内容。
 
 ## 8. 配置与隐私边界
 
@@ -423,7 +583,7 @@ Token 写入公共文档、日志或仓库：
 | 变量 | 用途 |
 | --- | --- |
 | `MOSA_PORT` | Node 服务端口，默认 `43517` |
-| `MOSA_DESKTOP_PORT` | Electron 壳使用的端口，默认 `43517` |
+| `MOSA_DESKTOP_PORT` | Electron 壳使用的端口，默认 `43517`；显式设置后不再在 43517–43521 间回退 |
 | `MOSA_LIBRARY_DIR` | SQLite/库目录；显式指定后用于库隔离和迁移 |
 | `MOSA_PROJECT_DIR` | 项目根目录覆盖 |
 | `CODEX_HOME` | Codex 本地数据根；默认 `$HOME/.codex` / `%USERPROFILE%\.codex` |
@@ -431,16 +591,18 @@ Token 写入公共文档、日志或仓库：
 | `CODEX_SESSIONS_DIR` | Codex 会话目录覆盖 |
 | `GROK_SESSIONS_DIR` | Grok 会话目录覆盖 |
 | `COWART_MOSA_CANVAS_DIR` | GravityPort 管理画布目录覆盖 |
-| `MOSA_DISABLE_BRIDGES` | 禁用指定桥接的逗号分隔列表 |
+| `MOSA_COWART_REGISTRY_PATH` | Cowart 外部项目注册表路径覆盖（默认 `<CODEX_HOME>/mosa/cowart-projects.json`） |
+| `MOSA_DISABLE_BRIDGES` | 禁用指定桥接的逗号分隔列表：`codex`（同时停用 ChatGPT 桌面版对话同步）、`grok`、`cowart`、`cowartDiscovery`；未知名称直接报错 |
+| `MOSA_CLIENT_TOKEN` | 管理 API 的 client token；未设置时 `npm start` 每次随机生成，桌面版使用 `userData` 中持久化的值 |
 | `MOSA_WEB_CAPTURE_TOKEN` | 启用网页捕获的本地 Token |
 | `MOSA_WEB_CAPTURE_ORIGINS` | 网页捕获允许的扩展 origin 列表 |
 | `MOSA_WEB_CAPTURE_PAIR` | 设为 `auto` 时，独立 `npm start` Runtime 也允许扩展静默配对（默认关闭，桌面版始终自动配对） |
-| `MOSA_C2PATOOL_PATH` | C2PA 导出使用的 `c2patool` 路径覆盖（见 operations.md） |
+| `MOSA_C2PATOOL_PATH` | C2PA 导出（`lib/c2pa-export.mjs`，目前尚未接入 UI/HTTP/MCP 入口）使用的 `c2patool` 路径覆盖（见 [docs/operations.md](docs/operations.md)） |
 | `MOSA_DISABLE_TELEMETRY` | 设为 `1` 时桌面壳不发匿名使用统计（见 PRIVACY.md） |
 | `MOSA_FEEDBACK_URL` | 反馈收集服务地址覆盖（默认 `https://mosa.azhuilab.com/api/feedback`） |
 | `MOSA_FEEDBACK_TIMEOUT_MS` | 反馈转发超时毫秒数（默认 15000） |
 
-GravityPort 只读取已配置的 Codex、Grok 和 Cowart 位置；不会把 Downloads、Desktop、
+GravityPort 只读取已配置的 Codex（含 ChatGPT 桌面版状态文件）、Grok 和 Cowart 位置；不会把 Downloads、Desktop、
 Documents 或任意项目图片目录作为默认扫描根。导入路径、画布路径、外部来源和
 打开文件夹操作均经过边界
 校验；运行时隔离检查在写入库或监听端口前失败即停止。请把 Prompt、会话 ID、
@@ -458,5 +620,6 @@ npm run check
 git diff --check
 ```
 
-上述命令验证构建、Node 测试、ESLint、源文件边界和补丁空白；真实桌面包、
+上述命令验证构建、Node 测试、ESLint，以及 `npm run check` 中的源文件边界、死代码、
+i18n 键和 Web UI 类型检查，最后检查补丁空白；真实桌面包、
 浏览器扩展重载和已登录网页上的 Web Capture 仍需按相应指南单独验证。
