@@ -230,3 +230,48 @@ function buildGalleryBlankMenu(ctx: MenuContext): MenuEntry[] {
     ],
   ])
 }
+
+/** Sidebar group colors offered by the group menu, in display order. */
+export const GROUP_COLORS: { color: string; label: string }[] = [
+  { color: "#E06C75", label: "红色" },
+  { color: "#D19A66", label: "橙色" },
+  { color: "#98C379", label: "绿色" },
+  { color: "#61AFEF", label: "蓝色" },
+  { color: "#C678DD", label: "紫色" },
+  { color: "#56B6C2", label: "青色" },
+]
+
+export type GroupMenuContext = {
+  name: string
+  /** Position of this group in the sidebar's 我的分组 list. */
+  index: number
+  groupCount: number
+  exporting: boolean
+}
+
+/** Right-click menu for a group under 我的分组 in the sidebar, headed by the
+ * group's name. */
+export function buildGroupMenu(ctx: GroupMenuContext): MenuEntry[] {
+  return [
+    { kind: "heading", label: ctx.name },
+    ...buildSectionedMenu([
+      [{ kind: "item", id: "group-rename", label: "重命名分组" }],
+      [
+        { kind: "item", id: "group-move-up", label: "上移分组", disabled: ctx.index <= 0 },
+        { kind: "item", id: "group-move-down", label: "下移分组", disabled: ctx.index < 0 || ctx.index >= ctx.groupCount - 1 },
+        {
+          kind: "item",
+          id: "group-color",
+          label: "分组颜色",
+          submenu: GROUP_COLORS.map(entry => ({ kind: "item" as const, id: `group-color:${entry.color}`, label: entry.label, color: entry.color })),
+        },
+      ],
+      [
+        { kind: "item", id: "group-stats", label: "分组统计" },
+        { kind: "item", id: "group-export", label: "导出分组", disabled: ctx.exporting },
+        ...(ctx.groupCount > 1 ? [{ kind: "item" as const, id: "group-merge", label: "合并分组" }] : []),
+      ],
+      [{ kind: "item", id: "group-delete", label: "删除分组", icon: "trash", danger: true }],
+    ]),
+  ]
+}

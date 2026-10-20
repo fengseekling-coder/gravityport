@@ -14,6 +14,7 @@ const repositoryRoot = resolve(import.meta.dirname, "..");
 const uiRoot = join(repositoryRoot, "web", "gravityport");
 
 let buildContextMenu;
+let buildGroupMenu;
 
 before(async () => {
   const compileRoot = await mkdtemp(join(tmpdir(), "mosa-gp-cm-"));
@@ -25,7 +26,7 @@ before(async () => {
     "--moduleResolution", "bundler",
     "--skipLibCheck",
   ], { stdio: "pipe" });
-  ({ buildContextMenu } = await import(join(compileRoot, "context-menus.js")));
+  ({ buildContextMenu, buildGroupMenu } = await import(join(compileRoot, "context-menus.js")));
   after(async () => {
     await rm(compileRoot, { recursive: true, force: true });
   });
@@ -341,4 +342,39 @@ describe("context-menus / separator hygiene", () => {
       assertNoBadSeparators(buildContextMenu(baseCtx(scenario.ctx)), scenario.label);
     });
   }
+});
+
+describe("buildGroupMenu (sidebar 我的分组)", () => {
+  const groupCtx = (overrides = {}) => ({ name: "polish", index: 1, groupCount: 3, exporting: false, ...overrides });
+  const itemIds = (entries) => entries.filter((e) => e.kind === "item").map((e) => e.id);
+
+  it("heads the menu with the group name and puts delete last as danger", () => {
+    const entries = buildGroupMenu(groupCtx());
+    assert.deepEqual(entries[0], { kind: "heading", label: "polish" });
+    assert.deepEqual(itemIds(entries), [
+      "group-rename", "group-move-up", "group-move-down", "group-color",
+      "group-stats", "group-export", "group-merge", "group-delete",
+    ]);
+    const last = entries.at(-1);
+    assert.equal(last.id, "group-delete");
+    assert.equal(last.danger, true);
+    assert.ok(entries.every((e, i) => e.kind !== "separator" || (entries[i - 1]?.kind === "item" && entries[i + 1]?.kind === "item")));
+  });
+
+  it("offers the six group colors as a submenu with color dots", () => {
+    const color = buildGroupMenu(groupCtx()).find((e) => e.id === "group-color");
+    assert.equal(color.submenu.length, 6);
+    assert.ok(color.submenu.every((e) => e.id === `group-color:${e.color}` && /^#[0-9A-F]{6}$/.test(e.color)));
+  });
+
+  it("disables moves at the ends, hides merge for a lone group, disables export while exporting", () => {
+    const first = buildGroupMenu(groupCtx({ index: 0 }));
+    assert.equal(first.find((e) => e.id === "group-move-up").disabled, true);
+    assert.equal(first.find((e) => e.id === "group-move-down").disabled, false);
+    const lastGroup = buildGroupMenu(groupCtx({ index: 2 }));
+    assert.equal(lastGroup.find((e) => e.id === "group-move-down").disabled, true);
+    const lone = buildGroupMenu(groupCtx({ index: 0, groupCount: 1, exporting: true }));
+    assert.ok(!itemIds(lone).includes("group-merge"));
+    assert.equal(lone.find((e) => e.id === "group-export").disabled, true);
+  });
 });
