@@ -1393,11 +1393,24 @@
     };
   }
 
+  // The tool chip a prompt was sent with (ChatGPT's "Create image" system
+  // hint) renders inside the user bubble as its own line, before or after the
+  // text. Only a whole first/last line that is exactly a chip label goes; the
+  // same words typed inside the message (e.g. "@创建图像 …") stay.
+  const SYSTEM_HINT_LABEL_LINES = new Set(["创建图像", "創建圖像", "建立圖像", "Create image"]);
+
+  function stripSystemHintLabelLines(text) {
+    const lines = String(text || "").split(/\r?\n/);
+    while (lines.length && (SYSTEM_HINT_LABEL_LINES.has(lines[0].trim()) || !lines[0].trim())) lines.shift();
+    while (lines.length && (SYSTEM_HINT_LABEL_LINES.has(lines[lines.length - 1].trim()) || !lines[lines.length - 1].trim())) lines.pop();
+    return lines.join("\n").trim();
+  }
+
   function userMessageForCandidate(candidate) {
     const image = candidate?.el instanceof HTMLImageElement ? candidate.el : null;
     if (!image) return "";
     const nearest = nearestPrecedingUserScope(image);
-    return String(nearest?.innerText || "").trim();
+    return stripSystemHintLabelLines(nearest?.innerText || "");
   }
 
   function messageScopeForCandidate(candidate) {
