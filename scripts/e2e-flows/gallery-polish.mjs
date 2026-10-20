@@ -107,10 +107,10 @@ function layoutSource(config) {
     groupRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 300 }));
     const statsItem = await waitFor(() => Array.from(document.querySelectorAll('.context-menu button'))
       .find((button) => button.textContent.trim() === '分组统计') || null, 'group statistics menu item');
-    // The group menu is the shared context menu: group name as heading, the
-    // six colors in a submenu, and delete styled as the danger row.
+    // The group menu is the shared context menu: no heading, the six colors
+    // in a submenu, and delete styled as the danger row.
     const groupMenu = statsItem.closest('.context-menu');
-    const groupMenuShared = groupMenu?.querySelector('.menu-heading')?.textContent.trim() === 'polish'
+    const groupMenuShared = Boolean(groupMenu) && !groupMenu.querySelector('.menu-heading')
       && Array.from(groupMenu.querySelectorAll('button[aria-haspopup="menu"]')).some((button) => button.textContent.includes('分组颜色'))
       && Array.from(groupMenu.querySelectorAll('button.danger')).some((button) => button.textContent.includes('删除分组'));
     statsItem.click();
