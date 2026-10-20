@@ -1021,7 +1021,7 @@ test("disabling the switch drops buffers and pending rounds immediately", async 
 });
 
 test("options page: the diagnostics panel only exists behind options.html#dev", () => {
-  assert.equal(manifest.version, "0.15.35");
+  assert.equal(manifest.version, "0.15.36");
   assert.ok(manifest.permissions.includes("unlimitedStorage"));
   assert.ok(backgroundSource.includes("chrome.runtime.getManifest().version"),
     "the background stamps stored records with the extension version");
