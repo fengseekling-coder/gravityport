@@ -18,6 +18,7 @@ import {
   desktopIconBasePath,
   generateDesktopIcons,
 } from "../desktop/icon-assets.mjs";
+import { desktopLicensesOutputDir } from "../scripts/third-party-licenses.mjs";
 import {
   assertDesktopPackagingNode,
   desktopPackagingNodeError,
@@ -135,6 +136,20 @@ test("desktop packaging target resolution supports only the approved macOS and W
     () => resolveDesktopPackagingTarget({ platform: "win32", arch: "arm64", env: {}, argv: [] }),
     /Unsupported MOSA desktop packaging target: win32-arm64/,
   );
+});
+
+test("both targets copy the generated license folder into Resources", () => {
+  for (const platform of ["darwin", "win32"]) {
+    const target = resolveDesktopPackagingTarget({ platform, env: {}, argv: [] });
+    const config = createForgeConfig({ target, env: {} });
+    assert.deepEqual(config.packagerConfig.extraResource, [desktopLicensesOutputDir({ outDir: "out" })]);
+    assert.match(config.packagerConfig.extraResource[0], /[\\/]out[\\/]\.desktop-licenses[\\/]licenses$/);
+    const routed = createForgeConfig({ target, env: { MOSA_FORGE_OUT_DIR: "qa-out" } });
+    assert.deepEqual(routed.packagerConfig.extraResource, [desktopLicensesOutputDir({ outDir: "qa-out" })]);
+    assert.ok(target.libvipsPackage, `${target.id} names its libvips package`);
+  }
+  assert.equal(resolveDesktopPackagingTarget({ platform: "darwin", env: {}, argv: [] }).libvipsPackage, "sharp-libvips-darwin-arm64");
+  assert.equal(resolveDesktopPackagingTarget({ platform: "win32", env: {}, argv: [] }).libvipsPackage, "sharp-win32-x64");
 });
 
 test("Windows Forge config omits mac signing and selects Windows native runtime packages", () => {
@@ -265,6 +280,8 @@ test("desktop package excludes every non-runtime project surface", () => {
     "/CHANGELOG.md",
     "/COMMERCIAL-LICENSE.md",
     "/desktop/assets/mosa-app-icon.svg",
+    "/desktop/licenses/GPL-3.0.txt",
+    "/desktop/licenses/LGPL-3.0.txt",
     "/desktop/forge.config.mjs",
     "/desktop/icon-assets.mjs",
     "/dist/lib/server-security.js",

@@ -45,6 +45,8 @@ node scripts/prepare-desktop-release-manifest.mjs \
 
 For Windows, `desktop:make:windows` and the `desktop:release:windows*` scripts write `out/make/zip/win32/x64/GravityPort-win32-x64-<version>.zip`. Upload it to `/downloads/` and pass `--windows <zip> --windows-payload-exe-name GravityPort.exe` (the default `MOSA.exe` expects a `MOSA-` filename), plus `--windows-signer-thumbprint <40-hex>` for Production.
 
+After the feed is published, create the GitHub Release with `npm run release:github -- --version <version>`. It requires the `v<version>` tag on `origin`, takes its notes from the same `release-notes.json` entry, and derives the channel from the version alone: a version with a pre-release suffix is published as a pre-release and never Latest, a final version is marked Latest. Run it with `--dry-run` first to print the exact `gh` command and notes without changing anything; pass `--asset <path>` (repeatable) to attach files, and `--update` when the Release already exists. For the transition build, name it in the title, for example `--title "GravityPort v0.3.0-rc.1 (MOSA transition)"`.
+
 ## Optional Visual Pack publishing
 
 Visual search model/runtime bytes are not shipped inside the core desktop package. Build one platform-specific pack per supported target and publish its directory tree under the fixed first-party origin:

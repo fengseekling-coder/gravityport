@@ -4,6 +4,7 @@ import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { desktopDistributionFromEnvironment, requiresPlatformSigning } from "../lib/release-distribution.mjs";
 import { resolveReleaseProduct } from "../scripts/release-product.mjs";
+import { desktopLicensesOutputDir, writeDesktopLicenses } from "../scripts/third-party-licenses.mjs";
 import {
   desktopIconBasePath,
   desktopIconOutputDir,
@@ -55,6 +56,8 @@ const DESKTOP_PACKAGING_TARGETS = Object.freeze({
     arch: "arm64",
     sqlitePrebuild: "darwin-arm64.node",
     sharpPackages: Object.freeze(["sharp-darwin-arm64", "sharp-libvips-darwin-arm64"]),
+    // The @img package whose README/versions.json describe the shipped libvips build.
+    libvipsPackage: "sharp-libvips-darwin-arm64",
     asarUnpackDir: "node_modules/@img/sharp-libvips-darwin-arm64",
   }),
   "win32-x64": Object.freeze({
@@ -63,6 +66,7 @@ const DESKTOP_PACKAGING_TARGETS = Object.freeze({
     arch: "x64",
     sqlitePrebuild: "win32-x64.node",
     sharpPackages: Object.freeze(["sharp-win32-x64"]),
+    libvipsPackage: "sharp-win32-x64",
     asarUnpackDir: "node_modules/@img/sharp-win32-x64",
   }),
 });
@@ -248,11 +252,26 @@ export function packageIgnorePatternsForTarget(target = resolveDesktopPackagingT
   /^\/web\/(?!gravityport(?:\/|$)).+/,
   /^\/web\/gravityport\/(?!dist(?:\/|$)).+/,
   /^\/desktop\/assets(?:\/|$)/,
+  // License texts ship once, in Resources/licenses/ (see scripts/third-party-licenses.mjs).
+  /^\/desktop\/licenses(?:\/|$)/,
   /^\/desktop\/(?:forge\.config\.mjs|icon-assets\.mjs)$/,
   /^\/lib\/.*(?:\.ts|\.js\.map)$/,
   /^\/node_modules\/\.package-lock\.json$/,
   new RegExp(`^/node_modules/(?!(?:better-sqlite3|detect-libc|node-addon-api|semver|sharp)(?:/|$)|@img(?:/(?:${allowedImagePackages})(?:/|$)|$)).+`),
   ];
+}
+
+// Runs on the pruned app tree. The license folder is generated from what is
+// left after pruning, so it lists exactly the runtime packages that ship.
+export async function finalizePrunedApp(buildPath, target, { licensesDir, projectRoot } = {}) {
+  await preparePackagedRuntime(buildPath, target);
+  await writeDesktopLicenses({
+    projectRoot,
+    buildPath,
+    platform: target.platform,
+    libvipsPackage: target.libvipsPackage,
+    outputDir: licensesDir,
+  });
 }
 
 const activeTarget = resolveDesktopPackagingTarget();
@@ -265,6 +284,7 @@ export function createForgeConfig({ target = activeTarget, env = process.env } =
   const outDir = env.MOSA_FORGE_OUT_DIR || "out";
   const iconOutputDir = desktopIconOutputDir({ outDir });
   const icon = desktopIconBasePath({ outDir });
+  const licensesDir = desktopLicensesOutputDir({ outDir });
   return {
   // Forge normally writes to repository-local out/. QA environments may route
   // generated packages elsewhere without changing the release layout.
@@ -276,6 +296,8 @@ export function createForgeConfig({ target = activeTarget, env = process.env } =
     ...macPackaging,
     ...windowsPackaging,
     ignore,
+    // Copied into Resources/ after packageAfterPrune writes it and before signing.
+    extraResource: [licensesDir],
     asar: {
       // Sharp's target package contains native siblings that must stay outside
       // app.asar. The exact package differs between macOS and Windows.
@@ -293,7 +315,7 @@ export function createForgeConfig({ target = activeTarget, env = process.env } =
     // that native runtime and fail closed if the target dependency is absent.
     packageAfterPrune: async (_config, buildPath, _electronVersion, platform, arch) => {
       const hookTarget = resolveDesktopPackagingTarget({ platform, arch, env: {}, argv: [] });
-      await preparePackagedRuntime(buildPath, hookTarget);
+      await finalizePrunedApp(buildPath, hookTarget, { licensesDir });
     },
   },
   plugins: [

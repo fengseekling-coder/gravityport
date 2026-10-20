@@ -2,11 +2,12 @@
 
 import { extractFile, getRawHeader } from "@electron/asar";
 import { access, readFile, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { resolveDesktopPackagingTarget } from "../desktop/forge.config.mjs";
 import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
+import { LICENSES_DIR_NAME, verifyPackagedLicenses } from "./third-party-licenses.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const NATIVE_BINARY_PATTERN = /\.(?:node|dylib|dll)$/iu;
@@ -142,6 +143,8 @@ export async function verifyPackagedRuntime({
       + `got ${packagedManifest.name || "(missing)"}@${packagedManifest.version || "(missing)"}.`,
     );
   }
+
+  await verifyPackagedLicenses(join(dirname(asarPath), LICENSES_DIR_NAME));
 
   return {
     asarPath,
