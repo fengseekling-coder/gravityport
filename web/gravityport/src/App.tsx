@@ -2497,9 +2497,11 @@ export default function App() {
       })
     } catch (error) { notify(errorMessage(error)) }
   }
+  // 不再提醒 only skips plain moves: a selection holding a stack card takes
+  // every member with it, so it always confirms.
   const requestDelete = () => {
     setMenu(null)
-    if (skipConfirm) remove()
+    if (skipConfirm && !splitSelectionStacks(selectionIds).stackIds.length) remove()
     else setDeleting(true)
   }
   // Restore the selection (or just the focused asset when nothing else is
@@ -3102,13 +3104,16 @@ export default function App() {
       // Right-clicking outside the multi-selection re-targets the
       // context menu to the clicked card; inside it, the whole
       // selection stays the action target. Stack cards follow the
-      // same grammar — the stack menu still acts on that stack
-      // alone through its own target. Trash keeps its restore
-      // menu, but stack cards stay inert there.
+      // same grammar: alone, they get the stack menu (open, rename,
+      // dissolve, act on that stack); inside a multi-selection they
+      // get the batch menu, so trash and group actions take the
+      // whole selection. Trash keeps its restore menu, but stack
+      // cards stay inert there.
       if (a.stack && active === "回收站") return
+      const inMultiSelection = selectedIds.includes(a.id) && batchIds.length > 1
       if (!selectedIds.includes(a.id)) applySelection([], a.id)
       else focusAsset(a.id)
-      if (a.stack) {
+      if (a.stack && !inMultiSelection) {
         openStackMenu(a.stack, a.name, e.clientX, e.clientY)
         return
       }

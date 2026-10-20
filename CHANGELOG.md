@@ -93,6 +93,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ### Fixes / 修复
 
+- Right-clicking a stack card that is part of a multi-selection now opens the batch menu ("已选 {count} 项"), so 移至回收站 and the group actions take the whole selection; before, the stack card's own menu acted on that stack alone and left the other selected images behind. A selection containing a stack now always confirms before moving to the Trash, even with 不再提醒 on — that setting only skips plain moves, as documented.
 - When the live event stream drops and reconnects, the app now refreshes once automatically, so changes made while the stream was down appear without a manual refresh.
 - A background library refresh no longer cancels a select-all in progress: selecting across pages now completes even while thumbnails are still being generated and library events keep arriving.
 - Dragging a library file out of the app and dropping it back — or dropping it in from the Finder — no longer imports a duplicate: files that already belong to the library are recognized and skipped, and when everything dropped was already in the library a toast says so ("{count} 个文件已在素材库中，没有重复导入").

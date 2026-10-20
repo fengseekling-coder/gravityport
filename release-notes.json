@@ -24,7 +24,8 @@
       "侧栏「我的分组」的右键菜单换成和素材右键菜单一样的样式：分组颜色收进二级菜单，删除单独放在最下面。",
       "画廊支持键盘浏览：方向键移到相邻卡片，回车打开；⌘F 或 / 跳到搜索框，菜单里的「查找」也能用了。",
       "按 Delete 删除时也遵守「不再提醒」，不再每次弹确认。",
-      "浏览器扩展关掉自动入库后，不再自己上报 ChatGPT 对话标题。"
+      "浏览器扩展关掉自动入库后，不再自己上报 ChatGPT 对话标题。",
+      "修复：同时选中单图和堆叠后，在堆叠卡片上右键删除，现在会把整个选区移到回收站，不再只删堆叠；选区里有堆叠时，即使勾了「不再提醒」也会先确认。"
     ],
     "en": [
       "MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.",
@@ -49,7 +50,8 @@
       "The right-click menu for groups under My groups now matches the asset menu: group colors sit in a submenu, and Delete stands on its own at the bottom.",
       "Browse the gallery from the keyboard: arrow keys move to the neighbouring card and Enter opens it; ⌘F or / jumps to search, and the menu's Find now works.",
       "Pressing Delete now honours \"Don’t ask again\" instead of always asking for confirmation.",
-      "With auto capture off, the browser extension no longer reports ChatGPT conversation titles on its own."
+      "With auto capture off, the browser extension no longer reports ChatGPT conversation titles on its own.",
+      "Fixed: right-clicking a selected stack card now moves the whole selection to the Trash, not just the stack, and a selection with a stack always asks first."
     ]
   },
   "releases": [

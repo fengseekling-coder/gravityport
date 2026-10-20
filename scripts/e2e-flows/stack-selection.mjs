@@ -2,10 +2,13 @@
 // stack cards, as in a real library. ⌘-click adds to the inspected card, a
 // Shift-click range and a marquee both include stack cards, and a batch
 // move-to-trash takes every member of a selected stack (undo brings them all
-// back). A focused card never draws the focus-visible outline on top of its
-// selection ring.
+// back). Right-clicking a stack card inside a multi-selection opens the batch
+// menu, so its 移至回收站 takes the plain images too, and a selection with a
+// stack still confirms after 不再提醒 while a plain move no longer does. A
+// focused card never draws the focus-visible outline on top of its selection
+// ring.
 export const name = "stack-selection";
-export const description = "stack gallery: ⌘-click adds to the inspected card -> Shift range and marquee include stacks -> batch trash takes whole stacks, undo restores -> no focus outline on cards";
+export const description = "stack gallery: ⌘-click adds to the inspected card -> Shift range and marquee include stacks -> batch trash takes whole stacks, undo restores -> right-click on a selected stack card trashes the whole selection, stacks confirm after 不再提醒 -> no focus outline on cards";
 
 const STACKS = 3;
 const STACK_SIZE = 2;
@@ -32,7 +35,10 @@ export async function run(ctx) {
     const result = await ctx.runInPage(server, stackSelectionSource(total), { windowSize: [1440, 940] });
     if (result?.cmdAdded !== 2 || result?.rangeAll !== STACKS + PLAIN || result?.rangeStacks !== STACKS
       || result?.marqueeAll !== STACKS + PLAIN || result?.marqueeStacks !== STACKS
-      || result?.trashed !== total || result?.restored !== true || result?.focusOutline !== "none") {
+      || result?.trashed !== total || result?.restored !== true
+      || result?.stackCardMenuHeading !== "已选 2 项" || result?.mixedConfirmed !== true || result?.mixedTrashed !== 1 + STACK_SIZE
+      || result?.plainSkippedConfirm !== true || result?.plainTrashed !== 1
+      || result?.focusOutline !== "none") {
       throw new Error(`stack-selection result: ${JSON.stringify(result)}`);
     }
     return result;
@@ -114,6 +120,11 @@ function stackSelectionSource(total) {
     if (!trashItem) throw new Error('batch menu has no 移至回收站');
     trashItem.click();
     await waitFor(() => document.querySelector('[role="alertdialog"]'), 'batch delete confirm');
+    // Turn on 不再提醒 here; step 4b checks it skips plain moves only.
+    const skip = document.querySelector('[role="alertdialog"] input[type="checkbox"]');
+    if (!skip) throw new Error('delete confirm has no 不再提醒 checkbox');
+    if (!skip.checked) skip.click();
+    await waitFor(() => skip.checked, '不再提醒 checked');
     Array.from(document.querySelectorAll('[role="alertdialog"] button')).find((button) => button.textContent.trim() === '移至回收站').click();
     await waitFor(() => navSmall('回收站') === '${total}', 'every stack member in the trash');
     const trashed = Number(navSmall('回收站'));
@@ -121,6 +132,43 @@ function stackSelectionSource(total) {
     undo.click();
     await waitFor(() => navSmall('回收站') === '0' && cards().filter(isStack).length === ${STACKS}, 'undo restores every member');
     const restored = true;
+
+    // 4b. One plain image plus one stack, right-clicked on the stack card:
+    // the batch menu opens and trashes both, and the stack still confirms.
+    const plainCards = () => cards().filter((card) => !isStack(card));
+    const menuButton = (label) => Array.from(document.querySelectorAll('.context-menu button')).find((entry) => entry.textContent.trim() === label);
+    await escape();
+    click(plainCards()[0]);
+    await waitFor(() => selected().length === 1 && selected()[0] === plainCards()[0], 'plain card inspected');
+    const mixedStack = stackCards()[0];
+    click(mixedStack, { metaKey: true });
+    await waitFor(() => selected().length === 2, '⌘-click adds a stack to the plain card');
+    mixedStack.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 600, clientY: 400 }));
+    await waitFor(() => document.querySelector('.context-menu'), 'stack card menu inside the selection');
+    const stackCardMenuHeading = document.querySelector('.context-menu .menu-heading')?.textContent?.trim() || '';
+    if (menuButton('重命名堆叠')) throw new Error('a stack card inside a multi-selection still opened the single-stack menu');
+    menuButton('移至回收站').click();
+    await waitFor(() => document.querySelector('[role="alertdialog"]'), 'a selection with a stack confirms despite 不再提醒');
+    const mixedConfirmed = true;
+    Array.from(document.querySelectorAll('[role="alertdialog"] button')).find((button) => button.textContent.trim() === '移至回收站').click();
+    await waitFor(() => navSmall('回收站') === String(1 + ${STACK_SIZE}), 'the plain image and every stack member in the trash');
+    const mixedTrashed = Number(navSmall('回收站'));
+    (await waitFor(() => document.querySelector('.toast .toast-action'), 'mixed undo action')).click();
+    await waitFor(() => navSmall('回收站') === '0', 'undo restores the mixed selection');
+
+    // 4c. A plain-only move honours 不再提醒: no dialog, straight to the trash.
+    await escape();
+    await waitFor(() => plainCards().length === ${PLAIN}, 'plain cards back after undo');
+    click(plainCards()[0]);
+    await waitFor(() => selected().length === 1 && selected()[0] === plainCards()[0], 'plain card selected again');
+    plainCards()[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 600, clientY: 400 }));
+    await waitFor(() => document.querySelector('.context-menu'), 'plain card menu');
+    menuButton('移至回收站').click();
+    await waitFor(() => navSmall('回收站') === '1', 'plain move skips the confirm');
+    const plainSkippedConfirm = !document.querySelector('[role="alertdialog"]');
+    const plainTrashed = Number(navSmall('回收站'));
+    (await waitFor(() => document.querySelector('.toast .toast-action'), 'plain undo action')).click();
+    await waitFor(() => navSmall('回收站') === '0', 'undo restores the plain image');
 
     // 5. A focused card never draws the focus-visible outline: the generic
     // button:focus-visible ring (same color, 3px out) doubled the selection
@@ -130,6 +178,7 @@ function stackSelectionSource(total) {
     const cardRule = rules.find((rule) => (rule.selectorText || '').split(',').some((part) => part.trim() === '.app .asset-card:focus-visible'));
     const focusOutline = cardRule ? cardRule.style.outlineStyle : 'missing';
 
-    return { cmdAdded, rangeAll, rangeStacks, marqueeAll, marqueeStacks, trashed, restored, focusOutline };
+    return { cmdAdded, rangeAll, rangeStacks, marqueeAll, marqueeStacks, trashed, restored,
+      stackCardMenuHeading, mixedConfirmed, mixedTrashed, plainSkippedConfirm, plainTrashed, focusOutline };
   })()`;
 }
