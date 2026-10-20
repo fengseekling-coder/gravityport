@@ -153,7 +153,53 @@ export type StackDropRecord = {
  *  what was added — never the cover that was already there. */
 export type StackUndoPlan =
   | { kind: "dissolve-stack"; project: string; stackId: string }
-  | { kind: "remove-from-stack"; project: string; stackId: string; assetIds: string[] };
+  | { kind: "remove-from-stack"; project: string; stackId: string; assetIds: string[] }
+  | StackUnmergePlan;
+
+/** A dragged stack as it was before a merge: rebuilt from this on undo. */
+export type MergeSource = { name: string; memberIds: string[] };
+
+/** Undo of a merge (task 196): loosen what moved — or dissolve the stack the
+ *  merge created — then rebuild every dragged stack in its old order, cover
+ *  (the first member) and name. */
+export type StackUnmergePlan = {
+  kind: "unmerge";
+  project: string;
+  movedIds: string[];
+  sources: MergeSource[];
+  createdStackId?: string;
+};
+
+/**
+ * What a drag carrying stacks merges: the moved ids in drag order, each
+ * stack card expanded to its members in stack order, plain cards as
+ * themselves, duplicates dropped; and each dragged stack's pre-merge shape.
+ */
+export function planStackMerge(
+  dragIds: string[],
+  stackOfCard: ReadonlyMap<string, { id: string; name: string }>,
+  membersOf: ReadonlyMap<string, string[]>,
+): { movedIds: string[]; sources: MergeSource[] } {
+  const movedIds: string[] = [];
+  const seen = new Set<string>();
+  const sources: MergeSource[] = [];
+  const seenStacks = new Set<string>();
+  const add = (id: string) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    movedIds.push(id);
+  };
+  for (const cardId of dragIds) {
+    const stack = stackOfCard.get(cardId);
+    if (!stack) { add(cardId); continue; }
+    if (seenStacks.has(stack.id)) continue;
+    seenStacks.add(stack.id);
+    const memberIds = [...new Set(membersOf.get(stack.id) || [])].filter(Boolean);
+    sources.push({ name: stack.name || "", memberIds });
+    memberIds.forEach(add);
+  }
+  return { movedIds, sources };
+}
 
 export function undoPlanForStackDrop(drop: StackDropRecord): StackUndoPlan | null {
   if (!drop || !drop.project || !drop.stackId) return null;

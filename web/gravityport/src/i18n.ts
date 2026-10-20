@@ -241,6 +241,12 @@ const english: Record<string, string> = {
   "已把 {count} 项移到「{group}」": "Moved {count} items to “{group}”",
   "已把 {count} 项移出分组": "Removed {count} items from their group",
   "已向堆叠加入 {count} 项素材": "Added {count} assets",
+  // Task 196: dragging stacks onto a card merges them
+  "已合并到堆叠「{name}」，共 {count} 项": "Merged {count} items into “{name}”",
+  "已合并到堆叠，共 {count} 项": "Merged {count} items into the stack",
+  "已合并 X 项，Y 项失败": "Merged X items; Y failed",
+  "合并堆叠失败": "Couldn’t merge the stacks",
+  "撤销失败": "Couldn’t undo",
   "堆叠内容已发生变化，已刷新，请重新拖动排序": "The stack changed while you were reordering it. It has been refreshed; drag again.",
   "当前素材无法拖出到其他应用": "This asset cannot be dragged to another app",
   "一次最多拖出 512 个文件，已带出前 512 个": "Up to 512 files can be dragged at once; the first 512 were included.",

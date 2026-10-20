@@ -129,3 +129,15 @@ export class GalleryScrollMemory {
     }
   }
 }
+
+/** True when the same view's list changed other than by a page appended at
+ * the end (trash, undo, stack edits, live arrivals): the caller then holds the
+ * scroll position instead of letting the rebuilt layout move it. An identical
+ * list (a same-view refresh) and pure appends (pagination) are not changes. */
+export function listChangedInPlace(previousIds: readonly string[], ids: readonly string[]): boolean {
+  if (ids.length < previousIds.length) return true
+  for (let index = 0; index < previousIds.length; index += 1) {
+    if (previousIds[index] !== ids[index]) return true
+  }
+  return false
+}

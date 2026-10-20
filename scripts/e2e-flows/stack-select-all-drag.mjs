@@ -5,9 +5,9 @@
 // all members). A hand-picked selection of stacks and a plain card drags onto
 // a group, and out of the window it hands the system drag every member path,
 // in selection order with each stack expanded in its own order. A selection
-// carrying stacks never merges onto another card.
+// carrying stacks dropped on a plain card merges into a new stack (task 196).
 export const name = "stack-select-all-drag";
-export const description = "30 stacks behind 110 plain cards -> ⌘A selects all 140 cards across pages -> drag to a group moves all 170 assets -> ⌘A + Delete trashes 170, undo restores -> stacks + plain card drag to a group -> drag-out hands every member path in order -> stacks never merge onto a card";
+export const description = "30 stacks behind 110 plain cards -> ⌘A selects all 140 cards across pages -> drag to a group moves all 170 assets -> ⌘A + Delete trashes 170, undo restores -> stacks + plain card drag to a group -> drag-out hands every member path in order -> stacks + a card merge onto a plain card";
 
 const STACKS = 30;
 const STACK_SIZE = 2;
@@ -77,7 +77,7 @@ export async function run(ctx) {
     const drop = plainIds.slice(0, PLAIN - KEEP_PLAIN);
     await ctx.api(server.origin, "POST", "/api/assets/batch", { action: "trash", projectId: "default", assetIds: drop });
     const second = await ctx.runInPage(server, dragSource({ cards: STACKS + KEEP_PLAIN, stacks: STACKS, dragGroup }), { windowSize: [1440, 940] });
-    if (second?.groupToast !== true || !Array.isArray(second?.draggedPaths) || second?.mergeBlocked !== true) {
+    if (second?.groupToast !== true || !Array.isArray(second?.draggedPaths) || second?.mergeMade !== true) {
       throw new Error(`stack-select-all-drag part 2: ${JSON.stringify(second)}`);
     }
     // Server truth for the group drop: both stacks whole, the plain card, and
@@ -260,12 +260,14 @@ function dragSource({ cards: cardTotal, stacks, dragGroup }) {
     delete window.electronAPI;
     await sleep(300);
 
-    // 3. A selection with stacks never highlights a card as a stack target.
+    // 3. A selection with stacks merges onto a plain card: the dragged stack
+    // dissolves into a new stack, so the count comes back to the same number
+    // once the gallery reloads (highlight timing is stack-merge-drag's job).
     const mergeCards = [stackCards()[4], plainCards()[2]];
     await selectCards(mergeCards);
-    const highlighted = await dragTo(mergeCards[1], plainCards()[3], () => Boolean(document.querySelector('.card-drop-target')));
-    await sleep(800);
-    const mergeBlocked = !highlighted && !toastText().includes('已堆叠') && stackCards().length === ${stacks};
-    return { groupToast, groupCards: groupIds, outCards: outIds, draggedPaths, mergeBlocked, clickRetries };
+    await dragTo(mergeCards[1], plainCards()[3]);
+    await waitFor(() => toastText().includes('已堆叠'), 'merge toast');
+    const mergeMade = Boolean(await waitFor(() => stackCards().length === ${stacks}, 'stack count settles after the merge', 10000).catch(() => false));
+    return { groupToast, groupCards: groupIds, outCards: outIds, draggedPaths, mergeMade, clickRetries };
   })()`;
 }

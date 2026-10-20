@@ -48,7 +48,9 @@ function projectSwitchSource() {
     }
 
     await waitFor(() => document.querySelector('.app') && cards() === 1, 'default project card');
-    const switcherVisible = Boolean(document.querySelector('.sidebar-project .toolbar-select'));
+    // The switcher appears once the project list loads (two projects); a
+    // slow start (Windows CI) must not read it before that.
+    const switcherVisible = Boolean(await waitFor(() => document.querySelector('.sidebar-project .toolbar-select'), 'project switcher shown', 15000).catch(() => null));
 
     await chooseProject('alpha');
     await waitFor(() => cards() === 1, "alpha project shows its own card");
