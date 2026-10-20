@@ -2,6 +2,8 @@
 
 This file records upstream projects that materially informed GravityPort's design or implementation, the main third-party components shipped inside the GravityPort desktop app, and third-party models or runtimes that GravityPort redistributes in its optional packs. It is separate from GravityPort's own license terms.
 
+The desktop packages carry the full license texts for the third-party code they ship in a `licenses` folder: `GravityPort.app/Contents/Resources/licenses/` on macOS and `resources\licenses\` next to `GravityPort.exe` on Windows. It holds Electron's `LICENSE` (as `ELECTRON-LICENSE.txt`), Chromium's `LICENSES.chromium.html`, the GNU LGPL and GPL version 3 texts, and `THIRD_PARTY_LICENSES.txt`, which lists every npm package in the interface bundle and in the desktop runtime with its license text, followed by each library packaged with libvips and its license. Packaging generates the folder with `scripts/third-party-licenses.mjs` and refuses to finish if any shipped package lacks a license text.
+
 ## APSAL Open
 
 GravityPort's recipe snapshot model was informed by the immutable, reproducible creative-record concepts in **APSAL Open**.
@@ -31,7 +33,7 @@ The GravityPort desktop app is built on **Electron**, which bundles Chromium and
 - Source: <https://github.com/electron/electron>
 - Runtime role: the application window, menus, native integrations, and the embedded Node.js runtime that runs the local GravityPort service.
 
-The license texts are at <https://github.com/electron/electron/blob/main/LICENSE> and, for Chromium and its dependencies, in the `LICENSES.chromium.html` file that every Electron release includes.
+The license texts are at <https://github.com/electron/electron/blob/main/LICENSE> and, for Chromium and its dependencies, in the `LICENSES.chromium.html` file that every Electron release includes. The copies from the Electron build GravityPort is packaged with ship in the desktop package's `licenses` folder.
 
 ## sharp and libvips (image processing)
 
@@ -43,7 +45,7 @@ Thumbnails, previews, and image metadata are produced with **sharp**, which ship
 - Sources: <https://github.com/lovell/sharp> and <https://github.com/libvips/libvips>; the build scripts for the prebuilt binaries are at <https://github.com/lovell/sharp-libvips>
 - Runtime role: decoding, resizing, and encoding images locally; images never leave the computer for this.
 
-libvips is used unmodified and is dynamically linked as a separate shared library (`libvips-cpp.*.dylib` / `.dll` under `node_modules/@img/sharp-libvips-<platform>/lib/` inside the app), so it can be replaced with a compatible build under the terms of the LGPL. The LGPL text is at <https://github.com/libvips/libvips/blob/master/LICENSE>, and the libraries bundled into the prebuilt binary, with their licenses, are listed at <https://github.com/lovell/sharp-libvips/blob/main/THIRD-PARTY-NOTICES.md>.
+libvips is used unmodified and is dynamically linked as a separate shared library (`libvips-cpp.*.dylib` under `node_modules/@img/sharp-libvips-darwin-arm64/lib/` on macOS, the libvips `.dll` files under `node_modules/@img/sharp-win32-x64/lib/` on Windows, both in `app.asar.unpacked` inside the app), so it can be replaced with a compatible build under the terms of the LGPL. The LGPL text is at <https://github.com/libvips/libvips/blob/master/LICENSE>, and the libraries bundled into the prebuilt binary, with their licenses, are listed at <https://github.com/lovell/sharp-libvips/blob/main/THIRD-PARTY-NOTICES.md>. The same list, with the version of each library that ships, is section 3 of `THIRD_PARTY_LICENSES.txt` in the desktop package's `licenses` folder, next to the LGPL and GPL texts.
 
 ## better-sqlite3 and SQLite (library database)
 

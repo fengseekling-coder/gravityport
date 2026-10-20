@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createPackage, createPackageWithOptions } from "@electron/asar";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import {
   packagedAsarPath,
   verifyPackagedRuntime,
 } from "../scripts/verify-packaged-runtime.mjs";
+import { LICENSE_FILES } from "../scripts/third-party-licenses.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 
 const IDENTITY = Object.freeze({
@@ -21,6 +22,15 @@ async function writeFixtureFile(root, relativePath, contents) {
   const path = join(root, ...relativePath.split("/"));
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, contents);
+}
+
+async function writePackagedLicenses(asarPath) {
+  const licensesDir = join(dirname(asarPath), "licenses");
+  await mkdir(licensesDir, { recursive: true });
+  for (const name of Object.values(LICENSE_FILES)) {
+    await writeFile(join(licensesDir, name), name === LICENSE_FILES.notices ? "react\nbetter-sqlite3\nlibvips\n" : `${name}\n`);
+  }
+  return licensesDir;
 }
 
 async function createFixture(t, { platform, arch, packedNatives = false }) {
@@ -53,7 +63,8 @@ async function createFixture(t, { platform, arch, packedNatives = false }) {
       unpackDir: platform === "darwin" ? "node_modules/@img/sharp-libvips-darwin-arm64" : "node_modules/@img/sharp-win32-x64",
     });
   }
-  return { projectRoot, asarPath };
+  const licensesDir = await writePackagedLicenses(asarPath);
+  return { projectRoot, asarPath, licensesDir };
 }
 
 test("packaged runtime verifier accepts a macOS package only when native binaries are unpacked", async (t) => {
@@ -107,6 +118,34 @@ test("packaged runtime verifier rejects optional visual runtime bundled into the
   await assert.rejects(
     verifyPackagedRuntime({ projectRoot, platform: "darwin", arch: "arm64" }),
     /Optional visual runtime must stay out of GravityPort\.app/,
+  );
+});
+
+test("packaged runtime verifier requires every license file in Resources/licenses on both targets", async (t) => {
+  for (const [platform, arch] of [["darwin", "arm64"], ["win32", "x64"]]) {
+    for (const name of Object.values(LICENSE_FILES)) {
+      const { projectRoot, licensesDir } = await createFixture(t, { platform, arch });
+      await rm(join(licensesDir, name));
+      await assert.rejects(
+        verifyPackagedRuntime({ projectRoot, platform, arch }),
+        new RegExp(`Packaged license file is missing: licenses/${name.replace(/\./g, "\\.")}`),
+      );
+    }
+  }
+});
+
+test("packaged runtime verifier rejects empty license files and notices that miss a component", async (t) => {
+  const { projectRoot, licensesDir } = await createFixture(t, { platform: "darwin", arch: "arm64" });
+  await writeFile(join(licensesDir, LICENSE_FILES.gpl), "");
+  await assert.rejects(
+    verifyPackagedRuntime({ projectRoot, platform: "darwin", arch: "arm64" }),
+    /Packaged license file is empty: licenses\/GPL-3\.0\.txt/,
+  );
+  await writeFile(join(licensesDir, LICENSE_FILES.gpl), "GPL\n");
+  await writeFile(join(licensesDir, LICENSE_FILES.notices), "better-sqlite3\nlibvips\n");
+  await assert.rejects(
+    verifyPackagedRuntime({ projectRoot, platform: "darwin", arch: "arm64" }),
+    /THIRD_PARTY_LICENSES\.txt does not mention react/,
   );
 });
 
