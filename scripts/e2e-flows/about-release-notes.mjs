@@ -109,7 +109,12 @@ function pageHelpers() {
       const nav = navByTitle('关于') || navByTitle('About');
       if (!nav) throw new Error('about nav missing: ' + Array.from(document.querySelectorAll('.settings-nav button')).map((b) => b.textContent.trim()).join('|'));
       nav.click();
-      await waitFor(() => document.querySelector('.release-notes .release-heading h4'), 'release-notes block');
+      // Until /api/health answers, the heading is the "当前版本 — 更新内容"
+      // placeholder; a slow start (Windows CI) must not be read that early.
+      await waitFor(() => {
+        const heading = document.querySelector('.release-notes .release-heading h4');
+        return heading && !heading.textContent.includes('—') ? heading : null;
+      }, 'release-notes block with the version loaded');
     }
     const collect = () => {
       const blocks = Array.from(document.querySelectorAll('.settings-content .release-notes'));
