@@ -46,7 +46,7 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.34");
+  assert.equal(manifest.version, "0.15.35");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -245,7 +245,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.34");
+  assert.equal(manifest.version, "0.15.35");
   // Storage keys and the pairing product identifier stay "mosa" so old
   // extensions keep working with the renamed App and vice versa.
   assert.match(backgroundSource, /if \(identity\?\.product !== "mosa"\) continue;/);
@@ -1843,7 +1843,7 @@ test("binds prompt and asset when one image call splits them across nested reque
 });
 
 test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.34");
+  assert.equal(manifest.version, "0.15.35");
   assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
   assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
   assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);
@@ -2386,7 +2386,7 @@ test("falls back to the legacy conversation endpoint when the plural endpoint is
 function currentChatGptContentHarness() {
   const names = [
     "conversationIdFromUrl", "currentConversationId", "conversationTurnForNode", "turnContainsRole", "nearestPrecedingUserScope",
-    "userMessageForCandidate", "messageIdsForCandidate", "messageIdForCandidate", "messageScopeForCandidate", "domCaptionForCandidate",
+    "userMessageForCandidate", "stripSystemHintLabelLines", "messageIdsForCandidate", "messageIdForCandidate", "messageScopeForCandidate", "domCaptionForCandidate",
     "chatGptImageProxyInfo", "normalizeAssetId", "isTrustedBlobAssetUrl", "normalizeBlobAssetId", "blobAssetIdForUrl", "imageLookupKeys", "candidateLookupKeys",
     "findGenerationEvidenceForCandidate", "resolvePrompt", "buildStoredPrompt", "cleanPromptText",
     "extractPlaceHints", "promptMentionsPlace", "looksLikeGenerationCaption", "isWeakChatPrompt",
@@ -2397,7 +2397,7 @@ function currentChatGptContentHarness() {
     assert.ok(match, `missing ${name}`);
     return match[0];
   }).join("\n");
-  const constants = ["CHATGPT_TURN_SELECTOR", "CHATGPT_USER_SELECTOR", "CHATGPT_MESSAGE_SELECTOR"]
+  const constants = ["CHATGPT_TURN_SELECTOR", "CHATGPT_USER_SELECTOR", "CHATGPT_MESSAGE_SELECTOR", "SYSTEM_HINT_LABEL_LINES"]
     .map((name) => new RegExp(`const ${name} = [^;]+;`).exec(contentSource)[0]).join("\n");
   const userNode = {
     innerText: "Make the lettering blue and keep the background red.",
@@ -3630,7 +3630,7 @@ function currentChatGptAutoCaptureHarness() {
     "COMPOSER_SELECTOR", "CHATGPT_TURN_SELECTOR", "CHATGPT_USER_SELECTOR", "CHATGPT_MESSAGE_SELECTOR", "STYLE_HINTS",
     "MAX_BLOB_ASSETS", "SESSION_CACHE_MAX", "SIZE_FAILURE_LIMIT", "SIZE_FAILURE_BACKOFF_MS",
     "AUTO_STABILITY_DELAY_MS", "AUTO_IN_PROGRESS_STALE_MS", "AUTO_PARTIAL_FALLBACK_MS", "DOM_MEDIA_GRACE_MS",
-    "SESSION_TITLE_MAX_LENGTH", "SESSION_TITLE_PLACEHOLDERS",
+    "SESSION_TITLE_MAX_LENGTH", "SESSION_TITLE_PLACEHOLDERS", "SYSTEM_HINT_LABEL_LINES",
   ].map((name) => new RegExp(`const ${name} = [^;]+;`).exec(contentSource)?.[0]);
   assert.ok(constants.every(Boolean), "auto-capture constants should be extractable from content.js");
 
@@ -3651,7 +3651,7 @@ function currentChatGptAutoCaptureHarness() {
     "isArchiveWorthyCandidate", "canAttempt", "enqueueAuto", "ingestCandidate", "findCandidateForMeta", "resolvePrompt",
     "bytesFromUrlOrImg", "waitForRenderedCandidate", "renderedCandidateFor", "originalBytesFromUrl", "canvasBytesFromImage",
     "arrayBufferToBase64", "decodedImageDimensions",
-    "userMessageForCandidate", "messageScopeForCandidate", "domCaptionForCandidate", "messageIdsForCandidate", "messageIdForCandidate",
+    "userMessageForCandidate", "stripSystemHintLabelLines", "messageScopeForCandidate", "domCaptionForCandidate", "messageIdsForCandidate", "messageIdForCandidate",
     "buildStoredPrompt", "cleanPromptText", "extractPlaceHints", "promptMentionsPlace", "looksLikeGenerationCaption", "isWeakChatPrompt",
     "scorePromptText", "promptQuality", "metaPromptQuality",
   ];
@@ -5019,4 +5019,18 @@ test("background opens a ChatGPT desktop conversation only when it holds a gener
   assert.deepEqual(acks.at(-1), { conversationId: "aaaaaaaa-0000-0000-0000-000000000002", outcome: "captured" });
   await context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000003"]);
   assert.equal(created.length, 2);
+});
+
+test("user message drops the image tool chip line but keeps the same words typed in the text", () => {
+  const constant = /const SYSTEM_HINT_LABEL_LINES = [^\n]+\n/.exec(contentSource)?.[0];
+  const fn = /function stripSystemHintLabelLines\([\s\S]*?\n  }\n/.exec(contentSource)?.[0];
+  assert.ok(constant && fn);
+  const context = {};
+  vm.runInNewContext(`${constant}\n${fn}\nthis.strip = stripSystemHintLabelLines;`, context);
+  assert.equal(context.strip("一只放在白色桌面上的蓝色玻璃苹果\n创建图像"), "一只放在白色桌面上的蓝色玻璃苹果");
+  assert.equal(context.strip("创建图像\n\n一座巨大的赛博朋克佛像\n第二段"), "一座巨大的赛博朋克佛像\n第二段");
+  assert.equal(context.strip("Create image\r\nA glass apple"), "A glass apple");
+  assert.equal(context.strip("@创建图像 基于参考图: 一只苹果"), "@创建图像 基于参考图: 一只苹果");
+  assert.equal(context.strip("第一行\n创建图像\n最后一行"), "第一行\n创建图像\n最后一行");
+  assert.equal(context.strip("创建图像"), "");
 });

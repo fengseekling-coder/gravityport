@@ -8,7 +8,7 @@ import { PinterestConnectionCard } from "./PinterestConnectionCard"
 import { FeedbackPanel } from "./FeedbackPanel"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
-import { buildContextMenu, type MenuContext, type MenuEntry } from "./context-menus"
+import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } from "./context-menus"
 import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberIds, listStackMemberPaths } from "./library-actions"
 import {
   dragIdsForCard, dragGhostCount, pointOutsideWindow, nativeDragPaths,
@@ -467,7 +467,7 @@ export default function App() {
   // The context menu carries its target with it: stack menus act on the
   // right-clicked stack without touching the selection, so the handlers read
   // the menu state instead of guessing from the focused asset.
-  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[]; target: MenuContext["target"]; selectionCount: number; stackId: string; stackName: string; stackCount: number } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[]; target: MenuContext["target"] | "group"; selectionCount: number; stackId: string; stackName: string; stackCount: number; groupName?: string } | null>(null)
   // The menu clamps into the window by its real rendered size, not a row
   // estimate: the effect measures after mount and corrects before paint.
   const menuRef = useRef<HTMLDivElement>(null)
@@ -486,7 +486,6 @@ export default function App() {
   const [columns, setColumns] = useState(() => resolveInitialColumns(readStoredColumns(columnsStorage()), window.innerWidth))
   const [toast, setToast] = useState<ToastState>(null)
   const [expandedSections, setExpandedSections] = useState([true, true])
-  const [groupMenu, setGroupMenu] = useState<{ name: string; x: number; y: number } | null>(null)
   const [groupRename, setGroupRename] = useState<{ original: string; draft: string } | null>(null)
   const [stackRename, setStackRename] = useState<{ stackId: string; initialName: string; draft: string } | null>(null)
   const [stackDissolveConfirm, setStackDissolveConfirm] = useState<{ stackId: string; stackCount: number } | null>(null)
@@ -2615,6 +2614,54 @@ export default function App() {
     setMenu({ x, y, entries, target: ctx.target, selectionCount: 0, stackId, stackName, stackCount: assets.length })
   }
 
+  const openGroupMenu = (name: string, x: number, y: number) => {
+    const names = (navigation?.groups || []).map(item => item.name)
+    const entries = translateMenuEntries(buildGroupMenu({ name, index: names.indexOf(name), groupCount: names.length, exporting: Boolean(exportingGroup) }), 0)
+    setMenu({ x, y, entries, target: "group", selectionCount: 0, stackId: "", stackName: "", stackCount: 0, groupName: name })
+  }
+
+  // Sidebar group menu — every action reads the group the menu was opened on.
+  const runGroupMenuAction = (name: string, id: string) => {
+    if (id === "group-rename") setGroupRename({ original: name, draft: name })
+    else if (id === "group-move-up" || id === "group-move-down") {
+      const names = (navigation?.groups || []).map(item => item.name)
+      const index = names.indexOf(name)
+      const target = index + (id === "group-move-up" ? -1 : 1)
+      if (index < 0 || target < 0 || target >= names.length) return
+      ;[names[index], names[target]] = [names[target], names[index]]
+      reorderGroups(project, names).then(refreshNavigation).catch(error => notify(errorMessage(error)))
+    }
+    else if (id.startsWith("group-color:")) {
+      recolorGroup(project, name, id.slice("group-color:".length)).then(refreshNavigation).catch(error => notify(errorMessage(error)))
+    }
+    else if (id === "group-stats") {
+      fetchGroupStats(project, name).then(result => setGroupStats({ name, values: result.stats })).catch(error => notify(errorMessage(error)))
+    }
+    else if (id === "group-export") {
+      if (exportingGroup) return
+      const originProject = project
+      setExportingGroup(name)
+      fetchRawGroupAssets(originProject, name).then(records => {
+        const payload = { exportedAt: new Date().toISOString(), project: originProject, group: name,
+          assets: records.map(sanitizeAssetForExport) }
+        const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }))
+        try {
+          const link = document.createElement("a")
+          link.href = url
+          link.download = `gravityport-group-${name.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "group"}.json`
+          document.body.appendChild(link)
+          link.click()
+          link.remove()
+        } finally { window.setTimeout(() => URL.revokeObjectURL(url), 30_000) }
+      }).catch(error => notify(errorMessage(error))).finally(() => setExportingGroup(""))
+    }
+    else if (id === "group-merge") {
+      const other = navigation?.groups.find(item => item.name !== name)
+      if (other) setGroupMerge({ source: name, target: other.name })
+    }
+    else if (id === "group-delete") setGroupDeleteConfirm(name)
+  }
+
   // Shared paste: ⌘V and both menu paste entries move the cut ids into the
   // target stack, or back out to loose assets when the target is null.
   const pasteCut = (targetStackId: string | null) => {
@@ -2654,6 +2701,7 @@ export default function App() {
     const target = menu
     setMenu(null)
     if (!target) return
+    if (target.target === "group") { if (target.groupName) runGroupMenuAction(target.groupName, id); return }
     const ids = [...batchIds]
     // Asset menu
     if (id === "open-viewer") setPreview(true)
@@ -3095,7 +3143,7 @@ export default function App() {
                 onContextMenu={event => {
                   if (section !== 1) return
                   event.preventDefault()
-                  setGroupMenu({ name: g.name, x: event.clientX, y: event.clientY })
+                  openGroupMenu(g.name, event.clientX, event.clientY)
                 }}
                 onDragOver={event => {
                   if (g.id.startsWith("group:") && !preview && !settings) event.preventDefault()
@@ -3120,58 +3168,6 @@ export default function App() {
           <Icon name="settings" size={14} />
         </button>
       </aside>
-      {groupMenu && <>
-        <div className="group-menu-dismiss" onClick={() => setGroupMenu(null)} aria-hidden="true" />
-        <div className="group-manage-menu" role="menu" style={{ left: Math.min(groupMenu.x, window.innerWidth - 220), top: Math.min(groupMenu.y, window.innerHeight - 310) }}>
-          <strong>{groupMenu.name}</strong>
-          <button role="menuitem" onClick={() => { setGroupRename({ original: groupMenu.name, draft: groupMenu.name }); setGroupMenu(null) }}>{tr("重命名分组")}</button>
-          {([[-1, "上移分组"], [1, "下移分组"]] as const).map(([step, label]) => <button role="menuitem" key={label} onClick={() => {
-            const names = (navigation?.groups || []).map(item => item.name)
-            const index = names.indexOf(groupMenu.name)
-            const target = index + step
-            setGroupMenu(null)
-            if (index < 0 || target < 0 || target >= names.length) return
-            ;[names[index], names[target]] = [names[target], names[index]]
-            reorderGroups(project, names).then(refreshNavigation).catch(error => notify(errorMessage(error)))
-          }}>{tr(label)}</button>)}
-          <div className="group-color-choices" role="group" aria-label={tr("分组颜色")}>
-            {["#E06C75", "#D19A66", "#98C379", "#61AFEF", "#C678DD", "#56B6C2"].map(color => <button key={color} style={{ background: color }} aria-label={`${tr("分组颜色")} ${color}`} onClick={() => {
-              recolorGroup(project, groupMenu.name, color).then(refreshNavigation).catch(error => notify(errorMessage(error)))
-              setGroupMenu(null)
-            }} />)}
-          </div>
-          <button role="menuitem" onClick={() => {
-            const name = groupMenu.name
-            setGroupMenu(null)
-            fetchGroupStats(project, name).then(result => setGroupStats({ name, values: result.stats })).catch(error => notify(errorMessage(error)))
-          }}>{tr("分组统计")}</button>
-          <button role="menuitem" disabled={Boolean(exportingGroup)} onClick={() => {
-            const name = groupMenu.name
-            const originProject = project
-            setGroupMenu(null)
-            setExportingGroup(name)
-            fetchRawGroupAssets(originProject, name).then(records => {
-              const payload = { exportedAt: new Date().toISOString(), project: originProject, group: name,
-                assets: records.map(sanitizeAssetForExport) }
-              const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }))
-              try {
-                const link = document.createElement("a")
-                link.href = url
-                link.download = `gravityport-group-${name.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "group"}.json`
-                document.body.appendChild(link)
-                link.click()
-                link.remove()
-              } finally { window.setTimeout(() => URL.revokeObjectURL(url), 30_000) }
-            }).catch(error => notify(errorMessage(error))).finally(() => setExportingGroup(""))
-          }}>{tr("导出分组")}</button>
-          {navigation?.groups.some(item => item.name !== groupMenu.name) && <button role="menuitem" onClick={() => {
-            const other = navigation?.groups.find(item => item.name !== groupMenu.name)
-            if (other) setGroupMerge({ source: groupMenu.name, target: other.name })
-            setGroupMenu(null)
-          }}>{tr("合并分组")}</button>}
-          <button role="menuitem" onClick={() => { setGroupDeleteConfirm(groupMenu.name); setGroupMenu(null) }}>{tr("删除分组")}</button>
-        </div>
-      </>}
       {(groupRename || groupDeleteConfirm || groupMerge || groupStats) && <div className="group-dialog-backdrop" role="presentation">
         <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("分组管理")}>
           {groupRename && <form onSubmit={event => {

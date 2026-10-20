@@ -20,7 +20,8 @@
       "修复：视频卡片不再显示破图，画廊和详情里显示视频画面，右上角有播放标记。",
       "修复：少数图片缩略图比例不对、点开大图是空白。",
       "在 ChatGPT 桌面应用里聊天生成的图片，现在也能通过网页采集扩展自动收录（需开启自动采集）。",
-      "修复：新版 Codex 生成的图片重新记录 Codex 实际使用的提示词，不再误用你的聊天消息。"
+      "修复：新版 Codex 生成的图片重新记录 Codex 实际使用的提示词，不再误用你的聊天消息。",
+      "侧栏「我的分组」的右键菜单换成和素材右键菜单一样的样式：分组颜色收进二级菜单，删除单独放在最下面。"
     ],
     "en": [
       "MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.",
@@ -41,7 +42,8 @@
       "Fixed: video cards no longer show a broken image; the gallery and details show a frame from the video with a play badge.",
       "Fixed: a few images showed a wrong thumbnail ratio or a blank large view.",
       "Images made in ChatGPT desktop-app chats are now captured too, through the Web Capture extension with auto capture on.",
-      "Fixed: images from newer Codex versions record the prompt Codex actually used again, instead of your chat message."
+      "Fixed: images from newer Codex versions record the prompt Codex actually used again, instead of your chat message.",
+      "The right-click menu for groups under My groups now matches the asset menu: group colors sit in a submenu, and Delete stands on its own at the bottom."
     ]
   },
   "releases": [

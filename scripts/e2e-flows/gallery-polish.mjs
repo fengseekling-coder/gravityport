@@ -33,7 +33,7 @@ export async function run(ctx) {
     });
 
     const layout = await ctx.runInPage(server, layoutSource({ wideId: wide.asset.id, normalId: normalIds[0] }), { windowSize: [1440, 940] });
-    if (layout?.wideSpans !== true || layout?.columnsRemembered !== true || layout?.groupStatsLabelled !== true) {
+    if (layout?.wideSpans !== true || layout?.columnsRemembered !== true || layout?.groupStatsLabelled !== true || layout?.groupMenuShared !== true) {
       throw new Error(`gallery-polish layout: ${JSON.stringify(layout)}`);
     }
     return { empty, layout };
@@ -105,12 +105,18 @@ function layoutSource(config) {
     const groupRow = await waitFor(() => Array.from(document.querySelectorAll('.group-row'))
       .find((row) => (row.getAttribute('aria-label') || '') === 'polish') || null, 'the polish group row');
     groupRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 300 }));
-    const statsItem = await waitFor(() => Array.from(document.querySelectorAll('.group-manage-menu button'))
+    const statsItem = await waitFor(() => Array.from(document.querySelectorAll('.context-menu button'))
       .find((button) => button.textContent.trim() === '分组统计') || null, 'group statistics menu item');
+    // The group menu is the shared context menu: group name as heading, the
+    // six colors in a submenu, and delete styled as the danger row.
+    const groupMenu = statsItem.closest('.context-menu');
+    const groupMenuShared = groupMenu?.querySelector('.menu-heading')?.textContent.trim() === 'polish'
+      && Array.from(groupMenu.querySelectorAll('button[aria-haspopup="menu"]')).some((button) => button.textContent.includes('分组颜色'))
+      && Array.from(groupMenu.querySelectorAll('button.danger')).some((button) => button.textContent.includes('删除分组'));
     statsItem.click();
     const dialog = await waitFor(() => document.querySelector('.group-stats-data'), 'the statistics dialog');
     await waitFor(() => dialog.textContent.includes('素材总数') && dialog.textContent.includes('按分类'), 'labelled statistics');
     const groupStatsLabelled = !/total:|favorites:|versionChildren/.test(dialog.textContent);
-    return { wideWidth, normalWidth, wideSpans, columnsRemembered, groupStatsLabelled };
+    return { wideWidth, normalWidth, wideSpans, columnsRemembered, groupStatsLabelled, groupMenuShared };
   })()`;
 }

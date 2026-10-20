@@ -1034,13 +1034,6 @@ img.black-image {
  * natural widths (a zero-width container would shrink-to-fit CJK labels down
  * to one character), the zero height clips it out of view and scroll area. */
 .tags-measure { position: absolute; width: max-content; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
-.group-menu-dismiss { position: fixed; inset: 0; z-index: 101; }
-.group-manage-menu { position: fixed; z-index: 102; display: flex; flex-direction: column; gap: 2px; width: 214px; padding: 8px; border-radius: 10px; background: var(--ui-panel); color: var(--ui-text); border: 1px solid var(--ui-line); box-shadow: 0 12px 40px #0004; }
-.group-manage-menu > strong { padding: 5px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group-manage-menu > button { text-align: left; border: 0; border-radius: 5px; background: transparent; color: inherit; padding: 6px 8px; cursor: pointer; }
-.group-manage-menu > button:hover { background: var(--ui-hover); }
-.group-color-choices { display: flex; gap: 5px; padding: 8px 4px; }
-.group-color-choices button { width: 19px; height: 19px; border-radius: 50%; border: 1px solid #fff5; cursor: pointer; }
 .group-dialog-backdrop { position: fixed; inset: 0; z-index: 105; display: grid; place-items: center; background: #0007; }
 .group-dialog { width: min(380px, calc(100vw - 40px)); max-height: 80vh; overflow: auto; padding: 24px; border: 1px solid var(--ui-line); border-radius: 12px; background: var(--ui-panel); color: var(--ui-text); box-shadow: 0 18px 56px #0005; }
 .group-dialog h3 { margin: 0 0 16px; }
@@ -3355,7 +3348,7 @@ video.black-image,
   -webkit-app-region: drag;
 }
 .app.native-darwin :is(.brandbar, .toolbar, .detail-heading) :is(button, input, select, textarea, a, label, [role="button"], .column-control),
-.modal-layer, .group-dialog-backdrop, .group-menu-dismiss, .group-manage-menu,
+.modal-layer, .group-dialog-backdrop,
 .context-menu, .toolbar-select-menu, .column-popover, .toast,
 .pinterest-detail-backdrop, .pinterest-confirm-backdrop {
   -webkit-app-region: no-drag;
