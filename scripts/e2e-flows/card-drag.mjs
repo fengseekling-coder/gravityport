@@ -1,13 +1,13 @@
 // GravityPort React UI flow (task 146): card dragging — short press still
 // selects, drag onto a card builds a stack with a 6s undo, multi-drag onto a
 // stack joins it, drag to a sidebar group / 待整理 reassigns the group, a
-// stack card drops on the sidebar move all members, a stack card is inert on
-// gallery cards, inert rows change nothing, reorder inside an unfiltered
+// stack card drops on the sidebar move all members, a stack card dropped on
+// itself is inert (merging stacks is stack-merge-drag), inert rows change nothing, reorder inside an unfiltered
 // stack, no reorder with a search term, Escape cancels cleanly, and the
 // synthetic click after a drag is swallowed. Every step checks server truth
 // through the in-page API and the final state is re-verified from node.
 export const name = "card-drag";
-export const description = "card drag: select threshold -> stack create + undo -> multi-drag join stack + undo -> sidebar group/待整理 drops -> stack card sidebar drop -> stack card inert on cards -> inert nav rows -> stack reorder + cover -> search blocks reorder -> Escape cancels -> click swallowed";
+export const description = "card drag: select threshold -> stack create + undo -> multi-drag join stack + undo -> sidebar group/待整理 drops -> stack card sidebar drop -> stack card inert on itself -> inert nav rows -> stack reorder + cover -> search blocks reorder -> Escape cancels -> click swallowed";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -484,11 +484,13 @@ function cardDragSource(config) {
       return true;
     });
 
-    // ── 6) Stack card onto a plain card: nothing happens, no highlight ──
-    await step('stack card is inert on gallery cards', async () => {
+    // ── 6) Stack card dropped back on itself: nothing happens, no highlight
+    // (dropping it on another card merges — task 196, stack-merge-drag) ──
+    await step('stack card is inert on itself', async () => {
       const stackCard = cardFor(config.looseIds[1]);
-      await dragTo(stackCard, centerOf(cardFor(config.looseIds[2])), {
-          trackEl: () => cardFor(config.looseIds[2]),
+      const self = centerOf(stackCard);
+      await dragTo(stackCard, { x: self.x + 8, y: self.y + 8 }, {
+          trackEl: () => cardFor(config.looseIds[1]),
         beforeRelease: async () => {
           const highlights = dropHighlights();
           if (highlights.card) throw new Error('stack drag highlighted a gallery card: ' + JSON.stringify(highlights));
@@ -497,7 +499,7 @@ function cardDragSource(config) {
       // Only a selected card drags (task 155), so the stack card is already
       // the selection here and a leaked post-drag click would change nothing;
       // the multi-drag step above is where the swallow is proven.
-      if ((await stackCount()) !== 2) throw new Error('stack drag onto a card changed the stack count');
+      if ((await stackCount()) !== 2) throw new Error('stack drag onto itself changed the stack count');
       const c = await assetById(config.looseIds[2]);
       if (c.stack) throw new Error('target card joined a stack: ' + JSON.stringify(c.stack));
       return true;

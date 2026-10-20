@@ -154,3 +154,17 @@ describe("GalleryScrollMemory", () => {
     assert.equal(table.get("view").scrollTop, 2);
   });
 });
+
+describe("listChangedInPlace", () => {
+  it("ignores an identical list and a page appended at the end", () => {
+    assert.equal(memory.listChangedInPlace(["a", "b"], ["a", "b"]), false);
+    assert.equal(memory.listChangedInPlace(["a", "b"], ["a", "b", "c", "d"]), false);
+    assert.equal(memory.listChangedInPlace([], ["a"]), false);
+  });
+  it("reports removals, insertions and reorders", () => {
+    assert.equal(memory.listChangedInPlace(["a", "b", "c"], ["a", "c"]), true);
+    assert.equal(memory.listChangedInPlace(["a", "c"], ["a", "b", "c"]), true);
+    assert.equal(memory.listChangedInPlace(["b", "c"], ["a", "b", "c"]), true);
+    assert.equal(memory.listChangedInPlace(["a", "b"], ["b", "a"]), true);
+  });
+});

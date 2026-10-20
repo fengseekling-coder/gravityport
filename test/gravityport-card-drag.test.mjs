@@ -355,3 +355,22 @@ describe("createNativeDragController", () => {
     assert.equal(callCount, 0);
   });
 });
+
+describe("planStackMerge", () => {
+  const stacks = new Map([["coverA", { id: "sA", name: "甲" }], ["coverB", { id: "sB", name: "" }]]);
+  const members = new Map([["sA", ["coverA", "a2", "a3"]], ["sB", ["coverB", "b2"]]]);
+
+  it("expands stack cards to their members in stack order, plain cards as themselves", () => {
+    assert.deepEqual(cardDragModule.planStackMerge(["coverB", "p1", "coverA"], stacks, members), {
+      movedIds: ["coverB", "b2", "p1", "coverA", "a2", "a3"],
+      sources: [{ name: "", memberIds: ["coverB", "b2"] }, { name: "甲", memberIds: ["coverA", "a2", "a3"] }],
+    });
+  });
+
+  it("records each stack once and drops duplicate ids", () => {
+    assert.deepEqual(cardDragModule.planStackMerge(["coverA", "coverA", "a2"], stacks, members), {
+      movedIds: ["coverA", "a2", "a3"],
+      sources: [{ name: "甲", memberIds: ["coverA", "a2", "a3"] }],
+    });
+  });
+});

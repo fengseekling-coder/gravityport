@@ -12,7 +12,7 @@ import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } fr
 import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberIds, listStackMemberPaths } from "./library-actions"
 import {
   dragIdsForCard, dragGhostCount, pointOutsideWindow, nativeDragPaths,
-  createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop,
+  createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop, planStackMerge,
   collectDragOutPaths, type DragOutUnit,
   type StackUndoPlan,
 } from "./card-drag"
@@ -35,7 +35,7 @@ import {
 } from "./gallery-window"
 import { readStoredColumns, resolveInitialColumns, writeStoredColumns } from "./gallery-columns"
 import {
-  buildScrollRecord, GalleryScrollMemory, resolveRestoredScrollTop, revealCardScrollTop,
+  buildScrollRecord, GalleryScrollMemory, listChangedInPlace, resolveRestoredScrollTop, revealCardScrollTop,
   type GalleryScrollRecord,
 } from "./gallery-scroll-memory"
 import { deriveEmptyState } from "./empty-state"
@@ -1355,13 +1355,72 @@ export default function App() {
       }
     })
   }
+  // Task 197: a list change inside the displayed view (trash, undo, stack
+  // edits, live arrivals) must leave the user where they were reading. The
+  // position has been seen to jump up around the commit that drops a card
+  // (once, in a real library; cause not pinned down). The position is read
+  // during render, before React touches the DOM (a scroll-event record can be
+  // stale: hidden windows throttle scroll events and animation frames), and
+  // written back after the list commits, again once the masonry window (one
+  // render late) commits, and once more in the next frame. Cards before a
+  // removed one keep their placement, so the same scrollTop is the same view.
+  const scrollBeforeListRef = useRef<{ assets: MosaAsset[]; scrollTop: number } | null>(null)
+  if (scrollBeforeListRef.current?.assets !== assets) {
+    scrollBeforeListRef.current = { assets, scrollTop: gridRef.current?.scrollTop ?? 0 }
+  }
+  const pendingHoldRef = useRef<{ viewKey: string; scrollTop: number } | null>(null)
+  const applyGalleryHold = () => {
+    const hold = pendingHoldRef.current
+    const grid = gridRef.current
+    if (!hold || !grid) return
+    if (committedViewKeyRef.current !== hold.viewKey) { pendingHoldRef.current = null; return }
+    const target = Math.min(hold.scrollTop, Math.max(0, grid.scrollHeight - grid.clientHeight))
+    if (Math.abs(grid.scrollTop - target) > 1) grid.scrollTop = target
+    recordLiveGalleryScroll()
+    setShowToTop(grid.scrollTop > grid.clientHeight)
+  }
+  // The ids the last layout pass laid out, with the view they belonged to.
+  const laidOutListRef = useRef<{ viewKey: string; ids: string[] }>({ viewKey: "", ids: [] })
   useLayoutEffect(() => {
+    const viewKey = committedViewKeyRef.current
+    const ids = assets.map(item => item.id)
+    const previous = laidOutListRef.current
+    laidOutListRef.current = { viewKey, ids }
+    const owed = pendingScrollRestoreRef.current
+    const before = scrollBeforeListRef.current?.scrollTop ?? 0
+    // A restore owed to the viewer closing (reveal) keeps priority; at the
+    // top there is nothing to hold.
+    const hold = viewKey && previous.viewKey === viewKey && listChangedInPlace(previous.ids, ids)
+      && !owed?.reveal && before > 0
+    if (hold) {
+      // A plain restore still owed to this view is stale: the user has
+      // scrolled here since, and it would land on an anchor the change moved.
+      if (owed?.viewKey === viewKey) pendingScrollRestoreRef.current = null
+      pendingHoldRef.current = { viewKey, scrollTop: before }
+    }
     updateGalleryWindow()
     consumeGalleryScrollRestore()
+    if (hold) {
+      applyGalleryHold()
+      const held = pendingHoldRef.current
+      requestAnimationFrame(() => {
+        if (pendingHoldRef.current !== held) return
+        applyGalleryHold()
+        pendingHoldRef.current = null
+        updateGalleryWindow()
+      })
+    }
     // preview toggles remount the grid, so the window must be re-derived for
     // the fresh (top-of-gallery) scroll position — and any restore owed by the
     // toggle settles before the first paint.
   }, [assets, columns, windowingActive, preview])
+  // The masonry window for a changed list commits one render after the list:
+  // only then does the scroller have its full extent, so re-apply a held
+  // position here, still before paint.
+  useLayoutEffect(() => {
+    applyGalleryHold()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [galleryWindow])
   // The observer is bound to the grid element, which remounts when the
   // preview opens/closes: re-run the binding on every preview toggle or the
   // fresh grid keeps no size observer and window updates go blind.
@@ -2011,12 +2070,13 @@ export default function App() {
       return
     }
     setSideDrop(null)
-    // A drag carrying stacks never lands on another card (no stack merging).
-    if (drag.stackIds.length) { setCardDrop(null); return }
     const card = cardElementAt(x, y)
     if (!card) { setCardDrop(null); return }
     const cardId = card.getAttribute("data-asset-id") || ""
     if (!cardId) { setCardDrop(null); return }
+    // A drag carrying stacks merges into the card under it (task 196), but
+    // never into one of its own cards.
+    if (drag.stackIds.length && drag.dragIds.includes(cardId)) { setCardDrop(null); return }
     if (drag.insideStack) {
       // Reorder insertion line; no line while over the dragged cards. With a
       // search term or an incomplete view the drag only serves the hand-off.
@@ -2106,7 +2166,21 @@ export default function App() {
     if (!undo) return
     try {
       if (undo.kind === "dissolve-stack") await dissolveStack(undo.project, undo.stackId)
-      else await removeAssetsFromStack(undo.project, undo.stackId, undo.assetIds)
+      else if (undo.kind === "remove-from-stack") await removeAssetsFromStack(undo.project, undo.stackId, undo.assetIds)
+      else {
+        // Unmerge: loosen everything the merge moved, then rebuild each
+        // dragged stack with its old order, cover (first member) and name.
+        if (undo.createdStackId) await dissolveStack(undo.project, undo.createdStackId)
+        else if (undo.movedIds.length) {
+          const loosened = await moveAssetsToStack(undo.project, undo.movedIds, null)
+          if (loosened.failed) throw new Error(loosened.firstError || tr("撤销失败"))
+        }
+        for (const source of undo.sources) {
+          if (source.memberIds.length < 2) continue
+          const rebuilt = await createStack(undo.project, source.memberIds, source.memberIds[0])
+          if (source.name && rebuilt.name !== source.name) await renameStack(undo.project, rebuilt.id, source.name)
+        }
+      }
       notify(tr("已撤销"))
       refreshCurrentView()
     } catch (error) { notify(errorMessage(error)) }
@@ -2142,8 +2216,65 @@ export default function App() {
     } catch (error) { notify(errorMessage(error)) }
     finally { cardDragMutationRef.current = false }
   }
+  // Task 196: a drag carrying stacks merges. Onto a stack card, every
+  // dragged stack's members (each in its own order) and the plain cards join
+  // after the target's own members; the target keeps its name and cover.
+  // Onto a plain card, they all form a new stack with that card as cover.
+  // The server dissolves a stack once it is moved empty.
+  const runStackMergeDrop = async (drop: CardDropTarget, gesture: CardDragFinish) => {
+    if (!drop.cardId || gesture.dragIds.includes(drop.cardId)) return
+    const targetAsset = assetsRef.current.find(item => item.id === drop.cardId)
+    if (!targetAsset) return
+    const originProject = targetAsset.project_id || project
+    const stackOfCard = new Map<string, { id: string; name: string }>()
+    for (const item of assetsRef.current) {
+      if (item.stack?.id && gesture.dragIds.includes(item.id)) stackOfCard.set(item.id, { id: item.stack.id, name: item.stack.name || "" })
+    }
+    cardDragMutationRef.current = true
+    try {
+      const stackIds = [...new Set([...stackOfCard.values()].map(stack => stack.id))]
+      const membersOf = new Map(await Promise.all(stackIds.map(async id => [id, await listStackMemberIds(originProject, id)] as const)))
+      const { movedIds, sources } = planStackMerge(gesture.dragIds, stackOfCard, membersOf)
+      const targetStack = targetAsset.stack?.id ? targetAsset.stack : null
+      if (targetStack) {
+        const outcome = await moveAssetsToStack(originProject, movedIds, targetStack.id)
+        if (!outcome.succeeded) { notify(outcome.firstError || tr("合并堆叠失败")); return }
+        const moved = movedIds.filter(id => !outcome.failedIds.includes(id))
+        const undo: StackUndoPlan = { kind: "unmerge", project: originProject, movedIds: moved, sources }
+        notifyWithAction(outcome.failed
+          ? tr("已合并 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+          : targetStack.name
+            ? fillNamed("已合并到堆叠「{name}」，共 {count} 项", { name: targetStack.name, count: moved.length })
+            : fillNamed("已合并到堆叠，共 {count} 项", { count: moved.length }), {
+          label: tr("撤销"),
+          run: () => { void runStackUndo(undo) },
+        })
+      } else {
+        // A new stack only takes loose assets: free the dragged stacks' members
+        // first (their stacks dissolve), then stack everything on the target.
+        const sourceIds = sources.flatMap(source => source.memberIds)
+        const loosened = await moveAssetsToStack(originProject, sourceIds, null)
+        if (loosened.failed) {
+          notify(loosened.firstError || tr("合并堆叠失败"))
+          refreshNavigation()
+          return
+        }
+        const ids = [drop.cardId, ...movedIds]
+        const stack = await createStack(originProject, ids, drop.cardId)
+        const undo: StackUndoPlan = { kind: "unmerge", project: originProject, movedIds: [], sources, createdStackId: stack.id }
+        notifyWithAction(fillNamed("已堆叠 {count} 项素材", { count: ids.length }), {
+          label: tr("撤销"),
+          run: () => { void runStackUndo(undo) },
+        })
+      }
+      applySelection([], "")
+      refreshNavigation()
+    } catch (error) { notify(errorMessage(error)); refreshNavigation() }
+    finally { cardDragMutationRef.current = false }
+  }
   const runRootStackDrop = async (drop: CardDropTarget, gesture: CardDragFinish) => {
-    if (!drop.cardId || gesture.stackIds.length || gesture.dragIds.includes(drop.cardId)) return
+    if (gesture.stackIds.length) { void runStackMergeDrop(drop, gesture); return }
+    if (!drop.cardId || gesture.dragIds.includes(drop.cardId)) return
     // Dropping a multi-selection back onto one of its own members is a common
     // tiny mouse-jitter path — treat it as a no-op instead of surprising the
     // user with a new stack.
