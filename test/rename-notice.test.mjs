@@ -18,6 +18,7 @@ import {
   RENAME_NOTICE_MARKER_FILE,
   RENAME_NOTICE_MARKER_VERSION,
 } from "../desktop/rename-notice.mjs";
+import { LIBRARY_LOCATION_FILE, resolveLibraryLocation } from "../lib/library-location.mjs";
 
 function temporaryDir(t, prefix = "mosa-rename-notice-") {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -33,6 +34,11 @@ function seedUsageProfile(userDataDir) {
     lastReportedAt: 1,
     lastReportedDay: "2026-10-10",
   })}\n`, "utf8");
+}
+
+// 老版本挪素材库时写下的偏好文件；判定只看它在不在，不读内容。
+function seedLibraryLocation(userDataDir) {
+  writeFileSync(join(userDataDir, LIBRARY_LOCATION_FILE), `${JSON.stringify({ path: "/Volumes/External/MOSA Library" })}\n`, "utf8");
 }
 
 function writeMarker(userDataDir, content) {
@@ -65,6 +71,62 @@ test("a legacy library directory alone is an existing user (pending, pops)", (t)
   assert.equal(result.shouldShow, true);
   assert.equal(result.state, "pending");
   assert.equal(readMarker(userDataDir).state, "pending");
+});
+
+test("a userData with only library-location.json is an existing user who moved the library (pending, pops)", (t) => {
+  const userDataDir = temporaryDir(t);
+  seedLibraryLocation(userDataDir);
+  const absentLegacyDir = join(tmpdir(), `mosa-rename-notice-absent-${Date.now()}`);
+
+  const result = evaluateRenameNoticeState({ userDataDir, legacyLibraryDir: absentLegacyDir });
+
+  assert.equal(result.shouldShow, true);
+  assert.equal(result.state, "pending");
+  assert.equal(result.persisted, true);
+  assert.deepEqual(readMarker(userDataDir), { version: RENAME_NOTICE_MARKER_VERSION, state: "pending" });
+});
+
+test("none of the three signals (usage profile, library location, legacy library) is a new user", (t) => {
+  const userDataDir = temporaryDir(t);
+  const absentLegacyDir = join(tmpdir(), `mosa-rename-notice-absent-${Date.now()}`);
+  assert.equal(existsSync(join(userDataDir, ANONYMOUS_USAGE_PROFILE_FILE)), false);
+  assert.equal(existsSync(join(userDataDir, LIBRARY_LOCATION_FILE)), false);
+
+  const result = evaluateRenameNoticeState({ userDataDir, legacyLibraryDir: absentLegacyDir });
+
+  assert.equal(result.shouldShow, false);
+  assert.equal(result.state, "not-needed");
+  assert.deepEqual(readMarker(userDataDir), { version: RENAME_NOTICE_MARKER_VERSION, state: "not-needed" });
+});
+
+test("an existing not-needed marker wins over a later library-location.json (no re-evaluation)", (t) => {
+  const userDataDir = temporaryDir(t);
+  writeMarker(userDataDir, `{"version": 1, "state": "not-needed"}\n`);
+  seedLibraryLocation(userDataDir);
+
+  const result = evaluateRenameNoticeState({ userDataDir, legacyLibraryDir: "" });
+
+  assert.equal(result.shouldShow, false);
+  assert.equal(result.state, "not-needed");
+  assert.equal(result.persisted, true);
+  assert.equal(readFileSync(join(userDataDir, RENAME_NOTICE_MARKER_FILE), "utf8"), `{"version": 1, "state": "not-needed"}\n`);
+});
+
+test("with an empty legacy dir the decision rests on the userData files alone", (t) => {
+  // 家目录里真有老素材库，但隔离实例传空：只有 userData 里的文件说了算。
+  const legacyLibraryDir = join(temporaryDir(t, "mosa-rename-legacy-"), "MOSA Library");
+  mkdirSync(legacyLibraryDir, { recursive: true });
+
+  const withLocation = temporaryDir(t);
+  seedLibraryLocation(withLocation);
+  const moved = evaluateRenameNoticeState({ userDataDir: withLocation, legacyLibraryDir: "" });
+  assert.equal(moved.shouldShow, true);
+  assert.equal(moved.state, "pending");
+
+  const withoutLocation = temporaryDir(t);
+  const fresh = evaluateRenameNoticeState({ userDataDir: withoutLocation, legacyLibraryDir: "" });
+  assert.equal(fresh.shouldShow, false);
+  assert.equal(fresh.state, "not-needed");
 });
 
 test("no old-user signal is a new user: no dialog, not-needed recorded", (t) => {
@@ -219,6 +281,23 @@ test("the decision happens before anonymous-usage.json is created: a fresh insta
   const afterBoot = evaluateRenameNoticeState({ userDataDir, legacyLibraryDir: "" });
   assert.equal(afterBoot.shouldShow, false);
   assert.equal(afterBoot.state, "not-needed");
+});
+
+// 顺序测试：main.mjs 在判定之前唯一碰 library-location.json 的是
+// resolveLibraryLocation（只读）；写它的 saveLibraryDir 只在用户挪库的 IPC
+// 里调用。全新 userData 走完这一步后，文件仍不存在，判定仍是新用户。
+test("resolving the library location on a fresh install never creates library-location.json", (t) => {
+  const userDataDir = temporaryDir(t);
+  const homeDir = temporaryDir(t, "mosa-rename-home-");
+  const locationFile = join(userDataDir, LIBRARY_LOCATION_FILE);
+
+  const resolved = resolveLibraryLocation({ homeDir, envLibraryDir: undefined, locationFile });
+  assert.equal(resolved.source, "new-default-fresh");
+  assert.equal(existsSync(locationFile), false, "startup resolution must stay read-only");
+
+  const decision = evaluateRenameNoticeState({ userDataDir, legacyLibraryDir: join(homeDir, "MOSA Library") });
+  assert.equal(decision.shouldShow, false);
+  assert.equal(decision.state, "not-needed");
 });
 
 // 接线位置补钉（配合上面的行为顺序测试）：main.mjs 里判定调用必须出现在

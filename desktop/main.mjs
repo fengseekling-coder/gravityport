@@ -21,6 +21,7 @@ import { copyLibraryForRelocation, validateRelocationTarget } from "../lib/libra
 import {
   defaultLibraryDir,
   legacyDefaultLibraryDir,
+  LIBRARY_LOCATION_FILE,
   MOSA_LIBRARY_LOCATION_FILE_UNREADABLE,
   MOSA_LIBRARY_NOT_FOUND,
   resolveLibraryLocation,
@@ -95,7 +96,7 @@ const visualModelManager = createVisualModelManager({ userDataDir: desktopDataDi
 const productionDefaultUserData = join(app.getPath("appData"), app.name);
 const importStagingRoot = importStagingDir(desktopDataDir);
 const desktopPort = process.env.MOSA_DESKTOP_PORT || DEFAULT_MOSA_DESKTOP_PORT;
-const LIBRARY_LOCATION_PATH = join(desktopDataDir, "library-location.json");
+const LIBRARY_LOCATION_PATH = join(desktopDataDir, LIBRARY_LOCATION_FILE);
 // `homedir()` follows HOME on macOS, and tool sandboxes may intentionally
 // rewrite HOME to a temporary directory. userInfo().homedir comes from the OS
 // account record instead, so source desktop launches still resolve the signed-
@@ -203,8 +204,13 @@ if (!guard.ok) {
 // Runs at the earliest point where a userData write is safe: AFTER the isolation
 // guard above (a rejected run must not write anywhere) and BEFORE the
 // ensureInstallationId() call below, which mints anonymous-usage.json on a fresh
-// install — that file's existence is the old-user signal the decision reads, so
-// it must still be absent here on a first launch. The legacy library directory
+// install — that file's existence is one of the old-user signals the decision
+// reads, so it must still be absent here on a first launch. The other userData
+// signal is library-location.json, which only saveLibraryDir() writes, from the
+// user-triggered "change-library-location" handler; nothing on the startup path
+// above writes it, so a fresh install cannot have it yet. It catches old users
+// who moved their library (no ~/MOSA Library) and turned anonymous usage off
+// (no anonymous-usage.json). The legacy library directory
 // is only consulted when userData sits at the production default: QA and test
 // instances run with a moved userData (see isolationContext) and pass "" so the
 // decision never looks at the real home directory, or every dev test run would
