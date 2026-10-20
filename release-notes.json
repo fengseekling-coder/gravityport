@@ -18,7 +18,10 @@
       "修复：把素材库里的图拖出去再拖回来，不会再重复导入一份。",
       "查看大图时可以全屏，收起侧栏和详情，只留图片。",
       "修复：视频卡片不再显示破图，画廊和详情里显示视频画面，右上角有播放标记。",
-      "修复：少数图片缩略图比例不对、点开大图是空白。"
+      "修复：少数图片缩略图比例不对、点开大图是空白。",
+      "修复：新版 Codex 生成的图能读到正确的提示词。",
+      "ChatGPT 桌面版里聊天生成的图会自动收进素材库（需要 Chrome 开着、浏览器扩展的自动入库开着）。",
+      "侧栏「我的分组」的右键菜单换成和素材右键菜单一样的样式：分组颜色收进二级菜单，删除单独放在最下面。"
     ],
     "en": [
       "MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.",
@@ -37,7 +40,10 @@
       "Fixed: dragging a library image out and back in no longer imports a duplicate.",
       "When viewing an image you can now go fullscreen inside the window: the sidebar and details collapse, leaving only the picture.",
       "Fixed: video cards no longer show a broken image; the gallery and details show a frame from the video with a play badge.",
-      "Fixed: a few images showed a wrong thumbnail ratio or a blank large view."
+      "Fixed: a few images showed a wrong thumbnail ratio or a blank large view.",
+      "Fixed: images made with the new Codex now pick up the right prompt.",
+      "Images generated in ChatGPT desktop chats are now added to your library automatically (with Chrome open and auto-capture turned on in the browser extension).",
+      "The right-click menu for groups under My groups now matches the asset menu: group colors sit in a submenu, and Delete stands on its own at the bottom."
     ]
   },
   "releases": [

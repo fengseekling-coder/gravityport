@@ -23,6 +23,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 - Settings gains a 反馈 page for sending problems and ideas straight to us: you can optionally attach a diagnostic log that is redacted before it leaves the app (home and library paths, tokens, long secrets, and anything mentioning prompts removed), and its full contents are shown for review before sending.
 - The Settings → 模型 page now drives the local visual model end to end — install, update, cancel, enable/disable, and remove, with the current phase and progress shown — instead of a single install button.
 - The image viewer gains a 全屏 button (next to 1:1 in the zoom bar): it collapses the sidebar, toolbar, and Inspector so the viewer fills the window and the image grows to fit, while the zoom bar, paging arrows, and toasts stay put; the button turns into 退出全屏 and Esc leaves the fullscreen first, with a second Esc closing the viewer. This is a fullscreen inside the app's window — the window itself, its macOS traffic lights, and the system fullscreen state are untouched.
+- Right-clicking a group under 我的分组 opens the same context menu as the gallery: the group name as its heading, rows aligned with the asset menu and split by separators, ends of the list greying out 上移分组 / 下移分组, the six group colors in a 分组颜色 submenu, and 删除分组 at the bottom in the danger style. It replaces a separate menu that had centered rows and no grouping.
 
 ### Gallery & organizing / 画廊与整理
 
