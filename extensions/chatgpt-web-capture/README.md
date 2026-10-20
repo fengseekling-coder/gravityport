@@ -38,7 +38,7 @@ npm start
    - **保存当前图**：页面上最大的那张
    - **保存全部大图**：本页最多 12 张
 
-自动入库关闭时，扩展不会解析 ChatGPT 的网络生成数据，也不会运行 Google 站点的自动 DOM 扫描；手动保存会在本次操作期间临时启用必要的 ChatGPT 页面关联读取。
+自动入库关闭时，扩展不会解析 ChatGPT 的网络生成数据，不会领取或打开 ChatGPT 桌面版对话，也不会运行 Google 站点的自动 DOM 扫描；手动保存会在本次操作期间临时启用必要的 ChatGPT 页面关联读取。已配对时，扩展仍会把当前打开的 ChatGPT 对话标题和对话号发给本机 GravityPort，仅用于给已有的该对话堆叠命名。
 
 ChatGPT 捕获现在把一次响应明确拆成 **Message / Generation Attempt / Output** 三层，而不是把一个 tool call 里的所有图片和 Prompt 塞进同一个上下文。Attempt 保存 generation-call / tool-call、共享 Prompt 和生成状态；每个 Output 单独保存 provider asset / Estuary identity、输出级 Prompt 和媒体证据。输出级 Prompt 只属于自己的图片；真正的 Attempt 共享 Prompt 才会分发给同一次生成里的多个 Output。图片先到、Prompt 后到或多张图并行完成都可以按稳定标识补齐，不再依赖“最近几秒出现的文字”猜测。
 
@@ -64,7 +64,7 @@ ChatGPT 中能够明确识别为本轮上传输入的参考图，会作为该轮
 
 1. **实时流**：ChatGPT 对多数账号用 WebSocket 推流，扩展会解析其中带图片资产的帧（`fetch`/`XHR` 看不到这些）。
 2. **会话元数据**：打开或切换会话时页面自己拉取的会话 JSON。
-3. **主动重读**：生成证据恢复会在约 2.8 秒、7.2 秒、15 秒分阶段重试；提示词升级仍采用有界延迟重读。所有请求只使用当前站点已有的同源浏览器会话去读当前会话，不会读取、复制或重放 ChatGPT 的 Authorization 请求头。拿到更好的提示词会通过 hash 去重自动升级已入库的图。
+3. **主动重读**：生成证据恢复会在约 2.8 秒、7.2 秒、15 秒分阶段重试；提示词升级仍采用有界延迟重读。所有请求只使用当前站点已有的同源浏览器会话去读当前会话，不会读取、复制或重放页面的 Authorization 请求头（唯一例外是下文「ChatGPT 桌面版对话」的后台检查：扩展向 chatgpt.com 取一次登录令牌，只用于那一次读取）。拿到更好的提示词会通过 hash 去重自动升级已入库的图。
 
 第 3 条失败时右下角面板会显示原因，不再静默丢失。
 
@@ -74,14 +74,22 @@ ChatGPT 中能够明确识别为本轮上传输入的参考图，会作为该轮
 
 后台消息现在会校验扩展自身 sender、顶层 frame、当前 Provider URL 和消息类型，视频分块传输也绑定到创建它的 tab / Provider，避免其他页面或错误 frame 复用入库消息。ChatGPT MAIN-world bridge 同时使用每个 document 独立的 channel 标识过滤陈旧或无关消息；这属于纵深防御，不把同一网页 MAIN world 中已经执行的站点脚本错误描述为密码学不可信边界。Gemini / Flow / AI Studio / ChatGPT 的 URL 归属判定统一收口到 `provider-policy.js`，后台安全门和页面适配器共用同一套规则。
 
-在这三个 Google 站点上，也可右键生成图片后选择「保存图片到 GravityPort」；Gemini、Flow 与 AI Studio 手动保存时也只会按上述局部规则匹配 Prompt，未匹配则不保存文字。
+在 ChatGPT 和这三个 Google 站点上，也可右键生成图片后选择「保存图片到 GravityPort」；Flow 与 AI Studio 的视频可右键选择「保存视频到 GravityPort」；Gemini、Flow 与 AI Studio 手动保存时也只会按上述局部规则匹配 Prompt，未匹配则不保存文字。
+
+### ChatGPT 桌面版对话
+
+ChatGPT 桌面版（与 Codex 合在一个 App 里）不会把聊天里的图片和文字存到本机。GravityPort 启用 Codex 来源时，约每 10 秒查看一次桌面版的本地状态文件 `<CODEX_HOME>/.codex-global-state.json`（默认在 `~/.codex/`），只取桌面聊天绑定的 ChatGPT 对话号和每段对话最后一次提问的消息编号，据此判断哪段对话刚用过。对话安静 90 秒后，GravityPort 在扩展每分钟一次的本机状态上报回复里把它交给扩展，一次一段；只有已配对、开启了**发现新图时自动入库**、且当前没有同步窗口打开的扩展才会领取。
+
+扩展先用浏览器里已登录的 ChatGPT 账号读一次这段对话：后台向 `https://chatgpt.com/api/auth/session` 取一次当前登录的访问令牌，只作为 Authorization 头用于这一次 `chatgpt.com/backend-api/conversation/<对话号>` 请求，不保存，也不发给 GravityPort 或其他任何地方。对话内容只用来判断其中有没有非用户消息里的图片，不保存也不上报。没有生成图就回报「无图」，不开窗口；有图（或读不到）时，在一个最小化、不抢焦点的新窗口里打开 `https://chatgpt.com/c/<对话号>#gravityport-desktop-sync`，按普通 ChatGPT 页面流程采集，采集安静 10 秒（至少 20 秒、最多 110 秒）后自动关窗。一次只开一个窗口，约 150 秒仍未结束按超时关闭；手动关掉窗口算本次失败，每次活动最多尝试 3 次。和在浏览器里重开旧对话一样，能收到图和用户原话，收不到 Model caption 与提示词2。浏览器登录的 ChatGPT 账号与桌面版不同时读不到对话，也不会入库。
+
+GravityPort 只在素材库根目录的 `.chatgpt-desktop-sync.json` 里记录对话号、时间戳、重试计数和最后一次提问编号的 hash，不保存提示词文字。首次读到状态文件时，里面列出的每段桌面对话都会被检查一次。关闭扩展的自动入库即停止领取；`MOSA_DISABLE_BRIDGES=codex` 会让 GravityPort 完全不读该状态文件（同时停用 Codex 图片导入）。
 
 ## 数据与权限
 
 - 扩展只在清单声明的 ChatGPT、Gemini、Flow 和 Google AI Studio 域名中运行，并只把数据发送到选项中配置的本机 GravityPort 地址。
-- ChatGPT 入库数据包括图片字节、匹配到的 Prompt/用户消息、页面 URL、会话/消息 ID、模型信息、采集时间和扩展版本；页面运行时明确暴露时，还会保存彼此独立的 tool-call、generation-call、response 和 provider asset 标识。Gemini、Flow 与 AI Studio 只有在上述局部匹配成功时才额外包括该页面可见 Prompt。
-- GravityPort 地址、Token 和自动采集开关保存在 Chrome 本地存储，不使用同步存储。
-- 图片下载需要清单中列出的 OpenAI/Google 静态资源域名权限；本机通信只允许 `127.0.0.1` 或 `localhost`。
+- ChatGPT 入库数据包括图片字节、匹配到的 Prompt/用户消息、「提示词2」（`generation_request_prompt`，页面实时数据中出现时）、页面 URL、去掉签名参数的原始与最终媒体 URL、尺寸、会话/消息 ID、对话标题、模型信息、生成状态、采集时间和扩展版本；页面运行时明确暴露时，还会保存彼此独立的 tool-call、generation-call、response 和 provider asset 标识。打开对话时另会上报对话轮次结构（只有编号与数字）。Gemini、Flow 与 AI Studio 只有在上述局部匹配成功时才额外包括该页面可见 Prompt。
+- GravityPort 地址、Token、自动采集开关和待重试队列保存在 Chrome 本地存储（`chrome.storage.local`），不使用同步存储；桌面版对话同步进行中的任务（对话号、窗口/标签页编号、开始时间）只存在浏览器关闭即清空的 `chrome.storage.session`。
+- 清单权限为 `storage`、`contextMenus`、`alarms`、`unlimitedStorage`；图片下载需要清单中列出的 OpenAI/Google 静态资源域名权限；本机通信只允许 `127.0.0.1` 或 `localhost`。
 - GravityPort 不会因此获得任何受支持站点的账号密码或 API Key。完整说明见 [PRIVACY.md](../../PRIVACY.md)。
 
 ## 限制
@@ -94,7 +102,7 @@ ChatGPT 的 `Model caption` 只在实时推送中出现：它是 `commentary` �
 - 启发式判断“像生图 Prompt”的文本只作为恢复线索，不会被升级为 `generation-tool-prompt`
 - 无标记的 caption 只在**图片工具消息**内被接受；助手的普通回复即使提到风格词也不会被当成提示词
 - 用户消息里粘贴的 `Model caption:` 文本不会被当成模型 caption
-- 重读会话不会读取或复制 ChatGPT 的 Authorization 请求头；若同源会话请求无法返回元数据，扩展保留已捕获的图片并把 Prompt 标记为不可用
+- 页面重读会话不会读取或复制 ChatGPT 页面的 Authorization 请求头；若同源会话请求无法返回元数据，扩展保留已捕获的图片并把 Prompt 标记为不可用（桌面版对话检查使用的单次令牌见「ChatGPT 桌面版对话」）
 - 相同内容 hash 去重
 - 参考图附件不进入素材库；当前可靠自动识别以 ChatGPT 上传输入为准，Flow/Gemini 不按页面顺序猜测参考图
 - 改扩展代码后要在 `chrome://extensions` 点刷新，并硬刷新网页

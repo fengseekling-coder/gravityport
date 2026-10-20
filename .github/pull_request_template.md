@@ -18,6 +18,7 @@ List the exact checks run and their results.
 
 - [ ] The change is focused and includes regression coverage where behavior changed.
 - [ ] Public docs and changelog are updated when contracts changed.
+- [ ] User-visible changes have a Chinese and English sentence in `release-notes.json` → `unreleased`.
 - [ ] No real Prompts, user media, Tokens, credentials, session logs, local paths, or deployment material are included.
 - [ ] Dependency license metadata is unchanged unless the dependency itself changed.
 - [ ] `npm test`, `npm run lint`, `npm run check`, and `git diff --check` pass, or exceptions are explained above.

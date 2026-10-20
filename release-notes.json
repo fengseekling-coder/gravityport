@@ -9,7 +9,7 @@
       "版本树按 ChatGPT 对话的轮次分组，展开就能看到每一轮生成的缩略图。",
       "设置里新增「反馈」：直接把问题或建议发给我们，可以选择附上已脱敏的诊断日志，发送前能看到全文。",
       "设置 →「关于」里能看到这个版本更新了什么；有新版本时，会先列出新版本的更新内容。",
-      "从检视器或堆叠返回画廊时，会回到原来的位置；长列表多了「回到顶部」按钮。",
+      "从大图、堆叠或其他视图返回画廊时，会回到原来的位置；长列表多了「回到顶部」按钮。",
       "框选更顺手：可以从空白处开始框选，按住 Shift 加选，拖到窗口边缘会自动滚动；⌘A 和多选拖动都包括堆叠。",
       "画廊里的横图排得更整齐，不再留下大块空白。",
       "检视器头部显示类型、来源和日期；标签改成纯文字；比例直接显示 16:9、9:16 这样的名字。",
@@ -19,8 +19,8 @@
       "查看大图时可以全屏，收起侧栏和详情，只留图片。",
       "修复：视频卡片不再显示破图，画廊和详情里显示视频画面，右上角有播放标记。",
       "修复：少数图片缩略图比例不对、点开大图是空白。",
-      "修复：新版 Codex 生成的图能读到正确的提示词。",
-      "ChatGPT 桌面版里聊天生成的图会自动收进素材库（需要 Chrome 开着、浏览器扩展的自动入库开着）。",
+      "在 ChatGPT 桌面应用里聊天生成的图片，现在也能通过网页采集扩展自动收录（需开启自动采集）。",
+      "修复：新版 Codex 生成的图片重新记录 Codex 实际使用的提示词，不再误用你的聊天消息。",
       "侧栏「我的分组」的右键菜单换成和素材右键菜单一样的样式：分组颜色收进二级菜单，删除单独放在最下面。"
     ],
     "en": [
@@ -31,7 +31,7 @@
       "The version tree groups ChatGPT images by conversation round, with thumbnails for every round when expanded.",
       "Settings has a new Feedback page for sending problems or ideas straight to us, with an optional redacted diagnostic log you can read before sending.",
       "Settings → About now lists what changed in this version, and shows what's new in the next version when an update is available.",
-      "Going back to the gallery from the Inspector or a stack returns to where you were, and long lists get a Back to top button.",
+      "Going back to the gallery from the image viewer, a stack, or another view returns to where you were, and long lists get a Back to top button.",
       "Smoother marquee selection: start from empty space, hold Shift to add, and the gallery scrolls when you reach the window edge. ⌘A and multi-card drags include stacks.",
       "Wide images line up more evenly in the gallery instead of leaving large gaps.",
       "The Inspector header shows kind, source, and date; tags are plain text; aspect ratios use familiar names like 16:9 and 9:16.",
@@ -41,8 +41,8 @@
       "When viewing an image you can now go fullscreen inside the window: the sidebar and details collapse, leaving only the picture.",
       "Fixed: video cards no longer show a broken image; the gallery and details show a frame from the video with a play badge.",
       "Fixed: a few images showed a wrong thumbnail ratio or a blank large view.",
-      "Fixed: images made with the new Codex now pick up the right prompt.",
-      "Images generated in ChatGPT desktop chats are now added to your library automatically (with Chrome open and auto-capture turned on in the browser extension).",
+      "Images made in ChatGPT desktop-app chats are now captured too, through the Web Capture extension with auto capture on.",
+      "Fixed: images from newer Codex versions record the prompt Codex actually used again, instead of your chat message.",
       "The right-click menu for groups under My groups now matches the asset menu: group colors sit in a submenu, and Delete stands on its own at the bottom."
     ]
   },

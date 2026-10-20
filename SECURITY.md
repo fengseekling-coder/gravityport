@@ -6,8 +6,8 @@ GravityPort reads local creative assets, Prompt and provenance records, and sele
 
 | Version | Security updates |
 | --- | --- |
-| `main` and the latest release | Supported |
-| Older tagged snapshots | No planned updates |
+| `main` and the newest published desktop build (see the [download page](https://gravityport.azhuilab.com/#download)) | Supported |
+| Older builds and tagged snapshots | No planned updates |
 
 `v0.1.0` is the final MIT-licensed source snapshot. Later releases use the license in the root `LICENSE`.
 
