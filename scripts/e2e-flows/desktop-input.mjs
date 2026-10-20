@@ -141,7 +141,9 @@ export async function run(ctx) {
           action: "group", projectId: "default", assetIds: [seededIds[index % seededIds.length]], group: name,
         });
       }
-      await sleep(500);
+      // The new groups reach the sidebar through the live refresh; a fixed
+      // 500ms pause sometimes measured before they rendered (macOS CI).
+      await waitFor(cdp, `document.querySelector(".sidebar").scrollHeight > document.querySelector(".sidebar").clientHeight`, "sidebar overflow from 40 groups");
       const layout = await cdp.evaluate(`(() => {
         const el = document.querySelector(".brandbar");
         const r = el.getBoundingClientRect();
