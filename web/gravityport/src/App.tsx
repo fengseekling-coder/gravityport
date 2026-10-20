@@ -2616,7 +2616,7 @@ export default function App() {
 
   const openGroupMenu = (name: string, x: number, y: number) => {
     const names = (navigation?.groups || []).map(item => item.name)
-    const entries = translateMenuEntries(buildGroupMenu({ name, index: names.indexOf(name), groupCount: names.length, exporting: Boolean(exportingGroup) }), 0)
+    const entries = translateMenuEntries(buildGroupMenu({ index: names.indexOf(name), groupCount: names.length, exporting: Boolean(exportingGroup) }), 0)
     setMenu({ x, y, entries, target: "group", selectionCount: 0, stackId: "", stackName: "", stackCount: 0, groupName: name })
   }
 

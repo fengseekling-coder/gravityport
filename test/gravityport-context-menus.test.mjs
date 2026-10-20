@@ -345,12 +345,13 @@ describe("context-menus / separator hygiene", () => {
 });
 
 describe("buildGroupMenu (sidebar 我的分组)", () => {
-  const groupCtx = (overrides = {}) => ({ name: "polish", index: 1, groupCount: 3, exporting: false, ...overrides });
+  const groupCtx = (overrides = {}) => ({ index: 1, groupCount: 3, exporting: false, ...overrides });
   const itemIds = (entries) => entries.filter((e) => e.kind === "item").map((e) => e.id);
 
-  it("heads the menu with the group name and puts delete last as danger", () => {
+  it("has no heading, starts with rename and puts delete last as danger", () => {
     const entries = buildGroupMenu(groupCtx());
-    assert.deepEqual(entries[0], { kind: "heading", label: "polish" });
+    assert.ok(entries.every((e) => e.kind !== "heading"));
+    assert.equal(entries[0].id, "group-rename");
     assert.deepEqual(itemIds(entries), [
       "group-rename", "group-move-up", "group-move-down", "group-color",
       "group-stats", "group-export", "group-merge", "group-delete",
