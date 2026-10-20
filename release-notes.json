@@ -21,7 +21,10 @@
       "修复：少数图片缩略图比例不对、点开大图是空白。",
       "在 ChatGPT 桌面应用里聊天生成的图片，现在也能通过网页采集扩展自动收录（需开启自动采集）。",
       "修复：新版 Codex 生成的图片重新记录 Codex 实际使用的提示词，不再误用你的聊天消息。",
-      "侧栏「我的分组」的右键菜单换成和素材右键菜单一样的样式：分组颜色收进二级菜单，删除单独放在最下面。"
+      "侧栏「我的分组」的右键菜单换成和素材右键菜单一样的样式：分组颜色收进二级菜单，删除单独放在最下面。",
+      "画廊支持键盘浏览：方向键移到相邻卡片，回车打开；⌘F 或 / 跳到搜索框，菜单里的「查找」也能用了。",
+      "按 Delete 删除时也遵守「不再提醒」，不再每次弹确认。",
+      "浏览器扩展关掉自动入库后，不再自己上报 ChatGPT 对话标题。"
     ],
     "en": [
       "MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.",
@@ -43,7 +46,10 @@
       "Fixed: a few images showed a wrong thumbnail ratio or a blank large view.",
       "Images made in ChatGPT desktop-app chats are now captured too, through the Web Capture extension with auto capture on.",
       "Fixed: images from newer Codex versions record the prompt Codex actually used again, instead of your chat message.",
-      "The right-click menu for groups under My groups now matches the asset menu: group colors sit in a submenu, and Delete stands on its own at the bottom."
+      "The right-click menu for groups under My groups now matches the asset menu: group colors sit in a submenu, and Delete stands on its own at the bottom.",
+      "Browse the gallery from the keyboard: arrow keys move to the neighbouring card and Enter opens it; ⌘F or / jumps to search, and the menu's Find now works.",
+      "Pressing Delete now honours \"Don’t ask again\" instead of always asking for confirmation.",
+      "With auto capture off, the browser extension no longer reports ChatGPT conversation titles on its own."
     ]
   },
   "releases": [

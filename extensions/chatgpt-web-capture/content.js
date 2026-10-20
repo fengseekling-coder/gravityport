@@ -2593,11 +2593,12 @@
 
   // Stack naming: report the conversation title so unnamed session stacks get
   // named — including old conversations reopened long after their captures.
-  // Best effort only: failures are dropped silently, never queued or retried,
+  // Only while automatic capture is on: with it off the extension reports
+  // nothing on its own (manual saves still carry the title). Best effort only: failures are dropped silently, never queued or retried,
   // and a dead extension context must stay invisible here (no context-lost
   // toast for a background nicety).
   function reportSessionTitleNow() {
-    if (contextLost || !extensionAlive()) return;
+    if (!autoCapture || contextLost || !extensionAlive()) return;
     const conversationId = conversationIdFromUrl();
     const title = currentConversationTitle();
     if (!conversationId || !title) return;
@@ -2682,6 +2683,7 @@
       else document.addEventListener("DOMContentLoaded", startObs, { once: true });
       requestCurrentConversationRefresh(null);
       scheduleScan(true);
+      scheduleSessionTitleReport(0);
       if (desktopSyncRun) startDesktopSyncWatch();
     }
   });
@@ -2736,6 +2738,7 @@
       startObs();
       requestCurrentConversationRefresh(null);
       scheduleScan(true);
+      scheduleSessionTitleReport(0);
     } else {
       observer?.disconnect();
       if (scanTimer) clearTimeout(scanTimer);

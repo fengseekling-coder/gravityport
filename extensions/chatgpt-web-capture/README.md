@@ -1,4 +1,4 @@
-# GravityPort Web Capture（0.15.35）
+# GravityPort Web Capture（0.15.36）
 
 把 **ChatGPT、Gemini、Flow 和 Google AI Studio 网页**中用户可见的生成媒体归档到本机 GravityPort。ChatGPT 支持图片提示词关联；Flow 与 Google AI Studio 同时支持已识别的视频，Gemini、Flow 与 Google AI Studio 的页面可见 Prompt 均明确标为未验证。
 
@@ -38,7 +38,7 @@ npm start
    - **保存当前图**：页面上最大的那张
    - **保存全部大图**：本页最多 12 张
 
-自动入库关闭时，扩展不会解析 ChatGPT 的网络生成数据，不会领取或打开 ChatGPT 桌面版对话，也不会运行 Google 站点的自动 DOM 扫描；手动保存会在本次操作期间临时启用必要的 ChatGPT 页面关联读取。已配对时，扩展仍会把当前打开的 ChatGPT 对话标题和对话号发给本机 GravityPort，仅用于给已有的该对话堆叠命名。
+自动入库关闭时，扩展不会解析 ChatGPT 的网络生成数据，不会领取或打开 ChatGPT 桌面版对话，也不会运行 Google 站点的自动 DOM 扫描；手动保存会在本次操作期间临时启用必要的 ChatGPT 页面关联读取。也不会单独上报 ChatGPT 对话标题（自 0.15.36 起；手动保存的素材照旧带上标题）。自动入库开着时，扩展会把当前打开的 ChatGPT 对话标题和对话号发给本机 GravityPort，仅用于给已有的该对话堆叠命名。
 
 ChatGPT 捕获现在把一次响应明确拆成 **Message / Generation Attempt / Output** 三层，而不是把一个 tool call 里的所有图片和 Prompt 塞进同一个上下文。Attempt 保存 generation-call / tool-call、共享 Prompt 和生成状态；每个 Output 单独保存 provider asset / Estuary identity、输出级 Prompt 和媒体证据。输出级 Prompt 只属于自己的图片；真正的 Attempt 共享 Prompt 才会分发给同一次生成里的多个 Output。图片先到、Prompt 后到或多张图并行完成都可以按稳定标识补齐，不再依赖“最近几秒出现的文字”猜测。
 

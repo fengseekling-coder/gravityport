@@ -23,6 +23,7 @@ import { focusSelection, logicalSelection, pruneSelection, replaceSelection, tog
 import { boxFromPoints, boxesIntersect, marqueeAutoScrollDelta, marqueeAutoScrollStep, marqueeSelection, masonryCardBoxes, MARQUEE_AUTO_SCROLL_TICK_MS, MARQUEE_DRAG_THRESHOLD_PX, type Box } from "./marquee"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
+import { galleryKeyAction, isFocusSearchKey, neighbourAssetId } from "./gallery-keys"
 import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
 import { computeConversationRounds, conversationRoundRows, roundLine } from "./conversation-rounds"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
@@ -2210,6 +2211,21 @@ export default function App() {
     }
     return "card-drop-target"
   }
+  // ⌘F / Ctrl+F, "/" and the desktop menu's Find all land here. The viewer
+  // hides the toolbar, so Find from the viewer closes it first.
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const focusSearchRef = useRef<() => void>(() => {})
+  focusSearchRef.current = () => {
+    if (settings || pinterestActive) return
+    if (preview) setPreview(false)
+    window.setTimeout(() => {
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }, preview ? 50 : 0)
+  }
+  useEffect(() => {
+    desktopAPI()?.onMenuSearch?.(() => focusSearchRef.current())
+  }, [])
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -2233,6 +2249,18 @@ export default function App() {
         else if (preview) setPreview(false)
         else if (selectedIds.length || selected) applySelection([], "")
       }
+      // Find works from inside a text field too (the desktop menu's Find is
+      // the same key and arrives through onMenuSearch instead).
+      if (isFocusSearchKey(e, {
+        viewIsLibrary: !preview && !settings && !pinterestActive,
+        hasBlockingOverlay: Boolean(menu || deleting || renameNoticeOpen),
+        targetIsTextEntry: isEditableTarget(e.target),
+        platform: isMacPlatform() ? "mac" : "other",
+      })) {
+        e.preventDefault()
+        focusSearchRef.current()
+        return
+      }
       // Text surfaces own select-all, delete, cut and paste: Backspace in the
       // prompt editor, ⌘A in the search field and typing anywhere must never
       // trigger a gallery shortcut.
@@ -2240,6 +2268,49 @@ export default function App() {
       // The Pinterest view hides the gallery: ⌘A then Delete there must not
       // select and trash library assets nobody can see.
       if (pinterestActive) return
+      // Gallery keyboard navigation: arrows move the inspected card by its
+      // on-screen neighbours, Enter opens it (or enters its stack). Off while
+      // the viewer, Settings, a menu or a dialog is up, and for a batch.
+      const plainKey = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
+      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen
+      if (plainKey && galleryIdle && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        const grid = gridRef.current
+        const current = selectionRef.current.selected || asset?.id || ""
+        if (!grid || !current || selectionRef.current.selectedIds.length > 1) return
+        const cards = Array.from(grid.querySelectorAll<HTMLElement>("[data-asset-id]")).map(element => {
+          const rect = element.getBoundingClientRect()
+          return { id: element.dataset.assetId || "", element, left: rect.left, top: rect.top, bottom: rect.bottom,
+            centerX: rect.left + rect.width / 2, centerY: rect.top + rect.height / 2 }
+        }).filter(card => card.id)
+        // Nothing inspected yet: the first arrow press lands on that card.
+        const next = selectionRef.current.selected ? neighbourAssetId(cards, current, e.key) : current
+        if (!next) return
+        e.preventDefault()
+        anchorIndexRef.current = assets.findIndex(a => a.id === next)
+        applySelection([], next)
+        cards.find(card => card.id === next)?.element.scrollIntoView({ block: "nearest" })
+        return
+      }
+      if (plainKey && galleryIdle && e.key === "Enter") {
+        // A focused toolbar or sidebar button keeps Enter for itself.
+        const target = e.target instanceof HTMLElement ? e.target : null
+        if (target?.closest("button, a, [role='menuitem']") && !target.closest("[data-asset-id]")) return
+        const action = galleryKeyAction(e, {
+          viewIsLibrary: true,
+          hasSelection: selectionRef.current.selectedIds.length > 1,
+          targetIsTextEntry: false,
+          insideStack: Boolean(stackId),
+          currentAsset: asset ? { stackId: asset.stack?.id } : null,
+        })
+        if (action === "none" || !asset) return
+        e.preventDefault()
+        if (action === "enter-stack" && asset.stack) goTo({ stackId: asset.stack.id, stackName: asset.stack.name || asset.name })
+        else {
+          focusAsset(asset.id)
+          setPreview(true)
+        }
+        return
+      }
       if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
         e.preventDefault()
         void selectAllAcrossPages()
@@ -2249,7 +2320,8 @@ export default function App() {
         (e.key === "Delete" || e.key === "Backspace") &&
         !settings && !deleting && selectionIds.length > 0 && active !== "回收站"
       )
-        setDeleting(true)
+        // Same entry as the menu's 移至回收站: 不再提醒 skips the dialog.
+        requestDelete()
       // Stack cards cannot be cut (the menu greys 剪切 out for them too).
       if ((e.metaKey || e.ctrlKey) && (e.key === "x" || e.key === "X") && selectionIds.length
         && !splitSelectionStacks(selectionIds).stackIds.length) {
@@ -2268,7 +2340,7 @@ export default function App() {
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds])
+  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen])
   // Fullscreen belongs to the open viewer, never outlives it: the back button,
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
@@ -3399,6 +3471,7 @@ export default function App() {
                 <ColumnControl value={columns} onChange={value => { setColumns(value); writeStoredColumns(columnsStorage(), value) }} language={language} />
                 <label className="search">
                   <input
+                    ref={searchInputRef}
                     aria-label={tr("搜索素材")}
                     placeholder={tr("搜索素材")}
                     value={query}

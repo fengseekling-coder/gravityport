@@ -28,6 +28,7 @@ type ElectronAPI = {
   changeLibraryLocation?: () => Promise<{ ok?: boolean; libraryDir?: string; error?: string }>
   setWindowFullScreen?: (flag: boolean) => Promise<unknown>
   onWindowFullScreenChange?: (callback: (isFullScreen: boolean) => void) => unknown
+  onMenuSearch?: (callback: () => void) => unknown
   openPinterestAuthorize?: (url: string) => Promise<{ ok?: boolean }>
   openExternalLink?: (url: string) => Promise<{ ok?: boolean }>
   [key: string]: unknown

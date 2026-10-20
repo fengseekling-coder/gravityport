@@ -46,7 +46,7 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.35");
+  assert.equal(manifest.version, "0.15.36");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -245,7 +245,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.35");
+  assert.equal(manifest.version, "0.15.36");
   // Storage keys and the pairing product identifier stay "mosa" so old
   // extensions keep working with the renamed App and vice versa.
   assert.match(backgroundSource, /if \(identity\?\.product !== "mosa"\) continue;/);
@@ -1843,7 +1843,7 @@ test("binds prompt and asset when one image call splits them across nested reque
 });
 
 test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.35");
+  assert.equal(manifest.version, "0.15.36");
   assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
   assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
   assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);
@@ -2642,21 +2642,23 @@ test("an open page follows auto-capture changes from local storage only", () => 
     let manualHookDisableTimer = null;
     let pageHookCaptureAck = null;
     let scheduled = 0;
+    let titleReports = 0;
     let status = "";
     function scheduleScan() { scheduled += 1; }
+    function scheduleSessionTitleReport() { titleReports += 1; }
     function setStatus(value) { status = value; }
     function syncPageHookCaptureEnabled() {}
     ${listener}
-    globalThis.readState = () => ({ autoCapture, scheduled, status });
+    globalThis.readState = () => ({ autoCapture, scheduled, titleReports, status });
   `, context, { filename: "content-storage-listener.js" });
 
   assert.equal(typeof storageListener, "function");
   storageListener({ autoCapture: { newValue: false } }, "local");
-  assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: false, scheduled: 0, status: "自动关" }));
+  assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: false, scheduled: 0, titleReports: 0, status: "自动关" }));
   storageListener({ autoCapture: { newValue: true } }, "sync");
-  assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: false, scheduled: 0, status: "自动关" }));
+  assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: false, scheduled: 0, titleReports: 0, status: "自动关" }));
   storageListener({ autoCapture: { newValue: true } }, "local");
-  assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: true, scheduled: 1, status: "自动开" }));
+  assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: true, scheduled: 1, titleReports: 1, status: "自动开" }));
 });
 
 test("refreshes only the active conversation to recover a late Model caption", async () => {
@@ -5033,4 +5035,12 @@ test("user message drops the image tool chip line but keeps the same words typed
   assert.equal(context.strip("@创建图像 基于参考图: 一只苹果"), "@创建图像 基于参考图: 一只苹果");
   assert.equal(context.strip("第一行\n创建图像\n最后一行"), "第一行\n创建图像\n最后一行");
   assert.equal(context.strip("创建图像"), "");
+});
+
+test("conversation titles are reported only while automatic capture is on", async () => {
+  const source = await readFile(new URL("../extensions/chatgpt-web-capture/content.js", import.meta.url), "utf8");
+  assert.match(source, /function reportSessionTitleNow\(\) \{\n {4}if \(!autoCapture \|\| contextLost \|\| !extensionAlive\(\)\) return;/);
+  // Switching auto capture on (at boot or later) reports the open conversation once.
+  assert.match(source, /scheduleScan\(true\);\n {6}scheduleSessionTitleReport\(0\);\n {6}if \(desktopSyncRun\) startDesktopSyncWatch\(\);/);
+  assert.match(source, /requestCurrentConversationRefresh\(null\);\n {6}scheduleScan\(true\);\n {6}scheduleSessionTitleReport\(0\);\n {4}\} else \{/);
 });
