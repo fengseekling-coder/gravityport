@@ -58,13 +58,9 @@ Browse and search one gallery with adjustable column counts, marquee selection, 
 
 The Inspector shows each asset's version tree, with generations from a ChatGPT conversation grouped by conversation round so you can see how the image evolved turn by turn. Any two versions in a family can be compared side by side.
 
-### Find images by how they look (optional)
-
-Install the optional Visual Pack from **Settings → Models** to turn on local visual search. The Inspector then suggests visually related assets, and the same index powers text-to-image and image-to-image search for the API and MCP. The model runs entirely on your computer: no Python, Ollama, or upload of your library.
-
 ### Let AI agents search your library
 
-The built-in MCP server (`npm run mcp`) lets Codex and other MCP clients list, search, and record assets, Prompts, versions, and generation history in the same local library. `asset_search` combines text, a time range, and, when the Visual Pack is enabled, visual search. See [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口) for the tool list.
+The built-in MCP server (`npm run mcp`) lets Codex and other MCP clients list, search, and record assets, Prompts, versions, and generation history in the same local library. `asset_search` combines text and a time range. See [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口) for the tool list.
 
 ### Recover deleted work and back up the library
 
@@ -126,7 +122,7 @@ Desktop packaging needs Node.js 22.x; the repository pins `22.23.1` in `.nvmrc` 
 - It reads only its configured Codex, Grok, and approved Cowart locations. It does not scan Downloads, Desktop, or arbitrary image folders.
 - Web Capture is optional. Packaged Desktop provisions its local ingest Token and fixed approved extension origins automatically; a standalone `npm start` runtime keeps capture disabled until those values are configured explicitly. The extension sends captured image bytes and page provenance only to the configured local GravityPort address. ChatGPT retains message-scoped context when available; Gemini, Flow, and Google AI Studio retain only narrowly associated visible user Prompt text when it can be safely matched and mark it unverified. With auto capture on, the extension also captures images from conversations you just used in the ChatGPT desktop app by opening them briefly in a minimized browser window; see [PRIVACY.md](PRIVACY.md#chatgpt-desktop-app-conversations).
 - Eligible reference images are stored as private, content-hash-deduplicated generation-record attachments, not ordinary gallery assets.
-- The desktop app ships no AI model. The optional Visual Pack is downloaded only when you install it in Settings, runs locally, and never uploads your library. GravityPort adds no remote sync or automatic upload of your library.
+- The desktop app ships and downloads no AI model. GravityPort adds no remote sync or automatic upload of your library.
 - Packaged desktop builds send minimal anonymous install/activity metadata through a separate bodyless request to the same first-party release endpoint used for update metadata. This contains only a random installation ID, version, platform, architecture, and first-launch/daily-active event, and never includes assets, Prompts, or local paths. See [PRIVACY.md](PRIVACY.md), which also explains how to turn it off.
 
 See [PRIVACY.md](PRIVACY.md) for the full data boundary and [SECURITY.md](SECURITY.md) for private vulnerability reporting.

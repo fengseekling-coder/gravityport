@@ -161,7 +161,7 @@ Electron `userData` 下，由 `desktop/visual-model-manager.mjs` 和
 hash 增量建立 embedding 索引，`lib/visual-relationship-*.mjs` 提供相似图、近似重复和
 版本/堆叠候选；候选只作建议，不会自动修改素材组织或 provenance。HTTP 入口是
 `lib/api/visual-routes.mjs`，检视器的「相关推荐」和 MCP `asset_search` 的 `visual: true`
-都使用这套索引。未安装 Visual Pack 时，其余功能照常工作。模型选型与准入标准见
+都使用这套索引。未安装 Visual Pack 时，其余功能照常工作。桌面界面目前不提供这一功能（`App.tsx` 的 `LOCAL_VISUAL_SEARCH`）：设置不显示「模型」页，检视器不请求相关推荐；后台与 API 保留。模型选型与准入标准见
 [docs/visual-retrieval-model-evaluation.md](docs/visual-retrieval-model-evaluation.md)。
 
 ## 3. 仓库模块与构建

@@ -1,6 +1,6 @@
 # Visual Retrieval Model Evaluation
 
-Status: SigLIP2 Base passed this gate and ships as the optional Visual Pack (since 0.2.1-rc.25). This document keeps the evaluation record and the gate that any future candidate must pass.
+Status: SigLIP2 Base passed this gate and is wired in as the optional Visual Pack, but no pack has been published and the desktop UI hides the feature for now (`LOCAL_VISUAL_SEARCH` in `web/gravityport/src/App.tsx`). Real-library quality was never scored. This document keeps the evaluation record and the gate that any future candidate must pass.
 
 GravityPort's current text search already covers explicit keywords, supported Chinese conversational phrasing, and a small audited design vocabulary. The remaining retrieval gap is pixel-grounded intent: composition, subject position, color placement, and other facts that are not present in Prompt or metadata.
 
