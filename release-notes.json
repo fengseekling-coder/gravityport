@@ -6,6 +6,20 @@
   },
   "releases": [
     {
+      "version": "0.3.2",
+      "date": "2026-10-21",
+      "zh": [
+        "修复：删除图片或合并堆叠后，详情栏会自动落到画廊第一张；这张软件自己选中的卡片不再被 ⌘ 点选或 Shift 框选一起带进选区，也不会被单按 Delete 删掉。亲手点它一下就恢复正常选中。",
+        "堆叠按里面最新的一张图排序：堆叠收进新图会往前排，把那张图移到回收站后又退回原处。已有的堆叠在第一次打开素材库时重新排一次。",
+        "侧栏重新显示 Pinterest 入口（标着「暂未开放」），「设置 → 连接」也放回来了；Pinterest 接口还在试用额度，正式批准前浏览会受限。"
+      ],
+      "en": [
+        "Fixed: the card the Inspector falls back to after a delete or stack merge no longer joins a ⌘-click or Shift-marquee selection or answers Delete; click it once to select it normally.",
+        "Stacks now sort by their newest image: a stack moves up when it gains a new image and back when that image goes to the Trash. Existing stacks are re-sorted the first time the library opens.",
+        "The Pinterest entry is back in the sidebar (marked Not yet available), along with Settings → Connections; Pinterest access is still on the trial tier, so browsing stays limited until it is approved."
+      ]
+    },
+    {
       "version": "0.3.1",
       "date": "2026-10-21",
       "zh": [
