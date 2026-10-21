@@ -66,7 +66,7 @@ The built-in MCP server (`npm run mcp`) lets Codex and other MCP clients list, s
 
 Removed assets move to Trash, where they are kept for 90 days with a per-asset countdown. Right after a deletion an undo button offers to reverse it; Trash has its own menu for restoring, deleting permanently, and emptying. For whole-library safety, the `gravityport backup`, `backup-verify`, and `restore` commands create and check verified point-in-time backups.
 
-Settings → Feedback sends bug reports and ideas, optionally with a redacted diagnostic log that you can read in full before sending.
+Settings → Feedback sends bug reports and ideas, optionally with a redacted diagnostic log that you can read in full before sending. A Pinterest connection for browsing your own boards is built but stays unavailable until Pinterest approves production API access.
 
 ## Fits into your workflow
 
