@@ -6,6 +6,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ### Interface / 界面
 
+- Stacks now sort in the gallery by their newest image instead of their cover's date: a stack that gains a fresh capture moves up with it, and trashing that image moves the stack back. Existing stacks are re-sorted the first time the app opens the library.
 - The Pinterest entry is back: the sidebar row (marked 暂未开放 until you connect) and Settings → 连接 with the connection card show again. Pinterest's API access is still the trial tier, so browsing stays limited until standard access is approved.
 
 ### Fixes / 修复
