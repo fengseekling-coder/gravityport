@@ -8,7 +8,7 @@
 // focused card never draws the focus-visible outline on top of its selection
 // ring.
 export const name = "stack-selection";
-export const description = "stack gallery: ⌘-click adds to the inspected card -> Shift range and marquee include stacks -> batch trash takes whole stacks, undo restores -> right-click on a selected stack card trashes the whole selection, stacks confirm after 不再提醒 -> no focus outline on cards";
+export const description = "stack gallery: ⌘-click adds to the inspected card -> Shift range and marquee include stacks -> batch trash takes whole stacks, undo restores -> right-click on a selected stack card trashes the whole selection, stacks confirm after 不再提醒 -> the focus the app falls back to after a trash move never joins a ⌘-click batch or answers Delete -> no focus outline on cards";
 
 const STACKS = 3;
 const STACK_SIZE = 2;
@@ -38,6 +38,7 @@ export async function run(ctx) {
       || result?.trashed !== total || result?.restored !== true
       || result?.stackCardMenuHeading !== "已选 2 项" || result?.mixedConfirmed !== true || result?.mixedTrashed !== 1 + STACK_SIZE
       || result?.plainSkippedConfirm !== true || result?.plainTrashed !== 1
+      || result?.implicitDeleteIgnored !== true || result?.implicitNotBatched !== true || result?.firstKept !== true
       || result?.focusOutline !== "none") {
       throw new Error(`stack-selection result: ${JSON.stringify(result)}`);
     }
@@ -170,6 +171,35 @@ function stackSelectionSource(total) {
     (await waitFor(() => document.querySelector('.toast .toast-action'), 'plain undo action')).click();
     await waitFor(() => navSmall('回收站') === '0', 'undo restores the plain image');
 
+    // 4d. After a trash move the focus falls back to the first card on its
+    // own. That card must not ride along: Delete with nothing picked does
+    // nothing, and a ⌘-click batch starts from the clicked card alone (it used
+    // to sweep the newest card, out of sight at the top, into the trash).
+    await escape();
+    await waitFor(() => plainCards().length === ${PLAIN}, 'plain cards back after the plain undo');
+    const victim = plainCards().find((card) => card !== cards()[0]);
+    click(victim);
+    await waitFor(() => selected().length === 1 && selected()[0] === victim, 'victim selected');
+    victim.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 600, clientY: 400 }));
+    await waitFor(() => document.querySelector('.context-menu'), 'victim menu');
+    menuButton('移至回收站').click();
+    await waitFor(() => navSmall('回收站') === '1', 'victim in the trash');
+    const firstId = await waitFor(() => selected().length === 1 && selected()[0] === cards()[0]
+      ? cards()[0].getAttribute('data-asset-id') : '', 'focus falls back to the first card');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
+    await sleep(600);
+    const implicitDeleteIgnored = navSmall('回收站') === '1' && !document.querySelector('[role="alertdialog"]')
+      && cards()[0].getAttribute('data-asset-id') === firstId;
+    const target = cards().find((card, index) => index > 0 && !isStack(card));
+    if (!target) throw new Error('no plain card left to ⌘-click: Delete trashed the implicit first card');
+    click(target, { metaKey: true });
+    await sleep(300);
+    const implicitNotBatched = selected().length === 1 && selected()[0] === target;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
+    await waitFor(() => navSmall('回收站') === '2', 'only the ⌘-clicked card joins the trash');
+    await sleep(300);
+    const firstKept = cards()[0]?.getAttribute('data-asset-id') === firstId && navSmall('回收站') === '2';
+
     // 5. A focused card never draws the focus-visible outline: the generic
     // button:focus-visible ring (same color, 3px out) doubled the selection
     // ring after any key press. Synthetic input cannot enter :focus-visible,
@@ -179,6 +209,7 @@ function stackSelectionSource(total) {
     const focusOutline = cardRule ? cardRule.style.outlineStyle : 'missing';
 
     return { cmdAdded, rangeAll, rangeStacks, marqueeAll, marqueeStacks, trashed, restored,
-      stackCardMenuHeading, mixedConfirmed, mixedTrashed, plainSkippedConfirm, plainTrashed, focusOutline };
+      stackCardMenuHeading, mixedConfirmed, mixedTrashed, plainSkippedConfirm, plainTrashed,
+      implicitDeleteIgnored, implicitNotBatched, firstKept, focusOutline };
   })()`;
 }

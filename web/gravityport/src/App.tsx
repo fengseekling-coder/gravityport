@@ -673,7 +673,9 @@ export default function App() {
         scrollMemoryRef.current.set(leavingKey, {
           ...base,
           loaded: assetsRef.current.length || base.loaded,
-          selected: selectionRef.current.selected,
+          // A focus the app picked is not remembered as the user's: coming
+          // back lands on the first card again, still implicit.
+          selected: selectionRef.current.selected === implicitFocusRef.current ? "" : selectionRef.current.selected,
         })
       }
       liveScrollRef.current = null
@@ -785,7 +787,11 @@ export default function App() {
           const fallback = pruned.selected
             || (pruned.selectedIds.length ? pruned.selectedIds[0] : collected[0]?.id)
             || ""
-          applySelection(pruned.selectedIds, fallback)
+          // The first card, or a kept focus that was already the app's pick,
+          // stays implicit (see implicitFocusRef).
+          const implicit = !pruned.selectedIds.length
+            && (!pruned.selected || pruned.selected === implicitFocusRef.current)
+          applySelection(pruned.selectedIds, fallback, implicit)
         }
         lastGoodProjectRef.current = project
         if (!firstPageOkRef.current) {
@@ -1587,8 +1593,16 @@ export default function App() {
   const selectionRef = useRef({ selectedIds: [] as string[], selected: "" })
   const selectionRevisionRef = useRef(0)
   selectionRef.current = { selectedIds, selected }
-  const applySelection = (nextIds: string[], nextSelected: string) => {
+  // The card the app focused on its own (a view's first card after a load or
+  // a trash move), not one the user picked. The inspector still shows it, but
+  // it never joins a ⌘-click batch or answers the Delete key: after trashing
+  // cards deep in the gallery the focus falls back to the newest card, out of
+  // sight at the top, and the next ⌘-click batch used to carry it into the
+  // trash too.
+  const implicitFocusRef = useRef("")
+  const applySelection = (nextIds: string[], nextSelected: string, implicit = false) => {
     selectionRevisionRef.current += 1
+    implicitFocusRef.current = implicit && !nextIds.length ? nextSelected : ""
     selectionRef.current = { selectedIds: nextIds, selected: nextSelected }
     setSelectedIds(nextIds)
     setSelected(nextSelected)
@@ -1621,9 +1635,10 @@ export default function App() {
     }
     if (event.metaKey || event.ctrlKey) {
       // The inspected card is the implicit selection: the first ⌘-click adds
-      // to it instead of replacing it.
+      // to it instead of replacing it — unless the app picked it, not the user.
       const { selectedIds: current, selected: focused } = selectionRef.current
-      const toggled = toggleModifierSelection(logicalSelection(current, focused), focused, id)
+      const base = !current.length && focused === implicitFocusRef.current ? [] : logicalSelection(current, focused)
+      const toggled = toggleModifierSelection(base, focused, id)
       applySelection(toggled.selectedIds, toggled.selected)
       anchorIndexRef.current = index
       return
@@ -2468,6 +2483,7 @@ export default function App() {
       if (
         (e.key === "Delete" || e.key === "Backspace") &&
         !settings && !deleting && selectionIds.length > 0 && active !== "回收站"
+        && (preview || selectedIds.length > 0 || selected !== implicitFocusRef.current)
       )
         // Same entry as the menu's 移至回收站: 不再提醒 skips the dialog.
         requestDelete()
