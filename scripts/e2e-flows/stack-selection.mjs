@@ -39,6 +39,7 @@ export async function run(ctx) {
       || result?.stackCardMenuHeading !== "已选 2 项" || result?.mixedConfirmed !== true || result?.mixedTrashed !== 1 + STACK_SIZE
       || result?.plainSkippedConfirm !== true || result?.plainTrashed !== 1
       || result?.implicitDeleteIgnored !== true || result?.implicitNotBatched !== true || result?.firstKept !== true
+      || result?.shiftMarqueeSkipsImplicit !== true
       || result?.focusOutline !== "none") {
       throw new Error(`stack-selection result: ${JSON.stringify(result)}`);
     }
@@ -199,6 +200,19 @@ function stackSelectionSource(total) {
     await waitFor(() => navSmall('回收站') === '2', 'only the ⌘-clicked card joins the trash');
     await sleep(300);
     const firstKept = cards()[0]?.getAttribute('data-asset-id') === firstId && navSmall('回收站') === '2';
+    // A Shift-marquee adds to the selection, but not to that fallback focus.
+    await waitFor(() => selected().length === 1 && selected()[0] === cards()[0], 'focus falls back to the first card again');
+    const sweepCard = cards().find((card, index) => index > 0 && !isStack(card)) || cards()[1];
+    const sweepBox = sweepCard.getBoundingClientRect();
+    const sweepPointer = (target, type, x, y) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, shiftKey: true, pointerId: 22, pointerType: 'mouse', button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y }));
+    const sx = sweepBox.left + sweepBox.width / 2;
+    const sy = sweepBox.top + sweepBox.height / 2;
+    sweepPointer(sweepCard, 'pointerdown', sx, sy);
+    sweepPointer(window, 'pointermove', sx + 12, sy + 12);
+    await sleep(120);
+    sweepPointer(window, 'pointerup', sx + 12, sy + 12);
+    await sleep(300);
+    const shiftMarqueeSkipsImplicit = selected().length === 1 && selected()[0] === sweepCard;
 
     // 5. A focused card never draws the focus-visible outline: the generic
     // button:focus-visible ring (same color, 3px out) doubled the selection
@@ -210,6 +224,6 @@ function stackSelectionSource(total) {
 
     return { cmdAdded, rangeAll, rangeStacks, marqueeAll, marqueeStacks, trashed, restored,
       stackCardMenuHeading, mixedConfirmed, mixedTrashed, plainSkippedConfirm, plainTrashed,
-      implicitDeleteIgnored, implicitNotBatched, firstKept, focusOutline };
+      implicitDeleteIgnored, implicitNotBatched, firstKept, shiftMarqueeSkipsImplicit, focusOutline };
   })()`;
 }

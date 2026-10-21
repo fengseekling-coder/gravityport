@@ -11,7 +11,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ### Fixes / 修复
 
-- Moving cards to the trash no longer takes the newest card with them on the next batch: after a trash move the Inspector falls back to the gallery's first card on its own, and that card used to join the next ⌘-click selection (and answer the Delete key) even while it sat out of sight at the top. A card the app focused by itself now never joins a ⌘-click batch or answers Delete; clicking it makes it a normal selection again.
+- Moving cards to the trash no longer takes the newest card with them on the next batch: after a trash move the Inspector falls back to the gallery's first card on its own, and that card used to join the next ⌘-click selection (and answer the Delete key) even while it sat out of sight at the top. A card the app focused by itself now never joins a ⌘-click batch or a Shift-marquee, and never answers Delete; clicking it makes it a normal selection again.
 
 ## 0.3.1 — 2026-10-21 / Preview
 

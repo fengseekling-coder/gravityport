@@ -1765,7 +1765,11 @@ export default function App() {
     marqueeRef.current = gesture
     const pressX = event.clientX
     const pressY = event.clientY
-    const base = event.shiftKey ? logicalSelection(selectionRef.current.selectedIds, selectionRef.current.selected) : []
+    // Shift adds to the selection — never to a focus the app picked itself
+    // (see implicitFocusRef).
+    const { selectedIds: heldIds, selected: heldFocus } = selectionRef.current
+    const base = !event.shiftKey ? []
+      : !heldIds.length && heldFocus === implicitFocusRef.current ? [] : logicalSelection(heldIds, heldFocus)
     const startId = startCard?.dataset.assetId || ""
     const toContent = (clientX: number, clientY: number) => {
       const bounds = grid.getBoundingClientRect()
