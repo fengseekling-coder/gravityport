@@ -133,6 +133,10 @@ function errorMessage(error: unknown): string {
 // Task 146 card dragging.
 const CARD_DRAG_THRESHOLD_PX = 8
 const NATIVE_DRAG_MAX_FILES = 512
+// Local visual search (task 200) is off for now: no Visual Pack is published,
+// and groups/auto-stacks cover finding images. This hides Settings → 模型 and
+// the Inspector's similar-image row; the runtime and API stay in place.
+const LOCAL_VISUAL_SEARCH = false
 
 type CardDragGesture = {
   pointerId: number
@@ -986,7 +990,7 @@ export default function App() {
     fetchAssetGenerationHistory(project, selected, controller.signal).then(history => {
       if (!controller.signal.aborted) setGenerationHistory(history)
     }).catch(() => {})
-    fetchSimilarAssets(project, selected, controller.signal).then(items => {
+    if (LOCAL_VISUAL_SEARCH) fetchSimilarAssets(project, selected, controller.signal).then(items => {
       if (!controller.signal.aborted) setSimilarAssets(items)
     }).catch(() => {})
     fetchAssetRecipes(project, selected, controller.signal).then(history => {
@@ -4364,7 +4368,7 @@ export default function App() {
                 ["连接", "link"],
                 ["反馈", "message"],
                 ["关于", "info"],
-              ].map(([label, icon]) => (
+              ].filter(([label]) => LOCAL_VISUAL_SEARCH || label !== "模型").map(([label, icon]) => (
                 <button
                   className={settingTab === label ? "active" : ""}
                   aria-pressed={settingTab === label}
