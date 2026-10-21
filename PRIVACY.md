@@ -132,7 +132,7 @@ To stop this, turn off automatic capture in the extension, or disable or remove 
 
 ## Pinterest connection (not yet available)
 
-GravityPort Desktop can optionally connect to your Pinterest account so you can browse your own boards and Pins inside the app. The feature is implemented but not yet available: the sidebar entry and the Settings page that connects it stay hidden until Pinterest approves production API access, and GravityPort does not access Pinterest at all until you connect.
+GravityPort Desktop can optionally connect to your Pinterest account so you can browse your own boards and Pins inside the app. The feature is implemented but not yet available: the sidebar entry stays marked as unavailable until Pinterest approves production API access, and GravityPort does not access Pinterest at all until you connect.
 
 Once connected, the app reads the following through the official Pinterest API with read-only scopes: your Pinterest username; the name, description, Pin count, and cover of your boards, including secret boards; and the title, description, link, and image addresses of the Pins on those boards. This content is shown live on your computer only. It is not saved into the GravityPort library and is not uploaded to GravityPort-operated servers. To avoid repeated requests, the app keeps responses in an in-memory cache for at most 5 minutes and clears it when you disconnect or quit the app. Pin images load directly from Pinterest.
 
@@ -172,7 +172,7 @@ Codex, ChatGPT, Grok, Cowart, Chrome, Pinterest, and any AI or image-generation 
 - `MOSA_LIBRARY_DIR` remains an explicit runtime override. When it is set, it takes precedence over the saved desktop location and the in-app move control is disabled.
 - Disable web capture by disabling or removing the extension. Turning off its automatic capture stops automatic capture and ChatGPT desktop app capture, and the separate conversation-title reports, while manual saves still work. GravityPort Desktop creates its own Web Capture Token in Electron `userData` and pairs automatically, so leaving `MOSA_WEB_CAPTURE_TOKEN` unset does not disable web capture there; a standalone `npm start` runtime keeps web capture disabled while `MOSA_WEB_CAPTURE_TOKEN` is unset.
 - Disable a source bridge by not configuring or running the corresponding source tool, or by listing it in `MOSA_DISABLE_BRIDGES` (comma-separated: `codex`, `grok`, `cowart`, `cowartDiscovery`). Disabling `codex` also stops GravityPort from reading the ChatGPT desktop app's state file.
-- Pinterest stays disconnected; the connection screen is hidden in this release, and until you connect it GravityPort never accesses Pinterest. Disconnecting deletes the tokens stored on your computer.
+- Pinterest stays disconnected until you connect it in Settings → Connect; disconnecting deletes the tokens stored on your computer, and until then GravityPort never accesses Pinterest.
 - Nothing is submitted through the feedback page until you press **Send** there; leaving **Include diagnostic log** unticked sends no log.
 - Back up the library before migration, repair, or manual removal.
 - Do not commit the library, Tokens, Prompts, session records, or generated media to the source repository.

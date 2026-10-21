@@ -137,11 +137,10 @@ const NATIVE_DRAG_MAX_FILES = 512
 // and groups/auto-stacks cover finding images. This hides Settings → 模型 and
 // the Inspector's similar-image row; the runtime and API stay in place.
 const LOCAL_VISUAL_SEARCH = false
-// Pinterest browsing (tasks 135/138/147) stays hidden until Pinterest approves
-// Standard API access: Trial's shared daily quota cannot serve every user.
-// This hides the sidebar row and Settings → 连接; the view, the connection
-// card, and the local token API stay in place.
-const PINTEREST_ENTRY = false
+// Pinterest browsing (tasks 135/138/147). The sidebar row and Settings → 连接
+// are shown, the row marked 暂未开放 until a connection lands; false hides
+// both while the view, the connection card, and the local token API stay.
+const PINTEREST_ENTRY = true
 
 type CardDragGesture = {
   pointerId: number
