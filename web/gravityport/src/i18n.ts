@@ -104,6 +104,11 @@ const english: Record<string, string> = {
   "已添加到分组": "Added to group", "已从分组移除": "Removed from group",
   "已剪切": "Cut", "已粘贴到堆叠": "Pasted into stack", "已移出堆叠": "Moved out of the stack",
   "复制图片失败": "Couldn't copy the image",
+  // Multi-file copy (task 198)
+  "复制全部图片": "Copy all images", "复制全部路径": "Copy all paths",
+  "已复制 {count} 张图片": "Copied {count} images", "已复制 {count} 条路径": "Copied {count} paths",
+  "已复制 {count} 张，{skipped} 张找不到": "Copied {count} images; {skipped} couldn't be found",
+  "最多复制 {limit} 张，已复制前 {count} 张": "Up to {limit} images can be copied; copied the first {count}",
   "重试": "Retry", "加载更多": "Load more",
   "构建": "Build", "正式版": "Production",
   "取消收藏": "Remove from Favorites", "复制失败": "Copy failed", "存储类型": "Storage type",

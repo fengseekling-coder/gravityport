@@ -1884,6 +1884,21 @@ export default function App() {
     }
     return { plainIds, stackIds }
   }
+  // File paths for a batch, in selection order with each root-gallery stack
+  // card expanded to its members (all pages, stack order), duplicates
+  // collapsed. Shared by the system drag-out and the menu's copy actions.
+  const batchFilePaths = (ids: string[], { limit = Number.POSITIVE_INFINITY, signal }: { limit?: number; signal?: AbortSignal } = {}) => {
+    const loaded = new Map(assetsRef.current.map(item => [item.id, item]))
+    const pathOf = pagesSnapshot()?.pathOf
+    const stackOf = stackOfCard()
+    const units: DragOutUnit[] = ids.map(id => {
+      const stack = stackOf(id)
+      return stack ? { kind: "stack", stackId: stack } : { kind: "asset", path: loaded.get(id)?.image_path || pathOf?.get(id) || "" }
+    })
+    return stackFilePaths(units, signal, limit)
+  }
+  const stackFilePaths = (units: DragOutUnit[], signal?: AbortSignal, limit = Number.POSITIVE_INFINITY) =>
+    collectDragOutPaths(units, id => listStackMemberPaths(project, id, signal).then(members => stackMemberPaths(members)), { limit })
   // Group assignment for a batch: plain cards in one request, each stack card
   // through the stack's own endpoint (all members follow). The outcome counts
   // one per stack, like a plain card.
@@ -1982,19 +1997,13 @@ export default function App() {
       const pathOf = pagesSnapshot()?.pathOf
       const pathOfCard = (id: string) => loaded.get(id)?.image_path || pathOf?.get(id) || ""
       if (stackIds.length) {
-        const units: DragOutUnit[] = dragIds.map(id => {
-          const stack = stackOf(id)
-          return stack ? { kind: "stack", stackId: stack } : { kind: "asset", path: pathOfCard(id) }
-        })
         // Start fetching the stacks' member paths on press (all pages, stack
         // order, deduplicated) so leaving the window never waits on the
         // network longer than it must; the gesture is abandoned silently if
         // the button is released while the fetch is still running.
         const abort = new AbortController()
         membersAbort = abort
-        membersPromise = collectDragOutPaths(units,
-          id => listStackMemberPaths(project, id, abort.signal).then(members => stackMemberPaths(members)),
-          { limit: NATIVE_DRAG_MAX_FILES })
+        membersPromise = batchFilePaths(dragIds, { limit: NATIVE_DRAG_MAX_FILES, signal: abort.signal })
         membersPromise.catch(() => {})
       } else {
         const paths = nativeDragPaths(dragIds.map(id => ({ id, image_path: pathOfCard(id) })), dragIds)
@@ -2695,7 +2704,12 @@ export default function App() {
   }
   const writeText = async (text: string) => {
     const api = desktopAPI()
-    if (api?.writeClipboardText) { await api.writeClipboardText(text); return }
+    if (api?.writeClipboardText) {
+      // The bridge refuses oversized text (a huge path list) with ok: false.
+      const result = await api.writeClipboardText(text) as { ok?: boolean } | undefined
+      if (result?.ok === false) throw new Error("clipboard write refused")
+      return
+    }
     await navigator.clipboard?.writeText(text)
   }
   const copyImage = async () => {
@@ -2711,6 +2725,32 @@ export default function App() {
       }
       notify(`${tr("复制图片")} ${tr("完成")}`)
     } catch { notify(tr("复制图片失败")) }
+  }
+  // Several files onto the system clipboard (task 198): what pastes into
+  // Finder, Explorer, chat apps and web pages as that many files. A single
+  // card's 复制图片 above still copies the pixels.
+  const copyFiles = async (collect: (limit: number) => Promise<{ paths: string[]; overLimit: boolean }>) => {
+    const api = desktopAPI()
+    if (!api?.writeClipboardFiles) return
+    try {
+      const { paths, overLimit } = await collect(NATIVE_DRAG_MAX_FILES)
+      const result = paths.length ? await api.writeClipboardFiles(paths) : null
+      const count = Number(result?.count) || 0
+      if (!result?.ok || !count) { notify(tr("复制图片失败")); return }
+      const skipped = Number(result.skipped) || 0
+      if (overLimit) notify(fillNamed("最多复制 {limit} 张，已复制前 {count} 张", { limit: NATIVE_DRAG_MAX_FILES, count }))
+      else if (skipped) notify(fillNamed("已复制 {count} 张，{skipped} 张找不到", { count, skipped }))
+      else notify(fillNamed("已复制 {count} 张图片", { count }))
+    } catch { notify(tr("复制图片失败")) }
+  }
+  // Paths as text, one per line, same order and expansion as the files.
+  const copyPaths = async (collect: () => Promise<{ paths: string[] }>) => {
+    try {
+      const { paths } = await collect()
+      if (!paths.length) { notify(tr("复制失败")); return }
+      await writeText(paths.join("\n"))
+      notify(fillNamed("已复制 {count} 条路径", { count: paths.length }))
+    } catch { notify(tr("复制失败")) }
   }
   const exportAsset = () => {
     if (!asset) return
@@ -2771,6 +2811,7 @@ export default function App() {
       pageTotal: pageTotal ?? assets.length,
       isMac: isMacPlatform(),
       trashCount: navigation?.trash ?? 0,
+      canCopyFiles: typeof desktopAPI()?.writeClipboardFiles === "function",
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), ctx.selectionCount)
     setMenu({ x, y, entries, target: "asset", selectionCount: ctx.selectionCount, stackId: "", stackName: "", stackCount: 0 })
@@ -2792,6 +2833,7 @@ export default function App() {
       pageTotal: assets.length,
       isMac: isMacPlatform(),
       trashCount: navigation?.trash ?? 0,
+      canCopyFiles: typeof desktopAPI()?.writeClipboardFiles === "function",
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), 0)
     setMenu({ x, y, entries, target: "stack", selectionCount: 0, stackId: stack.id, stackName: stack.name || cardName, stackCount: stack.count })
@@ -2812,6 +2854,7 @@ export default function App() {
       pageTotal: pageTotal ?? assets.length,
       isMac: isMacPlatform(),
       trashCount: navigation?.trash ?? 0,
+      canCopyFiles: typeof desktopAPI()?.writeClipboardFiles === "function",
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), 0)
     // An empty builder result (stack surfaces inside the trash) opens nothing.
@@ -2911,7 +2954,10 @@ export default function App() {
     // Asset menu
     if (id === "open-viewer") setPreview(true)
     else if (id === "show-in-library") showInLibrary()
-    else if (id === "copy-image") void copyImage()
+    else if (id === "copy-image") {
+      if (ids.length > 1) void copyFiles(limit => batchFilePaths(ids, { limit }))
+      else void copyImage()
+    }
     else if (id === "cut") {
       cutIdsRef.current = ids
       notify("已剪切")
@@ -2920,6 +2966,7 @@ export default function App() {
       if (!asset?.prompt) { notify(tr("无提示词记录")); return }
       writeText(asset.prompt).then(() => notify(`${tr("复制提示词")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
     }
+    else if (id === "copy-path" && ids.length > 1) void copyPaths(() => batchFilePaths(ids))
     else if (id === "copy-path") {
       if (!asset) return
       writeText(asset.image_path || asset.image_url).then(() => notify(`${tr("复制路径")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
@@ -2986,6 +3033,8 @@ export default function App() {
     // Stack menu — every action reads the stack the menu was opened on.
     else if (id === "open-stack") goTo({ stackId: target.stackId, stackName: target.stackName })
     else if (id === "paste-into-stack") pasteCut(target.stackId)
+    else if (id === "stack-copy-images") void copyFiles(limit => stackFilePaths([{ kind: "stack", stackId: target.stackId }], undefined, limit))
+    else if (id === "stack-copy-paths") void copyPaths(() => stackFilePaths([{ kind: "stack", stackId: target.stackId }]))
     else if (id.startsWith("stack-add-to-group:")) {
       const groupName = id.slice("stack-add-to-group:".length)
       assignStackToGroup(project, target.stackId, groupName)

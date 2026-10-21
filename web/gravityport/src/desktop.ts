@@ -7,6 +7,7 @@ type ElectronAPI = {
   pasteImage?: () => Promise<unknown>
   writeClipboardText?: (text: string) => Promise<unknown>
   writeClipboardImage?: (path: string) => Promise<unknown>
+  writeClipboardFiles?: (paths: string[]) => Promise<{ ok?: boolean; count?: number; skipped?: number; reason?: string }>
   startNativeDrag?: (paths: string[]) => Promise<unknown>
   libraryFileFlags?: (files: File[]) => Promise<boolean[]>
   setLocale?: (locale: string) => Promise<unknown>

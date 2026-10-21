@@ -42,6 +42,7 @@ const EXPECTED_API_KEYS = [
   "setVisualModelEnabled",
   "setWindowFullScreen",
   "startNativeDrag",
+  "writeClipboardFiles",
   "writeClipboardImage",
   "writeClipboardText",
 ];
@@ -97,8 +98,9 @@ test("preload path, module format, security settings, and API surface are stable
   // acknowledge-rename-notice（老用户「已更名」提示）。任务 135：第 21 条
   // open-pinterest-authorize（Pinterest OAuth 授权页）。任务 147：第 22 条
   // open-external-link（Pinterest Pin 外链，仅 http/https）。第 23 条
-  // library-file-flags（拖出又拖回时不重复导入，只回布尔值）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "only the twenty-three approved invoke channels remain");
+  // library-file-flags（拖出又拖回时不重复导入，只回布尔值）。任务 198：第 24 条
+  // write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 24, "only the twenty-four approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
@@ -114,6 +116,8 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /ipcMain\.handle\("rename-notice-state"/);
   assert.match(main, /ipcMain\.handle\("acknowledge-rename-notice"/);
   assert.match(preload, /writeClipboardImage: \(path\) => ipcRenderer\.invoke\("write-clipboard-image", path\)/);
+  assert.match(preload, /writeClipboardFiles: \(paths\) => ipcRenderer\.invoke\("write-clipboard-files", paths\)/);
+  assert.match(main, /ipcMain\.handle\("write-clipboard-files"/);
   assert.match(preload, /writeClipboardText: \(text\) => ipcRenderer\.invoke\("write-clipboard-text", text\)/);
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.match(preload, /cancelUpdateDownload: \(\) => ipcRenderer\.invoke\("cancel-update-download"\)/);

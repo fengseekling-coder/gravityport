@@ -154,14 +154,16 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "setVisualModelEnabled",
     "setWindowFullScreen",
     "startNativeDrag",
+    "writeClipboardFiles",
     "writeClipboardImage",
     "writeClipboardText",
   ]);
   // 任务 96（A6）：第 18 条批准通道 set-window-full-screen。任务 116：第 19/20 条
   // rename-notice-state / acknowledge-rename-notice（老用户「已更名」提示）。任务 135：
   // 第 21 条 open-pinterest-authorize（Pinterest OAuth 授权页）。任务 147：第 22 条
-  // open-external-link（Pinterest Pin 外链，仅 http/https）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "preload keeps the approved invoke channels");
+  // open-external-link（Pinterest Pin 外链，仅 http/https）。任务 198：第 24 条
+  // write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 24, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");
   // R1 isolation fix (2026-08-09, approved scope) added qa:web/qa:electron/

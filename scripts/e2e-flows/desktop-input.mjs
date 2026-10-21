@@ -10,7 +10,9 @@
 // CDP input bypasses that layer, so the guard for it lives in
 // test/desktop-shell-contract.test.mjs plus the OS-level
 // scripts/packaged-input-smoke.mjs check.
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
+import { realpathSync } from "node:fs";
 import { readFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
@@ -257,6 +259,30 @@ export async function run(ctx) {
       if (focused === "BODY" || focused === "none") throw new Error(`focus stayed on ${focused}`);
     }));
 
+    // Task 198: the real preload + main bridge puts several library files on
+    // the system clipboard and refuses paths outside the library.
+    await step("write-clipboard-files puts library files on the system clipboard", async () => {
+      const page = await ctx.api(origin, "GET", "/api/assets?project=default&limit=2");
+      const paths = (page.assets || []).map((asset) => asset.image_path).filter(Boolean);
+      if (paths.length !== 2) throw new Error(`expected 2 library paths, got ${JSON.stringify(paths)}`);
+      const outside = await ctx.makePng("desktop-input-outside.png", [10, 20, 30]);
+      const result = await cdp.send("Runtime.evaluate", {
+        expression: `window.electronAPI.writeClipboardFiles(${JSON.stringify([...paths, outside])})`,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (process.platform !== "darwin" && process.platform !== "win32") {
+        if (result?.ok !== false || result?.reason !== "unsupported") throw new Error(`expected unsupported, got ${JSON.stringify(result)}`);
+        return;
+      }
+      if (result?.ok !== true || result.count !== 2 || result.skipped !== 1) throw new Error(`bridge result ${JSON.stringify(result)}`);
+      const expected = paths.map((path) => realpathSync.native(path));
+      const actual = readSystemClipboardFiles().map((path) => realpathSync.native(path));
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        throw new Error(`clipboard files ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`);
+      }
+    });
+
     if (failures.length) throw new Error(`${failures.length} desktop-input step(s) failed:\n- ${failures.join("\n- ")}`);
     return { seeded: SEED_COUNT, steps: "all passed" };
   } catch (error) {
@@ -275,6 +301,16 @@ export async function run(ctx) {
     }
     await rm(guiRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 }).catch(() => {});
   }
+}
+
+// The file list on the OS clipboard, read the way other apps see it.
+function readSystemClipboardFiles() {
+  if (process.platform === "darwin") {
+    const script = 'ObjC.import("AppKit"); var u = $.NSPasteboard.generalPasteboard.readObjectsForClassesOptions($([$.NSURL]), $({})); var out = []; for (var i = 0; i < u.count; i++) out.push(u.objectAtIndex(i).path.js); JSON.stringify(out)';
+    return JSON.parse(execFileSync("osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8" }));
+  }
+  const script = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; ConvertTo-Json -Compress @(Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName })";
+  return JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-Command", script], { encoding: "utf8" }));
 }
 
 async function seedAssets(ctx, port) {

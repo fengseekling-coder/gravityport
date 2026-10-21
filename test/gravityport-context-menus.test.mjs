@@ -48,6 +48,8 @@ const baseCtx = (overrides = {}) => ({
   groups: [],
   pageTotal: 10,
   isMac: true,
+  trashCount: 0,
+  canCopyFiles: true,
   ...overrides,
 });
 
@@ -101,15 +103,29 @@ describe("context-menus / asset menu", () => {
     assert.equal(findItem(entries, "toggle-favorite").label, "取消收藏");
   });
 
-  it("multi-select: heading first, no open section, cut-only copy section", () => {
+  it("multi-select: heading first, no open section, copy section copies files and paths", () => {
     const entries = buildContextMenu(baseCtx({ selectionCount: 3 }));
     const ids = idList(entries);
     assert.equal(ids[0], "HEAD:已选 {count} 项", "heading with {count} placeholder comes first");
     assert.equal(ids[1], "|", "one separator after the heading");
     assert.ok(!ids.includes("open-viewer"), "multi-select has no viewer section");
-    assert.deepEqual(itemIds(entries).filter(id => id === "cut" || id === "copy-image"), ["cut"],
-      "multi-select copy section is cut only");
+    assert.deepEqual(ids.slice(2, 6), ["copy-image", "cut", "copy-path", "|"],
+      "multi-select copy section: 复制图片, 剪切, 复制路径 (no 复制提示词)");
     assert.ok(ids.includes("HEAD:已选 {count} 项"));
+  });
+
+  it("multi-select with stacks keeps 复制图片 and 复制路径 (stacks expand to members)", () => {
+    const entries = buildContextMenu(baseCtx({ selectionCount: 2, selectionHasStacks: true }));
+    assert.notEqual(findItem(entries, "copy-image").disabled, true);
+    assert.notEqual(findItem(entries, "copy-path").disabled, true);
+  });
+
+  it("without a file clipboard (browser) multi-select hides 复制图片 but keeps 复制路径", () => {
+    const entries = buildContextMenu(baseCtx({ selectionCount: 3, canCopyFiles: false }));
+    assert.ok(!itemIds(entries).includes("copy-image"));
+    assert.ok(itemIds(entries).includes("copy-path"));
+    const single = buildContextMenu(baseCtx({ selectionCount: 1, canCopyFiles: false }));
+    assert.ok(itemIds(single).includes("copy-image"), "single 复制图片 copies pixels and needs no file clipboard");
   });
 
   it("single-select: no heading", () => {
@@ -187,6 +203,8 @@ describe("context-menus / stack card menu", () => {
     assert.deepEqual(idList(entries()), [
       "open-stack",
       "|",
+      "stack-copy-images", "stack-copy-paths",
+      "|",
       "stack-add-to-group", "stack-remove-from-group",
       "|",
       "rename-stack", "dissolve-stack",
@@ -200,6 +218,12 @@ describe("context-menus / stack card menu", () => {
     const ids = idList(entries({ cutActive: true }));
     assert.equal(ids[0], "paste-into-stack");
     assert.equal(ids[1], "|");
+  });
+
+  it("without a file clipboard: 复制全部图片 absent, 复制全部路径 stays", () => {
+    const ids = itemIds(entries({ canCopyFiles: false }));
+    assert.ok(!ids.includes("stack-copy-images"));
+    assert.ok(ids.includes("stack-copy-paths"));
   });
 
   it("no cut content: 粘贴到此堆叠 absent", () => {
@@ -290,6 +314,7 @@ describe("context-menus / trash scope", () => {
     assert.ok(!ids.includes("open-viewer"), "multi-select has no viewer entry");
     assert.equal(findItem(entries, "restore-selection").label, "恢复 {count} 个素材");
     assert.equal(findItem(entries, "permanent-delete").label, "永久删除 {count} 个素材");
+    assert.ok(itemIds(entries).includes("copy-path"), "复制路径 copies every selected path");
   });
 
   it("blank area: 全选 + 清空回收站, greying out on an empty trash", () => {
