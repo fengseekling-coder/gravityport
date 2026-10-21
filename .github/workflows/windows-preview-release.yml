@@ -1,0 +1,132 @@
+name: Windows Preview Release Artifact
+
+# Builds the Windows Preview update ZIP for an already-tagged release on a
+# Windows runner (the Sharp/SQLite runtimes for win32 must be provisioned
+# natively, see desktop/forge.config.mjs). The ZIP is uploaded as a workflow
+# artifact; publishing it to the first-party download host stays a manual step
+# (docs/releasing.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag that is already pushed to origin, for example v0.3.1"
+        required: true
+        type: string
+      product:
+        description: "Package product: MOSA (transition build) or GravityPort"
+        required: true
+        type: choice
+        options:
+          - GravityPort
+          - MOSA
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-preview:
+    name: Build Preview ZIP on windows-2022
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_PRODUCT: ${{ inputs.product }}
+    steps:
+      - name: Validate inputs
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') { throw "Unexpected tag: $env:RELEASE_TAG" }
+          if (@('MOSA', 'GravityPort') -notcontains $env:RELEASE_PRODUCT) { throw "Unexpected product: $env:RELEASE_PRODUCT" }
+
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Assert release provenance
+        run: |
+          $actualSha = (git rev-parse HEAD).Trim()
+          $tag = (git describe --tags --exact-match HEAD).Trim()
+          if ($tag -ne $env:RELEASE_TAG) { throw "HEAD is not exactly ${env:RELEASE_TAG}: $tag" }
+          $peeledTagSha = (git rev-parse "$($env:RELEASE_TAG)^{}").Trim()
+          if ($peeledTagSha -ne $actualSha) { throw "Unexpected peeled tag SHA: $peeledTagSha" }
+          if (git status --porcelain) { throw 'Tag checkout is not clean.' }
+          "RELEASE_SHA=$actualSha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_VERSION=$($env:RELEASE_TAG.Substring(1))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install immutable dependencies
+        run: npm ci
+
+      - name: Build the Windows Preview ZIP
+        env:
+          MOSA_RELEASE_DISTRIBUTION: preview
+          MOSA_RELEASE_PRODUCT: ${{ inputs.product }}
+          MOSA_RELEASE_MANIFEST_PUBLIC_KEY: ${{ vars.MOSA_RELEASE_MANIFEST_PUBLIC_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MOSA_RELEASE_MANIFEST_PUBLIC_KEY)) {
+            throw 'The MOSA_RELEASE_MANIFEST_PUBLIC_KEY repository variable is missing.'
+          }
+          npm run desktop:release:windows
+
+      - name: Verify ZIP identity and Preview signing state
+        run: |
+          $zipName = "$($env:RELEASE_PRODUCT)-win32-x64-$($env:RELEASE_VERSION).zip"
+          $zip = "out/make/zip/win32/x64/$zipName"
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "ZIP is missing: $zip" }
+
+          $inspect = Join-Path $env:RUNNER_TEMP 'windows-preview-inspect'
+          Expand-Archive -LiteralPath $zip -DestinationPath $inspect -Force
+          $asarFiles = @(Get-ChildItem -LiteralPath $inspect -Recurse -File -Filter app.asar)
+          if ($asarFiles.Count -ne 1) { throw "Expected exactly one app.asar, got $($asarFiles.Count)." }
+
+          $identityScript = @'
+          const asar = require('@electron/asar');
+          const identity = JSON.parse(asar.extractFile(process.argv[1], 'web/gravityport/dist/build-identity.json').toString('utf8'));
+          const expected = JSON.parse(process.argv[2]);
+          for (const [key, value] of Object.entries(expected)) {
+            const actual = key === 'keyId' ? identity.releaseManifestTrust?.keyId : identity[key];
+            if (actual !== value) throw new Error(`Unexpected ${key}: ${actual || '(missing)'}`);
+          }
+          console.log(JSON.stringify({
+            productVersion: identity.productVersion,
+            gitSha: identity.gitSha,
+            distribution: identity.distribution,
+            uiFingerprint: identity.uiFingerprint,
+            runtimeFingerprint: identity.runtimeFingerprint,
+            keyId: identity.releaseManifestTrust?.keyId,
+          }));
+          '@
+          $expected = @{
+            productVersion = $env:RELEASE_VERSION
+            gitSha = $env:RELEASE_SHA
+            distribution = 'preview'
+            keyId = '235d3651f80176bed99098cab6a4c6fe0581d0206e23f691af2c8bf88aa9839f'
+          }
+          node -e $identityScript $asarFiles[0].FullName ($expected | ConvertTo-Json -Compress)
+
+          $exe = Get-ChildItem -LiteralPath $inspect -Recurse -File -Filter "$($env:RELEASE_PRODUCT).exe" | Select-Object -First 1
+          if ($null -eq $exe) { throw "$($env:RELEASE_PRODUCT).exe is missing from the ZIP." }
+          $authenticode = Get-AuthenticodeSignature -FilePath $exe.FullName
+          if ($authenticode.Status -ne 'NotSigned') { throw "Preview executable expected NotSigned, got $($authenticode.Status)." }
+
+          $sha256 = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha256 *$zipName" | Set-Content -NoNewline -Encoding ascii SHA256SUMS.txt
+          "ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload the Windows Preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.product }}-${{ inputs.tag }}-windows-preview-x64
+          if-no-files-found: error
+          path: |
+            ${{ env.ZIP_PATH }}
+            SHA256SUMS.txt

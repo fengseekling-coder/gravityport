@@ -86,27 +86,6 @@
       开启后，扩展仅在支持的网站中观察与生成媒体相关的页面数据，并把匹配到的媒体、Prompt 与来源发送到本机 GravityPort。默认关闭；不会上传到 GravityPort 云端。
     </p>
 
-    <!-- DEV-ONLY(128): remove before release (the whole #dev diagnostics panel). -->
-    <section id="devDiagnostics" hidden style="margin-top:24px;padding:12px;border-radius:12px;background:#fef9c3">
-      <h2 style="margin:0;font-size:16px">开发者诊断（原文）</h2>
-      <div class="row">
-        <input id="devRawDiagnostics" type="checkbox" />
-        <label for="devRawDiagnostics" style="margin: 0; font-weight: 500">记录出图轮次的原始数据</label>
-      </div>
-      <p style="margin:8px 0 0;color:#475569;font-size:12px">
-        开启后，在 ChatGPT 出图但没拿到提示词时，把这一轮的原始数据存在本机，供排查。含对话原文，只给开发者自己用。
-      </p>
-      <div class="row" style="margin-top:8px">
-        <span id="devRawStats" style="color:#475569;font-size:12px"></span>
-      </div>
-      <div class="row">
-        <button id="devRawExportAll" type="button" style="background:#334155;margin-top:8px;margin-right:8px">导出全部</button>
-        <button id="devRawExportRecent" type="button" style="background:#334155;margin-top:8px;margin-right:8px">导出最近 20 轮</button>
-        <button id="devRawClear" type="button" style="background:#b91c1c;margin-top:8px">清空</button>
-      </div>
-      <div id="devRawStatus" role="status" aria-live="polite" style="margin-top:8px;font-size:12px"></div>
-    </section>
-
     <button id="save" type="button">保存设置</button>
     <button id="test" type="button" style="background: #334155; margin-left: 8px">测试连接</button>
     <div id="status" role="status" aria-live="polite"></div>

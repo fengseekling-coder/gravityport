@@ -559,7 +559,7 @@ ChatGPT 桌面版（与 Codex 同一个 App）不把聊天中的生成图或聊�
 ### 7.6 Pinterest（暂未开放）
 
 `lib/pinterest/` 与 `lib/api/pinterest-routes.mjs` 实现只读的 Pinterest 画板浏览；侧栏入口
-在加载画板前显示「暂未开放」，等待 Pinterest 批准正式 API 访问。客户端只在桌面版创建；
+和设置里的「连接」页在 `App.tsx` 中由常量 `PINTEREST_ENTRY` 关着（默认隐藏），等待 Pinterest 批准正式 API 访问。客户端只在桌面版创建；
 OAuth 回调地址固定为 `http://localhost:43517/api/pinterest/callback`，运行时不在 43517
 端口时连接返回 `PINTEREST_PORT_MISMATCH`。授权码与 refresh token 经
 `https://mosa.azhuilab.com/api/pinterest/token` 中转换取 token（app secret 不在客户端），

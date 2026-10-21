@@ -1,71 +1,93 @@
 {
   "schema": 1,
   "unreleased": {
-    "zh": [
-      "MOSA 更名为 GravityPort：应用、浏览器扩展和命令行都换了新名字，素材库、设置和扩展配对原样保留。",
-      "全新界面：画廊、检视器和设置整体重做，层级更清楚。",
-      "拖拽整理：把卡片拖到侧栏分组归类，拖到另一张卡上合成堆叠，堆叠里可以拖动排序，也能直接拖出应用；拖错了可以撤销。",
-      "回收站：删除后可以马上撤销；回收站里的素材保留 90 天并显示剩余天数，可以恢复、永久删除或一键清空。",
-      "版本树按 ChatGPT 对话的轮次分组，展开就能看到每一轮生成的缩略图。",
-      "设置里新增「反馈」：直接把问题或建议发给我们，可以选择附上已脱敏的诊断日志，发送前能看到全文。",
-      "设置 →「关于」里能看到这个版本更新了什么；有新版本时，会先列出新版本的更新内容。",
-      "从大图、堆叠或其他视图返回画廊时，会回到原来的位置；长列表多了「回到顶部」按钮。",
-      "框选更顺手：可以从空白处开始框选，按住 Shift 加选，拖到窗口边缘会自动滚动；⌘A 和多选拖动都包括堆叠。",
-      "画廊里的横图排得更整齐，不再留下大块空白。",
-      "检视器头部显示类型、来源和日期；标签改成纯文字；比例直接显示 16:9、9:16 这样的名字。",
-      "搜索只匹配你看得见的内容，比如文件名、提示词、标签和分组，结果更准。",
-      "macOS 上可以按住窗口顶部拖动窗口。",
-      "修复：把素材库里的图拖出去再拖回来，不会再重复导入一份。",
-      "查看大图时可以全屏，收起侧栏和详情，只留图片。",
-      "修复：视频卡片不再显示破图，画廊和详情里显示视频画面，右上角有播放标记。",
-      "修复：少数图片缩略图比例不对、点开大图是空白。",
-      "在 ChatGPT 桌面应用里聊天生成的图片，现在也能通过网页采集扩展自动收录（需开启自动采集）。",
-      "修复：新版 Codex 生成的图片重新记录 Codex 实际使用的提示词，不再误用你的聊天消息。",
-      "侧栏「我的分组」的右键菜单换成和素材右键菜单一样的样式：分组颜色收进二级菜单，删除单独放在最下面。",
-      "画廊支持键盘浏览：方向键移到相邻卡片，回车打开；⌘F 或 / 跳到搜索框，菜单里的「查找」也能用了。",
-      "按 Delete 删除时也遵守「不再提醒」，不再每次弹确认。",
-      "浏览器扩展关掉自动入库后，不再自己上报 ChatGPT 对话标题。",
-      "修复：同时选中单图和堆叠后，在堆叠卡片上右键删除，现在会把整个选区移到回收站，不再只删堆叠；选区里有堆叠时，即使勾了「不再提醒」也会先确认。",
-      "把一个堆叠拖到另一个堆叠上就能合并；拖到普通图片上会和它合成新堆叠。合并后可以撤销。",
-      "修复：在堆叠里把图片移到回收站后，画廊偶尔会跳回上方，现在会停在原来的位置。",
-      "多选后右键可以复制图片和路径；堆叠右键可以复制全部图片和全部路径。多张图片以文件形式复制，能直接粘贴到访达、聊天软件或网页。"
-    ],
-    "en": [
-      "MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.",
-      "A new interface: the gallery, Inspector, and Settings are redesigned with a clearer layout.",
-      "Drag to organize: drop cards on a sidebar group, onto another card to build a stack, reorder inside a stack, or drag them out of the app. Mistakes can be undone.",
-      "Trash: deletions can be undone right away, trashed items are kept for 90 days with the days left shown, and you can restore, delete forever, or empty the Trash.",
-      "The version tree groups ChatGPT images by conversation round, with thumbnails for every round when expanded.",
-      "Settings has a new Feedback page for sending problems or ideas straight to us, with an optional redacted diagnostic log you can read before sending.",
-      "Settings → About now lists what changed in this version, and shows what's new in the next version when an update is available.",
-      "Going back to the gallery from the image viewer, a stack, or another view returns to where you were, and long lists get a Back to top button.",
-      "Smoother marquee selection: start from empty space, hold Shift to add, and the gallery scrolls when you reach the window edge. ⌘A and multi-card drags include stacks.",
-      "Wide images line up more evenly in the gallery instead of leaving large gaps.",
-      "The Inspector header shows kind, source, and date; tags are plain text; aspect ratios use familiar names like 16:9 and 9:16.",
-      "Search matches only what you can see, such as file names, prompts, tags, and groups, so results are more accurate.",
-      "On macOS, drag the top of the window to move it.",
-      "Fixed: dragging a library image out and back in no longer imports a duplicate.",
-      "When viewing an image you can now go fullscreen inside the window: the sidebar and details collapse, leaving only the picture.",
-      "Fixed: video cards no longer show a broken image; the gallery and details show a frame from the video with a play badge.",
-      "Fixed: a few images showed a wrong thumbnail ratio or a blank large view.",
-      "Images made in ChatGPT desktop-app chats are now captured too, through the Web Capture extension with auto capture on.",
-      "Fixed: images from newer Codex versions record the prompt Codex actually used again, instead of your chat message.",
-      "The right-click menu for groups under My groups now matches the asset menu: group colors sit in a submenu, and Delete stands on its own at the bottom.",
-      "Browse the gallery from the keyboard: arrow keys move to the neighbouring card and Enter opens it; ⌘F or / jumps to search, and the menu's Find now works.",
-      "Pressing Delete now honours \"Don’t ask again\" instead of always asking for confirmation.",
-      "With auto capture off, the browser extension no longer reports ChatGPT conversation titles on its own.",
-      "Fixed: right-clicking a selected stack card now moves the whole selection to the Trash, not just the stack, and a selection with a stack always asks first.",
-      "Drag a stack onto another stack to merge them; drop it on a single image to stack them together. Merges can be undone.",
-      "Fixed: moving an image to the trash inside a stack could make the gallery jump back up; it now stays where you were.",
-      "Right-click a multi-selection to copy its images or paths, or a stack to copy all of its images or paths. Several images copy as files, ready to paste into Finder, chat apps, or web pages."
-    ]
+    "zh": [],
+    "en": []
   },
   "releases": [
     {
+      "version": "0.3.1",
+      "date": "2026-10-21",
+      "zh": [
+        "MOSA 更名为 GravityPort：应用、浏览器扩展和命令行都换了新名字，素材库、设置和扩展配对原样保留。",
+        "macOS 上更新后应用名变为 GravityPort.app，旧的 MOSA.app 会被移到废纸篓。"
+      ],
+      "en": [
+        "MOSA is now GravityPort: the app, browser extension, and command line use the new name, while your library, settings, and extension pairing stay exactly where they were.",
+        "On macOS the app is renamed to GravityPort.app after the update, and the old MOSA.app is moved to the Trash."
+      ]
+    },
+    {
+      "version": "0.3.0-rc.1",
+      "date": "2026-10-21",
+      "zh": [
+        "MOSA 即将更名为 GravityPort：这是更名前的过渡版本，再更新一次就会变成 GravityPort。素材库、设置和扩展配对原样保留。",
+        "全新界面：画廊、检视器和设置整体重做，层级更清楚。",
+        "拖拽整理：把卡片拖到侧栏分组归类，拖到另一张卡上合成堆叠，堆叠里可以拖动排序，也能直接拖出应用；拖错了可以撤销。",
+        "回收站：删除后可以马上撤销；回收站里的素材保留 90 天并显示剩余天数，可以恢复、永久删除或一键清空。",
+        "版本树按 ChatGPT 对话的轮次分组，展开就能看到每一轮生成的缩略图。",
+        "设置里新增「反馈」：直接把问题或建议发给我们，可以选择附上已脱敏的诊断日志，发送前能看到全文。",
+        "设置 →「关于」里能看到这个版本更新了什么；有新版本时，会先列出新版本的更新内容。",
+        "从大图、堆叠或其他视图返回画廊时，会回到原来的位置；长列表多了「回到顶部」按钮。",
+        "框选更顺手：可以从空白处开始框选，按住 Shift 加选，拖到窗口边缘会自动滚动；⌘A 和多选拖动都包括堆叠。",
+        "画廊里的横图排得更整齐，不再留下大块空白。",
+        "检视器头部显示类型、来源和日期；标签改成纯文字；比例直接显示 16:9、9:16 这样的名字。",
+        "搜索只匹配你看得见的内容，比如文件名、提示词、标签和分组，结果更准。",
+        "macOS 上可以按住窗口顶部拖动窗口。",
+        "修复：把素材库里的图拖出去再拖回来，不会再重复导入一份。",
+        "查看大图时可以全屏，收起侧栏和详情，只留图片。",
+        "修复：视频卡片不再显示破图，画廊和详情里显示视频画面，右上角有播放标记。",
+        "修复：少数图片缩略图比例不对、点开大图是空白。",
+        "在 ChatGPT 桌面应用里聊天生成的图片，现在也能通过网页采集扩展自动收录（需开启自动采集）。",
+        "修复：新版 Codex 生成的图片重新记录 Codex 实际使用的提示词，不再误用你的聊天消息。",
+        "侧栏「我的分组」的右键菜单换成和素材右键菜单一样的样式：分组颜色收进二级菜单，删除单独放在最下面。",
+        "画廊支持键盘浏览：方向键移到相邻卡片，回车打开；⌘F 或 / 跳到搜索框，菜单里的「查找」也能用了。",
+        "按 Delete 删除时也遵守「不再提醒」，不再每次弹确认。",
+        "浏览器扩展关掉自动入库后，不再自己上报 ChatGPT 对话标题。",
+        "修复：同时选中单图和堆叠后，在堆叠卡片上右键删除，现在会把整个选区移到回收站，不再只删堆叠；选区里有堆叠时，即使勾了「不再提醒」也会先确认。",
+        "把一个堆叠拖到另一个堆叠上就能合并；拖到普通图片上会和它合成新堆叠。合并后可以撤销。",
+        "修复：在堆叠里把图片移到回收站后，画廊偶尔会跳回上方，现在会停在原来的位置。",
+        "多选后右键可以复制图片和路径；堆叠右键可以复制全部图片和全部路径。多张图片以文件形式复制，能直接粘贴到访达、聊天软件或网页。"
+      ],
+      "en": [
+        "MOSA is becoming GravityPort: this is the last build before the rename, and one more update turns it into GravityPort. Your library, settings, and extension pairing stay exactly as they are.",
+        "A new interface: the gallery, Inspector, and Settings are redesigned with a clearer layout.",
+        "Drag to organize: drop cards on a sidebar group, onto another card to build a stack, reorder inside a stack, or drag them out of the app. Mistakes can be undone.",
+        "Trash: deletions can be undone right away, trashed items are kept for 90 days with the days left shown, and you can restore, delete forever, or empty the Trash.",
+        "The version tree groups ChatGPT images by conversation round, with thumbnails for every round when expanded.",
+        "Settings has a new Feedback page for sending problems or ideas straight to us, with an optional redacted diagnostic log you can read before sending.",
+        "Settings → About now lists what changed in this version, and shows what's new in the next version when an update is available.",
+        "Going back to the gallery from the image viewer, a stack, or another view returns to where you were, and long lists get a Back to top button.",
+        "Smoother marquee selection: start from empty space, hold Shift to add, and the gallery scrolls when you reach the window edge. ⌘A and multi-card drags include stacks.",
+        "Wide images line up more evenly in the gallery instead of leaving large gaps.",
+        "The Inspector header shows kind, source, and date; tags are plain text; aspect ratios use familiar names like 16:9 and 9:16.",
+        "Search matches only what you can see, such as file names, prompts, tags, and groups, so results are more accurate.",
+        "On macOS, drag the top of the window to move it.",
+        "Fixed: dragging a library image out and back in no longer imports a duplicate.",
+        "When viewing an image you can now go fullscreen inside the window: the sidebar and details collapse, leaving only the picture.",
+        "Fixed: video cards no longer show a broken image; the gallery and details show a frame from the video with a play badge.",
+        "Fixed: a few images showed a wrong thumbnail ratio or a blank large view.",
+        "Images made in ChatGPT desktop-app chats are now captured too, through the Web Capture extension with auto capture on.",
+        "Fixed: images from newer Codex versions record the prompt Codex actually used again, instead of your chat message.",
+        "The right-click menu for groups under My groups now matches the asset menu: group colors sit in a submenu, and Delete stands on its own at the bottom.",
+        "Browse the gallery from the keyboard: arrow keys move to the neighbouring card and Enter opens it; ⌘F or / jumps to search, and the menu's Find now works.",
+        "Pressing Delete now honours \"Don’t ask again\" instead of always asking for confirmation.",
+        "With auto capture off, the browser extension no longer reports ChatGPT conversation titles on its own.",
+        "Fixed: right-clicking a selected stack card now moves the whole selection to the Trash, not just the stack, and a selection with a stack always asks first.",
+        "Drag a stack onto another stack to merge them; drop it on a single image to stack them together. Merges can be undone.",
+        "Fixed: moving an image to the trash inside a stack could make the gallery jump back up; it now stays where you were.",
+        "Right-click a multi-selection to copy its images or paths, or a stack to copy all of its images or paths. Several images copy as files, ready to paste into Finder, chat apps, or web pages."
+      ]
+    },
+    {
       "version": "0.2.1-rc.34",
       "date": "2026-09-24",
-      "zh": ["修复 Windows 更新助手在成功完成后未显式退出的问题，提升更新流程稳定性。"],
-      "en": ["Fix the Windows update helper to exit explicitly after a successful update, improving update reliability."]
+      "zh": [
+        "修复 Windows 更新助手在成功完成后未显式退出的问题，提升更新流程稳定性。"
+      ],
+      "en": [
+        "Fix the Windows update helper to exit explicitly after a successful update, improving update reliability."
+      ]
     }
   ]
 }

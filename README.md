@@ -27,7 +27,7 @@ Get GravityPort from the [official download page](https://gravityport.azhuilab.c
 - **GravityPort Desktop for Windows 10/11** (x64): a portable ZIP. Extract it and run `GravityPort.exe`. Windows is still a Preview / testing target.
 - **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP loaded in developer mode, not a signed CRX. See the [install guide](https://gravityport.azhuilab.com/guide/).
 
-Installed desktop apps check for updates themselves in **Settings → About**. Until the first release under the GravityPort name ships, the download page still offers the last build released as MOSA.
+Installed desktop apps check for updates themselves in **Settings → About**. The [release manifest](https://gravityport.azhuilab.com/releases/gravityport/latest.json) is the machine-readable source for the newest version.
 
 ## First launch
 
@@ -66,7 +66,7 @@ The built-in MCP server (`npm run mcp`) lets Codex and other MCP clients list, s
 
 Removed assets move to Trash, where they are kept for 90 days with a per-asset countdown. Right after a deletion an undo button offers to reverse it; Trash has its own menu for restoring, deleting permanently, and emptying. For whole-library safety, the `gravityport backup`, `backup-verify`, and `restore` commands create and check verified point-in-time backups.
 
-Settings → Feedback sends bug reports and ideas, optionally with a redacted diagnostic log that you can read in full before sending. A Pinterest connection for browsing your own boards is built but stays unavailable until Pinterest approves production API access.
+Settings → Feedback sends bug reports and ideas, optionally with a redacted diagnostic log that you can read in full before sending.
 
 ## Fits into your workflow
 
