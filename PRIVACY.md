@@ -67,11 +67,9 @@ The website can also retain a short campaign label such as `ref=reddit_codex` on
 
 GravityPort Desktop reads `https://mosa.azhuilab.com/releases/gravityport/latest.json` when you check for or install an application update, and also silently when the app window opens if more than 24 hours have passed since the last check. Versions released before the rename still read the legacy address `https://mosa.azhuilab.com/releases/latest.json`. If you explicitly choose **Download and update**, macOS and Windows builds download only the platform-specific update artifact advertised by that manifest from `https://mosa.azhuilab.com/downloads/`. GravityPort does not attach your library contents, images, videos, Prompts, provenance records, search queries, library paths, or Visual Pack embeddings to the update download. Update files are staged locally under Electron `userData`, verified by declared byte size and SHA-256, and used only to replace the application itself; the library folder (`MOSA Library`, or `GravityPort Library` for new installs) and its original assets remain outside the application replacement transaction.
 
-## Optional Visual Pack download
+## No model downloads
 
-Local visual search is optional. When you open the Models tab in Settings, GravityPort reads the first-party release manifest at `https://mosa.azhuilab.com/releases/gravityport/latest.json` (at most once every 15 minutes) to show whether a Visual Pack is available; when you explicitly choose Install or Update, it downloads the published platform-specific Visual Pack only from `https://mosa.azhuilab.com/downloads/visual-packs/`. These requests necessarily reach the download server, but GravityPort does not attach your images, videos, Prompts, provenance records, library paths, search queries, or derived visual embeddings to the request. Pack files are verified and stored locally under Electron `userData`; they are not placed in or uploaded from the library folder (`MOSA Library`, or `GravityPort Library` for new installs).
-
-Removing the Visual Pack deletes the local optional model/runtime and derived visual relationship index. It does not delete or modify original library assets, Prompt text, or provenance records.
+Local visual search is not offered in the app for now: Settings has no Models tab, and GravityPort does not download a Visual Pack or any other model.
 
 ## Optional C2PA helper download
 
@@ -165,7 +163,7 @@ On the server, feedback is stored in a private directory on the collection servi
 
 The GravityPort service binds to `127.0.0.1` and is not designed for public exposure. GravityPort does not add remote synchronization. The desktop shell's only GravityPort-operated analytics signal is the bounded usage metadata sent through the separate HTTPS request described above.
 
-The outbound connections described in the sections above are: the update, usage, and Visual Pack endpoints under `mosa.azhuilab.com`; the Pinterest authorization relay under `mosa.azhuilab.com` together with Pinterest's own authorization and API endpoints when you connect Pinterest; and the feedback collection service when you press **Send** on the feedback page. None of them carries your library contents, and Pinterest browsing results are not sent anywhere by GravityPort. The Web Capture extension's requests to `chatgpt.com` for ChatGPT desktop app conversations are made by your browser with your own ChatGPT session; GravityPort itself does not contact OpenAI.
+The outbound connections described in the sections above are: the update and usage endpoints under `mosa.azhuilab.com`; the Pinterest authorization relay under `mosa.azhuilab.com` together with Pinterest's own authorization and API endpoints when you connect Pinterest; and the feedback collection service when you press **Send** on the feedback page. None of them carries your library contents, and Pinterest browsing results are not sent anywhere by GravityPort. The Web Capture extension's requests to `chatgpt.com` for ChatGPT desktop app conversations are made by your browser with your own ChatGPT session; GravityPort itself does not contact OpenAI.
 
 Codex, ChatGPT, Grok, Cowart, Chrome, Pinterest, and any AI or image-generation provider used before an asset reaches GravityPort are separate products. Their own network behavior and privacy policies still apply.
 
