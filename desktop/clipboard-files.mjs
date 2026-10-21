@@ -26,7 +26,9 @@ export function macFilenamesPlist(paths) {
 // UTF-8 JSON file named by an environment variable, never in the command line.
 export const WINDOWS_SET_CLIPBOARD_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
-  "$paths = @(Get-Content -LiteralPath $env:GRAVITYPORT_CLIPBOARD_FILES -Raw -Encoding UTF8 | ConvertFrom-Json)",
+  // Windows PowerShell 5.1 emits a JSON array as one object: @(...) around it
+  // would nest the list, so cast the output to a string array instead.
+  "[string[]]$paths = Get-Content -LiteralPath $env:GRAVITYPORT_CLIPBOARD_FILES -Raw -Encoding UTF8 | ConvertFrom-Json",
   "Set-Clipboard -LiteralPath $paths",
 ].join("; ");
 

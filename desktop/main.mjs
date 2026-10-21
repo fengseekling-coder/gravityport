@@ -699,7 +699,8 @@ function registerIPC() {
     try {
       const written = await writeClipboardFiles(files, { clipboard });
       return written ? { ok: true, count: files.length, skipped } : { ok: false, reason: "unsupported" };
-    } catch {
+    } catch (error) {
+      console.error(`[MOSA] write-clipboard-files failed: ${error?.message || error}`);
       return { ok: false, reason: "unavailable" };
     }
   });
