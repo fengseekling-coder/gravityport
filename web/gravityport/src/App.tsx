@@ -137,6 +137,11 @@ const NATIVE_DRAG_MAX_FILES = 512
 // and groups/auto-stacks cover finding images. This hides Settings → 模型 and
 // the Inspector's similar-image row; the runtime and API stay in place.
 const LOCAL_VISUAL_SEARCH = false
+// Pinterest browsing (tasks 135/138/147) stays hidden until Pinterest approves
+// Standard API access: Trial's shared daily quota cannot serve every user.
+// This hides the sidebar row and Settings → 连接; the view, the connection
+// card, and the local token API stay in place.
+const PINTEREST_ENTRY = false
 
 type CardDragGesture = {
   pointerId: number
@@ -613,7 +618,7 @@ export default function App() {
   const scope: Scope = active === "收藏" ? "favorite" : active === "待整理" ? "unorganized" : active === "回收站" ? "trash" : "all"
   // The Pinterest row browses the user's live boards (PinterestView), not
   // local assets; the gallery underneath stays mounted but out of reach.
-  const pinterestActive = active === "Pinterest"
+  const pinterestActive = PINTEREST_ENTRY && active === "Pinterest"
   const source = active.startsWith("source:") ? active.slice(7) : undefined
   const group = active.startsWith("group:") ? active.slice(6) : undefined
   const mediaKind = assetType === "image" ? "img" : assetType === "video" ? "video" : "all"
@@ -3326,8 +3331,8 @@ export default function App() {
           </div>
         )}
         <nav className="main-nav" aria-label={tr("素材库")}>
-          {["所有素材", "Pinterest", "待整理", "收藏", "回收站"].map(
-            (label, i) => (
+          {["所有素材", "Pinterest", "待整理", "收藏", "回收站"].filter(label => PINTEREST_ENTRY || label !== "Pinterest").map(
+            (label) => (
               <button
                 key={label}
                 title={tr(label)}
@@ -3340,22 +3345,22 @@ export default function App() {
                   setSelectedIds([])
                 }}
               >
-                {i === 1 ? <span className="brand-icon" aria-hidden="true" /> : <Icon
-                  name={i === 2 ? "inbox" : i === 3 ? "heart" : i === 4 ? "trash" : "grid"}
+                {label === "Pinterest" ? <span className="brand-icon" aria-hidden="true" /> : <Icon
+                  name={label === "待整理" ? "inbox" : label === "收藏" ? "heart" : label === "回收站" ? "trash" : "grid"}
                   size={16}
                 />}
                 <span>{tr(label)}</span>
                 <small>
-                  {i === 0
+                  {label === "所有素材"
                     ? navigation?.total ?? 0
-                    : i === 1
+                    : label === "Pinterest"
                       // Pinterest stays in Trial access (1,000 calls a day shared
                       // by every user) until Standard access is approved, so the
                       // count slot says so until boards have been loaded.
                       ? pinterestBoards ? `${pinterestBoards.count}${pinterestBoards.complete ? "" : "+"}` : <span className="nav-soon">{tr("暂未开放")}</span>
-                      : i === 2
+                      : label === "待整理"
                         ? navigation?.unorganized ?? 0
-                        : i === 3
+                        : label === "收藏"
                           ? navigation?.favorites ?? 0
                           : navigation?.trash ?? 0}
                 </small>
@@ -4368,7 +4373,7 @@ export default function App() {
                 ["连接", "link"],
                 ["反馈", "message"],
                 ["关于", "info"],
-              ].filter(([label]) => LOCAL_VISUAL_SEARCH || label !== "模型").map(([label, icon]) => (
+              ].filter(([label]) => (LOCAL_VISUAL_SEARCH || label !== "模型") && (PINTEREST_ENTRY || label !== "连接")).map(([label, icon]) => (
                 <button
                   className={settingTab === label ? "active" : ""}
                   aria-pressed={settingTab === label}

@@ -1,4 +1,4 @@
-# GravityPort Web Capture（0.15.36）
+# GravityPort Web Capture（0.15.37）
 
 把 **ChatGPT、Gemini、Flow 和 Google AI Studio 网页**中用户可见的生成媒体归档到本机 GravityPort。ChatGPT 支持图片提示词关联；Flow 与 Google AI Studio 同时支持已识别的视频，Gemini、Flow 与 Google AI Studio 的页面可见 Prompt 均明确标为未验证。
 
@@ -89,7 +89,7 @@ GravityPort 只在素材库根目录的 `.chatgpt-desktop-sync.json` 里记录�
 - 扩展只在清单声明的 ChatGPT、Gemini、Flow 和 Google AI Studio 域名中运行，并只把数据发送到选项中配置的本机 GravityPort 地址。
 - ChatGPT 入库数据包括图片字节、匹配到的 Prompt/用户消息、「提示词2」（`generation_request_prompt`，页面实时数据中出现时）、页面 URL、去掉签名参数的原始与最终媒体 URL、尺寸、会话/消息 ID、对话标题、模型信息、生成状态、采集时间和扩展版本；页面运行时明确暴露时，还会保存彼此独立的 tool-call、generation-call、response 和 provider asset 标识。打开对话时另会上报对话轮次结构（只有编号与数字）。Gemini、Flow 与 AI Studio 只有在上述局部匹配成功时才额外包括该页面可见 Prompt。
 - GravityPort 地址、Token、自动采集开关和待重试队列保存在 Chrome 本地存储（`chrome.storage.local`），不使用同步存储；桌面版对话同步进行中的任务（对话号、窗口/标签页编号、开始时间）只存在浏览器关闭即清空的 `chrome.storage.session`。
-- 清单权限为 `storage`、`contextMenus`、`alarms`、`unlimitedStorage`；图片下载需要清单中列出的 OpenAI/Google 静态资源域名权限；本机通信只允许 `127.0.0.1` 或 `localhost`。
+- 清单权限为 `storage`、`contextMenus`、`alarms`；图片下载需要清单中列出的 OpenAI/Google 静态资源域名权限；本机通信只允许 `127.0.0.1` 或 `localhost`。
 - GravityPort 不会因此获得任何受支持站点的账号密码或 API Key。完整说明见 [PRIVACY.md](../../PRIVACY.md)。
 
 ## 限制

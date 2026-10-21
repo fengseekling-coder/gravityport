@@ -1,7 +1,7 @@
 /**
  * Shared MAIN-world page-hook harness. Extracted from
- * test/chatgpt-web-capture-hook.test.mjs so the dev raw diagnostics suite can
- * drive the same interception points without duplicating the sandbox.
+ * test/chatgpt-web-capture-hook.test.mjs so other suites can drive the same
+ * interception points without duplicating the sandbox.
  */
 
 import assert from "node:assert/strict";
@@ -10,7 +10,6 @@ import { setImmediate } from "node:timers/promises";
 import vm from "node:vm";
 
 export const hookSource = await readFile(new URL("../../extensions/chatgpt-web-capture/page-hook.js", import.meta.url), "utf8");
-export const devRawSource = await readFile(new URL("../../extensions/chatgpt-web-capture/dev-raw-diagnostics.js", import.meta.url), "utf8");
 
 // Minimal MessageChannel stand-in: two entangled ports. Messages are
 // delivered synchronously while a listener is attached and queue otherwise,
@@ -89,7 +88,7 @@ export function createHookHarness(payload, conversationId = "conversation-test",
   const documentElement = { dataset: {} };
   // The blob-asset hooks need the page's Blob, Response and URL.createObjectURL.
   // Parts may be strings or Uint8Array; arrayBuffer() hands back the exact
-  // bytes so the dev diagnostics metadata reader can parse real containers.
+  // bytes.
   class HookBlob {
     constructor(parts = [], opts = {}) {
       const encoder = new TextEncoder();
@@ -192,9 +191,6 @@ export function createHookHarness(payload, conversationId = "conversation-test",
   MockXHR.prototype.send = () => {};
   MockXHR.prototype.setRequestHeader = () => {};
 
-  // The manifest loads dev-raw-diagnostics.js right before page-hook.js in
-  // the same MAIN world; the sandbox mirrors that order. The module stays
-  // inert until something calls setEnabled(true).
   const sandbox = {
     Date,
     JSON,
@@ -220,7 +216,6 @@ export function createHookHarness(payload, conversationId = "conversation-test",
     location: { origin: "https://chatgpt.com", pathname: `/c/${conversationId}` },
     window,
   };
-  vm.runInNewContext(devRawSource, sandbox, { filename: "dev-raw-diagnostics.js" });
   vm.runInNewContext(hookSource, sandbox, { filename: "page-hook.js" });
 
   if (options.captureEnabled !== false && contentPort) {
@@ -243,7 +238,6 @@ export function createHookHarness(payload, conversationId = "conversation-test",
     blobClass: HookBlob,
     responseClass: HookResponse,
     urlClass: HookURL,
-    devRaw: sandbox.MosaDevRawDiagnostics,
     dispatchWindowMessage(data, eventOverrides = {}) {
       for (const listener of [...windowMessageListeners]) {
         listener({ source: window, data, ...eventOverrides });

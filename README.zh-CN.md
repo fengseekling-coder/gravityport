@@ -27,7 +27,7 @@ GravityPort 原名 MOSA。已有安装的素材库位置、设置和命令名都
 - **GravityPort 桌面版 Windows 10/11**（x64）：便携 ZIP。解压后运行 `GravityPort.exe`。Windows 目前是预览 / 测试目标。
 - **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，需要在开发者模式加载，不是签名的 CRX。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
 
-已安装的桌面应用会在 **设置 → 关于** 里自行检查更新。第一个以 GravityPort 名义发布的版本推出之前，下载页提供的仍是最后一个以 MOSA 名义发布的版本。
+已安装的桌面应用会在 **设置 → 关于** 里自行检查更新。[发布清单](https://gravityport.azhuilab.com/releases/gravityport/latest.json)是最新版本的机器可读来源。
 
 ## 第一次打开
 
@@ -66,7 +66,7 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 
 删除的素材进入回收站，保留 90 天并逐张显示倒计时；刚删除时会出现撤销按钮，回收站有自己的恢复、永久删除和清空菜单。整库安全方面，`gravityport backup`、`backup-verify` 和 `restore` 命令用来创建和校验经过验证的时间点备份。
 
-设置 → 反馈可以发送 bug 报告和建议，可以选择附上一份先脱敏、发送前可完整查看的诊断日志。Pinterest 连接（浏览你自己的画板）已经开发完成，在 Pinterest 批准生产 API 权限之前暂不开放。
+设置 → 反馈可以发送 bug 报告和建议，可以选择附上一份先脱敏、发送前可完整查看的诊断日志。
 
 ## 融入你的工作流
 

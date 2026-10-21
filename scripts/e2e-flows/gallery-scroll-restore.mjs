@@ -2,13 +2,13 @@
 // left it. Preview round-trips hold the exact position (revealing only a
 // viewer-paged focused card), stack round-trips restore the loaded window,
 // position and focused card via both the back button and the blank-menu
-// 「返回素材库」, sidebar switches to a group and to Pinterest restore per
+// 「返回素材库」, sidebar switches to a group and to 收藏 restore per
 // view, never-visited views start explicitly at the top, and the root as the
 // app opens it (never scrolled) still keeps its focused card and reveals a
 // card paged to in the viewer.
 export const name = "gallery-scroll-restore";
 export const description =
-  "341 cards -> preview exit holds position / reveals paged card -> stack via back and 返回素材库 restores window+position+selection -> group and Pinterest sidebar switches restore -> first visit starts at 0 -> untouched views keep focus and reveal a paged card";
+  "341 cards -> preview exit holds position / reveals paged card -> stack via back and 返回素材库 restores window+position+selection -> group and 收藏 sidebar switches restore -> first visit starts at 0 -> untouched views keep focus and reveal a paged card";
 
 const PLAIN_TOTAL = 340; // > GALLERY_MOUNT_ALL_THRESHOLD (320): windowing on
 const STACK_MEMBERS = 3;
@@ -427,16 +427,16 @@ function pageSource({ coverId, groupName }) {
     assertSamePosition(g5before, g5after2, 'forward back to all');
     result.groupSwitch = { before: g5before, after: g5after, afterForward: g5after2, groupTop, groupTop2, unorganizedTop, afterUnorganized: g5afterUnorganized, failed: false };
 
-    // ── step 6: Pinterest out and back ──
+    // ── step 6: 收藏 (an empty view) out and back ──
     const p6before = measure();
-    navButton('Pinterest').click();
-    await waitFor(() => document.querySelector('.pinterest-guide'), 'Pinterest guide shows');
+    navButton('收藏').click();
+    await waitFor(() => navButton('收藏').getAttribute('aria-current') === 'page', '收藏 view shows');
     navButton('所有素材').click();
-    await waitFor(() => grid(), 'root gallery returns from Pinterest');
-    await settle('after Pinterest round-trip');
+    await waitFor(() => grid(), 'root gallery returns from 收藏');
+    await settle('after 收藏 round-trip');
     const p6after = measure();
-    assertSamePosition(p6before, p6after, 'Pinterest round-trip');
-    result.pinterest = { before: p6before, after: p6after, failed: false };
+    assertSamePosition(p6before, p6after, '收藏 round-trip');
+    result.favorites = { before: p6before, after: p6after, failed: false };
 
     // ── step 7: no scrollbar, and the bottom-right back-to-top button ──
     const g7 = grid();

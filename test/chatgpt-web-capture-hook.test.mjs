@@ -40,13 +40,11 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
   const hook = manifest.content_scripts.find((entry) => entry.js?.includes("page-hook.js"));
   assert.equal(hook?.run_at, "document_start");
   assert.equal(hook?.world, "MAIN");
-  // dev-raw-diagnostics.js must run before page-hook.js so the hook finds
-  // MosaDevRawDiagnostics on the very first SSE/WS frame.
-  assert.deepEqual(hook?.js, ["dev-raw-diagnostics.js", "page-hook.js"]);
+  assert.deepEqual(hook?.js, ["page-hook.js"]);
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.36");
+  assert.equal(manifest.version, "0.15.37");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -245,7 +243,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.36");
+  assert.equal(manifest.version, "0.15.37");
   // Storage keys and the pairing product identifier stay "mosa" so old
   // extensions keep working with the renamed App and vice versa.
   assert.match(backgroundSource, /if \(identity\?\.product !== "mosa"\) continue;/);
@@ -290,7 +288,7 @@ test("surfaces MOSA's own ingest error when pairing repair keeps the same connec
 });
 
 test("defaults capture off and keeps Chrome permissions minimal", () => {
-  assert.deepEqual(manifest.permissions, ["storage", "contextMenus", "alarms", "unlimitedStorage"]);
+  assert.deepEqual(manifest.permissions, ["storage", "contextMenus", "alarms"]);
   assert.equal(manifest.permissions.includes("activeTab"), false);
   assert.match(backgroundSource, /autoCapture:\s*false/);
   assert.match(optionsSource, /autoCapture:\s*false/);
@@ -1292,20 +1290,13 @@ test("provider content scripts only receive the autoCapture setting", () => {
   const handlerEnd = backgroundSource.indexOf('if (message.type === "mosa.probeFlowMedia")', handlerStart);
   assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
   const handler = backgroundSource.slice(handlerStart, handlerEnd);
-  // The response for non-extension-page senders must still be a single object
-  // literal whose primary field is autoCapture, but it can carry a
-  // captureDiagnostics flag gated to chatgpt.com content scripts only.
-  assert.match(handler, /extensionPageSender\(sender\)\s*\?\s*settings\s*:\s*\{[\s\S]*?autoCapture: settings\.autoCapture/);
-  assert.match(handler, /isChatGptPageSender\(sender\)/);
-  // Extract the branch executed for non-extension-page senders. We strip out
-  // the chatgpt-only branch so we can assert provider pages never see
-  // captureDiagnostics.
+  // The response for non-extension-page senders is a single object literal
+  // whose only field is autoCapture.
+  assert.match(handler, /extensionPageSender\(sender\)\s*\?\s*settings\s*:\s*\{\s*autoCapture: settings\.autoCapture\s*\}/);
   const providerResponse = handler
     .replace(/extensionPageSender\(sender\)\s*\?\s*settings\s*:/, "")
-    .replace(/\/\/[^\n]*/g, "")
-    .replace(/captureDiagnostics:\s*isChatGptPageSender\(sender\)\s*\?\s*Boolean\(settings\.captureDiagnostics\)\s*:\s*false,?\s*/, "");
+    .replace(/\/\/[^\n]*/g, "");
   assert.doesNotMatch(providerResponse, /mosaToken|mosaBaseUrl/, "the provider-page settings response must not expose the Token or base URL");
-  assert.doesNotMatch(providerResponse, /captureDiagnostics/, "provider pages must not receive the captureDiagnostics flag");
   // The sender gate itself is unchanged: extension pages and provider pages only.
   assert.match(backgroundSource, /return extensionPageSender\(sender\) \|\| Boolean\(pageSenderContext\(sender\)\);/);
 });
@@ -1843,7 +1834,7 @@ test("binds prompt and asset when one image call splits them across nested reque
 });
 
 test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.36");
+  assert.equal(manifest.version, "0.15.37");
   assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
   assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
   assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);
@@ -2544,7 +2535,6 @@ function loadSettingsHarness({ response, responseError, localValue = true } = {}
       return response;
     },
     syncPageHookCaptureEnabled: () => {},
-    syncPageHookDevRawDiagnostics: () => {},
   };
   vm.runInNewContext(`
     let autoCapture = false;

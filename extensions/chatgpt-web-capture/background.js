@@ -1,21 +1,8 @@
 import "./provider-policy.js";
-// DEV-ONLY(128): remove before release (the whole dev raw diagnostics block).
-import {
-  createIdbStore,
-  removeLegacyCaptureDiagnosticsKeys,
-  devRawJsonlLine,
-} from "./dev-raw-diagnostics-store.js";
-
-const devRawDiagnosticsStore = createIdbStore();
-// Startup cleanup: the pre-0.15.30 structure-only diagnostics storage keys
-// are dead weight; remove them once per service-worker start.
-removeLegacyCaptureDiagnosticsKeys(chrome.storage.local).catch(() => {});
-
 const DEFAULTS = {
   mosaBaseUrl: "http://127.0.0.1:43517",
   mosaToken: "",
   autoCapture: false,
-  devRawDiagnostics: false,
 };
 const DISCOVERY_PORTS = [43517, 43518, 43519, 43520, 43521];
 const STORAGE_KEYS = ["mosaBaseUrl", "mosaToken", "autoCapture"];
@@ -125,16 +112,6 @@ function extensionPageSender(sender) {
   return String(sender.url || "").startsWith(`chrome-extension://${chrome.runtime.id}/`);
 }
 
-// DEV-ONLY(128): remove before release. The options page is declared with
-// open_in_tab, so its messages always carry sender.tab and never pass
-// extensionPageSender(); the dev panel routes accept the extension's own
-// options page in a tab instead.
-function devRawOptionsPageSender(sender) {
-  if (!sender || sender.id !== chrome.runtime.id) return false;
-  if (Number(sender.frameId ?? 0) !== 0) return false;
-  return String(sender.url || "").startsWith(`chrome-extension://${chrome.runtime.id}/options.html`);
-}
-
 function pageSenderContext(sender) {
   if (!sender || sender.id !== chrome.runtime.id || !sender.tab) return null;
   if (Number(sender.frameId ?? 0) !== 0) return null;
@@ -155,19 +132,12 @@ function senderAllowedForMessage(message, sender) {
   if (message?.type === "mosa.getSettings") {
     return extensionPageSender(sender) || Boolean(pageSenderContext(sender));
   }
-  // DEV-ONLY(128): remove before release (the three dev panel routes; they
-  // come from the options page, which has no provider page context).
-  if (["mosa.devRawDiagnostics.stats", "mosa.devRawDiagnostics.exportPage", "mosa.devRawDiagnostics.clear"].includes(message?.type)) {
-    return devRawOptionsPageSender(sender);
-  }
   const context = pageSenderContext(sender);
   if (!context) return false;
   if (message.type === "mosa.fetchImage") return context.provider === "chatgpt";
   if (message.type === "mosa.reportSessionTitle") return context.provider === "chatgpt";
   if (message.type === "mosa.desktopSyncDone") return context.provider === "chatgpt";
   if (message.type === "mosa.reportConversationTurns") return context.provider === "chatgpt";
-  // DEV-ONLY(128): remove before release (records come from the ChatGPT tab).
-  if (message.type === "mosa.devRawDiagnostics.record") return context.provider === "chatgpt";
   if (message.type === "mosa.probeFlowMedia") return context.provider === "flow";
   if (["mosa.beginVideoTransfer", "mosa.videoTransferChunk", "mosa.commitVideoTransfer", "mosa.abortVideoTransfer"].includes(message.type)) {
     return context.provider === "flow" || context.provider === "google-ai-studio";
@@ -846,56 +816,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // DEV-ONLY(128): remove before release (the whole dev raw diagnostics block).
-  if (message.type === "mosa.devRawDiagnostics.record") {
-    // Records come from the paired ChatGPT tab only (checked above). Stamp
-    // the extension version and arrival time, store, and evict; capture
-    // itself is never blocked on this.
-    const record = message.payload && typeof message.payload === "object" ? message.payload : null;
-    if (!record) {
-      sendResponse({ ok: false, error: "empty dev raw diagnostics record" });
-      return true;
-    }
-    if (typeof record.version !== "string" || !record.version) {
-      record.version = chrome.runtime.getManifest().version;
-    }
-    if (typeof record.recordedAt !== "string" || !record.recordedAt) {
-      record.recordedAt = new Date().toISOString();
-    }
-    devRawDiagnosticsStore.addRecord(record)
-      .then((result) => sendResponse({ ok: true, id: result.id, count: result.count }))
-      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message.type === "mosa.devRawDiagnostics.stats") {
-    devRawDiagnosticsStore.statsRecords()
-      .then((stats) => sendResponse({ ok: true, stats }))
-      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message.type === "mosa.devRawDiagnostics.exportPage") {
-    const afterId = Number(message.afterId) || 0;
-    const limit = Math.min(Math.max(Number(message.limit) || 10, 1), 50);
-    devRawDiagnosticsStore.listRecords({ afterId, limit })
-      .then((page) => sendResponse({
-        ok: true,
-        lines: page.records.map((record) => devRawJsonlLine(record)),
-        nextAfterId: page.nextAfterId,
-        hasMore: page.hasMore,
-      }))
-      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (message.type === "mosa.devRawDiagnostics.clear") {
-    devRawDiagnosticsStore.clearRecords()
-      .then(() => sendResponse({ ok: true }))
-      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
   if (message.type === "mosa.upgradeMetadata") {
     upgradeMetadataToMosa(message.payload)
       .then((result) => sendResponse({ ok: true, result }))
@@ -1017,32 +937,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // DEV-ONLY(128): remove before release (the devRawDiagnostics branch).
-  function isChatGptPageSender(sender) {
-    // Content scripts on chatgpt.com need the devRawDiagnostics flag to enable
-    // the page-hook dev diagnostics mode. Provider pages (gemini/flow) never
-    // observe the flag, so we filter by sender URL.
-    try {
-      const url = new URL(sender?.url || sender?.tab?.url || "");
-      const host = url.hostname.toLowerCase();
-      return host === "chatgpt.com" || host === "chat.openai.com" || host.endsWith(".chatgpt.com") || host.endsWith(".openai.com");
-    } catch {
-      return false;
-    }
-  }
-
   if (message.type === "mosa.getSettings") {
     // Extension pages manage every field. Content scripts on provider pages
     // only read autoCapture, so the mosaToken and base URL never leave the
-    // background for a page origin. The chatgpt-web-capture content script
-    // additionally needs the devRawDiagnostics toggle, which is harmless on
-    // ChatGPT (settings storage is local) and never reaches provider tabs.
+    // background for a page origin.
     getSettings()
       .then((settings) => sendResponse({
         ok: true,
         settings: extensionPageSender(sender)
           ? settings
-          : { autoCapture: settings.autoCapture, devRawDiagnostics: isChatGptPageSender(sender) ? Boolean(settings.devRawDiagnostics) : false },
+          : { autoCapture: settings.autoCapture },
       }))
       .catch((error) => sendResponse({
         ok: false,
