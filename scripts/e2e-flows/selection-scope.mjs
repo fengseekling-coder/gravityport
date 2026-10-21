@@ -112,6 +112,15 @@ function selectionScopeSource(config) {
     const searchLandedOnVisibleCard = selectedIds().length === 1 && selectedIds()[0] === config.gammaId;
 
     // ── 2) Delete acts on the visible card only, never the hidden pair ──
+    // The re-landed ring is the app's own pick: Delete ignores it until the
+    // user picks the card (task 202), and the hidden pair is never touched.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    await sleep(500);
+    if (document.querySelector('[role="alertdialog"]') || plain().length !== 1) {
+      throw new Error('Delete acted on the implicit focus the app picked');
+    }
+    clickCard(plain()[0]);
+    await waitFor(() => selectedIds().length === 1 && selectedIds()[0] === config.gammaId, 'needle picked');
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
     await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'delete confirm opens');
     const confirm = Array.from(document.querySelectorAll('[role="alertdialog"] button'))
