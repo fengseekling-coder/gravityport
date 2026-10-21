@@ -251,7 +251,7 @@ test("gallery filters match hidden members while raw asset queries keep every me
   assert.deepEqual(raw.assets.map((asset) => asset.id), ["hidden-flow-video"]);
 });
 
-test("changing the first member changes the cover without moving the stack's gallery sort anchor", async (t) => {
+test("changing the first member changes the cover without moving the stack's gallery sort anchor (its newest member)", async (t) => {
   const store = await createFixtureStore(t);
   const sourcePath = (await store.getAsset("default", "a")).image_path;
   await store.createAsset({
@@ -263,12 +263,39 @@ test("changing the first member changes the cover without moving the stack's gal
   });
   const stack = await store.createAssetStack("default", ["a", "b", "c"], { coverAssetId: "b" });
   const before = await store.listAssetPage({ projectId: "default", collapseStacks: true, sort: "newest", limit: 0 });
-  assert.deepEqual(before.assets.map((asset) => asset.id), ["d", "between", "b"]);
+  // The stack sorts by its newest member (c, 12:02), ahead of "between".
+  assert.deepEqual(before.assets.map((asset) => asset.id), ["d", "b", "between"]);
 
   const reordered = await store.reorderAssetStack("default", stack.id, ["c", "b", "a"]);
   assert.equal(reordered.cover_asset_id, "c");
   const after = await store.listAssetPage({ projectId: "default", collapseStacks: true, sort: "newest", limit: 0 });
-  assert.deepEqual(after.assets.map((asset) => asset.id), ["d", "between", "c"]);
+  assert.deepEqual(after.assets.map((asset) => asset.id), ["d", "c", "between"]);
+});
+
+test("a stack sorts by its newest live member: a fresh member lifts it, trashing that member drops it back", async (t) => {
+  const store = await createFixtureStore(t);
+  const sourcePath = (await store.getAsset("default", "a")).image_path;
+  // An old cover with a newer member, as when old images are stacked with new ones.
+  const stack = await store.createAssetStack("default", ["a", "b"], { coverAssetId: "a" });
+  const newest = async () => (await store.listAssetPage({ projectId: "default", collapseStacks: true, sort: "newest", limit: 0 }))
+    .assets.map((asset) => asset.id);
+  assert.deepEqual(await newest(), ["d", "c", "a"]);
+
+  await store.createAsset({
+    assetId: "fresh",
+    imagePath: sourcePath,
+    prompt: "fresh",
+    created_at: "2026-08-30T09:00:00.000Z",
+    source: { type: "local-file" },
+  });
+  await store.addAssetsToStack("default", stack.id, ["fresh"]);
+  assert.deepEqual(await newest(), ["a", "d", "c"]);
+
+  await store.deleteAsset("default", "fresh");
+  assert.deepEqual(await newest(), ["d", "c", "a"]);
+
+  await store.restoreAsset("default", "fresh");
+  assert.deepEqual(await newest(), ["a", "d", "c"]);
 });
 
 test("name ordering follows the visible Stack cover and its later metadata edits", async (t) => {
