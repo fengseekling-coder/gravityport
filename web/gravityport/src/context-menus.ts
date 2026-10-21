@@ -27,6 +27,9 @@ export type MenuContext = {
   isMac: boolean
   /** Assets currently in the trash; 清空回收站 greys out at zero. */
   trashCount: number
+  /** The desktop bridge can put several files on the system clipboard; the
+   * multi-file 复制图片 entries only appear when it can. */
+  canCopyFiles: boolean
 }
 
 /** Drop empty sections and join the rest with one separator each, so the
@@ -125,8 +128,14 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
     { kind: "item" as const, id: "show-in-library", label: "在素材库中显示", icon: "folder" },
   ]
 
+  // Multi-selection copies files and paths (stack cards expand to their
+  // members); the prompt copy stays single-only.
   const copySection = isMultiple
-    ? [{ kind: "item" as const, id: "cut", label: "剪切", icon: "scissors", disabled: hasStacks }]
+    ? [
+        ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "copy-image", label: "复制图片", icon: "image" }] : []),
+        { kind: "item" as const, id: "cut", label: "剪切", icon: "scissors", disabled: hasStacks },
+        { kind: "item" as const, id: "copy-path", label: "复制路径", icon: "link" },
+      ]
     : [
         { kind: "item" as const, id: "copy-image", label: "复制图片", icon: "image" },
         { kind: "item" as const, id: "cut", label: "剪切", icon: "scissors" },
@@ -180,6 +189,10 @@ function buildStackMenu(ctx: MenuContext): MenuEntry[] {
     pasteSection,
     [
       { kind: "item" as const, id: "open-stack", label: "打开堆叠", icon: "layers" },
+    ],
+    [
+      ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "stack-copy-images", label: "复制全部图片", icon: "image" }] : []),
+      { kind: "item" as const, id: "stack-copy-paths", label: "复制全部路径", icon: "link" },
     ],
     [
       { kind: "item" as const, id: "stack-add-to-group", label: "添加分组", icon: "plus", submenu: groupSubmenu("stack-add-to-group", ctx.groups) },

@@ -599,7 +599,8 @@ test("retired show-in-folder IPC stays removed without expanding renderer author
   // 任务 116：第 19/20 条 rename-notice-state / acknowledge-rename-notice（老用户「已更名」提示）。
   // 任务 135：第 21 条 open-pinterest-authorize（Pinterest 授权页，只放行 https://www.pinterest.com/oauth/）。
   // 任务 147：第 22 条 open-external-link（Pinterest Pin 外链，仅 http/https）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "no invoke channel beyond the currently approved narrow requests (Visual Pack lifecycle remains named and URL-free)");
+  // 任务 198：第 24 条 write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 24, "no invoke channel beyond the currently approved narrow requests (Visual Pack lifecycle remains named and URL-free)");
   assert.doesNotMatch(preload, /shell\s*[:.]/, "shell is never exposed to the renderer");
   assert.doesNotMatch(preload, /exec\(|spawn\(|execFile\(/, "no arbitrary command execution");
 

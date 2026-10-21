@@ -271,6 +271,7 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "setVisualModelEnabled",
     "setWindowFullScreen",
     "startNativeDrag",
+    "writeClipboardFiles",
     "writeClipboardImage",
     "writeClipboardText",
   ], "electronAPI surface must match the approved narrow desktop capabilities");

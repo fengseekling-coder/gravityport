@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   pasteImage: () => ipcRenderer.invoke("paste-image"),
   writeClipboardText: (text) => ipcRenderer.invoke("write-clipboard-text", text),
   writeClipboardImage: (path) => ipcRenderer.invoke("write-clipboard-image", path),
+  writeClipboardFiles: (paths) => ipcRenderer.invoke("write-clipboard-files", paths),
   startNativeDrag: (paths) => ipcRenderer.invoke("start-native-file-drag", paths),
   // Which dropped files already live inside the library — a card dragged out
   // of the window and dropped back must not import a second copy.

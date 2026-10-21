@@ -2,7 +2,7 @@
 // blank areas, group submenus. Every UI step is checked against the server
 // through the in-page API (session token) and re-verified from node via ctx.api.
 export const name = "context-menus";
-export const description = "stack card menu (open/rename/group/paste/dissolve/trash) -> blank-area menus (back-to-library/stack-selected) -> asset menu group submenu -> server truth at every step";
+export const description = "stack card menu (open/rename/group/paste/dissolve/trash) -> blank-area menus (back-to-library/stack-selected) -> multi-select and stack copy (files/paths) -> asset menu group submenu -> server truth at every step";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -271,6 +271,69 @@ function contextMenusSource(config) {
       await clickMenuItem('返回素材库');
       await waitFor(() => activeStackCard(), 'back to the root gallery');
       return annotated?.stack?.count;
+    });
+
+    // ── 6b) Task 198: multi-select and stack-card copy. A recording desktop
+    // bridge stands in for the preload (the real main-process clipboard is
+    // covered by desktop-input); it sees exactly the paths the UI sends. ──
+    await step('multi-select and stack copy images and paths', async () => {
+      const sent = { files: [], text: [] };
+      window.electronAPI = {
+        writeClipboardFiles: async (paths) => { sent.files.push(paths); return { ok: true, count: paths.length, skipped: 0 }; },
+        writeClipboardText: async (text) => { sent.text.push(text); return true; },
+      };
+      try {
+        const pathOf = async (id) => (await assetById(id))?.image_path || '';
+        const stackPaths = ((await api('/api/asset-stacks/' + encodeURIComponent(config.stackId) + '/assets?project=default&limit=250')).assets || [])
+          .map((asset) => asset.image_path);
+        const loosePaths = [await pathOf(config.looseIds[1]), await pathOf(config.looseIds[2])];
+        if (stackPaths.length !== 3 || loosePaths.some((path) => !path)) throw new Error('setup paths ' + JSON.stringify({ stackPaths, loosePaths }));
+
+        // Two loose cards: 复制图片 sends both files, 复制路径 two lines, in selection order.
+        cardFor(config.looseIds[1]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        cardFor(config.looseIds[2]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+        await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 2, 'two cards selected');
+        await openMenu(cardFor(config.looseIds[1]));
+        await clickMenuItem('复制图片');
+        await waitFor(() => sent.files.length === 1, 'files sent');
+        if (JSON.stringify(sent.files[0]) !== JSON.stringify(loosePaths)) throw new Error('multi files ' + JSON.stringify(sent.files[0]));
+        await waitFor(() => (document.querySelector('.toast')?.textContent || '').includes('已复制 2 张图片'), 'files toast');
+        await openMenu(cardFor(config.looseIds[1]));
+        await clickMenuItem('复制路径');
+        await waitFor(() => sent.text.length === 1, 'paths sent');
+        if (sent.text[0] !== loosePaths.join('\\n')) throw new Error('multi paths ' + JSON.stringify(sent.text[0]));
+
+        // A loose card plus the stack card: the stack expands to its members in stack order.
+        cardFor(config.looseIds[1]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        cardFor(config.coverId).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+        await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 2, 'loose + stack selected');
+        await openMenu(cardFor(config.looseIds[1]));
+        await clickMenuItem('复制路径');
+        await waitFor(() => sent.text.length === 2, 'mixed paths sent');
+        const mixed = [loosePaths[0], ...stackPaths].join('\\n');
+        if (sent.text[1] !== mixed) throw new Error('mixed paths ' + JSON.stringify(sent.text[1]) + ' != ' + JSON.stringify(mixed));
+
+        // Stack card alone: 复制全部图片 / 复制全部路径.
+        cardFor(config.looseIds[3]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 1, 'single selection');
+        await openMenu(cardFor(config.coverId));
+        await clickMenuItem('复制全部图片');
+        await waitFor(() => sent.files.length === 2, 'stack files sent');
+        if (JSON.stringify(sent.files[1]) !== JSON.stringify(stackPaths)) throw new Error('stack files ' + JSON.stringify(sent.files[1]));
+        await openMenu(cardFor(config.coverId));
+        await clickMenuItem('复制全部路径');
+        await waitFor(() => sent.text.length === 3, 'stack paths sent');
+        if (sent.text[2] !== stackPaths.join('\\n')) throw new Error('stack paths ' + JSON.stringify(sent.text[2]));
+      } finally {
+        delete window.electronAPI;
+      }
+
+      // Without the bridge (plain browser) the multi-file entries are hidden.
+      await openMenu(cardFor(config.coverId));
+      const labels = menuLabels();
+      await closeMenu();
+      if (labels.includes('复制全部图片') || !labels.includes('复制全部路径')) throw new Error('browser stack menu ' + JSON.stringify(labels));
+      return sent.files.length + sent.text.length;
     });
 
     // ── 7) Multi-select two loose assets -> 堆叠所选: new stack server-side ──

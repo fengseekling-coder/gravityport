@@ -15,6 +15,7 @@ import { checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
 import { openExternalLinkOutcome } from "./open-external-link.mjs";
+import { writeClipboardFiles } from "./clipboard-files.mjs";
 import { mosaClientTokenFingerprint, resolveAllowedFolderPath } from "../lib/server-security.js";
 import { isUrlLikePath } from "../lib/path-safety.mjs";
 import { copyLibraryForRelocation, validateRelocationTarget } from "../lib/library-relocation.mjs";
@@ -652,32 +653,56 @@ function registerIPC() {
     }
   });
 
-  // Native file export is deliberately a one-way, narrow bridge. The renderer
-  // may nominate library paths, but the trusted main process canonicalizes
-  // every path, rejects directories/out-of-library targets, caps the batch,
-  // and only then hands files to the OS drag session.
-  ipcMain.handle("start-native-file-drag", async (event, requestedPaths) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+  // Native file export (drag-out and the multi-file clipboard) is deliberately
+  // a one-way, narrow bridge. The renderer may nominate library paths, but the
+  // trusted main process canonicalizes every path, rejects directories and
+  // out-of-library targets, caps the batch, and only then hands files to the
+  // OS. `skipped` counts nominated paths that did not pass.
+  const allowedLibraryFiles = (requestedPaths) => {
     const input = Array.isArray(requestedPaths) ? requestedPaths.slice(0, MAX_NATIVE_DRAG_FILES) : [];
     const files = [];
     const seen = new Set();
+    let skipped = 0;
     for (const requestedPath of input) {
-      if (typeof requestedPath !== "string" || !requestedPath.trim()) continue;
+      if (typeof requestedPath !== "string" || !requestedPath.trim()) { skipped += 1; continue; }
       let allowed;
       try {
         allowed = resolveAllowedFolderPath(requestedPath.trim(), [libraryDir]);
-        if (!allowed || seen.has(allowed) || !existsSync(allowed) || !statSync(allowed).isFile()) continue;
+        if (allowed && seen.has(allowed)) continue;
+        if (!allowed || !existsSync(allowed) || !statSync(allowed).isFile()) { skipped += 1; continue; }
       } catch {
+        skipped += 1;
         continue;
       }
       seen.add(allowed);
       files.push(allowed);
     }
+    return { files, skipped };
+  };
+
+  ipcMain.handle("start-native-file-drag", async (event, requestedPaths) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+    const { files } = allowedLibraryFiles(requestedPaths);
     if (!files.length) return { ok: false };
     let icon = nativeImage.createFromPath(files[0]);
     if (icon.isEmpty()) icon = NATIVE_DRAG_FALLBACK_ICON;
     event.sender.startDrag({ file: files[0], files, icon });
     return { ok: true, count: files.length };
+  });
+
+  ipcMain.handle("write-clipboard-files", async (event, requestedPaths) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+      return { ok: false, reason: "unavailable" };
+    }
+    const { files, skipped } = allowedLibraryFiles(requestedPaths);
+    if (!files.length) return { ok: false, reason: "missing", skipped };
+    try {
+      const written = await writeClipboardFiles(files, { clipboard });
+      return written ? { ok: true, count: files.length, skipped } : { ok: false, reason: "unsupported" };
+    } catch (error) {
+      console.error(`[MOSA] write-clipboard-files failed: ${error?.message || error}`);
+      return { ok: false, reason: "unavailable" };
+    }
   });
 
   // The reverse check for drops: true for each path that resolves to an
