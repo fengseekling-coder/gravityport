@@ -135,6 +135,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "changeLibraryLocation",
     "checkForUpdates",
     "downloadAndInstallUpdate",
+    "getMcpClientConfig",
     "getRenameNoticeState",
     "getUserProfile",
     "getVisualModelState",
@@ -163,12 +164,13 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // 第 21 条 open-pinterest-authorize（Pinterest OAuth 授权页）。任务 147：第 22 条
   // open-external-link（Pinterest Pin 外链，仅 http/https）。任务 198：第 24 条
   // write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 24, "preload keeps the approved invoke channels");
+  // 任务 208：第 25 条 mcp-client-config（只读，返回本机 App 路径拼成的 MCP 配置文本，不收参数）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");
   // R1 isolation fix (2026-08-09, approved scope) added qa:web/qa:electron/
   // qa:packaged launcher scripts to package.json, so its dependency sections
   // (the frozen semantics) are pinned structurally instead of by file hash.
   assert.equal(sha256(JSON.stringify(manifest.dependencies)), "709481475dca249e75c25f9e0b5e93a685b92cfada8e7e7ab0db8a33653c1843", "package.json dependencies must remain unchanged");
-  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "11f67ce00f34b4d3dfb9b9ed0dfb428b0368ad5e0a17bd3bafaa40e3c2124fac", "package.json devDependencies must remain unchanged");
+  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "4d971367be4ced6e52cd69f6a46e7a9516d779e01591a54947b30639d59814e7", "package.json devDependencies must remain unchanged");
 });

@@ -243,7 +243,30 @@ Cowart 快照可提供画布说明与来源，但不保证具有完整生图 Pro
 
 ## MCP 与接口
 
-MCP 服务从源码目录运行（先执行一次 `npm ci` 完成构建），通过 stdio 通信，不额外占用端口。以 Codex 为例，在 `~/.codex/config.toml` 中加入：
+GravityPort 自带 MCP 服务，通过 stdio 通信，不额外占用端口。AI 助手接上后，可以直接搜索、查看和记录你的素材库。
+
+### 桌面版（推荐）
+
+桌面版安装包里已经带了 MCP 服务，不用装 Node，也不用下载源码：
+
+1. 打开「设置 → 连接」，找到「AI 助手（MCP）」。
+2. 选你用的客户端：Claude Desktop、Claude Code 或 Codex，点「复制」。
+3. 粘贴：
+   - **Claude Desktop**：粘贴到 `claude_desktop_config.json`（Claude 设置 → 开发者 → 编辑配置）。文件里已有 `mcpServers` 的，只把 `gravityport` 这一段并进去。
+   - **Claude Code**：复制的是一条 `claude mcp add-json …`（Windows 是 `claude mcp add …`）命令，在终端里运行一次即可。
+   - **Codex**：粘贴到 `~/.codex/config.toml` 末尾。
+4. 重启这个 AI 助手。
+
+配置里写的是 GravityPort 自己的可执行文件（以 `ELECTRON_RUN_AS_NODE=1` 运行 App 内的 `mcp/server.mjs`）和桌面版记录素材库位置的文件 `library-location.json`，而不是素材库路径本身。所以：
+
+- 在「设置 → 存储」里挪过素材库也不用改配置，重启 AI 助手就会跟过去。挪库时如果 AI 助手开着，它会提示素材库已移动、请重启。
+- GravityPort 不用开着；开着时两边同时读写同一个库也是安全的（SQLite WAL）。
+- macOS 上请先把 GravityPort 拖进「应用程序」文件夹再复制配置；从「下载」或磁盘映像里直接运行时路径是临时的，设置里会提醒。App 更新后路径不变，配置不用重新复制。
+- 记录的素材库找不到（例如外接硬盘没接）时，MCP 服务会在 stderr 写明原因后退出，不会新建一个空库。
+
+### 从源码运行
+
+先执行一次 `npm ci` 完成构建。以 Codex 为例，在 `~/.codex/config.toml` 中加入：
 
 ```toml
 [mcp_servers.gravityport]
@@ -251,7 +274,10 @@ command = "node"
 args = ["/absolute/path/to/gravityport/mcp/server.mjs"]
 ```
 
-其他 MCP 客户端同样填写 `node` 和 `mcp/server.mjs` 的绝对路径即可。MCP 按与桌面版相同的规则查找默认素材库（`~/MOSA Library` 或 `~/GravityPort Library`），但不会读取桌面版保存的自定义位置；如果你在「设置 → 存储」里移动过素材库，请在客户端配置中用 `MOSA_LIBRARY_DIR` 环境变量指定素材库路径。
+其他 MCP 客户端同样填写 `node` 和 `mcp/server.mjs` 的绝对路径即可，也可以用 `npm run mcp` 启动。没有额外配置时，MCP 按与桌面版相同的规则查找默认素材库（`~/MOSA Library` 或 `~/GravityPort Library`）。要指定素材库，可在客户端配置的 `env` 里设置下面任一变量：
+
+- `MOSA_LIBRARY_DIR`：素材库的绝对路径，优先级最高。
+- `MOSA_LIBRARY_LOCATION_FILE`：桌面版的 `library-location.json`（macOS 在 `~/Library/Application Support/mosa/`），跟随桌面版里挪过的位置。
 
 MCP 工具包括：
 

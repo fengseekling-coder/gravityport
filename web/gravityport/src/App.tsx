@@ -5,6 +5,7 @@ import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
 import { PinterestView } from "./PinterestView"
 import { PinterestConnectionCard } from "./PinterestConnectionCard"
+import { McpClientConfigCard } from "./McpClientConfigCard"
 import { FeedbackPanel } from "./FeedbackPanel"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
@@ -4533,7 +4534,10 @@ export default function App() {
                 </>
                 )
               ) : settingTab === "连接" ? (
-                <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
+                <>
+                  <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
+                  <McpClientConfigCard language={language} />
+                </>
               ) : settingTab === "反馈" ? (
                 <FeedbackPanel language={language} />
               ) : (
