@@ -27,8 +27,11 @@ const ID_A = "11111111-1111-4111-8111-111111111111";
 const ID_B = "22222222-2222-4222-9222-222222222222";
 const ID_OWN = "33333333-3333-4333-a333-333333333333";
 
-function logLine({ ip = "203.0.113.7", time = "20/Oct/2026:10:00:00 +0000", method = "GET", target = "/", status = 200, referrer = "-", userAgent = BROWSER } = {}) {
-  return `${ip} - - [${time}] "${method} ${target} HTTP/1.1" ${status} 512 "${referrer}" "${userAgent}"`;
+// The website's home page is about 62 KB; other sites on the same server answer "/" with much less.
+const HOME_PAGE_BYTES = 62011;
+
+function logLine({ ip = "203.0.113.7", time = "20/Oct/2026:10:00:00 +0000", method = "GET", target = "/", status = 200, bytes = HOME_PAGE_BYTES, referrer = "-", userAgent = BROWSER } = {}) {
+  return `${ip} - - [${time}] "${method} ${target} HTTP/1.1" ${status} ${bytes} "${referrer}" "${userAgent}"`;
 }
 
 function usageTarget({ event = "daily_active", installationId = ID_A, platform = "macos", version = "0.3.3", path } = {}) {
@@ -48,6 +51,7 @@ describe("parseAccessLogLine", () => {
     const entry = parseAccessLogLine(logLine({
       time: "21/Oct/2026:08:30:00 +0800",
       target: "/downloads/a.dmg?x=1",
+      bytes: 1234,
       referrer: "https://gravityport.azhuilab.com/",
     }));
     assert.equal(entry.ip, "203.0.113.7");
@@ -56,8 +60,10 @@ describe("parseAccessLogLine", () => {
     assert.equal(entry.path, "/downloads/a.dmg");
     assert.equal(entry.query, "x=1");
     assert.equal(entry.status, 200);
+    assert.equal(entry.bytes, 1234);
     assert.equal(entry.referrer, "https://gravityport.azhuilab.com/");
     assert.equal(entry.userAgent, BROWSER);
+    assert.equal(parseAccessLogLine(logLine({ bytes: "-" })).bytes, 0);
   });
 
   it("skips lines that are not requests for a path", () => {
@@ -102,9 +108,14 @@ describe("classifyRequest", () => {
     assert.equal(classify({ target: "/downloads/visual-packs/pack.zip" }), null);
   });
 
-  it("counts website pages but not the API", () => {
+  it("counts the website's own pages only, since other sites share the log", () => {
     assert.deepEqual(classify({ target: "/" }), { kind: "page", mobile: false, source: "" });
-    assert.deepEqual(classify({ target: "/guide/", status: 304 }), { kind: "page", mobile: false, source: "" });
+    assert.deepEqual(classify({ target: "/en/?ref=reddit_codex" }), { kind: "page", mobile: false, source: "" });
+    assert.deepEqual(classify({ target: "/privacy/", bytes: 9000 }), { kind: "page", mobile: false, source: "" });
+    assert.equal(classify({ target: "/", bytes: 4200 }), null, "another site's home page");
+    assert.equal(classify({ target: "/", status: 304, bytes: 0 }), null, "a revalidated page has no size to tell the sites apart");
+    assert.equal(classify({ target: "/dashboard/", referrer: "https://api.tokenkey.app/" }), null, "another site's page");
+    assert.equal(classify({ target: "/blog/post.html" }), null);
     assert.equal(classify({ target: "/api/feedback" }), null);
     assert.equal(classify({ target: "/", userAgent: GOOGLEBOT }), null);
   });
@@ -142,6 +153,9 @@ describe("createUsageReport", () => {
     logLine({ ip: "198.51.100.3", time: "20/Oct/2026:10:05:00 +0000", target: "/downloads/GravityPort-win32-x64-0.3.2.zip?ref=reddit_codex" }),
     logLine({ ip: "198.51.100.4", time: "20/Oct/2026:11:00:00 +0000", target: "/", referrer: "https://t.co/abc", userAgent: IPHONE }),
     logLine({ ip: "198.51.100.4", time: "20/Oct/2026:11:01:00 +0000", target: "/downloads/GravityPort-0.3.2-arm64.dmg", userAgent: IPHONE }),
+    // Another site on the same server: its home page and its own pages are not the website's visitors.
+    logLine({ ip: "198.51.100.8", time: "20/Oct/2026:12:00:00 +0000", target: "/", bytes: 3100, referrer: "https://azhui.tokenkey.app/" }),
+    logLine({ ip: "198.51.100.8", time: "20/Oct/2026:12:00:05 +0000", target: "/console/", referrer: "https://api.tokenkey.app/", userAgent: ANDROID }),
     logLine({ time: "21/Oct/2026:10:00:00 +0000", method: "HEAD", target: usageTarget({ version: "0.3.3" }), userAgent: NODE_FETCH }),
     logLine({ time: "21/Oct/2026:10:00:00 +0000", target: "/releases/gravityport/latest.json", userAgent: NODE_FETCH }),
     logLine({ time: "22/Oct/2026:10:00:00 +0000", method: "HEAD", target: usageTarget({ installationId: ID_B, platform: "windows", version: "0.3.2", path: "/releases/latest.json" }), userAgent: NODE_FETCH }),
