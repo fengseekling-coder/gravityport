@@ -12,7 +12,7 @@ import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../l
 import { getDesktopText, getNotificationTextForAssetsImported, getUpdateNotificationText } from "./notification-i18n.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
-import { checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
+import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
 import { openExternalLinkOutcome } from "./open-external-link.mjs";
@@ -930,6 +930,9 @@ function registerIPC() {
     if (!app.isPackaged || isolationContext.qaRun) {
       return { status: "unsupported", currentVersion: app.getVersion() };
     }
+    if (!canInstallUpdateInApp(expectedServiceIdentity.releaseManifestTrust)) {
+      return { status: "unsupported", reason: "release-manifest-untrusted", currentVersion: app.getVersion() };
+    }
     if (process.platform === "darwin") {
       if (macosUpdateInstallPromise) return macosUpdateInstallPromise;
       macosUpdateInstallPromise = (async () => {
@@ -1280,7 +1283,7 @@ function runUpdateCheck({ notify = false } = {}) {
       return {
         status: "ok",
         ...result,
-        canInstallInApp: app.isPackaged && (
+        canInstallInApp: app.isPackaged && canInstallUpdateInApp(expectedServiceIdentity.releaseManifestTrust) && (
           (process.platform === "win32" && Boolean(result.windowsArtifact))
           || (process.platform === "darwin" && Boolean(result.macArtifact) && Boolean(resolveMacosInstallAppPath(process.execPath)))
         ),
