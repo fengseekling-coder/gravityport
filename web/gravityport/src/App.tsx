@@ -3464,15 +3464,15 @@ export default function App() {
               if (active === `group:${groupRename.original}`) goTo({ active: `group:${name}` })
               refreshNavigation(); setGroupRename(null)
             }).catch(error => notify(errorMessage(error)))
-          }}><h3>{tr("重命名分组")}</h3><input autoFocus value={groupRename.draft} maxLength={80} onChange={event => setGroupRename(old => old ? { ...old, draft: event.target.value } : old)} /><div className="group-dialog-actions"><button type="button" onClick={() => setGroupRename(null)}>{tr("取消")}</button><button type="submit">{tr("保存")}</button></div></form>}
-          {groupDeleteConfirm && <><h3>{tr("删除分组")}</h3><p>{tr("仅删除分组，保留其中全部素材。")}</p><div className="group-dialog-actions"><button onClick={() => setGroupDeleteConfirm(null)}>{tr("取消")}</button><button onClick={() => {
+          }}><h3>{tr("重命名分组")}</h3><input autoFocus value={groupRename.draft} maxLength={80} onChange={event => setGroupRename(old => old ? { ...old, draft: event.target.value } : old)} /><div className="group-dialog-actions"><button type="button" className="neutral-button" onClick={() => setGroupRename(null)}>{tr("取消")}</button><button type="submit" className="primary-button">{tr("保存")}</button></div></form>}
+          {groupDeleteConfirm && <><h3>{tr("删除分组")}</h3><p>{tr("仅删除分组，保留其中全部素材。")}</p><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupDeleteConfirm(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
             const name = groupDeleteConfirm
             deleteGroupKeepingAssets(project, name).then(() => {
               if (active === `group:${name}`) goTo({ active: "所有素材" })
               refreshNavigation(); setGroupDeleteConfirm(null)
             }).catch(error => notify(errorMessage(error)))
           }}>{tr("删除分组")}</button></div></>}
-          {groupMerge && <><h3>{tr("合并分组")}</h3><p>{groupMerge.source} →</p><select value={groupMerge.target} onChange={event => setGroupMerge(old => old ? { ...old, target: event.target.value } : old)}>{navigation?.groups.filter(item => item.name !== groupMerge.source).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select><div className="group-dialog-actions"><button onClick={() => setGroupMerge(null)}>{tr("取消")}</button><button onClick={() => {
+          {groupMerge && <><h3>{tr("合并分组")}</h3><p>{groupMerge.source} →</p><select value={groupMerge.target} onChange={event => setGroupMerge(old => old ? { ...old, target: event.target.value } : old)}>{navigation?.groups.filter(item => item.name !== groupMerge.source).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupMerge(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
             const { source, target } = groupMerge
             mergeGroups(project, source, target).then(() => {
               if (active === `group:${source}`) goTo({ active: `group:${target}` })
@@ -3492,7 +3492,7 @@ export default function App() {
                     : <p>{tr(facet.emptyText)}</p>}
                 </div>)}
               </div>
-              <button onClick={() => setGroupStats(null)}>{tr("关闭")}</button>
+              <div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupStats(null)}>{tr("关闭")}</button></div>
             </>
           })()}
         </div>
@@ -3500,7 +3500,7 @@ export default function App() {
 
       {/* Stack rename dialog */}
       {stackRename && (
-        <div className="group-dialog-backdrop" role="presentation" onClick={() => setStackRename(null)}>
+        <div className="group-dialog-backdrop" role="presentation" onClick={event => { if (event.target === event.currentTarget) setStackRename(null) }}>
           <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("重命名堆叠")}>
             <form onSubmit={event => {
               event.preventDefault()
@@ -3519,8 +3519,8 @@ export default function App() {
               <h3>{tr("重命名堆叠")}</h3>
               <input autoFocus value={stackRename.draft} maxLength={80} onChange={event => setStackRename(old => old ? { ...old, draft: event.target.value } : old)} />
               <div className="group-dialog-actions">
-                <button type="button" onClick={() => setStackRename(null)}>{tr("取消")}</button>
-                <button type="submit">{tr("保存")}</button>
+                <button type="button" className="neutral-button" onClick={() => setStackRename(null)}>{tr("取消")}</button>
+                <button type="submit" className="primary-button">{tr("保存")}</button>
               </div>
             </form>
           </div>
@@ -3529,7 +3529,7 @@ export default function App() {
 
       {/* Stack dissolve confirmation */}
       {stackDissolveConfirm && (
-        <div className="modal-layer delete-layer" onClick={() => setStackDissolveConfirm(null)}>
+        <div className="modal-layer delete-layer" onClick={event => { if (event.target === event.currentTarget) setStackDissolveConfirm(null) }}>
           <div className="delete-modal" role="alertdialog" aria-modal="true">
             <div className="delete-icon"><Icon name="layers" size={26} /></div>
             <h3>{tr("解散这个堆叠？")}</h3>
@@ -3558,7 +3558,7 @@ export default function App() {
       {/* Stack move-to-trash confirmation — a stack always confirms, the
       "不再提醒" suppression only ever covered plain assets. */}
       {stackTrashConfirm && (
-        <div className="modal-layer delete-layer" onClick={() => setStackTrashConfirm(null)}>
+        <div className="modal-layer delete-layer" onClick={event => { if (event.target === event.currentTarget) setStackTrashConfirm(null) }}>
           <div className="delete-modal" role="alertdialog" aria-modal="true">
             <div className="delete-icon"><Icon name="trash" size={26} /></div>
             <h3>{tr("将这个堆叠移到回收站？")}</h3>
@@ -3590,7 +3590,7 @@ export default function App() {
       {/* Create a group and move the menu's target into it. A server rejection
       (duplicate name) shows inside the dialog and keeps it open. */}
       {groupCreateWithSelection && (
-        <div className="group-dialog-backdrop" role="presentation" onClick={() => setGroupCreateWithSelection(null)}>
+        <div className="group-dialog-backdrop" role="presentation" onClick={event => { if (event.target === event.currentTarget) setGroupCreateWithSelection(null) }}>
           <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("新建分组并移入")}>
             <form onSubmit={event => {
               event.preventDefault()
@@ -3621,8 +3621,8 @@ export default function App() {
               }} />
               {groupCreateError && <p className="group-dialog-error" role="alert">{groupCreateError}</p>}
               <div className="group-dialog-actions">
-                <button type="button" onClick={() => setGroupCreateWithSelection(null)}>{tr("取消")}</button>
-                <button type="submit">{tr("保存")}</button>
+                <button type="button" className="neutral-button" onClick={() => setGroupCreateWithSelection(null)}>{tr("取消")}</button>
+                <button type="submit" className="primary-button">{tr("保存")}</button>
               </div>
             </form>
           </div>

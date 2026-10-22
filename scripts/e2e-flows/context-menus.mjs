@@ -155,6 +155,11 @@ function contextMenusSource(config) {
     }
     async function dialogSubmit(value, buttonLabel) {
       const input = await waitFor(() => document.querySelector('.group-dialog input'), 'dialog input');
+      // A click inside the dialog must stay inside: reaching the backdrop
+      // would close it, and a real Save click would lose the submission.
+      input.click();
+      await sleep(150);
+      if (!document.querySelector('.group-dialog')) throw new Error('a click inside the dialog closed it');
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
       setter.call(input, value);
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -164,10 +169,13 @@ function contextMenusSource(config) {
       return waitFor(() => !document.querySelector('.group-dialog'), 'dialog closes');
     }
     async function confirmDialog(titleText, buttonLabel) {
-      await waitFor(() => {
-        const modal = document.querySelector('.delete-modal');
-        return modal && modal.querySelector('h3')?.textContent === titleText ? modal : null;
+      const modal = await waitFor(() => {
+        const candidate = document.querySelector('.delete-modal');
+        return candidate && candidate.querySelector('h3')?.textContent === titleText ? candidate : null;
       }, 'confirm dialog ' + titleText);
+      modal.querySelector('p').click();
+      await sleep(150);
+      if (!document.querySelector('.delete-modal')) throw new Error('a click inside the confirm dialog closed it');
       const button = Array.from(document.querySelectorAll('.delete-modal button'))
         .find((entry) => entry.textContent.trim() === buttonLabel);
       button.click();

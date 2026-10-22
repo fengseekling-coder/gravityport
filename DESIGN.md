@@ -76,13 +76,13 @@
 - 999px 胶囊：图片上的小标。正圆：设置窗口关闭按钮、回到顶部、开关的圆点。
 - 几乎不描边：区块靠表面颜色区分，必要时一条 `--ui-line`。
 - 浮起只用一种阴影 `--ui-shadow`（浅色 `0 16px 48px #0000001c, 0 1px 4px #0000000a`，深色 `0 16px 48px #00000040, 0 1px 4px #00000020`）。下拉和列数弹层再加 `0 0 0 1px var(--ui-line)`。
-- 遮罩：设置窗口 `#00000012`，确认框 `#00000015`。
+- 遮罩：设置窗口、确认框、填写框都是 `#00000012`。
 
 ## 动效
 
 - 缓动：`--ease-out`（`cubic-bezier(.22, 1, .36, 1)`）。
 - 按钮的底色、文字、阴影过渡 180ms，按下下沉 1px。
-- 浮层出现统一用 `surface-in`（透明、下移 10px、缩到 0.98 → 原位）：右键菜单 180ms，确认框 320ms，设置窗口 380ms；遮罩 `veil-in` 240ms；提示条 `toast-in` 上浮 8px，280ms。
+- 浮层出现统一用 `surface-in`（透明、下移 10px、缩到 0.98 → 原位）：右键菜单 180ms，确认框和填写框 320ms，设置窗口 380ms；遮罩 `veil-in` 240ms；提示条 `toast-in` 上浮 8px，280ms。
 - `prefers-reduced-motion: reduce` 时关掉所有动画和过渡。
 
 ## 状态
@@ -113,12 +113,13 @@
 | 工具栏下拉 | `ToolbarSelect.tsx` | 列表 `.toolbar-select-menu` 最窄 176px，选项 32px 高，已选项打 `--ui-accent` 勾 |
 | 列数 | `ColumnControl.tsx` | 弹层 192px，滑杆 + 2/3/4/5/6/8 刻度 |
 | 侧栏 | `.sidebar`、`.nav-row`、`.section-toggle` | 行高 36px，当前项 `--ui-selected` 底加 `aria-current="page"` |
-| 图片卡片 | `.asset-card` | 黑底，小标 `.stack-mark` `.video-mark` `.trash-countdown` `.favorite-mark`，名字条 `.card-name` |
+| 图片卡片 | `.asset-card` | 黑底，小标 `.stack-mark` `.video-mark` `.trash-countdown` `.favorite-mark`，名字条 `.card-name`；名字条显示时，收藏心形落在名字条右端、和最后一行对齐，名字给它让出位置 |
+| 拖动缩略图 | `.card-drag-ghost` | 跟着指针的缩略图；拖多张时右下角数量角标 `.card-drag-ghost-count`：`--ui-primary` 底、`--ui-primary-text` 字 |
 | 详情栏 | `.details` | 概要 → 属性小格 → 标签 → 色板 → 提示词 → 用户指令 → 参考图 → 版本树 → 素材路径 |
-| 右键菜单 | `.context-menu`、`.context-submenu` | 宽 192 / 200px，项高 32px，危险项 `.danger` 放最后一段；菜单内容以 `context-menus.ts` 为准 |
+| 右键菜单 | `.context-menu`、`.context-submenu` | 宽 192 / 200px，项高 32px，危险项 `.danger` 放最后一段；子菜单和主菜单同一种表面（`--ui-raised` 底、`--ui-shadow`），小标题 11px `--ui-muted`，分隔线 `--ui-line`；菜单内容以 `context-menus.ts` 为准 |
 | 提示条 | `.toast` + `.toast-action` | 一句结果，能撤销就带「撤销」 |
 | 确认框 | `.delete-modal` | 图标块、问题标题、一句后果、「取消」+ 写明动作的主按钮 |
-| 填写框 | `.group-dialog` | 新建分组、重命名；名字最长 80 字 |
+| 填写框 | `.group-dialog` | 新建分组并移入、重命名分组和堆叠、合并分组、删除分组；外观同确认框（`--ui-panel` 底、`--radius-panel`、`--ui-shadow`、16px 标题、同一层遮罩），输入框 32px 高，「取消」+ 写明动作的主按钮；名字最长 80 字 |
 | 设置窗口 | `.settings-modal` | 最大 736×560，左栏 176px，内容放在 `.settings-section` 块里 |
 | MCP 配置卡片 | `McpClientConfigCard.tsx`、`mcp-config.css` | 连接页里：`--ui-panel` 底加 `--ui-line` 描边、`--radius-panel`；配置代码块 `--ui-inset` 底，右上角复制按钮 |
 | 查看器 | `ImageViewer.tsx`、`.viewer-controls` | 底部缩放条，鼠标不动时淡出 |
@@ -146,15 +147,13 @@
 - 不写新的 `.dark` 字面量覆盖：深色值放进 `.app.dark` 的变量里。
 - 字号只用 12 / 16 / 20，字重只用 400 / 500 / 600。
 - 新浮层照确认框的规格：`--ui-panel` 底、`--radius-panel`、`--ui-shadow`、`surface-in` 动画，并加到上面的层级表里。
+- 点遮罩关闭浮层时，只认点在遮罩本身（`event.target === event.currentTarget`）：框里的点击不能冒泡把框关掉，否则点「保存」会先关框、丢掉提交。
 - 交付前浅色、深色都看一遍，窗口 1280 和 1440 宽都看一遍。
 
 ## 已知的偏差
 
 这些是源码现状，改到相关代码时顺手收掉：
 
-- 填写框 `.group-dialog` 圆角 12px、输入框 6px、遮罩 `#0007`、阴影 `0 18px 56px #0005`，和确认框不一致。
-- 右键菜单的小标题、分隔线、子菜单还用字面量颜色（`#8a8a8e`、`#e5e5e5`、`#fffffff2`，深色各有一份），没走 `--ui-*`。
-- 打开「显示素材名称」后，卡片右下角的收藏心形被名字条盖住。
-- 收藏为空时的提示写「点素材上的星标」，但收藏图标是心形。
-- 浅色主题下，拖动多张卡片时的数量角标是白字配 `--ui-accent`（3.7:1）。
-- `web/gravityport/public/favicon.svg` 还是原型自带的图形，不是 GravityPort 标志。
+- 工具栏的文字和图标是浅色 `--ui-secondary` 放在 `--ui-work` 上（3.7:1），没到正文的 4.5:1；改它会动整条工具栏的观感，要单独定。
+- 深色 `--ui-muted` 放在 `--ui-raised` 上只有 4.4:1，右键菜单的小标题、快捷键提示就是这样；两套主题都要达标，得调深色 `--ui-muted` 本身，会影响全局。
+- `index.css` 前面的原型层里还留着被后面覆盖、不生效的字面量颜色（例如 `.context-menu .menu-divider` 的 `#e5e5e5`、`.dark .delete-modal` 的 `#303034f5`），读源码时容易误判；以计算值为准，改到时顺手删掉。
