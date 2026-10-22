@@ -132,6 +132,7 @@ Running and developing GravityPort:
 - [Operations guide](docs/operations.md) (English): operating modes, migration, backup, verification, bridge health, and recovery boundaries.
 - [Release guide](docs/releasing.md) (English): distribution tracks, signing, update manifests, release notes, and optional pack publishing.
 - [Architecture](ARCHITECTURE.md) (中文): current runtime, storage, and integration layout.
+- [Design system](DESIGN.md) (中文): colors, type, spacing, components, and copy rules for the desktop interface.
 - [Contributing guide](CONTRIBUTING.md): development workflow, checks, and privacy requirements.
 
 Policies and history:
