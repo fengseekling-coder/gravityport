@@ -450,7 +450,6 @@ img.black-image {
 }.context-menu .danger {
   color: #d74742;
 }.delete-layer {
-  background: #00000015;
   z-index: 45;
 }.delete-modal {
   background: #fafafaf5;
@@ -692,7 +691,7 @@ img.black-image {
   border-radius: 4px;
 }.library-location span {
   font-size: 8px;
-}.modal-layer {
+}.modal-layer, .group-dialog-backdrop {
   background: #00000012;
   animation: veil-in 240ms ease both;
 }.settings-modal {
@@ -1034,12 +1033,13 @@ img.black-image {
  * natural widths (a zero-width container would shrink-to-fit CJK labels down
  * to one character), the zero height clips it out of view and scroll area. */
 .tags-measure { position: absolute; width: max-content; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
-.group-dialog-backdrop { position: fixed; inset: 0; z-index: 105; display: grid; place-items: center; background: #0007; }
-.group-dialog { width: min(380px, calc(100vw - 40px)); max-height: 80vh; overflow: auto; padding: 24px; border: 1px solid var(--ui-line); border-radius: 12px; background: var(--ui-panel); color: var(--ui-text); box-shadow: 0 18px 56px #0005; }
-.group-dialog h3 { margin: 0 0 16px; }
-.group-dialog input,.group-dialog select { width: 100%; padding: 8px; border: 1px solid var(--ui-line); border-radius: 6px; color: inherit; background: transparent; }
+/* Fill-in dialogs (group and stack names) share the confirm dialog's surface,
+ * veil and title; the veil and its fade come from the .modal-layer rule. */
+.group-dialog-backdrop { position: fixed; inset: 0; z-index: 105; display: grid; place-items: center; }
+.group-dialog { width: min(380px, calc(100vw - 40px)); max-height: 80vh; overflow: auto; padding: var(--space-6); border-radius: var(--radius-panel); background: var(--ui-panel); color: var(--ui-text); box-shadow: var(--ui-shadow); animation: surface-in 320ms var(--ease-out) both; }
+.group-dialog h3 { margin: 0 0 var(--space-4); font-size: var(--type-title-size); font-weight: var(--type-weight-title); line-height: var(--space-6); letter-spacing: -.5px; }
+.group-dialog input,.group-dialog select { width: 100%; height: var(--space-8); padding: 0 var(--space-2); border: 1px solid var(--ui-line); border-radius: var(--radius-control); color: inherit; background: transparent; }
 .group-dialog-actions { margin-top: 24px; display: flex; justify-content: flex-end; gap: 8px; }
-.group-dialog-actions button { border: 1px solid var(--ui-line); border-radius: 6px; padding: 7px 12px; color: inherit; background: var(--ui-hover); cursor: pointer; }
 .group-stats-data { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .version-tree { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }
 .generation-tree-row { border-left: 1px solid var(--ui-accent); max-width: 100%; }
@@ -1069,10 +1069,22 @@ img.black-image {
 }.favorite-mark {
   bottom: var(--space-3);
   right: var(--space-3);
+  z-index: 1;
 }.card-name {
   padding: var(--space-2);
   font-size: 12px;
   line-height: var(--space-4);
+  overflow-wrap: anywhere;
+}.asset-card:has(.card-name) .favorite-mark {
+  /* With names shown the heart sits on the name bar, centered on its last
+     line; the name stops short of it. */
+  display: grid;
+  place-items: center;
+  height: var(--space-4);
+  bottom: var(--space-2);
+  right: var(--space-2);
+}.favorite-mark ~ .card-name {
+  padding-right: var(--space-7);
 }.details {
   width: auto;
   min-height: 0;
@@ -3362,21 +3374,15 @@ video.black-image,
   min-height: 0;
   padding: 0;
   margin: var(--space-1) var(--space-2);
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--ui-line);
   border-radius: 0;
-}
-.dark .context-menu div.menu-divider {
-  border-top-color: #505056;
 }
 .context-menu .menu-heading {
   padding: var(--space-2) var(--space-2) var(--space-1);
   font-size: 11px;
   line-height: 1.2;
-  color: #8a8a8e;
+  color: var(--ui-muted);
   cursor: default;
-}
-.dark .context-menu .menu-heading {
-  color: #9a9aa2;
 }
 .context-menu button:disabled {
   opacity: 0.4;
@@ -3412,11 +3418,9 @@ video.black-image,
   max-height: calc(100vh - 24px);
   overflow-y: auto;
   padding: var(--space-1);
-  background: #fffffff2;
-  backdrop-filter: blur(20px);
-  border: 1px solid #ffffffc9;
+  background: var(--ui-raised);
   border-radius: var(--radius-control);
-  box-shadow: 0 10px 35px #0003, 0 0 0 1px #00000015;
+  box-shadow: var(--ui-shadow);
   z-index: 41;
   animation: surface-in 180ms var(--ease-out) both;
 }
@@ -3424,16 +3428,11 @@ video.black-image,
   left: auto;
   right: calc(100% + 6px);
 }
-.dark .context-submenu {
-  background: #303034f5;
-  border-color: #555;
-  color: #eee;
-}
 /* The create-group dialog shows server rejections (duplicate names) inline
    and stays open. */
 .group-dialog-error {
   margin: var(--space-4) 0 0;
-  color: #d74742;
+  color: var(--ui-danger);
   font-size: 12px;
 }
 
@@ -3582,14 +3581,12 @@ video.black-image,
   padding: 0 6px;
   border: 2px solid var(--ui-raised);
   border-radius: 999px;
-  color: #fff;
-  background: var(--ui-accent);
+  color: var(--ui-primary-text);
+  background: var(--ui-primary);
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-}.app.dark .card-drag-ghost-count {
-  color: #111;
 }body.gp-card-dragging {
   cursor: grabbing;
   user-select: none;

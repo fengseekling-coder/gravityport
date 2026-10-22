@@ -62,7 +62,7 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
     return {
       kind: "favorites-empty",
       title: "还没有收藏",
-      description: "点素材上的星标，把常用的图收在这里",
+      description: "点素材详情里的心形，或在素材上右键「收藏」",
       clearAction: false,
     };
   }
