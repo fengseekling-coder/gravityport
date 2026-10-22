@@ -7,12 +7,15 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { windowsInstallerArtifactPath } from "../scripts/make-windows-installer.mjs";
 import { releaseProductNames, resolveReleaseProduct } from "../scripts/release-product.mjs";
 
@@ -69,6 +72,126 @@ async function waitUntil(check, message, timeoutMs = 60_000) {
   throw new Error(message);
 }
 
+function freePort() {
+  return new Promise((resolvePort, rejectPort) => {
+    const server = createServer();
+    server.once("error", rejectPort);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => resolvePort(port));
+    });
+  });
+}
+
+// The last few thousand characters a child printed, for failure messages.
+function recentOutput(...streams) {
+  let text = "";
+  for (const stream of streams) {
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk) => { text = (text + chunk).slice(-4000); });
+  }
+  return () => text;
+}
+
+// Ends every program started from dir (the app, its helper processes, an MCP
+// server) and waits until none is left.
+async function stopEverythingRunningFrom(dir) {
+  const fromDir = "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and "
+    + `$_.ExecutablePath.StartsWith(${psLiteral(`${dir}\\`)}, [StringComparison]::OrdinalIgnoreCase) }`;
+  await waitUntil(async () => {
+    const found = await powershell(
+      `$found = @(${fromDir}); $found | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; $found.Count`,
+    );
+    return found === "0";
+  }, `programs started from ${dir} keep running`);
+}
+
+// Opens the installed app as scripts/packaged-smoke.mjs opens the packaged
+// one: with its own library, settings folder and port, so nothing of the
+// account's own GravityPort is touched. It starts outside the app folder, so
+// only the files the app itself keeps open hold that folder.
+async function openInstalledApp(exe, sandbox) {
+  const port = await freePort();
+  const libraryDir = join(sandbox, "library");
+  const userData = join(sandbox, "user-data");
+  await mkdir(libraryDir, { recursive: true });
+  await mkdir(userData, { recursive: true });
+  const child = spawn(exe, ["--disable-gpu", `--user-data-dir=${userData}`], {
+    cwd: sandbox,
+    env: {
+      ...process.env,
+      MOSA_RUNTIME_MODE: "qa",
+      MOSA_QA_RUN: "1",
+      MOSA_LIBRARY_DIR: libraryDir,
+      MOSA_USER_DATA: userData,
+      MOSA_DESKTOP_PORT: String(port),
+      MOSA_DISABLE_BRIDGES: "cowart,cowartDiscovery,codex,grok",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let failure = null;
+  child.once("error", (error) => { failure = error; });
+  const output = recentOutput(child.stdout, child.stderr);
+  const answers = () => fetch(`http://127.0.0.1:${port}/api/health`).then((response) => response.ok, () => false);
+  try {
+    await waitUntil(async () => {
+      if (failure) throw failure;
+      if (child.exitCode !== null) throw new Error(`it quit with exit code ${child.exitCode}`);
+      return answers();
+    }, "it did not answer within 90 seconds", 90_000);
+  } catch (error) {
+    throw new Error(`The installed app did not open: ${error.message}\n${output()}`, { cause: error });
+  }
+  return { libraryDir, answers };
+}
+
+// Starts the installed app's bundled MCP server with the command an AI
+// assistant such as Claude runs (Settings shows it), and waits until it
+// answers `initialize`.
+async function startInstalledMcpServer({ exe, appDir, libraryDir, sandbox }) {
+  const config = buildMcpClientConfig({
+    platform: "win32",
+    execPath: exe,
+    serverPath: join(appDir, "resources", "app.asar", "mcp", "server.mjs"),
+    managedLibraryDir: libraryDir,
+  });
+  const home = join(sandbox, "mcp-home");
+  await mkdir(home, { recursive: true });
+  const systemEnv = Object.fromEntries(["PATH", "SystemRoot", "TEMP", "TMP"]
+    .filter((name) => process.env[name])
+    .map((name) => [name, process.env[name]]));
+  const child = spawn(config.command, config.args, {
+    cwd: home,
+    env: { ...systemEnv, HOME: home, USERPROFILE: home, ...config.env },
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  let failure = null;
+  child.once("error", (error) => { failure = error; });
+  const errors = recentOutput(child.stderr);
+  let received = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { received += chunk; });
+  const answered = () => received.split("\n").slice(0, -1).some((line) => {
+    try {
+      return JSON.parse(line).id === 1;
+    } catch {
+      return false;
+    }
+  });
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } })}\n`);
+  try {
+    await waitUntil(() => {
+      if (failure) throw failure;
+      if (child.exitCode !== null) throw new Error(`it quit with exit code ${child.exitCode}`);
+      return answered();
+    }, "it did not answer within 30 seconds", 30_000);
+  } catch (error) {
+    throw new Error(`The installed MCP server did not start: ${error.message}\n${errors()}`, { cause: error });
+  }
+  return child;
+}
+
 scope("the Windows installer installs, refuses to touch a running copy, upgrades, and uninstalls", async () => {
   const packageJson = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8"));
   const installer = windowsInstallerArtifactPath({ rootDir, outDir, version: packageJson.version, product });
@@ -85,7 +208,7 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
   const uninstallKey = `HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${product}`;
   assert.equal(existsSync(installRoot), false, `${product} is already installed for this account; the rehearsal will not touch it.`);
 
-  let probe = null;
+  const sandbox = await mkdtemp(join(tmpdir(), "mosa-installer-rehearsal-"));
   try {
     // First install.
     assert.equal(await run(installer, ["/S"]), 0, "silent install exit code");
@@ -98,35 +221,42 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
       const target = await powershell(`(New-Object -ComObject WScript.Shell).CreateShortcut(${psLiteral(shortcut)}).TargetPath`);
       assert.equal(target.toLowerCase(), exe.toLowerCase(), `${shortcut} opens the installed app`);
     }
-    const entry = JSON.parse(await powershell(`Get-ItemProperty -LiteralPath ${psLiteral(uninstallKey)} | ConvertTo-Json -Compress`));
+    // Only the key's own values: Get-ItemProperty adds PowerShell's PS*
+    // properties, which ConvertTo-Json cannot serialize cleanly.
+    const entry = JSON.parse(await powershell(
+      `$key = Get-Item -LiteralPath ${psLiteral(uninstallKey)}; $values = [ordered]@{}; `
+      + "foreach ($name in $key.GetValueNames()) { $values[$name] = $key.GetValue($name) }; $values | ConvertTo-Json -Compress",
+    ));
     assert.equal(entry.DisplayName, product);
     assert.equal(entry.InstallLocation.toLowerCase(), installRoot.toLowerCase());
     assert.equal(entry.UninstallString.toLowerCase(), `"${uninstaller}"`.toLowerCase());
     assert.equal(entry.DisplayVersion, undefined, "no version that in-app updates would leave stale");
 
-    // A program running from the app folder blocks both installing over it
-    // and uninstalling it; silent runs give up and leave it untouched.
-    const probeExe = join(appDir, "lock-probe.exe");
-    await copyFile(join(process.env.SystemRoot, "System32", "PING.EXE"), probeExe);
-    probe = spawn(probeExe, ["-n", "120", "127.0.0.1"], { stdio: "ignore", windowsHide: true });
-    await new Promise((resolveSpawn, rejectSpawn) => {
-      probe.once("spawn", resolveSpawn);
-      probe.once("error", rejectSpawn);
-    });
-    assert.equal(await run(installer, ["/S"]), 2, "install over a running copy is aborted");
-    assert.ok(existsSync(exe) && existsSync(probeExe), "the running copy is left as it was");
+    // While the installed app is open, installing over it and uninstalling it
+    // are both refused; silent runs give up and leave it running untouched.
+    const app = await openInstalledApp(exe, sandbox);
+    assert.equal(await run(installer, ["/S"]), 2, "installing over the open app is refused");
+    assert.equal(await run(uninstaller, ["/S", `_?=${installRoot}`]), 2, "uninstalling the open app is refused");
+    assert.ok(existsSync(exe), "the open app stays in place");
     assert.equal(existsSync(join(installRoot, "app.old")), false);
-    assert.equal(await run(uninstaller, ["/S", `_?=${installRoot}`]), 2, "uninstalling a running copy is aborted");
-    assert.ok(existsSync(exe) && existsSync(probeExe), "the running copy survives the refused uninstall");
-    probe.kill();
-    await new Promise((resolveExit) => (probe.exitCode !== null ? resolveExit() : probe.once("exit", resolveExit)));
-    probe = null;
+    assert.equal(existsSync(join(installRoot, "app.removing")), false);
+    assert.ok(await app.answers(), "the open app keeps running");
+    await stopEverythingRunningFrom(installRoot);
+
+    // The same while only an AI assistant's MCP server runs from the app.
+    const mcpServer = await startInstalledMcpServer({ exe, appDir, libraryDir: app.libraryDir, sandbox });
+    assert.equal(await run(installer, ["/S"]), 2, "installing under a running MCP server is refused");
+    assert.ok(existsSync(exe) && mcpServer.exitCode === null, "the MCP server keeps running");
+    mcpServer.stdin.end();
+    await stopEverythingRunningFrom(installRoot);
 
     // Installing again replaces the whole app folder, like a version change.
+    const leftover = join(appDir, "from-an-older-version.txt");
+    await writeFile(leftover, "older");
     assert.equal(await run(installer, ["/S"]), 0, "upgrade exit code");
-    assert.equal(existsSync(probeExe), false, "files from the previous copy are gone");
+    assert.equal(existsSync(leftover), false, "files from the previous copy are gone");
     assert.equal(existsSync(join(installRoot, "app.old")), false, "the previous copy is removed");
-    assert.ok(existsSync(exe));
+    assert.deepEqual(await treeDigest(appDir), packaged, "the upgraded copy matches the package");
 
     // The in-app updater parks the previous version beside app\.
     await mkdir(join(installRoot, ".MOSA-update-rehearsal", "previous"), { recursive: true });
@@ -139,11 +269,12 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
     assert.equal(existsSync(desktopShortcut), false, "desktop shortcut removed");
     assert.equal(await powershell(`Test-Path -LiteralPath ${psLiteral(uninstallKey)}`), "False", "Settings > Apps entry removed");
   } finally {
-    if (probe) probe.kill();
+    await stopEverythingRunningFrom(installRoot).catch(() => {});
     if (existsSync(installRoot)) await rm(installRoot, { recursive: true, force: true }).catch(() => {});
     await rm(startMenuShortcut, { force: true }).catch(() => {});
     await rm(desktopShortcut, { force: true }).catch(() => {});
     await powershell(`Remove-Item -LiteralPath ${psLiteral(uninstallKey)} -Recurse -ErrorAction SilentlyContinue`).catch(() => {});
+    await rm(sandbox, { recursive: true, force: true }).catch(() => {});
   }
 });
 

@@ -101,11 +101,13 @@ Function .onInit
   StrCpy $MovedAside 0
 FunctionEnd
 
-; Renames $INSTDIR\app to $INSTDIR\<TO>. Windows cannot rename a folder
-; while a program inside it is running, so a successful rename proves the app
-; is closed. Antivirus scanners and the search indexer can hold a file for a
-; moment after the app quits, so it tries for about two seconds before it
-; asks. Cancel, and every silent run, aborts with the app untouched.
+; Renames $INSTDIR\app to $INSTDIR\<TO>. A running copy, including the MCP
+; server an AI assistant starts from it, keeps files inside app open (such as
+; resources\app.asar), and Windows cannot rename a folder with open files
+; inside, so a successful rename proves nothing runs from it. Antivirus
+; scanners and the search indexer can hold a file for a moment after the app
+; quits, so it tries for about two seconds before it asks. Cancel, and every
+; silent run, aborts with the app untouched.
 !macro MoveAppFolderTo TO
   retry:
     StrCpy $R9 0

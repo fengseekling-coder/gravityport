@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -41,9 +41,10 @@ test("Windows installer names follow the release package names", () => {
   assert.equal(windowsInstallerArtifactName("0.3.4"), "GravityPort-win32-x64-0.3.4.exe");
   assert.equal(windowsInstallerArtifactName("0.3.4-rc.1", "MOSA"), "MOSA-win32-x64-0.3.4-rc.1.exe");
   assert.throws(() => windowsInstallerArtifactName("latest"), /Invalid Windows installer version/);
+  const root = resolve("repo-root");
   assert.equal(
-    windowsInstallerArtifactPath({ rootDir: "/repo", version: "0.3.4", product: "GravityPort" }),
-    "/repo/out/make/installer/win32/x64/GravityPort-win32-x64-0.3.4.exe",
+    windowsInstallerArtifactPath({ rootDir: root, version: "0.3.4", product: "GravityPort" }),
+    join(root, "out", "make", "installer", "win32", "x64", "GravityPort-win32-x64-0.3.4.exe"),
   );
 });
 
