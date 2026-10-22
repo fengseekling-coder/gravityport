@@ -13,30 +13,19 @@ GravityPort 是一个本地优先的 AI 生成素材库：图片、视频、Prom
 
 ![GravityPort 画廊与检视器](docs/images/gravityport-app.webp)
 
-GravityPort 原名 MOSA。已有安装的素材库位置、设置和命令名都保持不变。
-
 **本地优先 · Prompt 与来源 · 版本历史 · 无 GravityPort 云账户**
 
-[下载](#下载) · [第一次打开](#第一次打开) · [中文使用指南](docs/guide.zh-CN.md) · [隐私](PRIVACY.md) · [文档](#文档)
+[下载](#下载) · [中文使用指南](docs/guide.zh-CN.md) · [隐私](PRIVACY.md) · [文档](#文档)
 
 ## 下载
 
 从[官方下载页](https://gravityport.azhuilab.com/#download)获取 GravityPort。下载页始终列出现行安装包的体积和 SHA-256 校验值。
 
 - **GravityPort 桌面版 macOS**（Apple Silicon）：DMG 镜像。把 `GravityPort.app` 拖入「应用程序」。
-- **GravityPort 桌面版 Windows 10/11**（x64）：便携 ZIP。解压后运行 `GravityPort.exe`。Windows 目前是预览 / 测试目标。
-- **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，需要在开发者模式加载，不是签名的 CRX。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
+- **GravityPort 桌面版 Windows 10/11**（x64）：便携 ZIP。解压后运行 `GravityPort.exe`。
+- **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，先启动桌面应用再加载，两边会自动配对。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
 
 已安装的桌面应用会在 **设置 → 关于** 里自行检查更新。[发布清单](https://gravityport.azhuilab.com/releases/gravityport/latest.json)是最新版本的机器可读来源。
-
-## 第一次打开
-
-当前桌面版本是预览版：macOS 应用未经 Apple 公证，Windows 应用暂未代码签名，首次打开时系统会警告。
-
-- **macOS：** 打开 GravityPort。当 macOS 提示无法验证应用时，点**完成**，打开**系统设置 → 隐私与安全性**，滚动到**安全性**一节，在 GravityPort 旁边点**仍要打开**并确认。macOS 会记住这个选择。在 macOS 14 及更早版本上，也可以按住 Control 点按应用并选择**打开**。
-- **Windows：** 如果 SmartScreen 显示「Windows 已保护你的电脑」，点**更多信息 → 仍要运行**。
-
-如果使用网页采集扩展，先启动桌面应用再加载扩展，应用会自动完成配对。
 
 ## 为什么需要 GravityPort
 
@@ -85,9 +74,7 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 | 目标 | 状态 |
 | --- | --- |
 | macOS arm64 | 主桌面目标。首次安装用 DMG，之后走应用内更新。 |
-| Windows 10/11 x64 | **预览 / 测试。** 之前的版本在真实 Windows 机器上验证过：启动、SQLite、Sharp、素材库和检视器、Codex 自动采集；换成新界面后还没有在 Windows 真机上重新验证。便携 ZIP，支持应用内更新。 |
-
-Grok 和 Cowart 来源在 Windows 上的发现，以及常规的 Windows 安装器，还在计划中。
+| Windows 10/11 x64 | 便携 ZIP，之后走应用内更新。 |
 
 ## 从源码运行
 

@@ -13,30 +13,19 @@ GravityPort is a local-first library for AI-generated images, videos, Prompts, p
 
 ![GravityPort gallery with the Inspector open](docs/images/gravityport-app.webp)
 
-GravityPort was previously called MOSA. Existing installs keep their library folder, settings, and command names.
-
 **Local-first · Prompt & provenance · Version history · No GravityPort cloud account**
 
-[Downloads](#downloads) · [First launch](#first-launch) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
+[Downloads](#downloads) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
 
 ## Downloads
 
 Get GravityPort from the [official download page](https://gravityport.azhuilab.com/#download). It always lists the current packages with their sizes and SHA-256 values.
 
 - **GravityPort Desktop for macOS** (Apple Silicon): a DMG. Drag `GravityPort.app` into Applications.
-- **GravityPort Desktop for Windows 10/11** (x64): a portable ZIP. Extract it and run `GravityPort.exe`. Windows is still a Preview / testing target.
-- **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP loaded in developer mode, not a signed CRX. See the [install guide](https://gravityport.azhuilab.com/guide/).
+- **GravityPort Desktop for Windows 10/11** (x64): a portable ZIP. Extract it and run `GravityPort.exe`.
+- **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP; load it after the desktop app is running and the two pair automatically. See the [install guide](https://gravityport.azhuilab.com/guide/).
 
 Installed desktop apps check for updates themselves in **Settings → About**. The [release manifest](https://gravityport.azhuilab.com/releases/gravityport/latest.json) is the machine-readable source for the newest version.
-
-## First launch
-
-Current desktop builds are Preview releases: the macOS app is not notarized by Apple and the Windows app is not code-signed yet, so the system warns you the first time you open them.
-
-- **macOS:** open GravityPort once. When macOS says it can't verify the app, click **Done**, open **System Settings → Privacy & Security**, scroll to **Security**, click **Open Anyway** next to GravityPort, and confirm. macOS remembers the choice. On macOS 14 and earlier you can instead Control-click the app and choose **Open**.
-- **Windows:** if SmartScreen shows "Windows protected your PC", click **More info → Run anyway**.
-
-If you use the Web Capture extension, load it after the desktop app is running; the app pairs with it automatically.
 
 ## Why GravityPort
 
@@ -85,9 +74,7 @@ Whatever the source, everything lands in the same local gallery with groups, sta
 | Target | Status |
 | --- | --- |
 | macOS arm64 | Main desktop target. DMG for first install, in-app updates afterwards. |
-| Windows 10/11 x64 | **Preview / testing.** An earlier build was verified on a real Windows machine (startup, SQLite, Sharp, the library and Inspector, automatic Codex collection); the redesigned interface has not been re-checked on Windows hardware yet. Portable ZIP with in-app updates. |
-
-Grok and Cowart source discovery on Windows and a conventional Windows installer are still to come.
+| Windows 10/11 x64 | Portable ZIP, in-app updates afterwards. |
 
 ## Run from source
 
