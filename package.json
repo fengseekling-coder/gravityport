@@ -55,6 +55,7 @@
     "verify:desktop:package:windows": "node scripts/verify-packaged-runtime.mjs --platform win32 --arch x64",
     "verify:release:provenance": "node scripts/check-release-provenance.mjs",
     "release:github": "node scripts/publish-github-release.mjs",
+    "usage:report": "node scripts/usage-report.mjs",
     "verify:release:macos": "node scripts/verify-macos-release.mjs",
     "verify:release:windows": "node scripts/verify-windows-release.mjs",
     "predesktop:package": "npm run check:desktop-node && npm run build",
