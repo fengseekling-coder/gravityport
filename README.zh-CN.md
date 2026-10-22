@@ -140,6 +140,7 @@ npm run desktop:package:windows
 - [运维指南](docs/operations.md)（英文）：运行模式、迁移、备份、校验、桥接健康与恢复边界。
 - [发布指南](docs/releasing.md)（英文）：发布通道、签名、更新清单、更新说明与可选包发布。
 - [架构](ARCHITECTURE.md)：当前运行时、存储与集成结构。
+- [界面设计规范](DESIGN.md)：桌面版界面的颜色、字体、间距、组件和文案规则。
 - [贡献指南](CONTRIBUTING.md)：开发流程、检查项与隐私要求。
 
 政策与历史：

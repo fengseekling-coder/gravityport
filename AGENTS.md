@@ -10,6 +10,7 @@
 ## Local Development
 
 - Use `npm ci`, `npm test`, `npm run lint`, and `npm run check` before proposing a change.
+- Interface changes under `web/gravityport` follow `DESIGN.md`: use the existing `--ui-*`, `--space-*`, and `--radius-*` variables, and update `DESIGN.md` in the same change when a token or component rule changes.
 - Start the local service with `npm start`. Configure non-default locations through the documented environment variables.
 - The Cowart integration is optional. When it is unavailable, preserve normal library behavior rather than creating plugin-specific files in the checkout.
 
