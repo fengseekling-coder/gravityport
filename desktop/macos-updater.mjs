@@ -255,11 +255,22 @@ FAILED_APP="$TRANSACTION_ROOT/failed.app"
 CROSS_NAME=0
 MOVED_ORIGINAL=0
 NEW_PID=""
+# The new version writes this before it upgrades the library schema. From then
+# on the previous version cannot open the library, so never roll back to it.
+SCHEMA_MARKER="$(dirname "$READY_FILE")/schema-upgrade-started.json"
+KEPT_NEW=0
 
 if [ "$CURRENT_APP_NAME" != "$APP_NAME" ]; then CROSS_NAME=1; fi
 
 rollback() {
   rm -f "$HANDOFF_FILE" 2>/dev/null || true
+  if [ "$MOVED_ORIGINAL" -eq 1 ] && [ -f "$SCHEMA_MARKER" ]; then
+    KEPT_NEW=1
+    if [ -z "$NEW_PID" ] || ! kill -0 "$NEW_PID" 2>/dev/null; then
+      "$OPEN_BIN" -n "$TARGET_APP" >/dev/null 2>&1 || true
+    fi
+    return
+  fi
   if [ -n "$NEW_PID" ] && kill -0 "$NEW_PID" 2>/dev/null; then
     kill -TERM "$NEW_PID" 2>/dev/null || true
     i=0
@@ -280,7 +291,7 @@ rollback() {
   fi
 }
 
-trap 'code=$?; rollback; echo "macOS update helper failed (exit $code)" > "$LOG_PATH"; exit $code' HUP INT TERM EXIT
+trap 'code=$?; rollback; if [ "$KEPT_NEW" -eq 1 ]; then echo "macOS update helper kept the new version because it already upgraded the library (exit $code)" > "$LOG_PATH"; exit 34; fi; echo "macOS update helper failed (exit $code)" > "$LOG_PATH"; exit $code' HUP INT TERM EXIT
 
 while kill -0 "$TARGET_PID" 2>/dev/null; do sleep 0.25; done
 
@@ -328,11 +339,11 @@ if [ "$CROSS_NAME" -eq 1 ]; then
 else
   mv "$REPLACEMENT_APP" "$INSTALL_APP"
 fi
-rm -f "$READY_FILE"
+rm -f "$READY_FILE" "$SCHEMA_MARKER"
 
 "$OPEN_BIN" -n "$TARGET_APP" --args "--mosa-update-ready-file=$READY_FILE"
 i=0
-while [ "$i" -lt 180 ]; do
+while [ "$i" -lt 480 ]; do
   if [ -f "$READY_FILE" ]; then
     READY_VERSION=$(/usr/bin/plutil -extract version raw -o - "$READY_FILE")
     READY_GIT_SHA=$(/usr/bin/plutil -extract gitSha raw -o - "$READY_FILE")

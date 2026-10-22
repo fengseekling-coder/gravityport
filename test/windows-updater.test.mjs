@@ -588,3 +588,15 @@ test("post-update readiness argument is accepted only inside the updater staging
   assert.equal(resolveWindowsUpdateReadyFile([`--mosa-update-ready-file=${ready}`], root), ready);
   assert.equal(resolveWindowsUpdateReadyFile(["--mosa-update-ready-file=C:\\Temp\\fake-ready.json"], root), null);
 });
+
+test("Windows apply helper waits 120 seconds and never rolls back a library the new version upgraded", () => {
+  const script = windowsUpdateHelperScript();
+  assert.match(script, /\$readyDeadline = \[DateTime\]::UtcNow\.AddSeconds\(120\)/);
+  assert.doesNotMatch(script, /AddSeconds\(45\)/);
+  assert.match(script, /\$schemaUpgradeMarker = Join-Path \(Split-Path -Parent \$ReadyFile\) "schema-upgrade-started\.json"/);
+  assert.ok(script.indexOf("Remove-Item -LiteralPath $schemaUpgradeMarker") < script.indexOf("$newProcess = Start-Process"), "a stale marker is cleared before the new version starts");
+  const recovery = script.slice(script.lastIndexOf("  } catch {", script.indexOf("Stop-Process -Id $newProcess.Id")));
+  const keep = recovery.indexOf("Test-Path -LiteralPath $schemaUpgradeMarker");
+  assert.ok(keep > 0 && keep < recovery.indexOf("Stop-Process -Id $newProcess.Id"), "the marker is checked before the new version is stopped");
+  assert.ok(recovery.indexOf("exit 34") > keep && recovery.indexOf("exit 34") < recovery.indexOf("Move-MosaDirectoryWithRetry -LiteralPath $backupDir"), "keeping the new version exits before the previous copy is restored");
+});

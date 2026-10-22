@@ -46,7 +46,26 @@ async function writeExecutable(path, body) {
 // argument it exits immediately (a relaunched previous app must not linger).
 // mode "silent": never reports readiness and exits after a moment, which is
 // how the helper's failure path is exercised.
+// mode "upgraded-silent": like "silent", but first leaves the schema-upgrade
+// marker next to the ready file, the way a version that upgraded the library
+// schema does before it could report readiness.
 function appExecutableBody({ version, distribution, mode }) {
+  if (mode === "upgraded-silent") {
+    return `#!/bin/sh
+ready=""
+for arg in "$@"; do
+  case "\$arg" in
+    --mosa-update-ready-file=*) ready="\${arg#--mosa-update-ready-file=}";;
+  esac
+done
+if [ -z "\$ready" ]; then
+  exit 0
+fi
+printf '{"from":15,"to":16}\\n' > "\$(dirname "\$ready")/schema-upgrade-started.json"
+sleep 1
+exit 43
+`;
+  }
   if (mode === "silent") {
     return `#!/bin/sh
 # never reports readiness
@@ -299,6 +318,89 @@ previewScope("rehearsal: cross-name update with a silent payload rolls back to M
       label: "previous app restored at the original path and name",
     });
     assert.equal(existsSync(join(appsDir, "GravityPort.app")), false, "failed replacement must be removed");
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
+});
+
+previewScope("rehearsal: a payload that upgraded the library is kept instead of rolled back", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-rehearsal-schema-"));
+  const appsDir = join(root, "apps");
+  try {
+    await mkdir(appsDir, { recursive: true });
+    await makeFakeApp({ root: appsDir, appName: "GravityPort.app", execName: "GravityPort", version: "0.3.2", marker: "old" });
+    const payloadRoot = join(root, "payload");
+    await mkdir(payloadRoot, { recursive: true });
+    await makeFakeApp({
+      root: payloadRoot,
+      appName: "GravityPort.app",
+      execName: "GravityPort",
+      version: VERSION,
+      marker: "new",
+      mode: "upgraded-silent",
+    });
+    const zipPath = await makePayloadZip({ root: payloadRoot, appName: "GravityPort.app" });
+    const stubs = await writeStubScripts(root);
+
+    const { logPath } = await launchHelper({
+      root,
+      stubs,
+      installAppPath: join(appsDir, "GravityPort.app"),
+      zipPath,
+      appName: "GravityPort.app",
+    });
+
+    await waitFor(() => existsSync(logPath), { label: "helper log" });
+    assert.match(readFileSync(logPath, "utf8"), /kept the new version because it already upgraded the library/);
+    assert.equal(markerOf(join(appsDir, "GravityPort.app")), "new", "the version that upgraded the library stays installed");
+    // The new version stopped before reporting readiness: the helper starts it
+    // again instead of reopening the previous version.
+    await waitFor(() => readFileSync(join(root, "open.log"), "utf8").trim().split("\n").length === 2, { label: "relaunch of the kept version" });
+    assert.deepEqual(readFileSync(join(root, "open.log"), "utf8").trim().split("\n"), [
+      join(appsDir, "GravityPort.app"),
+      join(appsDir, "GravityPort.app"),
+    ]);
+    // The previous copy stays parked in the transaction directory.
+    const [transaction] = transactionDirs(appsDir);
+    assert.ok(transaction, "the previous copy stays parked");
+    assert.equal(markerOf(join(appsDir, transaction, "previous.app")), "old");
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
+});
+
+previewScope("rehearsal: a cross-name payload that upgraded the library is kept instead of rolled back", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-rehearsal-schema-cross-"));
+  const appsDir = join(root, "apps");
+  try {
+    await mkdir(appsDir, { recursive: true });
+    await makeFakeApp({ root: appsDir, appName: "MOSA.app", execName: "MOSA", version: "0.2.1-rc.34", marker: "old" });
+    const payloadRoot = join(root, "payload");
+    await mkdir(payloadRoot, { recursive: true });
+    await makeFakeApp({
+      root: payloadRoot,
+      appName: "GravityPort.app",
+      execName: "GravityPort",
+      version: VERSION,
+      marker: "new",
+      mode: "upgraded-silent",
+    });
+    const zipPath = await makePayloadZip({ root: payloadRoot, appName: "GravityPort.app" });
+    const stubs = await writeStubScripts(root);
+
+    const { logPath } = await launchHelper({
+      root,
+      stubs,
+      installAppPath: join(appsDir, "MOSA.app"),
+      zipPath,
+      appName: "GravityPort.app",
+    });
+
+    await waitFor(() => existsSync(logPath), { label: "helper log" });
+    assert.match(readFileSync(logPath, "utf8"), /exit \d+/);
+    assert.match(readFileSync(logPath, "utf8"), /kept the new version/);
+    assert.equal(markerOf(join(appsDir, "GravityPort.app")), "new");
+    assert.equal(existsSync(join(appsDir, "MOSA.app")), false, "the previous name is not restored over an upgraded library");
   } finally {
     await removeTestPath(root, { recursive: true, force: true });
   }
