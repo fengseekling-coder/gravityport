@@ -12,6 +12,11 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 - An in-app update no longer rolls back to the previous version once the new version has started upgrading the library: the previous version cannot open an upgraded library, so the updater keeps the new version (and the parked previous copy) and starts it again if needed. The new version also gets 120 seconds instead of 45 to report that it started, and right after an update the source bridges wait until it has reported, so a macOS folder-permission prompt can no longer hold it past the deadline.
 
+### Fixes
+
+- The CLI and library backup errors now tell you to run `gravityport migrate` instead of `mosa migrate` (both commands still work).
+- The visual relationship index is stored at `<userData>/visual-relationship-indexes/<library>/` again instead of one directory deeper; an existing index is moved up on first use.
+
 ## 0.3.3 — 2026-10-22 / Preview
 
 ### MCP
