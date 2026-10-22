@@ -242,7 +242,7 @@ test("packaged runtime paths and asar locations follow the release product switc
 });
 
 test("both release products check the gravityport update feed and report usage onto it", () => {
-  assert.equal(MOSA_UPDATE_FEED_URL, "https://mosa.azhuilab.com/releases/gravityport/latest.json");
+  assert.equal(MOSA_UPDATE_FEED_URL, "https://gravityport.azhuilab.com/releases/gravityport/latest.json");
   const url = new URL(buildUpdateFeedUrl({
     event: "daily_active",
     telemetryVersion: 2,
@@ -251,5 +251,5 @@ test("both release products check the gravityport update feed and report usage o
     arch: "arm64",
     version: "0.2.0",
   }));
-  assert.equal(`${url.origin}${url.pathname}`, "https://mosa.azhuilab.com/releases/gravityport/latest.json");
+  assert.equal(`${url.origin}${url.pathname}`, "https://gravityport.azhuilab.com/releases/gravityport/latest.json");
 });

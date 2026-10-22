@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../lib/apply-env-aliases.mjs";
 
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";

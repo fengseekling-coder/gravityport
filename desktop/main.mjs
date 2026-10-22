@@ -1,3 +1,4 @@
+import "../lib/apply-env-aliases.mjs";
 import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, screen, session, shell, Notification } from "electron";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, readdir, rm, stat } from "node:fs/promises";
@@ -54,6 +55,7 @@ import {
 import { createVisualInferenceClient } from "../lib/visual-inference-client.mjs";
 import { createMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
+import { isTelemetryDisabled } from "../lib/env-aliases.mjs";
 
 const preloadPath = fileURLToPath(new URL("./preload.cjs", import.meta.url));
 const startupShellPath = fileURLToPath(new URL("./startup.html", import.meta.url));
@@ -1224,7 +1226,7 @@ function runAnonymousUsageReport() {
 function startAnonymousUsageLifecycle() {
   // Explicit local opt-out. The daily HEAD ping carries no identifiers beyond
   // a random install id, but the machine owner can still switch it off.
-  if (process.env.MOSA_DISABLE_TELEMETRY === "1") return;
+  if (isTelemetryDisabled()) return;
   if (usageReportTimer || isolationContext.qaRun || !app.isPackaged) return;
   void runAnonymousUsageReport();
   usageReportTimer = setInterval(() => {

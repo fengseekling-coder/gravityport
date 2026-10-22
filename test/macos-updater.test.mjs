@@ -46,13 +46,13 @@ test("macOS update artifacts are pinned to the official filename and HTTPS downl
   assert.deepEqual(validateMacosUpdateArtifact(artifact, "0.3.0"), artifact);
   assert.equal(
     macosUpdateDownloadUrl(artifact),
-    "https://mosa.azhuilab.com/downloads/MOSA-darwin-arm64-0.3.0.zip",
+    "https://gravityport.azhuilab.com/downloads/MOSA-darwin-arm64-0.3.0.zip",
   );
   const renamed = artifactFor(Buffer.from("zip"), "0.3.0", { appName: "GravityPort.app" });
   assert.deepEqual(validateMacosUpdateArtifact(renamed, "0.3.0"), renamed);
   assert.equal(
     macosUpdateDownloadUrl(renamed),
-    "https://mosa.azhuilab.com/downloads/GravityPort-darwin-arm64-0.3.0.zip",
+    "https://gravityport.azhuilab.com/downloads/GravityPort-darwin-arm64-0.3.0.zip",
   );
   // An appName that disagrees with the filename prefix is refused.
   assert.throws(() => validateMacosUpdateArtifact({ ...renamed, appName: "MOSA.app" }, "0.3.0"), /filename/);

@@ -206,7 +206,7 @@ export function createWebCaptureIngest(options: { store?: Store; libraryDir?: st
     return { ok: true, retryRequestId };
   }
   function assertToken(provided: string): void {
-    if (!token) { const e = new Error("Web capture is disabled until MOSA_WEB_CAPTURE_TOKEN is configured.") as Error & { statusCode: number; code: string; expose: boolean }; e.statusCode = 503; e.code = "WEB_CAPTURE_DISABLED"; e.expose = true; throw e; }
+    if (!token) { const e = new Error("Web capture is disabled until GRAVITYPORT_WEB_CAPTURE_TOKEN is configured.") as Error & { statusCode: number; code: string; expose: boolean }; e.statusCode = 503; e.code = "WEB_CAPTURE_DISABLED"; e.expose = true; throw e; }
     if (!safeTokenEqual(String(provided || "").trim(), token)) { const e = new Error("Unauthorized web capture token.") as Error & { statusCode: number; code: string }; e.statusCode = 401; e.code = "WEB_CAPTURE_UNAUTHORIZED"; throw e; }
   }
   async function performIngest(input: WebCaptureInput, authToken: string, mediaFilePath = ""): Promise<IngestResult> {

@@ -29,6 +29,7 @@ test("0.3.0 release candidates outrank the occupied 0.2.1 line", () => {
   assert.equal(compareVersions("0.3.0-rc.1", "0.2.1-rc.34"), 1);
   assert.equal(compareVersions("0.3.1", "0.3.0-rc.1"), 1);
   assert.equal(compareVersions("0.3.2", "0.3.1"), 1);
+  assert.equal(compareVersions("0.3.3", "0.3.2"), 1);
 });
 
 test("update manifest keeps only bounded release metadata", () => {
@@ -45,7 +46,7 @@ test("update manifest keeps only bounded release metadata", () => {
     macArtifact: null,
     windowsArtifact: null,
   });
-  assert.equal(MOSA_UPDATE_FEED_URL, "https://mosa.azhuilab.com/releases/gravityport/latest.json");
+  assert.equal(MOSA_UPDATE_FEED_URL, "https://gravityport.azhuilab.com/releases/gravityport/latest.json");
   assert.equal(MOSA_DOWNLOAD_PAGE_URL, "https://gravityport.azhuilab.com/#download");
 });
 

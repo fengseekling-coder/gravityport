@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../lib/apply-env-aliases.mjs";
 // Task 127: OS-level input smoke against the packaged macOS app.
 //
 // CDP Input.dispatchMouseEvent bypasses the macOS window server, so it cannot

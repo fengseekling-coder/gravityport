@@ -232,7 +232,7 @@ cannot supply a URL or filesystem destination. The main process reads the same
 first-party release feed used by application updates, selects only the entry
 matching the current platform/architecture, and downloads files only from:
 
-`https://mosa.azhuilab.com/downloads/visual-packs/<id>/<revision>/<target>/...`
+`https://gravityport.azhuilab.com/downloads/visual-packs/<id>/<revision>/<target>/...`
 
 The release feed pins `model-pack.json` by byte size and SHA-256. After that
 manifest is verified, each model/runtime file is downloaded into a private

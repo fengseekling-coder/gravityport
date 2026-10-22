@@ -1,6 +1,6 @@
 // BUG-08 fix: preload hook loaded by `npm test` before any test file runs.
 //
-// It deletes MOSA runtime environment variables inherited from the host shell
+// It deletes MOSA/GravityPort runtime environment variables inherited from the host shell
 // so a leftover value from a previous run (e.g. MOSA_LIBRARY_DIR pointing at
 // an old temporary library) can never cause mass false failures. Test files
 // may still set their own MOSA_* values afterwards; the caller's parent shell
@@ -22,6 +22,13 @@ const POLLUTING_MOSA_VARIABLES = [
   "MOSA_USER_DATA",
   "MOSA_QA_RUN",
   "MOSA_CLIENT_TOKEN",
+  // GravityPort names of the user-facing switches (lib/env-aliases.mjs).
+  "GRAVITYPORT_LIBRARY_DIR",
+  "GRAVITYPORT_LIBRARY_LOCATION_FILE",
+  "GRAVITYPORT_DISABLE_BRIDGES",
+  "GRAVITYPORT_DISABLE_TELEMETRY",
+  "GRAVITYPORT_WEB_CAPTURE_TOKEN",
+  "GRAVITYPORT_WEB_CAPTURE_ORIGINS",
 ];
 
 for (const name of POLLUTING_MOSA_VARIABLES) {
