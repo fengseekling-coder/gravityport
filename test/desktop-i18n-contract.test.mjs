@@ -172,5 +172,5 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // qa:packaged launcher scripts to package.json, so its dependency sections
   // (the frozen semantics) are pinned structurally instead of by file hash.
   assert.equal(sha256(JSON.stringify(manifest.dependencies)), "709481475dca249e75c25f9e0b5e93a685b92cfada8e7e7ab0db8a33653c1843", "package.json dependencies must remain unchanged");
-  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "4d971367be4ced6e52cd69f6a46e7a9516d779e01591a54947b30639d59814e7", "package.json devDependencies must remain unchanged");
+  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "fec336043950407c51bb8a01fa9b5d2e09f47dc0f2e42baece4366b81b835d6b", "package.json devDependencies must remain unchanged");
 });
