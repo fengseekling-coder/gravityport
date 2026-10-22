@@ -4,7 +4,10 @@
 // logs. It answers "how many people really use GravityPort?" with four counts
 // per week (Monday to Sunday, UTC):
 //
-// - site visitors: distinct IPs that opened a page of the website in a browser;
+// - site visitors: distinct IPs that opened a page of the website in a browser.
+//   The server's log also holds other sites, so only the website's own page
+//   addresses count, and the home page only at its full size (the rule the
+//   website's private stats panel uses);
 // - downloads: distinct IPs that downloaded an install package in a desktop
 //   browser (macOS .dmg, Windows win32 .zip). The range requests of one
 //   download, bots, link previews and the app's own update downloads do not
@@ -64,13 +67,25 @@ const BOT_PATTERN = /bot|crawl|spider|slurp|preview|scan|headless|lighthouse|fac
 const MOBILE_PATTERN = /iPhone|iPod|Android|Mobile/i;
 // A referrer from the website itself is a visitor moving between its pages.
 const OWN_HOSTS = new Set(["gravityport.azhuilab.com", "mosa.azhuilab.com"]);
+// Other sites on the same server write to the same log, and the log does not
+// say which site a request was for. So a page view counts only on the website's
+// own page addresses, and the home page only when the response is the size of
+// the real page (about 60 KB; other sites' home pages are much smaller). Same
+// rule as the private stats panel in the website repository.
+const HOME_PAGES = new Set(["/", "/index.html", "/en", "/en/", "/en/index.html"]);
+const HOME_PAGE_MIN_BYTES = 20_000;
+const OTHER_PAGES = new Set([
+  "/guide", "/guide/", "/guide/index.html",
+  "/demo", "/demo/", "/demo/index.html",
+  "/privacy", "/privacy/", "/privacy/index.html",
+]);
 const HOST_PATTERN = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/;
 const IPV4_PATTERN = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const DIRECT_SOURCE = "";
 const OTHER_SOURCE = "other";
 const TOP_SOURCES = 8;
 // $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent"
-const COMBINED_LINE = /^(\S+) \S+ \S+ \[([^\]]+)\] "([^"]*)" (\d{3}) \S+ "([^"]*)" "([^"]*)"/;
+const COMBINED_LINE = /^(\S+) \S+ \S+ \[([^\]]+)\] "([^"]*)" (\d{3}) (\S+) "([^"]*)" "([^"]*)"/;
 const TIME_LOCAL = /^(\d{2})\/([A-Z][a-z]{2})\/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$/;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -92,7 +107,7 @@ function parseTimeLocal(value) {
 function parseLine(line) {
   const match = COMBINED_LINE.exec(line);
   if (!match) return { problem: "format" };
-  const [, ip, timeLocal, request, status, referrer, userAgent] = match;
+  const [, ip, timeLocal, request, status, bytes, referrer, userAgent] = match;
   const time = parseTimeLocal(timeLocal);
   if (!Number.isFinite(time)) return { problem: "format" };
   const [method, target] = request.split(" ");
@@ -106,6 +121,7 @@ function parseLine(line) {
       path: queryStart < 0 ? target : target.slice(0, queryStart),
       query: queryStart < 0 ? "" : target.slice(queryStart + 1),
       status: Number(status),
+      bytes: /^\d+$/.test(bytes) ? Number(bytes) : 0,
       referrer,
       userAgent,
     },
@@ -149,9 +165,10 @@ function downloadPlatform(path) {
   return null;
 }
 
-function isPage(path) {
-  if (path.startsWith("/api/") || path.startsWith("/releases/") || path.startsWith("/downloads/")) return false;
-  return path.endsWith("/") || path.endsWith(".html");
+function isWebsitePage(entry) {
+  if (entry.status < 200 || entry.status >= 300) return false;
+  if (HOME_PAGES.has(entry.path)) return entry.bytes >= HOME_PAGE_MIN_BYTES;
+  return OTHER_PAGES.has(entry.path);
 }
 
 /**
@@ -178,7 +195,7 @@ export function classifyRequest(entry) {
     const ref = new URLSearchParams(entry.query).get("ref") || "";
     return { kind: "download", platform, ref: REF_PATTERN.test(ref) ? ref : "", mobile };
   }
-  if (isPage(entry.path) && (entry.status === 200 || entry.status === 304)) {
+  if (isWebsitePage(entry)) {
     return { kind: "page", mobile, source: referrerSource(entry.referrer) };
   }
   return null;
