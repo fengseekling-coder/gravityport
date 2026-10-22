@@ -4,6 +4,10 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ## Unreleased
 
+### Security
+
+- The desktop app now runs on Electron 43.8.3 (Chromium 150.0.7871.250, Node.js 24.22.0) instead of 43.2.0, picking up the Chromium security fixes released since July; images and videos captured from the web are decoded by this engine.
+
 ### Updates
 
 - An in-app update no longer rolls back to the previous version once the new version has started upgrading the library: the previous version cannot open an upgraded library, so the updater keeps the new version (and the parked previous copy) and starts it again if needed. The new version also gets 120 seconds instead of 45 to report that it started, and right after an update the source bridges wait until it has reported, so a macOS folder-permission prompt can no longer hold it past the deadline.

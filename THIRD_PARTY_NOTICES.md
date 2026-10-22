@@ -28,7 +28,7 @@ The upstream Apache License 2.0 text is available in APSAL Open's tagged source 
 The GravityPort desktop app is built on **Electron**, which bundles Chromium and Node.js.
 
 - Project: `electron/electron`
-- Version: 43.2.0 (pinned in `package.json`)
+- Version: 43.8.3 (pinned in `package.json`)
 - Upstream license: MIT License; the bundled Chromium, Node.js, and their own dependencies keep their respective licenses
 - Source: <https://github.com/electron/electron>
 - Runtime role: the application window, menus, native integrations, and the embedded Node.js runtime that runs the local GravityPort service.

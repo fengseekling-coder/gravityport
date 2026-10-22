@@ -2,10 +2,12 @@
   "schema": 1,
   "unreleased": {
     "zh": [
-      "App 内更新更稳：新版第一次启动有 2 分钟准备时间；新版一旦升级了素材库，就不会再退回打不开它的旧版。"
+      "App 内更新更稳：新版第一次启动有 2 分钟准备时间；新版一旦升级了素材库，就不会再退回打不开它的旧版。",
+      "内置的 Electron 升到 43.8.3，带上近三个月的 Chromium 安全修复。"
     ],
     "en": [
-      "Safer in-app updates: the new version gets two minutes to start, and once it has upgraded your library the update is never rolled back to a version that cannot open it."
+      "Safer in-app updates: the new version gets two minutes to start, and once it has upgraded your library the update is never rolled back to a version that cannot open it.",
+      "The built-in Electron is now 43.8.3, with the last three months of Chromium security fixes."
     ]
   },
   "releases": [
