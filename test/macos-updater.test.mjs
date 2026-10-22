@@ -382,3 +382,15 @@ test("macOS helper tool overrides never leak in from the app environment", () =>
     { PATH: "/usr/bin", MOSA_UPDATE_TRASH_DIR: "/tmp/rehearsal-trash" },
   );
 });
+
+test("macOS apply helper waits 120 seconds and never rolls back a library the new version upgraded", () => {
+  const script = macosUpdateHelperScript();
+  assert.match(script, /while \[ "\$i" -lt 480 \]; do/, "480 polls of 0.25s = 120s");
+  assert.match(script, /SCHEMA_MARKER="\$\(dirname "\$READY_FILE"\)\/schema-upgrade-started\.json"/);
+  assert.match(script, /rm -f "\$READY_FILE" "\$SCHEMA_MARKER"/, "a stale marker never survives into a new attempt");
+  const rollback = script.slice(script.indexOf("rollback() {"));
+  const keep = rollback.indexOf('[ -f "$SCHEMA_MARKER" ]');
+  assert.ok(keep > 0 && keep < rollback.indexOf('kill -TERM "$NEW_PID"'), "the marker is checked before the new version is stopped");
+  assert.ok(keep < rollback.indexOf('mv "$BACKUP_APP" "$INSTALL_APP"'), "the marker is checked before the previous version is restored");
+  assert.match(script, /if \[ "\$KEPT_NEW" -eq 1 \]; then echo "[^"]*kept the new version[^"]*" > "\$LOG_PATH"; exit 34; fi/);
+});

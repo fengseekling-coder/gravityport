@@ -13,6 +13,7 @@ import { getDesktopText, getNotificationTextForAssetsImported, getUpdateNotifica
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
+import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
 import { openExternalLinkOutcome } from "./open-external-link.mjs";
@@ -273,6 +274,18 @@ const MACOS_UPDATE_STAGING_ROOT = join(desktopDataDir, "updates", "macos");
 const WINDOWS_UPDATE_STAGING_ROOT = join(desktopDataDir, "updates", "windows");
 const macosUpdateReadyFile = resolveMacosUpdateReadyFile(process.argv, MACOS_UPDATE_STAGING_ROOT);
 const windowsUpdateReadyFile = resolveWindowsUpdateReadyFile(process.argv, WINDOWS_UPDATE_STAGING_ROOT);
+// Right after an in-app update, the source bridges wait until this launch has
+// reported readiness to the updater: a bridge watching a folder macOS
+// protects blocks this process on a permission prompt, and the updater rolls
+// back a version that stays silent. A fallback releases them regardless.
+const UPDATE_READY_BRIDGE_FALLBACK_MS = 3 * 60 * 1000;
+let releaseBridgesAfterUpdateReady = () => {};
+const bridgesAfterUpdateReady = (macosUpdateReadyFile || windowsUpdateReadyFile)
+  ? new Promise((resolveGate) => {
+    releaseBridgesAfterUpdateReady = () => resolveGate();
+    setTimeout(resolveGate, UPDATE_READY_BRIDGE_FALLBACK_MS).unref?.();
+  })
+  : null;
 const rendererConsoleErrors = new Set();
 const MAX_RENDERER_CONSOLE_ERRORS = 32;
 
@@ -910,9 +923,11 @@ function registerIPC() {
         }), "utf8");
       } catch (error) {
         console.error(`[MOSA] unable to report post-update readiness: ${error?.message || error}`);
+        releaseBridgesAfterUpdateReady();
         return false;
       }
     }
+    releaseBridgesAfterUpdateReady();
     return true;
   });
 
@@ -1441,6 +1456,11 @@ async function ensureDesktopService() {
       || await loadOrCreateWebCaptureToken(desktopDataDir);
     const webCaptureOrigins = process.env.MOSA_WEB_CAPTURE_ORIGINS
       || MOSA_WEB_CAPTURE_DEFAULT_ORIGINS;
+    // Before this launch may upgrade the library schema, tell the update
+    // helper: a library the new version upgraded must never be handed back
+    // to the previous version, which could not open it.
+    const updateReadyFile = macosUpdateReadyFile || windowsUpdateReadyFile;
+    if (updateReadyFile) markPendingSchemaUpgrade({ readyFile: updateReadyFile, libraryDir });
     const nextService = await startMosaService({
       port: desktopPort,
       libraryDir,
@@ -1481,6 +1501,7 @@ async function ensureDesktopService() {
         webCapturePairingEnabled: true,
         clientToken,
         disabledBridges: parseDisabledBridges({ env: process.env }),
+        ...(bridgesAfterUpdateReady ? { bridgeStartupGate: bridgesAfterUpdateReady } : {}),
       },
     });
     if (shuttingDown) {

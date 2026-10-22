@@ -340,6 +340,9 @@ $backupDir = Join-Path $transactionRoot "previous"
 $oldExe = Join-Path $InstallDir $CurrentExeName
 $newProcess = $null
 $movedOriginal = $false
+# The new version writes this before it upgrades the library schema. From then
+# on the previous version cannot open the library, so never roll back to it.
+$schemaUpgradeMarker = Join-Path (Split-Path -Parent $ReadyFile) "schema-upgrade-started.json"
 
 # Installation-rehearsal tests pass this probe as a script parameter to run
 # signature verification against a stub that answers Status/Thumbprint/Subject
@@ -459,12 +462,13 @@ try {
       throw "Updated MOSA executable is missing after replacement."
     }
     Remove-Item -LiteralPath $ReadyFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $schemaUpgradeMarker -Force -ErrorAction SilentlyContinue
     $readyArgument = '--mosa-update-ready-file="' + $ReadyFile + '"'
     # The PowerShell helper itself is created with CREATE_NO_WINDOW. Do not
     # propagate hidden-window semantics to MOSA.exe: it is a GUI application
     # and must relaunch with its normal visible-window lifecycle.
     $newProcess = Start-Process -FilePath $newExe -WorkingDirectory $InstallDir -ArgumentList @($readyArgument) -PassThru
-    $readyDeadline = [DateTime]::UtcNow.AddSeconds(45)
+    $readyDeadline = [DateTime]::UtcNow.AddSeconds(120)
     while ([DateTime]::UtcNow -lt $readyDeadline) {
       if (Test-Path -LiteralPath $ReadyFile -PathType Leaf) { break }
       if ($newProcess.HasExited) {
@@ -493,6 +497,18 @@ try {
     Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     exit 0
   } catch {
+    if ($movedOriginal -and (Test-Path -LiteralPath $schemaUpgradeMarker -PathType Leaf)) {
+      # Keep the new version and the parked previous copy; only the new
+      # version can open the upgraded library.
+      if ((-not $newProcess) -or $newProcess.HasExited) {
+        $keptExe = Join-Path $InstallDir $CurrentExeName
+        if (Test-Path -LiteralPath $keptExe -PathType Leaf) {
+          Start-Process -FilePath $keptExe -WorkingDirectory $InstallDir -ErrorAction SilentlyContinue
+        }
+      }
+      ("Kept the new version because it already upgraded the library." + [Environment]::NewLine + ($_ | Out-String)) | Set-Content -LiteralPath $LogPath -Encoding UTF8
+      exit 34
+    }
     if ($newProcess -and -not $newProcess.HasExited) {
       Stop-Process -Id $newProcess.Id -Force -ErrorAction SilentlyContinue
       Wait-Process -Id $newProcess.Id -ErrorAction SilentlyContinue
