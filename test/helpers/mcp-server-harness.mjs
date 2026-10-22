@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import sharp from "sharp";
+import { readGravityPortEnv } from "../../lib/env-aliases.mjs";
 import { removeTestPath } from "../test-cleanup.mjs";
 
 // Every spawned MCP server must be pinned to a throwaway workspace. Without
@@ -67,8 +68,8 @@ export function startMcpServer(t, workspace, { env: extraEnv } = {}) {
  */
 export function spawnMcpServerAsClient(t, { command = process.execPath, args = ["mcp/server.mjs"], cwd = process.cwd(), env }) {
   if (!env?.HOME) throw new Error("Refusing to spawn the MCP server without a throwaway HOME.");
-  if (!env.MOSA_LIBRARY_DIR && !env.MOSA_LIBRARY_LOCATION_FILE) {
-    throw new Error("Refusing to spawn the MCP server without MOSA_LIBRARY_DIR or MOSA_LIBRARY_LOCATION_FILE.");
+  if (!readGravityPortEnv(env, "GRAVITYPORT_LIBRARY_DIR") && !readGravityPortEnv(env, "GRAVITYPORT_LIBRARY_LOCATION_FILE")) {
+    throw new Error("Refusing to spawn the MCP server without GRAVITYPORT_LIBRARY_DIR or GRAVITYPORT_LIBRARY_LOCATION_FILE.");
   }
   const child = spawn(command, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   const handle = new McpServerProcess(child);

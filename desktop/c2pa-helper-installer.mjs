@@ -16,7 +16,7 @@ import {
 import { verifyReleaseManifestSignature } from "../lib/release-manifest-signature.mjs";
 import { MOSA_UPDATE_FEED_URL } from "./update-service.mjs";
 
-export const MOSA_C2PA_HELPER_DOWNLOAD_BASE_URL = "https://mosa.azhuilab.com/downloads/helper-packs/c2patool/";
+export const MOSA_C2PA_HELPER_DOWNLOAD_BASE_URL = "https://gravityport.azhuilab.com/downloads/helper-packs/c2patool/";
 
 const RELEASE_MANIFEST_MAX_BYTES = 64 * 1024;
 const HELPER_MANIFEST_MAX_BYTES = 64 * 1024;

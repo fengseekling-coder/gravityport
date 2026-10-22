@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../lib/apply-env-aliases.mjs";
 
 import { constants as fsConstants } from "node:fs";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

@@ -60,11 +60,11 @@ test("Windows update artifacts are pinned to the official filename and HTTPS dow
   assert.deepEqual(validateWindowsUpdateArtifact(gravity, "0.3.0"), gravity);
   assert.equal(
     windowsUpdateDownloadUrl(artifact),
-    "https://mosa.azhuilab.com/downloads/MOSA-win32-x64-0.3.0.zip",
+    "https://gravityport.azhuilab.com/downloads/MOSA-win32-x64-0.3.0.zip",
   );
   assert.equal(
     windowsUpdateDownloadUrl(gravity),
-    "https://mosa.azhuilab.com/downloads/GravityPort-win32-x64-0.3.0.zip",
+    "https://gravityport.azhuilab.com/downloads/GravityPort-win32-x64-0.3.0.zip",
   );
   assert.throws(() => validateWindowsUpdateArtifact({ ...artifact, file: "other.zip" }, "0.3.0"), /filename/);
   assert.throws(() => validateWindowsUpdateArtifact({ ...artifact, sha256: "bad" }, "0.3.0"), /SHA-256/);

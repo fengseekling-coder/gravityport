@@ -24,7 +24,7 @@ async function desktopLikeHome(t) {
 
 /** The env a config copied from Settings carries, plus the throwaway HOME. */
 function copiedConfigEnv({ home, locationFile }) {
-  return { ...process.env, HOME: home, MOSA_LIBRARY_LOCATION_FILE: locationFile };
+  return { ...process.env, HOME: home, GRAVITYPORT_LIBRARY_LOCATION_FILE: locationFile };
 }
 
 function startAsClient(t, fixture) {
@@ -78,6 +78,23 @@ test("a copied desktop config keeps finding the library after it is moved", asyn
   assert.deepEqual(await searchIds(second, "lighthouse"), ["harbor-dusk"]);
   const asset = (await second.callToolStrict("asset_get", { assetId: "harbor-dusk" })).structuredContent.asset;
   assert.ok(resolve(asset.image_path).startsWith(movedLibrary), `asset resolves inside the moved library: ${asset.image_path}`);
+});
+
+test("a config that still uses the legacy MOSA_LIBRARY_LOCATION_FILE name is honored", async (t) => {
+  const fixture = await desktopLikeHome(t);
+  const missing = join(fixture.root, "Legacy Drive", "Art Library");
+  await writeFile(fixture.locationFile, `${JSON.stringify({ path: missing })}\n`);
+
+  // Only the legacy name points at the location file, so reaching that
+  // missing library proves the server read it.
+  const server = spawnMcpServerAsClient(t, {
+    args: [SERVER_PATH],
+    cwd: fixture.clientCwd,
+    env: { ...process.env, HOME: fixture.home, MOSA_LIBRARY_LOCATION_FILE: fixture.locationFile },
+  });
+  const exit = await server.waitForExit();
+  assert.equal(exit.code, 1);
+  assert.match(server.stderr, /GravityPort library not found at .*Legacy Drive/);
 });
 
 test("a location file naming a missing library fails on stderr and keeps stdout clean", async (t) => {

@@ -92,7 +92,7 @@ test("C2PA helper release metadata is platform-bound and uses only the first-par
   assert.equal(parsed.target, "win32-x64");
   assert.equal(
     c2paHelperDownloadUrl(parsed, "bin/c2patool.exe"),
-    "https://mosa.azhuilab.com/downloads/helper-packs/c2patool/0.27.22/win32-x64/bin/c2patool.exe",
+    "https://gravityport.azhuilab.com/downloads/helper-packs/c2patool/0.27.22/win32-x64/bin/c2patool.exe",
   );
   assert.throws(() => c2paHelperDownloadUrl(parsed, "../escape"), /path is invalid/i);
 });

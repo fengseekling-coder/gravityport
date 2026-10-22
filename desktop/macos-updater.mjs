@@ -15,7 +15,7 @@ import { MACOS_TEAM_IDENTIFIER_PATTERN, MACOS_UPDATE_APP_NAMES } from "./update-
 
 export { MACOS_UPDATE_APP_NAMES };
 
-export const MOSA_MACOS_DOWNLOAD_BASE_URL = "https://mosa.azhuilab.com/downloads/";
+export const MOSA_MACOS_DOWNLOAD_BASE_URL = "https://gravityport.azhuilab.com/downloads/";
 const MAX_MACOS_UPDATE_BYTES = 1_500_000_000;
 const DEFAULT_MACOS_UPDATE_IDLE_TIMEOUT_MS = 30_000;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;

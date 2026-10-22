@@ -1,3 +1,4 @@
+import "../lib/apply-env-aliases.mjs";
 import readline from "node:readline";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";

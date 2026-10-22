@@ -1,3 +1,4 @@
+import "./lib/apply-env-aliases.mjs";
 import { startMosaRuntime } from "./lib/mosa-runtime.mjs";
 import { parseDisabledBridges } from "./lib/runtime-bridges.mjs";
 

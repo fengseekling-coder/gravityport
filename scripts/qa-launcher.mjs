@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../lib/apply-env-aliases.mjs";
 /**
  * Unified MOSA QA launcher.
  *

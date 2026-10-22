@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../lib/apply-env-aliases.mjs";
 
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -309,8 +310,9 @@ async function readPackagedMcpConfig(origin, cdpPort) {
       throw new Error(`MCP config does not run the packaged server: ${JSON.stringify(config.args)}`);
     }
     if (config.env?.ELECTRON_RUN_AS_NODE !== "1") throw new Error("MCP config must run the executable in Node mode.");
-    // The smoke launch pins MOSA_LIBRARY_DIR, so the config names that library directly.
-    if (resolve(config.env.MOSA_LIBRARY_DIR || "") !== resolve(libraryDir)) {
+    // The smoke launch pins MOSA_LIBRARY_DIR, so the config names that library
+    // directly, under its GravityPort name.
+    if (resolve(config.env.GRAVITYPORT_LIBRARY_DIR || "") !== resolve(libraryDir)) {
       throw new Error(`MCP config names the wrong library: ${JSON.stringify(config.env)}`);
     }
     return config;

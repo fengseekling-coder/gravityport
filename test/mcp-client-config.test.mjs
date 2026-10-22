@@ -32,7 +32,7 @@ for (const home of ["/Users/a b", "/Users/o'neil", "/Users/$HOME `x` \"q\""]) {
     assert.equal(config.serverName, "gravityport");
     assert.equal(config.command, MAC_EXEC);
     assert.deepEqual(config.args, [MAC_SERVER]);
-    assert.deepEqual(config.env, { ELECTRON_RUN_AS_NODE: "1", MOSA_LIBRARY_LOCATION_FILE: libraryLocationFile });
+    assert.deepEqual(config.env, { ELECTRON_RUN_AS_NODE: "1", GRAVITYPORT_LIBRARY_LOCATION_FILE: libraryLocationFile });
 
     assert.deepEqual(JSON.parse(config.claudeDesktop), { mcpServers: { gravityport: expectedServer(config) } });
 
@@ -45,7 +45,7 @@ for (const home of ["/Users/a b", "/Users/o'neil", "/Users/$HOME `x` \"q\""]) {
   });
 }
 
-test("a desktop started with MOSA_LIBRARY_DIR hands out that fixed library instead of the location file", () => {
+test("a desktop started with GRAVITYPORT_LIBRARY_DIR hands out that fixed library instead of the location file", () => {
   const config = buildMcpClientConfig({
     platform: "darwin",
     execPath: MAC_EXEC,
@@ -53,9 +53,9 @@ test("a desktop started with MOSA_LIBRARY_DIR hands out that fixed library inste
     libraryLocationFile: "/Users/a/Library/Application Support/mosa/library-location.json",
     managedLibraryDir: "/Volumes/Art/GravityPort Library",
   });
-  assert.deepEqual(config.env, { ELECTRON_RUN_AS_NODE: "1", MOSA_LIBRARY_DIR: "/Volumes/Art/GravityPort Library" });
-  assert.equal(parseToml(config.codex).mcp_servers.gravityport.env.MOSA_LIBRARY_LOCATION_FILE, undefined);
-  assert.doesNotMatch(config.claudeDesktop, /MOSA_LIBRARY_LOCATION_FILE/);
+  assert.deepEqual(config.env, { ELECTRON_RUN_AS_NODE: "1", GRAVITYPORT_LIBRARY_DIR: "/Volumes/Art/GravityPort Library" });
+  assert.equal(parseToml(config.codex).mcp_servers.gravityport.env.GRAVITYPORT_LIBRARY_LOCATION_FILE, undefined);
+  assert.doesNotMatch(config.claudeDesktop, /GRAVITYPORT_LIBRARY_LOCATION_FILE/);
 });
 
 test("Windows config escapes backslashes and quotes paths for PowerShell and cmd", () => {
@@ -67,12 +67,12 @@ test("Windows config escapes backslashes and quotes paths for PowerShell and cmd
   assert.deepEqual(JSON.parse(config.claudeDesktop).mcpServers.gravityport, {
     command: execPath,
     args: [serverPath],
-    env: { ELECTRON_RUN_AS_NODE: "1", MOSA_LIBRARY_LOCATION_FILE: libraryLocationFile },
+    env: { ELECTRON_RUN_AS_NODE: "1", GRAVITYPORT_LIBRARY_LOCATION_FILE: libraryLocationFile },
   });
   assert.deepEqual(parseToml(config.codex).mcp_servers.gravityport, expectedServer(config));
   assert.equal(
     config.claudeCode,
-    `claude mcp add --scope user gravityport --env "ELECTRON_RUN_AS_NODE=1" --env "MOSA_LIBRARY_LOCATION_FILE=${libraryLocationFile}" -- "${execPath}" "${serverPath}"`,
+    `claude mcp add --scope user gravityport --env "ELECTRON_RUN_AS_NODE=1" --env "GRAVITYPORT_LIBRARY_LOCATION_FILE=${libraryLocationFile}" -- "${execPath}" "${serverPath}"`,
   );
 });
 

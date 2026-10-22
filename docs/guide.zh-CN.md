@@ -26,7 +26,7 @@ GravityPort 当前是绑定 `127.0.0.1` 的本地 Web 应用，也提供共享�
 - 要自动归档 Codex 生图，需要安装 Codex Desktop。
 - 要自动归档 Grok 媒体，需要本机已登录并可写入 `~/.grok/sessions` 的 Grok Build CLI。
 - Cowart 自动归档需要安装 Cowart 插件；不使用 Cowart 时不影响 GravityPort 的其他功能。
-- 网页生图归档需要 Chrome。使用 GravityPort Desktop App 时会自动生成本机 Token，并只授权 GravityPort 开发版与 Chrome Web Store 正式版这两个固定扩展来源完成本地配对；仅源码 `npm start` 模式需要手工配置 `MOSA_WEB_CAPTURE_TOKEN` 与 `MOSA_WEB_CAPTURE_ORIGINS`。要收录 ChatGPT 桌面应用里生成的图片，还需要扩展已配对、Chrome 已登录 chatgpt.com，并开启「发现新图时自动入库」。
+- 网页生图归档需要 Chrome。使用 GravityPort Desktop App 时会自动生成本机 Token，并只授权 GravityPort 开发版与 Chrome Web Store 正式版这两个固定扩展来源完成本地配对；仅源码 `npm start` 模式需要手工配置 `GRAVITYPORT_WEB_CAPTURE_TOKEN` 与 `GRAVITYPORT_WEB_CAPTURE_ORIGINS`。要收录 ChatGPT 桌面应用里生成的图片，还需要扩展已配对、Chrome 已登录 chatgpt.com，并开启「发现新图时自动入库」。
 
 ### Windows 10/11 x64 Preview 状态
 
@@ -147,8 +147,8 @@ Web Capture 是可选功能。使用 Desktop App 时，只需加载官方扩展�
 如果你从源码使用 `npm start` 启动独立 Web Runtime，则仍需手工配置：
 
 ```bash
-MOSA_WEB_CAPTURE_TOKEN='replace-with-a-random-secret' \
-MOSA_WEB_CAPTURE_ORIGINS='chrome-extension://replace-with-extension-id' \
+GRAVITYPORT_WEB_CAPTURE_TOKEN='replace-with-a-random-secret' \
+GRAVITYPORT_WEB_CAPTURE_ORIGINS='chrome-extension://replace-with-extension-id' \
 npm start
 ```
 
@@ -164,7 +164,7 @@ ChatGPT 桌面应用（现在也承载 Codex）里聊天生成的图片不会写
 
 某个会话安静约 90 秒后，GravityPort 把它交给已配对、并勾选了「发现新图时自动入库」的扩展（0.15.33 起），一次一段。扩展先用 Chrome 里已登录的 ChatGPT 账号读一次这段对话：为此会向 `chatgpt.com/api/auth/session` 取一次访问令牌，只用于这一次读取，不保存，也不发送给 GravityPort。确认没有生成图的对话不会被打开；有生成图（或无法确认）时，才在一个最小化、不抢焦点的后台窗口里打开它，按普通 ChatGPT 网页的方式采集，完成后自动关闭窗口。每次活动最多尝试 3 次。
 
-和在浏览器里重新打开旧对话一样，这种方式保存图片和你发送的消息；ChatGPT 自己给图片配的说明文字只有在浏览器里实时生成时才拿得到。收录的图片归入「智能分组」的 ChatGPT。需要 Chrome 正在运行、扩展已配对，且浏览器登录的 ChatGPT 账号和桌面应用一致；关闭自动入库即停止同步，设置 `MOSA_DISABLE_BRIDGES=codex` 则 GravityPort 完全不读该状态文件（同时停用 Codex 图片导入）。详见 [隐私说明](../PRIVACY.md#chatgpt-desktop-app-conversations)。
+和在浏览器里重新打开旧对话一样，这种方式保存图片和你发送的消息；ChatGPT 自己给图片配的说明文字只有在浏览器里实时生成时才拿得到。收录的图片归入「智能分组」的 ChatGPT。需要 Chrome 正在运行、扩展已配对，且浏览器登录的 ChatGPT 账号和桌面应用一致；关闭自动入库即停止同步，设置 `GRAVITYPORT_DISABLE_BRIDGES=codex` 则 GravityPort 完全不读该状态文件（同时停用 Codex 图片导入）。详见 [隐私说明](../PRIVACY.md#chatgpt-desktop-app-conversations)。
 
 ### Grok Build CLI 媒体
 
@@ -274,8 +274,8 @@ args = ["/absolute/path/to/gravityport/mcp/server.mjs"]
 
 其他 MCP 客户端同样填写 `node` 和 `mcp/server.mjs` 的绝对路径即可，也可以用 `npm run mcp` 启动。没有额外配置时，MCP 按与桌面版相同的规则查找默认素材库。要指定素材库，可在客户端配置的 `env` 里设置下面任一变量：
 
-- `MOSA_LIBRARY_DIR`：素材库的绝对路径，优先级最高。
-- `MOSA_LIBRARY_LOCATION_FILE`：桌面版的 `library-location.json`（macOS 在 `~/Library/Application Support/mosa/`），跟随桌面版里挪过的位置。
+- `GRAVITYPORT_LIBRARY_DIR`：素材库的绝对路径，优先级最高。
+- `GRAVITYPORT_LIBRARY_LOCATION_FILE`：桌面版的 `library-location.json`（macOS 在 `~/Library/Application Support/mosa/`），跟随桌面版里挪过的位置。
 
 MCP 工具包括：
 

@@ -15,7 +15,7 @@ import {
 import { MOSA_UPDATE_FEED_URL } from "./update-service.mjs";
 import { verifyReleaseManifestSignature } from "../lib/release-manifest-signature.mjs";
 
-export const MOSA_VISUAL_PACK_DOWNLOAD_BASE_URL = "https://mosa.azhuilab.com/downloads/visual-packs/";
+export const MOSA_VISUAL_PACK_DOWNLOAD_BASE_URL = "https://gravityport.azhuilab.com/downloads/visual-packs/";
 
 const RELEASE_MANIFEST_MAX_BYTES = 64 * 1024;
 const MODEL_MANIFEST_MAX_BYTES = 256 * 1024;

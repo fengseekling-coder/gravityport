@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../lib/apply-env-aliases.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
