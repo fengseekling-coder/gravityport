@@ -1,4 +1,4 @@
-import { verifyReleaseManifestSignature } from "../lib/release-manifest-signature.mjs";
+import { normalizeReleaseManifestTrust, verifyReleaseManifestSignature } from "../lib/release-manifest-signature.mjs";
 import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
 
 // Both release products (MOSA transition build and GravityPort) check this
@@ -96,6 +96,21 @@ export function compareVersions(leftVersion, rightVersion) {
     return left.parts[index] > right.parts[index] ? 1 : -1;
   }
   return comparePrerelease(left.prerelease, right.prerelease);
+}
+
+// Installing an update replaces the app itself, so it is allowed only when
+// this build carries the release public key and therefore verified the
+// manifest signature. A build packaged without it (local development
+// packages) may still check and show a newer version, but must send the user
+// to the download page instead of installing from an unverified manifest.
+export function canInstallUpdateInApp(releaseManifestTrust) {
+  if (!releaseManifestTrust) return false;
+  try {
+    normalizeReleaseManifestTrust(releaseManifestTrust);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function canUpdateDistribution(currentDistribution, targetDistribution) {

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   MOSA_DOWNLOAD_PAGE_URL,
   MOSA_UPDATE_FEED_URL,
   buildUpdateFeedUrl,
+  canInstallUpdateInApp,
   canUpdateDistribution,
   checkForMosaUpdate,
   compareVersions,
@@ -445,4 +447,23 @@ test("macOS production manifests pin a team identifier and preview may omit it",
   assert.throws(() => manifestFor("production", "TOO_LONG_TEAM_ID"), /team identifier/);
   assert.equal(manifestFor("preview", "").macArtifact.teamIdentifier, undefined);
   assert.equal(manifestFor("preview", "ABCDEF1234").macArtifact.teamIdentifier, "ABCDEF1234");
+});
+
+test("in-app update install requires the packaged release manifest trust", () => {
+  const { publicKey } = generateKeyPairSync("ed25519");
+  const trust = createReleaseManifestTrust(publicKey);
+  assert.equal(canInstallUpdateInApp(trust), true);
+  assert.equal(canInstallUpdateInApp(null), false);
+  assert.equal(canInstallUpdateInApp(undefined), false);
+  assert.equal(canInstallUpdateInApp({}), false);
+  assert.equal(canInstallUpdateInApp({ ...trust, keyId: "0".repeat(64) }), false);
+});
+
+test("desktop main refuses in-app installs and offers the download page without manifest trust", () => {
+  const source = readFileSync(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  const handler = source.slice(source.indexOf('ipcMain.handle("download-and-install-update"'));
+  const guard = handler.indexOf("canInstallUpdateInApp(expectedServiceIdentity.releaseManifestTrust)");
+  assert.ok(guard > 0, "download-and-install-update must check the manifest trust");
+  assert.ok(guard < handler.indexOf("downloadMacosUpdate("), "the trust check must run before any download");
+  assert.match(source, /canInstallInApp: app\.isPackaged && canInstallUpdateInApp\(expectedServiceIdentity\.releaseManifestTrust\)/);
 });
