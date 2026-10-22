@@ -184,7 +184,7 @@ const english: Record<string, string> = {
   "回收站是空的": "Trash is empty",
   "移到回收站的素材会在这里保留 90 天": "Assets you move to Trash stay here for 90 days",
   "还没有收藏": "No favorites yet",
-  "点素材上的星标，把常用的图收在这里": "Star an asset to keep it here",
+  "点素材详情里的心形，或在素材上右键「收藏」": "Click the heart in Asset details, or right-click an asset and choose \"Favorites\"",
   "都整理好了": "All sorted",
   "还没有分组的素材会出现在这里": "Assets without a group show up here",
   "这个分组还没有素材": "This group is empty",
