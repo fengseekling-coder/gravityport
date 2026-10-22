@@ -15,7 +15,7 @@ GravityPort 是一个本地优先的 AI 生成素材库：图片、视频、Prom
 
 **本地优先 · Prompt 与来源 · 版本历史 · 无 GravityPort 云账户**
 
-[下载](#下载) · [中文使用指南](docs/guide.zh-CN.md) · [隐私](PRIVACY.md) · [文档](#文档)
+[下载](#下载) · [第一次打开](#第一次打开) · [中文使用指南](docs/guide.zh-CN.md) · [隐私](PRIVACY.md) · [文档](#文档)
 
 ## 下载
 
@@ -26,6 +26,11 @@ GravityPort 是一个本地优先的 AI 生成素材库：图片、视频、Prom
 - **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，先启动桌面应用再加载，两边会自动配对。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
 
 已安装的桌面应用会在 **设置 → 关于** 里自行检查更新。[发布清单](https://gravityport.azhuilab.com/releases/gravityport/latest.json)是最新版本的机器可读来源。
+
+## 第一次打开
+
+- **macOS：** 打开「系统设置 → 隐私与安全性」，在 GravityPort 旁边点**仍要打开**。只需一次。
+- **Windows：** 如果提示「Windows 已保护你的电脑」，点**更多信息 → 仍要运行**。
 
 ## 为什么需要 GravityPort
 
