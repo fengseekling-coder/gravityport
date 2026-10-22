@@ -1,7 +1,5 @@
 # GravityPort 中文使用指南
 
-GravityPort 原名 MOSA。已安装的用户，素材库文件夹、设置和命令名都保持不变。
-
 GravityPort 是面向 Codex、Cowart 和本地 Grok Build CLI 的本地创作素材库。它不负责生图，而是在媒体生成或画布编辑后，自动把图片/视频、Prompt、来源、参数、版本和画布上下文归档为可检索、可复用的本地素材。
 
 ## 许可与商用
@@ -50,7 +48,7 @@ macOS Desktop 与 Web Capture 的后台监督服务共用同一资料库和本�
 - **Windows 10/11 x64**：便携 ZIP，解压后运行 `GravityPort.exe`（目前是 Preview 测试版）。
 - **网页生图扩展（可选）**：开发者模式加载的 ZIP，安装步骤见[官网安装指南](https://gravityport.azhuilab.com/guide/)。
 
-装好后，应用会在「设置 → 关于」里自己检查更新。第一个以 GravityPort 名义发布的版本推出之前，下载页提供的仍是最后一个以 MOSA 名义发布的版本。
+装好后，应用会在「设置 → 关于」里自己检查更新。
 
 ### 第一次打开
 
@@ -77,7 +75,7 @@ npm start
 
 ## SQLite 素材库与迁移
 
-默认运行期素材库：本机已有 `~/MOSA Library` 的继续用它；没有库的机器新建 `~/GravityPort Library`（规则在 `lib/library-location.mjs`）。迁移完成后，里面包含 `mosa.db`、原图、预览图、缩略图和 JSON/Prompt 备份：
+默认素材库是 `~/GravityPort Library`；从旧版本升级的用户沿用原来的位置（规则在 `lib/library-location.mjs`）。迁移完成后，里面包含数据库文件、原图、预览图、缩略图和 JSON/Prompt 备份：
 
 ```text
 ~/GravityPort Library/
@@ -274,7 +272,7 @@ command = "node"
 args = ["/absolute/path/to/gravityport/mcp/server.mjs"]
 ```
 
-其他 MCP 客户端同样填写 `node` 和 `mcp/server.mjs` 的绝对路径即可，也可以用 `npm run mcp` 启动。没有额外配置时，MCP 按与桌面版相同的规则查找默认素材库（`~/MOSA Library` 或 `~/GravityPort Library`）。要指定素材库，可在客户端配置的 `env` 里设置下面任一变量：
+其他 MCP 客户端同样填写 `node` 和 `mcp/server.mjs` 的绝对路径即可，也可以用 `npm run mcp` 启动。没有额外配置时，MCP 按与桌面版相同的规则查找默认素材库。要指定素材库，可在客户端配置的 `env` 里设置下面任一变量：
 
 - `MOSA_LIBRARY_DIR`：素材库的绝对路径，优先级最高。
 - `MOSA_LIBRARY_LOCATION_FILE`：桌面版的 `library-location.json`（macOS 在 `~/Library/Application Support/mosa/`），跟随桌面版里挪过的位置。
