@@ -59,6 +59,23 @@ export function startMcpServer(t, workspace, { env: extraEnv } = {}) {
   return handle;
 }
 
+/**
+ * Spawn the MCP server exactly as an AI client would from a copied desktop
+ * config: a chosen command, arguments, working directory, and environment.
+ * HOME must still be a throwaway directory, and the library must be named
+ * either directly or through a library-location file.
+ */
+export function spawnMcpServerAsClient(t, { command = process.execPath, args = ["mcp/server.mjs"], cwd = process.cwd(), env }) {
+  if (!env?.HOME) throw new Error("Refusing to spawn the MCP server without a throwaway HOME.");
+  if (!env.MOSA_LIBRARY_DIR && !env.MOSA_LIBRARY_LOCATION_FILE) {
+    throw new Error("Refusing to spawn the MCP server without MOSA_LIBRARY_DIR or MOSA_LIBRARY_LOCATION_FILE.");
+  }
+  const child = spawn(command, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  const handle = new McpServerProcess(child);
+  t.after(() => handle.terminateIfRunning());
+  return handle;
+}
+
 function delay(ms) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }

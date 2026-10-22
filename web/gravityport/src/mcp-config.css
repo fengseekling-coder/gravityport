@@ -1,0 +1,85 @@
+/* ---- Settings → 连接: AI assistants (MCP) --------------------------------- */
+
+.mcp-config-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-panel);
+  background: var(--ui-panel);
+  min-width: 0;
+}
+
+.mcp-config-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mcp-config-copy strong {
+  font-weight: var(--type-weight-title);
+  color: var(--ui-text);
+}
+
+.mcp-config-copy p,
+.mcp-config-hint,
+.mcp-config-note,
+.mcp-config-warning {
+  margin: 0;
+  color: var(--ui-secondary);
+}
+
+.mcp-config-hint,
+.mcp-config-note {
+  font-size: 12px;
+}
+
+.mcp-config-note {
+  color: var(--ui-muted);
+}
+
+.mcp-config-note a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.mcp-config-warning {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
+  color: var(--ui-text);
+}
+
+.mcp-config-clients {
+  align-self: flex-start;
+}
+
+.mcp-config-code {
+  position: relative;
+  min-width: 0;
+}
+
+.mcp-config-code pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--space-3);
+  padding-right: calc(var(--space-3) + 72px);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: var(--ui-inset);
+  color: var(--ui-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre;
+  user-select: text;
+}
+
+.mcp-config-copy-button {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+}

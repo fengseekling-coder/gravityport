@@ -299,6 +299,14 @@ const english: Record<string, string> = {
   "内容太长了，请去掉诊断日志或删减内容后重试。": "Feedback is too large. Remove the diagnostic log or shorten it.",
   "内容不符合要求，请检查后重试。": "Something in the form isn't valid. Please check and try again.",
   "发送失败，请稍后再试。": "Couldn't send feedback. Please try again later.",
+  "AI 助手（MCP）": "AI assistants (MCP)",
+  "让 Claude、Codex 等 AI 助手直接搜索、查看和记录你的素材库。复制下面的配置，粘贴到对应 AI 助手里，再重启它。": "Let AI assistants like Claude and Codex search, read, and add to your library. Copy the config below, paste it into the assistant, then restart it.",
+  "粘贴到 claude_desktop_config.json（Claude 设置 → 开发者 → 编辑配置）。里面已有 mcpServers 的，只把 gravityport 这一段并进去。": "Paste into claude_desktop_config.json (Claude Settings → Developer → Edit Config). If it already has mcpServers, add just the gravityport entry.",
+  "在终端里运行这条命令。": "Run this command in a terminal.", "复制": "Copy",
+  "粘贴到 ~/.codex/config.toml 末尾。": "Add this to the end of ~/.codex/config.toml.",
+  "挪了素材库也不用改配置，重启 AI 助手就会跟过去。GravityPort 不用开着。": "Moved your library? No need to change this: restart the assistant and it follows. GravityPort doesn't need to be open.",
+  "请先把 GravityPort 拖进「应用程序」文件夹再复制，不然这段路径会失效。": "Move GravityPort to your Applications folder before copying, or this path will stop working.",
+  "从源码运行时的配置方法见使用指南。": "Running from source? See the guide for setup.",
 }
 
 export function translate(text: string, language: Language): string {

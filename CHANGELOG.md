@@ -2,6 +2,13 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## Unreleased
+
+### MCP
+
+- The desktop app now ships its MCP server, so Claude, Codex, and other AI assistants can search, read, and add to your library without Node.js or a source checkout. Settings → 连接 has a new "AI assistants (MCP) / AI 助手（MCP）" card with ready-to-paste configs for Claude Desktop (JSON), Claude Code (a `claude mcp` command), and Codex (TOML), plus a Copy button. The config runs the app's own executable in Node mode and names the desktop's `library-location.json` instead of a fixed library path, so moving the library in Settings → Storage keeps it working after the assistant restarts; an assistant left running during a move is told to restart instead of touching the old location. On macOS the card asks you to move GravityPort into Applications first when it runs from a temporary location.
+- The MCP server accepts a new `MOSA_LIBRARY_LOCATION_FILE` variable that follows the desktop's saved library location, and exits with a message on stderr (never a fresh empty library) when the recorded library cannot be found.
+
 ## 0.3.2 — 2026-10-21 / Preview
 
 ### Interface / 界面

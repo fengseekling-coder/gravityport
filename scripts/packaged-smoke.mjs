@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { packagedExecutablePath } from "./desktop-runtime-paths.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
+import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
+import { copyLibraryForRelocation } from "../lib/library-relocation.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const forgeOutDir = resolve(rootDir, process.env.MOSA_FORGE_OUT_DIR || "out");
@@ -52,6 +54,11 @@ try {
   }
   assertPackagedWindowChrome(restartRenderer);
   await verifyPersistedAsset(activeLaunch.origin, importedAssetId);
+  const mcpConfig = await readPackagedMcpConfig(activeLaunch.origin, activeLaunch.cdpPort);
+  await stopChild(activeLaunch.child);
+  activeLaunch = null;
+  await verifyBundledMcp({ mcpConfig, importedAssetId });
+  console.log("PACKAGED_BUNDLED_MCP_PASS");
 
   console.log(JSON.stringify({
     ok: true,
@@ -62,6 +69,7 @@ try {
     cdpPointerInput: true,
     import: true,
     restartPersistence: true,
+    bundledMcp: true,
   }));
 } catch (error) {
   const details = activeLaunch
@@ -173,6 +181,9 @@ async function verifyPackagedCdpPointerInput(origin, cdpPort, importedAssetId) {
 
     await clickElement(socket, '.sidebar .user-button');
     await waitForDom(socket, `Boolean(document.querySelector('.settings-modal'))`, "settings click");
+    // The close button moves while the modal animates in; a click aimed
+    // mid-animation can land where the button no longer is.
+    await waitForDom(socket, `document.querySelector('.modal-layer')?.getAnimations({ subtree: true }).every((animation) => animation.playState !== 'running')`, "settings open animation");
     await clickElement(socket, '.settings-modal .modal-close');
     await waitForDom(socket, `!document.querySelector('.settings-modal')`, "settings close");
 
@@ -280,6 +291,118 @@ async function verifyPersistedAsset(origin, assetId) {
     await sleep(100);
   }
   throw new Error("Packaged asset was not readable after application restart.");
+}
+
+// Settings → 连接 hands AI clients this config. It must point at the package
+// under test, and running it exactly as written must reach the library.
+async function readPackagedMcpConfig(origin, cdpPort) {
+  const socket = await connectRenderer(origin, cdpPort);
+  try {
+    const config = await evaluate(socket, "window.electronAPI.getMcpClientConfig()");
+    if (!config?.available) throw new Error("Packaged app did not offer an MCP client config.");
+    if (await realpath(config.command) !== await realpath(binary)) {
+      throw new Error(`MCP config command is not the packaged executable: ${config.command}`);
+    }
+    const serverPath = config.args?.[0] || "";
+    const expectedServerSuffix = ["app.asar", "mcp", "server.mjs"].join(sep);
+    if (config.args?.length !== 1 || !serverPath.endsWith(expectedServerSuffix) || !serverPath.startsWith(forgeOutDir)) {
+      throw new Error(`MCP config does not run the packaged server: ${JSON.stringify(config.args)}`);
+    }
+    if (config.env?.ELECTRON_RUN_AS_NODE !== "1") throw new Error("MCP config must run the executable in Node mode.");
+    // The smoke launch pins MOSA_LIBRARY_DIR, so the config names that library directly.
+    if (resolve(config.env.MOSA_LIBRARY_DIR || "") !== resolve(libraryDir)) {
+      throw new Error(`MCP config names the wrong library: ${JSON.stringify(config.env)}`);
+    }
+    return config;
+  } finally {
+    socket.close();
+  }
+}
+
+async function verifyBundledMcp({ mcpConfig, importedAssetId }) {
+  const home = join(temp, "mcp-home");
+  await mkdir(home, { recursive: true });
+  const search = async (config) => {
+    const server = startMcpClientProcess(config, home);
+    try {
+      const init = await server.request("initialize", { protocolVersion: "2025-11-25" });
+      if (init.result?.serverInfo?.name !== "GravityPort MCP") throw new Error(`Bundled MCP did not initialize: ${JSON.stringify(init)}`);
+      const tools = await server.request("tools/list");
+      if (!tools.result?.tools?.some((tool) => tool.name === "asset_search")) throw new Error("Bundled MCP does not list asset_search.");
+      const found = await server.request("tools/call", { name: "asset_search", arguments: { query: "packaged smoke import" } });
+      const ids = (found.result?.structuredContent?.results || []).map((entry) => entry.asset?.id ?? entry.id);
+      if (!ids.includes(importedAssetId)) throw new Error(`Bundled MCP asset_search missed the imported asset: ${JSON.stringify(found)}`);
+    } catch (error) {
+      throw new Error(`${error.message}\n${server.stderr()}`, { cause: error });
+    } finally {
+      await server.stop();
+    }
+  };
+
+  await search(mcpConfig);
+
+  // A user who moved the library: the desktop copies it and records the new
+  // place in library-location.json, which the default config follows.
+  const movedLibraryDir = join(temp, "moved", "Art Library");
+  await mkdir(movedLibraryDir, { recursive: true });
+  await copyLibraryForRelocation({ sourceLibraryDir: libraryDir, destinationLibraryDir: movedLibraryDir });
+  const locationFile = join(temp, "moved-user-data", "library-location.json");
+  await mkdir(join(temp, "moved-user-data"), { recursive: true });
+  await writeFile(locationFile, `${JSON.stringify({ path: movedLibraryDir })}\n`);
+  await rm(libraryDir, { recursive: true, force: true });
+  await search(buildMcpClientConfig({
+    platform: process.platform,
+    execPath: mcpConfig.command,
+    serverPath: mcpConfig.args[0],
+    libraryLocationFile: locationFile,
+  }));
+}
+
+// Spawns the server the way an MCP client does: the configured command, args
+// and env on top of a minimal system environment, from an unrelated directory.
+function startMcpClientProcess(config, home) {
+  const systemEnv = Object.fromEntries(["PATH", "SystemRoot", "TEMP", "TMP", "TMPDIR"]
+    .filter((name) => process.env[name])
+    .map((name) => [name, process.env[name]]));
+  const child = spawn(config.command, config.args, {
+    cwd: home,
+    env: { ...systemEnv, HOME: home, USERPROFILE: home, ...config.env },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const stderr = collect(child.stderr);
+  const responses = new Map();
+  let buffer = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    let newline;
+    while ((newline = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!line) continue;
+      const message = JSON.parse(line);
+      responses.set(message.id, message);
+    }
+  });
+  let nextId = 1;
+  return {
+    stderr,
+    async request(method, params) {
+      const id = nextId++;
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, ...(params ? { params } : {}) })}\n`);
+      const end = Date.now() + 30000;
+      while (Date.now() < end) {
+        if (responses.has(id)) return responses.get(id);
+        if (child.exitCode !== null) throw new Error(`Bundled MCP exited (${child.exitCode}) before answering ${method}.`);
+        await sleep(20);
+      }
+      throw new Error(`Bundled MCP did not answer ${method}.`);
+    },
+    async stop() {
+      child.stdin.end();
+      await stopChild(child);
+    },
+  };
 }
 
 function freePort() {

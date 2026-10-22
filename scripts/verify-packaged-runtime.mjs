@@ -2,7 +2,7 @@
 
 import { extractFile, getRawHeader } from "@electron/asar";
 import { access, readFile, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { resolveDesktopPackagingTarget } from "../desktop/forge.config.mjs";
@@ -11,6 +11,32 @@ import { LICENSES_DIR_NAME, verifyPackagedLicenses } from "./third-party-license
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const NATIVE_BINARY_PATTERN = /\.(?:node|dylib|dll)$/iu;
+export const PACKAGED_MCP_SERVER = "mcp/server.mjs";
+const RELATIVE_IMPORT_PATTERN = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)["'](\.{1,2}\/[^"']+)["']/gu;
+
+/**
+ * Every packaged module the bundled MCP server reaches through relative
+ * imports. A missing one means AI clients would get a server that cannot start.
+ */
+export function missingMcpServerModules(packagedPaths, readModule) {
+  const available = new Set(packagedPaths);
+  const missing = [];
+  const seen = new Set();
+  const pending = [PACKAGED_MCP_SERVER];
+  while (pending.length) {
+    const path = pending.pop();
+    if (seen.has(path)) continue;
+    seen.add(path);
+    if (!available.has(path)) {
+      missing.push(path);
+      continue;
+    }
+    for (const [, specifier] of String(readModule(path)).matchAll(RELATIVE_IMPORT_PATTERN)) {
+      pending.push(posix.normalize(posix.join(posix.dirname(path), specifier)));
+    }
+  }
+  return missing.sort();
+}
 
 function packageResourcesDir({ outDir, target, product = resolveReleaseProduct() }) {
   const names = releaseProductNames(product);
@@ -128,6 +154,14 @@ export async function verifyPackagedRuntime({
   const unpackedOnnxDir = join(unpackedRoot, "node_modules", "onnxruntime-node");
   const unpackedOnnx = await stat(unpackedOnnxDir).catch(() => null);
   if (unpackedOnnx) throw new Error(`Optional ONNX Runtime must stay out of ${releaseProductNames(product).macAppBundleName} unpacked resources.`);
+
+  const missingMcpModules = missingMcpServerModules(
+    files.map(({ path }) => path),
+    (path) => extractFile(asarPath, path).toString("utf8"),
+  );
+  if (missingMcpModules.length) {
+    throw new Error(`Bundled MCP server is incomplete; missing from app.asar: ${missingMcpModules.join(", ")}`);
+  }
 
   const sourceIdentity = JSON.parse(await readFile(resolve(projectRoot, "web", "gravityport", "dist", "build-identity.json"), "utf8"));
   const packagedIdentity = parseJsonBuffer(extractFile(asarPath, join("web", "gravityport", "dist", "build-identity.json")), "packaged build identity");

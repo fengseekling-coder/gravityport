@@ -23,6 +23,7 @@ const EXPECTED_API_KEYS = [
   "changeLibraryLocation",
   "checkForUpdates",
   "downloadAndInstallUpdate",
+  "getMcpClientConfig",
   "getRenameNoticeState",
   "getUserProfile",
   "getVisualModelState",
@@ -100,7 +101,8 @@ test("preload path, module format, security settings, and API surface are stable
   // open-external-link（Pinterest Pin 外链，仅 http/https）。第 23 条
   // library-file-flags（拖出又拖回时不重复导入，只回布尔值）。任务 198：第 24 条
   // write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 24, "only the twenty-four approved invoke channels remain");
+  // 任务 208：第 25 条 mcp-client-config（只读，返回本机 App 路径拼成的 MCP 配置文本，不收参数）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "only the twenty-five approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
@@ -219,7 +221,7 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /minHeight: 640,/);
   const manifest = JSON.parse(packageJson);
   assert.equal(sha256(JSON.stringify(manifest.dependencies)), "709481475dca249e75c25f9e0b5e93a685b92cfada8e7e7ab0db8a33653c1843", "package.json dependencies were not changed by this phase");
-  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "11f67ce00f34b4d3dfb9b9ed0dfb428b0368ad5e0a17bd3bafaa40e3c2124fac", "package.json devDependencies were not changed by this phase");
+  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "4d971367be4ced6e52cd69f6a46e7a9516d779e01591a54947b30639d59814e7", "package.json devDependencies were not changed by this phase");
   assertPackageLockMatchesManifest(lockfile, manifest, "package-lock.json must preserve dependency identity");
   assert.doesNotMatch(packageJson, /electron-preload-runtime-contract/);
 });

@@ -60,7 +60,7 @@ The Inspector shows each asset's version tree, with generations from a ChatGPT c
 
 ### Let AI agents search your library
 
-The built-in MCP server (`npm run mcp`) lets Codex and other MCP clients list, search, and record assets, Prompts, versions, and generation history in the same local library. `asset_search` combines text and a time range. See [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口) for the tool list.
+The built-in MCP server lets Claude, Codex, and other MCP clients list, search, and record assets, Prompts, versions, and generation history in the same local library. `asset_search` combines text and a time range. The desktop app ships the server: copy a ready-made config for Claude Desktop, Claude Code, or Codex from Settings → Connect, with no Node.js or source checkout needed. From source, run `npm run mcp`. See [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口) for setup and the tool list.
 
 ### Recover deleted work and back up the library
 

@@ -252,6 +252,7 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "changeLibraryLocation",
     "checkForUpdates",
     "downloadAndInstallUpdate",
+    "getMcpClientConfig", // 任务 208：只读，本机 App 路径拼成的 MCP 配置文本
     "getRenameNoticeState",
     "getUserProfile",
     "getVisualModelState",

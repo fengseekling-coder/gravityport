@@ -3,7 +3,7 @@
 // assets, the gallery chrome and its shortcuts stay out of reach there, and
 // Settings → 连接 hosts the Pinterest connection card.
 export const name = "pinterest-entry";
-export const description = "Pinterest row -> guide page, no gallery toolbar/inspector -> ⌘A+Delete touch nothing -> 打开设置 lands on 连接 with the connection card";
+export const description = "Pinterest row -> guide page, no gallery toolbar/inspector -> ⌘A+Delete touch nothing -> 打开设置 lands on 连接 with the connection card and the MCP card";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -64,7 +64,10 @@ function pinterestEntrySource() {
     await waitFor(() => document.querySelector('.settings-modal .pinterest-connection-card'), 'connection card in Settings');
     const activeTab = document.querySelector('.settings-nav button[aria-pressed="true"]')?.textContent?.trim();
     if (activeTab !== '连接') throw new Error('打开设置 should land on 连接, got ' + JSON.stringify(activeTab));
-    if (/MCP/.test(document.querySelector('.settings-modal').textContent)) throw new Error('Settings still mentions MCP');
+    // The Pinterest connection is not an MCP integration; the separate
+    // AI assistants (MCP) card below it is (task 208).
+    if (/MCP/.test(document.querySelector('.settings-modal .pinterest-connection-card').textContent)) throw new Error('Pinterest card still mentions MCP');
+    await waitFor(() => document.querySelector('.settings-modal .pinterest-connection-card + .mcp-config-card'), 'AI assistants (MCP) card below the Pinterest card');
     key({ key: 'Escape' });
     await waitFor(() => !document.querySelector('.settings-modal'), 'settings closed');
 
