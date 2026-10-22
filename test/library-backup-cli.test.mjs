@@ -54,7 +54,7 @@ test("mosa backup refuses an unmigrated library and exits non-zero", () => {
 
   const backup = runCli(["backup", "--library", libraryDir, "--to", join(root, "bk")]);
   assert.notEqual(backup.status, 0);
-  assert.match(`${backup.stdout}${backup.stderr}`, /mosa migrate/);
+  assert.match(`${backup.stdout}${backup.stderr}`, /gravityport migrate/);
   assert.equal(existsSync(join(root, "bk")), false, "no backup directory is created");
 });
 
@@ -81,7 +81,7 @@ test("verify and thumbnails refuse to materialize a library in an empty or missi
   writeFileSync(join(legacy, "assets", "legacyproj", "metadata", "img.json"), JSON.stringify({ id: "img", asset: "img.png" }));
   const verifyLegacy = runCli(["verify", "--library", legacy]);
   assert.notEqual(verifyLegacy.status, 0);
-  assert.equal(JSON.parse(verifyLegacy.stdout).error.includes("mosa migrate"), true, verifyLegacy.stdout);
+  assert.equal(JSON.parse(verifyLegacy.stdout).error.includes("gravityport migrate"), true, verifyLegacy.stdout);
   assert.equal(existsSync(join(legacy, "mosa.db")), false, "verify must not create mosa.db in a legacy JSON library");
 
   const thumbnails = runCli(["thumbnails", "repair", "--library", empty]);

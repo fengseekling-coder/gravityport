@@ -110,7 +110,7 @@ export async function assertExistingSqliteLibrary(libraryDir: string): Promise<v
 
 function describeMissingSqliteLibrary(root: string, presence: "present" | "legacy" | "absent"): string {
   if (presence === "legacy") {
-    return `"${root}" holds a legacy JSON library; run \`mosa migrate\` before running this command against it.`;
+    return `"${root}" holds a legacy JSON library; run \`gravityport migrate\` before running this command against it.`;
   }
   return `"${root}" is not a GravityPort SQLite library (no mosa.db); nothing was created or modified.`;
 }

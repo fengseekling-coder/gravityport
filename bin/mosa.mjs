@@ -112,12 +112,12 @@ async function runThumbnails(values) {
   try {
     await assertExistingSqliteLibrary(options.library);
   } catch (error) {
-    throw new Error(`${error.message} Run \`mosa migrate\` successfully before rebuilding derivatives.`);
+    throw new Error(`${error.message} Run \`gravityport migrate\` successfully before rebuilding derivatives.`);
   }
   const store = createSqliteAssetStore({ managerDir, projectRoot, libraryDir: options.library, storage: "sqlite" });
   try {
     const migration = await store.migrationStatus();
-    if (migration.migration_state !== "completed") throw new Error("Run `mosa migrate` successfully before rebuilding derivatives.");
+    if (migration.migration_state !== "completed") throw new Error("Run `gravityport migrate` successfully before rebuilding derivatives.");
     const queued = await store.enqueueMissingDerivatives({ mode: action });
     const worker = createDerivativeWorker({ store });
     worker.start();

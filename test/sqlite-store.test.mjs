@@ -1155,7 +1155,7 @@ test("SQLite store re-links copied Codex assets, archived ones included, and exp
   await store.archiveAsset("default", archived.id);
 
   // Stand in for a library that predates hard-linked ingest, or one carried over by
-  // `mosa migrate`: same bytes, separate inode.
+  // `gravityport migrate`: same bytes, separate inode.
   for (const asset of [active, archived, orphan]) {
     await unlink(asset.image_path);
     await copyFile(codexPath, asset.image_path);
