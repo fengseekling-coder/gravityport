@@ -49,6 +49,12 @@ For Windows, `desktop:make:windows` and the `desktop:release:windows*` scripts w
 
 After the feed is published, create the GitHub Release with `npm run release:github -- --version <version>`. It requires the `v<version>` tag on `origin`, takes its notes from the same `release-notes.json` entry, and derives the channel from the version alone: a version with a pre-release suffix is published as a pre-release and never Latest, a final version is marked Latest. Run it with `--dry-run` first to print the exact `gh` command and notes without changing anything; pass `--asset <path>` (repeatable) to attach files, and `--update` when the Release already exists. For the transition build, name it in the title, for example `--title "GravityPort v0.3.0-rc.1 (MOSA transition)"`.
 
+## Counting users
+
+`npm run usage:report -- <access.log> [...]` reads the website server's nginx access logs (the default `combined` format; rotated `.gz` files work too) and prints, for each week (Monday to Sunday, UTC), the site's visitors, browser downloads of the install packages (one per IP and platform), first launches, and installs active that week, followed by totals for the whole log, the versions active in its last seven days, and downloads per `?ref=` campaign label. Usage signals count on every address a version has used: `releases/gravityport/latest.json` on either hostname and the pre-rename `releases/latest.json`. Update checks request the same address without an installation id and are ignored, as are bots, link previews, and the app's own update downloads.
+
+Leave your own machines out with `--exclude <file or comma-separated ids>`: each machine's id is the `installationId` in `anonymous-usage.json` in the app's data folder (`~/Library/Application Support/mosa` on macOS, `%APPDATA%\mosa` on Windows). `--json` prints the same counts for scripts. The script has no dependencies, so it can also be copied to the server alone and run as `node usage-report.mjs /var/log/nginx/access.log*`. It prints totals only, never an IP address or installation id.
+
 ## Optional Visual Pack publishing
 
 Visual search model/runtime bytes are not shipped inside the core desktop package. Build one platform-specific pack per supported target and publish its directory tree under the fixed first-party origin:
