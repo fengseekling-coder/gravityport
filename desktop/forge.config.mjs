@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { desktopDistributionFromEnvironment, requiresPlatformSigning } from "../lib/release-distribution.mjs";
 import { resolveReleaseProduct } from "../scripts/release-product.mjs";
 import { desktopLicensesOutputDir, writeDesktopLicenses } from "../scripts/third-party-licenses.mjs";
+import { windowsSignOptionsFromEnvironment } from "../scripts/windows-signing.mjs";
 import {
   desktopIconBasePath,
   desktopIconOutputDir,
@@ -148,41 +149,9 @@ export function macReleasePackagingConfig(env = process.env) {
 }
 
 export function windowsReleasePackagingConfig(env = process.env) {
-  const distribution = desktopDistributionFromEnvironment(env);
-  if (!requiresPlatformSigning(distribution)) return {};
-
-  const signerThumbprint = String(env.MOSA_WINDOWS_SIGNER_THUMBPRINT || "").replace(/\s+/g, "").toUpperCase();
-  if (!/^[0-9A-F]{40,64}$/.test(signerThumbprint)) {
-    throw new Error("MOSA Windows release build requires MOSA_WINDOWS_SIGNER_THUMBPRINT.");
-  }
-
-  const certificateFile = String(env.WINDOWS_CERTIFICATE_FILE || "").trim();
-  const certificatePassword = String(env.WINDOWS_CERTIFICATE_PASSWORD || "").trim();
-  const signToolPath = String(env.WINDOWS_SIGNTOOL_PATH || "").trim();
-  const signWithParams = String(env.WINDOWS_SIGN_WITH_PARAMS || "").trim();
-  const hookModulePath = String(env.WINDOWS_SIGN_HOOK_MODULE_PATH || "").trim();
-  const certificateMode = Boolean(certificateFile && certificatePassword);
-  const customMode = Boolean(signWithParams || hookModulePath);
-  if (!certificateMode && !customMode) {
-    throw new Error(
-      "MOSA Windows release build requires a signing source: WINDOWS_CERTIFICATE_FILE + WINDOWS_CERTIFICATE_PASSWORD, "
-      + "WINDOWS_SIGN_WITH_PARAMS, or WINDOWS_SIGN_HOOK_MODULE_PATH.",
-    );
-  }
-
-  return {
-    windowsSign: {
-      continueOnError: false,
-      hashes: ["sha256"],
-      description: resolveReleaseProduct(env),
-      website: "https://gravityport.azhuilab.com/",
-      ...(certificateFile ? { certificateFile } : {}),
-      ...(certificatePassword ? { certificatePassword } : {}),
-      ...(signToolPath ? { signToolPath } : {}),
-      ...(signWithParams ? { signWithParams } : {}),
-      ...(hookModulePath ? { hookModulePath } : {}),
-    },
-  };
+  // The installer build signs its own executables with the same options.
+  const windowsSign = windowsSignOptionsFromEnvironment(env);
+  return windowsSign ? { windowsSign } : {};
 }
 
 function buildOnlyRuntimePaths(target) {
@@ -325,9 +294,11 @@ export function createForgeConfig({ target = activeTarget, env = process.env } =
     new AutoUnpackNativesPlugin(),
   ],
   makers: [
-    // Windows remains a portable ZIP target. macOS distribution is built as a
-    // DMG by scripts/make-macos-dmg.mjs so users get the standard drag-to-
-    // Applications replacement flow instead of accumulating extracted apps.
+    // The Windows ZIP is the in-app update package; first installs download
+    // the one-file installer from scripts/make-windows-installer.mjs. macOS
+    // distribution is built as a DMG by scripts/make-macos-dmg.mjs so users
+    // get the standard drag-to-Applications replacement flow instead of
+    // accumulating extracted apps.
     new MakerZIP({}, ["win32"]),
   ],
   };

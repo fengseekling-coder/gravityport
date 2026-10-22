@@ -22,7 +22,7 @@ GravityPort is a local-first library for AI-generated images, videos, Prompts, p
 Get GravityPort from the [official download page](https://gravityport.azhuilab.com/#download). It always lists the current packages with their sizes and SHA-256 values.
 
 - **GravityPort Desktop for macOS** (Apple Silicon): a DMG. Drag `GravityPort.app` into Applications.
-- **GravityPort Desktop for Windows 10/11** (x64): a portable ZIP. Extract it and run `GravityPort.exe`.
+- **GravityPort Desktop for Windows 10/11** (x64): an installer. Double-click it; it installs GravityPort for your Windows account without asking for an administrator, adds it to the Start menu and the desktop, and opens it. Remove it in Settings → Apps; your library stays. (0.3.3 and earlier came as a portable ZIP: extract it and run `GravityPort.exe`.)
 - **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP; load it after the desktop app is running and the two pair automatically. See the [install guide](https://gravityport.azhuilab.com/guide/).
 
 Installed desktop apps check for updates themselves in **Settings → About**. The [release manifest](https://gravityport.azhuilab.com/releases/gravityport/latest.json) is the machine-readable source for the newest version.
@@ -30,6 +30,7 @@ Installed desktop apps check for updates themselves in **Settings → About**. T
 ## First launch
 
 - **macOS:** open System Settings → Privacy & Security and click **Open Anyway** next to GravityPort. Only once.
+- **Windows:** the installer is not code-signed yet, so SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**. Only once, when you install.
 - **Windows:** if you see "Windows protected your PC", click **More info → Run anyway**.
 
 ## Why GravityPort
@@ -79,7 +80,7 @@ Whatever the source, everything lands in the same local gallery with groups, sta
 | Target | Status |
 | --- | --- |
 | macOS arm64 | Main desktop target. DMG for first install, in-app updates afterwards. |
-| Windows 10/11 x64 | Portable ZIP, in-app updates afterwards. |
+| Windows 10/11 x64 | Installer for first install, in-app updates afterwards. Not code-signed yet. |
 
 ## Run from source
 

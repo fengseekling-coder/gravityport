@@ -18,7 +18,7 @@ GravityPort 采用 [PolyForm Noncommercial License 1.0.0](../LICENSE)，属于�
 - **网页生图扩展**可选，用于把 ChatGPT、Gemini、Flow 和 Google AI Studio 的网页成图及其可用上下文发送到本机 GravityPort；开启自动入库后，也会代为收录 ChatGPT 桌面应用里生成的图片。
 - **GravityPort** 负责自动收集、归档、检索和版本管理。
 
-GravityPort 当前是绑定 `127.0.0.1` 的本地 Web 应用，也提供共享同一套 UI/Runtime 的 Electron 桌面壳。macOS arm64 是现有桌面开发目标，Windows 10/11 x64 已进入 Preview/Testing；仓库尚未发布正式签名安装器。它不是云服务，也不调用 Grok API，不应通过公网或反向代理暴露。Desktop 可选安装一个完全本地运行的 Visual Pack（界面里叫「视觉能力包」），用于检视器「相关推荐」的相似图、视觉关系候选，以及 MCP `asset_search`（`visual: true`）和本地 `/api/visual/search` 的文字搜图（画廊的「搜索素材」仍是文本检索）；未安装时核心素材库功能保持不变。
+GravityPort 当前是绑定 `127.0.0.1` 的本地 Web 应用，也提供共享同一套 UI/Runtime 的 Electron 桌面壳。macOS arm64 是现有桌面开发目标，Windows 10/11 x64 已进入 Preview/Testing，提供安装程序，但还没有代码签名。它不是云服务，也不调用 Grok API，不应通过公网或反向代理暴露。Desktop 可选安装一个完全本地运行的 Visual Pack（界面里叫「视觉能力包」），用于检视器「相关推荐」的相似图、视觉关系候选，以及 MCP `asset_search`（`visual: true`）和本地 `/api/visual/search` 的文字搜图（画廊的「搜索素材」仍是文本检索）；未安装时核心素材库功能保持不变。
 
 ## 环境要求
 
@@ -32,7 +32,7 @@ GravityPort 当前是绑定 `127.0.0.1` 的本地 Web 应用，也提供共享�
 
 之前的版本在 Windows 真机上验证过：应用启动、本地 SQLite、Sharp 原生图像处理、素材库/资产检视器，以及 Codex 素材自动收录；换成新界面之后还没有在 Windows 真机上重新验证。Windows 使用原生标题栏，但隐藏 Electron 默认菜单栏；菜单 accelerator 仍保留。
 
-Windows 上的 Grok/Cowart 来源目录尚未完成真机验证，暂不把推测路径写成正式默认值。当前打包版已经支持在应用内读取官方 release manifest、下载对应版本的 portable ZIP、校验文件大小与 SHA-256，并在退出本地 Runtime、释放文件锁后通过独立更新辅助进程原位替换应用目录；替换失败时会回滚旧目录。Windows 安装器和代码签名仍属于发布阶段工作，因此当前 Windows 构建仍应视为测试版，而不是正式签名发行版。
+Windows 上的 Grok/Cowart 来源目录尚未完成真机验证，暂不把推测路径写成正式默认值。当前打包版已经支持在应用内读取官方 release manifest、下载对应版本的更新 ZIP、校验文件大小与 SHA-256，并在退出本地 Runtime、释放文件锁后通过独立更新辅助进程原位替换应用目录；替换失败时会回滚旧目录。首次安装用安装程序，它把应用装在 `%LOCALAPPDATA%\Programs\GravityPort\app`，应用内更新替换的正是这个文件夹。Windows 代码签名仍属于发布阶段工作，因此当前 Windows 构建仍应视为测试版，而不是正式签名发行版。
 
 macOS Desktop 与 Web Capture 的后台监督服务共用同一资料库和本地端口。新版 Desktop 启动时会先发布一个最多 90 秒有效（覆盖 Desktop 最长 30 秒的旧 Runtime 退出等待和自身启动）、绑定当前 PID 与进程启动身份的接管标记；监督服务看到后会停止自己拉起的后台 Runtime 并让 Desktop 接管。若 Desktop 启动失败，标记会自动过期，后台服务恢复。这样覆盖安装/重启 GravityPort 时不应再需要手动结束仓库里的 `server.mjs`。外部非 GravityPort 服务、不同资料库的 GravityPort Runtime 仍不会被自动终止。
 
@@ -45,7 +45,7 @@ macOS Desktop 与 Web Capture 的后台监督服务共用同一资料库和本�
 普通使用直接从[官网下载页](https://gravityport.azhuilab.com/#download)下载桌面版即可，不需要源码：
 
 - **macOS（Apple 芯片）**：DMG，把 `GravityPort.app` 拖进「应用程序」。
-- **Windows 10/11 x64**：便携 ZIP，解压后运行 `GravityPort.exe`（目前是 Preview 测试版）。
+- **Windows 10/11 x64**：安装程序，双击就装好，开始菜单和桌面会出现 GravityPort（目前是 Preview 测试版）。不需要管理员权限；卸载在「设置 → 应用」里，素材库和设置会保留。以前用解压版的话，装好后可以删掉原来解压出来的文件夹，素材库不受影响。
 - **网页生图扩展（可选）**：开发者模式加载的 ZIP，安装步骤见[官网安装指南](https://gravityport.azhuilab.com/guide/)。
 
 装好后，应用会在「设置 → 关于」里自己检查更新。
@@ -55,7 +55,7 @@ macOS Desktop 与 Web Capture 的后台监督服务共用同一资料库和本�
 当前桌面版是 Preview 版本：macOS 版还没有经过 Apple 公证，Windows 版还没有代码签名，所以第一次打开时系统会提示风险。
 
 - **macOS**：先打开一次 GravityPort，看到「无法验证」的提示后点「完成」；然后打开「系统设置 → 隐私与安全性」，在「安全性」一栏找到 GravityPort，点「仍要打开」并确认。之后系统会记住这个选择。macOS 14 及更早版本也可以按住 Control 点按应用，选「打开」。
-- **Windows**：如果 SmartScreen 提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。
+- **Windows**：如果 SmartScreen 提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。只在运行安装程序时出现一次。
 
 要用网页生图扩展的话，先打开桌面版再加载扩展，两者会自动配对。
 

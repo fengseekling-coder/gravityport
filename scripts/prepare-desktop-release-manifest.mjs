@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseUpdateManifest, macosUpdateFileNameForAppName, windowsUpdateFileNameForPayloadExeName, MACOS_TEAM_IDENTIFIER_PATTERN, MACOS_UPDATE_APP_NAMES, WINDOWS_UPDATE_EXE_NAMES, WINDOWS_SIGNER_THUMBPRINT_PATTERN } from "../desktop/update-service.mjs";
 import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
 import { formatNotesText, notesForVersion, readReleaseNotes } from "../lib/release-notes.mjs";
+import { releaseProductNames } from "./release-product.mjs";
 import {
   normalizeReleaseManifestTrust,
   releaseManifestPrivateKeyFromEnvironment,
@@ -24,6 +25,7 @@ export async function prepareDesktopReleaseManifest({
   macAppName = "MOSA.app",
   macTeamIdentifier = "",
   windowsArtifactPath = "",
+  windowsInstallerPath = "",
   windowsPayloadExeName = "MOSA.exe",
   windowsSignerThumbprint = "",
   buildIdentity = null,
@@ -80,6 +82,19 @@ export async function prepareDesktopReleaseManifest({
   // context so a production Windows release can never leave unpinned.
   if (normalizedBuildIdentity.distribution === "production" && windows && !windows.signerThumbprint) {
     throw new Error("Production Windows releases require a platforms.windows signerThumbprint.");
+  }
+  // The installer is what the website offers for a first install. Desktop
+  // clients ignore it: in-app updates keep using the update ZIP, so an
+  // installer never ships without one.
+  if (windowsInstallerPath) {
+    if (!windows) throw new Error("A Windows installer ships with its update ZIP: pass the Windows ZIP as well.");
+    const installer = await artifactMetadata({
+      path: windowsInstallerPath,
+      expectedFile: releaseProductNames(cleanWindowsPayloadExeName.slice(0, -4)).windowsInstallerName(cleanVersion),
+      platform: "Windows",
+      arch: "x64",
+    });
+    windows.installer = { file: installer.file, size: installer.size, sha256: installer.sha256 };
   }
 
   const previous = previousManifest && typeof previousManifest === "object" && !Array.isArray(previousManifest)
@@ -208,7 +223,7 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.version || !args.output) {
-    throw new Error("Usage: prepare-desktop-release-manifest.mjs --version <version> --output <latest.json> [--previous <latest.json>] [--mac <zip>] [--mac-app-name <MOSA.app|GravityPort.app>] [--mac-team-identifier <10-char id>] [--windows <zip>] [--windows-payload-exe-name <MOSA.exe|GravityPort.exe>] [--windows-signer-thumbprint <40-char id>] [--published-at <ISO>] [--notes-zh <text>] [--notes-en <text>] [--release-notes <release-notes.json>]");
+    throw new Error("Usage: prepare-desktop-release-manifest.mjs --version <version> --output <latest.json> [--previous <latest.json>] [--mac <zip>] [--mac-app-name <MOSA.app|GravityPort.app>] [--mac-team-identifier <10-char id>] [--windows <zip>] [--windows-installer <exe>] [--windows-payload-exe-name <MOSA.exe|GravityPort.exe>] [--windows-signer-thumbprint <40-char id>] [--published-at <ISO>] [--notes-zh <text>] [--notes-en <text>] [--release-notes <release-notes.json>]");
   }
   const previousManifest = args.previous ? JSON.parse(await readFile(resolve(args.previous), "utf8")) : null;
   const projectRoot = new URL("..", import.meta.url);
@@ -220,6 +235,7 @@ async function main() {
     macAppName: args["mac-app-name"] || "MOSA.app",
     macTeamIdentifier: args["mac-team-identifier"] || "",
     windowsArtifactPath: args.windows || "",
+    windowsInstallerPath: args["windows-installer"] || "",
     windowsPayloadExeName: args["windows-payload-exe-name"] || "MOSA.exe",
     windowsSignerThumbprint: args["windows-signer-thumbprint"] || "",
     buildIdentity,

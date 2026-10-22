@@ -78,6 +78,30 @@ export async function verifyWindowsReleasePackage({
   return { packageDir: resolvedPackage, files: results.length, results };
 }
 
+// One file, such as the installer, must carry the release signature too.
+export async function verifyWindowsReleaseFile({
+  file,
+  expectedThumbprint = process.env.MOSA_WINDOWS_SIGNER_THUMBPRINT,
+  powershell = runPowerShell,
+} = {}) {
+  if (!file) throw new Error("Windows release file is required.");
+  const resolvedFile = resolve(file);
+  await access(resolvedFile);
+  const escaped = resolvedFile.replaceAll("'", "''");
+  const output = await powershell(
+    `$signature = Get-AuthenticodeSignature -LiteralPath '${escaped}'; `
+    + `[pscustomobject]@{path='${escaped}'; status=[string]$signature.Status; thumbprint=$signature.SignerCertificate.Thumbprint; subject=$signature.SignerCertificate.Subject} | ConvertTo-Json -Compress`,
+  );
+  let result;
+  try {
+    result = JSON.parse(output);
+  } catch (error) {
+    throw new Error(`Windows file Authenticode verifier returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  assertWindowsReleaseSignature(result, expectedThumbprint);
+  return result;
+}
+
 async function main() {
   if (process.platform !== "win32") throw new Error("Windows release verification must run on Windows.");
   const names = resolveReleaseProductNames();

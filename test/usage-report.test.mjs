@@ -98,6 +98,8 @@ describe("classifyRequest", () => {
   it("counts browser downloads of install packages only", () => {
     assert.deepEqual(classify({ target: "/downloads/GravityPort-0.3.3-arm64.dmg" }), { kind: "download", platform: "macos", ref: "", mobile: false });
     assert.deepEqual(classify({ target: "/downloads/GravityPort-win32-x64-0.3.3.zip", status: 206 }), { kind: "download", platform: "windows", ref: "", mobile: false });
+    assert.deepEqual(classify({ target: "/downloads/GravityPort-win32-x64-0.3.4.exe" }), { kind: "download", platform: "windows", ref: "", mobile: false }, "the Windows installer");
+    assert.equal(classify({ target: "/downloads/Unrelated-tool.exe" }), null, "only win32 installers");
     assert.deepEqual(classify({ target: "/downloads/GravityPort-0.3.3-arm64.dmg?ref=reddit_codex" }), { kind: "download", platform: "macos", ref: "reddit_codex", mobile: false });
     assert.equal(classify({ target: "/downloads/GravityPort-0.3.3-arm64.dmg?ref=%3Cscript%3E" })?.ref, "", "odd labels are dropped");
     assert.equal(classify({ target: "/downloads/GravityPort-darwin-arm64-0.3.3.zip" }), null, "macOS update ZIPs are not installers");

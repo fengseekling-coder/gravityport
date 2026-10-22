@@ -1,10 +1,11 @@
 name: Windows Preview Release Artifact
 
-# Builds the Windows Preview update ZIP for an already-tagged release on a
-# Windows runner (the Sharp/SQLite runtimes for win32 must be provisioned
-# natively, see desktop/forge.config.mjs). The ZIP is uploaded as a workflow
-# artifact; publishing it to the first-party download host stays a manual step
-# (docs/releasing.md).
+# Builds the Windows Preview update ZIP and installer for an already-tagged
+# release on a Windows runner (the Sharp/SQLite runtimes for win32 must be
+# provisioned natively, see desktop/forge.config.mjs). In-app updates download
+# the ZIP; the website offers the installer for first installs. Both are
+# uploaded as one workflow artifact; publishing them to the first-party
+# download host stays a manual step (docs/releasing.md).
 
 on:
   workflow_dispatch:
@@ -26,7 +27,7 @@ permissions:
 
 jobs:
   build-windows-preview:
-    name: Build Preview ZIP on windows-2022
+    name: Build Preview ZIP and installer on windows-2022
     runs-on: windows-2022
     defaults:
       run:
@@ -66,7 +67,7 @@ jobs:
       - name: Install immutable dependencies
         run: npm ci
 
-      - name: Build the Windows Preview ZIP
+      - name: Build the Windows Preview ZIP and installer
         env:
           MOSA_RELEASE_DISTRIBUTION: preview
           MOSA_RELEASE_PRODUCT: ${{ inputs.product }}
@@ -125,6 +126,22 @@ jobs:
           "$sha256 *$zipName" | Set-Content -NoNewline -Encoding ascii SHA256SUMS.txt
           "ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Verify the installer identity and Preview signing state
+        run: |
+          $installerName = "$($env:RELEASE_PRODUCT)-win32-x64-$($env:RELEASE_VERSION).exe"
+          $installer = "out/make/installer/win32/x64/$installerName"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Installer is missing: $installer" }
+          $info = (Get-Item -LiteralPath $installer).VersionInfo
+          if ($info.ProductName -ne $env:RELEASE_PRODUCT) { throw "Unexpected installer product: $($info.ProductName)" }
+          if ($info.ProductVersion -ne $env:RELEASE_VERSION) { throw "Unexpected installer version: $($info.ProductVersion)" }
+          $authenticode = Get-AuthenticodeSignature -FilePath $installer
+          if ($authenticode.Status -ne 'NotSigned') { throw "Preview installer expected NotSigned, got $($authenticode.Status)." }
+
+          $sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sums = @((Get-Content -LiteralPath SHA256SUMS.txt -Raw).Trim(), "$sha256 *$installerName")
+          (($sums -join "`n") + "`n") | Set-Content -NoNewline -Encoding ascii SHA256SUMS.txt
+          "INSTALLER_PATH=$installer" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Upload the Windows Preview artifact
         uses: actions/upload-artifact@v4
         with:
@@ -132,4 +149,5 @@ jobs:
           if-no-files-found: error
           path: |
             ${{ env.ZIP_PATH }}
+            ${{ env.INSTALLER_PATH }}
             SHA256SUMS.txt
