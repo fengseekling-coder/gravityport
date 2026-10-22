@@ -27,7 +27,7 @@ The maintainer will acknowledge the report, assess its scope, and coordinate dis
 ## Security Boundaries
 
 - GravityPort is designed for loopback use on `127.0.0.1`. Public ports, reverse proxies, shared-host deployment, and untrusted multi-user access are unsupported.
-- A standalone runtime started with `npm start` keeps Web Capture disabled unless `MOSA_WEB_CAPTURE_TOKEN` and an approved extension origin are explicitly configured. Packaged Desktop generates and stores its own random local Token and authorizes only the fixed GravityPort extension origins used by the desktop pairing flow. Treat every Web Capture Token as a local secret.
+- A standalone runtime started with `npm start` keeps Web Capture disabled unless `GRAVITYPORT_WEB_CAPTURE_TOKEN` and an approved extension origin are explicitly configured. Packaged Desktop generates and stores its own random local Token and authorizes only the fixed GravityPort extension origins used by the desktop pairing flow. Treat every Web Capture Token as a local secret.
 - Browser-extension origins, input envelopes, declared MIME types, decoded image bytes, file sizes, and pixel counts must be validated before ingest.
 - Codex, Grok, and Cowart source roots are explicit allowlists. Do not widen them to work around an import failure.
 - Imported media, Prompt text, provenance, page URLs, and session identifiers are private user data by default.

@@ -15,7 +15,7 @@ GravityPort is a local-first library for AI-generated images, videos, Prompts, p
 
 **Local-first · Prompt & provenance · Version history · No GravityPort cloud account**
 
-[Downloads](#downloads) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
+[Downloads](#downloads) · [First launch](#first-launch) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
 
 ## Downloads
 
@@ -26,6 +26,11 @@ Get GravityPort from the [official download page](https://gravityport.azhuilab.c
 - **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP; load it after the desktop app is running and the two pair automatically. See the [install guide](https://gravityport.azhuilab.com/guide/).
 
 Installed desktop apps check for updates themselves in **Settings → About**. The [release manifest](https://gravityport.azhuilab.com/releases/gravityport/latest.json) is the machine-readable source for the newest version.
+
+## First launch
+
+- **macOS:** open System Settings → Privacy & Security and click **Open Anyway** next to GravityPort. Only once.
+- **Windows:** if you see "Windows protected your PC", click **More info → Run anyway**.
 
 ## Why GravityPort
 

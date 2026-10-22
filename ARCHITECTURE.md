@@ -116,9 +116,9 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 
 `mcp/server.mjs` 是独立的 JSON-RPC over stdio MCP 服务。它直接打开同一资产存储，
 不创建额外的 HTTP 端口：SQLite 库依靠 WAL 与桌面/Web 运行时并存；JSON 兼容库必须独占
-运行时锁，不能与正在运行的 App 同时写入。MCP 只看 `MOSA_LIBRARY_DIR` 和默认库位置，
+运行时锁，不能与正在运行的 App 同时写入。MCP 只看 `GRAVITYPORT_LIBRARY_DIR` 和默认库位置，
 不读取桌面版的 `library-location.json`，桌面版改过库位置时需为 MCP 显式设置
-`MOSA_LIBRARY_DIR`。`asset_search` 的 `visual: true` 不在 MCP 进程内推理，而是通过
+`GRAVITYPORT_LIBRARY_DIR`。`asset_search` 的 `visual: true` 不在 MCP 进程内推理，而是通过
 `/api/visual/search` 复用正在服务同一库的本地运行时，不可用时退回文本/时间检索。当前工具覆盖：
 
 - `asset_create`、`asset_list`、`asset_get`
@@ -237,7 +237,7 @@ npm run build             构建 UI、编译 TypeScript 并写入构建身份
    项目存在。
 4. 创建 Node HTTP 服务并监听 loopback，返回 `url`、端口、库目录、存储类型、构建身份、
    `clientToken` 和 `stop()`。
-5. 监听成功后才开始后台工作：约 1 秒后并行启动各桥接（可按 `MOSA_DISABLE_BRIDGES`
+5. 监听成功后才开始后台工作：约 1 秒后并行启动各桥接（可按 `GRAVITYPORT_DISABLE_BRIDGES`
    禁用，单个桥接启动失败只记日志）；约 1.8 秒后执行一次回收站清理、历史孤立衍生文件
    回收，以及缺失尺寸/缩略图/预览素材的重新入队，三者结束后才启动衍生任务 worker。
    这些维护失败只记日志，不影响服务可用。
@@ -268,30 +268,30 @@ Web UI 启动时同时读取 `/api/health` 与静态 `build-identity.json`，在
 读到了新版静态文件，也不能继续以旧 API 契约驱动新版界面。
 
 桌面默认使用 `127.0.0.1:43517`；默认库目录统一由 `lib/library-location.mjs` 的
-`resolveLibraryLocation()` 解析：`MOSA_LIBRARY_DIR` 优先；其次桌面版的
+`resolveLibraryLocation()` 解析：`GRAVITYPORT_LIBRARY_DIR` 优先；其次桌面版的
 `library-location.json`（记录损坏或记录的库不存在时报错退出，不退回默认、
 不新建库）；否则 `$HOME/MOSA Library` 里有库就用它，`$HOME/GravityPort Library`
 里有库就用它，两处都没有才在 `$HOME/GravityPort Library` 新建（只有这一条
 允许指向不存在的目录）。如需独立运行时，使用 `MOSA_DESKTOP_PORT` 和
-`MOSA_LIBRARY_DIR` 明确指定；未设置 `MOSA_DESKTOP_PORT` 时，桌面壳在 `43517`–`43521`
+`GRAVITYPORT_LIBRARY_DIR` 明确指定；未设置 `MOSA_DESKTOP_PORT` 时，桌面壳在 `43517`–`43521`
 中探测并回退端口。
 
 桌面版可在「设置 → 存储 → 修改」移动自己拥有的库：先停止运行时，经
 `lib/library-relocation.mjs` 完整复制到空目录（跳过 `.mosa-runtime.lock`），成功后写入
-`library-location.json` 并重启，最后才删除旧目录；设置了 `MOSA_LIBRARY_DIR` 或附着到
+`library-location.json` 并重启，最后才删除旧目录；设置了 `GRAVITYPORT_LIBRARY_DIR` 或附着到
 外部服务时不允许移动。macOS 上可选的 Web Capture 后台 supervisor 与桌面壳通过库目录中的
 `.mosa-desktop-starting.json` 交接标记协调，细节见 [docs/operations.md](docs/operations.md)。
 
 ### 4.3 桌面更新与匿名统计
 
-`desktop/update-service.mjs` 从 `https://mosa.azhuilab.com/releases/gravityport/latest.json`
+`desktop/update-service.mjs` 从 `https://gravityport.azhuilab.com/releases/gravityport/latest.json`
 拉取发布清单（禁止重定向），配置了发布公钥时先用 `lib/release-manifest-signature.mjs`
 校验签名，再按版本号和发行通道判断能否更新。`desktop/macos-updater.mjs` /
-`desktop/windows-updater.mjs` 从 `https://mosa.azhuilab.com/downloads/` 下载对应平台的
+`desktop/windows-updater.mjs` 从 `https://gravityport.azhuilab.com/downloads/` 下载对应平台的
 更新包，校验 SHA-256 与签名身份（macOS Team ID / Windows 签名证书指纹）后交给分离的
 helper 替换应用并重启。打包版在首次启动和每个统计日各发一次无请求体的 `HEAD` 请求，把
 随机安装 ID、平台、架构和版本附在同一清单地址上作为匿名使用统计
-（`desktop/anonymous-usage.mjs`）；设置 `MOSA_DISABLE_TELEMETRY=1`、QA 运行或未打包的
+（`desktop/anonymous-usage.mjs`）；设置 `GRAVITYPORT_DISABLE_TELEMETRY=1`、QA 运行或未打包的
 开发壳都不会发送。发布流程见 [docs/releasing.md](docs/releasing.md)。
 
 ## 5. 存储与媒体处理
@@ -309,7 +309,7 @@ helper 替换应用并重启。打包版在首次启动和每个统计日各发�
   `gravityport migrate` 迁移；不会因为升级程序而自动删除旧数据。
 
 SQLite 数据库路径为 `<库目录>/mosa.db`（默认库目录按上文
-`resolveLibraryLocation()` 解析，也可由 `MOSA_LIBRARY_DIR` 指定）。SQLite schema 版本以
+`resolveLibraryLocation()` 解析，也可由 `GRAVITYPORT_LIBRARY_DIR` 指定）。SQLite schema 版本以
 `lib/sqlite-asset-store.mjs` 导出的 `CURRENT_SCHEMA_VERSION` 为唯一权威；不要在
 运维或架构文档中复制一个容易随迁移失效的数字。数据库启用 WAL、外键和 busy timeout。主要表和索引包括：
 
@@ -518,8 +518,8 @@ Google AI Studio 的视频按容器签名和大小（≤96 MiB，可分块上传
 
 独立的 `npm start` Web Runtime 使用 Web Capture 时必须同时配置：
 
-- `MOSA_WEB_CAPTURE_TOKEN`：请求的 Bearer 或 `x-mosa-token` 凭据；
-- `MOSA_WEB_CAPTURE_ORIGINS`：精确的 `chrome-extension://...` 或
+- `GRAVITYPORT_WEB_CAPTURE_TOKEN`：请求的 Bearer 或 `x-mosa-token` 凭据；
+- `GRAVITYPORT_WEB_CAPTURE_ORIGINS`：精确的 `chrome-extension://...` 或
   `moz-extension://...` origin 列表。
 
 Desktop Runtime 不要求用户手工填写这两个值。Electron 首次启动会在
@@ -539,7 +539,7 @@ ChatGPT 桌面版（与 Codex 同一个 App）不把聊天中的生成图或聊�
 桥接和浏览器扩展都看不到它们。`lib/chatgpt-desktop-sync.mjs` 只负责认出“刚用过的
 对话”，图像仍由已配对的 Web Capture 扩展按普通 ChatGPT 页面流程采集：
 
-- 运行时随 Codex 桥接一起启动它（`MOSA_DISABLE_BRIDGES` 含 `codex` 时一并禁用），每
+- 运行时随 Codex 桥接一起启动它（`GRAVITYPORT_DISABLE_BRIDGES` 含 `codex` 时一并禁用），每
   10 秒轮询 `<CODEX_HOME>/.codex-global-state.json`，只读取桌面聊天绑定的 ChatGPT 对话号，
   以及每段对话最后一次提问的消息编号。
 - 新绑定的对话，或最后一次提问编号发生变化的对话，记为“有活动”；首次运行时把已有绑定
@@ -562,7 +562,7 @@ ChatGPT 桌面版（与 Codex 同一个 App）不把聊天中的生成图或聊�
 和设置里的「连接」页在 `App.tsx` 中由常量 `PINTEREST_ENTRY` 关着（默认隐藏），等待 Pinterest 批准正式 API 访问。客户端只在桌面版创建；
 OAuth 回调地址固定为 `http://localhost:43517/api/pinterest/callback`，运行时不在 43517
 端口时连接返回 `PINTEREST_PORT_MISMATCH`。授权码与 refresh token 经
-`https://mosa.azhuilab.com/api/pinterest/token` 中转换取 token（app secret 不在客户端），
+`https://gravityport.azhuilab.com/api/pinterest/token` 中转换取 token（app secret 不在客户端），
 token 以 0600 权限原子写入 `userData`。画板与 Pin 通过 Pinterest API 实时读取，只在内存
 缓存最多 5 分钟，不写入素材库；Pin 图片直接从 `i.pinimg.com` 加载。
 
@@ -572,7 +572,7 @@ token 以 0600 权限原子写入 `userData`。画板与 Pin 通过 Pinterest AP
 设置页反馈面板通过 `GET /api/feedback/diagnostics` 预览脱敏后的诊断文本：库路径和主目录
 替换为占位符，Token、长密钥和邮箱被遮蔽，可能含 Prompt 的整行被删除。
 `POST /api/feedback/submit` 在本地校验类型、正文、联系方式和语言，对诊断文本重新脱敏并
-截断，然后只向 `MOSA_FEEDBACK_URL`（默认 `https://mosa.azhuilab.com/api/feedback`）转发
+截断，然后只向 `MOSA_FEEDBACK_URL`（默认 `https://gravityport.azhuilab.com/api/feedback`）转发
 一次请求；本地日志只记录提交结果状态，不记录内容。
 
 ## 8. 配置与隐私边界
@@ -584,7 +584,7 @@ Token 写入公共文档、日志或仓库：
 | --- | --- |
 | `MOSA_PORT` | Node 服务端口，默认 `43517` |
 | `MOSA_DESKTOP_PORT` | Electron 壳使用的端口，默认 `43517`；显式设置后不再在 43517–43521 间回退 |
-| `MOSA_LIBRARY_DIR` | SQLite/库目录；显式指定后用于库隔离和迁移 |
+| `GRAVITYPORT_LIBRARY_DIR` | SQLite/库目录；显式指定后用于库隔离和迁移 |
 | `MOSA_PROJECT_DIR` | 项目根目录覆盖 |
 | `CODEX_HOME` | Codex 本地数据根；默认 `$HOME/.codex` / `%USERPROFILE%\.codex` |
 | `CODEX_GENERATED_IMAGES_DIR` | Codex 生成图片目录覆盖 |
@@ -592,15 +592,21 @@ Token 写入公共文档、日志或仓库：
 | `GROK_SESSIONS_DIR` | Grok 会话目录覆盖 |
 | `COWART_MOSA_CANVAS_DIR` | GravityPort 管理画布目录覆盖 |
 | `MOSA_COWART_REGISTRY_PATH` | Cowart 外部项目注册表路径覆盖（默认 `<CODEX_HOME>/mosa/cowart-projects.json`） |
-| `MOSA_DISABLE_BRIDGES` | 禁用指定桥接的逗号分隔列表：`codex`（同时停用 ChatGPT 桌面版对话同步）、`grok`、`cowart`、`cowartDiscovery`；未知名称直接报错 |
+| `GRAVITYPORT_DISABLE_BRIDGES` | 禁用指定桥接的逗号分隔列表：`codex`（同时停用 ChatGPT 桌面版对话同步）、`grok`、`cowart`、`cowartDiscovery`；未知名称直接报错 |
 | `MOSA_CLIENT_TOKEN` | 管理 API 的 client token；未设置时 `npm start` 每次随机生成，桌面版使用 `userData` 中持久化的值 |
-| `MOSA_WEB_CAPTURE_TOKEN` | 启用网页捕获的本地 Token |
-| `MOSA_WEB_CAPTURE_ORIGINS` | 网页捕获允许的扩展 origin 列表 |
+| `GRAVITYPORT_WEB_CAPTURE_TOKEN` | 启用网页捕获的本地 Token |
+| `GRAVITYPORT_WEB_CAPTURE_ORIGINS` | 网页捕获允许的扩展 origin 列表 |
 | `MOSA_WEB_CAPTURE_PAIR` | 设为 `auto` 时，独立 `npm start` Runtime 也允许扩展静默配对（默认关闭，桌面版始终自动配对） |
 | `MOSA_C2PATOOL_PATH` | C2PA 导出（`lib/c2pa-export.mjs`，目前尚未接入 UI/HTTP/MCP 入口）使用的 `c2patool` 路径覆盖（见 [docs/operations.md](docs/operations.md)） |
-| `MOSA_DISABLE_TELEMETRY` | 设为 `1` 时桌面壳不发匿名使用统计（见 PRIVACY.md） |
-| `MOSA_FEEDBACK_URL` | 反馈收集服务地址覆盖（默认 `https://mosa.azhuilab.com/api/feedback`） |
+| `GRAVITYPORT_DISABLE_TELEMETRY` | 设为 `1` 时桌面壳不发匿名使用统计（见 PRIVACY.md） |
+| `MOSA_FEEDBACK_URL` | 反馈收集服务地址覆盖（默认 `https://gravityport.azhuilab.com/api/feedback`） |
 | `MOSA_FEEDBACK_TIMEOUT_MS` | 反馈转发超时毫秒数（默认 15000） |
+
+用户会手动设置的六个开关（`GRAVITYPORT_LIBRARY_DIR`、`GRAVITYPORT_LIBRARY_LOCATION_FILE`、
+`GRAVITYPORT_DISABLE_BRIDGES`、`GRAVITYPORT_DISABLE_TELEMETRY`、`GRAVITYPORT_WEB_CAPTURE_TOKEN`、
+`GRAVITYPORT_WEB_CAPTURE_ORIGINS`）仍接受改名前的 `MOSA_*` 同名变量作为不公开的兼容别名，两个都设时以
+`GRAVITYPORT_*` 为准。各进程入口第一行 `import "lib/apply-env-aliases.mjs"`，把新名折到代码读取的
+`MOSA_*` 上并删掉新名（`lib/env-aliases.mjs`），之后派生的子进程只看到一个值。其余内部变量保留 `MOSA_*`。
 
 GravityPort 只读取已配置的 Codex（含 ChatGPT 桌面版状态文件）、Grok 和 Cowart 位置；不会把 Downloads、Desktop、
 Documents 或任意项目图片目录作为默认扫描根。导入路径、画布路径、外部来源和

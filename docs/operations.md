@@ -20,22 +20,22 @@ The default address is `http://127.0.0.1:43517`. This process starts the Codex b
 For a persistent local installation, use the operating system's process manager and configure a dedicated local port and library explicitly:
 
 ```bash
-MOSA_LIBRARY_DIR=/absolute/path/to/library \
+GRAVITYPORT_LIBRARY_DIR=/absolute/path/to/library \
 MOSA_PORT=PORT \
-MOSA_WEB_CAPTURE_TOKEN='replace-with-a-random-secret' \
-MOSA_WEB_CAPTURE_ORIGINS='chrome-extension://replace-with-extension-id' \
+GRAVITYPORT_WEB_CAPTURE_TOKEN='replace-with-a-random-secret' \
+GRAVITYPORT_WEB_CAPTURE_ORIGINS='chrome-extension://replace-with-extension-id' \
 npm start
 ```
 
 Choose a port that is not already used by another GravityPort or legacy service. The service always binds to `127.0.0.1`; do not expose it through a proxy or port forward.
 
-For a standalone runtime started with `npm start`, `MOSA_WEB_CAPTURE_TOKEN` and `MOSA_WEB_CAPTURE_ORIGINS` remain required when the web-capture extension is used. The origins value is a comma-separated list of exact `chrome-extension://<id>` or `moz-extension://<id>` origins. When the Token is unset, web capture must remain disabled; when the origin is absent, extension requests must be rejected. Never put the Token in a tracked file, command transcript, issue, or log.
+For a standalone runtime started with `npm start`, `GRAVITYPORT_WEB_CAPTURE_TOKEN` and `GRAVITYPORT_WEB_CAPTURE_ORIGINS` remain required when the web-capture extension is used. The origins value is a comma-separated list of exact `chrome-extension://<id>` or `moz-extension://<id>` origins. When the Token is unset, web capture must remain disabled; when the origin is absent, extension requests must be rejected. Never put the Token in a tracked file, command transcript, issue, or log.
 
 The packaged/Desktop runtime supplies these values automatically: it persists one random Web Capture Token inside Electron `userData`, authorizes only GravityPort's two exact Chrome extension origins (the unpacked development ID and the Chrome Web Store ID), prefers port `43517`, and falls back through the reserved local discovery ports when another listener owns the preferred port. The extension verifies `/api/health`, pairs only from one of those approved `chrome-extension://` origins, and caches the resolved local address and Token in `chrome.storage.local`.
 
 A standalone runtime refuses extension pairing unless `MOSA_WEB_CAPTURE_PAIR=auto` is set; otherwise enter the address and Token on the extension's options page. The extension auto-discovers only ports `43517`–`43521`. Scripted POST/PATCH/DELETE calls to `/api/*` need the `x-mosa-client-token` header; set a stable `MOSA_CLIENT_TOKEN` for them, since the token is otherwise random per start. The browser UI receives its own HttpOnly session cookie and needs no token.
 
-Per-source location overrides (`CODEX_HOME`, `CODEX_GENERATED_IMAGES_DIR`, `CODEX_SESSIONS_DIR`, `GROK_SESSIONS_DIR`, `COWART_MOSA_CANVAS_DIR`, `MOSA_COWART_REGISTRY_PATH`) and `MOSA_DISABLE_BRIDGES` (`codex`, `grok`, `cowart`, `cowartDiscovery`) are listed in [ARCHITECTURE.md](../ARCHITECTURE.md#8-配置与隐私边界).
+Per-source location overrides (`CODEX_HOME`, `CODEX_GENERATED_IMAGES_DIR`, `CODEX_SESSIONS_DIR`, `GROK_SESSIONS_DIR`, `COWART_MOSA_CANVAS_DIR`, `MOSA_COWART_REGISTRY_PATH`) and `GRAVITYPORT_DISABLE_BRIDGES` (`codex`, `grok`, `cowart`, `cowartDiscovery`) are listed in [ARCHITECTURE.md](../ARCHITECTURE.md#8-配置与隐私边界).
 
 ### Desktop shell
 
@@ -55,7 +55,7 @@ The desktop packaging commands for both macOS and Windows require Node.js 22.x. 
 
 For reproducible native packaging, build macOS on macOS and Windows on Windows (the Windows CI job is the canonical clean builder). Sharp installs its native runtime through OS-specific optional packages, so a clean macOS `npm ci` does not install `@img/sharp-win32-x64`. macOS-to-Windows cross-packaging is therefore a developer-only path unless that target package is provisioned explicitly; the Forge prune hook fails closed with an actionable error instead of producing a package with a missing native runtime.
 
-The desktop shell defaults to `~/GravityPort Library` on `127.0.0.1:43517`, the same local service used by browser capture; a machine that already has a `~/MOSA Library` keeps using it, and only a machine without any library starts fresh with `~/GravityPort Library` (the rule lives in `lib/library-location.mjs`). A user can move an owned desktop library from **Settings → Storage → Change** (next to Storage location); the selected empty directory is persisted in the desktop user-data area and becomes the library root after GravityPort copies the existing library and restarts. Override the port with `MOSA_DESKTOP_PORT` only when a separate runtime is intentional, and the library with `MOSA_LIBRARY_DIR`. An explicit `MOSA_LIBRARY_DIR` always takes precedence over the saved desktop location and disables in-app relocation.
+The desktop shell defaults to `~/GravityPort Library` on `127.0.0.1:43517`, the same local service used by browser capture; a machine that already has a `~/MOSA Library` keeps using it, and only a machine without any library starts fresh with `~/GravityPort Library` (the rule lives in `lib/library-location.mjs`). A user can move an owned desktop library from **Settings → Storage → Change** (next to Storage location); the selected empty directory is persisted in the desktop user-data area and becomes the library root after GravityPort copies the existing library and restarts. Override the port with `MOSA_DESKTOP_PORT` only when a separate runtime is intentional, and the library with `GRAVITYPORT_LIBRARY_DIR`. An explicit `GRAVITYPORT_LIBRARY_DIR` always takes precedence over the saved desktop location and disables in-app relocation.
 
 At startup, the desktop shell verifies the service identity and library path. Ordinarily, an already-running matching external service can be attached without taking ownership, while an empty port starts an owned runtime. Packaged macOS startup has one deliberate exception for the Web Capture KeepAlive handoff: as soon as the Desktop process wins Electron's single-instance lock it writes a `.mosa-desktop-starting.json` marker valid for 90 seconds (covering Desktop's bounded 30-second wait for the supervisor to yield plus its own runtime startup) into the selected library. The marker is bound to the Desktop PID plus process-start identity and is ignored/removed when expired, dead, or PID-recycled. The macOS Web Capture supervisor checks that marker before spawning and while its child runtime is active; an active child receives one graceful `SIGTERM` and the supervisor enters its existing takeover grace. macOS self-update reuses the same marker protocol for compatibility with an already-loaded supervisor: after spawning the detached update helper, the old Desktop binds a 90-second handoff marker to the helper PID/start identity before releasing its runtime. The helper keeps that marker across old-app exit, extraction, replacement, relaunch, and the unchanged 45-second readiness window; the relaunched app therefore prefers an owned runtime without trying to create a competing marker. On success the helper clears the marker only after readiness is reported; on rollback it clears the marker before restoring the previous app. Packaged Desktop also has a narrow verified-owner retirement fallback so an older matching primary runtime can be retired only after re-verifying the live service, library lock owner, PID/start identity, and requested build. It never escalates to `SIGKILL`. If a marker owner dies or the marker expires, the supervisor resumes normal background fallback automatically. A foreign listener or a GravityPort service using another library remains a conflict and is never terminated.
 
@@ -157,7 +157,7 @@ Visual probes use generated pixel fixtures whose decisive composition facts are 
 Migration re-imports each record from the legacy library file rather than from the Codex path, so a library that was hard-linked before migrating holds a second copy of every Codex asset. Reclaim that space once the migration has been verified:
 
 ```bash
-MOSA_LIBRARY_DIR=/absolute/path/to/library node scripts/migrate-codex-hardlinks.mjs
+GRAVITYPORT_LIBRARY_DIR=/absolute/path/to/library node scripts/migrate-codex-hardlinks.mjs
 ```
 
 Set `MOSA_PROJECT_ID` to select a project other than `default`; the pass covers archived assets too. It only swaps a library file for a hard link when the Codex original still exists, sits on the same filesystem, and hashes identically, so it never rewrites image bytes. Every other asset is reported under `skipped` with its reason. New imports are already hard-linked on ingest and need no maintenance.

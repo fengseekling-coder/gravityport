@@ -130,7 +130,7 @@ test("returns 404 for a missing library image without stopping the server", asyn
   });
   assert.equal(disabledWebCapture.status, 503);
   assert.deepEqual(await disabledWebCapture.json(), {
-    error: "Web capture is disabled until MOSA_WEB_CAPTURE_TOKEN is configured.",
+    error: "Web capture is disabled until GRAVITYPORT_WEB_CAPTURE_TOKEN is configured.",
     code: "WEB_CAPTURE_DISABLED",
   });
 

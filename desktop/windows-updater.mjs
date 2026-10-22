@@ -15,7 +15,7 @@ import {
 
 export { WINDOWS_UPDATE_EXE_NAMES };
 
-export const MOSA_WINDOWS_DOWNLOAD_BASE_URL = "https://mosa.azhuilab.com/downloads/";
+export const MOSA_WINDOWS_DOWNLOAD_BASE_URL = "https://gravityport.azhuilab.com/downloads/";
 const MAX_WINDOWS_UPDATE_BYTES = 1_500_000_000;
 const DEFAULT_WINDOWS_UPDATE_IDLE_TIMEOUT_MS = 30_000;
 const DEFAULT_WINDOWS_HELPER_START_TIMEOUT_MS = 5_000;

@@ -6,6 +6,20 @@
   },
   "releases": [
     {
+      "version": "0.3.3",
+      "date": "2026-10-22",
+      "zh": [
+        "GravityPort 自带 MCP 服务：在「设置 → 连接」的「AI 助手（MCP）」卡片复制配置，粘进 Claude Desktop、Claude Code 或 Codex，AI 助手就能搜索、查看素材库，也能把新图加进来，不用另装 Node.js。挪过素材库后，重启 AI 助手就会跟上。",
+        "检查更新、下载更新包、发送反馈都改走 gravityport.azhuilab.com。",
+        "关闭匿名统计等高级开关改用 GRAVITYPORT_ 开头的环境变量名，例如 GRAVITYPORT_DISABLE_TELEMETRY=1；以前设过的照样生效。"
+      ],
+      "en": [
+        "GravityPort now ships its own MCP server: paste a config from Settings → Connections into Claude Desktop, Claude Code, or Codex, and the assistant can search, read, and add to your library.",
+        "Update checks, update downloads, and feedback now go to gravityport.azhuilab.com.",
+        "Advanced switches such as turning off anonymous usage now use GRAVITYPORT_ environment variable names, for example GRAVITYPORT_DISABLE_TELEMETRY=1; values you set before keep working."
+      ]
+    },
+    {
       "version": "0.3.2",
       "date": "2026-10-21",
       "zh": [

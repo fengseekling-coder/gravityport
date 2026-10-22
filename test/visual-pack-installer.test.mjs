@@ -128,7 +128,7 @@ test("Visual Pack release metadata is platform-bound and uses the fixed first-pa
   assert.equal(parsed.total_size, pack.release.total_size);
   assert.equal(
     visualPackDownloadUrl(parsed, "runtime/node_modules/onnxruntime-node/package.json"),
-    `https://mosa.azhuilab.com/downloads/visual-packs/siglip2-test/r1/${target}/runtime/node_modules/onnxruntime-node/package.json`,
+    `https://gravityport.azhuilab.com/downloads/visual-packs/siglip2-test/r1/${target}/runtime/node_modules/onnxruntime-node/package.json`,
   );
   assert.throws(() => visualPackDownloadUrl(parsed, "../escape"), /path is invalid/);
 });
