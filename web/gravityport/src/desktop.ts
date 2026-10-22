@@ -3,6 +3,19 @@
  * in a plain browser every accessor reports unavailable so the UI can fall back
  * to its web behavior instead of guessing.
  */
+export type McpClientConfig = {
+  available?: boolean
+  platform?: string
+  installWarning?: "not-in-applications" | null
+  serverName?: string
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  claudeDesktop?: string
+  claudeCode?: string
+  codex?: string
+}
+
 type ElectronAPI = {
   pasteImage?: () => Promise<unknown>
   writeClipboardText?: (text: string) => Promise<unknown>
@@ -27,6 +40,7 @@ type ElectronAPI = {
   getRenameNoticeState?: () => Promise<{ shouldShow?: boolean }>
   acknowledgeRenameNotice?: () => Promise<unknown>
   changeLibraryLocation?: () => Promise<{ ok?: boolean; libraryDir?: string; error?: string }>
+  getMcpClientConfig?: () => Promise<McpClientConfig>
   setWindowFullScreen?: (flag: boolean) => Promise<unknown>
   onWindowFullScreenChange?: (callback: (isFullScreen: boolean) => void) => unknown
   onMenuSearch?: (callback: () => void) => unknown

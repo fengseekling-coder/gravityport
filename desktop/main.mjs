@@ -53,6 +53,7 @@ import {
 } from "./visual-pack-installer.mjs";
 import { createVisualInferenceClient } from "../lib/visual-inference-client.mjs";
 import { createMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
+import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 
 const preloadPath = fileURLToPath(new URL("./preload.cjs", import.meta.url));
 const startupShellPath = fileURLToPath(new URL("./startup.html", import.meta.url));
@@ -729,6 +730,34 @@ function registerIPC() {
     currentLocale = locale;
     buildMenu();
     return true;
+  });
+
+  // Settings → Connections: a ready-to-paste config that runs the bundled MCP
+  // server with this executable in Node mode. It names the library-location
+  // file rather than the library, so moving the library keeps it valid.
+  ipcMain.handle("mcp-client-config", async (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+      return { available: false };
+    }
+    let installWarning = null;
+    if (process.platform === "darwin" && app.isPackaged) {
+      const location = evaluateMacosInstallLocation(process.execPath);
+      if (location.reason === "app-translocation" || !String(location.installAppPath || "").startsWith("/Applications/")) {
+        installWarning = "not-in-applications";
+      }
+    }
+    return {
+      available: true,
+      platform: process.platform,
+      installWarning,
+      ...buildMcpClientConfig({
+        platform: process.platform,
+        execPath: process.execPath,
+        serverPath: join(appRoot, "mcp", "server.mjs"),
+        libraryLocationFile: LIBRARY_LOCATION_PATH,
+        managedLibraryDir: process.env.MOSA_LIBRARY_DIR || "",
+      }),
+    };
   });
 
   ipcMain.handle("user-profile", async (event) => {

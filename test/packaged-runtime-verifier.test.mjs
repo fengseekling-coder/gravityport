@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import {
+  missingMcpServerModules,
   packagedAsarPath,
   verifyPackagedRuntime,
 } from "../scripts/verify-packaged-runtime.mjs";
@@ -33,7 +34,7 @@ async function writePackagedLicenses(asarPath) {
   return licensesDir;
 }
 
-async function createFixture(t, { platform, arch, packedNatives = false }) {
+async function createFixture(t, { platform, arch, packedNatives = false, omitMcpModule = "" }) {
   const projectRoot = await mkdtemp(join(tmpdir(), "mosa-package-verifier-"));
   deferTestPathRemoval(projectRoot, { recursive: true, force: true });
   const runtimeRoot = join(projectRoot, "runtime");
@@ -42,6 +43,16 @@ async function createFixture(t, { platform, arch, packedNatives = false }) {
   await writeFixtureFile(projectRoot, "package.json", `${JSON.stringify(manifest, null, 2)}\n`);
   await writeFixtureFile(runtimeRoot, "web/gravityport/dist/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
   await writeFixtureFile(runtimeRoot, "package.json", `${JSON.stringify(manifest, null, 2)}\n`);
+  const mcpModules = {
+    "mcp/server.mjs": 'import { search } from "../lib/search.mjs";\nimport "../lib/lock.js";\n',
+    "lib/search.mjs": 'export { range } from "./time-range.mjs";\nexport const search = () => import("./lazy.mjs");\n',
+    "lib/time-range.mjs": "export const range = 1;\n",
+    "lib/lazy.mjs": "export default 1;\n",
+    "lib/lock.js": "export {};\n",
+  };
+  for (const [path, contents] of Object.entries(mcpModules)) {
+    if (path !== omitMcpModule) await writeFixtureFile(runtimeRoot, path, contents);
+  }
 
   if (platform === "darwin") {
     await writeFixtureFile(runtimeRoot, "node_modules/better-sqlite3/prebuilds/darwin-arm64.node", "sqlite-native");
@@ -184,4 +195,35 @@ test("desktop packaging scripts cannot bypass structural verification and packag
   for (const scriptName of ["desktop:release:windows:preview", "desktop:release:windows:production"]) {
     assert.match(String(manifest.scripts?.[scriptName] || ""), /desktop:update-artifact:windows/);
   }
+});
+
+test("packaged runtime verifier rejects a bundled MCP server with a missing module", async (t) => {
+  for (const omitted of ["mcp/server.mjs", "lib/time-range.mjs", "lib/lazy.mjs", "lib/lock.js"]) {
+    const { projectRoot } = await createFixture(t, { platform: "darwin", arch: "arm64", omitMcpModule: omitted });
+    await assert.rejects(
+      verifyPackagedRuntime({ projectRoot, platform: "darwin", arch: "arm64" }),
+      new RegExp(`Bundled MCP server is incomplete; missing from app.asar: ${omitted.replace(/\./g, "\\.")}`),
+    );
+  }
+});
+
+test("bundled MCP import closure follows the real server's relative imports", async () => {
+  const root = new URL("..", import.meta.url);
+  const read = (path) => readFile(new URL(path, root), "utf8");
+  const sources = new Map();
+  const pending = ["mcp/server.mjs"];
+  while (pending.length) {
+    const path = pending.pop();
+    if (sources.has(path)) continue;
+    let text;
+    try { text = await read(path); } catch { continue; }
+    sources.set(path, text);
+    for (const [, specifier] of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)["'](\.{1,2}\/[^"']+)["']/gu)) {
+      pending.push(new URL(specifier, new URL(path, root)).pathname.slice(new URL(root).pathname.length));
+    }
+  }
+  assert.ok(sources.has("lib/asset-store.mjs"));
+  assert.deepEqual(missingMcpServerModules([...sources.keys()], (path) => sources.get(path)), []);
+  const withoutStore = [...sources.keys()].filter((path) => path !== "lib/asset-store.mjs");
+  assert.deepEqual(missingMcpServerModules(withoutStore, (path) => sources.get(path)), ["lib/asset-store.mjs"]);
 });

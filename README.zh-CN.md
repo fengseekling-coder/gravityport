@@ -60,7 +60,7 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 
 ### 让 AI 代理检索你的素材库
 
-内置的 MCP 服务器（`npm run mcp`）让 Codex 等 MCP 客户端可以在同一个本地素材库里列出、搜索和记录素材、Prompt、版本与生成历史。`asset_search` 支持文本和时间范围。工具清单见 [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口)。
+内置的 MCP 服务器让 Claude、Codex 等 MCP 客户端可以在同一个本地素材库里列出、搜索和记录素材、Prompt、版本与生成历史。`asset_search` 支持文本和时间范围。桌面版自带这个服务：在「设置 → 连接」里复制 Claude Desktop、Claude Code 或 Codex 的现成配置即可接入，不用装 Node.js，也不用下载源码；从源码运行用 `npm run mcp`。配置方法和工具清单见 [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口)。
 
 ### 找回误删的作品，备份整个库
 

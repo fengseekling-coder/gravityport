@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openPinterestAuthorize: (url) => ipcRenderer.invoke("open-pinterest-authorize", url),
   openExternalLink: (url) => ipcRenderer.invoke("open-external-link", url),
   changeLibraryLocation: () => ipcRenderer.invoke("change-library-location"),
+  getMcpClientConfig: () => ipcRenderer.invoke("mcp-client-config"),
   onMenuSearch: (callback) => ipcRenderer.on("menu-search", (_event, ...args) => callback(...args)),
   // 任务 96（A6）：大图页「全屏」与窗口系统全屏双向同步——渲染层写窗口全屏态、
   // 订阅主进程广播的 enter/leave-full-screen 变化。

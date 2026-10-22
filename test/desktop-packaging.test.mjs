@@ -290,7 +290,7 @@ test("desktop package excludes every non-runtime project surface", () => {
     "/lib/asset-sort.d.ts",
     "/lib/asset-sort.js.map",
     "/lib/asset-sort.ts",
-    "/mcp/server.mjs",
+    "/mcp/notes.md",
     "/node_modules/.package-lock.json",
     "/node_modules/@electron/asar/lib/asar.js",
     "/node_modules/@img/sharp-darwin-x64/package.json",
@@ -326,6 +326,8 @@ test("desktop package keeps every required runtime surface", () => {
     "/lib/asset-sort.js",
     "/lib/mosa-runtime.mjs",
     "/lib/runtime-isolation-guard.mjs",
+    "/mcp",
+    "/mcp/server.mjs",
     "/node_modules/better-sqlite3/lib/index.js",
     "/node_modules/better-sqlite3/prebuilds/darwin-arm64.node",
     "/node_modules/detect-libc/lib/detect-libc.js",
@@ -600,7 +602,8 @@ test("retired show-in-folder IPC stays removed without expanding renderer author
   // 任务 135：第 21 条 open-pinterest-authorize（Pinterest 授权页，只放行 https://www.pinterest.com/oauth/）。
   // 任务 147：第 22 条 open-external-link（Pinterest Pin 外链，仅 http/https）。
   // 任务 198：第 24 条 write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 24, "no invoke channel beyond the currently approved narrow requests (Visual Pack lifecycle remains named and URL-free)");
+  // 任务 208：第 25 条 mcp-client-config（只读：本机 App 路径拼出的 MCP 配置文本，不收任何参数）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "no invoke channel beyond the currently approved narrow requests (Visual Pack lifecycle remains named and URL-free)");
   assert.doesNotMatch(preload, /shell\s*[:.]/, "shell is never exposed to the renderer");
   assert.doesNotMatch(preload, /exec\(|spawn\(|execFile\(/, "no arbitrary command execution");
 

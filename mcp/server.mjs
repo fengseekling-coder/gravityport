@@ -1,24 +1,61 @@
 import readline from "node:readline";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
 import { buildAssetProvenanceBundle } from "../lib/provenance-bundle.mjs";
-import { resolveLibraryLocation } from "../lib/library-location.mjs";
+import {
+  MOSA_LIBRARY_LOCATION_FILE_UNREADABLE,
+  MOSA_LIBRARY_NOT_FOUND,
+  resolveLibraryLocation,
+} from "../lib/library-location.mjs";
 import { acquireMosaRuntimeLock } from "../lib/runtime-lock.js";
 import { MCP_SERVER_VERSION } from "../lib/version-identities.mjs";
 
 const managerDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const projectRoot = resolve(process.env.MOSA_PROJECT_DIR || process.cwd());
+// Inside the desktop app (ELECTRON_RUN_AS_NODE) the client picks the working
+// directory, often "/", so the app bundle itself stands in for the project root.
+const projectRoot = resolve(process.env.MOSA_PROJECT_DIR || (process.versions.electron ? managerDir : process.cwd()));
+// MOSA_LIBRARY_LOCATION_FILE points at the desktop's library-location.json, so a
+// config copied from Settings keeps following the library after it is moved.
+// No log sink here: the MCP stdio protocol owns stdout.
+const locationFile = process.env.MOSA_LIBRARY_LOCATION_FILE ? resolve(process.env.MOSA_LIBRARY_LOCATION_FILE) : "";
+function resolveCurrentLibraryDir() {
+  return resolveLibraryLocation({
+    homeDir: homedir(),
+    envLibraryDir: process.env.MOSA_LIBRARY_DIR,
+    locationFile,
+  }).libraryDir;
+}
+let libraryDir;
+try {
+  libraryDir = resolveCurrentLibraryDir();
+} catch (error) {
+  if (error?.code === MOSA_LIBRARY_NOT_FOUND) {
+    process.stderr.write(`GravityPort library not found at ${error.libraryDir}. Open GravityPort once, or reconnect the drive it lives on.\n`);
+    process.exit(1);
+  }
+  if (error?.code === MOSA_LIBRARY_LOCATION_FILE_UNREADABLE) {
+    process.stderr.write(`GravityPort could not read its library location file: ${error.locationFile}\n`);
+    process.exit(1);
+  }
+  throw error;
+}
 // The default library location still participates in SQLite detection, but the JSON
-// store only reroots its assets into it when MOSA_LIBRARY_DIR was explicitly set.
-// No location file and no log sink here: the MCP stdio protocol owns stdout, and
-// MCP keeps ignoring the desktop's library-location.json.
-const explicitLibraryDir = process.env.MOSA_LIBRARY_DIR ? resolve(process.env.MOSA_LIBRARY_DIR) : null;
-const libraryDir = resolveLibraryLocation({ homeDir: homedir(), envLibraryDir: process.env.MOSA_LIBRARY_DIR }).libraryDir;
-const store = createAssetStore({ projectRoot, managerDir, libraryDir, explicitLibraryDir });
+// store only reroots its assets into it when a library was named explicitly. Launched
+// from the desktop app (or following its location file), MCP uses the same library
+// layout as the desktop runtime.
+const desktopMode = Boolean(process.versions.electron || locationFile);
+const explicitLibraryDir = desktopMode || process.env.MOSA_LIBRARY_DIR ? libraryDir : null;
+const store = createAssetStore({
+  projectRoot,
+  managerDir,
+  libraryDir,
+  explicitLibraryDir,
+  ...(desktopMode ? { assetsRoot: join(libraryDir, "assets"), generatedImagesDir: join(libraryDir, "imports") } : {}),
+});
 // SQLite uses WAL plus insert-only managed filenames for safe App+MCP coexistence.
 //
 // SQLite WAL mode lets one writer and many readers operate concurrently against
@@ -611,6 +648,15 @@ function validateSchema(schema, value, path) {
   return "";
 }
 
+function libraryMovedAway() {
+  if (!locationFile) return false;
+  try {
+    return resolveCurrentLibraryDir() !== libraryDir;
+  } catch {
+    return true;
+  }
+}
+
 async function handleRequest(message) {
   const { id, method, params } = message;
   // JSON-RPC notifications (no `id`, e.g. notifications/initialized) must never
@@ -634,6 +680,18 @@ async function handleRequest(message) {
     return;
   }
   if (method === "tools/call") {
+    // Moving the library in the desktop copies it and deletes the original.
+    // This process still holds the old location, so refuse instead of
+    // reading or writing a library that is gone; a restart follows the move.
+    if (libraryMovedAway()) {
+      const message = "The GravityPort library has moved. Restart this AI assistant to reconnect.";
+      sendResult(id, {
+        content: [{ type: "text", text: message }],
+        isError: true,
+        structuredContent: { error: { code: "LIBRARY_MOVED", message } },
+      });
+      return;
+    }
     try {
       await handleToolCall(id, params);
     } catch (error) {

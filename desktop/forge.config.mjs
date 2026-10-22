@@ -243,12 +243,15 @@ function escapeRegex(value) {
 export function packageIgnorePatternsForTarget(target = resolveDesktopPackagingTarget()) {
   const allowedImagePackages = ["colour", ...target.sharpPackages].map(escapeRegex).join("|");
   return [
-  // The desktop bundle has one runtime surface. Everything else at the
+  // The desktop bundle has one runtime surface plus the MCP server. Everything else at the
   // repository root is development, documentation, or another distribution.
   // The shared UI ships from the built web/gravityport/dist/; /web itself must
   // stay allowed (the packager matches directory entries too) while everything
   // under /web outside that build output is ignored.
-  /^\/(?!web(?:\/|$)|desktop(?:\/|$)|lib(?:\/|$)|node_modules(?:\/|$)|LICENSE$|package\.json$).+/,
+  /^\/(?!web(?:\/|$)|desktop(?:\/|$)|lib(?:\/|$)|mcp(?:\/|$)|node_modules(?:\/|$)|LICENSE$|package\.json$).+/,
+  // The bundled MCP server: Settings → Connections hands AI clients a config
+  // that runs it with the app's own executable in Node mode.
+  /^\/mcp\/(?!server\.mjs$).+/,
   /^\/web\/(?!gravityport(?:\/|$)).+/,
   /^\/web\/gravityport\/(?!dist(?:\/|$)).+/,
   /^\/desktop\/assets(?:\/|$)/,
