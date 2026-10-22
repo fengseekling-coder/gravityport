@@ -94,7 +94,7 @@
     "@electron-forge/maker-zip": "7.11.2",
     "@electron-forge/plugin-auto-unpack-natives": "7.11.2",
     "c8": "^12.0.0",
-    "electron": "43.2.0",
+    "electron": "43.8.3",
     "eslint": "^10.7.0",
     "smol-toml": "1.8.0",
     "typescript": "5.4.5"

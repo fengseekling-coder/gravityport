@@ -175,11 +175,11 @@ test("restore without --from is rejected", () => {
   assert.match(result.stderr, /restore requires --from/);
 });
 
-test("thumbnails on a library without a completed migration points at mosa migrate", async () => {
+test("thumbnails on a library without a completed migration points at gravityport migrate", async () => {
   const unmigratedLibrary = join(state.root, "unmigrated-library");
   const result = runMosaCli(["thumbnails", "rebuild", "--library", unmigratedLibrary], { env: state.env });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Run `mosa migrate` successfully before rebuilding derivatives/);
+  assert.match(result.stderr, /Run `gravityport migrate` successfully before rebuilding derivatives/);
 });
 
 test("thumbnails repair restores a deleted derivative file", async () => {

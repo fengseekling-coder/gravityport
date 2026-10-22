@@ -265,7 +265,7 @@ async function assertMigrationCompleted(libraryDir: string): Promise<void> {
   try {
     const state = database.prepare("SELECT value FROM library_meta WHERE key = 'migration_state'").get()?.value;
     if (state !== "completed") {
-      throw new Error(`Source library migration is not complete (migration_state: ${String(state)}). Run \`mosa migrate\` on this library before backing it up.`);
+      throw new Error(`Source library migration is not complete (migration_state: ${String(state)}). Run \`gravityport migrate\` on this library before backing it up.`);
     }
   } finally {
     database.close();

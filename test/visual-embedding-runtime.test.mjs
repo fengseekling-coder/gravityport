@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createVisualEmbeddingRuntime } from "../lib/visual-embedding-runtime.mjs";
-import { createVisualRelationshipIndex } from "../lib/visual-relationship-index.mjs";
+import { createVisualRelationshipIndex, visualRelationshipIndexPath } from "../lib/visual-relationship-index.mjs";
 
 function fakePack(overrides = {}) {
   return {
@@ -123,6 +123,10 @@ test("runtime indexes candidate assets through the client and serves text search
         return { ...client, encodeText };
       },
     });
+    assert.equal(
+      runtime.index.databasePath,
+      visualRelationshipIndexPath({ userDataDir, libraryDir: join(userDataDir, "library") }),
+    );
     assert.equal(runtime.state, "ready");
     await runtime.worker.start();
     await runtime.worker.stop();

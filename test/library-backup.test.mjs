@@ -148,7 +148,7 @@ test("backup refuses an unmigrated source library and leaves no artifacts", asyn
 
   await assert.rejects(
     createLibraryBackup({ projectRoot, managerDir, libraryDir, destinationDir: backupDir }),
-    /mosa migrate/,
+    /gravityport migrate/,
   );
   const siblings = await readdir(root);
   assert.equal(siblings.includes("backup"), false, "no destination directory is created");

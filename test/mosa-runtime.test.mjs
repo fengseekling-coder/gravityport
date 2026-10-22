@@ -309,6 +309,27 @@ test("runtime listens before delayed optional integrations start", async (t) => 
   assert.equal(bridges.cowart.enabled, false);
 });
 
+test("a host bridge gate holds optional integrations until the desktop releases it", async (t) => {
+  const root = await makeTemporaryRoot(t, "mosa-runtime-bridge-gate-");
+  let releaseGate;
+  const bridgeStartupGate = new Promise((resolveGate) => { releaseGate = resolveGate; });
+  const runtime = await startMosaRuntime(runtimeOptions(root, {
+    bridgeStartupDelayMs: 0,
+    maintenanceStartDelayMs: 5000,
+    bridgeStartupGate,
+  }));
+  t.after(() => runtime.stop());
+  const bridges = async () => (await fetch(`${runtime.url}/api/bridges`)).json();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 400));
+  assert.equal((await bridges()).codex.enabled, false, "bridges wait for the host gate");
+  releaseGate();
+  const deadline = Date.now() + 5000;
+  while (!(await bridges()).codex.enabled) {
+    assert.ok(Date.now() < deadline, "bridges start once the host releases the gate");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+});
+
 test("bridge startup failures do not block the local library runtime", async (t) => {
   const root = await makeTemporaryRoot(t, "mosa-runtime-bridge-rollback-");
   const options = runtimeOptions(root, { bridgeStartupDelayMs: 0 });

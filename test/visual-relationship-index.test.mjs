@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,6 +85,49 @@ test("visual relationship index rejects malformed vectors instead of corrupting 
   try {
     assert.throws(() => index.upsertEmbedding("default", "bad", { ...MODEL, contentSha256: HASH_A, vector: [1, 0] }), /length/);
     assert.throws(() => index.upsertEmbedding("default", "bad", { ...MODEL, contentSha256: HASH_A, vector: [0, 0, 0] }), /zeroes/);
+  } finally {
+    index.close();
+  }
+});
+
+test("visual relationship index adopts an index left in the old nested directory", async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), "mosa-visual-index-legacy-"));
+  deferTestPathRemoval(userDataDir, { recursive: true, force: true });
+  const libraryDir = join(userDataDir, "library");
+  const key = visualRelationshipLibraryKey(libraryDir);
+  const legacyRoot = join(userDataDir, "visual-relationship-indexes", "visual-relationship-indexes");
+  const legacy = createVisualRelationshipIndex({
+    databasePath: join(legacyRoot, key, "visual-relationships.sqlite"),
+  });
+  legacy.upsertEmbedding("default", "asset-a", { ...MODEL, contentSha256: HASH_A, vector: [1, 0, 0] });
+  legacy.close();
+
+  const index = createVisualRelationshipIndex({ userDataDir, libraryDir });
+  try {
+    assert.equal(index.databasePath, visualRelationshipIndexPath({ userDataDir, libraryDir }));
+    assert.equal(index.indexStatus("default", MODEL).count, 1);
+    assert.equal(existsSync(legacyRoot), false);
+  } finally {
+    index.close();
+  }
+});
+
+test("visual relationship index keeps the current index when an old nested one also exists", async () => {
+  const userDataDir = await mkdtemp(join(tmpdir(), "mosa-visual-index-both-"));
+  deferTestPathRemoval(userDataDir, { recursive: true, force: true });
+  const libraryDir = join(userDataDir, "library");
+  const key = visualRelationshipLibraryKey(libraryDir);
+  const current = createVisualRelationshipIndex({ userDataDir, libraryDir });
+  current.close();
+  const legacyPath = join(userDataDir, "visual-relationship-indexes", "visual-relationship-indexes", key, "visual-relationships.sqlite");
+  const legacy = createVisualRelationshipIndex({ databasePath: legacyPath });
+  legacy.upsertEmbedding("default", "asset-a", { ...MODEL, contentSha256: HASH_A, vector: [1, 0, 0] });
+  legacy.close();
+
+  const index = createVisualRelationshipIndex({ userDataDir, libraryDir });
+  try {
+    assert.equal(index.indexStatus("default", MODEL).count, 0);
+    assert.equal(existsSync(legacyPath), true);
   } finally {
     index.close();
   }
