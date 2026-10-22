@@ -4,6 +4,10 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ## Unreleased
 
+### Windows
+
+- Windows now has an installer: one `.exe` that installs GravityPort for the current user without an administrator prompt (into `%LOCALAPPDATA%\Programs\GravityPort`), adds Start menu and desktop shortcuts and a Settings → Apps entry, and opens the app. The website offers it instead of the portable ZIP. In-app updates keep downloading the update ZIP and replace the installed app in place, and uninstalling keeps the library and settings. The installer is not code-signed yet, so SmartScreen still asks once, when it runs.
+
 ### Security
 
 - The desktop app now runs on Electron 43.8.3 (Chromium 150.0.7871.250, Node.js 24.22.0) instead of 43.2.0, picking up the Chromium security fixes released since July; images and videos captured from the web are decoded by this engine.

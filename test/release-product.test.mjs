@@ -64,10 +64,12 @@ test("release product names cover every packaging name for both products", () =>
   assert.equal(legacy.windowsPackageDirName, "MOSA-win32-x64");
   assert.equal(legacy.macosUpdateZipName("0.2.1-rc.4"), "MOSA-darwin-arm64-0.2.1-rc.4.zip");
   assert.equal(legacy.windowsUpdateZipName("0.2.1-rc.4"), "MOSA-win32-x64-0.2.1-rc.4.zip");
+  assert.equal(legacy.windowsInstallerName("0.2.1-rc.4"), "MOSA-win32-x64-0.2.1-rc.4.exe");
   assert.equal(legacy.macosDmgName("0.2.1-rc.4"), "MOSA-darwin-arm64-0.2.1-rc.4.dmg");
   const renamed = releaseProductNames("GravityPort");
   assert.equal(renamed.macosUpdateZipName("0.3.0"), "GravityPort-darwin-arm64-0.3.0.zip");
   assert.equal(renamed.windowsUpdateZipName("0.3.0"), "GravityPort-win32-x64-0.3.0.zip");
+  assert.equal(renamed.windowsInstallerName("0.3.0"), "GravityPort-win32-x64-0.3.0.exe");
   assert.equal(renamed.macosDmgName("0.3.0"), "GravityPort-darwin-arm64-0.3.0.dmg");
   assert.throws(() => releaseProductNames("mosa"), /Unsupported release product/);
 });

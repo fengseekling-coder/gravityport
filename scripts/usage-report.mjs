@@ -9,7 +9,8 @@
 //   addresses count, and the home page only at its full size (the rule the
 //   website's private stats panel uses);
 // - downloads: distinct IPs that downloaded an install package in a desktop
-//   browser (macOS .dmg, Windows win32 .zip). The range requests of one
+//   browser (macOS .dmg; Windows: the win32 installer .exe, or the win32 .zip
+//   the website offered before the installer). The range requests of one
 //   download, bots, link previews and the app's own update downloads do not
 //   count. Downloads on phones, which cannot install the app, are counted
 //   apart;
@@ -161,7 +162,7 @@ function downloadPlatform(path) {
   if (!path.startsWith("/downloads/") || !file || file.includes("/")) return null;
   const name = file.toLowerCase();
   if (name.endsWith(".dmg")) return "macos";
-  if (name.endsWith(".zip") && name.includes("win32")) return "windows";
+  if ((name.endsWith(".exe") || name.endsWith(".zip")) && name.includes("win32")) return "windows";
   return null;
 }
 

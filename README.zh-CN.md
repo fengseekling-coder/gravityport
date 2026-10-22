@@ -22,7 +22,7 @@ GravityPort 是一个本地优先的 AI 生成素材库：图片、视频、Prom
 从[官方下载页](https://gravityport.azhuilab.com/#download)获取 GravityPort。下载页始终列出现行安装包的体积和 SHA-256 校验值。
 
 - **GravityPort 桌面版 macOS**（Apple Silicon）：DMG 镜像。把 `GravityPort.app` 拖入「应用程序」。
-- **GravityPort 桌面版 Windows 10/11**（x64）：便携 ZIP。解压后运行 `GravityPort.exe`。
+- **GravityPort 桌面版 Windows 10/11**（x64）：安装程序。双击即可安装到当前 Windows 账户（不需要管理员），开始菜单和桌面会出现 GravityPort，装好后自动打开。卸载在「设置 → 应用」里，素材库会保留。（0.3.3 及更早版本是便携 ZIP：解压后运行 `GravityPort.exe`。）
 - **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，先启动桌面应用再加载，两边会自动配对。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
 
 已安装的桌面应用会在 **设置 → 关于** 里自行检查更新。[发布清单](https://gravityport.azhuilab.com/releases/gravityport/latest.json)是最新版本的机器可读来源。
@@ -30,6 +30,7 @@ GravityPort 是一个本地优先的 AI 生成素材库：图片、视频、Prom
 ## 第一次打开
 
 - **macOS：** 打开「系统设置 → 隐私与安全性」，在 GravityPort 旁边点**仍要打开**。只需一次。
+- **Windows：** 安装程序还没有代码签名，SmartScreen 可能提示「Windows 已保护你的电脑」。点**更多信息 → 仍要运行**。只在安装时出现一次。
 - **Windows：** 如果提示「Windows 已保护你的电脑」，点**更多信息 → 仍要运行**。
 
 ## 为什么需要 GravityPort
@@ -79,7 +80,7 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 | 目标 | 状态 |
 | --- | --- |
 | macOS arm64 | 主桌面目标。首次安装用 DMG，之后走应用内更新。 |
-| Windows 10/11 x64 | 便携 ZIP，之后走应用内更新。 |
+| Windows 10/11 x64 | 首次安装用安装程序，之后走应用内更新。暂无代码签名。 |
 
 ## 从源码运行
 

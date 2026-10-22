@@ -40,6 +40,9 @@ export function releaseProductNames(product = resolveReleaseProduct()) {
     windowsPackageDirName: `${product}-win32-x64`,
     macosUpdateZipName: (version, arch = "arm64") => `${product}-darwin-${arch}-${version}.zip`,
     windowsUpdateZipName: (version, arch = "x64") => `${product}-win32-${arch}-${version}.zip`,
+    // First installs download this one-file installer; in-app updates keep
+    // using the update ZIP above.
+    windowsInstallerName: (version, arch = "x64") => `${product}-win32-${arch}-${version}.exe`,
     macosDmgName: (version, arch = "arm64") => `${product}-darwin-${arch}-${version}.dmg`,
   });
 }

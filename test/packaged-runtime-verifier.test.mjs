@@ -191,9 +191,12 @@ test("desktop packaging scripts cannot bypass structural verification and packag
   assert.match(String(manifest.scripts?.["desktop:make"] || ""), /npm run desktop:package/);
   assert.match(String(manifest.scripts?.["desktop:make:windows"] || ""), /npm run desktop:package:windows/);
   assert.match(String(manifest.scripts?.["desktop:make:windows"] || ""), /desktop:update-artifact:windows/);
+  assert.match(String(manifest.scripts?.["desktop:make:windows"] || ""), /desktop:installer:windows/);
   assert.doesNotMatch(String(manifest.scripts?.["desktop:make:windows"] || ""), /electron-forge make/);
   for (const scriptName of ["desktop:release:windows:preview", "desktop:release:windows:production"]) {
     assert.match(String(manifest.scripts?.[scriptName] || ""), /desktop:update-artifact:windows/);
+    // The installer is built last, from the package that passed the smoke test.
+    assert.match(String(manifest.scripts?.[scriptName] || ""), /qa:packaged:smoke.*desktop:installer:windows$/);
   }
 });
 

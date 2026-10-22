@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -328,6 +328,62 @@ test("release manifest writes the Windows payload exe name and its bound artifac
         notes: { zh: "说明", en: "Notes" },
       }),
       /filename must be GravityPort-win32-x64-0\.3\.0\.zip/,
+    );
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+test("release manifest lists the Windows installer beside the update ZIP it ships with", async () => {
+  const version = "0.3.4";
+  const files = await fixtureArtifacts(version);
+  const windows = join(files.root, `GravityPort-win32-x64-${version}.zip`);
+  const installer = join(files.root, `GravityPort-win32-x64-${version}.exe`);
+  const installerBytes = `MZ installer ${version}`;
+  await writeFile(windows, `windows-gravityport-${version}`);
+  await writeFile(installer, installerBytes);
+  const release = {
+    version,
+    macArtifactPath: files.mac,
+    windowsPayloadExeName: "GravityPort.exe",
+    ...signingOptions(version),
+    publishedAt: "2026-10-22T01:00:00Z",
+    notes: { zh: "说明", en: "Notes" },
+  };
+  try {
+    const result = await prepareDesktopReleaseManifest({ ...release, windowsArtifactPath: windows, windowsInstallerPath: installer });
+    assert.deepEqual(result.platforms.windows.installer, {
+      file: `GravityPort-win32-x64-${version}.exe`,
+      size: Buffer.byteLength(installerBytes),
+      sha256: createHash("sha256").update(installerBytes).digest("hex"),
+    });
+    assert.equal(result.platforms.windows.file, `GravityPort-win32-x64-${version}.zip`);
+    assert.equal(verifyReleaseManifestSignature(result, RELEASE_TRUST), true, "the signature covers the installer entry");
+    // Installed apps keep updating from the ZIP; the installer is for the website.
+    const parsed = parseUpdateManifest(result);
+    assert.equal(parsed.windowsArtifact.file, `GravityPort-win32-x64-${version}.zip`);
+    assert.equal(parsed.windowsArtifact.installer, undefined);
+
+    const withoutInstaller = await prepareDesktopReleaseManifest({ ...release, windowsArtifactPath: windows });
+    assert.equal(Object.hasOwn(withoutInstaller.platforms.windows, "installer"), false);
+
+    await assert.rejects(
+      prepareDesktopReleaseManifest({ ...release, windowsInstallerPath: installer }),
+      /A Windows installer ships with its update ZIP/,
+    );
+    // The installer name follows the payload exe name, like the ZIP.
+    const misnamed = join(files.root, `MOSA-win32-x64-${version}.exe`);
+    await writeFile(misnamed, installerBytes);
+    await assert.rejects(
+      prepareDesktopReleaseManifest({ ...release, windowsArtifactPath: windows, windowsInstallerPath: misnamed }),
+      /filename must be GravityPort-win32-x64-0\.3\.4\.exe/,
+    );
+    const empty = join(files.root, "empty", `GravityPort-win32-x64-${version}.exe`);
+    await mkdir(join(files.root, "empty"));
+    await writeFile(empty, "");
+    await assert.rejects(
+      prepareDesktopReleaseManifest({ ...release, windowsArtifactPath: windows, windowsInstallerPath: empty }),
+      /missing or empty/,
     );
   } finally {
     await removeTestPath(files.root, { recursive: true, force: true });
