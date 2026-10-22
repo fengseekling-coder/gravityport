@@ -55,7 +55,7 @@
 - 行高：单行控件和列表行 16px，段落 20px（`--type-body-line`），页标题 28px。
 - 只有标题收紧字距：16px 标题 -0.3px（确认框标题 -0.5px），20px 页标题 -0.4px。
 - 计数、尺寸、百分比、列数用 `font-variant-numeric: tabular-nums`。
-- 等宽字只出现在反馈页的日志框：`ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`，11px / 1.5。
+- 等宽字只用在两处：反馈页的日志框（11px / 1.5）和连接页 MCP 配置的代码块（11px / 1.6），字体栈 `ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`。
 
 ## 间距和尺寸
 
@@ -120,6 +120,7 @@
 | 确认框 | `.delete-modal` | 图标块、问题标题、一句后果、「取消」+ 写明动作的主按钮 |
 | 填写框 | `.group-dialog` | 新建分组、重命名；名字最长 80 字 |
 | 设置窗口 | `.settings-modal` | 最大 736×560，左栏 176px，内容放在 `.settings-section` 块里 |
+| MCP 配置卡片 | `McpClientConfigCard.tsx`、`mcp-config.css` | 连接页里：`--ui-panel` 底加 `--ui-line` 描边、`--radius-panel`；配置代码块 `--ui-inset` 底，右上角复制按钮 |
 | 查看器 | `ImageViewer.tsx`、`.viewer-controls` | 底部缩放条，鼠标不动时淡出 |
 | 空状态 | `.empty-state` | 32px 图标 + 一句话 + 一句提示，文案在 `empty-state.ts` |
 
