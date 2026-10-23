@@ -1,4 +1,4 @@
-# GravityPort Web Capture（0.15.39）
+# GravityPort Web Capture（0.15.40）
 
 把 **ChatGPT、Gemini、Flow、Google AI Studio、即梦（Jimeng）和 Midjourney 网页**中用户可见的生成媒体归档到本机 GravityPort。ChatGPT 支持图片提示词关联；Flow、Google AI Studio、即梦与 Midjourney 同时支持已识别的视频，Gemini、Flow、Google AI Studio、即梦与 Midjourney 的页面可见 Prompt 均明确标为未验证。
 

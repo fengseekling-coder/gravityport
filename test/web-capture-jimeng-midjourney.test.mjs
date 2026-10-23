@@ -117,8 +117,8 @@ test("provider policy recognizes Jimeng and Midjourney pages and videos", () => 
   assert.equal(policy.supportsVideo("chatgpt"), false);
 });
 
-test("manifest declares the two new sites, their CDNs, and 0.15.39", () => {
-  assert.equal(manifest.version, "0.15.39");
+test("manifest declares the two new sites, their CDNs, and 0.15.40", () => {
+  assert.equal(manifest.version, "0.15.40");
   for (const host of [
     "https://jimeng.jianying.com/*",
     "https://*.byteimg.com/*",
@@ -218,6 +218,46 @@ test("jimeng extractor reads the live get_asset_list shape (created_time, common
   assert.equal(record.historyId, "8100000000000000001");
   assert.ok(record.capturedAtMs, "created_time feeds the freshness gate");
   assert.equal(jimeng.isFreshGeneration(record.capturedAtMs, nowMs), true, "a record created after the script started is captured");
+});
+
+test("jimeng original images (aigc_resize:0:0.png) take their size from the response and win", () => {
+  // get_history_by_ids on 2026-10-23 answered a fresh 9:16 generation with a
+  // single large image at aigc_resize:0:0.png and width 1440 / height 2560.
+  const nowMs = Date.parse("2026-10-23T18:24:00Z");
+  const sign = "?lk3s=fake&x-expires=1&x-signature=fake";
+  const response = {
+    ret: "0",
+    data: {
+      "ce68fe50-0000-4000-8000-000000000000": {
+        history_record_id: "8200000000000000001",
+        created_time: Math.floor(nowMs / 1000) + 5,
+        status: 50,
+        item_list: [{
+          common_attr: {
+            id: "8200000000000000011",
+            prompt: "一只橘猫趴在窗台上晒太阳",
+            create_time: Math.floor(nowMs / 1000) + 5,
+            cover_url: `https://p3-dreamina-sign.byteimg.com/tos-cn-i-fake/cat~tplv-fake-aigc_resize:640:640.jpeg${sign}`,
+          },
+          image: {
+            large_images: [{
+              image_url: `https://p3-dreamina-sign.byteimg.com/tos-cn-i-fake/cat~tplv-fake-aigc_resize:0:0.png${sign}`,
+              width: 1440,
+              height: 2560,
+            }],
+          },
+        }],
+      },
+    },
+  };
+  const { records } = jimeng.extractJimengResponse(JSON.stringify(response));
+  assert.equal(records.length, 1);
+  const [record] = records;
+  assert.match(record.image.url, /aigc_resize:0:0\.png/, "the full-size original is chosen");
+  assert.equal(record.image.width, 1440);
+  assert.equal(record.image.height, 2560);
+  assert.equal(record.historyId, "8200000000000000001");
+  assert.equal(jimeng.isFreshGeneration(record.capturedAtMs, nowMs), true);
 });
 
 test("jimeng media URL gate accepts only the ByteDance media hosts", () => {
