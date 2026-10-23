@@ -175,7 +175,7 @@ test("management mutations reject callers without the runtime capability", async
   });
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), {
-    error: "Unauthorized MOSA client.",
+    error: "Unauthorized GravityPort client.",
     code: "MOSA_CLIENT_UNAUTHORIZED",
   });
 });

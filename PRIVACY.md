@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: 2026-10-22
+Last updated: 2026-10-23
 
 GravityPort is a local-first creative asset library. It does not operate a GravityPort cloud library, advertising system, or remote user account. Packaged desktop builds send the bounded anonymous usage signal described below through a bodyless request to the same first-party release endpoint used for update metadata; usage reporting and update-manifest parsing are separate operations.
 
@@ -33,11 +33,15 @@ The selected local GravityPort library can contain:
 
 Reference images identified by Web Capture are stored as private generation-record attachments under the selected GravityPort library. They are content-hash deduplicated and may be linked into the subsequent generated asset's recipe snapshot, but they are not ordinary assets and therefore do not appear in the gallery, search, recent items, or asset totals. GravityPort does not infer the purpose or rights of a reference from its pixels.
 
-A recipe may also record rights declarations for the reference images it used: copyright state, portrait-consent state, redistribution state, an attribution string, and the purposes the reference may or may not serve. These are entered by the user, not detected. They can concern identifiable third parties, so an attribution name is personal data and the library should be treated accordingly. GravityPort never infers consent: every field starts at `unknown`, and silence is never recorded as permission.
+A recipe may record rights declarations for the reference images it used — copyright state, portrait-consent state, redistribution state, an attribution string, and permitted or forbidden purposes. These can only be attached through the MCP tools `asset_create` and `asset_update_metadata`; the app interface has no input for them. An attribution name can identify a third party, so treat it as personal data. Every field starts at `unknown`; GravityPort never infers consent.
 
 The library is stored on the user's machine. GravityPort does not upload it to a GravityPort-operated service.
 
 User-initiated exports of group metadata (the sidebar group context-menu "Export Group" JSON download) stay metadata-only: the exported file contains file names, Prompts, tags, groups, categories, ratings, business fields, source types, and timestamps, and the export strips every local file path and directory (managed originals, previews, import source paths), every `/library/...` URL that only resolves against the local GravityPort server, and web-capture page/media links such as `page_url` and `source_media_url`, so the file can be shared without disclosing your user name or directory structure. Fields are dropped by name only — any field, including a business field, whose key ends in `_path`, `_url`, or `_dir`, or is named `path` or `prompt_file`, is dropped, while all other fields are kept verbatim.
+
+## AI assistant (MCP)
+
+The GravityPort MCP server does not run on its own: an AI assistant can connect to your library only after you paste the ready-made configuration from Settings → Connect into Claude Desktop, Claude Code, or Codex. A connected assistant can search and read assets — including Prompts, source and provenance details, and local file paths — and can add images to the library. Once that content has been handed to the assistant, it is processed under that AI service's own privacy policy and may be sent to its servers. To keep an assistant from reading the library, remove the GravityPort entry from that assistant's MCP configuration.
 
 ## Anonymous Usage Metrics
 
@@ -64,6 +68,8 @@ At most once per calendar day in the `America/Los_Angeles` time zone, packaged G
 GravityPort does not attach library contents, asset counts, Prompt text, filenames, local paths, browser history, provider conversation identifiers, email addresses, names, or account data to this request. A failed usage request is not counted as a successful usage report. Manual update checks do not create extra activity reports. Upgrading from the previous 24-hour protocol permits one report under the new protocol while preserving the existing installation UUID.
 
 The website can also retain a short campaign label such as `ref=reddit_codex` on a download URL so aggregate download traffic can be attributed to the page or creator that referred it. GravityPort does not require a login for attribution.
+
+Access logs on the first-party server record each request's IP address, browser user-agent, and request URL; the update-check and usage-request URLs include the installation UUID. Log lines are deleted automatically after 14 days and are used only to troubleshoot faults and prevent abuse.
 
 ## Desktop application updates
 
@@ -158,7 +164,7 @@ The diagnostic log is a bounded in-memory ring buffer of the local service's rec
 
 The app does not send and does not store with the feedback: the installation ID, your assets, prompts, or the library location. The local log records only the outcome status of a submission, never its content.
 
-On the server, feedback is stored in a private directory on the collection service and is visible only to the developer through a logged-in admin page; it is used only to reply to you and to improve the product, not for advertising, and is never shared with third parties. The server does not store IP addresses — an IP is used only in memory, temporarily, to prevent submission abuse. To have feedback you sent deleted, write to [fengseekling@gmail.com](mailto:fengseekling@gmail.com) and mention roughly when you sent it.
+On the server, feedback is stored in a private directory on the collection service and is visible only to the developer through a logged-in admin page; it is used only to reply to you and to improve the product, not for advertising, and is never shared with third parties. The server does not store IP addresses with the feedback content — an IP is used only in memory, temporarily, to prevent submission abuse. To have feedback you sent deleted, write to [fengseekling@gmail.com](mailto:fengseekling@gmail.com) and mention roughly when you sent it.
 
 ## Network Boundary
 

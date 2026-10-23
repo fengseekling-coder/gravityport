@@ -19,7 +19,7 @@ GravityPort is a local-first library for AI-generated images, videos, Prompts, p
 
 ## Downloads
 
-Get GravityPort from the [official download page](https://gravityport.azhuilab.com/#download). It always lists the current packages with their sizes and SHA-256 values.
+Get GravityPort from the [official download page](https://gravityport.azhuilab.com/#download). It always lists the current packages with their sizes; the Windows package also shows its SHA-256 value.
 
 - **GravityPort Desktop for macOS** (Apple Silicon): a DMG. Drag `GravityPort.app` into Applications.
 - **GravityPort Desktop for Windows 10/11** (x64): an installer. Double-click it; it installs GravityPort for your Windows account without asking for an administrator, adds it to the Start menu and the desktop, and opens it. Remove it in Settings → Apps; your library stays. (0.3.3 and earlier came as a portable ZIP: extract it and run `GravityPort.exe`.)
@@ -61,7 +61,7 @@ The built-in MCP server lets Claude, Codex, and other MCP clients list, search, 
 
 Removed assets move to Trash, where they are kept for 90 days with a per-asset countdown. Right after a deletion an undo button offers to reverse it; Trash has its own menu for restoring, deleting permanently, and emptying. For whole-library safety, the `gravityport backup`, `backup-verify`, and `restore` commands create and check verified point-in-time backups.
 
-Settings → Feedback sends bug reports and ideas, optionally with a redacted diagnostic log that you can read in full before sending. A Pinterest connection for browsing your own boards is built but stays unavailable until Pinterest approves production API access.
+Settings → Feedback sends bug reports and ideas, optionally with a redacted diagnostic log that you can read in full before sending. The Pinterest entry is already shown in the app; connecting opens up once Pinterest approves production API access.
 
 ## Fits into your workflow
 

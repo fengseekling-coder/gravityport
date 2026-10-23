@@ -74,7 +74,7 @@ test("JSON storage grants an exclusive runtime lock and hands it to the next ser
   const second = startMcpServer(t, workspace);
   const secondExit = await second.waitForExit();
   assert.equal(secondExit.code, 1, `the second server exits non-zero (stderr: ${second.stderr.slice(-500)})`);
-  assert.match(second.stderr, /MOSA runtime already active/);
+  assert.match(second.stderr, /GravityPort runtime already active/);
 
   // The first server is unaffected by the failed takeover attempt.
   assert.deepEqual((await first.request("ping")).result, {});

@@ -54,6 +54,7 @@ app.whenReady().then(async () => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      spellcheck: false,
     },
   });
   // Windows clamps a new window to the screen: the windows-2022 runner's

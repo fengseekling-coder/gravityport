@@ -26,7 +26,8 @@ import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } fr
 import { isEditableTarget } from "./keyboard"
 import { galleryKeyAction, isFocusSearchKey, neighbourAssetId } from "./gallery-keys"
 import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
-import { computeConversationRounds, conversationRoundRows, roundLine } from "./conversation-rounds"
+import { computeConversationRounds, conversationRoundRows, roundCompareSelection, roundLine, type ConversationRoundRow } from "./conversation-rounds"
+import VersionCompare, { type VersionCompareEntry } from "./version-compare"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
 import { aspectRatioLabel, describeSource, promptNotice, resolveReferences } from "./inspector-info"
 import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, removeTagFromStored, fitTagsInTwoLines } from "./tag-display"
@@ -532,8 +533,8 @@ export default function App() {
   const [recipeHistory, setRecipeHistory] = useState<MosaRecipeHistory | null | undefined>(undefined)
   const [similarAssets, setSimilarAssets] = useState<MosaAsset[]>([])
   const [versionTreeOpen, setVersionTreeOpen] = useState(false)
-  const [compareBaseId, setCompareBaseId] = useState("")
-  const [compareTargetId, setCompareTargetId] = useState("")
+  // The version compare keeps its selection inside the block (task 217); the
+  // blocks remount per asset, so switching assets resets both to defaults.
   // The prompt draft is bound to one concrete asset; it never outlives the
   // asset (or project) it was opened for.
   const [promptEdit, setPromptEdit] = useState<PromptEditTarget & { draft: string } | null>(null)
@@ -4163,6 +4164,35 @@ export default function App() {
               )
               const turnLine = (turnIndex: number | null) => (turnIndex != null ? fillNamed(tr("第 {n} 轮"), { n: turnIndex }) : "")
               return <div className="version-tree" role="region" aria-label={tr("完整版本树")}>
+                {(() => {
+                  // 任务 217：对话模式也能任选两轮并排对比。有输出图的轮次
+                  // 不足两个时不出这块；默认目标 = 当前素材那一轮、基准 =
+                  // 它的上一轮（当前在第一轮时改为第一轮 vs 第二轮）。
+                  const selection = roundCompareSelection(conversationRoundRows(generationHistory, asset?.id || ""), asset?.id || "")
+                  if (!selection) return null
+                  const roundEntry = (row: ConversationRoundRow): VersionCompareEntry => {
+                    const output = row.outputAsset
+                    return {
+                      id: String(output?.id || ""),
+                      label: row.turnIndex !== null ? fillNamed(tr("第 {n} 轮"), { n: row.turnIndex }) : tr("无轮次"),
+                      imageUrl: output?.medium_url || output?.preview_url || output?.image_url || "",
+                      values: {
+                        "尺寸": output ? `${output.width} × ${output.height}` : "",
+                        "用户指令": row.event.user_prompt || "",
+                        "提示词": row.event.effective_prompt || "",
+                      },
+                    }
+                  }
+                  return <VersionCompare
+                    key={`rounds-${asset?.id || ""}`}
+                    language={language}
+                    captions
+                    fields={["尺寸", "用户指令", "提示词"]}
+                    entries={selection.options.map(roundEntry)}
+                    defaultBaseId={String(selection.base.outputAsset?.id || "")}
+                    defaultTargetId={String(selection.target.outputAsset?.id || "")}
+                  />
+                })()}
                 <h4>{tr("生成关系")}</h4>
                 {generationTreeRows(generationHistory).map(({ event, depth, parentIds, relationTypes }) => {
                   const display = generationDisplay(generationHistory, event.id, asset)
@@ -4291,25 +4321,23 @@ export default function App() {
                   detail: [v.version_change || "", timeLabel(v.created_at)].filter(Boolean).join(" · "),
                   onClick: v.id === asset?.id ? undefined : () => selectHistoryAsset(v.id),
                 }))}
-                {versions && versions.length > 1 && <div className="version-compare">
-                  <h4>{tr("版本对比")}</h4>
-                  <div className="version-compare-selectors">
-                    <select aria-label={tr("基准版本")} value={versions.some(v => v.id === compareBaseId) ? compareBaseId : versions[0].id} onChange={event => setCompareBaseId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
-                    <select aria-label={tr("目标版本")} value={versions.some(v => v.id === compareTargetId) ? compareTargetId : versions[versions.length - 1].id} onChange={event => setCompareTargetId(event.target.value)}>{versions.map(v => <option key={v.id} value={v.id}>{tr("版本")} {v.version_index}</option>)}</select>
-                  </div>
-                  {(() => {
-                    const before = versions.find(v => v.id === compareBaseId) || versions[0]
-                    const after = versions.find(v => v.id === compareTargetId) || versions[versions.length - 1]
-                    return <>
-                      <div className="version-compare-images">{[before, after].map(v => <img key={v.id} alt={`${tr("版本")} ${v.version_index}`} src={v.medium_url || v.preview_url || v.image_url} loading="lazy" />)}</div>
-                      <div className="version-compare-fields">{([
-                        ["尺寸", `${before.width} × ${before.height}`, `${after.width} × ${after.height}`],
-                        ["提示词", before.prompt, after.prompt],
-                        ["版本", before.version_change || "", after.version_change || ""],
-                      ] as const).map(([field, left, right]) => <div key={field} className={left !== right ? "changed" : ""}><strong>{tr(field)}</strong><span>{left || "—"}</span><span>{right || "—"}</span></div>)}</div>
-                    </>
-                  })()}
-                </div>}
+                {versions && versions.length > 1 && <VersionCompare
+                  key={`family-${asset?.id || ""}`}
+                  language={language}
+                  fields={["尺寸", "提示词", "版本"]}
+                  entries={versions.map(v => ({
+                    id: v.id,
+                    label: `${tr("版本")} ${v.version_index}`,
+                    imageUrl: v.medium_url || v.preview_url || v.image_url,
+                    values: {
+                      "尺寸": `${v.width} × ${v.height}`,
+                      "提示词": v.prompt,
+                      "版本": v.version_change || "",
+                    },
+                  }))}
+                  defaultBaseId={versions[0].id}
+                  defaultTargetId={versions[versions.length - 1].id}
+                />}
               </div>
             })()}
           </section>

@@ -158,7 +158,7 @@ document.getElementById("test").addEventListener("click", async () => {
       return;
     }
     if (response.status === 403) {
-      setStatus("扩展来源未获服务端批准。请检查 MOSA_WEB_CAPTURE_ORIGINS。", "error");
+      setStatus("扩展来源未获服务端批准。请检查 GRAVITYPORT_WEB_CAPTURE_ORIGINS。", "error");
       return;
     }
     throw new Error(data.error || `HTTP ${response.status}`);

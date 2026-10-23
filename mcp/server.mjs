@@ -172,7 +172,7 @@ function toolDefinitions() {
   return [
     {
       name: TOOL_ASSET_CREATE,
-      description: "Copy a generated image into the GravityPort library and save prompt recipe metadata. Codex's <CODEX_HOME>/generated_images task folders are supported and recorded as the source; CODEX_HOME defaults to the user's .codex directory.",
+      description: "Copy a generated image into the GravityPort library and save prompt recipe metadata. Codex's <CODEX_HOME>/generated_images task folders are supported and recorded as the source; CODEX_HOME defaults to the user's .codex directory. Imports are restricted to trusted roots: Codex's generated_images folder (<CODEX_HOME>/generated_images, or the directory named by CODEX_GENERATED_IMAGES_DIR) and the GravityPort library's own folders (assets/ and imports/ inside the library directory). An imagePath anywhere else, such as a project or Downloads folder, is rejected with IMAGE_PATH_NOT_READABLE; copy the file under an allowed root first.",
       inputSchema: {
         type: "object",
         properties: {
@@ -710,15 +710,29 @@ async function handleRequest(message) {
 }
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
-rl.on("line", async (line) => {
+// stdin can end while a request (e.g. a slow asset_create write) is still being
+// handled. Track those requests so the store only closes after they settle,
+// otherwise the in-flight write dies with "database connection is not open".
+const inFlightRequests = new Set();
+rl.on("line", (line) => {
   if (!line.trim()) return;
+  const request = handleLine(line);
+  inFlightRequests.add(request);
+  request.then(
+    () => inFlightRequests.delete(request),
+    () => inFlightRequests.delete(request),
+  );
+});
+async function handleLine(line) {
   try {
     await handleRequest(JSON.parse(line));
   } catch (error) {
     sendError(null, -32700, error.message);
   }
+}
+rl.on("close", () => {
+  void Promise.allSettled([...inFlightRequests]).then(() => closeDirectStore());
 });
-rl.on("close", () => { void closeDirectStore(); });
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => {
     void closeDirectStore().finally(() => process.exit(0));
