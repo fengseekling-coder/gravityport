@@ -1,0 +1,69 @@
+/* ---- Settings → 连接: browser extension status ----------------------------- */
+
+.web-capture-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-panel);
+  background: var(--ui-panel);
+  min-width: 0;
+}
+
+.web-capture-status-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.web-capture-status-title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.web-capture-status-title strong {
+  font-weight: var(--type-weight-title);
+  color: var(--ui-text);
+}
+
+.web-capture-state {
+  margin: 0;
+  color: var(--ui-secondary);
+}
+
+.web-capture-note {
+  margin: 0;
+  color: var(--ui-secondary);
+  font-size: 12px;
+}
+
+.web-capture-note a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.web-capture-row {
+  margin: 0;
+  color: var(--ui-secondary);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.web-capture-retried {
+  color: var(--ui-accent);
+}
+
+.web-capture-error {
+  margin: 0;
+  color: var(--ui-danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

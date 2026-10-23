@@ -19,6 +19,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ### Interface
 
+- Settings → 连接 now has a Browser extension (浏览器扩展) card: it shows whether the extension has talked to the app recently (已连接 / 没有连接, with install guidance and a website link when it has not), the version it last captured with — plus a website link when that version is older than the one this app ships — how many captures wait in its retry queue together with a 重试 button, and the last ingest error. A 刷新 button re-reads the status; nothing polls in the background.
 - With 显示素材名称 (Show asset names) on, a favorite's heart now sits at the right end of the card's name bar instead of hiding under it; the name stops short of the heart, and a long unbroken name wraps inside the bar instead of running past it.
 - The group and stack name dialogs (新建分组并移入, 重命名分组, 合并分组, 删除分组, 重命名堆叠) now look like the confirmation dialogs: the same panel, corners, shadow, backdrop and title size, a 32px input, and 取消 beside a primary action button.
 - Context-menu headings, separators and submenus now use the theme colors, so a submenu has the same solid surface and shadow as the menu it opens from, in light and dark mode.
