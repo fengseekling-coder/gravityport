@@ -5,6 +5,9 @@
 // it no longer belongs to.
 export const name = "history-switch-race";
 export const description = "parent+2 versions -> slow 版本 3 fetch -> switch to another project -> late response must not append or select -> back in default, 版本 3 then 版本 2 clicked with both delayed -> the newer click wins and stays";
+
+import { CHOOSE_PROJECT_SOURCE } from "./_shared.mjs";
+
 export async function run(ctx) {
   await ctx.prepare();
   const server = await ctx.startServer();
@@ -40,6 +43,7 @@ export async function run(ctx) {
 function flowSource(config) {
   return `(async () => {
     const config = ${JSON.stringify(config)};
+    ${CHOOSE_PROJECT_SOURCE}
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitFor(check, label, timeoutMs = 20000) {
       const deadline = Date.now() + timeoutMs;
@@ -49,6 +53,7 @@ function flowSource(config) {
         if (value) { stable += 1; if (stable >= 2) return value; } else stable = 0;
         await sleep(100);
       }
+      e2eTimeoutReport(label, timeoutMs);
       throw new Error('Timed out waiting for ' + label
         + ' | cards=' + document.querySelectorAll('.asset-card').length
         + ' | toast=' + (document.querySelector('.toast')?.textContent || '')
@@ -64,14 +69,7 @@ function flowSource(config) {
     const rowOf = (label) => versionRows()
       .find((row) => new RegExp('^' + label + '(?!\\d)').test(row.querySelector('span')?.textContent || '')) || null;
     const escapeRegex = (text) => text.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&');
-    const switchProject = async (name) => {
-      const trigger = await waitFor(() => document.querySelector('.sidebar-project .toolbar-select'), 'project switcher');
-      trigger.click();
-      const option = await waitFor(() => Array.from(document.querySelectorAll('.toolbar-select-menu [role="option"]'))
-        .find((node) => node.textContent.trim() === name) || null, 'project option ' + name);
-      option.click();
-      await waitFor(() => !document.querySelector('.toolbar-select-menu'), 'project menu closes');
-    };
+    const switchProject = chooseProject;
     // Delay exactly the single-asset detail fetch for one id. The versions
     // and generation-history endpoints share the prefix, so anchor the id
     // against the query string or a following path segment. Wrappers chain:

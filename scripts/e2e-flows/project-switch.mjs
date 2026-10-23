@@ -3,6 +3,8 @@
 export const name = "project-switch";
 export const description = "asset created in project alpha -> sidebar switcher appears -> switch shows alpha's gallery -> switch back shows default";
 
+import { CHOOSE_PROJECT_SOURCE } from "./_shared.mjs";
+
 export async function run(ctx) {
   await ctx.prepare();
   const server = await ctx.startServer();
@@ -26,6 +28,7 @@ export async function run(ctx) {
 
 function projectSwitchSource() {
   return `(async () => {
+    ${CHOOSE_PROJECT_SOURCE}
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitFor(check, label, timeoutMs = 15000) {
       const deadline = Date.now() + timeoutMs;
@@ -35,17 +38,10 @@ function projectSwitchSource() {
         if (value) { stable += 1; if (stable >= 2) return value; } else stable = 0;
         await sleep(100);
       }
+      e2eTimeoutReport(label, timeoutMs);
       throw new Error('Timed out waiting for ' + label + ' | cards=' + document.querySelectorAll('.asset-card').length);
     }
     const cards = () => document.querySelectorAll('.asset-card').length;
-    async function chooseProject(name) {
-      const trigger = await waitFor(() => document.querySelector('.sidebar-project .toolbar-select') || null, 'project switcher');
-      trigger.click();
-      const option = await waitFor(() => Array.from(document.querySelectorAll('.toolbar-select-menu [role="option"]'))
-        .find((node) => node.textContent.trim() === name) || null, 'project option ' + name);
-      option.click();
-      await waitFor(() => !document.querySelector('.toolbar-select-menu'), 'project menu closes');
-    }
 
     await waitFor(() => document.querySelector('.app') && cards() === 1, 'default project card');
     // The switcher appears once the project list loads (two projects); a
