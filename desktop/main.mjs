@@ -1,4 +1,8 @@
 import "../lib/apply-env-aliases.mjs";
+// Must stay the second import: applies the quiet (no Dock, no focus steal)
+// activation policy before any heavy import lets the process check in with
+// Launch Services as a regular app. See desktop/quiet-test-mode.mjs.
+import "./quiet-test-mode.mjs";
 import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, screen, session, shell, Notification } from "electron";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, readdir, rm, stat } from "node:fs/promises";
@@ -176,6 +180,15 @@ const isolationContext = {
 const launchedFromMacosUpdate = Boolean(
   resolveMacosUpdateReadyFile(process.argv, join(desktopDataDir, "updates", "macos")),
 );
+// Task 229: e2e/QA desktop runs on macOS must not appear in the Dock or steal
+// the user's keyboard focus while the suite runs for many minutes. The Dock
+// policy itself is applied by the quiet-test-mode.mjs import near the top of
+// this file; this flag only switches the window lifecycle below. Unpackaged
+// QA runs only — the packaged input smoke (real CGEvent input) and a user's
+// own copy of the app both need the normal activating behavior.
+const quietTestApp = process.platform === "darwin"
+  && Boolean(isolationContext.qaRun)
+  && !app.isPackaged;
 const desktopStartupHandoffEnabled = process.platform === "darwin"
   && app.isPackaged
   && !isolationContext.qaRun
@@ -1315,11 +1328,22 @@ function runUpdateCheck({ notify = false } = {}) {
   return updateCheckPromise;
 }
 
+// Quiet QA runs (task 229): showInactive keeps the window on screen without
+// activating the app, so CDP-driven input keeps landing while the user keeps
+// typing in whatever app they were in.
+function showDesktopWindow(windowRef) {
+  if (quietTestApp) {
+    windowRef.showInactive();
+    return;
+  }
+  windowRef.show();
+}
+
 function openMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     windowOpenRequested = false;
-    mainWindow.show();
-    mainWindow.focus();
+    showDesktopWindow(mainWindow);
+    if (!quietTestApp) mainWindow.focus();
     return Promise.resolve();
   }
   windowOpenRequested = true;
@@ -1433,7 +1457,7 @@ async function createMainWindow() {
   registerIPC();
   await windowRef.loadFile(startupShellPath);
   if (windowRef.isDestroyed()) return;
-  windowRef.show();
+  showDesktopWindow(windowRef);
 
   const activeService = await ensureDesktopService();
   if (windowRef.isDestroyed() || mainWindow !== windowRef) return;
@@ -1447,7 +1471,7 @@ async function createMainWindow() {
   if (activeService.clientToken) clientUrl.hash = `mosa-client-token=${encodeURIComponent(activeService.clientToken)}`;
   await windowRef.loadURL(clientUrl.toString());
   if (windowRef.isDestroyed()) return;
-  windowRef.show();
+  showDesktopWindow(windowRef);
 
   startBridgeNotificationPoll(activeService.port);
 }

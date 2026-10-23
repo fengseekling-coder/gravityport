@@ -36,6 +36,9 @@ export function selectGuiEnvironment(sourceEnv) {
 }
 
 export async function createMacGuiLauncher({ rootDir, executable, args, env, cwd, pidFile, logFile, healthUrl, healthFile }) {
+  // LSUIElement (agent app) keeps the QA launcher itself out of the Dock and
+  // out of the foreground when `open` launches it (task 229); the Electron
+  // child manages its own activation policy.
   const appDir = join(rootDir, "MOSA QA Launcher.app");
   const contentsDir = join(appDir, "Contents");
   const macosDir = join(contentsDir, "MacOS");
@@ -51,6 +54,7 @@ export async function createMacGuiLauncher({ rootDir, executable, args, env, cwd
   <key>CFBundleName</key><string>MOSA QA Launcher</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>1</string>
+  <key>LSUIElement</key><true/>
 </dict>
 </plist>
 `;
@@ -86,7 +90,10 @@ wait "$child_pid"
 }
 
 export function openMacGuiLauncher(appDir) {
-  return spawn("open", ["-n", "-W", appDir], {
+  // -g: launch in the background — without it Launch Services hands `open`'s
+  // activation intent to the Electron child, which steals the user's focus
+  // even though the bundle itself is LSUIElement (task 229).
+  return spawn("open", ["-g", "-n", "-W", appDir], {
     stdio: "inherit",
   });
 }
