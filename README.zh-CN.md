@@ -19,7 +19,7 @@ GravityPort 是一个本地优先的 AI 生成素材库：图片、视频、Prom
 
 ## 下载
 
-从[官方下载页](https://gravityport.azhuilab.com/#download)获取 GravityPort。下载页始终列出现行安装包的体积和 SHA-256 校验值。
+从[官方下载页](https://gravityport.azhuilab.com/#download)获取 GravityPort。下载页始终列出现行安装包的体积；Windows 包还标注 SHA-256 校验值。
 
 - **GravityPort 桌面版 macOS**（Apple Silicon）：DMG 镜像。把 `GravityPort.app` 拖入「应用程序」。
 - **GravityPort 桌面版 Windows 10/11**（x64）：安装程序。双击即可安装到当前 Windows 账户（不需要管理员），开始菜单和桌面会出现 GravityPort，装好后自动打开。卸载在「设置 → 应用」里，素材库会保留。（0.3.3 及更早版本是便携 ZIP：解压后运行 `GravityPort.exe`。）
@@ -61,7 +61,7 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 
 删除的素材进入回收站，保留 90 天并逐张显示倒计时；刚删除时会出现撤销按钮，回收站有自己的恢复、永久删除和清空菜单。整库安全方面，`gravityport backup`、`backup-verify` 和 `restore` 命令用来创建和校验经过验证的时间点备份。
 
-设置 → 反馈可以发送 bug 报告和建议，可以选择附上一份先脱敏、发送前可完整查看的诊断日志。Pinterest 连接（浏览你自己的画板）已经开发完成，在 Pinterest 批准生产 API 权限之前暂不开放。
+设置 → 反馈可以发送 bug 报告和建议，可以选择附上一份先脱敏、发送前可完整查看的诊断日志。Pinterest 入口已经在应用里显示，等 Pinterest 批准正式接口后开放。
 
 ## 融入你的工作流
 

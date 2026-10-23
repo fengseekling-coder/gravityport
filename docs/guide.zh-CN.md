@@ -18,7 +18,7 @@ GravityPort 采用 [PolyForm Noncommercial License 1.0.0](../LICENSE)，属于�
 - **网页生图扩展**可选，用于把 ChatGPT、Gemini、Flow 和 Google AI Studio 的网页成图及其可用上下文发送到本机 GravityPort；开启自动入库后，也会代为收录 ChatGPT 桌面应用里生成的图片。
 - **GravityPort** 负责自动收集、归档、检索和版本管理。
 
-GravityPort 当前是绑定 `127.0.0.1` 的本地 Web 应用，也提供共享同一套 UI/Runtime 的 Electron 桌面壳。macOS arm64 是现有桌面开发目标，Windows 10/11 x64 已进入 Preview/Testing，提供安装程序，但还没有代码签名。它不是云服务，也不调用 Grok API，不应通过公网或反向代理暴露。Desktop 可选安装一个完全本地运行的 Visual Pack（界面里叫「视觉能力包」），用于检视器「相关推荐」的相似图、视觉关系候选，以及 MCP `asset_search`（`visual: true`）和本地 `/api/visual/search` 的文字搜图（画廊的「搜索素材」仍是文本检索）；未安装时核心素材库功能保持不变。
+GravityPort 当前是绑定 `127.0.0.1` 的本地 Web 应用，也提供共享同一套 UI/Runtime 的 Electron 桌面壳。macOS arm64 是现有桌面开发目标，Windows 10/11 x64 提供安装程序，但还没有代码签名。它不是云服务，也不调用 Grok API，不应通过公网或反向代理暴露。
 
 ## 环境要求
 
@@ -142,7 +142,7 @@ GravityPort 不扫描 Downloads、桌面、Documents 或任意本地图片目录
 
 ### 网页生图
 
-Web Capture 是可选功能。使用 Desktop App 时，只需加载官方扩展并打开 GravityPort；扩展会自动发现 `127.0.0.1` 上的 GravityPort discovery 端口并配对。如果首选端口被占用，Desktop 与扩展会自动切换到备用端口。
+Web Capture 是可选功能。使用 Desktop App 时，只需加载官方扩展并打开 GravityPort；扩展会自动发现 `127.0.0.1` 上的 GravityPort discovery 端口并配对。如果首选端口被占用，Desktop 与扩展会自动切换到备用端口。快捷键 Alt+Shift+M 切换「发现新图时自动入库」开关。
 
 如果你从源码使用 `npm start` 启动独立 Web Runtime，则仍需手工配置：
 
@@ -218,7 +218,7 @@ Cowart 快照可提供画布说明与来源，但不保证具有完整生图 Pro
 
 ### 设置
 
-设置在左下角「用户中心」，分五页：「常规」（主题、显示素材名称、界面语言）、「存储」（素材库位置与存储类型，可「打开」或「修改」）、「连接」（Pinterest 连接卡片）、「反馈」、「关于」（版本信息、检查与下载更新、本版本更新内容）。
+设置在左下角「用户中心」，分五页：「常规」（主题、显示素材名称、界面语言）、「存储」（素材库位置与存储类型，可「打开」或「修改」）、「连接」（Pinterest 连接卡片和「AI 助手（MCP）」卡：选 Claude Desktop、Claude Code 或 Codex，点「复制」得到现成配置，粘进对应客户端，重启 AI 助手）、「反馈」、「关于」（版本信息、检查与下载更新、本版本更新内容）。
 
 ### 反馈
 
@@ -261,6 +261,8 @@ GravityPort 自带 MCP 服务，通过 stdio 通信，不额外占用端口。AI
 - GravityPort 不用开着；开着时两边同时读写同一个库也是安全的（SQLite WAL）。
 - macOS 上请先把 GravityPort 拖进「应用程序」文件夹再复制配置；从「下载」或磁盘映像里直接运行时路径是临时的，设置里会提醒。App 更新后路径不变，配置不用重新复制。
 - 记录的素材库找不到（例如外接硬盘没接）时，MCP 服务会在 stderr 写明原因后退出，不会新建一个空库。
+
+`asset_create` 只能导入 Codex 生成目录和素材库目录里的图，其他路径的图会返回 `IMAGE_PATH_NOT_READABLE`。
 
 ### 从源码运行
 
