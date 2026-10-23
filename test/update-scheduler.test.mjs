@@ -295,3 +295,32 @@ test("stop() cancels the pending timer and the in-flight download", async (t) =>
   assert.equal(timers.scheduledCount(), 0, "no timer survives stop()");
   assert.equal(checks, 1);
 });
+
+test("cancelDownload() aborts the in-flight background download but keeps the cadence", async (t) => {
+  const timers = manualTimers();
+  const root = await mkdtemp(join(tmpdir(), "mosa-update-sched-"));
+  t.after(() => removeTestPath(root, { recursive: true, force: true }));
+  let signalSeen = null;
+  let ready = 0;
+  const scheduler = createUpdateScheduler({
+    ...baseSchedulerOverrides(timers),
+    downloadUpdate: async (_release, { signal }) => {
+      signalSeen = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    },
+    onUpdateReady: () => { ready += 1; },
+    stagingRoot: root,
+    notifiedVersionsPath: join(root, "notified.json"),
+  });
+  t.after(() => scheduler.stop());
+  await scheduler.start();
+  const fired = timers.fire(UPDATE_FIRST_CHECK_DELAY_MS);
+  while (!signalSeen) await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+  scheduler.cancelDownload();
+  await fired;
+  assert.ok(signalSeen.aborted, "the background download is aborted");
+  assert.equal(ready, 0, "an aborted download never announces update-ready");
+  assert.equal(timers.scheduledCount(), 1, "the next scheduled check survives");
+});

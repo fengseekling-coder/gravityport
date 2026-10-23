@@ -1040,6 +1040,7 @@ function registerIPC() {
     }
     if (process.platform === "darwin") {
       if (macosUpdateInstallPromise) return macosUpdateInstallPromise;
+      updateScheduler.cancelDownload();
       macosUpdateInstallPromise = (async () => {
         const controller = new AbortController();
         macosUpdateDownloadController = controller;
@@ -1107,6 +1108,7 @@ function registerIPC() {
       return { status: "unsupported", currentVersion: app.getVersion() };
     }
     if (windowsUpdateInstallPromise) return windowsUpdateInstallPromise;
+    updateScheduler.cancelDownload();
     windowsUpdateInstallPromise = (async () => {
       const controller = new AbortController();
       windowsUpdateDownloadController = controller;

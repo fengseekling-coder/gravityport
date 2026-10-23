@@ -166,6 +166,12 @@ export function createUpdateScheduler({
       downloadAbort?.abort(new Error("Update scheduler stopped."));
       downloadAbort = null;
     },
+    // A manual install owns the staging root: abort a background download in
+    // flight so the two never write the same directory. The next scheduled
+    // cycle runs again (it skips while the install is in progress).
+    cancelDownload() {
+      downloadAbort?.abort(new Error("Update download taken over by a manual install."));
+    },
     readyPayload,
   };
 }

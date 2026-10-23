@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import { normalizeReleaseManifestTrust, verifyReleaseManifestSignature } from "../lib/release-manifest-signature.mjs";
 import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
 
@@ -108,6 +111,25 @@ export function canInstallUpdateInApp(releaseManifestTrust) {
   try {
     normalizeReleaseManifestTrust(releaseManifestTrust);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+// Task 231: a package an earlier (background) download left in the staging
+// root may be reused only when it is byte-for-byte the artifact the freshly
+// verified manifest names: same size, then the full-file SHA-256. Any read
+// error or mismatch means "not reusable" and the caller re-downloads.
+export async function stagedArtifactMatches(zipPath, expectedSize, expectedSha256) {
+  const size = Number(expectedSize);
+  const digest = String(expectedSha256 || "").trim().toLowerCase();
+  if (!zipPath || !Number.isSafeInteger(size) || size <= 0 || !/^[0-9a-f]{64}$/.test(digest)) return false;
+  try {
+    const info = await stat(zipPath);
+    if (!info.isFile() || info.size !== size) return false;
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(zipPath)) hash.update(chunk);
+    return hash.digest("hex") === digest;
   } catch {
     return false;
   }
