@@ -32,10 +32,11 @@ before(async () => {
 });
 
 describe("SMART_SOURCE_GROUPS", () => {
-  it("carries the seven sidebar smart groups intact", () => {
+  it("carries the nine sidebar smart groups intact", () => {
     assert.deepEqual(td.SMART_SOURCE_GROUPS, [
       ["web-chatgpt", "ChatGPT"], ["web-gemini", "Gemini"],
       ["web-flow", "Flow"], ["web-google-ai-studio", "Google AI Studio"],
+      ["web-jimeng", "即梦"], ["web-midjourney", "Midjourney"],
       ["codex-generated", "Codex"], ["grok-generated", "Grok"],
       ["cowart-generated", "Cowart"],
     ]);
@@ -49,6 +50,8 @@ describe("vendorLabelFor", () => {
       "web-gemini": "Gemini",
       "web-flow": "Flow",
       "web-google-ai-studio": "Google AI Studio",
+      "web-jimeng": "即梦",
+      "web-midjourney": "Midjourney",
       "codex-generated": "Codex",
       "grok-generated": "Grok",
       "cowart-generated": "Cowart",

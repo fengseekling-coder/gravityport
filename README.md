@@ -9,7 +9,7 @@ English | [简体中文](README.zh-CN.md)
 > **Local visual memory for AI creation.**
 > 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
 
-GravityPort is a local-first library for AI-generated images, videos, Prompts, provenance, and version history. It keeps creative output from Codex, Grok Build CLI, Cowart, and an optional Web Capture extension for ChatGPT, Gemini, Flow, and Google AI Studio in one library on your own computer.
+GravityPort is a local-first library for AI-generated images, videos, Prompts, provenance, and version history. It keeps creative output from Codex, Grok Build CLI, Cowart, and an optional Web Capture extension for ChatGPT, Gemini, Flow, Google AI Studio, Jimeng, and Midjourney in one library on your own computer.
 
 ![GravityPort gallery with the Inspector open](docs/images/gravityport-app.webp)
 
@@ -68,7 +68,7 @@ Settings → Feedback sends bug reports and ideas, optionally with a redacted di
 | You create in | GravityPort keeps |
 | --- | --- |
 | **Codex Desktop** | Generated images and the matching local generation context when available |
-| **ChatGPT, Gemini, Flow, or Google AI Studio in Chrome** | Optional visible web-generated images and conservative page-scoped context through the local extension |
+| **ChatGPT, Gemini, Flow, Google AI Studio, Jimeng, or Midjourney in Chrome** | Optional visible web-generated images/videos and conservative page-scoped context through the local extension |
 | **ChatGPT desktop app** | Images from desktop chats, picked up by the same extension (auto capture on) through your browser's ChatGPT session |
 | **Grok Build CLI** | Images and videos from local sessions, with matched tool context when available |
 | **Cowart** | Approved canvas snapshots archived from Cowart into the library |
@@ -113,7 +113,7 @@ Desktop packaging needs Node.js 22.x; the repository pins `22.23.1` in `.nvmrc` 
 
 - GravityPort is a local Web UI bound to loopback; it is not a cloud service and must not be exposed through a public port or reverse proxy.
 - It reads only its configured Codex, Grok, and approved Cowart locations. It does not scan Downloads, Desktop, or arbitrary image folders.
-- Web Capture is optional. Packaged Desktop provisions its local ingest Token and fixed approved extension origins automatically; a standalone `npm start` runtime keeps capture disabled until those values are configured explicitly. The extension sends captured image bytes and page provenance only to the configured local GravityPort address. ChatGPT retains message-scoped context when available; Gemini, Flow, and Google AI Studio retain only narrowly associated visible user Prompt text when it can be safely matched and mark it unverified. With auto capture on, the extension also captures images from conversations you just used in the ChatGPT desktop app by opening them briefly in a minimized browser window; see [PRIVACY.md](PRIVACY.md#chatgpt-desktop-app-conversations).
+- Web Capture is optional. Packaged Desktop provisions its local ingest Token and fixed approved extension origins automatically; a standalone `npm start` runtime keeps capture disabled until those values are configured explicitly. The extension sends captured image bytes and page provenance only to the configured local GravityPort address. ChatGPT retains message-scoped context when available; Gemini, Flow, Google AI Studio, Jimeng, and Midjourney retain only narrowly associated visible user Prompt text when it can be safely matched and mark it unverified. With auto capture on, the extension also captures images from conversations you just used in the ChatGPT desktop app by opening them briefly in a minimized browser window; see [PRIVACY.md](PRIVACY.md#chatgpt-desktop-app-conversations).
 - Eligible reference images are stored as private, content-hash-deduplicated generation-record attachments, not ordinary gallery assets.
 - The desktop app ships and downloads no AI model. GravityPort adds no remote sync or automatic upload of your library.
 - Packaged desktop builds send minimal anonymous install/activity metadata through a separate bodyless request to the same first-party release endpoint used for update metadata. This contains only a random installation ID, version, platform, architecture, and first-launch/daily-active event, and never includes assets, Prompts, or local paths. See [PRIVACY.md](PRIVACY.md), which also explains how to turn it off.

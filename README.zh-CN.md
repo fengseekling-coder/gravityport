@@ -9,7 +9,7 @@
 > **为 AI 创作留住本地视觉记忆。**
 > 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
 
-GravityPort 是一个本地优先的 AI 生成素材库：图片、视频、Prompt、来源与版本历史都保存在你自己的电脑上。它把 Codex、Grok Build CLI、Cowart 的产出，以及通过可选的网页采集扩展从 ChatGPT、Gemini、Flow、Google AI Studio 收录的内容，收进同一个库。
+GravityPort 是一个本地优先的 AI 生成素材库：图片、视频、Prompt、来源与版本历史都保存在你自己的电脑上。它把 Codex、Grok Build CLI、Cowart 的产出，以及通过可选的网页采集扩展从 ChatGPT、Gemini、Flow、Google AI Studio、即梦、Midjourney 收录的内容，收进同一个库。
 
 ![GravityPort 画廊与检视器](docs/images/gravityport-app.webp)
 
@@ -68,7 +68,7 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 | 你在哪里创作 | GravityPort 收进什么 |
 | --- | --- |
 | **Codex Desktop** | 生成的图片，以及可得时匹配到的本地生成上下文 |
-| **Chrome 里的 ChatGPT、Gemini、Flow、Google AI Studio** | 通过本地扩展，可选收录网页生成的可见图片和保守的页面级上下文 |
+| **Chrome 里的 ChatGPT、Gemini、Flow、Google AI Studio、即梦、Midjourney** | 通过本地扩展，可选收录网页生成的可见图片/视频和保守的页面级上下文 |
 | **ChatGPT 桌面应用** | 桌面聊天里生成的图片，由同一个扩展（开启自动采集时）借助浏览器里的 ChatGPT 登录收录 |
 | **Grok Build CLI** | 本地会话产出的图片和视频，可得时匹配工具上下文 |
 | **Cowart** | 经 Cowart 批准、从 Cowart 归档进素材库的画布快照 |
@@ -113,7 +113,7 @@ npm run desktop:package:windows
 
 - GravityPort 是绑定回环地址的本地 Web 界面，不是云服务，不允许通过公网端口或反向代理暴露出去。
 - 它只读取配置好的 Codex、Grok 和经批准的 Cowart 位置，不扫描「下载」「桌面」或任意的图片文件夹。
-- 网页采集是可选功能。打包的桌面版会自动配置本地收录 Token 和固定的已批准扩展来源；单独用 `npm start` 跑起来的运行时，在这些值被显式配置之前保持关闭。扩展只把捕获的图片字节和页面出处发送到配置好的本地 GravityPort 地址。ChatGPT 在可得时保留消息级上下文；Gemini、Flow、Google AI Studio 只在能安全匹配时保留少量相关联的可见用户 Prompt 文本，并标记为未验证。开启自动采集后，扩展还会把你刚在 ChatGPT 桌面应用里用过的对话，在一个最小化的浏览器窗口里短暂打开并采集其中的图片，详见 [PRIVACY.md](PRIVACY.md#chatgpt-desktop-app-conversations)。
+- 网页采集是可选功能。打包的桌面版会自动配置本地收录 Token 和固定的已批准扩展来源；单独用 `npm start` 跑起来的运行时，在这些值被显式配置之前保持关闭。扩展只把捕获的图片字节和页面出处发送到配置好的本地 GravityPort 地址。ChatGPT 在可得时保留消息级上下文；Gemini、Flow、Google AI Studio、即梦、Midjourney 只在能安全匹配时保留少量相关联的可见用户 Prompt 文本，并标记为未验证。开启自动采集后，扩展还会把你刚在 ChatGPT 桌面应用里用过的对话，在一个最小化的浏览器窗口里短暂打开并采集其中的图片，详见 [PRIVACY.md](PRIVACY.md#chatgpt-desktop-app-conversations)。
 - 合格的参考图作为私有的、按内容哈希去重的生成记录附件存储，不是普通的画廊素材。
 - 桌面应用不内置、也不下载任何 AI 模型。GravityPort 不添加任何远端同步或自动上传。
 - 打包的桌面版通过发布更新元数据所用的同一个第一方端点，以无请求体的请求发送极少的匿名安装 / 活跃元数据：只包含随机安装 ID、版本、平台、架构和首启 / 日活事件，绝不包含素材、Prompt 或本地路径。详见 [PRIVACY.md](PRIVACY.md)，其中也说明了如何关闭。

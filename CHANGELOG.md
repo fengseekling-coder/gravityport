@@ -8,6 +8,10 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 - The app now keeps itself up to date while it is open: the desktop app checks the release feed a couple of minutes after launch and then every four hours, and downloads a new version in the background. Once the package is verified, a persistent 重启并更新 (Restart to update) button appears at the bottom of the sidebar, one system notification is sent per version, and Settings → 关于 offers the same button; a version you skipped stays staged, so the next launch offers it again without downloading twice. Failed background downloads stay silent and are retried on the next cycle.
 
+### Web Capture
+
+- The browser extension (0.15.39) can now archive generated images and videos from Jimeng (`jimeng.jianying.com`, the generate and conversation pages) and Midjourney (`www.midjourney.com/imagine`). Jimeng media comes from the site's own generation responses, so the full-size signed URLs are captured and downloaded while they are still valid, with the site-shown prompt, model, dimensions and reference thumbnails when the page exposes them; Midjourney captures prefer the full-size PNG downloaded in the extension background over the 640px preview (falling back to the preview, marked as such). On both sites, history that already existed when the extension started is never auto-captured — only newly generated items are — and any item can still be saved with the right-click menu.
+
 ## 0.3.4 — 2026-10-23 / Preview
 
 ### Windows

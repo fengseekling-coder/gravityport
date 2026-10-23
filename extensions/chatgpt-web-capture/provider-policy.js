@@ -11,7 +11,7 @@
     "/fx/api/trpc/media.getMediaUrlRedirect",
     "/api/trpc/media.getMediaUrlRedirect",
   ]);
-  const VIDEO_PROVIDERS = new Set(["flow", "google-ai-studio"]);
+  const VIDEO_PROVIDERS = new Set(["flow", "google-ai-studio", "jimeng", "midjourney"]);
 
   function providerForPageUrl(value) {
     let url;
@@ -27,6 +27,8 @@
     if (host === "aistudio.google.com") return "google-ai-studio";
     if (host === "flow.google.com") return "flow";
     if (host === "labs.google" && FLOW_PATH.test(url.pathname.toLowerCase())) return "flow";
+    if (host === "jimeng.jianying.com") return "jimeng";
+    if (host === "www.midjourney.com") return "midjourney";
     return "";
   }
 

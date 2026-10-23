@@ -15,8 +15,8 @@ const CAPTURE_QUEUE_MAX_BYTES = 512 * 1024 * 1024;
 const CAPTURE_MEDIA_DB = "mosa-web-capture-media-v1";
 const CAPTURE_MEDIA_STORE = "media";
 const LEGACY_DEV_TOKEN = "mosa-web-capture-dev";
-const WEB_IMAGE_PROVIDERS = new Set(["chatgpt", "gemini", "flow", "google-ai-studio"]);
-const WEB_VIDEO_PROVIDERS = new Set(["flow", "google-ai-studio"]);
+const WEB_IMAGE_PROVIDERS = new Set(["chatgpt", "gemini", "flow", "google-ai-studio", "jimeng", "midjourney"]);
+const WEB_VIDEO_PROVIDERS = new Set(["flow", "google-ai-studio", "jimeng", "midjourney"]);
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 96 * 1024 * 1024;
 const MAX_VIDEO_CHUNKS = 40;
@@ -30,6 +30,7 @@ const REMOTE_MEDIA_HOSTS = new Set([
   "storage.googleapis.com",
   "generativelanguage.googleapis.com",
   "flow-content.google",
+  "cdn.midjourney.com",
 ]);
 let settingsMigration;
 let queueDrainPromise;
@@ -140,8 +141,9 @@ function senderAllowedForMessage(message, sender) {
   if (message.type === "mosa.desktopSyncDone") return context.provider === "chatgpt";
   if (message.type === "mosa.reportConversationTurns") return context.provider === "chatgpt";
   if (message.type === "mosa.probeFlowMedia") return context.provider === "flow";
+  if (message.type === "mosa.fetchMidjourneyOriginal") return context.provider === "midjourney";
   if (["mosa.beginVideoTransfer", "mosa.videoTransferChunk", "mosa.commitVideoTransfer", "mosa.abortVideoTransfer"].includes(message.type)) {
-    return context.provider === "flow" || context.provider === "google-ai-studio";
+    return context.provider === "flow" || context.provider === "google-ai-studio" || context.provider === "jimeng" || context.provider === "midjourney";
   }
   if (message.type === "mosa.openOptions") return true;
   if (!["mosa.ingest", "mosa.upgradeMetadata"].includes(message.type)) return true;
@@ -1104,6 +1106,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "mosa.fetchMidjourneyOriginal") {
+    fetchMidjourneyOriginal(message.previewUrl)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    return true;
+  }
+
   if (message.type === "mosa.openOptions") {
     chrome.runtime.openOptionsPage()
       .then(() => sendResponse({ ok: true }))
@@ -1238,8 +1250,68 @@ async function probeFlowMedia(url) {
   throw lastError || new Error("Flow media probe failed.");
 }
 
-function migrateSettingsToLocal() {
-  if (settingsMigration) return settingsMigration;
+// Midjourney full-size PNGs sit at the same CDN path as the 640px preview
+// WebP without the preview suffix. The page itself cannot fetch them
+// (CORS/403 without the Cloudflare cookie), but the extension background
+// with host permissions can. The preview URL is validated and re-derived so
+// a page can never point this at an arbitrary origin.
+async function fetchMidjourneyOriginal(previewUrl) {
+  let parsed;
+  try {
+    parsed = new URL(String(previewUrl || ""));
+  } catch {
+    throw new Error("Invalid Midjourney preview URL.");
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "cdn.midjourney.com") {
+    throw new Error("Unsupported Midjourney preview URL.");
+  }
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  if (segments.length < 2 || !/^[0-9a-f]{8,64}$/i.test(segments[0])) {
+    throw new Error("Unsupported Midjourney preview URL.");
+  }
+  const previewMatch = /^0_(\d+)(?:_640_\d+)?\.(webp|png|jpe?g)$/i.exec(segments[segments.length - 1]);
+  if (!previewMatch) throw new Error("Unsupported Midjourney preview URL.");
+  const originalUrl = `${parsed.origin}/${segments[0]}/0_${previewMatch[1]}.png`;
+  const attempts = [
+    { credentials: "include", cache: "no-cache" },
+    { credentials: "omit", cache: "no-cache" },
+  ];
+  let lastError = null;
+  for (const init of attempts) {
+    try {
+      const response = await fetchWithTimeout(originalUrl, init, 20_000);
+      if (!response.ok) {
+        lastError = mediaDownloadError(`Midjourney original download failed (${response.status})`, response.status);
+        continue;
+      }
+      const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+      if (contentType && !contentType.startsWith("image/")) {
+        lastError = new Error("Midjourney original did not return an image.");
+        response.body?.cancel?.().catch?.(() => {});
+        continue;
+      }
+      const blob = await response.blob();
+      if (!blob || blob.size < 100) {
+        lastError = new Error("Midjourney original empty/too small");
+        continue;
+      }
+      if (blob.size > MAX_IMAGE_BYTES) {
+        throw new Error("Midjourney original exceeds GravityPort capture size limit.");
+      }
+      const mimeType = contentType || blob.type || "image/png";
+      return {
+        imageBase64: bufferToBase64(await blob.arrayBuffer()),
+        mimeType,
+        finalUrl: response.url || originalUrl,
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  throw lastError || new Error("Midjourney original download failed.");
+}
+
+function migrateSettingsToLocal() {  if (settingsMigration) return settingsMigration;
   settingsMigration = (async () => {
     const [local, synced] = await Promise.all([
       chrome.storage.local.get(null),
@@ -1351,7 +1423,10 @@ function assertAllowedRemoteMediaUrl(value) {
     || host.endsWith(".oaiusercontent.com")
     || host.endsWith(".blob.core.windows.net")
     || host.endsWith(".googleusercontent.com")
-    || host.endsWith(".ggpht.com");
+    || host.endsWith(".ggpht.com")
+    || host.endsWith(".byteimg.com")
+    || host.endsWith(".jimeng.com")
+    || host.endsWith(".vlabvod.com");
   if (!allowed) throw new Error("Unsupported media host.");
 }
 
@@ -1408,6 +1483,7 @@ function captureRequestPayload(payload, { mediaKind, mimeType, mediaUrl = "", fi
     pageUrl: payload.pageUrl || "",
     sourceMediaUrl: sanitizeProvenanceUrl(mediaUrl || payload.sourceMediaUrl || ""),
     finalMediaUrl: sanitizeProvenanceUrl(finalMediaUrl || payload.finalMediaUrl || ""),
+    media_variant: String(payload.mediaVariant || payload.media_variant || "").trim().toLowerCase().slice(0, 32),
     conversationId: payload.conversationId || "",
     generation_session_title: String(payload.generationSessionTitle || payload.generation_session_title || "").trim().slice(0, 200),
     messageId: payload.messageId || "",
@@ -1770,6 +1846,8 @@ async function refreshContextMenus() {
       "https://labs.google/*",
       "https://flow.google.com/*",
       "https://aistudio.google.com/*",
+      "https://jimeng.jianying.com/*",
+      "https://www.midjourney.com/*",
     ],
   });
   chrome.contextMenus.create({
@@ -1780,6 +1858,8 @@ async function refreshContextMenus() {
       "https://labs.google/*",
       "https://flow.google.com/*",
       "https://aistudio.google.com/*",
+      "https://jimeng.jianying.com/*",
+      "https://www.midjourney.com/*",
     ],
   });
 }

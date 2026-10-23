@@ -272,6 +272,8 @@ const english: Record<string, string> = {
   "Gemini 网页版": "Gemini Web",
   "Flow 网页版": "Flow Web",
   "Google AI Studio 网页版": "Google AI Studio Web",
+  "即梦网页版": "Jimeng Web",
+  "Midjourney 网页版": "Midjourney Web",
   "手动导入": "Manual import",
   "未知来源": "Unknown source",
   "分组": "Group",
@@ -279,6 +281,8 @@ const english: Record<string, string> = {
   "Gemini 页面可见用户提示词（未验证为实际生图提示词）": "Gemini visible user prompt (not verified as the generation prompt)",
   "Flow 页面可见提示词（未验证为实际生图提示词）": "Flow provider-visible prompt (not verified as the generation prompt)",
   "Google AI Studio 页面可见用户提示词（未验证为实际生图提示词）": "Google AI Studio visible user prompt (not verified as the generation prompt)",
+  "即梦页面可见提示词（未验证为实际生图提示词）": "Jimeng visible prompt (not verified as the generation prompt)",
+  "Midjourney 页面可见提示词（未验证为实际生图提示词）": "Midjourney visible prompt (not verified as the generation prompt)",
   // Task 158: settings feedback page. Error-copy keys mirror the route codes
   // in feedback-api.ts (FEEDBACK_OFFLINE / _RATE_LIMITED / _TOO_LARGE /
   // _INVALID, plus the generic fallback).

@@ -13,6 +13,8 @@ const SOURCE_LABEL_MAP: Record<string, string> = {
   "web-gemini": "Gemini 网页版",
   "web-flow": "Flow 网页版",
   "web-google-ai-studio": "Google AI Studio 网页版",
+  "web-jimeng": "即梦网页版",
+  "web-midjourney": "Midjourney 网页版",
   "local-file": "手动导入",
 }
 
@@ -37,7 +39,7 @@ type SourceDescription = {
 }
 
 type PromptNotice = {
-  key: "webPromptUnavailable" | "geminiVisibleUserPromptUnverified" | "flowProviderVisiblePromptUnverified" | "googleAiStudioVisibleUserPromptUnverified"
+  key: "webPromptUnavailable" | "geminiVisibleUserPromptUnverified" | "flowProviderVisiblePromptUnverified" | "googleAiStudioVisibleUserPromptUnverified" | "jimengVisiblePromptUnverified" | "midjourneyVisiblePromptUnverified"
   text: string
 } | null
 
@@ -155,7 +157,7 @@ export function promptNotice(asset: MosaAsset): PromptNotice {
   const provider = String((source as Record<string, unknown>).provider || "")
 
   // Check if web source with no prompt available
-  const isWebSource = /^web-(?:chatgpt|gemini|flow|google-ai-studio)$/.test(sourceType)
+  const isWebSource = /^web-(?:chatgpt|gemini|flow|google-ai-studio|jimeng|midjourney)$/.test(sourceType)
   const promptUnavailable = isWebSource && promptStatus === "not-available"
 
   if (!asset.prompt && promptUnavailable) {
@@ -183,6 +185,18 @@ export function promptNotice(asset: MosaAsset): PromptNotice {
       return {
         key: "flowProviderVisiblePromptUnverified",
         text: "Flow 页面可见提示词（未验证为实际生图提示词）",
+      }
+    }
+    if (provider === "jimeng" || sourceType === "web-jimeng") {
+      return {
+        key: "jimengVisiblePromptUnverified",
+        text: "即梦页面可见提示词（未验证为实际生图提示词）",
+      }
+    }
+    if (provider === "midjourney" || sourceType === "web-midjourney") {
+      return {
+        key: "midjourneyVisiblePromptUnverified",
+        text: "Midjourney 页面可见提示词（未验证为实际生图提示词）",
       }
     }
   }
