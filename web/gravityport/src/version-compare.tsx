@@ -24,6 +24,7 @@ export function versionCompareRows(fields: string[], base: VersionCompareEntry, 
   })
 }
 
+// 两侧可以选同一条，所以图和说明按左右位置作 key，不用条目 id。
 // 选择是组件内部状态：已选 id 不在条目里（换素材、列表刷新）时回落到调用
 // 方给的默认；App 用 key=素材 id 在切换素材时整体重置成默认选择。
 export default function VersionCompare({ language, entries, fields, defaultBaseId, defaultTargetId, captions = false }: {
@@ -55,10 +56,10 @@ export default function VersionCompare({ language, entries, fields, defaultBaseI
       </select>
     </div>
     <div className="version-compare-images">
-      {[base, target].map((entry) => <img key={entry.id} alt={entry.label} src={entry.imageUrl} loading="lazy" />)}
+      {[base, target].map((entry, side) => <img key={side} alt={entry.label} src={entry.imageUrl} loading="lazy" />)}
     </div>
     {captions && <div className="version-compare-captions">
-      {[base, target].map((entry) => <span key={entry.id}>{entry.label}</span>)}
+      {[base, target].map((entry, side) => <span key={side}>{entry.label}</span>)}
     </div>}
     <div className="version-compare-fields">
       {versionCompareRows(fields, base, target).map(({ field, left, right, changed }) => (
