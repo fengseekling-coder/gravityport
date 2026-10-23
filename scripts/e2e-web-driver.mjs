@@ -38,6 +38,12 @@ if (process.env.MOSA_E2E_WEB_WINDOW_SIZE && !windowSizeMatch) {
   process.exit(2);
 }
 
+// E2E-only driver: on macOS run as a background (accessory) app so the hidden
+// test window never shows up in the Dock or steals the user's keyboard focus
+// mid-run. Must run before app ready so the process never registers as a
+// regular (Foreground) application in the first place.
+if (process.platform === "darwin") app.dock?.hide();
+
 app.setPath("userData", resolve(userDataDir));
 
 app.whenReady().then(async () => {
