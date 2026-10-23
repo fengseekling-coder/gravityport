@@ -1266,10 +1266,10 @@ async function fetchMidjourneyOriginal(previewUrl) {
     throw new Error("Unsupported Midjourney preview URL.");
   }
   const segments = parsed.pathname.split("/").filter(Boolean);
-  if (segments.length < 2 || !/^[0-9a-f]{8,64}$/i.test(segments[0])) {
+  if (segments.length < 2 || !/^[0-9a-f]{8}(?:-?[0-9a-f]{4}){3}-?[0-9a-f]{12}$/i.test(segments[0])) {
     throw new Error("Unsupported Midjourney preview URL.");
   }
-  const previewMatch = /^0_(\d+)(?:_640_\d+)?\.(webp|png|jpe?g)$/i.exec(segments[segments.length - 1]);
+  const previewMatch = /^0_(\d+)(?:_\d+_[A-Za-z0-9]+)?\.(webp|png|jpe?g)$/i.exec(segments[segments.length - 1]);
   if (!previewMatch) throw new Error("Unsupported Midjourney preview URL.");
   const originalUrl = `${parsed.origin}/${segments[0]}/0_${previewMatch[1]}.png`;
   const attempts = [
@@ -1311,7 +1311,8 @@ async function fetchMidjourneyOriginal(previewUrl) {
   throw lastError || new Error("Midjourney original download failed.");
 }
 
-function migrateSettingsToLocal() {  if (settingsMigration) return settingsMigration;
+function migrateSettingsToLocal() {
+  if (settingsMigration) return settingsMigration;
   settingsMigration = (async () => {
     const [local, synced] = await Promise.all([
       chrome.storage.local.get(null),

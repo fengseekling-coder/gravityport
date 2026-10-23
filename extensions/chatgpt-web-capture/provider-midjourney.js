@@ -17,8 +17,11 @@
   if (!providerPolicy) return;
 
   const CDN_HOST = "cdn.midjourney.com";
-  const JOB_ID_PATTERN = /^[0-9a-f]{8,64}$/i;
-  const PREVIEW_FILE_PATTERN = /^0_(\d+)(?:_640_(\d+))?\.(webp|png|jpe?g)$/i;
+  // Job ids are UUIDs with hyphens on the live site (e.g. 28db0dbe-289a-...);
+  // the hyphen-less form is accepted too.
+  const JOB_ID_PATTERN = /^[0-9a-f]{8}(?:-?[0-9a-f]{4}){3}-?[0-9a-f]{12}$/i;
+  // Live previews are 0_<n>_640_N.webp; keep any <width>_<suffix> variant.
+  const PREVIEW_FILE_PATTERN = /^0_(\d+)(_\d+_[A-Za-z0-9]+)?\.(webp|png|jpe?g)$/i;
   const VIDEO_FILE_PATTERN = /\.(mp4|webm|mov|m4v)$/i;
   const MIN_VISIBLE_AREA = 96 * 96;
   const MIN_EDGE = 256;
@@ -87,6 +90,12 @@
   const baseline = new Set();
   let captureInFlight = 0;
   const captureWaiters = [];
+
+  // Diagnostic lines for the user's live-site test; never includes cookies,
+  // signatures or prompt text.
+  function debugLog(...parts) {
+    try { console.info("[GravityPort] midjourney", ...parts); } catch { /* console unavailable */ }
+  }
 
   function rememberSeen(key) {
     if (!key) return;
@@ -305,9 +314,11 @@
         payload.mimeType = original.mimeType || "image/png";
         payload.finalMediaUrl = original.finalUrl || info.originalUrl;
         payload.mediaVariant = "original";
+        debugLog("original fetched", `${info.jobId}:${info.index}`);
       } else {
         payload.imageUrl = info.url;
         payload.mediaVariant = "preview";
+        debugLog("original unavailable, using preview", `${info.jobId}:${info.index}`, original?.error || "");
       }
       try {
         const response = await sendIngest(payload);
@@ -380,6 +391,7 @@
     if (!firstScanDone) {
       firstScanDone = true;
       for (const { info } of [...images, ...videos]) baseline.add(info.jobId);
+      debugLog("baseline", baseline.size, "jobs already on the page");
       return;
     }
 
@@ -393,9 +405,11 @@
       // the user scrolled, or (b) as a multi-card batch in one tick. A fresh
       // generation inserts a single new card with no recent scrolling.
       if (batchBaseline || globalThis.MosaMidjourneyCapture.isScrollBaselineInsertion(nowMs, lastScrollAtMs)) {
+        if (!baseline.has(entry.info.jobId)) debugLog("history job skipped", entry.info.jobId, batchBaseline ? "batch" : "after scroll");
         baseline.add(entry.info.jobId);
         continue;
       }
+      debugLog("new job, capturing", entry.mediaKind, `${entry.info.jobId}:${entry.info.index}`);
       if (entry.mediaKind === "image") void captureImage(entry.img, entry.info, "automatic");
       else void captureVideo(entry.video, entry.info, "automatic");
     }

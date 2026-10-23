@@ -171,6 +171,55 @@ test("jimeng extractor picks the largest image variant and the watermark-free vi
     "records without a parseable timestamp fail closed to baseline");
 });
 
+test("jimeng extractor reads the live get_asset_list shape (created_time, common_attr.prompt, nested model_config)", () => {
+  // Key layout observed on jimeng.jianying.com /mweb/v1/get_asset_list on
+  // 2026-10-23; every value here is made up.
+  const nowMs = Date.parse("2026-10-23T10:00:00Z");
+  const sign = "?lk3s=fake&x-expires=1&x-signature=fake";
+  const response = {
+    ret: "0",
+    data: {
+      has_more: false,
+      asset_list: [{
+        id: "a1",
+        type: 1,
+        image: {
+          history_record_id: "8100000000000000001",
+          created_time: Math.floor(nowMs / 1000) + 30,
+          item_list: [{
+            common_attr: {
+              id: "8100000000000000011",
+              prompt: "红色背景上的金属数字 77",
+              create_time: Math.floor(nowMs / 1000) + 30,
+              cover_url: `https://p26-dreamina-sign.byteimg.com/tos-cn-i-fake/abc~tplv-fake-aigc_resize:640:640.jpeg${sign}`,
+            },
+            image: {
+              format: "png",
+              large_images: [{
+                image_url: `https://p26-dreamina-sign.byteimg.com/tos-cn-i-fake/abc~tplv-fake-aigc_resize:2400:2400.webp${sign}`,
+                width: 816,
+                height: 1456,
+              }],
+            },
+            aigc_image_params: {
+              text2image_params: { model_config: { model_name: "图片 4.0" } },
+            },
+          }],
+        },
+      }],
+    },
+  };
+  const { records } = jimeng.extractJimengResponse(JSON.stringify(response));
+  assert.equal(records.length, 1);
+  const [record] = records;
+  assert.match(record.image.url, /aigc_resize:2400:2400/);
+  assert.equal(record.prompt, "红色背景上的金属数字 77");
+  assert.equal(record.model, "图片 4.0");
+  assert.equal(record.historyId, "8100000000000000001");
+  assert.ok(record.capturedAtMs, "created_time feeds the freshness gate");
+  assert.equal(jimeng.isFreshGeneration(record.capturedAtMs, nowMs), true, "a record created after the script started is captured");
+});
+
 test("jimeng media URL gate accepts only the ByteDance media hosts", () => {
   const info = jimeng.mediaUrlInfo("https://p3-dreamina-sign.byteimg.com/tos-cn-i-fake/key-CCCC~tplv-fake-aigc_resize:720:1280.webp?x-signature=fake");
   assert.equal(info.kind, "image");
@@ -273,6 +322,36 @@ test("midjourney URL parser derives the full-size original and job identity", ()
   assert.equal(midjourney.parseMidjourneyMediaUrl("https://evil.example/2c0ab4d1e5f64789abcd1234ef567890/0_0_640_640.webp"), null);
   assert.equal(midjourney.parseMidjourneyMediaUrl("https://cdn.midjourney.com/not-a-job/0_0_640_640.webp"), null);
   assert.equal(midjourney.parseMidjourneyMediaUrl("https://cdn.midjourney.com/2c0ab4d1e5f64789abcd1234ef567890/logo.svg"), null);
+});
+
+test("midjourney URL parser accepts the live-site format (UUID job ids, 0_<n>_640_N previews)", () => {
+  // Shape observed on www.midjourney.com/imagine on 2026-10-23 (job id is a
+  // made-up UUID; only the format matters).
+  const live = midjourney.parseMidjourneyMediaUrl("https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3_640_N.webp?method=shortest");
+  assert.ok(live, "a live preview URL parses");
+  assert.equal(live.jobId, "1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d");
+  assert.equal(live.index, 3);
+  assert.equal(live.isPreview, true);
+  assert.equal(live.originalUrl, "https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3.png");
+  assert.equal(midjourney.midjourneyAssetIdentity(live), "1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d:3");
+  const original = midjourney.parseMidjourneyMediaUrl("https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3.png");
+  assert.equal(original.isPreview, false);
+  assert.equal(midjourney.parseMidjourneyMediaUrl("https://cdn.midjourney.com/1b2c3d4e-5f60/0_0_640_N.webp"), null, "a truncated id is rejected");
+});
+
+test("background re-derives the original from a live-format preview URL", () => {
+  const match = /function fetchMidjourneyOriginal[\s\S]*?const originalUrl/.exec(backgroundSource);
+  assert.ok(match, "fetchMidjourneyOriginal is present");
+  const body = match[0];
+  const idPattern = new RegExp(/test\(segments\[0\]\)/.source);
+  assert.match(body, idPattern);
+  const idRegex = /!(\/\^\[0-9a-f\][^\n]*?\/i)\.test\(segments\[0\]\)/.exec(body);
+  const fileRegex = /const previewMatch = (\/\^0_[^\n]*?\/i)\.exec/.exec(body);
+  assert.ok(idRegex && fileRegex, "both URL rules are literal regexes");
+  const toRegExp = (literal) => new RegExp(literal.slice(1, literal.lastIndexOf("/")), "i");
+  assert.ok(toRegExp(idRegex[1]).test("1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d"));
+  assert.ok(toRegExp(fileRegex[1]).test("0_3_640_N.webp"));
+  assert.ok(toRegExp(fileRegex[1]).test("0_3.png"));
 });
 
 test("midjourney baseline rules separate lazy history from fresh generations", () => {

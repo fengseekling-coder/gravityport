@@ -15,22 +15,27 @@
   // transferred exactly once through a transient window message, so a page
   // script that runs later cannot forge or steal the bridge.
   let portPost = null;
+  let activePort = null;
 
+  // The isolated-world script runs at document_idle, long after this hook's
+  // first offer, so every request gets a fresh channel (the ChatGPT hook does
+  // the same). The previous port is closed so only the newest listener
+  // receives responses. A page script could also request a port, but it would
+  // only receive copies of responses the page itself already has.
   function handPortToContent() {
-    if (!portPost) {
-      const channel = new MessageChannel();
-      const port = channel.port1;
-      portPost = port.postMessage.bind(port);
-      port.start?.();
-      window.postMessage(
-        { source: "mosa-jimeng-hook", type: "hook-port" },
-        location.origin,
-        [channel.port2],
-      );
-    }
+    const channel = new MessageChannel();
+    try { activePort?.close(); } catch { /* already closed */ }
+    activePort = channel.port1;
+    portPost = activePort.postMessage.bind(activePort);
+    activePort.start?.();
+    window.postMessage(
+      { source: "mosa-jimeng-hook", type: "hook-port" },
+      location.origin,
+      [channel.port2],
+    );
   }
   handPortToContent();
-  // A late-waking content script (document_idle) may re-request the port.
+  // The content script asks for a port once it is listening.
   window.addEventListener("message", (event) => {
     if (event.origin !== location.origin) return;
     if (event.data?.source === "mosa-jimeng-content" && event.data?.type === "hook-port-request") {

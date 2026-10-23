@@ -17,7 +17,9 @@
   const IMAGE_PATH_HINTS = [/\.webp($|[?#])/i, /\.png($|[?#])/i, /\.jpeg($|[?#])/i, /\.jpg($|[?#])/i, /aigc_resize/i, /tos-cn-i/i];
   const PROMPT_KEYS = ["prompt", "prompt_text", "first_prompt", "video_prompt", "image_prompt", "user_prompt", "description"];
   const MODEL_KEYS = ["model_name", "model", "model_version", "aigc_model"];
-  const TIME_KEYS = ["finish_time", "create_time", "created_at", "submit_time", "c_time", "insert_time", "update_time"];
+  // Live get_asset_list records carry `created_time` (seconds) on the record
+  // and `create_time` on each item's common_attr (seen 2026-10-23).
+  const TIME_KEYS = ["finish_time", "created_time", "create_time", "created_at", "submit_time", "c_time", "insert_time", "update_time"];
   const RECORD_ID_KEYS = ["history_record_id", "history_id", "record_id"];
   const ITEM_ID_KEYS = ["item_id", "id", "local_item_id"];
   const REFERENCE_KEYS = ["image_refs", "image_refs_url", "ref_images", "reference_images"];
@@ -156,11 +158,21 @@
       height: Number(largeImages?.[0]?.height || bestImage?.height || commonAttr.height || video.height) || 0,
       durationSeconds: Number(commonAttr.duration || video.duration) || 0,
       prompt: firstStringValue(item, PROMPT_KEYS) || firstStringValue(commonAttr, PROMPT_KEYS),
-      model: firstStringValue(item, MODEL_KEYS),
+      // Live responses nest the model under aigc_image_params.<kind>_params.model_config.
+      model: firstStringValue(item, MODEL_KEYS) || nestedModelName(item.aigc_image_params),
       referenceUrls: [],
       capturedAtMs: null,
       status: "",
     };
+  }
+
+  function nestedModelName(params) {
+    if (!params || typeof params !== "object") return "";
+    for (const value of Object.values(params)) {
+      const name = value && typeof value === "object" ? value.model_config?.model_name : "";
+      if (typeof name === "string" && name.trim()) return name.trim().slice(0, 120);
+    }
+    return "";
   }
 
   /**
@@ -209,7 +221,7 @@
         for (const item of node.item_list) {
           const extracted = extractJimengItem(item);
           if (!extracted) continue;
-          extracted.capturedAtMs = context.capturedAtMs;
+          extracted.capturedAtMs = context.capturedAtMs ?? normalizeTimestampMs(item.common_attr?.create_time);
           extracted.prompt = extracted.prompt || context.prompt;
           extracted.model = extracted.model || context.model;
           extracted.historyId = context.recordId;
@@ -277,6 +289,21 @@
   let toastTimer = null;
   let scanTimer = null;
   let scanInterval = null;
+
+  // Diagnostic lines for the user's live-site test; URLs lose their query
+  // (signatures) and no prompt text or account data is printed.
+  function debugLog(...parts) {
+    try { console.info("[GravityPort] jimeng", ...parts); } catch { /* console unavailable */ }
+  }
+
+  function urlForLog(value) {
+    try {
+      const url = new URL(String(value || ""));
+      return `${url.host}${url.pathname.slice(0, 120)}`;
+    } catch {
+      return "";
+    }
+  }
 
   function rememberSeen(key) {
     if (!key) return;
@@ -468,15 +495,18 @@
         // Old history (listing pages, lazy-loaded past work): baseline it so
         // the same item seen again in a later response stays out of capture.
         baseline.add(mediaKey);
+        debugLog("history record skipped", mediaKey, record.capturedAtMs ? "older than this page" : "no timestamp");
         continue;
       }
       const hasImage = record.image && Math.min(record.image.width || 0, record.image.height || 0) >= MIN_AUTO_IMAGE_EDGE;
       const hasVideo = Boolean(record.video);
       if (!hasImage && !hasVideo) continue;
       if (hasVideo && !seen.has(`jimeng:video:${mediaKey}`)) {
+        debugLog("new video, capturing", mediaKey, urlForLog(record.video.url));
         void captureRecordMedia(record, "video");
       }
       if (hasImage && !seen.has(`jimeng:image:${mediaKey}`)) {
+        debugLog("new image, capturing", mediaKey, urlForLog(record.image.url), `${record.image.width || 0}x${record.image.height || 0}`);
         for (const referenceUrl of record.referenceUrls) void captureReference(referenceUrl, record);
         void captureRecordMedia(record, "image");
       }
@@ -498,6 +528,7 @@
   function onHookResponse(text) {
     if (typeof text !== "string" || !text || text.length > MAX_RESPONSE_TEXT) return;
     const { records } = extractJimengResponse(text);
+    if (records.length) debugLog("api response", records.length, "generation items");
     for (const record of records) mergeLearned(record);
     scheduleScan();
   }
