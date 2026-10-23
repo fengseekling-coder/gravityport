@@ -77,10 +77,21 @@ app.whenReady().then(async () => {
   // E2E only: a page script can request a mid-run window resize by
   // console-logging "__MOSA_E2E_RESIZE__ <width>x<height>"; the page then waits
   // for the resize event itself. Registered before load so early messages land.
+  const timeoutReports = [];
   win.webContents.on("console-message", (event, _level, legacyMessage) => {
     const message = typeof event?.message === "string" ? event.message : legacyMessage;
-    const resize = /^__MOSA_E2E_RESIZE__ (\d+)x(\d+)$/.exec(String(message || "").trim());
+    const trimmed = String(message || "").trim();
+    const resize = /^__MOSA_E2E_RESIZE__ (\d+)x(\d+)$/.exec(trimmed);
     if (resize) win.setContentSize(Number(resize[1]), Number(resize[2]));
+    // Timeout scenes (e2e-flows/_shared.mjs) ride the same channel out: the
+    // page is destroyed right after logging, so this forward is the only copy.
+    // On failure the runner attaches driver stdout to its error; on success
+    // the runner echoes only the last stdout line, so the scenes also ride
+    // inside the result envelope below.
+    if (trimmed.startsWith("[e2e-timeout]")) {
+      timeoutReports.push(trimmed);
+      console.log(trimmed);
+    }
   });
   // E2E only: the hidden window must never pop a save dialog (it would hang),
   // so every download is auto-saved into this run's sandboxed userData under
@@ -126,7 +137,10 @@ app.whenReady().then(async () => {
     else if (flow === "stack") source = createStackUiFlowSource();
     else if (flow === "trash") source = createTrashUiFlowSource(JSON.parse(trashConfigSource));
     else source = createCriticalUiFlowSource({ mode, searchTerm, recipeChange, dropGroupName, pasteEnabled });
-    const result = await win.webContents.executeJavaScript(source, true);
+    let result = await win.webContents.executeJavaScript(source, true);
+    if (timeoutReports.length && result && typeof result === "object" && !Array.isArray(result)) {
+      result = { ...result, e2eTimeoutReports: timeoutReports };
+    }
     console.log(JSON.stringify(result));
   } finally {
     win.destroy();

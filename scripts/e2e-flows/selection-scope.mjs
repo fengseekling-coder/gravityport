@@ -7,6 +7,8 @@
 export const name = "selection-scope";
 export const description = "multi-select -> search narrows: the ring lands on the visible needle card (hidden A/B gone) -> Delete+confirm trashes exactly that visible card -> project switch re-lands -> same-view refresh prunes an externally trashed member";
 
+import { CHOOSE_PROJECT_SOURCE } from "./_shared.mjs";
+
 export async function run(ctx) {
   await ctx.prepare();
   const server = await ctx.startServer();
@@ -56,6 +58,7 @@ export async function run(ctx) {
 function selectionScopeSource(config) {
   return `(async () => {
     const config = ${JSON.stringify(config)};
+    ${CHOOSE_PROJECT_SOURCE}
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitFor(check, label, timeoutMs = 15000) {
       const deadline = Date.now() + timeoutMs;
@@ -65,6 +68,7 @@ function selectionScopeSource(config) {
         if (value) { stable += 1; if (stable >= 2) return value; } else stable = 0;
         await sleep(100);
       }
+      e2eTimeoutReport(label, timeoutMs);
       throw new Error('Timed out waiting for ' + label + ' | cards=' + document.querySelectorAll('.asset-card').length
         + ' | selected=' + JSON.stringify(selectedIds())
         + ' | toast=' + (document.querySelector('.toast')?.textContent || ''));
@@ -82,14 +86,6 @@ function selectionScopeSource(config) {
       setter.call(input, text);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       return input;
-    }
-    async function chooseProject(name) {
-      const trigger = await waitFor(() => document.querySelector('.sidebar-project .toolbar-select') || null, 'project switcher');
-      trigger.click();
-      const option = await waitFor(() => Array.from(document.querySelectorAll('.toolbar-select-menu [role="option"]'))
-        .find((node) => node.textContent.trim() === name) || null, 'project option ' + name);
-      option.click();
-      await waitFor(() => !document.querySelector('.toolbar-select-menu'), 'project menu closes');
     }
     function cardForId(id) {
       return document.querySelector('.asset-card[data-asset-id="' + id + '"]');

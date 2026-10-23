@@ -4,6 +4,9 @@
 // intent without selecting the new gallery; Escape cancels it outright.
 export const name = "pending-select-all-scope";
 export const description = "delayed load + ⌘A -> project switch -> new project NOT all-selected || same-view refresh + ⌘A -> all selected after settle || delayed project load + ⌘A + Escape -> nothing all-selected";
+
+import { CHOOSE_PROJECT_SOURCE } from "./_shared.mjs";
+
 export async function run(ctx) {
   await ctx.prepare();
   const server = await ctx.startServer();
@@ -38,6 +41,7 @@ export async function run(ctx) {
 function flowSource(config) {
   return `(async () => {
     const config = ${JSON.stringify(config)};
+    ${CHOOSE_PROJECT_SOURCE}
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitFor(check, label, timeoutMs = 20000) {
       const deadline = Date.now() + timeoutMs;
@@ -47,6 +51,7 @@ function flowSource(config) {
         if (value) { stable += 1; if (stable >= 2) return value; } else stable = 0;
         await sleep(100);
       }
+      e2eTimeoutReport(label, timeoutMs);
       throw new Error('Timed out waiting for ' + label
         + ' | cards=' + document.querySelectorAll('.asset-card').length
         + ' | selected=' + document.querySelectorAll('.asset-card.asset-selected').length
@@ -72,14 +77,7 @@ function flowSource(config) {
       };
       return () => { window.fetch = previousFetch; };
     };
-    const switchProject = async (name) => {
-      const trigger = await waitFor(() => document.querySelector('.sidebar-project .toolbar-select'), 'project switcher');
-      trigger.click();
-      const option = await waitFor(() => Array.from(document.querySelectorAll('.toolbar-select-menu [role="option"]'))
-        .find((node) => node.textContent.trim() === name) || null, 'project option ' + name);
-      option.click();
-      await waitFor(() => !document.querySelector('.toolbar-select-menu'), 'project menu closes');
-    };
+    const switchProject = chooseProject;
 
     await waitFor(() => document.querySelector('.app') && cards().length >= 1, 'first default cards rendered');
 

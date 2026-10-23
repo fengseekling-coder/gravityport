@@ -4,6 +4,8 @@
 // change and a late response is discarded. The stale merge is short-lived
 // (the next same-view refresh wipes it), so the flow watches
 // data-loaded-assets continuously instead of sampling once.
+import { CHOOSE_PROJECT_SOURCE } from "./_shared.mjs";
+
 export const name = "pagination-race";
 export const description = "110 default assets + 1 alpha -> page-2 fetch delayed -> project switch while pending -> alpha never shows more than its own 1 asset -> default paginates cleanly again";
 
@@ -41,6 +43,7 @@ export async function run(ctx) {
 function raceSource(config) {
   return `(async () => {
     const config = ${JSON.stringify(config)};
+    ${CHOOSE_PROJECT_SOURCE}
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitFor(check, label, timeoutMs = 30000) {
       const deadline = Date.now() + timeoutMs;
@@ -50,6 +53,7 @@ function raceSource(config) {
         if (value) { stable += 1; if (stable >= 2) return value; } else stable = 0;
         await sleep(100);
       }
+      e2eTimeoutReport(label, timeoutMs);
       throw new Error('Timed out waiting for ' + label + ' | loaded=' + (document.querySelector('.asset-grid')?.dataset.loadedAssets || '?')
         + ' | cards=' + document.querySelectorAll('.asset-card').length
         + ' | toast=' + (document.querySelector('.toast')?.textContent || ''));
@@ -57,14 +61,6 @@ function raceSource(config) {
     const loadedCount = () => Number(document.querySelector('.asset-grid')?.dataset.loadedAssets || 0);
     const domIds = () => Array.from(document.querySelectorAll('[data-asset-id]')).map((node) => node.getAttribute('data-asset-id'));
     const projectLabel = () => document.querySelector('.sidebar-project .toolbar-select span')?.textContent?.trim() || '?';
-    async function chooseProject(name) {
-      const trigger = await waitFor(() => document.querySelector('.sidebar-project .toolbar-select') || null, 'project switcher');
-      trigger.click();
-      const option = await waitFor(() => Array.from(document.querySelectorAll('.toolbar-select-menu [role="option"]'))
-        .find((node) => node.textContent.trim() === name) || null, 'project option ' + name);
-      option.click();
-      await waitFor(() => !document.querySelector('.toolbar-select-menu'), 'project menu closes');
-    }
 
     await waitFor(() => loadedCount() === ${PAGE_SIZE}, 'the first page loads exactly');
 

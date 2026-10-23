@@ -5,6 +5,8 @@
 export const name = "project-switch-resilience";
 export const description = "failed alpha load reverts to default with view state -> delayed alpha load shows no stale default cards -> rapid default/alpha switches land on the final choice";
 
+import { CHOOSE_PROJECT_SOURCE } from "./_shared.mjs";
+
 export async function run(ctx) {
   await ctx.prepare();
   const server = await ctx.startServer();
@@ -31,6 +33,7 @@ export async function run(ctx) {
 function projectSwitchResilienceSource(config) {
   return `(async () => {
     const config = ${JSON.stringify(config)};
+    ${CHOOSE_PROJECT_SOURCE}
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitFor(check, label, timeoutMs = 20000) {
       const deadline = Date.now() + timeoutMs;
@@ -40,6 +43,7 @@ function projectSwitchResilienceSource(config) {
         if (value) { stable += 1; if (stable >= 2) return value; } else stable = 0;
         await sleep(100);
       }
+      e2eTimeoutReport(label, timeoutMs);
       throw new Error('Timed out waiting for ' + label + ' | cards=' + document.querySelectorAll('.asset-card').length
         + ' | switcher=' + (document.querySelector('.sidebar-project .toolbar-select span')?.textContent || '?')
         + ' | toast=' + (document.querySelector('.toast')?.textContent || ''));
@@ -47,14 +51,6 @@ function projectSwitchResilienceSource(config) {
     const cardFor = (id) => document.querySelector('.asset-card[data-asset-id="' + id + '"]');
     const cards = () => Array.from(document.querySelectorAll('.asset-card'));
     const switcherLabel = () => document.querySelector('.sidebar-project .toolbar-select span')?.textContent?.trim() || '';
-    async function chooseProject(name) {
-      const trigger = await waitFor(() => document.querySelector('.sidebar-project .toolbar-select') || null, 'project switcher');
-      trigger.click();
-      const option = await waitFor(() => Array.from(document.querySelectorAll('.toolbar-select-menu [role="option"]'))
-        .find((node) => node.textContent.trim() === name) || null, 'project option ' + name);
-      option.click();
-      await waitFor(() => !document.querySelector('.toolbar-select-menu'), 'project menu closes');
-    }
     // Fetch fault injection around the real network; the original fetch stays
     // recoverable so later segments run clean.
     if (!window.__origFetch) window.__origFetch = window.fetch.bind(window);
