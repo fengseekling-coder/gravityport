@@ -70,7 +70,7 @@ ChatGPT 中能够明确识别为本轮上传输入的参考图，会作为该轮
 
 打开 Gemini（`gemini.google.com`）、Flow（`labs.google` 或新版独立域名 `flow.google.com`）或 Google AI Studio（`aistudio.google.com`）出图后，扩展只对视口中已加载且达到最小尺寸的用户可见图片自动入库。Gemini 只读取生成图所属 `model-response` 前、同一局部消息结构中的最近可见 `user-query`；Flow 优先使用图片组内唯一、相邻且带「Reuse Prompt」语义的 Prompt 卡片，在本地化界面没有该英文标签时，仅当局部生成结构中仍然只有一个可用 Prompt 卡片才接受，存在歧义则留空；AI Studio 只读取图片所在 `ms-chat-session` 内、图片 Model 回合之前最近的页面可见用户 Prompt 回合。三者均标记为「未验证为实际生图提示词」，不会读取输入框、编辑器、隐藏内容、模型思考、其他会话或登录信息；若图片先于 Prompt 完成渲染，只会对同一图片的局部关联信息进行有界重试。
 
-远程生成媒体在提交前会进入扩展本地待处理队列，GravityPort 暂时未运行或扩展 Service Worker 被浏览器回收时会保留任务并在后续重新尝试。队列任务最长保留 7 天，过期记录会从本地存储清除；同一媒体后来拿到更完整的终态或 Prompt 时会更新原队列票据，而不是继续重放旧的 `in_progress / not-available` 元数据。纯页面本地 `blob:` 图片和视频字节会先写入扩展自己的 IndexedDB spool，标签页关闭后仍可由 Service Worker 继续投递；单个存储故障也不会反过来阻断 GravityPort 当前在线时的实时入库。Flow / AI Studio 的大体积页面本地视频使用分块扩展消息并逐块写入 IndexedDB，远程 HTTPS 视频则直接读取响应流；投递到 GravityPort 时两者都通过临时上传会话逐块写入本地临时文件。扩展后台不再在内存中保留整段视频，GravityPort commit 时也使用文件流计算内容哈希后直接导入。上传会话按顺序校验 chunk、限制总大小，并在 commit、abort 或超时清理临时文件；远程响应即使没有 `Content-Length` 也会在接收过程中持续执行 96 MiB 上限。原始媒体 URL 与实际重定向后的最终媒体 URL 会作为来源证据保存，但会移除签名、令牌和无关查询参数，仅保留必要的稳定媒体标识；最终重定向目标仍需通过媒体域名白名单。
+远程生成媒体在提交前会进入扩展本地待处理队列，GravityPort 暂时未运行或扩展 Service Worker 被浏览器回收时会保留任务并在后续重新尝试。队列任务最长保留 7 天，过期记录会从本地存储清除；同一媒体后来拿到更完整的终态或 Prompt 时会更新原队列票据，而不是继续重放旧的 `in_progress / not-available` 元数据。GravityPort 没开时，图片本身会先存进扩展的 IndexedDB（总量最多 512MB，超出后最旧的票据先退回仅网址，没有网址的直接移除），不再只留一个可能很快过期的下载网址；只有网址、页面没取到字节的采集会在入队时趁网址最新鲜当场补抓一次，抓不到才保持仅网址。纯页面本地 `blob:` 图片和视频字节会先写入扩展自己的 IndexedDB spool，标签页关闭后仍可由 Service Worker 继续投递；单个存储故障也不会反过来阻断 GravityPort 当前在线时的实时入库。Flow / AI Studio 的大体积页面本地视频使用分块扩展消息并逐块写入 IndexedDB，远程 HTTPS 视频则直接读取响应流；投递到 GravityPort 时两者都通过临时上传会话逐块写入本地临时文件。扩展后台不再在内存中保留整段视频，GravityPort commit 时也使用文件流计算内容哈希后直接导入。上传会话按顺序校验 chunk、限制总大小，并在 commit、abort 或超时清理临时文件；远程响应即使没有 `Content-Length` 也会在接收过程中持续执行 96 MiB 上限。原始媒体 URL 与实际重定向后的最终媒体 URL 会作为来源证据保存，但会移除签名、令牌和无关查询参数，仅保留必要的稳定媒体标识；最终重定向目标仍需通过媒体域名白名单。已过期的媒体网址（403 / 404 / 410）在重试 3 次后按「网址已过期」放弃并移出队列，不再每分钟空转；网络错误与 5xx 照旧重试。
 
 后台消息现在会校验扩展自身 sender、顶层 frame、当前 Provider URL 和消息类型，视频分块传输也绑定到创建它的 tab / Provider，避免其他页面或错误 frame 复用入库消息。ChatGPT MAIN-world bridge 同时使用每个 document 独立的 channel 标识过滤陈旧或无关消息；这属于纵深防御，不把同一网页 MAIN world 中已经执行的站点脚本错误描述为密码学不可信边界。Gemini / Flow / AI Studio / ChatGPT 的 URL 归属判定统一收口到 `provider-policy.js`，后台安全门和页面适配器共用同一套规则。
 
@@ -89,7 +89,7 @@ GravityPort 只在素材库根目录的 `.chatgpt-desktop-sync.json` 里记录�
 - 扩展只在清单声明的 ChatGPT、Gemini、Flow 和 Google AI Studio 域名中运行，并只把数据发送到选项中配置的本机 GravityPort 地址。
 - ChatGPT 入库数据包括图片字节、匹配到的 Prompt/用户消息、「提示词2」（`generation_request_prompt`，页面实时数据中出现时）、页面 URL、去掉签名参数的原始与最终媒体 URL、尺寸、会话/消息 ID、对话标题、模型信息、生成状态、采集时间和扩展版本；页面运行时明确暴露时，还会保存彼此独立的 tool-call、generation-call、response 和 provider asset 标识。打开对话时另会上报对话轮次结构（只有编号与数字）。Gemini、Flow 与 AI Studio 只有在上述局部匹配成功时才额外包括该页面可见 Prompt。
 - GravityPort 地址、Token、自动采集开关和待重试队列保存在 Chrome 本地存储（`chrome.storage.local`），不使用同步存储；桌面版对话同步进行中的任务（对话号、窗口/标签页编号、开始时间）只存在浏览器关闭即清空的 `chrome.storage.session`。
-- 清单权限为 `storage`、`contextMenus`、`alarms`；图片下载需要清单中列出的 OpenAI/Google 静态资源域名权限；本机通信只允许 `127.0.0.1` 或 `localhost`。
+- 清单权限为 `storage`、`contextMenus`、`alarms`、`unlimitedStorage`（最后这项用于上面说的离线字节队列，Chrome 不因它弹新的安装警告）；图片下载需要清单中列出的 OpenAI/Google 静态资源域名权限；本机通信只允许 `127.0.0.1` 或 `localhost`。
 - GravityPort 不会因此获得任何受支持站点的账号密码或 API Key。完整说明见 [PRIVACY.md](../../PRIVACY.md)。
 
 ## 限制

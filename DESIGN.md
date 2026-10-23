@@ -122,6 +122,7 @@
 | 填写框 | `.group-dialog` | 新建分组并移入、重命名分组和堆叠、合并分组、删除分组；外观同确认框（`--ui-panel` 底、`--radius-panel`、`--ui-shadow`、16px 标题、同一层遮罩），输入框 32px 高，「取消」+ 写明动作的主按钮；名字最长 80 字 |
 | 设置窗口 | `.settings-modal` | 最大 736×560，左栏 176px，内容放在 `.settings-section` 块里 |
 | MCP 配置卡片 | `McpClientConfigCard.tsx`、`mcp-config.css` | 连接页里：`--ui-panel` 底加 `--ui-line` 描边、`--radius-panel`；配置代码块 `--ui-inset` 底，右上角复制按钮 |
+| 浏览器扩展卡 | `WebCaptureStatusCard.tsx`、`web-capture-status.css` | 连接页里：已连接/没有连接（5 分钟窗口）、扩展版本（落后自带版本给官网链接）、待重试张数加重试按钮、最近一次错误一行；打开时取一次，刷新按钮手动取 |
 | 查看器 | `ImageViewer.tsx`、`.viewer-controls` | 底部缩放条，鼠标不动时淡出 |
 | 空状态 | `.empty-state` | 32px 图标 + 一句话 + 一句提示，文案在 `empty-state.ts` |
 

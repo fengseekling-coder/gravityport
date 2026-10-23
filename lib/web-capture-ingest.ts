@@ -144,7 +144,7 @@ export function createWebCaptureIngest(options: { store?: Store; libraryDir?: st
     }
     activeIngests = Math.max(0, activeIngests - 1);
   }
-  const state: { enabled: boolean; providers: string[]; lastIngestAt: string | null; lastImportCount: number; totalImported: number; totalSkipped: number; lastError: string | null; lastSkippedReason: string | null } = { enabled: Boolean(token) && allowedOriginCount > 0, providers: Object.keys(PROVIDER_CONFIG), lastIngestAt: null, lastImportCount: 0, totalImported: 0, totalSkipped: 0, lastError: null, lastSkippedReason: null };
+  const state: { enabled: boolean; providers: string[]; lastIngestAt: string | null; lastExtensionVersion: string | null; lastImportCount: number; totalImported: number; totalSkipped: number; lastError: string | null; lastSkippedReason: string | null } = { enabled: Boolean(token) && allowedOriginCount > 0, providers: Object.keys(PROVIDER_CONFIG), lastIngestAt: null, lastExtensionVersion: null, lastImportCount: 0, totalImported: 0, totalSkipped: 0, lastError: null, lastSkippedReason: null };
   const recentActivity: Metadata[] = [];
   let retryRequestId = 0;
   let clientQueue: Metadata = { reportedAt: null, pending: 0, failed: 0, items: [] };
@@ -177,6 +177,10 @@ export function createWebCaptureIngest(options: { store?: Store; libraryDir?: st
   }
   function updateClientStatus(input: Metadata = {}, authToken = ""): Record<string, unknown> {
     assertToken(authToken);
+    // 0.15.38+ extensions report their version with every queue status, so the
+    // Settings card knows it without waiting for a capture.
+    const reportedVersion = String(input.extensionVersion || "").trim().slice(0, 64);
+    if (reportedVersion) state.lastExtensionVersion = reportedVersion;
     const rawItems = Array.isArray(input.items) ? input.items.slice(0, 20) : [];
     const items = rawItems.map((entry) => {
       const value = entry && typeof entry === "object" && !Array.isArray(entry) ? entry as Metadata : {};
@@ -213,6 +217,11 @@ export function createWebCaptureIngest(options: { store?: Store; libraryDir?: st
     assertToken(authToken);
     await acquireIngestSlot();
     try {
+      // The Settings → 连接 card shows which extension version last reported
+      // here, so every token-accepted capture refreshes it. A capture without
+      // a version (very old extension) keeps the previous value.
+      const extensionVersion = String(input.extensionVersion || input.extension_version || "").trim().slice(0, 64);
+      if (extensionVersion) state.lastExtensionVersion = extensionVersion;
       const result = await ingestWebCapture({ store, referenceStore, tempRoot, projectId, input, mediaFilePath });
       state.lastIngestAt = new Date().toISOString();
       state.lastError = null;

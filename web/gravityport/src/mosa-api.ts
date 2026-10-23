@@ -313,6 +313,74 @@ export async function fetchHealth(signal?: AbortSignal) {
   }
 }
 
+export type MosaWebCaptureQueueItem = {
+  id: string
+  provider: string
+  mediaKind: "image" | "video"
+  promptStatus: string
+  generationStatus: string
+  attempts: number
+  lastError: string
+}
+
+/** GET /api/web-capture — the bridge snapshot behind the Settings → 连接
+ * extension card. Field names follow lib/web-capture-ingest.ts status(). */
+export type MosaWebCaptureStatus = {
+  enabled: boolean
+  tokenConfigured: boolean
+  lastIngestAt: string | null
+  lastExtensionVersion: string
+  totalImported: number
+  lastError: string | null
+  queue: { reportedAt: string | null; pending: number; failed: number; items: MosaWebCaptureQueueItem[] }
+  retryRequestId: number
+}
+
+function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
+  const queue = (input.queue && typeof input.queue === "object" ? input.queue : {}) as JsonValue
+  const items = Array.isArray(queue.items) ? queue.items : []
+  const serverTime = (value: unknown): string | null =>
+    typeof value === "string" && value && Number.isFinite(Date.parse(value)) ? value : null
+  return {
+    enabled: input.enabled === true,
+    tokenConfigured: input.tokenConfigured === true,
+    lastIngestAt: serverTime(input.lastIngestAt),
+    lastExtensionVersion: String(input.lastExtensionVersion || ""),
+    totalImported: Math.max(0, Number(input.totalImported || 0)),
+    lastError: typeof input.lastError === "string" && input.lastError ? input.lastError : null,
+    queue: {
+      reportedAt: serverTime(queue.reportedAt),
+      pending: Math.max(0, Number(queue.pending || 0)),
+      failed: Math.max(0, Number(queue.failed || 0)),
+      items: items.map((row: unknown) => {
+        const item = (row && typeof row === "object" && !Array.isArray(row) ? row : {}) as JsonValue
+        return {
+          id: String(item.id || ""),
+          provider: String(item.provider || ""),
+          mediaKind: item.mediaKind === "video" ? "video" : "image",
+          promptStatus: String(item.promptStatus || ""),
+          generationStatus: String(item.generationStatus || ""),
+          attempts: Math.max(0, Number(item.attempts || 0)),
+          lastError: String(item.lastError || ""),
+        }
+      }),
+    },
+    retryRequestId: Math.max(0, Number(input.retryRequestId || 0)),
+  }
+}
+
+export async function fetchWebCaptureStatus(signal?: AbortSignal): Promise<MosaWebCaptureStatus> {
+  const data = await requestJson<{ bridge?: JsonValue }>("/api/web-capture", { signal })
+  return normalizeWebCaptureStatus(data.bridge || {})
+}
+
+/** POST /api/web-capture/retry — asks the paired extension to replay its
+ * queue. Returns the server's retryRequestId so callers can tell rounds apart. */
+export async function requestWebCaptureRetry(): Promise<number> {
+  const data = await requestJson<{ retryRequestId?: number }>("/api/web-capture/retry", { method: "POST" })
+  return Math.max(0, Number(data.retryRequestId || 0))
+}
+
 export async function fetchVisualStatus(project: string, signal?: AbortSignal): Promise<MosaVisualStatus> {
   const data = await requestJson<{ visual?: JsonValue }>(`/api/visual/status?project=${e(project)}`, { signal })
   return (data.visual || {}) as MosaVisualStatus

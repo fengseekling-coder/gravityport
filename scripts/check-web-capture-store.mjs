@@ -28,7 +28,7 @@ check(/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(String(manifest.version || "")), "manifes
 
 const permissions = Array.isArray(manifest.permissions) ? manifest.permissions : [];
 check(!permissions.includes("activeTab"), "unused activeTab permission must stay removed");
-check(permissions.every((permission) => ["storage", "contextMenus", "alarms"].includes(permission)), "unexpected extension permission requested");
+check(permissions.every((permission) => ["storage", "contextMenus", "alarms", "unlimitedStorage"].includes(permission)), "unexpected extension permission requested");
 
 const hosts = Array.isArray(manifest.host_permissions) ? manifest.host_permissions : [];
 check(!hosts.includes("<all_urls>"), "<all_urls> is not allowed");

@@ -309,6 +309,16 @@ const english: Record<string, string> = {
   "挪了素材库也不用改配置，重启 AI 助手就会跟过去。GravityPort 不用开着。": "Moved your library? No need to change this: restart the assistant and it follows. GravityPort doesn't need to be open.",
   "请先把 GravityPort 拖进「应用程序」文件夹再复制，不然这段路径会失效。": "Move GravityPort to your Applications folder before copying, or this path will stop working.",
   "从源码运行时的配置方法见使用指南。": "Running from source? See the guide for setup.",
+  // Task 225: Settings → 连接 browser extension status card
+  "浏览器扩展": "Browser extension",
+  "已连接": "Connected",
+  "没有连接": "Not connected",
+  "扩展版本": "Extension version",
+  "有新版扩展": "A newer extension is available",
+  "去官网安装浏览器扩展，并在扩展设置里打开「发现新图时自动入库」。": "Install the browser extension from our website, then turn on auto-archiving in its settings.",
+  "等待重试 {count} 张": "{count} waiting to retry",
+  "已让扩展重试": "Asked the extension to retry",
+  "最近一次错误": "Last error",
 }
 
 export function translate(text: string, language: Language): string {

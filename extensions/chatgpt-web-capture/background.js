@@ -11,6 +11,7 @@ const CAPTURE_QUEUE_ALARM = "mosa-capture-queue";
 const CAPTURE_QUEUE_MAX_ITEMS = 256;
 const CAPTURE_QUEUE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const CAPTURE_QUEUE_MAX_ATTEMPTS = 3;
+const CAPTURE_QUEUE_MAX_BYTES = 512 * 1024 * 1024;
 const CAPTURE_MEDIA_DB = "mosa-web-capture-media-v1";
 const CAPTURE_MEDIA_STORE = "media";
 const LEGACY_DEV_TOKEN = "mosa-web-capture-dev";
@@ -182,19 +183,25 @@ function stableCaptureKey(payload = {}) {
 function queueReplayPayload(payload = {}, id = "") {
   const mediaUrl = payload.mediaKind === "video" ? payload.mediaUrl : payload.imageUrl;
   const replay = { ...payload };
+  const base64 = payload.mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
+  // Keep the captured bytes themselves: provider URLs are frequently signed
+  // and expire long before GravityPort comes back online, so a URL-only
+  // ticket loses the media (review M10). The bytes live in IndexedDB, the
+  // ticket only carries the queuedMediaId.
+  if (id && typeof base64 === "string" && base64) {
+    delete replay.mediaBase64;
+    delete replay.imageBase64;
+    replay.queuedMediaId = id;
+    delete replay.localMediaIdentity;
+    return replay;
+  }
   if (typeof mediaUrl === "string" && mediaUrl.startsWith("https:")) {
     delete replay.mediaBase64;
     delete replay.imageBase64;
     delete replay.localMediaIdentity;
     return replay;
   }
-  const base64 = payload.mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
-  if (!id || typeof base64 !== "string" || !base64) return null;
-  delete replay.mediaBase64;
-  delete replay.imageBase64;
-  replay.queuedMediaId = id;
-  delete replay.localMediaIdentity;
-  return replay;
+  return null;
 }
 
 function promptPayloadRank(payload = {}) {
@@ -271,9 +278,96 @@ async function writeCaptureQueue(queue) {
   await chrome.storage.local.set({ [CAPTURE_QUEUE_KEY]: queue.slice(-CAPTURE_QUEUE_MAX_ITEMS) });
 }
 
+function captureMediaSizes() {
+  return openCaptureMediaDb().then((db) => new Promise((resolve, reject) => {
+    const sizes = new Map();
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      db.close();
+      if (error) reject(error);
+      else resolve(sizes);
+    };
+    try {
+      const tx = db.transaction(CAPTURE_MEDIA_STORE, "readonly");
+      const cursorRequest = tx.objectStore(CAPTURE_MEDIA_STORE).openCursor();
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+        sizes.set(String(cursor.key), Number(cursor.value?.blob?.size || 0));
+        cursor.continue();
+      };
+      tx.oncomplete = () => finish();
+      tx.onerror = () => finish(tx.error || new Error("Capture media read failed."));
+      tx.onabort = () => finish(tx.error || new Error("Capture media read aborted."));
+    } catch (error) {
+      finish(error);
+    }
+  }));
+}
+
+function queuedTicketByteSize(item, sizes) {
+  const payload = item?.payload;
+  if (payload?.queuedMediaId) return sizes.get(`capture:${payload.queuedMediaId}`) || 0;
+  const spool = item?.videoSpool;
+  if (spool?.transferId) {
+    const totalChunks = Number(spool.totalChunks) || 0;
+    let total = 0;
+    for (let index = 0; index < totalChunks; index += 1) {
+      total += sizes.get(videoChunkKey(spool.transferId, index)) || 0;
+    }
+    return total;
+  }
+  return 0;
+}
+
+function downgradeQueuedTicketToUrl(item) {
+  const payload = { ...(item?.payload || {}) };
+  delete payload.queuedMediaId;
+  const mediaUrl = payload.mediaKind === "video" ? payload.mediaUrl : payload.imageUrl;
+  const downgraded = { ...item, payload, lastUpdatedAt: Date.now() };
+  delete downgraded.videoSpool;
+  if (typeof mediaUrl === "string" && mediaUrl.startsWith("https:")) return downgraded;
+  return null;
+}
+
+// Byte tickets must not add up without bound (256 items × 15 MiB worst case).
+// Past the budget the oldest tickets lose their stored bytes first: back to a
+// URL ticket when one exists, removed entirely otherwise.
+async function enforceCaptureQueueBudget() {
+  let evicted = [];
+  await mutateCaptureQueue(async () => {
+    const queue = await readCaptureQueue();
+    if (!queue.length) return;
+    const sizes = await captureMediaSizes().catch(() => new Map());
+    let totalBytes = 0;
+    for (const item of queue) totalBytes += queuedTicketByteSize(item, sizes);
+    if (totalBytes <= CAPTURE_QUEUE_MAX_BYTES) return;
+    const next = [...queue];
+    for (let index = 0; index < next.length && totalBytes > CAPTURE_QUEUE_MAX_BYTES; index += 1) {
+      const item = next[index];
+      const size = queuedTicketByteSize(item, sizes);
+      if (size <= 0) continue;
+      totalBytes -= size;
+      const downgraded = downgradeQueuedTicketToUrl(item);
+      next[index] = downgraded;
+      evicted.push({ item, kept: Boolean(downgraded) });
+    }
+    await writeCaptureQueue(next.filter(Boolean));
+  });
+  for (const { item } of evicted) {
+    if (item?.payload?.queuedMediaId) await captureMediaDelete(`capture:${item.payload.queuedMediaId}`).catch(() => {});
+    if (item?.videoSpool?.transferId) await deleteVideoSpool(item.videoSpool.transferId, item.videoSpool.totalChunks).catch(() => {});
+  }
+}
+
 async function captureQueueStatusSnapshot() {
   const queue = await readCaptureQueue();
   return {
+    // Lets Settings → 连接 show this extension's version right after the app
+    // starts, before the next capture arrives.
+    extensionVersion: chrome.runtime.getManifest().version,
     pending: queue.length,
     failed: queue.filter((item) => Number(item?.attempts || 0) > 0).length,
     items: queue.slice(0, 20).map((item) => ({
@@ -443,9 +537,35 @@ function reportConversationTurnsThrottled(payload = {}) {
   });
 }
 
+async function mosaReachable() {
+  try {
+    const settings = await getSettings();
+    const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
+    return await ensureMosaAvailable(baseUrl);
+  } catch {
+    return false;
+  }
+}
+
+async function prefetchQueuedMediaBytes(payload, replayPayload, id) {
+  try {
+    const fetched = await fetchMediaAsBase64(payload.imageUrl, { publicMedia: false, mediaKind: "image" });
+    const bytes = base64ToBytes(fetched.mediaBase64);
+    await captureMediaPut({
+      key: `capture:${id}`,
+      blob: new Blob([bytes], { type: fetched.mimeType || payload.mimeType || "image/png" }),
+      updatedAt: Date.now(),
+    });
+    return { ...replayPayload, mimeType: fetched.mimeType || replayPayload.mimeType, queuedMediaId: id };
+  } catch {
+    // The URL ticket stays as before; replay will retry the download later.
+    return replayPayload;
+  }
+}
+
 async function enqueueCapture(payload) {
   const id = stableCaptureKey(payload);
-  const replayPayload = queueReplayPayload(payload, id);
+  let replayPayload = queueReplayPayload(payload, id);
   if (!replayPayload) return null;
   if (replayPayload.queuedMediaId) {
     const base64 = payload.mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
@@ -455,14 +575,20 @@ async function enqueueCapture(payload) {
       blob: new Blob([bytes], { type: payload.mimeType || (payload.mediaKind === "video" ? "video/mp4" : "image/png") }),
       updatedAt: Date.now(),
     });
+  } else if (payload.mediaKind !== "video" && !(await mosaReachable())) {
+    // URL-only ticket while GravityPort is offline: this provider URL is as
+    // fresh as it will ever be, so fetch the media once now and upgrade the
+    // ticket to bytes. Videos stay URL tickets — replay streams them, and a
+    // byte copy would eat the whole queue budget in a few captures.
+    replayPayload = await prefetchQueuedMediaBytes(payload, replayPayload, id);
   }
   await mutateCaptureQueue(async () => {
     const queue = await readCaptureQueue();
     const index = queue.findIndex((item) => item.id === id);
     if (index < 0) {
-      // Persist a small replay ticket rather than the potentially multi-MiB
-      // Base64 body. If MOSA is temporarily unavailable and the page closes,
-      // the service worker can re-download the same provider URL later.
+      // Byte tickets keep the media itself in IndexedDB so an expired
+      // provider URL cannot lose the capture while GravityPort is closed;
+      // URL-only tickets remain for media that has no local bytes yet.
       queue.push({ id, payload: replayPayload, createdAt: Date.now(), attempts: 0, lastError: "" });
     } else {
       queue[index] = {
@@ -473,6 +599,7 @@ async function enqueueCapture(payload) {
     }
     await writeCaptureQueue(queue);
   });
+  await enforceCaptureQueueBudget().catch(() => {});
   return id;
 }
 
@@ -505,6 +632,7 @@ async function enqueueVideoSpool(payload, transferId, totalBytes, totalChunks) {
   if (replacedSpool?.transferId && replacedSpool.transferId !== transferId) {
     await deleteVideoSpool(replacedSpool.transferId, replacedSpool.totalChunks);
   }
+  await enforceCaptureQueueBudget().catch(() => {});
   return queuedItem;
 }
 
@@ -547,6 +675,17 @@ function ingestResponseError(message, status) {
   const error = new Error(message);
   error.status = Number(status) || 0;
   error.retryable = error.status === 0 || error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+  return error;
+}
+
+// Provider media URLs are usually signed and expire. 403/404/410 will not
+// heal on retry, so the queued ticket must give up like other non-retryable
+// failures instead of re-downloading every minute until the age limit.
+function mediaDownloadError(message, status) {
+  const error = new Error(message);
+  error.status = Number(status) || 0;
+  error.retryable = ![403, 404, 410].includes(error.status);
+  if (!error.retryable) error.message = `${message}（网址已过期）`;
   return error;
 }
 
@@ -1167,7 +1306,7 @@ async function fetchMediaAsBase64(url, {
     try {
       const response = await fetchWithTimeout(url, init, requestTimeoutMs);
       if (!response.ok) {
-        lastError = new Error(`Failed to download ${label} (${response.status})`);
+        lastError = mediaDownloadError(`Failed to download ${label} (${response.status})`, response.status);
         continue;
       }
       // Redirects are followed by fetch. Re-validate the final destination so
@@ -1365,7 +1504,7 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
     try {
       const response = await fetchWithTimeout(mediaUrl, init, 45_000);
       if (!response.ok) {
-        lastError = new Error(`Failed to download video (${response.status})`);
+        lastError = mediaDownloadError(`Failed to download video (${response.status})`, response.status);
         continue;
       }
       const finalUrl = response.url || mediaUrl;

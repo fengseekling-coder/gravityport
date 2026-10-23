@@ -19,6 +19,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ### Interface
 
+- Settings → 连接 now has a Browser extension (浏览器扩展) card: it shows whether the extension has talked to the app recently (已连接 / 没有连接, with install guidance and a website link when it has not), the version it last captured with — plus a website link when that version is older than the one this app ships — how many captures wait in its retry queue together with a 重试 button, and the last ingest error. A 刷新 button re-reads the status; nothing polls in the background.
 - With 显示素材名称 (Show asset names) on, a favorite's heart now sits at the right end of the card's name bar instead of hiding under it; the name stops short of the heart, and a long unbroken name wraps inside the bar instead of running past it.
 - The group and stack name dialogs (新建分组并移入, 重命名分组, 合并分组, 删除分组, 重命名堆叠) now look like the confirmation dialogs: the same panel, corners, shadow, backdrop and title size, a 32px input, and 取消 beside a primary action button.
 - Context-menu headings, separators and submenus now use the theme colors, so a submenu has the same solid surface and shadow as the menu it opens from, in light and dark mode.
@@ -28,6 +29,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ### Fixes
 
+- While GravityPort is closed, the browser extension now keeps the captured image itself offline (up to 512 MB in total; past that, the oldest queue tickets drop their bytes first) instead of only a soon-expiring download URL, and a capture that has no bytes yet fetches them once at enqueue time while the URL is freshest. Media whose URL-only ticket is definitively gone (403/404/410) is now given up after 3 retries and reported as an expired URL instead of retrying every minute until the 7-day cleanup. To hold the bytes, the extension (0.15.38) asks for the `unlimitedStorage` permission again.
 - Dropping files into the gallery or pasting them while a group view is open now adds the imported assets to that group, matching what the guide promises; before, they always landed ungrouped in 待整理 no matter which view was open. Dropping a file onto a group's name in the sidebar keeps working as before.
 - The CLI and library backup errors now tell you to run `gravityport migrate` instead of `mosa migrate` (both commands still work).
 - A few leftover messages that could reach you now say GravityPort: the unauthorized-client notice when a write is rejected, the "runtime already active" dialog, and the browser extension's connection error (which now names `GRAVITYPORT_WEB_CAPTURE_ORIGINS`). The MCP tool description for adding an image now states which folders it accepts images from (the Codex generated_images folder and the library's own folders) and that anything else fails with IMAGE_PATH_NOT_READABLE.
