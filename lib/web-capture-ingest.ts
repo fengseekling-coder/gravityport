@@ -177,6 +177,10 @@ export function createWebCaptureIngest(options: { store?: Store; libraryDir?: st
   }
   function updateClientStatus(input: Metadata = {}, authToken = ""): Record<string, unknown> {
     assertToken(authToken);
+    // 0.15.38+ extensions report their version with every queue status, so the
+    // Settings card knows it without waiting for a capture.
+    const reportedVersion = String(input.extensionVersion || "").trim().slice(0, 64);
+    if (reportedVersion) state.lastExtensionVersion = reportedVersion;
     const rawItems = Array.isArray(input.items) ? input.items.slice(0, 20) : [];
     const items = rawItems.map((entry) => {
       const value = entry && typeof entry === "object" && !Array.isArray(entry) ? entry as Metadata : {};

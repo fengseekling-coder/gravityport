@@ -365,6 +365,9 @@ async function enforceCaptureQueueBudget() {
 async function captureQueueStatusSnapshot() {
   const queue = await readCaptureQueue();
   return {
+    // Lets Settings → 连接 show this extension's version right after the app
+    // starts, before the next capture arrives.
+    extensionVersion: chrome.runtime.getManifest().version,
     pending: queue.length,
     failed: queue.filter((item) => Number(item?.attempts || 0) > 0).length,
     items: queue.slice(0, 20).map((item) => ({

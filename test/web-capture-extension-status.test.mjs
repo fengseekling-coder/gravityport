@@ -71,6 +71,13 @@ test("an accepted capture records the extension version and status serves it", a
     }, "test-token");
     assert.notEqual(duplicate.status, "imported");
     assert.equal(capture.status().lastExtensionVersion, "0.15.37");
+
+    // 0.15.38+ also reports the version with each queue status, so it shows
+    // before any capture after a restart; a status without one keeps it.
+    capture.updateClientStatus({ extensionVersion: "0.15.38", pending: 0, items: [] }, "test-token");
+    assert.equal(capture.status().lastExtensionVersion, "0.15.38");
+    capture.updateClientStatus({ pending: 0, items: [] }, "test-token");
+    assert.equal(capture.status().lastExtensionVersion, "0.15.38");
   } finally {
     store.close?.();
     await rm(root, { recursive: true, force: true });
