@@ -135,20 +135,57 @@ function marqueeSource() {
     // column 2 that started below the fold.
     const g = grid();
     const gridBox = g.getBoundingClientRect();
-    const belowFold = boxes.filter((entry) => Math.abs(entry.box.left - row0[1].box.left) < 1 && entry.box.top > gridBox.bottom).map((entry) => entry.id);
+    // Card positions were measured before the earlier gestures; re-measure so
+    // the below-the-fold targets reflect the layout as this sweep starts.
+    const boxesNow = cards().map((card) => ({ id: card.dataset.assetId, box: card.getBoundingClientRect() }));
+    const belowFold = boxesNow.filter((entry) => Math.abs(entry.box.left - row0[1].box.left) < 1 && entry.box.top > gridBox.bottom).map((entry) => entry.id);
     if (!belowFold.length) throw new Error('fixture has nothing below the fold');
+    // Per-tick scene of the auto-scroll phase — [t, scrollTop, selection
+    // count, marquee bottom, cards the marquee rect overlaps] — carried into
+    // the failure report, since the page (and the scene) is gone afterwards.
+    // The overlap count is measured straight off the DOM, independent of the
+    // selection, so a selection that missed its geometry shows in the data.
+    const t0 = performance.now();
+    const timeline = [];
+    const sampleTick = () => {
+      const rectEl = document.querySelector('.marquee-rect');
+      const rect = rectEl ? rectEl.getBoundingClientRect() : null;
+      let hits = 0;
+      if (rect) for (const card of cards()) {
+        const box = card.getBoundingClientRect();
+        if (box.left < rect.right && box.right > rect.left && box.top < rect.bottom && box.bottom > rect.top) hits += 1;
+      }
+      timeline.push([Math.round(performance.now() - t0), Math.round(g.scrollTop), selectedIds().length, rect ? Math.round(rect.bottom) : -1, hits]);
+    };
     const startScroll = g.scrollTop;
     const ax = (row0[0].box.right + row0[1].box.left) / 2;
     const scrollTarget = document.elementFromPoint(ax, gy);
+    const sampler = setInterval(sampleTick, 100);
     pointer(scrollTarget, 'pointerdown', ax, gy);
     pointer(window, 'pointermove', center(row0[1].box).x, gridBox.bottom - 4);
-    await waitFor(() => g.scrollTop - startScroll > 300, 'marquee auto-scroll', 8000);
+    try {
+      await waitFor(() => g.scrollTop - startScroll > 300, 'marquee auto-scroll', 8000);
+    } catch (error) {
+      clearInterval(sampler);
+      // The driver forwards [e2e-timeout] lines into the run log (task 222);
+      // ride that channel instead of inventing a new one.
+      console.log('[e2e-timeout] ' + JSON.stringify({
+        label: 'marquee auto-scroll',
+        waitedMs: 8000,
+        visibility: document.visibilityState,
+        scrolledSoFar: Math.round(g.scrollTop - startScroll),
+        timeline: timeline.slice(-24),
+      }));
+      throw error;
+    }
     await sleep(200);
     pointer(window, 'pointerup', center(row0[1].box).x, gridBox.bottom - 4);
+    clearInterval(sampler);
     await sleep(200);
     const scrolled = g.scrollTop - startScroll;
     const finalIds = selectedIds();
     const reachedBelowFold = belowFold.some((id) => finalIds.includes(id));
-    return { gutterSelected, cardSweepGhost, cardSweepRect, cardSweepSelected, cardDragGhost, cardDragMarquee, shiftSelected, shiftClickConsumed, shiftDragGhost, scrolled, reachedBelowFold, rowWidth: row0.length };
+    const scene = reachedBelowFold && scrolled > 0 ? {} : { timeline: timeline.slice(-24) };
+    return { gutterSelected, cardSweepGhost, cardSweepRect, cardSweepSelected, cardDragGhost, cardDragMarquee, shiftSelected, shiftClickConsumed, shiftDragGhost, scrolled, reachedBelowFold, rowWidth: row0.length, ...scene };
   })()`;
 }
