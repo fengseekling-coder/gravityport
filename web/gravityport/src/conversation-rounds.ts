@@ -221,6 +221,55 @@ function windowAround(ordered: AssetRecordGroup[], centerIndex: number): AssetRe
   return ordered.slice(windowStart, anchorEnd)
 }
 
+// 任务 217：对话模式的「版本对比」。输入是 conversationRoundRows 的全部行，
+// 输出对比块要的三组行（都在有输出图的行里挑）：
+// - options：下拉选项，每个有轮次的组合只出一行代表（优先当前素材那行，否则
+//   取最早一行），没有轮次的行各自成一项；没有输出图的轮次根本没有行，自然
+//   进不了选项。
+// - base / target：默认选择。目标 = 当前素材那一轮（代表行就是当前素材），
+//   基准 = 它的上一轮；当前素材在第一轮时改为第一轮 vs 第二轮。当前素材没有
+//   轮次（或不在行里）时退化为最后两轮。
+// 有输出图的轮次（去重后的轮次数）不足 2 个时返回 null——同一轮里的多张图
+// 没有可对比的「上一轮」，宁可不显示。
+export type RoundCompareSelection = {
+  options: ConversationRoundRow[]
+  base: ConversationRoundRow
+  target: ConversationRoundRow
+}
+
+export function roundCompareSelection(rows: ConversationRoundRow[], currentAssetId: string): RoundCompareSelection | null {
+  const imageRows = rows.filter((row) => row.outputAsset)
+  const rounds: number[] = []
+  for (const row of imageRows) {
+    if (row.turnIndex !== null && !rounds.includes(row.turnIndex)) rounds.push(row.turnIndex)
+  }
+  if (rounds.length < 2) return null
+  const representativeOf = (round: number): ConversationRoundRow => {
+    const members = imageRows.filter((row) => row.turnIndex === round)
+    return members.find((row) => row.isCurrent) || members[0]
+  }
+  const options: ConversationRoundRow[] = []
+  for (const row of imageRows) {
+    if (row.turnIndex === null) options.push(row)
+    else if (representativeOf(row.turnIndex) === row) options.push(row)
+  }
+  const currentTurn = imageRows.find((row) => row.isCurrent)?.turnIndex ?? null
+  let baseRound: number
+  let targetRound: number
+  const currentIndex = currentTurn !== null ? rounds.indexOf(currentTurn) : -1
+  if (currentIndex > 0) {
+    baseRound = rounds[currentIndex - 1]
+    targetRound = currentTurn as number
+  } else if (currentIndex === 0) {
+    baseRound = rounds[0]
+    targetRound = rounds[1]
+  } else {
+    baseRound = rounds[rounds.length - 2]
+    targetRound = rounds[rounds.length - 1]
+  }
+  return { options, base: representativeOf(baseRound), target: representativeOf(targetRound) }
+}
+
 // 第二行的轮次文字，只管拼字（任务 144 第 2 条）：
 // - 快照有效（turns 非 null）时带「共 N 轮」前缀：行轮次合格写「· 第 n 轮」
 //   （当前素材「· 当前第 n 轮」），不合格只写「共 N 轮」（当前素材「· 当前」）。

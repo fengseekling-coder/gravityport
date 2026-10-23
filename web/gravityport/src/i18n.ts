@@ -233,6 +233,8 @@ const english: Record<string, string> = {
   "当前第 {n} 轮": "This asset, turn {n}",
   "第 {n} 轮": "Turn {n}",
   "当前": "This asset",
+  // Task 217: round compare option for captured images without a round number
+  "无轮次": "No round",
   // Task 148: expanded version view rows (thumbnails instead of generation ids)
   "把握 {percent}%": "{percent}% confidence",
   "改自上一张": "Edited from the previous image",
