@@ -44,7 +44,7 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.38");
+  assert.equal(manifest.version, "0.15.39");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -243,7 +243,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.38");
+  assert.equal(manifest.version, "0.15.39");
   // Storage keys and the pairing product identifier stay "mosa" so old
   // extensions keep working with the renamed App and vice versa.
   assert.match(backgroundSource, /if \(identity\?\.product !== "mosa"\) continue;/);
@@ -1085,8 +1085,8 @@ test("background limits generated video capture to Flow and Google AI Studio", (
   assert.match(backgroundSource, /sender\.id !== chrome\.runtime\.id/);
   assert.match(backgroundSource, /Number\(sender\.frameId \?\? 0\) !== 0/);
   assert.match(backgroundSource, /transfer\.senderKey !== senderKey\(sender\)/);
-  assert.match(backgroundSource, /new Set\(\["chatgpt", "gemini", "flow", "google-ai-studio"\]\)/);
-  assert.match(backgroundSource, /WEB_VIDEO_PROVIDERS = new Set\(\["flow", "google-ai-studio"\]\)/);
+  assert.match(backgroundSource, /new Set\(\["chatgpt", "gemini", "flow", "google-ai-studio", "jimeng", "midjourney"\]\)/);
+  assert.match(backgroundSource, /WEB_VIDEO_PROVIDERS = new Set\(\["flow", "google-ai-studio", "jimeng", "midjourney"\]\)/);
   assert.match(backgroundSource, /const provider = String\(payload\.provider \|\| "chatgpt"\)/);
   assert.match(backgroundSource, /if \(!WEB_IMAGE_PROVIDERS\.has\(provider\)\)/);
   assert.match(backgroundSource, /if \(mediaKind === "video" && !WEB_VIDEO_PROVIDERS\.has\(provider\)\)/);
@@ -1834,7 +1834,7 @@ test("binds prompt and asset when one image call splits them across nested reque
 });
 
 test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.38");
+  assert.equal(manifest.version, "0.15.39");
   assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
   assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
   assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);

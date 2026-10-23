@@ -7,6 +7,7 @@
 export const SMART_SOURCE_GROUPS = [
   ["web-chatgpt", "ChatGPT"], ["web-gemini", "Gemini"],
   ["web-flow", "Flow"], ["web-google-ai-studio", "Google AI Studio"],
+  ["web-jimeng", "即梦"], ["web-midjourney", "Midjourney"],
   ["codex-generated", "Codex"], ["grok-generated", "Grok"],
   ["cowart-generated", "Cowart"],
 ] as const

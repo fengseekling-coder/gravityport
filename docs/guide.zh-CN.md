@@ -15,7 +15,7 @@ GravityPort 采用 [PolyForm Noncommercial License 1.0.0](../LICENSE)，属于�
 - **Codex** 负责 AI 生成、理解和任务执行。
 - **Cowart** 负责画布编排与编辑。
 - **Grok Build CLI** 可在本地生成图片与视频。
-- **网页生图扩展**可选，用于把 ChatGPT、Gemini、Flow 和 Google AI Studio 的网页成图及其可用上下文发送到本机 GravityPort；开启自动入库后，也会代为收录 ChatGPT 桌面应用里生成的图片。
+- **网页生图扩展**可选，用于把 ChatGPT、Gemini、Flow、Google AI Studio、即梦（Jimeng）和 Midjourney 的网页成图/成片及其可用上下文发送到本机 GravityPort；开启自动入库后，也会代为收录 ChatGPT 桌面应用里生成的图片。
 - **GravityPort** 负责自动收集、归档、检索和版本管理。
 
 GravityPort 当前是绑定 `127.0.0.1` 的本地 Web 应用，也提供共享同一套 UI/Runtime 的 Electron 桌面壳。macOS arm64 是现有桌面开发目标，Windows 10/11 x64 提供安装程序，但还没有代码签名。它不是云服务，也不调用 Grok API，不应通过公网或反向代理暴露。
@@ -154,7 +154,7 @@ npm start
 
 Desktop 模式下扩展选项会自动得到实际 GravityPort 地址和 Token，通常无需手填。源码 Web Runtime 中，未配置 Token 时服务端保持禁用；来源不在精确白名单中时，跨来源请求会被拒绝。
 
-扩展只向所配置的 `127.0.0.1` 或 `localhost` GravityPort 地址发送图片字节和页面来源信息。ChatGPT 在可用时还会发送匹配到的 Prompt/用户消息、会话/消息 ID 与模型信息；Gemini 仅保存生成图所属 `model-response` 前、同一局部消息结构里的最近可见 `user-query`；Flow 仅在同一可见媒体卡片有唯一「Reuse Prompt」控件时保存其相邻可见 Prompt；Google AI Studio 仅保存图片所在会话内、图片 Model 回合之前最近的页面可见用户 Prompt 回合。三者都明确标为未验证实际生图提示词。扩展不读取 Google 站点的会话接口、登录凭据、隐藏提示词、输入编辑器或模型思考；若图片先于可匹配 Prompt 完成渲染，只会对同一图片的局部关联信息进行有界重试。地址、Token 与自动采集开关保存在 Chrome 本地存储，不使用同步存储。完整边界见 [隐私说明](../PRIVACY.md) 和 [扩展指南](../extensions/chatgpt-web-capture/README.md)。
+扩展只向所配置的 `127.0.0.1` 或 `localhost` GravityPort 地址发送图片字节和页面来源信息。ChatGPT 在可用时还会发送匹配到的 Prompt/用户消息、会话/消息 ID 与模型信息；Gemini 仅保存生成图所属 `model-response` 前、同一局部消息结构里的最近可见 `user-query`；Flow 仅在同一可见媒体卡片有唯一「Reuse Prompt」控件时保存其相邻可见 Prompt；Google AI Studio 仅保存图片所在会话内、图片 Model 回合之前最近的页面可见用户 Prompt 回合。三者都明确标为未验证实际生图提示词。即梦只读页面自己收到的 `/mweb/v1/` 接口响应（从不修改请求），只自动收录扩展启动后新生成的记录，历史记录需右键手动保存；Midjourney 从出图页网格识别生成图，优先在后台带 Cookie 下载原图，拿不到时存预览图并标注 `media_variant: preview`，两站同样标为未验证实际生图提示词。扩展不读取 Google 站点的会话接口、登录凭据、隐藏提示词、输入编辑器或模型思考；若图片先于可匹配 Prompt 完成渲染，只会对同一图片的局部关联信息进行有界重试。地址、Token 与自动采集开关保存在 Chrome 本地存储，不使用同步存储。完整边界见 [隐私说明](../PRIVACY.md) 和 [扩展指南](../extensions/chatgpt-web-capture/README.md)。
 
 被可靠识别为生成输入的参考图会保存为“生成记录附件”，而不是独立素材：文件按内容 hash 去重，只绑定到同会话中随后产生的生成结果及其 recipe snapshot，不进入素材瀑布流、搜索、最近添加或素材总数。当前可靠自动识别以 ChatGPT 的上传输入为准；Flow、Gemini 不会仅凭页面先后顺序猜测参考关系。旧版已经入库的 `is_reference` 素材保持原样，GravityPort 不自动迁移或删除现有库内容。
 
@@ -184,7 +184,7 @@ Cowart 快照可提供画布说明与来源，但不保证具有完整生图 Pro
 
 ### 侧栏
 
-左侧栏从上到下是「所有素材」「Pinterest」「待整理」「收藏」「回收站」，各自显示数量；下方是两个可折叠的分组区：「智能分组」按来源自动汇总素材（ChatGPT、Gemini、Flow、Google AI Studio、Codex、Grok、Cowart，只显示有素材的来源），「我的分组」是你自己建的分组，旁边的加号可以新建。侧栏的 Pinterest 入口在还没加载画板时标着「暂未开放」：Pinterest 目前处于试用额度，所有用户共用每天的请求次数。点进去或在「设置 → 连接」里点「连接 Pinterest」，在系统浏览器里授权一次后即可浏览自己的画板和 Pin；内容只在本机实时显示，不会存进素材库。这个视图里画廊工具栏、检视器、拖放导入、快捷键和右键菜单都不可用。
+左侧栏从上到下是「所有素材」「Pinterest」「待整理」「收藏」「回收站」，各自显示数量；下方是两个可折叠的分组区：「智能分组」按来源自动汇总素材（ChatGPT、Gemini、Flow、Google AI Studio、即梦、Midjourney、Codex、Grok、Cowart，只显示有素材的来源），「我的分组」是你自己建的分组，旁边的加号可以新建。侧栏的 Pinterest 入口在还没加载画板时标着「暂未开放」：Pinterest 目前处于试用额度，所有用户共用每天的请求次数。点进去或在「设置 → 连接」里点「连接 Pinterest」，在系统浏览器里授权一次后即可浏览自己的画板和 Pin；内容只在本机实时显示，不会存进素材库。这个视图里画廊工具栏、检视器、拖放导入、快捷键和右键菜单都不可用。
 
 ### 画廊
 
