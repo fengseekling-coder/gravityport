@@ -19,6 +19,7 @@ import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
+import { backgroundUpdateGatesPass, createUpdateScheduler, updateReadyNotificationCopy } from "./update-scheduler.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
 import { openExternalLinkOutcome } from "./open-external-link.mjs";
@@ -303,6 +304,70 @@ const bridgesAfterUpdateReady = (macosUpdateReadyFile || windowsUpdateReadyFile)
 const rendererConsoleErrors = new Set();
 const MAX_RENDERER_CONSOLE_ERRORS = 32;
 
+// Task 231: the main process owns the update cadence — check ~2 minutes after
+// startup and then every 4 hours, download a newer release into the existing
+// staging root in the background, and announce a verified staged package to
+// the renderer ("update-ready"), which keeps a persistent restart-to-update
+// button. Every gate that must suppress the cadence is evaluated live: a QA
+// run, an unpackaged build, a build without the release public key, an
+// unsupported macOS install location, and a manual install that owns the
+// staging root all pause it.
+const updateScheduler = createUpdateScheduler({
+  gatesPass: () => backgroundUpdateGatesPass({
+    isPackaged: app.isPackaged,
+    qaRun: Boolean(isolationContext.qaRun),
+    releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+    platform: process.platform,
+    installLocation: process.platform === "darwin" ? evaluateMacosInstallLocation(process.execPath) : null,
+  }),
+  checkForUpdate: () => checkForMosaUpdate({
+    currentVersion: app.getVersion(),
+    currentDistribution: expectedServiceIdentity.distribution,
+    releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+  }),
+  artifactForPlatform: (release) => (
+    process.platform === "darwin" ? release.macArtifact
+      : process.platform === "win32" ? release.windowsArtifact
+        : null
+  ),
+  downloadUpdate: (release, { signal }) => (
+    process.platform === "darwin"
+      ? downloadMacosUpdate({
+        artifact: release.macArtifact,
+        version: release.latestVersion,
+        stagingRoot: MACOS_UPDATE_STAGING_ROOT,
+        signal,
+      })
+      : downloadWindowsUpdate({
+        artifact: release.windowsArtifact,
+        version: release.latestVersion,
+        stagingRoot: WINDOWS_UPDATE_STAGING_ROOT,
+        signal,
+      })
+  ),
+  isInstallInProgress: () => Boolean(macosUpdateInstallPromise || windowsUpdateInstallPromise),
+  onUpdateReady: (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("update-ready", payload);
+    }
+  },
+  showReadyNotification: ({ version }) => {
+    if (!Notification.isSupported()) return;
+    const copy = updateReadyNotificationCopy(version, currentLocale);
+    const notification = new Notification({ title: copy.title, body: copy.body, silent: true });
+    notification.on("click", () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+    notification.show();
+  },
+  stagingRoot: process.platform === "darwin" ? MACOS_UPDATE_STAGING_ROOT : WINDOWS_UPDATE_STAGING_ROOT,
+  notifiedVersionsPath: join(desktopDataDir, "updates", "notified-versions.json"),
+});
+
 if (!app.requestSingleInstanceLock()) {
   app.exit(0);
 } else {
@@ -340,6 +405,7 @@ if (!app.requestSingleInstanceLock()) {
       console.warn(`[MOSA] visual pack cleanup failed: ${error?.message || error}`);
     });
     startAnonymousUsageLifecycle();
+    void updateScheduler.start();
     cleanupStaleUpdateTransactions();
   }).catch(reportStartupFailure);
 
@@ -364,6 +430,7 @@ if (!app.requestSingleInstanceLock()) {
     shuttingDown = true;
     stopBridgeNotificationPoll();
     stopAnonymousUsageLifecycle();
+    updateScheduler.stop();
     void Promise.allSettled([
       stopOwnedRuntime(),
       releaseDesktopStartupHandoff(),
@@ -616,6 +683,7 @@ function scheduleVisualPackRestart() {
     shuttingDown = true;
     stopBridgeNotificationPoll();
     stopAnonymousUsageLifecycle();
+    updateScheduler.stop();
     void stopOwnedRuntime().catch(console.error).finally(() => {
       app.relaunch();
       app.exit(0);
@@ -952,6 +1020,14 @@ function registerIPC() {
     return runUpdateCheck({ notify: notify === true });
   });
 
+  // Task 231: the renderer mirrors the main process's "verified package is
+  // staged" state — queried once on mount (the window may open after the
+  // announcement) and pushed live through the update-ready event.
+  ipcMain.handle("get-update-ready", (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return null;
+    return updateScheduler.readyPayload();
+  });
+
   ipcMain.handle("download-and-install-update", async (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
       return { status: "unavailable", currentVersion: app.getVersion() };
@@ -964,6 +1040,7 @@ function registerIPC() {
     }
     if (process.platform === "darwin") {
       if (macosUpdateInstallPromise) return macosUpdateInstallPromise;
+      updateScheduler.cancelDownload();
       macosUpdateInstallPromise = (async () => {
         const controller = new AbortController();
         macosUpdateDownloadController = controller;
@@ -1010,6 +1087,7 @@ function registerIPC() {
           shuttingDown = true;
           stopBridgeNotificationPoll();
           stopAnonymousUsageLifecycle();
+          updateScheduler.stop();
           await stopOwnedRuntime();
           await releaseDesktopStartupHandoff();
           app.exit(0);
@@ -1030,6 +1108,7 @@ function registerIPC() {
       return { status: "unsupported", currentVersion: app.getVersion() };
     }
     if (windowsUpdateInstallPromise) return windowsUpdateInstallPromise;
+    updateScheduler.cancelDownload();
     windowsUpdateInstallPromise = (async () => {
       const controller = new AbortController();
       windowsUpdateDownloadController = controller;
@@ -1076,6 +1155,7 @@ function registerIPC() {
       shuttingDown = true;
       stopBridgeNotificationPoll();
       stopAnonymousUsageLifecycle();
+      updateScheduler.stop();
       await stopOwnedRuntime();
       app.exit(0);
       return { status: "installing", latestVersion: release.latestVersion };

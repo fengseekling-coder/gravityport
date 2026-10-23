@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -96,6 +96,47 @@ test("macOS updater downloads to userData staging and verifies exact size plus S
         body: Readable.from([bytes]),
       }),
     }), /SHA-256 verification failed/);
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
+});
+
+test("macOS updater reuses a staged package that matches the manifest and re-downloads otherwise", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-mac-reuse-"));
+  const bytes = Buffer.from("fake-macos-zip-payload");
+  const artifact = artifactFor(bytes);
+  const fetchCalls = [];
+  const offlineFetch = async () => {
+    fetchCalls.push(1);
+    throw new Error("network unavailable");
+  };
+  const downloadFetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: (name) => name === "content-length" ? String(bytes.length) : null },
+    body: Readable.from([bytes]),
+  });
+  try {
+    const first = await downloadMacosUpdate({ artifact, version: "0.3.0", stagingRoot: root, fetchImpl: downloadFetch });
+    // A second download for the same artifact must not touch the network.
+    const second = await downloadMacosUpdate({ artifact, version: "0.3.0", stagingRoot: root, fetchImpl: offlineFetch });
+    assert.equal(second.zipPath, first.zipPath);
+    assert.equal(second.reused, true);
+    assert.equal(fetchCalls.length, 0);
+    assert.deepEqual(await readFile(second.zipPath), bytes);
+
+    // A tampered staged file forces a fresh download (which needs the network
+    // again and here fails), and the bad file does not survive the attempt.
+    await writeFile(first.zipPath, Buffer.from("tampered"));
+    await assert.rejects(
+      downloadMacosUpdate({ artifact, version: "0.3.0", stagingRoot: root, fetchImpl: offlineFetch }),
+      /network unavailable/,
+    );
+    assert.equal(fetchCalls.length, 1);
+    // A staged file of a different version never matches either.
+    const other = await downloadMacosUpdate({ artifact: artifactFor(bytes, "0.3.1"), version: "0.3.1", stagingRoot: root, fetchImpl: downloadFetch });
+    assert.equal(other.reused, undefined);
+    assert.deepEqual(await readFile(other.zipPath), bytes);
   } finally {
     await removeTestPath(root, { recursive: true, force: true });
   }

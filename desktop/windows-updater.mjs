@@ -10,6 +10,7 @@ import {
   WINDOWS_SIGNER_THUMBPRINT_PATTERN,
   WINDOWS_UPDATE_EXE_NAMES,
   normalizeWindowsUpdatePayloadExeName,
+  stagedArtifactMatches,
   windowsUpdateFileNameForPayloadExeName,
 } from "./update-service.mjs";
 
@@ -127,6 +128,14 @@ export async function downloadWindowsUpdate({
   const stagingDir = join(stagingRoot, normalizedVersion);
   const partialPath = join(stagingDir, `${safeArtifact.file}.partial`);
   const zipPath = join(stagingDir, safeArtifact.file);
+  // A package staged by an earlier background download is reused only when it
+  // still matches this freshly verified manifest artifact exactly; anything
+  // else (older version, truncated or tampered file) falls through to the
+  // wipe-and-redownload below.
+  if (await stagedArtifactMatches(zipPath, safeArtifact.size, safeArtifact.sha256)) {
+    onProgress({ receivedBytes: safeArtifact.size, totalBytes: safeArtifact.size, percent: 100 });
+    return { stagingDir, zipPath, artifact: safeArtifact, reused: true };
+  }
   // Only one downloaded release is ever useful. Removing the updater-owned
   // root prevents 150MB-class ZIPs from accumulating across versions.
   await rm(stagingRoot, { recursive: true, force: true });

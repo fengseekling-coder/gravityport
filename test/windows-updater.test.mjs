@@ -128,6 +128,47 @@ test("Windows updater downloads to userData staging and verifies exact size plus
   }
 });
 
+test("Windows updater reuses a staged package that matches the manifest and re-downloads otherwise", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-win-reuse-"));
+  const bytes = Buffer.from("fake-zip-payload");
+  const artifact = artifactFor(bytes);
+  const fetchCalls = [];
+  const offlineFetch = async () => {
+    fetchCalls.push(1);
+    throw new Error("network unavailable");
+  };
+  const downloadFetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: (name) => name === "content-length" ? String(bytes.length) : null },
+    body: Readable.from([bytes]),
+  });
+  try {
+    const first = await downloadWindowsUpdate({ artifact, version: "0.3.0", stagingRoot: root, fetchImpl: downloadFetch });
+    // A second download for the same artifact must not touch the network.
+    const second = await downloadWindowsUpdate({ artifact, version: "0.3.0", stagingRoot: root, fetchImpl: offlineFetch });
+    assert.equal(second.zipPath, first.zipPath);
+    assert.equal(second.reused, true);
+    assert.equal(fetchCalls.length, 0);
+    assert.deepEqual(await readFile(second.zipPath), bytes);
+
+    // A tampered staged file forces a fresh download (which needs the network
+    // again and here fails), and the bad file does not survive the attempt.
+    await writeFile(first.zipPath, Buffer.from("tampered"));
+    await assert.rejects(
+      downloadWindowsUpdate({ artifact, version: "0.3.0", stagingRoot: root, fetchImpl: offlineFetch }),
+      /network unavailable/,
+    );
+    assert.equal(fetchCalls.length, 1);
+    // A staged file of a different version never matches either.
+    const other = await downloadWindowsUpdate({ artifact: artifactFor(bytes, "0.3.1"), version: "0.3.1", stagingRoot: root, fetchImpl: downloadFetch });
+    assert.equal(other.reused, undefined);
+    assert.deepEqual(await readFile(other.zipPath), bytes);
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
+});
+
 test("Windows apply helper waits for MOSA, replaces the whole portable directory, rolls back, and relaunches", async () => {
   const script = windowsUpdateHelperScript();
   assert.match(script, /Wait-Process -Id \$TargetPid/);

@@ -25,12 +25,14 @@ const EXPECTED_API_KEYS = [
   "downloadAndInstallUpdate",
   "getMcpClientConfig",
   "getRenameNoticeState",
+  "getUpdateReady",
   "getUserProfile",
   "getVisualModelState",
   "installVisualPack",
   "libraryFileFlags",
   "onMenuSearch",
   "onUpdateDownloadProgress",
+  "onUpdateReady",
   "onVisualPackProgress",
   "onWindowFullScreenChange",
   "openDownloadPage",
@@ -102,7 +104,8 @@ test("preload path, module format, security settings, and API surface are stable
   // library-file-flags（拖出又拖回时不重复导入，只回布尔值）。任务 198：第 24 条
   // write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
   // 任务 208：第 25 条 mcp-client-config（只读，返回本机 App 路径拼成的 MCP 配置文本，不收参数）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "only the twenty-five approved invoke channels remain");
+  // 任务 231：第 26 条 get-update-ready（只读，返回主进程已下好并校验的更新包状态）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 26, "only the twenty-six approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
@@ -126,6 +129,10 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(preload, /downloadAndInstallUpdate: \(\) => ipcRenderer\.invoke\("download-and-install-update"\)/);
   assert.match(preload, /reportRendererReady: \(\) => ipcRenderer\.invoke\("renderer-ready"\)/);
   assert.match(preload, /onUpdateDownloadProgress: \(callback\) =>[\s\S]*?ipcRenderer\.on\("update-download-progress"/);
+  // 任务 231：已下好的更新包——查询 + 广播订阅，两个键成对出现。
+  assert.match(preload, /getUpdateReady: \(\) => ipcRenderer\.invoke\("get-update-ready"\)/);
+  assert.match(preload, /onUpdateReady: \(callback\) =>[\s\S]*?ipcRenderer\.on\("update-ready"/);
+  assert.match(main, /ipcMain\.handle\("get-update-ready"/);
   assert.match(preload, /openDownloadPage: \(\) => ipcRenderer\.invoke\("open-download-page"\)/);
   assert.match(preload, /openPinterestAuthorize: \(url\) => ipcRenderer\.invoke\("open-pinterest-authorize", url\)/);
   assert.match(preload, /openExternalLink: \(url\) => ipcRenderer\.invoke\("open-external-link", url\)/);

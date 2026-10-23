@@ -263,26 +263,3 @@ export function buildUpdateText(
     downloadAndInstall: false,
   };
 }
-
-// ---------------------------------------------------------------------------
-// 24-hour auto-check interval
-// ---------------------------------------------------------------------------
-
-const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const UPDATE_LAST_CHECKED_KEY = "mosa.update-last-checked";
-
-/**
- * Returns true when a silent auto-check should run right now, based on the
- * last-checked timestamp stored under mosa.update-last-checked.
- * Treats a missing or invalid timestamp as "never checked" (always true).
- */
-export function shouldAutoCheckForUpdates(getStored: (key: string) => string | null): boolean {
-  const raw = getStored(UPDATE_LAST_CHECKED_KEY);
-  const lastChecked = Number(raw || "0");
-  return !Number.isFinite(lastChecked) || lastChecked <= 0 || Date.now() - lastChecked >= UPDATE_CHECK_INTERVAL_MS;
-}
-
-/** Persists the current timestamp as the last-checked marker. */
-export function recordUpdateCheck(setStored: (key: string, value: string) => void): void {
-  setStored(UPDATE_LAST_CHECKED_KEY, String(Date.now()));
-}

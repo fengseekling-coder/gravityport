@@ -137,12 +137,14 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "downloadAndInstallUpdate",
     "getMcpClientConfig",
     "getRenameNoticeState",
+    "getUpdateReady",
     "getUserProfile",
     "getVisualModelState",
     "installVisualPack",
     "libraryFileFlags",
     "onMenuSearch",
     "onUpdateDownloadProgress",
+    "onUpdateReady",
     "onVisualPackProgress",
     "onWindowFullScreenChange",
     "openDownloadPage",
@@ -165,8 +167,10 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // open-external-link（Pinterest Pin 外链，仅 http/https）。任务 198：第 24 条
   // write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
   // 任务 208：第 25 条 mcp-client-config（只读，返回本机 App 路径拼成的 MCP 配置文本，不收参数）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "preload keeps the approved invoke channels");
+  // 任务 231：第 26 条 get-update-ready（只读，主进程已下好并校验的更新包状态）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 26, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
+  assert.match(preload, /getUpdateReady: \(\) => ipcRenderer\.invoke\("get-update-ready"\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");
   // R1 isolation fix (2026-08-09, approved scope) added qa:web/qa:electron/
   // qa:packaged launcher scripts to package.json, so its dependency sections

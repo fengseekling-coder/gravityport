@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("check-for-updates", notify === true),
   downloadAndInstallUpdate: () => ipcRenderer.invoke("download-and-install-update"),
   cancelUpdateDownload: () => ipcRenderer.invoke("cancel-update-download"),
+  // 任务 231：主进程已把校验过的更新包放进 staging，渲染层查询 + 订阅广播，
+  // 侧栏常驻「重启并更新」按钮据此显示。
+  getUpdateReady: () => ipcRenderer.invoke("get-update-ready"),
+  onUpdateReady: (callback) =>
+    ipcRenderer.on("update-ready", (_event, payload) => callback(payload)),
   reportRendererReady: () => ipcRenderer.invoke("renderer-ready"),
   onUpdateDownloadProgress: (callback) =>
     ipcRenderer.on("update-download-progress", (_event, progress) => callback(progress)),
