@@ -1,16 +1,22 @@
 {
   "schema": 1,
   "unreleased": {
-    "zh": [
-      "App 开着时也会自动检查更新并在后台下载，下好后侧栏会出现常驻的「重启并更新」按钮，点一下就完成更新。",
-      "浏览器扩展 0.15.39：即梦和 Midjourney 的图和视频也能自动收进素材库了，提示词、来源一起带上；Midjourney 优先收原图，历史旧图不会被自动灌进来，想收旧图右键保存即可。"
-    ],
-    "en": [
-      "The app now checks for updates while it runs and downloads them in the background; when one is ready, a persistent Restart to update button appears in the sidebar.",
-      "Extension 0.15.39 archives generated images and videos from Jimeng and Midjourney with prompts and provenance. Old history is never auto-imported; right-click saves any item."
-    ]
+    "zh": [],
+    "en": []
   },
   "releases": [
+    {
+      "version": "0.3.5",
+      "date": "2026-10-23",
+      "zh": [
+        "App 开着时也会自动检查更新并在后台下载，下好后侧栏会出现常驻的「重启并更新」按钮，点一下就完成更新。",
+        "浏览器扩展 0.15.39：即梦和 Midjourney 的图和视频也能自动收进素材库了，提示词、来源一起带上；Midjourney 优先收原图，历史旧图不会被自动灌进来，想收旧图右键保存即可。"
+      ],
+      "en": [
+        "The app now checks for updates while it runs and downloads them in the background; when one is ready, a persistent Restart to update button appears in the sidebar.",
+        "Extension 0.15.39 archives generated images and videos from Jimeng and Midjourney with prompts and provenance. Old history is never auto-imported; right-click saves any item."
+      ]
+    },
     {
       "version": "0.3.4",
       "date": "2026-10-23",
