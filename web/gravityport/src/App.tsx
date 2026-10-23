@@ -18,6 +18,7 @@ import {
   type StackUndoPlan,
 } from "./card-drag"
 import { runImport, collectDroppedFiles, excludeLibraryFiles } from "./import-pipeline"
+import { groupNameForActive } from "./import-target"
 import { trashRemainingDays } from "./trash-ui"
 import { desktopAPI } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
@@ -2587,7 +2588,7 @@ export default function App() {
     const paste = (event: ClipboardEvent) => {
       if (active === "回收站") return
       const files = Array.from(event.clipboardData?.files || [])
-      if (files.length) void importFiles(files)
+      if (files.length) void importFiles(files, groupNameForActive(active))
     }
     window.addEventListener("paste", paste)
     return () => window.removeEventListener("paste", paste)
@@ -3638,7 +3639,7 @@ export default function App() {
         onDrop={event => {
           if (preview || settings || active === "回收站" || pinterestActive) return
           event.preventDefault()
-          importDroppedFiles(event.dataTransfer)
+          importDroppedFiles(event.dataTransfer, groupNameForActive(active))
         }}
       >
         <header className="toolbar">

@@ -467,9 +467,10 @@ test("Electron drag/drop uses the same byte-stream staging path as Web", async (
   assert.match(app, /onDrop={event =>/, "the workspace owns the drop handler");
   // Task 142: the drop handler hands the DataTransfer to collectDroppedFiles
   // (folder expansion, still real File objects) and importFiles runs the
-  // staged pipeline from import-pipeline.ts.
-  assert.match(app, /importDroppedFiles\(event\.dataTransfer\)/,
-    "drop handler feeds the DataTransfer into the staged import pipeline");
+  // staged pipeline from import-pipeline.ts. Task 224: the group the user is
+  // browsing rides along as the import target.
+  assert.match(app, /importDroppedFiles\(event\.dataTransfer, groupNameForActive\(active\)\)/,
+    "drop handler feeds the DataTransfer into the staged import pipeline, into the browsed group");
   assert.match(app, /collectDroppedFiles\(dataTransfer/,
     "dropped folders expand into real File objects before staging");
   assert.match(pipeline, /stageImportFile\(file\)/, "imports stream bytes through the runtime staging endpoint");

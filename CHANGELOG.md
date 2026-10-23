@@ -28,6 +28,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ### Fixes
 
+- Dropping files into the gallery or pasting them while a group view is open now adds the imported assets to that group, matching what the guide promises; before, they always landed ungrouped in 待整理 no matter which view was open. Dropping a file onto a group's name in the sidebar keeps working as before.
 - The CLI and library backup errors now tell you to run `gravityport migrate` instead of `mosa migrate` (both commands still work).
 - A few leftover messages that could reach you now say GravityPort: the unauthorized-client notice when a write is rejected, the "runtime already active" dialog, and the browser extension's connection error (which now names `GRAVITYPORT_WEB_CAPTURE_ORIGINS`). The MCP tool description for adding an image now states which folders it accepts images from (the Codex generated_images folder and the library's own folders) and that anything else fails with IMAGE_PATH_NOT_READABLE.
 - When an AI assistant closes its connection to the MCP server while a write is still in progress, the write now finishes and reports success instead of failing with "database connection is not open"; the server also reports its real version (the app's) instead of a hardcoded 0.2.0.
