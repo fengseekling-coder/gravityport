@@ -4,6 +4,10 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ## Unreleased
 
+### Desktop & MCP
+
+- Moving the library in Settings no longer risks losing AI-assistant writes: the desktop now marks the library before copying, the built-in MCP server refuses tool calls with a "moving the library" error for the duration (and answers normally again if the move fails), and the copy is aborted and rolled back if the source database changes while it is being copied.
+
 ### Web Capture
 
 - Extension 0.15.40: Jimeng's full-size originals (`aigc_resize:0:0.png`, e.g. 1440×2560) are now captured. Their URL carries no size, so 0.15.39 treated them as 0-pixel images and silently skipped every new Jimeng generation; the size now comes from the response. Midjourney also treats jobs that render within 8 seconds of the page opening as history, so a page that shows only one or two old jobs no longer auto-captures them.

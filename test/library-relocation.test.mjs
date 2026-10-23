@@ -147,8 +147,10 @@ test("copyLibraryForRelocation skips the runtime lock and rebases managed paths"
   const root = await mkdtemp(join(tmpdir(), "mosa-relocation-copy-"));
   deferTestPathRemoval(root, { recursive: true, force: true });
   const sourceLibraryDir = await seedRelocatableLibrary(root, "copy-source", "copied");
-  // A leftover lock from an unclean shutdown must never reach the new location.
+  // A leftover lock from an unclean shutdown must never reach the new location,
+  // and neither may the relocation marker the App writes before copying.
   await writeFile(join(sourceLibraryDir, ".mosa-runtime.lock"), "stale");
+  await writeFile(join(sourceLibraryDir, ".gravityport-relocating"), "{\"startedAt\":\"now\"}");
   const destinationLibraryDir = join(root, "copy-destination");
   await mkdir(destinationLibraryDir, { recursive: true });
 
@@ -158,6 +160,7 @@ test("copyLibraryForRelocation skips the runtime lock and rebases managed paths"
 
   const copiedEntries = await readdir(destinationLibraryDir);
   assert.equal(copiedEntries.includes(".mosa-runtime.lock"), false, "the runtime lock is never copied");
+  assert.equal(copiedEntries.includes(".gravityport-relocating"), false, "the relocation marker is never copied");
   const copiedDatabase = new Database(sqliteDatabasePath(destinationLibraryDir), { readonly: true });
   const copiedRow = copiedDatabase.prepare("SELECT original_path FROM assets WHERE project_id = 'default' AND id = 'copied'").get();
   copiedDatabase.close();

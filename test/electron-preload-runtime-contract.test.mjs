@@ -181,9 +181,9 @@ test("preload path, module format, security settings, and API surface are stable
     && relocationHandler.indexOf("if (!validation.ok) return") < relocationHandler.indexOf("await dialog.showMessageBox"),
     "a rejected target aborts before any copy is attempted");
   assert.match(relocationHandler, /await stopOwnedRuntime\(\)/, "SQLite and the runtime lock are closed before migration");
-  assert.ok(relocationHandler.indexOf("await copyLibraryForRelocation({") > relocationHandler.indexOf("await stopOwnedRuntime()"),
+  assert.ok(relocationHandler.indexOf("await copyLibraryForRelocationGuarded({") > relocationHandler.indexOf("await stopOwnedRuntime()"),
     "the copy starts only after the runtime stopped");
-  assert.ok(relocationHandler.indexOf("saveLibraryDir(nextLibraryDir)") > relocationHandler.indexOf("await copyLibraryForRelocation({"),
+  assert.ok(relocationHandler.indexOf("saveLibraryDir(nextLibraryDir)") > relocationHandler.indexOf("await copyLibraryForRelocationGuarded({"),
     "the persisted location switches only after the copy succeeds");
   assert.ok(relocationHandler.indexOf("await rm(previousLibraryDir") > relocationHandler.indexOf("saveLibraryDir(nextLibraryDir)"),
     "the original library is removed only after a successful copy and preference switch");

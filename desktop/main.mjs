@@ -26,7 +26,13 @@ import { openExternalLinkOutcome } from "./open-external-link.mjs";
 import { writeClipboardFiles } from "./clipboard-files.mjs";
 import { mosaClientTokenFingerprint, resolveAllowedFolderPath } from "../lib/server-security.js";
 import { isUrlLikePath } from "../lib/path-safety.mjs";
-import { copyLibraryForRelocation, validateRelocationTarget } from "../lib/library-relocation.mjs";
+import {
+  clearStaleRelocationMarker,
+  copyLibraryForRelocationGuarded,
+  removeRelocationMarker,
+  validateRelocationTarget,
+  writeRelocationMarker,
+} from "../lib/library-relocation.mjs";
 import {
   defaultLibraryDir,
   legacyDefaultLibraryDir,
@@ -1258,17 +1264,31 @@ function registerIPC() {
     if (confirmation.response !== 1) return { ok: false, reason: "cancelled" };
 
     const previousLibraryDir = libraryDir;
+    // The marker goes down before the runtime stops: the desktop MCP checks it
+    // before every tools/call, so from here on no MCP write can vanish with
+    // the old library. A marker that cannot be written means the move cannot
+    // be guarded, so it never starts.
+    try {
+      await writeRelocationMarker({ libraryDir: previousLibraryDir, pid: process.pid });
+    } catch (error) {
+      console.error(`[MOSA] library relocation marker could not be written: ${error?.stack || error}`);
+      return { ok: false, reason: "copy-failed" };
+    }
     try {
       await stopOwnedRuntime();
       service = null;
       // The runtime lock has been released by stopOwnedRuntime(), and the copy
-      // skips the lock file even if shutdown cleanup is delayed.
-      await copyLibraryForRelocation({
+      // skips the lock file and the relocation marker. The guarded copy also
+      // settles in-flight MCP writes, verifies the source database was not
+      // touched mid-copy, and removes the marker when it fails.
+      await copyLibraryForRelocationGuarded({
         sourceLibraryDir: previousLibraryDir,
         destinationLibraryDir: nextLibraryDir,
       });
       saveLibraryDir(nextLibraryDir);
     } catch (error) {
+      // The move is off; without this the MCP would refuse the old library forever.
+      await removeRelocationMarker({ libraryDir: previousLibraryDir }).catch(() => {});
       console.error(`[MOSA] library relocation failed: ${error?.stack || error}`);
       libraryDir = previousLibraryDir;
       app.relaunch();
@@ -1630,6 +1650,18 @@ async function ensureDesktopService() {
     }
     service = nextService;
     await releaseDesktopStartupHandoff();
+    if (nextService.mode === "owned") {
+      // A relocation that crashed mid-copy leaves its marker in the library;
+      // the MCP would keep refusing this healthy library until it is gone.
+      try {
+        const staleMarker = await clearStaleRelocationMarker({ libraryDir });
+        if (staleMarker.removed) {
+          console.info(`[MOSA] cleared stale relocation marker from the library (started at ${staleMarker.startedAt ?? "unknown time"}, pid ${staleMarker.pid ?? "unknown"})`);
+        }
+      } catch (error) {
+        console.warn(`[MOSA] could not check the library for a stale relocation marker: ${error?.message || error}`);
+      }
+    }
     return service;
   })().finally(() => {
     serviceStartPromise = null;
