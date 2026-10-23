@@ -16,7 +16,7 @@ test("permits only one MOSA bridge runtime for a library", async (t) => {
   const first = await acquireMosaRuntimeLock({ libraryDir });
   await assert.rejects(
     acquireMosaRuntimeLock({ libraryDir }),
-    /MOSA runtime already active for this library/,
+    /GravityPort runtime already active for this library/,
   );
   assert.equal(await first.release(), true);
 
@@ -79,5 +79,5 @@ test("legacy JSON MCP refuses a second writer while a MOSA runtime lease is acti
     new Promise((_, reject) => setTimeout(() => reject(new Error("MCP did not reject the active JSON runtime lease.")), 5000)),
   ]);
   assert.notEqual(code, 0);
-  assert.match(stderr, /MOSA runtime already active for this library/);
+  assert.match(stderr, /GravityPort runtime already active for this library/);
 });

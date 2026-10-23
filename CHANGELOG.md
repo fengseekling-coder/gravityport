@@ -15,6 +15,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 ### Updates
 
 - An in-app update no longer rolls back to the previous version once the new version has started upgrading the library: the previous version cannot open an upgraded library, so the updater keeps the new version (and the parked previous copy) and starts it again if needed. The new version also gets 120 seconds instead of 45 to report that it started, and right after an update the source bridges wait until it has reported, so a macOS folder-permission prompt can no longer hold it past the deadline.
+- Update downloads that a finished update has already replaced (staged under the app's data directory, one folder per version) are now removed on the next launch instead of piling up; the download for the version currently running, anything newer, and anything still installing are always kept.
 
 ### Interface
 
@@ -28,6 +29,9 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 ### Fixes
 
 - The CLI and library backup errors now tell you to run `gravityport migrate` instead of `mosa migrate` (both commands still work).
+- A few leftover messages that could reach you now say GravityPort: the unauthorized-client notice when a write is rejected, the "runtime already active" dialog, and the browser extension's connection error (which now names `GRAVITYPORT_WEB_CAPTURE_ORIGINS`). The MCP tool description for adding an image now states which folders it accepts images from (the Codex generated_images folder and the library's own folders) and that anything else fails with IMAGE_PATH_NOT_READABLE.
+- When an AI assistant closes its connection to the MCP server while a write is still in progress, the write now finishes and reports success instead of failing with "database connection is not open"; the server also reports its real version (the app's) instead of a hardcoded 0.2.0.
+- The desktop app no longer lets its interface run the spellchecker, so it never downloads spelling dictionaries from Chromium's CDN — the app's only network calls stay the ones the privacy notes describe.
 - The visual relationship index is stored at `<userData>/visual-relationship-indexes/<library>/` again instead of one directory deeper; an existing index is moved up on first use.
 - Clicking 保存 in the 新建分组并移入 and 重命名堆叠 dialogs now saves: any click inside them used to reach the backdrop and close the dialog before the name was submitted, so only Return worked. Clicking the text of the dissolve-stack and trash-stack confirmations no longer closes them either.
 

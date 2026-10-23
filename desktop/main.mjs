@@ -14,6 +14,7 @@ import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPT
 import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
+import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
 import { openExternalLinkOutcome } from "./open-external-link.mjs";
@@ -1328,6 +1329,18 @@ function openMainWindow() {
   cleanupOrphanStagedFiles(importStagingRoot).catch((error) => {
     console.error(`[MOSA] import-staging orphan sweep failed: ${error?.message || error}`);
   });
+  // Consumed update downloads (updates/<platform>/<version>, strictly older
+  // than the running build) go the same way; best-effort, next launch retries.
+  cleanupStaleUpdateStagingDirs({
+    stagingRoots: [MACOS_UPDATE_STAGING_ROOT, WINDOWS_UPDATE_STAGING_ROOT],
+    currentVersion: app.getVersion(),
+  }).then(({ failed }) => {
+    for (const entry of failed) {
+      console.warn(`[GravityPort] update-download cleanup failed for ${entry.dirPath}: ${entry.error}`);
+    }
+  }).catch((error) => {
+    console.warn(`[GravityPort] update-download cleanup failed: ${error?.message || error}`);
+  });
   windowPromise = (async () => {
     do {
       windowOpenRequested = false;
@@ -1354,6 +1367,9 @@ async function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The interface has no text the user spell-checks; without this Electron
+      // may fetch dictionaries from Chromium's CDN, an unstated network call.
+      spellcheck: false,
     },
   });
   const windowRef = mainWindow;

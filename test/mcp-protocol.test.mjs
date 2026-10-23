@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
+import sharp from "sharp";
 import { MCP_SERVER_VERSION } from "../lib/version-identities.mjs";
 import { createMcpWorkspace, startMcpServer } from "./helpers/mcp-server-harness.mjs";
 
@@ -171,4 +175,33 @@ test("business failures surface as isError tool results, not JSON-RPC errors", a
   assert.equal(missingArchive.error, undefined);
   assert.equal(missingArchive.result.isError, true);
   assert.equal(missingArchive.result.structuredContent.error.code, "ASSET_NOT_FOUND");
+});
+
+test("closing stdin mid-write lets the in-flight request finish before the store closes", async (t) => {
+  const workspace = await createMcpWorkspace(t);
+  const server = startMcpServer(t, workspace);
+  await server.request("initialize", {});
+
+  // Random pixels keep the PNG incompressible (~1 MB), so hashing, the pixel
+  // digest and the managed copy are still running when stdin ends below.
+  const imagePath = join(workspace.imagesDir, "in-flight.png");
+  await writeFile(imagePath, await sharp(randomBytes(1024 * 1024), {
+    raw: { width: 512, height: 512, channels: 4 },
+  }).png().toBuffer());
+
+  const id = server.send("tools/call", {
+    name: "asset_create",
+    arguments: { assetId: "in-flight", imagePath, prompt: "written while the client hangs up" },
+  });
+  server.child.stdin.end();
+
+  const response = await server.waitForResponse(id);
+  assert.equal(response.error, undefined, JSON.stringify(response.error));
+  assert.notEqual(response.result?.isError, true, JSON.stringify(response.result?.structuredContent));
+  assert.equal(response.result.structuredContent.asset.id, "in-flight");
+
+  // stdin is gone; after the in-flight request settled and the store closed,
+  // the server exits cleanly on its own.
+  const exit = await server.waitForExit();
+  assert.equal(exit.code, 0);
 });

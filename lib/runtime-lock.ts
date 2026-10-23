@@ -147,5 +147,5 @@ export async function readMosaRuntimeProcessIdentity(pid: number): Promise<strin
 }
 
 function activeRuntimeError(lockPath: string, owner: LockOwner): Error {
-  return new Error(`MOSA runtime already active for this library (PID ${owner.pid}; lock ${lockPath}). Stop that runtime or choose a different MOSA_LIBRARY_DIR.`);
+  return new Error(`GravityPort runtime already active for this library (PID ${owner.pid}; lock ${lockPath}). Stop that runtime or choose a different GRAVITYPORT_LIBRARY_DIR.`);
 }
