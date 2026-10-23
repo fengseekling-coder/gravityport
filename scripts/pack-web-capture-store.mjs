@@ -30,9 +30,26 @@ const runtimeFiles = [
   "options.html",
   "options.js",
   "page-hook.js",
+  "jimeng-page-hook.js",
+  "provider-jimeng.js",
+  "provider-midjourney.js",
   "provider-policy.js",
   "provider-sites.js",
 ];
+
+// Every file the manifest loads must ship: a missing content script makes
+// Chrome refuse the whole extension (0.15.39 nearly shipped without three).
+const manifestFiles = new Set([
+  manifest.background?.service_worker,
+  manifest.options_page,
+  manifest.options_ui?.page,
+  manifest.action?.default_popup,
+  ...(manifest.content_scripts || []).flatMap((entry) => [...(entry.js || []), ...(entry.css || [])]),
+].filter(Boolean));
+const missingFromPackage = [...manifestFiles].filter((file) => !runtimeFiles.includes(file));
+if (missingFromPackage.length) {
+  throw new Error(`Web Capture package would miss files the manifest loads: ${missingFromPackage.join(", ")}`);
+}
 
 async function zipStaging(sourceDir, target) {
   await rm(target, { force: true });
