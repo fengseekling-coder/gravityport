@@ -33,7 +33,7 @@ The selected local GravityPort library can contain:
 
 Reference images identified by Web Capture are stored as private generation-record attachments under the selected GravityPort library. They are content-hash deduplicated and may be linked into the subsequent generated asset's recipe snapshot, but they are not ordinary assets and therefore do not appear in the gallery, search, recent items, or asset totals. GravityPort does not infer the purpose or rights of a reference from its pixels.
 
-A recipe may record rights declarations for the reference images it used — copyright state, portrait-consent state, redistribution state, an attribution string, and permitted or forbidden purposes. These can only be attached through the MCP tools `asset_create` and `asset_update_metadata`; the app interface has no input for them.
+A recipe may record rights declarations for the reference images it used — copyright state, portrait-consent state, redistribution state, an attribution string, and permitted or forbidden purposes. These can only be attached through the MCP tools `asset_create` and `asset_update_metadata`; the app interface has no input for them. An attribution name can identify a third party, so treat it as personal data. Every field starts at `unknown`; GravityPort never infers consent.
 
 The library is stored on the user's machine. GravityPort does not upload it to a GravityPort-operated service.
 
