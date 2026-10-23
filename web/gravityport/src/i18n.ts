@@ -91,6 +91,9 @@ const english: Record<string, string> = {
   "正在下载 {percent}%": "Downloading {percent}%",
   "取消下载": "Cancel download",
   "更新失败，请稍后重试": "Update failed. Please try again later.",
+  // 任务 231：主进程后台下好更新包后的常驻重启按钮
+  "重启并更新": "Restart to update",
+  "重启并更新到 v{version}": "Restart to update to v{version}",
   "发布于 {date}": "Released on {date}",
   "正在检查…": "Checking…",
   // app-lifecycle: rename notice (task 116)

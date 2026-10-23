@@ -270,55 +270,6 @@ describe("createReadyGate", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 24-hour interval
-// ---------------------------------------------------------------------------
-
-describe("shouldAutoCheckForUpdates", () => {
-  let shouldAutoCheckForUpdates;
-
-  before(() => {
-    ({ shouldAutoCheckForUpdates } = lifecycle);
-  });
-
-  it("returns true when nothing is stored", () => {
-    assert.equal(shouldAutoCheckForUpdates(() => null), true);
-  });
-
-  it("returns true when the stored value is zero", () => {
-    assert.equal(shouldAutoCheckForUpdates(() => "0"), true);
-  });
-
-  it("returns true when more than 24 hours have passed", () => {
-    const yesterday = String(Date.now() - (25 * 60 * 60 * 1000));
-    assert.equal(shouldAutoCheckForUpdates(() => yesterday), true);
-  });
-
-  it("returns false when less than 24 hours have passed", () => {
-    const recent = String(Date.now() - (1 * 60 * 60 * 1000));
-    assert.equal(shouldAutoCheckForUpdates(() => recent), false);
-  });
-
-  it("returns true when stored value is not a number", () => {
-    assert.equal(shouldAutoCheckForUpdates(() => "not-a-timestamp"), true);
-  });
-});
-
-describe("recordUpdateCheck", () => {
-  let recordUpdateCheck;
-
-  before(() => {
-    ({ recordUpdateCheck } = lifecycle);
-  });
-
-  it("stores the current timestamp under the correct key", () => {
-    const stored = {};
-    recordUpdateCheck((key, value) => { stored[key] = value; });
-    const saved = Number(stored["mosa.update-last-checked"]);
-    assert.ok(Math.abs(saved - Date.now()) < 5000);
-  });
-});
-
 describe("fill", () => {
   it("fills any named placeholder present in the values, including {count}", () => {
     assert.equal(lifecycle.fill("已选 {count} 项", { count: 3 }), "已选 3 项");

@@ -2,6 +2,12 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## Unreleased
+
+### Updates
+
+- The app now keeps itself up to date while it is open: the desktop app checks the release feed a couple of minutes after launch and then every four hours, and downloads a new version in the background. Once the package is verified, a persistent 重启并更新 (Restart to update) button appears at the bottom of the sidebar, one system notification is sent per version, and Settings → 关于 offers the same button; a version you skipped stays staged, so the next launch offers it again without downloading twice. Failed background downloads stay silent and are retried on the next cycle.
+
 ## 0.3.4 — 2026-10-23 / Preview
 
 ### Windows

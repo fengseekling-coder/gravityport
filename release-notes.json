@@ -1,8 +1,12 @@
 {
   "schema": 1,
   "unreleased": {
-    "zh": [],
-    "en": []
+    "zh": [
+      "App 开着时也会自动检查更新并在后台下载，下好后侧栏会出现常驻的「重启并更新」按钮，点一下就完成更新。"
+    ],
+    "en": [
+      "The app now checks for updates while it runs and downloads them in the background; when one is ready, a persistent Restart to update button appears in the sidebar."
+    ]
   },
   "releases": [
     {

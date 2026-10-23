@@ -11,7 +11,7 @@ import {
   mosaDesktopStartupHandoffPath,
 } from "../lib/runtime-handoff.mjs";
 import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
-import { MACOS_TEAM_IDENTIFIER_PATTERN, MACOS_UPDATE_APP_NAMES } from "./update-service.mjs";
+import { MACOS_TEAM_IDENTIFIER_PATTERN, MACOS_UPDATE_APP_NAMES, stagedArtifactMatches } from "./update-service.mjs";
 
 export { MACOS_UPDATE_APP_NAMES };
 
@@ -121,6 +121,14 @@ export async function downloadMacosUpdate({
   const stagingDir = join(stagingRoot, normalizedVersion);
   const partialPath = join(stagingDir, `${safeArtifact.file}.partial`);
   const zipPath = join(stagingDir, safeArtifact.file);
+  // A package staged by an earlier background download is reused only when it
+  // still matches this freshly verified manifest artifact exactly; anything
+  // else (older version, truncated or tampered file) falls through to the
+  // wipe-and-redownload below.
+  if (await stagedArtifactMatches(zipPath, safeArtifact.size, safeArtifact.sha256)) {
+    onProgress({ receivedBytes: safeArtifact.size, totalBytes: safeArtifact.size, percent: 100 });
+    return { stagingDir, zipPath, artifact: safeArtifact, reused: true };
+  }
   await rm(stagingRoot, { recursive: true, force: true });
   await mkdir(stagingDir, { recursive: true });
 

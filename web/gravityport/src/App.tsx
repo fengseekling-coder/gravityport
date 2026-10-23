@@ -21,7 +21,7 @@ import {
 import { runImport, collectDroppedFiles, excludeLibraryFiles } from "./import-pipeline"
 import { groupNameForActive } from "./import-target"
 import { trashRemainingDays } from "./trash-ui"
-import { desktopAPI } from "./desktop"
+import { desktopAPI, type UpdateReadyState } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { boxFromPoints, boxesIntersect, marqueeAutoScrollDelta, marqueeAutoScrollStep, marqueeSelection, masonryCardBoxes, MARQUEE_AUTO_SCROLL_TICK_MS, MARQUEE_DRAG_THRESHOLD_PX, type Box } from "./marquee"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
@@ -52,8 +52,6 @@ import {
   fill,
   mapUpdateResult,
   buildUpdateText,
-  shouldAutoCheckForUpdates,
-  recordUpdateCheck,
   type UpdateUiState,
 } from "./app-lifecycle"
 import { buildReleaseNoteBlocks } from "./release-notes-view"
@@ -521,6 +519,10 @@ export default function App() {
   }, [skipConfirm])
   // Update check state machine (app-lifecycle).
   const [updateState, setUpdateState] = useState<UpdateUiState>({ phase: "idle" })
+  // Task 231 — the main process owns update checks and staged a verified
+  // package; the sidebar and the about panel keep a restart-to-update button.
+  const [updateReady, setUpdateReady] = useState<UpdateReadyState | null>(null)
+  const [restartPending, setRestartPending] = useState(false)
   // Rename notice (task 116): shown once at first-screen render.
   const [renameNoticeOpen, setRenameNoticeOpen] = useState(false)
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
@@ -911,17 +913,19 @@ export default function App() {
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  // Silent auto-check for updates every 24 hours.
+  // Task 231 — the main process checks for updates on its own cadence now.
+  // The renderer only mirrors the "verified package staged" state: query it
+  // once (the window may have opened after the announcement) and subscribe for
+  // live announcements; the button never disappears on its own.
   useEffect(() => {
-    if (!shouldAutoCheckForUpdates(key => localStorage.getItem(key))) return
     const api = desktopAPI()
-    if (!api?.checkForUpdates) return
-    api.checkForUpdates(false).then(result => {
-      recordUpdateCheck((key, value) => localStorage.setItem(key, value))
-      if (result?.updateAvailable) {
-        notify(fill(tr("发现新版本 v{version}"), { version: String(result.latestVersion ?? "").replace(/^v/i, "") }))
-      }
+    if (!api?.getUpdateReady) return
+    api.getUpdateReady().then(payload => {
+      if (payload?.version) setUpdateReady(payload)
     }).catch(() => {})
+    api.onUpdateReady?.(payload => {
+      if (payload?.version) setUpdateReady(payload)
+    })
   }, [])
   // Listen for update download progress.
   useEffect(() => {
@@ -3163,7 +3167,6 @@ export default function App() {
     setUpdateState({ phase: "checking" })
     try {
       const result = await api.checkForUpdates(true)
-      recordUpdateCheck((key, value) => localStorage.setItem(key, value))
       const state = mapUpdateResult(result ?? {})
       setUpdateState(state)
       if (state.phase === "current") {
@@ -3192,6 +3195,25 @@ export default function App() {
       setUpdateState(current => current.phase === "downloading"
         ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false, notes: current.notes }
         : current)
+      notify(tr("更新失败，请稍后重试"))
+    }
+  }
+  // Task 231 — restart into the staged, verified update. The install flow
+  // re-reads the manifest and re-verifies the package in the main process; on
+  // success it relaunches the new version, so the promise only resolves when
+  // something kept this window alive.
+  const restartToUpdate = async () => {
+    const api = desktopAPI()
+    if (!api?.downloadAndInstallUpdate) return
+    if (restartPending) return
+    setRestartPending(true)
+    try {
+      const result = await api.downloadAndInstallUpdate() as { status?: string } | undefined
+      if (result?.status === "installing") return
+      setRestartPending(false)
+      if (result?.status !== "cancelled") notify(tr("更新失败，请稍后重试"))
+    } catch {
+      setRestartPending(false)
       notify(tr("更新失败，请稍后重试"))
     }
   }
@@ -3456,6 +3478,18 @@ export default function App() {
           <span>{tr("用户中心")}</span>
           <Icon name="settings" size={14} />
         </button>
+        {updateReady && (
+          <button
+            className="user-button"
+            style={{ marginTop: "var(--space-2)" }}
+            disabled={restartPending}
+            title={fill(tr("重启并更新到 v{version}"), { version: updateReady.version || "" })}
+            onClick={restartToUpdate}
+          >
+            <Icon name="enter" size={14} />
+            <span>{fill(tr("重启并更新到 v{version}"), { version: updateReady.version || "" })}</span>
+          </button>
+        )}
       </aside>
       {(groupRename || groupDeleteConfirm || groupMerge || groupStats) && <div className="group-dialog-backdrop" role="presentation">
         <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("分组管理")}>
@@ -4591,6 +4625,11 @@ export default function App() {
                       })()}
                     </div>
                     {(() => {
+                      // Task 231 — a verified staged package wins: both entry
+                      // points restart into it instead of re-downloading.
+                      if (updateReady) {
+                        return <button className="neutral-button about-update" onClick={restartToUpdate} disabled={restartPending}>{tr("重启并更新")}</button>
+                      }
                       const text = buildUpdateText(
                         health?.productVersion || "",
                         updateState,

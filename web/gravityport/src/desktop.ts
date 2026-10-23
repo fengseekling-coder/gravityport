@@ -16,6 +16,12 @@ export type McpClientConfig = {
   codex?: string
 }
 
+// 任务 231：主进程已把校验过的更新包放进 staging 后广播的载荷。
+export type UpdateReadyState = {
+  version?: string
+  notes?: { zh?: string; en?: string }
+}
+
 type ElectronAPI = {
   pasteImage?: () => Promise<unknown>
   writeClipboardText?: (text: string) => Promise<unknown>
@@ -32,8 +38,10 @@ type ElectronAPI = {
   removeVisualPack?: () => Promise<unknown>
   onVisualPackProgress?: (callback: (progress: { percent?: number; status?: string; [key: string]: unknown }) => void) => unknown
   checkForUpdates?: (notify?: boolean) => Promise<{ status?: string; currentVersion?: string; latestVersion?: string; publishedAt?: string; updateAvailable?: boolean; canInstallInApp?: boolean; reason?: string; [key: string]: unknown }>
-  downloadAndInstallUpdate?: () => Promise<unknown>
+  downloadAndInstallUpdate?: () => Promise<{ status?: string; latestVersion?: string; [key: string]: unknown } | undefined>
   cancelUpdateDownload?: () => Promise<unknown>
+  getUpdateReady?: () => Promise<UpdateReadyState | null>
+  onUpdateReady?: (callback: (payload: UpdateReadyState) => void) => unknown
   onUpdateDownloadProgress?: (callback: (progress: { percent?: number; [key: string]: unknown }) => void) => unknown
   openDownloadPage?: () => Promise<{ ok?: boolean }>
   reportRendererReady?: () => Promise<unknown>
