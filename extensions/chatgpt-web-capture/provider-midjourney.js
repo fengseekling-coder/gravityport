@@ -29,6 +29,10 @@
   const PROMPT_MAX_CHARS = 8000;
   const PROMPT_MIN_CHARS = 4;
   const SCROLL_BASELINE_WINDOW_MS = 1200;
+  // History renders a moment after the script starts (the first scan can see
+  // 0 jobs); anything appearing within this window after load is history.
+  const LOAD_BASELINE_WINDOW_MS = 8000;
+  const scriptStartedAtMs = Date.now();
   const BATCH_BASELINE_JOB_CARDS = 3;
   const SEEN_MAX = 2048;
   const CAPTURE_CONCURRENCY = 2;
@@ -404,8 +408,9 @@
       // Lazy-loaded history pages in: (a) inside the scroll window right after
       // the user scrolled, or (b) as a multi-card batch in one tick. A fresh
       // generation inserts a single new card with no recent scrolling.
-      if (batchBaseline || globalThis.MosaMidjourneyCapture.isScrollBaselineInsertion(nowMs, lastScrollAtMs)) {
-        if (!baseline.has(entry.info.jobId)) debugLog("history job skipped", entry.info.jobId, batchBaseline ? "batch" : "after scroll");
+      const loadBaseline = nowMs - scriptStartedAtMs < LOAD_BASELINE_WINDOW_MS;
+      if (loadBaseline || batchBaseline || globalThis.MosaMidjourneyCapture.isScrollBaselineInsertion(nowMs, lastScrollAtMs)) {
+        if (!baseline.has(entry.info.jobId)) debugLog("history job skipped", entry.info.jobId, loadBaseline ? "page still loading" : batchBaseline ? "batch" : "after scroll");
         baseline.add(entry.info.jobId);
         continue;
       }

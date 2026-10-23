@@ -118,7 +118,19 @@
     const largeImages = item.image?.large_images;
     if (Array.isArray(largeImages)) {
       for (const entry of largeImages) {
-        considerImage(mediaUrlInfo(entry?.image_url || entry?.url));
+        const info = mediaUrlInfo(entry?.image_url || entry?.url);
+        // The live original is `aigc_resize:0:0.png` (0:0 = full size), so its
+        // URL carries no usable size; take the dimensions the response states
+        // (e.g. 1440x2560) instead of treating it as a 0-pixel image.
+        if (info && (!info.width || !info.height)) {
+          const width = Number(entry?.width) || 0;
+          const height = Number(entry?.height) || 0;
+          if (width > 0 && height > 0) {
+            info.width = width;
+            info.height = height;
+          }
+        }
+        considerImage(info);
       }
     }
     considerImage(mediaUrlInfo(item.image?.orig_image?.url));
@@ -499,6 +511,7 @@
         continue;
       }
       const hasImage = record.image && Math.min(record.image.width || 0, record.image.height || 0) >= MIN_AUTO_IMAGE_EDGE;
+      if (record.image && !hasImage) debugLog("image too small or size unknown, waiting", mediaKey, `${record.image.width || 0}x${record.image.height || 0}`);
       const hasVideo = Boolean(record.video);
       if (!hasImage && !hasVideo) continue;
       if (hasVideo && !seen.has(`jimeng:video:${mediaKey}`)) {

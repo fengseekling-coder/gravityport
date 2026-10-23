@@ -1,8 +1,12 @@
 {
   "schema": 1,
   "unreleased": {
-    "zh": [],
-    "en": []
+    "zh": [
+      "浏览器扩展 0.15.40：修复即梦新生成的图收不进来的问题，现在收的是原图（如 1440×2560）。"
+    ],
+    "en": [
+      "Extension 0.15.40 fixes Jimeng captures: new generations now arrive as full-size originals (for example 1440×2560)."
+    ]
   },
   "releases": [
     {
