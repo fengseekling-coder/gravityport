@@ -547,10 +547,14 @@ function cardDragSource(config) {
           beforeRelease: async () => {
             // The line is painted by the drag's rAF flush; a hidden window on
             // a slow runner (Windows CI) can run it well after the chase's
-            // last 130ms sleep, so wait for it instead of reading once.
+            // last 130ms sleep, so wait for it instead of reading once. A
+            // throttled frame can flush mid-walk and paint a stale AFTER line
+            // (the pointer crosses the target's right half); requiring the
+            // BEFORE class keeps the poll waiting for the next frame, which
+            // repaints the line from the final pointer position (task 223).
             const line = await waitFor(() => {
               const el = cardFor(first);
-              return el && el.classList.contains('stack-reorder-target') ? el : null;
+              return el && el.classList.contains('stack-reorder-before') ? el : null;
             }, 'reorder line', 3000).catch(() => {
               throw new Error('no reorder line on the first card: ' + dumpCards());
             });

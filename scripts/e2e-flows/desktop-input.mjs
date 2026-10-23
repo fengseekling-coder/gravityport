@@ -200,10 +200,25 @@ export async function run(ctx) {
     }));
 
     await step("trusted click opens the sort menu and selects an option", trusted(async () => {
-      await clickCenter(cdp, `document.querySelector('.toolbar-select[aria-haspopup="listbox"]')`);
-      await waitFor(cdp, `Boolean(document.querySelector(".toolbar-select-menu"))`, "sort menu open");
-      await clickCenter(cdp, `document.querySelector(".toolbar-select-option")`);
-      await waitFor(cdp, `!document.querySelector(".toolbar-select-menu")`, "sort menu closed");
+      // The sort menu is a ToolbarSelect: any scroll closes it, so a late
+      // scroll can shut the menu between open and option click (tasks 222
+      // and 223). Reopen-and-retry like the shared chooseProject, 4 rounds.
+      const open = `Boolean(document.querySelector(".toolbar-select-menu"))`;
+      let lastError = null;
+      for (let round = 1; round <= 4; round += 1) {
+        if (!(await cdp.evaluate(`Boolean(${open})`))) {
+          await clickCenter(cdp, `document.querySelector('.toolbar-select[aria-haspopup="listbox"]')`);
+        }
+        try {
+          await waitFor(cdp, open, "sort menu open", 2500);
+          await clickCenter(cdp, `document.querySelector(".toolbar-select-option")`);
+          await waitFor(cdp, `!document.querySelector(".toolbar-select-menu")`, "sort menu closed");
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError;
     }));
 
     await step("trusted click opens settings and Escape closes them", trusted(async () => {
@@ -266,11 +281,19 @@ export async function run(ctx) {
       const paths = (page.assets || []).map((asset) => asset.image_path).filter(Boolean);
       if (paths.length !== 2) throw new Error(`expected 2 library paths, got ${JSON.stringify(paths)}`);
       const outside = await ctx.makePng("desktop-input-outside.png", [10, 20, 30]);
-      const result = await cdp.send("Runtime.evaluate", {
+      const callBridge = () => cdp.send("Runtime.evaluate", {
         expression: `window.electronAPI.writeClipboardFiles(${JSON.stringify([...paths, outside])})`,
         awaitPromise: true,
         returnByValue: true,
       });
+      let result = await callBridge();
+      // The Windows CI clipboard service is occasionally unavailable; one
+      // short retry rides out that flake (task 223). Every other failure
+      // keeps failing exactly as before.
+      if (result?.ok === false && result?.reason === "unavailable") {
+        await sleep(300);
+        result = await callBridge();
+      }
       if (process.platform !== "darwin" && process.platform !== "win32") {
         if (result?.ok !== false || result?.reason !== "unsupported") throw new Error(`expected unsupported, got ${JSON.stringify(result)}`);
         return;

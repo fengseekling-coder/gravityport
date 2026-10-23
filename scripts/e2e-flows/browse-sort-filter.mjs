@@ -1,5 +1,7 @@
 // GravityPort React UI flow: search, media-kind filter, sort order and the
 // column control drive real server queries and the grid layout.
+import { TOOLBAR_SELECT_SOURCE } from "./_shared.mjs";
+
 export const name = "browse-sort-filter";
 export const description = "search narrows server-side -> mediaKind filter -> sort order flips card order -> column control reflows the grid";
 
@@ -50,6 +52,7 @@ function browseSource() {
       setter.call(input, value);
       input.dispatchEvent(new Event('input', { bubbles: true }));
     }
+    ${TOOLBAR_SELECT_SOURCE}
     async function chooseToolbarOption(label, optionText) {
       const trigger = Array.from(document.querySelectorAll('.toolbar-select')).find((node) => {
         const combobox = node.getAttribute('role') === 'combobox';
@@ -57,11 +60,9 @@ function browseSource() {
         return combobox && matches;
       });
       if (!trigger) throw new Error('Missing toolbar select ' + label);
-      trigger.click();
-      const option = await waitFor(() => Array.from(document.querySelectorAll('.toolbar-select-menu [role="option"]'))
-        .find((node) => node.textContent.trim() === optionText) || null, 'option ' + optionText);
-      option.click();
-      await waitFor(() => !document.querySelector('.toolbar-select-menu'), 'menu closes');
+      const optionFor = () => Array.from(document.querySelectorAll('.toolbar-select-menu [role="option"]'))
+        .find((node) => node.textContent.trim() === optionText) || null;
+      await chooseToolbarSelect(() => trigger, optionFor, 'option ' + optionText, 'toolbar select ' + label, 'menu closes');
     }
 
     await waitFor(() => document.querySelector('.app') && settled() && cardCount3(), 'three seeded cards');
