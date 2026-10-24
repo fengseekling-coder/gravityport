@@ -142,6 +142,8 @@ export async function verifyPackagedRuntime({
       `Sharp native runtime @img/${packageName}`,
     );
   }
+  // Local visual search was removed: its runtime must never creep back into
+  // the bundle, not even as a transitive dependency.
   const forbiddenVisualRuntimePrefixes = [
     "node_modules/onnxruntime-node/",
     "node_modules/onnxruntime-common/",
@@ -149,11 +151,11 @@ export async function verifyPackagedRuntime({
   ];
   const bundledVisualRuntime = files.find(({ path }) => forbiddenVisualRuntimePrefixes.some((prefix) => path.startsWith(prefix)));
   if (bundledVisualRuntime) {
-    throw new Error(`Optional visual runtime must stay out of ${releaseProductNames(product).macAppBundleName}: ${bundledVisualRuntime.path}`);
+    throw new Error(`Removed visual runtime must stay out of ${releaseProductNames(product).macAppBundleName}: ${bundledVisualRuntime.path}`);
   }
   const unpackedOnnxDir = join(unpackedRoot, "node_modules", "onnxruntime-node");
   const unpackedOnnx = await stat(unpackedOnnxDir).catch(() => null);
-  if (unpackedOnnx) throw new Error(`Optional ONNX Runtime must stay out of ${releaseProductNames(product).macAppBundleName} unpacked resources.`);
+  if (unpackedOnnx) throw new Error(`Removed ONNX Runtime must stay out of ${releaseProductNames(product).macAppBundleName} unpacked resources.`);
 
   const missingMcpModules = missingMcpServerModules(
     files.map(({ path }) => path),

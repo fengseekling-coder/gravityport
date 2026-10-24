@@ -38,9 +38,6 @@
     "pack:web-capture-store": "npm run check:web-capture-store && node scripts/pack-web-capture-store.mjs",
     "audit": "npm audit --omit=dev",
     "test:performance": "node scripts/run-performance.mjs",
-    "benchmark:vector-search": "node scripts/benchmark-vector-search.mjs",
-    "benchmark:visual-inference": "node scripts/benchmark-visual-inference.mjs",
-    "qa:visual-retrieval-candidate": "node scripts/evaluate-visual-retrieval-candidate.mjs",
     "prepare:c2pa-helper": "node scripts/prepare-c2pa-helper-pack.mjs",
     "check:c2pa-signer": "node scripts/check-c2pa-production-signer.mjs",
     "verify:codex": "node scripts/verify-codex-asset.mjs",
@@ -81,14 +78,11 @@
     "qa:packaged": "node scripts/qa-launcher.mjs --type packaged --no-build",
     "qa:packaged:smoke": "node scripts/packaged-smoke.mjs",
     "qa:packaged:input-smoke": "node scripts/packaged-input-smoke.mjs",
-    "qa:packaged:visual-smoke": "node scripts/packaged-visual-smoke.mjs",
     "qa:gallery:performance": "node scripts/qa-gallery-virtualization.mjs",
     "qa:gallery:resize": "node scripts/qa-gallery-resize.mjs"
   },
   "dependencies": {
-    "@huggingface/tokenizers": "^0.2.0",
     "better-sqlite3": "^13.0.1",
-    "onnxruntime-node": "^1.30.0",
     "sharp": "^0.35.4"
   },
   "devDependencies": {

@@ -19,7 +19,6 @@ const electronPath = process.platform === "darwin"
 const EXPECTED_API_KEYS = [
   "acknowledgeRenameNotice",
   "cancelUpdateDownload",
-  "cancelVisualPackInstall",
   "changeLibraryLocation",
   "checkForUpdates",
   "downloadAndInstallUpdate",
@@ -27,22 +26,17 @@ const EXPECTED_API_KEYS = [
   "getRenameNoticeState",
   "getUpdateReady",
   "getUserProfile",
-  "getVisualModelState",
-  "installVisualPack",
   "libraryFileFlags",
   "onMenuSearch",
   "onUpdateDownloadProgress",
   "onUpdateReady",
-  "onVisualPackProgress",
   "onWindowFullScreenChange",
   "openDownloadPage",
   "openExternalLink",
   "openPinterestAuthorize",
   "pasteImage",
-  "removeVisualPack",
   "reportRendererReady",
   "setLocale",
-  "setVisualModelEnabled",
   "setWindowFullScreen",
   "startNativeDrag",
   "writeClipboardFiles",
@@ -105,7 +99,9 @@ test("preload path, module format, security settings, and API surface are stable
   // write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
   // 任务 208：第 25 条 mcp-client-config（只读，返回本机 App 路径拼成的 MCP 配置文本，不收参数）。
   // 任务 231：第 26 条 get-update-ready（只读，返回主进程已下好并校验的更新包状态）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 26, "only the twenty-six approved invoke channels remain");
+  // 任务 238：删掉视觉检索 5 条通道（visual-model-state/set-enabled、visual-pack-install/
+  // cancel/remove），invoke 计数 26 → 21。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 21, "only the twenty-one approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
@@ -137,12 +133,6 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(preload, /openPinterestAuthorize: \(url\) => ipcRenderer\.invoke\("open-pinterest-authorize", url\)/);
   assert.match(preload, /openExternalLink: \(url\) => ipcRenderer\.invoke\("open-external-link", url\)/);
   assert.match(preload, /changeLibraryLocation: \(\) => ipcRenderer\.invoke\("change-library-location"\)/);
-  assert.match(preload, /getVisualModelState: \(refresh = false\) => ipcRenderer\.invoke\("visual-model-state", refresh === true\)/);
-  assert.match(preload, /setVisualModelEnabled: \(enabled\) => ipcRenderer\.invoke\("visual-model-set-enabled", enabled === true\)/);
-  assert.match(preload, /installVisualPack: \(\) => ipcRenderer\.invoke\("visual-pack-install"\)/);
-  assert.match(preload, /cancelVisualPackInstall: \(\) => ipcRenderer\.invoke\("visual-pack-cancel"\)/);
-  assert.match(preload, /removeVisualPack: \(\) => ipcRenderer\.invoke\("visual-pack-remove"\)/);
-  assert.match(preload, /onVisualPackProgress: \(callback\) =>[\s\S]*?ipcRenderer\.on\("visual-pack-progress"/);
   assert.doesNotMatch(preload, /openDownloadPage:\s*\([^)]*url/i, "renderer cannot choose an update destination");
   assert.match(main, /MOSA_DOWNLOAD_PAGE_URL/);
   assert.match(main, /ipcMain\.handle\("check-for-updates"/);
@@ -153,11 +143,6 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /ipcMain\.handle\("open-pinterest-authorize"/);
   assert.match(main, /ipcMain\.handle\("open-external-link"/);
   assert.match(main, /ipcMain\.handle\("change-library-location"/);
-  assert.match(main, /ipcMain\.handle\("visual-model-state"/);
-  assert.match(main, /ipcMain\.handle\("visual-model-set-enabled"/);
-  assert.match(main, /ipcMain\.handle\("visual-pack-install"/);
-  assert.match(main, /ipcMain\.handle\("visual-pack-cancel"/);
-  assert.match(main, /ipcMain\.handle\("visual-pack-remove"/);
   // 任务 96（A6）：窗口系统全屏双向同步——渲染层写入通道带主窗口 sender 守卫，
   // enter/leave-full-screen 广播回渲染层。
   assert.match(main, /ipcMain\.handle\("set-window-full-screen"/);
@@ -227,7 +212,8 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /minWidth: 960,/);
   assert.match(main, /minHeight: 640,/);
   const manifest = JSON.parse(packageJson);
-  assert.equal(sha256(JSON.stringify(manifest.dependencies)), "709481475dca249e75c25f9e0b5e93a685b92cfada8e7e7ab0db8a33653c1843", "package.json dependencies were not changed by this phase");
+  // 任务 238 更新：删除 @huggingface/tokenizers 与 onnxruntime-node（本地视觉检索移除）。
+  assert.equal(sha256(JSON.stringify(manifest.dependencies)), "0339eb218322b3a863818f979cfe4aca62624c31811a775da305ccda617d91a7", "package.json dependencies were not changed by this phase");
   assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "fec336043950407c51bb8a01fa9b5d2e09f47dc0f2e42baece4366b81b835d6b", "package.json devDependencies were not changed by this phase");
   assertPackageLockMatchesManifest(lockfile, manifest, "package-lock.json must preserve dependency identity");
   assert.doesNotMatch(packageJson, /electron-preload-runtime-contract/);

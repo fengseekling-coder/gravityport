@@ -131,7 +131,6 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   assert.deepEqual(exposedKeys, [
     "acknowledgeRenameNotice",
     "cancelUpdateDownload",
-    "cancelVisualPackInstall",
     "changeLibraryLocation",
     "checkForUpdates",
     "downloadAndInstallUpdate",
@@ -139,22 +138,17 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "getRenameNoticeState",
     "getUpdateReady",
     "getUserProfile",
-    "getVisualModelState",
-    "installVisualPack",
     "libraryFileFlags",
     "onMenuSearch",
     "onUpdateDownloadProgress",
     "onUpdateReady",
-    "onVisualPackProgress",
     "onWindowFullScreenChange",
     "openDownloadPage",
     "openExternalLink",
     "openPinterestAuthorize",
     "pasteImage",
-    "removeVisualPack",
     "reportRendererReady",
     "setLocale",
-    "setVisualModelEnabled",
     "setWindowFullScreen",
     "startNativeDrag",
     "writeClipboardFiles",
@@ -168,13 +162,15 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
   // 任务 208：第 25 条 mcp-client-config（只读，返回本机 App 路径拼成的 MCP 配置文本，不收参数）。
   // 任务 231：第 26 条 get-update-ready（只读，主进程已下好并校验的更新包状态）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 26, "preload keeps the approved invoke channels");
+  // 任务 238：删掉视觉检索 5 条通道后，invoke 计数 26 → 21。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 21, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.match(preload, /getUpdateReady: \(\) => ipcRenderer\.invoke\("get-update-ready"\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");
   // R1 isolation fix (2026-08-09, approved scope) added qa:web/qa:electron/
   // qa:packaged launcher scripts to package.json, so its dependency sections
   // (the frozen semantics) are pinned structurally instead of by file hash.
-  assert.equal(sha256(JSON.stringify(manifest.dependencies)), "709481475dca249e75c25f9e0b5e93a685b92cfada8e7e7ab0db8a33653c1843", "package.json dependencies must remain unchanged");
+  // 任务 238 更新：删除 @huggingface/tokenizers 与 onnxruntime-node（本地视觉检索移除）。
+  assert.equal(sha256(JSON.stringify(manifest.dependencies)), "0339eb218322b3a863818f979cfe4aca62624c31811a775da305ccda617d91a7", "package.json dependencies must remain unchanged");
   assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "fec336043950407c51bb8a01fa9b5d2e09f47dc0f2e42baece4366b81b835d6b", "package.json devDependencies must remain unchanged");
 });

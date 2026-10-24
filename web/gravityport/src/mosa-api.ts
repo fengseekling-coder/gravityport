@@ -75,12 +75,6 @@ export type MosaLibraryLocation = {
   supportedMediaExtensions: string[]
 }
 
-export type MosaVisualStatus = {
-  available: boolean
-  reason?: string
-  [key: string]: unknown
-}
-
 export type AssetQuery = {
   project: string
   q: string
@@ -379,28 +373,6 @@ export async function fetchWebCaptureStatus(signal?: AbortSignal): Promise<MosaW
 export async function requestWebCaptureRetry(): Promise<number> {
   const data = await requestJson<{ retryRequestId?: number }>("/api/web-capture/retry", { method: "POST" })
   return Math.max(0, Number(data.retryRequestId || 0))
-}
-
-export async function fetchVisualStatus(project: string, signal?: AbortSignal): Promise<MosaVisualStatus> {
-  const data = await requestJson<{ visual?: JsonValue }>(`/api/visual/status?project=${e(project)}`, { signal })
-  return (data.visual || {}) as MosaVisualStatus
-}
-
-/** Recommendations must come from the visual index, never arbitrary neighbors
- * in the gallery page. A disabled index is a valid empty result. */
-export async function fetchSimilarAssets(project: string, id: string, signal?: AbortSignal): Promise<MosaAsset[]> {
-  try {
-    const data = await requestJson<{ similar?: { asset_id?: string }[] }>(
-      `/api/visual/assets/${e(id)}/similar?project=${e(project)}&limit=8`, { signal })
-    const ids = (Array.isArray(data.similar) ? data.similar : [])
-      .map(item => String(item.asset_id || "")).filter(otherId => otherId && otherId !== id)
-    const resolved = await Promise.allSettled(ids.map(otherId => fetchAsset(project, otherId, signal)))
-    return resolved.filter((result): result is PromiseFulfilledResult<MosaAsset> => result.status === "fulfilled")
-      .map(result => result.value)
-  } catch (error) {
-    if ((error as Error & { code?: string }).code === "VISUAL_RELATIONSHIPS_UNAVAILABLE") return []
-    throw error
-  }
 }
 
 function buildAssetParams(q: AssetQuery, options: { limit: number; cursor?: string; includeTotal?: boolean }) {

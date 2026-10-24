@@ -2533,12 +2533,6 @@ img.black-image {
   padding: var(--space-2) 0;
   background: transparent;
   border-radius: var(--radius-control);
-}.app .model-summary {
-  display: flex;
-  align-items: center;
-  padding: var(--space-2) 0;
-  background: transparent;
-  border-radius: var(--radius-control);
 }.app .storage-summary > svg {
   color: var(--ui-muted);
 }.app .storage-path > div > span {
@@ -2555,26 +2549,12 @@ img.black-image {
 }.app .storage-summary > div {
   flex: 1;
   min-width: 0;
-}.app .model-summary > div:not(.model-symbol) {
-  flex: 1;
-  min-width: 0;
 }.app .storage-summary strong {
   display: block;
   font-size: 12px;
   line-height: var(--space-5);
   font-weight: 500;
-}.app .model-summary strong {
-  display: block;
-  font-size: 12px;
-  line-height: var(--space-5);
-  font-weight: 500;
 }.app .storage-summary span {
-  display: block;
-  color: var(--ui-muted);
-  font-size: 12px;
-  line-height: var(--space-5);
-  margin-top: var(--space-1);
-}.app .model-summary > div > span {
   display: block;
   color: var(--ui-muted);
   font-size: 12px;
@@ -2610,27 +2590,6 @@ img.black-image {
     overflow: hidden;
     clip-path: inset(50%);
   }
-}.app .model-symbol {
-  color: var(--ui-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}.app .model-summary {
-  min-height: var(--space-14);
-  gap: var(--space-2);
-}.app .model-description {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-}.app .model-description strong {
-  flex-shrink: 0;
-  white-space: nowrap;
-}.app .model-summary .model-description span {
-  margin: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }.app .settings-badge {
   display: inline-flex;
   color: var(--ui-muted);
@@ -2639,13 +2598,7 @@ img.black-image {
   white-space: nowrap;
 }.app .storage-summary strong {
   overflow-wrap: anywhere;
-}.app .model-summary strong {
-  overflow-wrap: anywhere;
 }.app .storage-summary > svg {
-  flex-shrink: 0;
-}.app .model-symbol {
-  flex-shrink: 0;
-}.app .model-summary > .settings-badge {
   flex-shrink: 0;
 }.app .settings-note {
   display: flex;
@@ -2847,9 +2800,6 @@ img.black-image {
   }.app .storage-summary {
     padding: var(--space-2) 0;
     gap: var(--space-2);
-  }.app .model-summary {
-    padding: var(--space-2) 0;
-    gap: var(--space-2);
   }
 }/*A single type scale for every settings page and state.*/
 
@@ -2877,12 +2827,6 @@ img.black-image {
   letter-spacing: 0;
   color: var(--ui-text);
 }.app .settings-modal .storage-description strong {
-  font-size: var(--settings-text-size);
-  line-height: var(--settings-text-line);
-  font-weight: var(--settings-weight-label);
-  letter-spacing: 0;
-  color: var(--ui-text);
-}.app .settings-modal .model-description strong {
   font-size: var(--settings-text-size);
   line-height: var(--settings-text-line);
   font-weight: var(--settings-weight-label);
@@ -2928,12 +2872,6 @@ img.black-image {
 }.app .settings-modal .segmented button.on {
   font-weight: var(--settings-weight-label);
 }.app .settings-modal .storage-description > span {
-  font-size: var(--settings-text-size);
-  line-height: var(--settings-text-line);
-  font-weight: var(--settings-weight-regular);
-  letter-spacing: 0;
-  color: var(--ui-muted);
-}.app .settings-modal .model-description > span {
   font-size: var(--settings-text-size);
   line-height: var(--settings-text-line);
   font-weight: var(--settings-weight-regular);
@@ -3439,10 +3377,7 @@ video.black-image,
   font-size: 12px;
 }
 
-/* Task 139 wiring: visual model status lines, group statistics facets, empty-state hint */
-.app .model-description.model-description-stacked { flex-direction: column; align-items: flex-start; gap: 2px; }
-.app .model-summary .model-description-stacked span { white-space: normal; }
-.app .visual-model-error { color: var(--ui-danger); }
+/* Task 139 wiring: group statistics facets, empty-state hint */
 .group-stats-facet { grid-column: 1 / -1; display: grid; gap: 2px; margin-top: 6px; }
 .group-stats-data p { margin: 0; }
 .app .empty-state small { margin-top: 6px; max-width: 360px; text-align: center; color: var(--ui-muted); }

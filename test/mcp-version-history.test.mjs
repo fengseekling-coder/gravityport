@@ -117,6 +117,20 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
   assert.equal(search.result.structuredContent.visual.requested, false);
   assert.ok(search.result.structuredContent.results.some((item) => item.asset.id === "child"));
 
+  // 任务 238：老客户端缓存旧 schema 仍会传 visual: true——必须照常文字检索、不报错。
+  const legacyVisual = await callMcp(server, {
+    jsonrpc: "2.0",
+    id: 45,
+    method: "tools/call",
+    params: {
+      name: "asset_search",
+      arguments: { projectId: "default", query: "updated prompt", visual: true, limit: 10 },
+    },
+  });
+  assert.equal(legacyVisual.error, undefined);
+  assert.equal(legacyVisual.result.structuredContent.visual.available, false);
+  assert.ok(legacyVisual.result.structuredContent.results.some((item) => item.asset.id === "child"));
+
   const provenance = await callMcp(server, {
     jsonrpc: "2.0",
     id: 42,

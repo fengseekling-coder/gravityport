@@ -382,7 +382,7 @@ test("reduces the packaged dependency tree to arm64 runtime files", async (t) =>
       scripts: { test: "node --test" },
       bin: { mosa: "bin/mosa.mjs" },
       engines: { node: ">=22" },
-      dependencies: { "@huggingface/tokenizers": "1", "better-sqlite3": "1", "onnxruntime-node": "1", sharp: "1" },
+      dependencies: { "better-sqlite3": "1", sharp: "1" },
       devDependencies: { electron: "1" },
     }),
   );
@@ -604,7 +604,8 @@ test("retired show-in-folder IPC stays removed without expanding renderer author
   // 任务 198：第 24 条 write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
   // 任务 208：第 25 条 mcp-client-config（只读：本机 App 路径拼出的 MCP 配置文本，不收任何参数）。
   // 任务 231：第 26 条 get-update-ready（只读，主进程已下好并校验的更新包状态）。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 26, "no invoke channel beyond the currently approved narrow requests (Visual Pack lifecycle remains named and URL-free)");
+  // 任务 238：删掉视觉检索 5 条通道后，invoke 计数 26 → 21。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 21, "no invoke channel beyond the currently approved narrow requests");
   assert.doesNotMatch(preload, /shell\s*[:.]/, "shell is never exposed to the renderer");
   assert.doesNotMatch(preload, /exec\(|spawn\(|execFile\(/, "no arbitrary command execution");
 

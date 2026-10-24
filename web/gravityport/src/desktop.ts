@@ -31,12 +31,6 @@ type ElectronAPI = {
   libraryFileFlags?: (files: File[]) => Promise<boolean[]>
   setLocale?: (locale: string) => Promise<unknown>
   getUserProfile?: () => Promise<{ installationId?: string; [key: string]: unknown }>
-  getVisualModelState?: (refresh?: boolean) => Promise<{ state?: string; [key: string]: unknown }>
-  setVisualModelEnabled?: (enabled: boolean) => Promise<{ state?: string; [key: string]: unknown }>
-  installVisualPack?: () => Promise<{ ok?: boolean; error?: string }>
-  cancelVisualPackInstall?: () => Promise<unknown>
-  removeVisualPack?: () => Promise<unknown>
-  onVisualPackProgress?: (callback: (progress: { percent?: number; status?: string; [key: string]: unknown }) => void) => unknown
   checkForUpdates?: (notify?: boolean) => Promise<{ status?: string; currentVersion?: string; latestVersion?: string; publishedAt?: string; updateAvailable?: boolean; canInstallInApp?: boolean; reason?: string; [key: string]: unknown }>
   downloadAndInstallUpdate?: () => Promise<{ status?: string; latestVersion?: string; [key: string]: unknown } | undefined>
   cancelUpdateDownload?: () => Promise<unknown>

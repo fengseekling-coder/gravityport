@@ -78,7 +78,7 @@ GravityPort Desktop reads `https://gravityport.azhuilab.com/releases/gravityport
 
 ## No model downloads
 
-Local visual search is not offered in the app for now: Settings has no Models tab, and GravityPort does not download a Visual Pack or any other model.
+Local visual search is not offered: the feature and its optional Visual Pack were removed. GravityPort does not download any model, and on startup it deletes the leftover Visual Pack and visual index data earlier versions kept under Electron `userData` (never your library folder).
 
 ## Optional C2PA helper download
 

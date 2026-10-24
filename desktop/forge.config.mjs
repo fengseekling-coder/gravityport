@@ -23,11 +23,6 @@ const PACKAGED_MANIFEST_KEYS = [
   "dependencies",
 ];
 
-const OPTIONAL_VISUAL_RUNTIME_DEPENDENCIES = new Set([
-  "@huggingface/tokenizers",
-  "onnxruntime-node",
-]);
-
 const COMMON_BUILD_ONLY_RUNTIME_PATHS = [
   "node_modules/better-sqlite3/binding.gyp",
   "node_modules/better-sqlite3/build",
@@ -197,11 +192,6 @@ export async function preparePackagedRuntime(buildPath, target = resolveDesktopP
   const runtimeManifest = Object.fromEntries(
     PACKAGED_MANIFEST_KEYS.filter((key) => manifest[key] !== undefined).map((key) => [key, manifest[key]]),
   );
-  if (runtimeManifest.dependencies) {
-    runtimeManifest.dependencies = Object.fromEntries(
-      Object.entries(runtimeManifest.dependencies).filter(([name]) => !OPTIONAL_VISUAL_RUNTIME_DEPENDENCIES.has(name)),
-    );
-  }
   await writeFile(manifestPath, `${JSON.stringify(runtimeManifest, null, 2)}\n`);
 }
 
