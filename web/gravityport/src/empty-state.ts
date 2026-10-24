@@ -92,7 +92,7 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
     return {
       kind: "library-empty",
       title: "素材库还是空的",
-      description: "把图片或文件夹拖进窗口，或直接粘贴剪贴板图片即可导入",
+      description: "把图片、视频或文件夹拖进窗口，或直接粘贴剪贴板里的图片、视频即可导入",
       clearAction: false,
     };
   }

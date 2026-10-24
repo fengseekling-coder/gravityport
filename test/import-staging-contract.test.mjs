@@ -250,6 +250,7 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "cancelUpdateDownload",
     "changeLibraryLocation",
     "checkForUpdates",
+    "clipboardImportable", // 任务 239：只回答剪贴板里有没有可导入内容，不传路径和字节
     "downloadAndInstallUpdate",
     "getMcpClientConfig", // 任务 208：只读，本机 App 路径拼成的 MCP 配置文本
     "getRenameNoticeState",
@@ -263,6 +264,7 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "openDownloadPage",
     "openExternalLink", // 任务 147：第 22 条 open-external-link（Pinterest Pin 外链，仅 http/https）
     "openPinterestAuthorize", // 任务 135：第 21 条 open-pinterest-authorize（Pinterest 授权页，只放行 https://www.pinterest.com/oauth/）
+    "pasteFromClipboard", // 任务 239：主进程对主窗口执行一次 webContents.paste，导入走渲染层统一 paste 监听
     "pasteImage",
     "reportRendererReady",
     "setLocale",

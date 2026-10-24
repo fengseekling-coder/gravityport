@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   libraryFileFlags: (files) => ipcRenderer.invoke("library-file-flags", Array.from(files || [], (file) => {
     try { return webUtils.getPathForFile(file) || ""; } catch { return ""; }
   })),
+  // 任务 239：右键空白处「粘贴」——主进程只回答剪贴板里有没有可导入内容，
+  // 再由主进程代按一次粘贴（webContents.paste），剪贴板内容不外传。
+  clipboardImportable: () => ipcRenderer.invoke("clipboard-importable"),
+  pasteFromClipboard: () => ipcRenderer.invoke("paste-from-clipboard"),
   setLocale: (locale) => ipcRenderer.invoke("set-locale", locale),
   getUserProfile: () => ipcRenderer.invoke("user-profile"),
   // 任务 116：老用户「已更名」提示——取启动早期判定结果、确认已读。

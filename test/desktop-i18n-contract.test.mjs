@@ -133,6 +133,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "cancelUpdateDownload",
     "changeLibraryLocation",
     "checkForUpdates",
+    "clipboardImportable",
     "downloadAndInstallUpdate",
     "getMcpClientConfig",
     "getRenameNoticeState",
@@ -146,6 +147,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "openDownloadPage",
     "openExternalLink",
     "openPinterestAuthorize",
+    "pasteFromClipboard",
     "pasteImage",
     "reportRendererReady",
     "setLocale",
@@ -162,8 +164,9 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // write-clipboard-files（多张图片进剪贴板，主进程只放行库内文件）。
   // 任务 208：第 25 条 mcp-client-config（只读，返回本机 App 路径拼成的 MCP 配置文本，不收参数）。
   // 任务 231：第 26 条 get-update-ready（只读，主进程已下好并校验的更新包状态）。
-  // 任务 238：删掉视觉检索 5 条通道后，invoke 计数 26 → 21。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 21, "preload keeps the approved invoke channels");
+  // 任务 238：删掉视觉检索 5 条通道后，invoke 计数 26 → 21。任务 239：右键粘贴导入
+  // 两个只读/动作通道（clipboard-importable、paste-from-clipboard），21 → 23。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.match(preload, /getUpdateReady: \(\) => ipcRenderer\.invoke\("get-update-ready"\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");

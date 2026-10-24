@@ -30,6 +30,10 @@ export type MenuContext = {
   /** The desktop bridge can put several files on the system clipboard; the
    * multi-file 复制图片 entries only appear when it can. */
   canCopyFiles: boolean
+  /** Task 239: the main process reports importable clipboard content (image
+   * data or files); the blank-area 粘贴 then offers paste-import. A pending
+   * cut keeps the menu on the cut-moving paste instead. */
+  clipboardImportable: boolean
 }
 
 /** Drop empty sections and join the rest with one separator each, so the
@@ -208,10 +212,18 @@ function buildStackMenu(ctx: MenuContext): MenuEntry[] {
   ])
 }
 
+/** Blank-area 粘贴: a pending cut moves the cut assets ("paste"); without one,
+ * importable clipboard content offers paste-to-import ("paste-import"), which
+ * asks the main process for one webContents.paste() and lands in the shared
+ * paste listener. */
+function blankPasteSection(ctx: MenuContext): MenuEntry[] {
+  if (ctx.cutActive) return [{ kind: "item", id: "paste", label: "粘贴", icon: "copy" }]
+  if (ctx.clipboardImportable) return [{ kind: "item", id: "paste-import", label: "粘贴", icon: "copy" }]
+  return []
+}
+
 function buildStackBlankMenu(ctx: MenuContext): MenuEntry[] {
-  const pasteSection: MenuEntry[] = ctx.cutActive
-    ? [{ kind: "item" as const, id: "paste", label: "粘贴", icon: "copy" }]
-    : []
+  const pasteSection: MenuEntry[] = blankPasteSection(ctx)
 
   return buildSectionedMenu([
     [{ kind: "item" as const, id: "back-to-library", label: "返回素材库", icon: "left" }],
@@ -228,9 +240,7 @@ function buildStackBlankMenu(ctx: MenuContext): MenuEntry[] {
 }
 
 function buildGalleryBlankMenu(ctx: MenuContext): MenuEntry[] {
-  const pasteSection: MenuEntry[] = ctx.cutActive
-    ? [{ kind: "item" as const, id: "paste", label: "粘贴", icon: "copy" }]
-    : []
+  const pasteSection: MenuEntry[] = blankPasteSection(ctx)
 
   return buildSectionedMenu([
     [

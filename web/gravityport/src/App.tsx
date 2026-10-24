@@ -20,6 +20,7 @@ import {
 } from "./card-drag"
 import { runImport, collectDroppedFiles, excludeLibraryFiles } from "./import-pipeline"
 import { groupNameForActive } from "./import-target"
+import { importVisibleInActiveView, pasteImportDecision, renameSynthesizedPasteFiles } from "./paste-import"
 import { trashRemainingDays } from "./trash-ui"
 import { desktopAPI, type UpdateReadyState } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
@@ -565,6 +566,9 @@ export default function App() {
   // selection reset of the view change it causes.
   const pendingInspectRef = useRef("")
   const cutIdsRef = useRef<string[]>([])
+  // One-up token per blank-menu open: the async clipboard answer may only
+  // patch the menu that asked for it, never one opened later in its place.
+  const blankMenuTokenRef = useRef(0)
   const readyGateRef = useRef<ReturnType<typeof createReadyGate> | null>(null)
   if (!readyGateRef.current) {
     readyGateRef.current = createReadyGate(() => {
@@ -2545,16 +2549,86 @@ export default function App() {
       })
       .catch(error => notify(errorMessage(error)))
   }
+  // Paste-to-import continuation (task 239): mirrors importDroppedFiles —
+  // folders expand through the entry scan when the paste offers entries,
+  // library files are skipped, raw image data is renamed — then points at
+  // 「所有素材」 when the current view cannot show the fresh imports.
+  const runPasteImport = async (topFiles: File[], entryScan: ReturnType<typeof collectDroppedFiles> | null) => {
+    try {
+      let scanned = topFiles
+      let folderNotice = false
+      if (entryScan) {
+        scanned = (await entryScan).files
+      } else {
+        // Paste DataTransfers carry no entries (the entry API is drag-only):
+        // a pasted folder arrives as one unreadable File. A one-byte read
+        // probe separates folders from real files; folders cannot expand in
+        // a paste, so they are skipped with a pointer to drag import.
+        const unreadable = await Promise.all(topFiles.map(file =>
+          file.slice(0, 1).arrayBuffer().then(() => false, () => true)))
+        folderNotice = unreadable.some(Boolean)
+        const files = topFiles.filter((_, index) => !unreadable[index])
+        if (!files.length) {
+          if (folderNotice) notify(tr("文件夹请拖进窗口导入"))
+          return
+        }
+        scanned = files
+      }
+      const flagLibrary = desktopAPI()?.libraryFileFlags
+      const flags: Promise<boolean[]> = flagLibrary && scanned.length
+        ? flagLibrary(scanned).catch(() => [])
+        : Promise.resolve([])
+      const flagged = await flags
+      const { files: kept, skipped } = excludeLibraryFiles(scanned, scanned.filter((_, index) => flagged[index] === true))
+      if (skipped && !kept.length) {
+        notify(fillNamed("{count} 个文件已在素材库中，没有重复导入", { count: skipped }))
+        return
+      }
+      const createdIds = await importFiles(renameSynthesizedPasteFiles(kept, language, new Date()), groupNameForActive(active))
+      if (createdIds.length && !importVisibleInActiveView({ active, query: debouncedQuery, assetType, stackId })) {
+        notify(fillNamed("已导入 {count} 个，在「所有素材」里", { count: createdIds.length }))
+      } else if (folderNotice) {
+        notify(tr("文件夹请拖进窗口导入"))
+      }
+    } catch (error) {
+      notify(errorMessage(error))
+    }
+  }
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
-      if (active === "回收站") return
-      const files = Array.from(event.clipboardData?.files || [])
-      if (files.length) void importFiles(files, groupNameForActive(active))
+      const dataTransfer = event.clipboardData
+      const topFiles = Array.from(dataTransfer?.files || [])
+      const decision = pasteImportDecision({
+        targetIsEditable: isEditableTarget(event.target),
+        settingsOpen: settings,
+        pinterestActive,
+        hasOverlay: Boolean(menu || deleting || renameNoticeOpen || permanentDeleteIds || emptyTrashConfirm
+          || groupDeleteConfirm || groupMerge || groupRename || stackRename || stackDissolveConfirm
+          || stackTrashConfirm || groupStats || groupCreateWithSelection),
+        cutActive: cutIdsRef.current.length > 0,
+        trashView: active === "回收站",
+        hasFiles: topFiles.length > 0,
+      })
+      if (decision !== "import") {
+        if (decision === "trash-blocked") notify(tr("回收站里不能导入"))
+        return
+      }
+      // collectDroppedFiles reads dataTransfer.items synchronously — inside
+      // the paste event tick only, exactly like the drop handler.
+      const entryScan = Array.from(dataTransfer?.items || [])
+        .some(item => { try { return Boolean(item.webkitGetAsEntry?.()) } catch { return false } })
+        ? collectDroppedFiles(dataTransfer, {
+          onScanProgress: count => notify(fillNamed("正在扫描拖入的文件…已找到 {count} 个", { count })),
+        })
+        : null
+      void runPasteImport(topFiles, entryScan)
     }
     window.addEventListener("paste", paste)
     return () => window.removeEventListener("paste", paste)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [importing, library, active, project, stackId])
+  }, [importing, library, active, project, stackId, settings, pinterestActive, menu, deleting, renameNoticeOpen,
+    permanentDeleteIds, emptyTrashConfirm, groupDeleteConfirm, groupMerge, groupRename, stackRename,
+    stackDissolveConfirm, stackTrashConfirm, groupStats, groupCreateWithSelection, language, debouncedQuery, assetType])
   const navigateAsset = async (direction: number) => {
     if (!visible.length) return
     const index = visible.findIndex(a => a.id === selected)
@@ -2804,6 +2878,9 @@ export default function App() {
       isMac: isMacPlatform(),
       trashCount: navigation?.trash ?? 0,
       canCopyFiles: typeof desktopAPI()?.writeClipboardFiles === "function",
+      // Asset and stack-card menus never offer paste-to-import: the blank-area
+      // menus own it (task 239).
+      clipboardImportable: false,
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), ctx.selectionCount)
     setMenu({ x, y, entries, target: "asset", selectionCount: ctx.selectionCount, stackId: "", stackName: "", stackCount: 0 })
@@ -2826,6 +2903,7 @@ export default function App() {
       isMac: isMacPlatform(),
       trashCount: navigation?.trash ?? 0,
       canCopyFiles: typeof desktopAPI()?.writeClipboardFiles === "function",
+      clipboardImportable: false,
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), 0)
     setMenu({ x, y, entries, target: "stack", selectionCount: 0, stackId: stack.id, stackName: stack.name || cardName, stackCount: stack.count })
@@ -2833,6 +2911,15 @@ export default function App() {
 
   const openBlankMenu = (x: number, y: number) => {
     const inStack = Boolean(stackId)
+    // Task 239: with a pending cut the blank-area 粘贴 moves the cut assets
+    // (id "paste"); otherwise, when the main process reports importable
+    // clipboard content, it offers paste-import. The clipboard query is
+    // async — the menu opens without the entry and patches itself in when
+    // the answer is yes; it never waits for the query.
+    const api = desktopAPI()
+    const clipboardImportable = active !== "回收站"
+      && typeof api?.clipboardImportable === "function"
+      && typeof api?.pasteFromClipboard === "function"
     const ctx: MenuContext = {
       target: inStack ? "stack-blank" : "gallery-blank",
       scope: active === "回收站" ? "trash" : "all",
@@ -2846,12 +2933,22 @@ export default function App() {
       pageTotal: pageTotal ?? assets.length,
       isMac: isMacPlatform(),
       trashCount: navigation?.trash ?? 0,
-      canCopyFiles: typeof desktopAPI()?.writeClipboardFiles === "function",
+      canCopyFiles: typeof api?.writeClipboardFiles === "function",
+      clipboardImportable: false,
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), 0)
     // An empty builder result (stack surfaces inside the trash) opens nothing.
     if (!entries.length) return
     setMenu({ x, y, entries, target: ctx.target, selectionCount: 0, stackId, stackName, stackCount: assets.length })
+    if (!clipboardImportable || !api) return
+    const token = ++blankMenuTokenRef.current
+    api.clipboardImportable!().then(importable => {
+      if (!importable) return
+      setMenu(current => {
+        if (!current || current.target !== ctx.target || blankMenuTokenRef.current !== token) return current
+        return { ...current, entries: translateMenuEntries(buildContextMenu({ ...ctx, clipboardImportable: true }), 0) }
+      })
+    }).catch(() => {})
   }
 
   const openGroupMenu = (name: string, x: number, y: number) => {
@@ -3050,6 +3147,9 @@ export default function App() {
     // Blank-area menus
     else if (id === "back-to-library") goTo({ stackId: "", stackName: "" })
     else if (id === "paste") pasteCut(target.target === "stack-blank" ? target.stackId : null)
+    // Task 239: the main process performs one webContents.paste(); the window
+    // paste listener above does the importing — ⌘V and the menu share one path.
+    else if (id === "paste-import") void desktopAPI()?.pasteFromClipboard?.()
     else if (id === "create-group") createNamedGroup()
     else if (id === "select-all") void selectAllAcrossPages()
     else if (id === "refresh" || id === "refresh-library") refreshCurrentView()

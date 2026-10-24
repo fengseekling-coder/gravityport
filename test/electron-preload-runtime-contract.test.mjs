@@ -21,6 +21,7 @@ const EXPECTED_API_KEYS = [
   "cancelUpdateDownload",
   "changeLibraryLocation",
   "checkForUpdates",
+  "clipboardImportable",
   "downloadAndInstallUpdate",
   "getMcpClientConfig",
   "getRenameNoticeState",
@@ -34,6 +35,7 @@ const EXPECTED_API_KEYS = [
   "openDownloadPage",
   "openExternalLink",
   "openPinterestAuthorize",
+  "pasteFromClipboard",
   "pasteImage",
   "reportRendererReady",
   "setLocale",
@@ -101,7 +103,10 @@ test("preload path, module format, security settings, and API surface are stable
   // 任务 231：第 26 条 get-update-ready（只读，返回主进程已下好并校验的更新包状态）。
   // 任务 238：删掉视觉检索 5 条通道（visual-model-state/set-enabled、visual-pack-install/
   // cancel/remove），invoke 计数 26 → 21。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 21, "only the twenty-one approved invoke channels remain");
+  // 任务 239：第 27/28 条 clipboard-importable（只回答剪贴板里有没有可导入内容，
+  // 不传路径和字节）+ paste-from-clipboard（主进程对主窗口执行一次 webContents.paste，
+  // 导入仍走渲染层统一的 paste 监听）。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "only the twenty-three approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
@@ -110,6 +115,16 @@ test("preload path, module format, security settings, and API surface are stable
   // the main process decides which of them are library files.
   assert.match(preload, /libraryFileFlags: \(files\) => ipcRenderer\.invoke\("library-file-flags"[\s\S]*?webUtils\.getPathForFile\(file\)/);
   assert.match(main, /ipcMain\.handle\("library-file-flags"[\s\S]*?resolveAllowedFolderPath\(requestedPath\.trim\(\), \[libraryDir\]\)/);
+  // 任务 239：右键粘贴导入的两个通道——查询只回布尔值，代按粘贴限定主窗口。
+  assert.match(preload, /clipboardImportable: \(\) => ipcRenderer\.invoke\("clipboard-importable"\)/);
+  assert.match(preload, /pasteFromClipboard: \(\) => ipcRenderer\.invoke\("paste-from-clipboard"\)/);
+  assert.match(main, /ipcMain\.handle\("clipboard-importable"/);
+  assert.match(main, /ipcMain\.handle\("paste-from-clipboard"/);
+  const clipboardImportableHandler = main.slice(main.indexOf('ipcMain.handle("clipboard-importable"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("clipboard-importable"')));
+  assert.match(clipboardImportableHandler, /event\.sender !== mainWindow\.webContents/);
+  const pasteFromClipboardHandler = main.slice(main.indexOf('ipcMain.handle("paste-from-clipboard"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("paste-from-clipboard"')));
+  assert.match(pasteFromClipboardHandler, /event\.sender !== mainWindow\.webContents/);
+  assert.match(pasteFromClipboardHandler, /event\.sender\.paste\(\)/);
   assert.match(preload, /getUserProfile: \(\) => ipcRenderer\.invoke\("user-profile"\)/);
   // 任务 116：老用户「已更名」提示的取状态/确认通道。
   assert.match(preload, /getRenameNoticeState: \(\) => ipcRenderer\.invoke\("rename-notice-state"\)/);
