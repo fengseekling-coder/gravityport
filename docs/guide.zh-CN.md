@@ -4,11 +4,11 @@ GravityPort 是面向 Codex、Cowart 和本地 Grok Build CLI 的本地创作素
 
 ## 许可与商用
 
-GravityPort 采用 [PolyForm Noncommercial License 1.0.0](../LICENSE)，属于源码可见、非商业许可软件，不是 OSI 认可的开源软件。
+GravityPort 采用 [PolyForm Shield License 1.0.0](../LICENSE)，源码公开，但不是 OSI 认可的开源软件。
 
-- 个人、学习、研究、兴趣项目等非商业用途，以及非商业修改和传播均可免费使用。
-- 任何商业用途、收费服务、客户交付或商业平台集成都须另行取得版权所有者的书面授权；申请流程见 [商业授权说明](../COMMERCIAL-LICENSE.md)。
-- 重新分发原版或修改版时，必须保留许可证条款和 Required Notice。
+- 任何人都可以免费使用，包括工作中使用和接单使用。
+- 可以修改和转发；转发原版或修改版时，必须保留许可证条款和 Required Notice。
+- 不允许用 GravityPort 的代码做和它竞争的产品，包括改名或稍作修改后发布，免费提供也不行。拿不准时见 [商用说明](../COMMERCIAL-LICENSE.md)。
 
 ## 产品边界
 
