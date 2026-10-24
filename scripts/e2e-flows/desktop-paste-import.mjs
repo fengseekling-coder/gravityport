@@ -536,7 +536,8 @@ async function dispatchPasteCommand(cdp) {
     });
     return;
   }
-  await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, modifiers: 2 });
+  // keyDown + keyUp only: a rawKeyDown before the keyDown makes Chromium run
+  // the paste command twice and the batch imports two copies of everything.
   await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, modifiers: 2, text: "v" });
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "v", code: "KeyV", windowsVirtualKeyCode: 86, modifiers: 2 });
 }
