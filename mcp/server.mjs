@@ -220,10 +220,11 @@ function toolDefinitions() {
           query: { type: "string" },
           createdAfter: { type: "string", description: "Inclusive ISO-8601 lower creation-time bound." },
           createdBefore: { type: "string", description: "Inclusive ISO-8601 upper creation-time bound." },
-          // Deprecated: local visual retrieval was removed. The property stays
+          // Deprecated: local visual retrieval was removed. Both properties stay
           // declared so clients with a cached older schema may still send
-          // `visual: true`; it is accepted and ignored (lexical search runs).
+          // `visual` / `minScore`; they are accepted and ignored (lexical search runs).
           visual: { type: "boolean", description: "Deprecated and ignored." },
+          minScore: { type: "number", description: "Deprecated and ignored." },
           limit: { type: "integer", minimum: 1, maximum: 100 },
         },
         additionalProperties: false,

@@ -124,7 +124,7 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     method: "tools/call",
     params: {
       name: "asset_search",
-      arguments: { projectId: "default", query: "updated prompt", visual: true, limit: 10 },
+      arguments: { projectId: "default", query: "updated prompt", visual: true, minScore: 0.2, limit: 10 },
     },
   });
   assert.equal(legacyVisual.error, undefined);
