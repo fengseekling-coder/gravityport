@@ -45,7 +45,6 @@ import {
 import { deriveEmptyState } from "./empty-state"
 import { describeGroupStats } from "./group-stats"
 import { createResyncOnReconnect } from "./live-sync-resync"
-import { applyVisualPackProgress, describeVisualModel, visualModelActionLabel, type VisualModelAction, type VisualModelStatus } from "./visual-model"
 import {
   checkVersionConsistency,
   createReadyGate,
@@ -56,13 +55,13 @@ import {
 } from "./app-lifecycle"
 import { buildReleaseNoteBlocks } from "./release-notes-view"
 import {
-  fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth, fetchVisualStatus, fetchSimilarAssets,
+  fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
   toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, setAssetsGroup,
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
   moveAssetsToStack, openLibraryFolder,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
-  type MosaVisualStatus, type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
+  type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
   fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
 } from "./mosa-api"
 
@@ -135,10 +134,6 @@ function errorMessage(error: unknown): string {
 // Task 146 card dragging.
 const CARD_DRAG_THRESHOLD_PX = 8
 const NATIVE_DRAG_MAX_FILES = 512
-// Local visual search (task 200) is off for now: no Visual Pack is published,
-// and groups/auto-stacks cover finding images. This hides Settings → 模型 and
-// the Inspector's similar-image row; the runtime and API stay in place.
-const LOCAL_VISUAL_SEARCH = false
 // Pinterest browsing (tasks 135/138/147). The sidebar row and Settings → 连接
 // are shown, the row marked 暂未开放 until a connection lands; false hides
 // both while the view, the connection card, and the local token API stay.
@@ -397,11 +392,6 @@ export default function App() {
   const [navigation, setNavigation] = useState<MosaNavigation | null>(null)
   const [library, setLibrary] = useState<MosaLibraryLocation | null>(null)
   const [health, setHealth] = useState<{ productVersion: string; gitSha: string; distribution: string } | null>(null)
-  const [visual, setVisual] = useState<MosaVisualStatus | null>(null)
-  // Desktop-side visual model state (install / enable / progress), shown on the
-  // settings 模型 tab; null until the desktop bridge answers.
-  const [visualModel, setVisualModel] = useState<VisualModelStatus | null>(null)
-  const [modelProgress, setModelProgress] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -469,7 +459,6 @@ export default function App() {
   const [addingTag, setAddingTag] = useState(false)
   const [tagDraft, setTagDraft] = useState("")
   const [tagError, setTagError] = useState("")
-  const [expandedRelated, setExpandedRelated] = useState(false)
   const [preview, setPreview] = useState(false)
   // Task 177: in-app viewer fullscreen (window stays a window — the OS
   // fullscreen API is deliberately untouched). Never persisted: it resets
@@ -535,7 +524,6 @@ export default function App() {
   // undefined: the recipe history has not answered for this asset yet;
   // null: it answered with none. Web captures keep their references there.
   const [recipeHistory, setRecipeHistory] = useState<MosaRecipeHistory | null | undefined>(undefined)
-  const [similarAssets, setSimilarAssets] = useState<MosaAsset[]>([])
   const [versionTreeOpen, setVersionTreeOpen] = useState(false)
   // The version compare keeps its selection inside the block (task 217); the
   // blocks remount per asset, so switching assets resets both to defaults.
@@ -851,7 +839,6 @@ export default function App() {
       lastMetaProjectRef.current = project
       setNavigation(null)
       setLibrary(null)
-      setVisual(null)
     }
     fetchProjects(controller.signal).then(list => {
       if (!controller.signal.aborted) setProjects(list)
@@ -864,9 +851,6 @@ export default function App() {
     }).catch(() => {})
     fetchHealth(controller.signal).then(data => {
       if (!controller.signal.aborted) setHealth(data)
-    }).catch(() => {})
-    fetchVisualStatus(project, controller.signal).then(data => {
-      if (!controller.signal.aborted) setVisual(data)
     }).catch(() => {})
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1001,15 +985,11 @@ export default function App() {
     }).catch(() => {})
     setVersions(null)
     setGenerationHistory(null)
-    setSimilarAssets([])
     fetchAssetVersions(project, selected, controller.signal).then(history => {
       if (!controller.signal.aborted) setVersions(history && history.versions.length > 1 ? history.versions : null)
     }).catch(() => {})
     fetchAssetGenerationHistory(project, selected, controller.signal).then(history => {
       if (!controller.signal.aborted) setGenerationHistory(history)
-    }).catch(() => {})
-    if (LOCAL_VISUAL_SEARCH) fetchSimilarAssets(project, selected, controller.signal).then(items => {
-      if (!controller.signal.aborted) setSimilarAssets(items)
     }).catch(() => {})
     fetchAssetRecipes(project, selected, controller.signal).then(history => {
       if (controller.signal.aborted) return
@@ -1074,30 +1054,6 @@ export default function App() {
       if (!controller.signal.aborted) notify(errorMessage(error))
     })
   }
-  // Keep two visual states honest while the model pack installs on desktop.
-  useEffect(() => {
-    const api = desktopAPI()
-    if (!api?.onVisualPackProgress) return
-    api.onVisualPackProgress(progress => {
-      const percent = Number(progress?.percent)
-      setModelProgress(Number.isFinite(percent) ? percent : null)
-      setVisualModel(old => applyVisualPackProgress(
-        old,
-        progress && typeof progress.phase === "string" ? { phase: progress.phase, percent } : null,
-      ))
-    })
-  }, [])
-  const refreshVisualModel = () => {
-    const api = desktopAPI()
-    if (!api?.getVisualModelState) return Promise.resolve()
-    return api.getVisualModelState(true)
-      .then(state => setVisualModel(state as unknown as VisualModelStatus))
-      .catch(() => {})
-  }
-  useEffect(() => {
-    if (settings && settingTab === "模型") void refreshVisualModel()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, settingTab])
   assetsRef.current = assets
   const asset = assets.find((a) => a.id === selected) || assets[0]
   // 版本树（任务 144）：有对话时行来自对话轮次计算——默认当前素材前后共三行，
@@ -3118,48 +3074,6 @@ export default function App() {
     if (!group) { notify(tr("请先在左侧选择或新建分组")); return }
     assignGroup(group)
   }
-  const installModelPack = async () => {
-    const api = desktopAPI()
-    if (!api?.installVisualPack) { notify("尚未连接模型服务，暂时无法安装"); return }
-    try {
-      setModelProgress(0)
-      const result = await api.installVisualPack()
-      if (result && result.ok === false) {
-        notify(String(result.error || tr("模型组件安装失败")))
-      } else {
-        notify(tr("模型组件已安装"))
-      }
-    } catch (error) {
-      notify(String((error as Error)?.message || tr("模型组件安装失败")))
-    } finally {
-      setModelProgress(null)
-      refreshNavigation()
-      void refreshVisualModel()
-    }
-  }
-  const runVisualModelAction = async (action: VisualModelAction) => {
-    const api = desktopAPI()
-    if (!api) return
-    try {
-      if (action === "install" || action === "update") {
-        await installModelPack()
-        return
-      }
-      if (action === "cancel") await api.cancelVisualPackInstall?.()
-      else if (action === "enable" || action === "disable") {
-        const state = await api.setVisualModelEnabled?.(action === "enable")
-        if (state) setVisualModel(state as unknown as VisualModelStatus)
-        refreshNavigation()
-      } else if (action === "remove") {
-        const result = await api.removeVisualPack?.() as { ok?: boolean; cancelled?: boolean } | undefined
-        if (result?.ok) notify(tr("视觉能力包已删除，GravityPort 正在重启"))
-      }
-    } catch (error) {
-      notify(String((error as Error)?.message || tr("视觉能力包删除失败")))
-    } finally {
-      void refreshVisualModel()
-    }
-  }
   const checkForUpdates = async () => {
     const api = desktopAPI()
     if (!api?.checkForUpdates) { notify(tr("网页版请访问官网获取最新版本")); return }
@@ -3286,7 +3200,6 @@ export default function App() {
   const sourceInfo = asset ? describeSource(asset, language) : null
   const headerLine = sourceInfo ? inspectorHeaderLine(sourceInfo, tr) : ""
   const promptNoticeInfo = asset ? promptNotice(asset) : null
-  const relatedAssets = similarAssets.slice(0, expandedRelated ? 6 : 2)
   const startPromptEdit = () => {
     if (!asset) return
     setPromptEdit({ project: asset.project_id, assetId: asset.id, draft: asset.prompt || "" })
@@ -4403,28 +4316,6 @@ export default function App() {
               ))}
             </div>
           </section>}
-          {relatedAssets.length > 0 && <section className="detail-section">
-            <div className="field-heading">
-              <span>{tr("相关推荐")}</span>
-              <button className="section-action" aria-expanded={expandedRelated} onClick={() => setExpandedRelated(!expandedRelated)}>{expandedRelated ? tr("收起") : tr("更多")}<Icon name="down" size={12} /></button>
-            </div>
-            {relatedAssets.map((relatedAsset) => (
-              <button
-                className="related"
-                key={relatedAsset.id}
-                onClick={() => focusAsset(relatedAsset.id)}
-              >
-                <i>{relatedAsset.thumbnail_url ? <img src={relatedAsset.thumbnail_url} alt="" loading="lazy" /> : null}</i>
-                <span>
-                  {relatedAsset.name}
-                  <small>
-                    {relatedAsset.format || "—"} · {relatedAsset.width} × {relatedAsset.height}
-                  </small>
-                </span>
-                <Icon name="right" size={11} />
-              </button>
-            ))}
-          </section>}
           <button
             className="library-location"
             onClick={revealAssetPath}
@@ -4453,11 +4344,10 @@ export default function App() {
               {[
                 ["常规与外观", "sun"],
                 ["存储", "folder"],
-                ["模型", "grid"],
                 ["连接", "link"],
                 ["反馈", "message"],
                 ["关于", "info"],
-              ].filter(([label]) => (LOCAL_VISUAL_SEARCH || label !== "模型") && (PINTEREST_ENTRY || label !== "连接")).map(([label, icon]) => (
+              ].filter(([label]) => (PINTEREST_ENTRY || label !== "连接")).map(([label, icon]) => (
                 <button
                   className={settingTab === label ? "active" : ""}
                   aria-pressed={settingTab === label}
@@ -4549,54 +4439,6 @@ export default function App() {
                   </section>
                   <div className="settings-note"><p>{library ? `${tr("存储类型")}: ${library.storage}` : ""}</p></div>
                 </>
-              ) : settingTab === "模型" ? (
-                desktopAPI()?.getVisualModelState ? (() => {
-                  const api = desktopAPI()
-                  const described = describeVisualModel(visualModel, {
-                    install: Boolean(api?.installVisualPack),
-                    cancel: Boolean(api?.cancelVisualPackInstall),
-                    remove: Boolean(api?.removeVisualPack),
-                    toggle: Boolean(api?.setVisualModelEnabled),
-                  })
-                  return <>
-                    <section className="settings-section">
-                      <div className="model-summary">
-                        <div className="model-symbol"><Icon name="layers" size={16} /></div>
-                        <div className="model-description model-description-stacked">
-                          <strong>{tr("本地视觉搜索")}</strong>
-                          <span>{tr(described.label)}</span>
-                          {described.details.map(detail => <span key={detail}>{detail}</span>)}
-                          {described.progress && <span>{tr(described.progress.phaseLabel)} {described.progress.percent}%</span>}
-                          {described.note && <span className="visual-model-error">{tr(described.note)}</span>}
-                        </div>
-                        <div className="storage-actions">
-                          {described.actions.map(action => (
-                            <button key={action} className="neutral-button" onClick={() => void runVisualModelAction(action)}>
-                              {tr(visualModelActionLabel(action))}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </section>
-                  </>
-                })() : (
-                <>
-                  <section className="settings-section">
-                    <div className="model-summary">
-                      <div className="model-symbol"><Icon name="layers" size={16} /></div>
-                      <div className="model-description"><strong>{tr("本地视觉搜索")}</strong><span title={visual?.available ? tr("模型服务运行中") : tr("尚未连接模型服务")}>
-                        {visual?.available
-                          ? tr("模型服务运行中")
-                          : modelProgress != null
-                            ? `${tr("正在安装模型组件")} ${modelProgress}%`
-                            : tr("尚未连接模型服务")}
-                      </span></div>
-                      {!visual?.available && <button className="neutral-button" onClick={installModelPack}>{tr("安装")}</button>}
-                    </div>
-                  </section>
-                  <div className="settings-note"><p>{tr("连接模型服务后即可启用。")}</p></div>
-                </>
-                )
               ) : settingTab === "连接" ? (
                 <>
                   <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />

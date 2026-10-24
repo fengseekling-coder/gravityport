@@ -16,13 +16,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // 任务 116：老用户「已更名」提示——取启动早期判定结果、确认已读。
   getRenameNoticeState: () => ipcRenderer.invoke("rename-notice-state"),
   acknowledgeRenameNotice: () => ipcRenderer.invoke("acknowledge-rename-notice"),
-  getVisualModelState: (refresh = false) => ipcRenderer.invoke("visual-model-state", refresh === true),
-  setVisualModelEnabled: (enabled) => ipcRenderer.invoke("visual-model-set-enabled", enabled === true),
-  installVisualPack: () => ipcRenderer.invoke("visual-pack-install"),
-  cancelVisualPackInstall: () => ipcRenderer.invoke("visual-pack-cancel"),
-  removeVisualPack: () => ipcRenderer.invoke("visual-pack-remove"),
-  onVisualPackProgress: (callback) =>
-    ipcRenderer.on("visual-pack-progress", (_event, progress) => callback(progress)),
   checkForUpdates: (notify = false) =>
     ipcRenderer.invoke("check-for-updates", notify === true),
   downloadAndInstallUpdate: () => ipcRenderer.invoke("download-and-install-update"),

@@ -17,13 +17,12 @@ function runCli(args) {
   });
 }
 
-test("mosa CLI advertises explicit backup, verification, restore, and visual-model verification commands", () => {
+test("mosa CLI advertises explicit backup, verification, and restore commands", () => {
   const result = runCli(["help"]);
   assert.equal(result.status, 0);
   assert.match(result.stdout, /gravityport backup \[--library <path>\] --to <backup-dir>/);
   assert.match(result.stdout, /gravityport backup-verify --from <backup-dir>/);
   assert.match(result.stdout, /gravityport restore --from <backup-dir> --to <empty-library-dir>/);
-  assert.match(result.stdout, /gravityport visual-model-verify --from <model-pack-dir>/);
 });
 
 test("backup and restore never infer destructive destination paths", () => {
@@ -38,10 +37,6 @@ test("backup and restore never infer destructive destination paths", () => {
   const restore = runCli(["restore", "--from", "/tmp/does-not-matter"]);
   assert.notEqual(restore.status, 0);
   assert.match(`${restore.stdout}${restore.stderr}`, /restore requires --to/);
-
-  const visualModelVerify = runCli(["visual-model-verify"]);
-  assert.notEqual(visualModelVerify.status, 0);
-  assert.match(`${visualModelVerify.stdout}${visualModelVerify.stderr}`, /visual-model-verify requires --from/);
 });
 
 test("mosa backup refuses an unmigrated library and exits non-zero", () => {

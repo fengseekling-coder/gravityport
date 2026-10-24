@@ -16,9 +16,9 @@ GravityPort 是一个本地优先的创意资产库。它把图像和视频原�
 只有在显式配置本地 ingest Token 和允许的扩展 origin 后才启用；Packaged Desktop
 会在本地自动生成 Token，并只授权固定的 GravityPort 扩展 origin 完成配对。
 
-桌面版的出站连接仅限：更新清单与更新包、匿名使用统计、Visual Pack 与 C2PA helper
-下载、用户主动连接时的 Pinterest 授权中转与 Pinterest API，以及用户在设置页点击发送时的
-反馈转发；它们都不携带素材库内容（见 [PRIVACY.md](PRIVACY.md) 的 Network Boundary）。
+桌面版的出站连接仅限：更新清单与更新包、匿名使用统计、C2PA helper 下载、用户主动连接时的
+Pinterest 授权中转与 Pinterest API，以及用户在设置页点击发送时的反馈转发；它们都不携带
+素材库内容（见 [PRIVACY.md](PRIVACY.md) 的 Network Boundary）。
 
 命名兼容：产品由 MOSA 更名为 GravityPort 后，以下标识有意保留旧名，以兼容现有安装和
 集成：npm 包名与 CLI 别名 `mosa`、`bin/mosa.mjs`、`lib/mosa-runtime.mjs`
@@ -80,13 +80,13 @@ Electron 桌面壳由 `desktop/main.mjs`、`desktop/preload.cjs` 和
 `desktop/service-manager.mjs` 组成。它与浏览器端共用同一份
 `web/gravityport/dist` 构建产物（打包进应用，forge 包内唯一 UI 路径），
 并通过受限的 preload API（`window.electronAPI`）处理桌面能力：剪贴板粘贴写入导入暂存区、
-写剪贴板、原生拖出与拖回去重判定、Visual Pack 安装与启停、受控更新的检查/下载/安装、打开
-外链与 Pinterest 授权页、切换库位置和窗口全屏同步。导入成功和可用更新的系统通知由主进程
+写剪贴板、原生拖出与拖回去重判定、受控更新的检查/下载/安装、打开外链与 Pinterest 授权页、
+切换库位置和窗口全屏同步。导入成功和可用更新的系统通知由主进程
 直接发出；在系统文件管理器中定位原件走运行时的 `POST /api/open-folder`。业务数据仍由同一个
 本地 HTTP 运行时提供。更新（`update-service.mjs`、`macos-updater.mjs`、
 `windows-updater.mjs`）、匿名统计（`anonymous-usage.mjs`）、扩展配对 Token
-（`web-capture-pairing.mjs`）、Visual Pack（`visual-model-manager.mjs`、
-`visual-pack-installer.mjs`）、C2PA helper 安装和改名提示各在 `desktop/` 下独立成模块。
+（`web-capture-pairing.mjs`）、旧视觉数据清理（`legacy-visual-cleanup.mjs`）、C2PA helper
+安装和改名提示各在 `desktop/` 下独立成模块。
 
 操作系统差异集中在 `desktop/platform/index.mjs`。当前 adapter 只负责桌面壳
 边界，例如 macOS traffic lights、Windows 原生标题栏/菜单栏策略和窗口生命周期
@@ -104,7 +104,7 @@ Electron 桌面壳由 `desktop/main.mjs`、`desktop/preload.cjs` 和
 - `lib/api/generation-routes.mjs`：生成事件、生成关系、单次 lineage 查询，以及资产详情所需的聚合生成历史。
 - `lib/api/library-routes.mjs`：项目、分组、库路径和受限文件夹操作。
 - `lib/api/bridge-routes.mjs`：健康检查、桥接状态、Web Capture 配对与 ingest（含分块上传、状态上报、对话标题与轮次绑定）、ChatGPT 桌面版对话的下发与结果回报，以及 Cowart 画布。
-- `lib/api/visual-routes.mjs`、`lib/api/pinterest-routes.mjs`、`lib/api/feedback-routes.mjs`：本地视觉检索、Pinterest 连接和设置反馈。
+- `lib/api/pinterest-routes.mjs`、`lib/api/feedback-routes.mjs`：Pinterest 连接和设置反馈。
 - `lib/http-response.mjs`：JSON 请求体读取、响应和 HTTP 错误处理。
 
 同一运行时还负责静态 UI、`/library/` 下的原图和衍生图读取、内容安全策略、
@@ -118,11 +118,11 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 不创建额外的 HTTP 端口：SQLite 库依靠 WAL 与桌面/Web 运行时并存；JSON 兼容库必须独占
 运行时锁，不能与正在运行的 App 同时写入。MCP 只看 `GRAVITYPORT_LIBRARY_DIR` 和默认库位置，
 不读取桌面版的 `library-location.json`，桌面版改过库位置时需为 MCP 显式设置
-`GRAVITYPORT_LIBRARY_DIR`。`asset_search` 的 `visual: true` 不在 MCP 进程内推理，而是通过
-`/api/visual/search` 复用正在服务同一库的本地运行时，不可用时退回文本/时间检索。当前工具覆盖：
+`GRAVITYPORT_LIBRARY_DIR`。本地视觉检索已移除：`asset_search` 只做文本与时间检索，老客户端
+缓存旧 schema 传来的 `visual: true` 会被接受并忽略。当前工具覆盖：
 
 - `asset_create`、`asset_list`、`asset_get`
-- `asset_search`（文本、时间范围与可选的本地视觉检索组合）、`asset_provenance_export`（导出脱敏 provenance bundle 与未签名的 C2PA assertion payload）
+- `asset_search`（文本与时间范围组合）、`asset_provenance_export`（导出脱敏 provenance bundle 与未签名的 C2PA assertion payload）
 - `asset_update_metadata`、`asset_attach_prompt`
 - `asset_archive`、`asset_duplicate`
 - `asset_version_create`、`asset_version_history`、`asset_recipe_history`
@@ -148,21 +148,13 @@ Relation 写入 `user_confirmed` 边，被否决的候选会持久化为 dismiss
 
 服务声明的 MCP server version 为 `0.2.0`；产品版本仍以 `package.json` 为准。
 
-### 2.4 可选的本地视觉检索
+### 2.4 本地视觉检索（已移除）
 
-本地视觉检索由可选的 Visual Pack 提供：固定版本的 SigLIP2 Base（ONNX int8）模型、
-`onnxruntime-node` 与 `@huggingface/tokenizers`。这些依赖不打进桌面主包，而是安装在
-Electron `userData` 下，由 `desktop/visual-model-manager.mjs` 和
-`desktop/visual-pack-installer.mjs` 负责发现、下载、逐文件校验和启停。
-
-推理运行在独立子进程中（`lib/visual-inference-worker-entry.mjs`），主运行时只通过
-`lib/visual-inference-client.mjs` 与它通信：有界请求队列、单请求超时、崩溃检测，
-失败时明确报告不可用，而不是返回错误结果。`lib/visual-embedding-*.mjs` 在后台按内容
-hash 增量建立 embedding 索引，`lib/visual-relationship-*.mjs` 提供相似图、近似重复和
-版本/堆叠候选；候选只作建议，不会自动修改素材组织或 provenance。HTTP 入口是
-`lib/api/visual-routes.mjs`，检视器的「相关推荐」和 MCP `asset_search` 的 `visual: true`
-都使用这套索引。未安装 Visual Pack 时，其余功能照常工作。桌面界面目前不提供这一功能（`App.tsx` 的 `LOCAL_VISUAL_SEARCH`）：设置不显示「模型」页，检视器不请求相关推荐；后台与 API 保留。模型选型与准入标准见
-[docs/visual-retrieval-model-evaluation.md](docs/visual-retrieval-model-evaluation.md)。
+本地以图搜图（Visual Pack、SigLIP2 embedding、视觉关系索引、`/api/visual/*` 路由、
+MCP `asset_search` 的 `visual` 检索、设置「模型」页与检视器「相关推荐」）已整块移除：
+找图靠分组、自动堆叠、搜索框与对话 AI。桌面启动时由 `desktop/legacy-visual-cleanup.mjs`
+清理旧版本留在 Electron `userData` 下的视觉包、暂存与索引目录。MCP 老客户端缓存旧
+schema 传来的 `visual: true` 会被接受并忽略，照常返回文本检索结果。
 
 ## 3. 仓库模块与构建
 
@@ -171,7 +163,7 @@ web/gravityport/          React 界面源码（src/）与 Vite 构建产物（di
 server.mjs               本地 Web 服务 CLI 入口
 lib/mosa-runtime.mjs     HTTP 运行时编排和静态资源服务
 lib/api-routes.mjs       API 总分发
-lib/api/*.mjs            素材、生成历史、库、桥接/Web Capture、视觉检索、Pinterest 和反馈路由
+lib/api/*.mjs            素材、生成历史、库、桥接/Web Capture、Pinterest 和反馈路由
 lib/pinterest/           Pinterest OAuth、token 存储与 API 客户端
 lib/feedback/            反馈转发配置
 lib/asset-store.mjs      存储选择和 JSON 兼容实现
@@ -231,8 +223,7 @@ npm run build             构建 UI、编译 TypeScript 并写入构建身份
    配置，并冻结本进程的构建身份。
 2. 先执行运行时隔离检查，再取得该库的运行时锁（`<库目录>/.mosa-runtime.lock`），
    避免同一库重复写入。
-3. 选择存储（见 5.1）并创建库变更流；按宿主配置启动可选的本地视觉运行时，桌面版另外
-   创建 Pinterest 客户端；创建（但不启动）Codex、ChatGPT 桌面版同步、Grok、Cowart、
+3. 选择存储（见 5.1）并创建库变更流；桌面版创建 Pinterest 客户端；创建（但不启动）Codex、ChatGPT 桌面版同步、Grok、Cowart、
    Cowart discovery 桥接和衍生任务 worker，安装每小时一次的回收站清理；确保 `default`
    项目存在。
 4. 创建 Node HTTP 服务并监听 loopback，返回 `url`、端口、库目录、存储类型、构建身份、
@@ -336,9 +327,7 @@ SQLite 数据库路径为 `<库目录>/mosa.db`（默认库目录按上文
   或语义搜索索引，可由资产元数据重新构建。
 
 进入搜索文本、FTS 和短词索引的字段由 `lib/asset-search-scope.mjs` 白名单决定（Prompt、
-用户原话、provider/model、标签、名称等），路径、哈希和采集内部字段不参与搜索。本地视觉
-索引不写入 `mosa.db`：`lib/visual-relationship-index.mjs` 在 Electron `userData` 下按库
-路径分目录保存。
+用户原话、provider/model、标签、名称等），路径、哈希和采集内部字段不参与搜索。
 
 ### 5.2 文件与衍生物
 
@@ -391,7 +380,6 @@ gravityport verify [--library <path>]
 gravityport backup [--library <path>] --to <backup-dir>
 gravityport backup-verify --from <backup-dir>
 gravityport restore --from <backup-dir> --to <empty-library-dir>
-gravityport visual-model-verify --from <model-pack-dir>
 gravityport thumbnails <rebuild|repair> [--library <path>]
 ```
 
@@ -433,7 +421,6 @@ gravityport thumbnails <rebuild|repair> [--library <path>]
 | `/api/import/stage`、`/api/assets/import-batch` | 导入暂存：`POST` 把浏览器/手动上传的文件流式写入 `<库目录>/assets/import-staging/`，`DELETE` 清理暂存文件；`import-batch` 分批入库（桌面粘贴由主进程直接写入 `userData` 暂存区） |
 | `/api/feedback/diagnostics`、`/api/feedback/submit` | 设置反馈页：读取脱敏诊断日志预览；校验并转发一条反馈到收集服务 |
 | `/api/pinterest/connect`、`/api/pinterest/callback`、`/api/pinterest/status`、`/api/pinterest/boards`、`/api/pinterest/boards/:id/pins`、`/api/pinterest/disconnect` | Pinterest 连接：本机 OAuth 回调、连接状态、画板/Pin 浏览与断开 |
-| `/api/visual/status`、`/api/visual/search`、`/api/visual/assets/:id/similar`、`/api/visual/assets/:id/candidates`、`/api/visual/index`（DELETE） | 本地视觉检索：模型/索引状态、文本→图像检索（MCP `visual: true` 使用）、相似图（检视器「相关推荐」使用）、版本/堆叠候选、清空当前项目索引；索引由后台 worker 增量建立，没有构建接口 |
 | `/api/ingest/web-capture-turn-bindings` | 采集插件上报对话结构（消息号与轮次绑定），供版本树按对话轮次显示 |
 | `/api/generation-message-bindings` | 生成记录补齐消息号与轮次的服务端写入接口 |
 | `/api/web-capture/pair`、`/api/web-capture/retry` | 扩展配对（桌面版自动发放 Token）与重试请求计数下发 |

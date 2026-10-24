@@ -107,7 +107,7 @@ describe("classifyRequest", () => {
     assert.equal(classify({ target: "/downloads/GravityPort-0.3.3-arm64.dmg", userAgent: GOOGLEBOT }), null);
     assert.equal(classify({ target: "/downloads/GravityPort-0.3.3-arm64.dmg", status: 404 }), null);
     assert.equal(classify({ method: "HEAD", target: "/downloads/GravityPort-0.3.3-arm64.dmg" }), null);
-    assert.equal(classify({ target: "/downloads/visual-packs/pack.zip" }), null);
+    assert.equal(classify({ target: "/downloads/nonproduct-archive.zip" }), null);
   });
 
   it("counts the website's own pages only, since other sites share the log", () => {

@@ -7,6 +7,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 ### Desktop & MCP
 
 - Moving the library in Settings no longer risks losing AI-assistant writes: the desktop now marks the library before copying, the built-in MCP server refuses tool calls with a "moving the library" error for the duration (and answers normally again if the move fails), and the copy is aborted and rolled back if the source database changes while it is being copied.
+- The local visual search code is removed entirely: the optional Visual Pack download, the local embedding/index runtime, the `/api/visual/*` endpoints, the CLI `visual-model-verify` command, and the `onnxruntime-node` dependency are gone. On startup the app deletes the leftover Visual Pack and visual index data earlier versions kept under its data folder (never the library); MCP `asset_search` keeps answering normally, and clients that still send `visual: true` get lexical results without an error.
 
 ### Web Capture
 

@@ -40,19 +40,10 @@ function signingOptions(version) {
   };
 }
 
-test("release manifest emits only unified platforms schema and preserves Visual Packs", async () => {
+test("release manifest emits only unified platforms schema and drops legacy Visual Packs", async () => {
   const version = "0.2.1-rc.16";
   const files = await fixtureArtifacts(version);
   try {
-    const visualPacks = {
-      "darwin-arm64": {
-        id: "siglip2-base-patch16-224",
-        revision: "model-revision",
-        totalSize: 123,
-        manifest: { size: 42, sha256: "a".repeat(64) },
-        license: { id: "apache-2.0", source: "https://example.com/license" },
-      },
-    };
     const result = await prepareDesktopReleaseManifest({
       version,
       macArtifactPath: files.mac,
@@ -61,7 +52,15 @@ test("release manifest emits only unified platforms schema and preserves Visual 
         version: "0.2.1-rc.15",
         artifacts: { mac: { url: "legacy" }, windows: { url: "legacy" } },
         platforms: { windows: { file: "MOSA-win32-x64-0.2.1-rc.15.zip" } },
-        visualPacks,
+        visualPacks: {
+          "darwin-arm64": {
+            id: "siglip2-base-patch16-224",
+            revision: "model-revision",
+            totalSize: 123,
+            manifest: { size: 42, sha256: "a".repeat(64) },
+            license: { id: "apache-2.0", source: "https://example.com/license" },
+          },
+        },
       },
       publishedAt: "2026-09-19T01:00:00Z",
       notes: { zh: "rc.16", en: "rc.16" },
@@ -76,7 +75,7 @@ test("release manifest emits only unified platforms schema and preserves Visual 
     assert.equal(verifyReleaseManifestSignature(result, RELEASE_TRUST), true);
     assert.deepEqual(Object.keys(result.platforms), ["macos"]);
     assert.equal("artifacts" in result, false);
-    assert.deepEqual(result.visualPacks, visualPacks);
+    assert.equal("visualPacks" in result, false);
     assert.equal(result.platforms.macos.file, `MOSA-darwin-arm64-${version}.zip`);
     const parsed = parseUpdateManifest(result);
     assert.equal(parsed.macArtifact.file, result.platforms.macos.file);

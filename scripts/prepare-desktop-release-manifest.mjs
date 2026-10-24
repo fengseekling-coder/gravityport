@@ -110,7 +110,6 @@ export async function prepareDesktopReleaseManifest({
       ...(macos ? { macos } : {}),
       ...(windows ? { windows } : {}),
     },
-    ...(validVisualPacks(previous.visualPacks) ? { visualPacks: structuredClone(previous.visualPacks) } : {}),
   };
 
   const trust = normalizeReleaseManifestTrust(buildIdentity?.releaseManifestTrust);
@@ -203,10 +202,6 @@ function normalizeBuildIdentity(value, version) {
   if (!/^[0-9a-f]{64}$/.test(uiFingerprint)) throw new Error("Release build identity uiFingerprint is invalid.");
   if (!/^[0-9a-f]{64}$/.test(runtimeFingerprint)) throw new Error("Release build identity runtimeFingerprint is invalid.");
   return { gitSha, uiFingerprint, runtimeFingerprint, distribution };
-}
-
-function validVisualPacks(value) {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function parseArgs(argv) {

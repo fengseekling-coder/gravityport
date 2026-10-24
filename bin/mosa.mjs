@@ -8,7 +8,6 @@ import { resolveLibraryLocation } from "../lib/library-location.mjs";
 import { createDerivativeWorker } from "../lib/derivative-worker.js";
 import { assertExistingSqliteLibrary, migrateLegacyLibrary, verifySqliteLibrary } from "../lib/library-migration.js";
 import { createLibraryBackup, restoreLibraryBackup, verifyLibraryBackup } from "../lib/library-backup.js";
-import { verifyVisualModelPack } from "../lib/visual-model-pack.mjs";
 
 const managerDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const projectRoot = resolve(process.env.MOSA_PROJECT_DIR || dirname(managerDir));
@@ -28,8 +27,6 @@ if (!command || command === "--help" || command === "help") {
   await runBackupVerify(args);
 } else if (command === "restore") {
   await runRestore(args);
-} else if (command === "visual-model-verify") {
-  await runVisualModelVerify(args);
 } else if (command === "thumbnails") {
   await runThumbnails(args);
 } else {
@@ -89,13 +86,6 @@ async function runRestore(values) {
     backupDir: options.from,
     destinationDir: options.to,
   });
-  console.log(JSON.stringify(report, null, 2));
-}
-
-async function runVisualModelVerify(values) {
-  const options = parseOptions(values);
-  if (!options.explicitFrom) throw new Error("visual-model-verify requires --from <model-pack-dir>.");
-  const report = await verifyVisualModelPack({ packDir: options.from });
   console.log(JSON.stringify(report, null, 2));
 }
 
@@ -186,7 +176,6 @@ function printHelp() {
   gravityport backup [--library <path>] --to <backup-dir>
   gravityport backup-verify --from <backup-dir>
   gravityport restore --from <backup-dir> --to <empty-library-dir>
-  gravityport visual-model-verify --from <model-pack-dir>
   gravityport thumbnails <rebuild|repair> [--library <path>]
     rebuild  regenerate every eligible asset's derivatives from the original, present or not
     repair   enqueue only assets with missing derivative metadata or derivative files missing on disk

@@ -248,7 +248,6 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
   assert.deepEqual(exposed, [
     "acknowledgeRenameNotice",
     "cancelUpdateDownload",
-    "cancelVisualPackInstall",
     "changeLibraryLocation",
     "checkForUpdates",
     "downloadAndInstallUpdate",
@@ -256,22 +255,17 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "getRenameNoticeState",
     "getUpdateReady", // 任务 231：只读，主进程已下好并校验的更新包状态
     "getUserProfile",
-    "getVisualModelState",
-    "installVisualPack",
     "libraryFileFlags", // drop-back guard: which dropped files already live in the library (booleans only)
     "onMenuSearch",
     "onUpdateDownloadProgress",
     "onUpdateReady", // 任务 231：主进程广播「已下好」，与 getUpdateReady 成对
-    "onVisualPackProgress",
     "onWindowFullScreenChange",
     "openDownloadPage",
     "openExternalLink", // 任务 147：第 22 条 open-external-link（Pinterest Pin 外链，仅 http/https）
     "openPinterestAuthorize", // 任务 135：第 21 条 open-pinterest-authorize（Pinterest 授权页，只放行 https://www.pinterest.com/oauth/）
     "pasteImage",
-    "removeVisualPack",
     "reportRendererReady",
     "setLocale",
-    "setVisualModelEnabled",
     "setWindowFullScreen",
     "startNativeDrag",
     "writeClipboardFiles",

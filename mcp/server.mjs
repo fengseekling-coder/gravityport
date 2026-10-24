@@ -212,7 +212,7 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_SEARCH,
-      description: "Search GravityPort visual memory using lexical search, optional local visual retrieval, and explicit creation-time bounds. Visual mode reuses the matching local GravityPort runtime and degrades to lexical/time search if visual inference is unavailable.",
+      description: "Search GravityPort visual memory using lexical search and explicit creation-time bounds.",
       inputSchema: {
         type: "object",
         properties: {
@@ -220,8 +220,11 @@ function toolDefinitions() {
           query: { type: "string" },
           createdAfter: { type: "string", description: "Inclusive ISO-8601 lower creation-time bound." },
           createdBefore: { type: "string", description: "Inclusive ISO-8601 upper creation-time bound." },
-          visual: { type: "boolean" },
-          minScore: { type: "number", minimum: -1, maximum: 1 },
+          // Deprecated: local visual retrieval was removed. Both properties stay
+          // declared so clients with a cached older schema may still send
+          // `visual` / `minScore`; they are accepted and ignored (lexical search runs).
+          visual: { type: "boolean", description: "Deprecated and ignored." },
+          minScore: { type: "number", description: "Deprecated and ignored." },
           limit: { type: "integer", minimum: 1, maximum: 100 },
         },
         additionalProperties: false,
@@ -469,13 +472,13 @@ async function handleToolCall(id, params) {
   if (params?.name === TOOL_ASSET_SEARCH) {
     const result = await searchMcpAssets({
       store,
-      libraryDir,
       projectId: args.projectId || "default",
       query: args.query || "",
       createdAfter: args.createdAfter,
       createdBefore: args.createdBefore,
+      // Legacy clients with a cached schema may still send visual: it is
+      // accepted and ignored so they keep getting lexical results.
       visual: args.visual === true,
-      minScore: args.minScore,
       limit: args.limit,
     });
     sendResult(id, { content: [{ type: "text", text: `${result.results.length} matching assets` }], structuredContent: result });

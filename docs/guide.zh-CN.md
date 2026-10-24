@@ -36,9 +36,9 @@ Windows 上的 Grok/Cowart 来源目录尚未完成真机验证，暂不把推�
 
 macOS Desktop 与 Web Capture 的后台监督服务共用同一资料库和本地端口。新版 Desktop 启动时会先发布一个最多 90 秒有效（覆盖 Desktop 最长 30 秒的旧 Runtime 退出等待和自身启动）、绑定当前 PID 与进程启动身份的接管标记；监督服务看到后会停止自己拉起的后台 Runtime 并让 Desktop 接管。若 Desktop 启动失败，标记会自动过期，后台服务恢复。这样覆盖安装/重启 GravityPort 时不应再需要手动结束仓库里的 `server.mjs`。外部非 GravityPort 服务、不同资料库的 GravityPort Runtime 仍不会被自动终止。
 
-### 本地视觉搜索（暂不提供）
+### 本地视觉搜索（已移除）
 
-本地视觉搜索（按画面找相似图、文字搜图）的后台代码还在，但桌面界面目前不提供：设置里没有「模型」页，检视器也不显示相关推荐，GravityPort 不会下载任何模型。找图请用分组、自动堆叠、搜索框，或通过 MCP 让 AI 代理检索。技术细节和模型评估记录见 [visual-retrieval-model-evaluation.md](visual-retrieval-model-evaluation.md)。
+本地视觉搜索（按画面找相似图、文字搜图）已整块移除：设置里没有「模型」页，检视器不显示相关推荐，GravityPort 不会下载任何模型，启动时还会清掉旧版本留在本机的视觉模型与索引数据。找图请用分组、自动堆叠、搜索框，或通过 MCP 让 AI 代理检索。
 
 ## 安装桌面版
 
@@ -302,7 +302,7 @@ generation_lineage
 
 `asset_list` 和 `GET /api/assets` 支持 `limit` 与 `cursor` 分页，默认 100 条、最大 250 条；`GET /api/assets` 还可用 `createdAfter` / `createdBefore` 传入 ISO-8601 时间做包含边界的创建时间过滤。
 
-`asset_search` 面向 AI agent 的“视觉记忆”检索：可组合文本查询、`createdAfter` / `createdBefore` 时间范围，并在 `visual: true` 时复用**同一资料库**当前正在运行的 GravityPort 本地视觉检索服务（桌面版目前不提供视觉模型，这一项会返回视觉不可用）。MCP 会先核对 loopback Runtime 的 GravityPort 身份和资料库路径；视觉模型未安装、未启用、Runtime 不可达或资料库不匹配时，不会另起一套模型进程，也不会放宽安全边界，而是明确返回视觉不可用原因并保留文本/时间检索结果。文本与视觉同时可用时使用稳定的 reciprocal-rank fusion 合并排序。
+`asset_search` 面向 AI agent 的“视觉记忆”检索：可组合文本查询与 `createdAfter` / `createdBefore` 时间范围，按文字与创建时间检索素材。本地视觉检索已移除；老客户端缓存的旧 schema 仍可能传 `visual: true`，这一参数会被接受并忽略，照常返回文本/时间检索结果，不会报错。
 
 `asset_provenance_export` 导出 `mosa.provenance.bundle/1`，包含经过字段白名单/敏感字段清理的素材身份、内容摘要、Recipe 历史、Generation Events/Relations 和 verification level；同时生成一个 `com.azhuilab.mosa.provenance` C2PA assertion payload。该 payload 明确标记为 `signed: false`：它只是交给 C2PA SDK/签名器的可移植声明数据，**不是**已经签名的 Content Credential，GravityPort 不会把未签名记录描述成经过 C2PA 验证的来源证明。
 
