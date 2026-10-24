@@ -345,3 +345,23 @@ describe("aspectRatioLabel", () => {
     assert.equal(label(Number.NaN, 100), "—");
   });
 });
+
+describe("formatVideoDuration", () => {
+  const format = (seconds) => inspectorInfoModule.formatVideoDuration(seconds);
+  it("rounds to seconds and shows M:SS below one hour", () => {
+    assert.equal(format(6.08), "0:06");
+    assert.equal(format(65), "1:05");
+    assert.equal(format(9.5), "0:10");
+    assert.equal(format(3599.6), "1:00:00");
+  });
+  it("shows H:MM:SS from one hour on", () => {
+    assert.equal(format(3600), "1:00:00");
+    assert.equal(format(3723), "1:02:03");
+    assert.equal(format(7325), "2:02:05");
+  });
+  it("shows a dash for missing or invalid values", () => {
+    assert.equal(format(0), "—");
+    assert.equal(format(-3), "—");
+    assert.equal(format(Number.NaN), "—");
+  });
+});

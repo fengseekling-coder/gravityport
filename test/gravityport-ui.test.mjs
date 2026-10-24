@@ -39,6 +39,15 @@ describe("normalizeAsset", () => {
     assert.equal(extensionFallback.mediaKind, "video");
   });
 
+  it("carries the video duration from business_fields and null when absent", () => {
+    const timed = adapterModule.normalizeAsset({ id: "v", business_fields: { media_kind: "video", duration_seconds: 6.08 } });
+    assert.equal(timed.duration_seconds, 6.08);
+    const untyped = adapterModule.normalizeAsset({ id: "i", business_fields: { width: 10, height: 5 } });
+    assert.equal(untyped.duration_seconds, null);
+    const bogus = adapterModule.normalizeAsset({ id: "x", business_fields: { duration_seconds: "soon" } });
+    assert.equal(bogus.duration_seconds, null);
+  });
+
   it("prefers runtime URLs and never fabricates missing metadata", () => {
     const asset = adapterModule.normalizeAsset({
       id: "a",

@@ -146,6 +146,29 @@ test("ingests Flow generated video bytes and dedupes them by content hash", asyn
   assert.equal(second.asset.id, first.asset.id);
 });
 
+test("reads video dimensions and duration from the captured file, not the page-reported values", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-web-video-file-meta-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  t.after(() => store.close?.());
+  const tempRoot = join(libraryDir, ".web-capture-tmp");
+  // A real MP4 (72x128, ~2 s) with page-reported values that disagree: the
+  // Jimeng page reports no dimensions at all and a rounded-up duration.
+  const mediaBase64 = (await readFile(join(import.meta.dirname, "fixtures", "video-metadata", "capture-72x128.mp4"))).toString("base64");
+  const imported = await ingestWebCapture({
+    store,
+    tempRoot,
+    projectId: "default",
+    input: { provider: "jimeng", mediaKind: "video", mediaBase64, mimeType: "video/mp4", durationSeconds: 7 },
+  });
+  assert.equal(imported.status, "imported");
+  assert.equal(imported.asset.business_fields?.width, 72);
+  assert.equal(imported.asset.business_fields?.height, 128);
+  assert.equal(imported.asset.business_fields?.duration_seconds, 2);
+});
+
 test("rejects video capture from unsupported providers and mismatched bytes", async () => {
   const store = { createAsset: async () => { throw new Error("must not create"); }, listAssets: async () => [] };
   const mediaBase64 = sampleMp4Bytes().toString("base64");

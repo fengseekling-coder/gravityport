@@ -32,7 +32,7 @@ import { generationTreeRows, generationDisplay, relatedChoices, type GenerationD
 import { computeConversationRounds, conversationRoundRows, roundCompareSelection, roundLine, type ConversationRoundRow } from "./conversation-rounds"
 import VersionCompare, { type VersionCompareEntry } from "./version-compare"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
-import { aspectRatioLabel, describeSource, promptNotice, resolveReferences } from "./inspector-info"
+import { aspectRatioLabel, formatVideoDuration, describeSource, promptNotice, resolveReferences } from "./inspector-info"
 import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, removeTagFromStored, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
@@ -3930,12 +3930,15 @@ export default function App() {
             </div>
           </div>
           <div className="asset-properties">
-              {[
+              {([
                 ["格式", asset.format || "—"],
                 ["尺寸", asset.width > 1 && asset.height > 1 ? `${asset.width} × ${asset.height}` : "—"],
                 ["比例", aspectRatioLabel(asset.width, asset.height)],
+                ...(asset.mediaKind === "video" && asset.duration_seconds
+                  ? [["时长", formatVideoDuration(asset.duration_seconds)]]
+                  : []),
                 ["大小", humanSize(asset.size_bytes)],
-              ].map(([label, value]) => (
+              ] as [string, string][]).map(([label, value]) => (
                 <span className="property-tag" key={label} title={`${tr(label)}: ${tr(value)}`} aria-label={`${tr(label)}: ${tr(value)}`}>{tr(value)}</span>
               ))}
               {sourceInfo?.groupLabel ? (

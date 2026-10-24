@@ -34,6 +34,8 @@ export type MosaAsset = {
   created_at: string
   updated_at: string
   size_bytes: number | null
+  /** Video presentation duration in seconds (business_fields.duration_seconds); null for images or unknown. */
+  duration_seconds: number | null
   format: string
   deleted_at: string | null
   child_asset_ids: string[]
@@ -193,6 +195,7 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
   const image_url = String(input.image_url || "")
   const stackRaw = (input.stack && typeof input.stack === "object" ? input.stack : null) as JsonValue | null
   const sizeRaw = Number(input.size_bytes ?? fields.file_bytes ?? fields.size_bytes)
+  const durationRaw = Number(fields.duration_seconds)
   return {
     id: String(input.id || ""),
     project_id: String(input.project_id || project),
@@ -219,6 +222,7 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     created_at: String(input.created_at || ""),
     updated_at: String(input.updated_at || ""),
     size_bytes: Number.isFinite(sizeRaw) && sizeRaw > 0 ? sizeRaw : null,
+    duration_seconds: Number.isFinite(durationRaw) && durationRaw > 0 ? durationRaw : null,
     format: path.match(/\.([a-z0-9]+)$/i)?.[1]?.toUpperCase() || "",
     deleted_at: input.deleted_at ? String(input.deleted_at) : null,
     child_asset_ids: asStringArray(input.child_asset_ids),
