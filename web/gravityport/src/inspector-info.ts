@@ -228,3 +228,16 @@ export function aspectRatioLabel(width: number, height: number): string {
   const trim = (value: string) => value.replace(/\.?0+$/, "")
   return width >= height ? `${trim(actual.toFixed(2))}:1` : `1:${trim((height / width).toFixed(2))}`
 }
+
+/** Inspector 时长 label for videos, rounded to whole seconds: 6.08 → "0:06",
+ * 65 → "1:05", 3723 → "1:02:03". Hours only appear from one hour on. */
+export function formatVideoDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—"
+  const total = Math.round(seconds)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const secs = total % 60
+  const mm = String(minutes).padStart(hours ? 2 : 1, "0")
+  const ss = String(secs).padStart(2, "0")
+  return hours ? `${hours}:${mm}:${ss}` : `${minutes}:${ss}`
+}

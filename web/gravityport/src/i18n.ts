@@ -41,6 +41,7 @@ const english: Record<string, string> = {
   "素材详情": "Asset details", "关闭素材详情": "Close asset details", "预览当前素材": "Preview current asset",
   "收藏素材": "Favorite asset", "打开预览": "Preview",
   "格式": "Format", "尺寸": "Dimensions", "比例": "Ratio", "大小": "Size", "时间": "Added",
+  "时长": "Duration",
   "收起": "Collapse", "提示词": "Prompt",
   "复制提示词": "Copy prompt", "提示词已复制": "Prompt copied", "展开提示词": "Show full prompt", "展开用户指令": "Show full instruction",
   "提示词1": "Prompt 1", "提示词2": "Prompt 2", "用户指令": "User instruction",

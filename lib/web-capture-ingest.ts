@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { lstat, mkdir, open, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import sharp from "./sharp-runtime.js";
+import { readVideoMetadataFromFile } from "./video-metadata.js";
 import { createdAtTimestamp } from "./recent-window.js";
 import { createReferenceAttachmentStore, type ReferenceAttachment } from "./reference-attachment-store.js";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
@@ -788,9 +789,6 @@ async function ingestWebVideoCapture(options: {
   const generationBatchId = captureSessionId && messageId ? `${captureSessionId}:${messageId}` : "";
   const capturedAt = String(input.capturedAt || input.captured_at || new Date().toISOString());
   const captureMode = String(input.captureMode || input.capture_mode || "automatic").trim().toLowerCase() === "manual" ? "manual" : "automatic";
-  const width = normalizeMediaMetric(input.width, 16_384);
-  const height = normalizeMediaMetric(input.height, 16_384);
-  const durationSeconds = normalizeMediaMetric(input.durationSeconds ?? input.duration_seconds, 3600, true);
   const captureOccurrence = {
     provider,
     type: providerConfig.sourceType,
@@ -887,6 +885,14 @@ async function ingestWebVideoCapture(options: {
   const tempName = `${providerConfig.tempPrefix}-video-${Date.now()}-${randomBytes(4).toString("hex")}${ext}`;
   const tempPath = uploadedVideoPath || join(tempRoot, tempName);
   if (!uploadedVideoPath) await writeFile(tempPath, videoBytes!);
+  // Dimensions and duration read from the file itself are the truth; the
+  // values a provider page reports (e.g. Jimeng's fixed duration of 7 for a
+  // 6.08 s video, or 0×0 when its API carries none) are only the fallback
+  // for containers this parser cannot read (WebM, truncated files).
+  const fileVideoMeta = await readVideoMetadataFromFile(tempPath).catch(() => null);
+  const width = fileVideoMeta?.width || normalizeMediaMetric(input.width, 16_384);
+  const height = fileVideoMeta?.height || normalizeMediaMetric(input.height, 16_384);
+  const durationSeconds = fileVideoMeta?.durationSeconds || normalizeMediaMetric(input.durationSeconds ?? input.duration_seconds, 3600, true);
   try {
     const explicitAssetId = String(input.assetId || "").trim();
     let assetId = sanitizeAssetId(explicitAssetId || `${providerConfig.assetIdPrefix}-video-${contentHash.slice(0, 12)}`, providerConfig.assetIdPrefix);
