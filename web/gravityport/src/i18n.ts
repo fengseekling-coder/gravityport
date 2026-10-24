@@ -169,7 +169,7 @@ const english: Record<string, string> = {
   "这个分组还没有素材": "This group is empty",
   "把图片拖到左侧的分组名上，或在素材上右键「添加分组」": "Drag images onto the group in the sidebar, or right-click an asset and choose \"Add to group\"",
   "素材库还是空的": "Your library is empty",
-  "把图片或文件夹拖进窗口，或直接粘贴剪贴板图片即可导入": "Drag images or folders into the window, or paste a clipboard image to import",
+  "把图片、视频或文件夹拖进窗口，或直接粘贴剪贴板里的图片、视频即可导入": "Drag images, videos, or folders into the window, or paste images and videos from your clipboard to import",
   "清除筛选": "Clear filters",
   // Task 142: trash menu, undo toast, import pipeline
   "恢复 {count} 个素材": "Restore {count} assets",
@@ -196,6 +196,10 @@ const english: Record<string, string> = {
   "{count} 个文件已在素材库中，没有重复导入": "{count} files are already in the library — not imported again",
   "有 {count} 个文件格式不支持，已跳过": "{count} unsupported files were skipped",
   "正在导入，请稍候": "Import in progress, please wait",
+  // Task 239: paste-to-import (⌘V and the blank-area menu 粘贴)
+  "回收站里不能导入": "Nothing can be imported into Trash",
+  "已导入 {count} 个，在「所有素材」里": "Imported {count} — find them in \"All assets\"",
+  "文件夹请拖进窗口导入": "Folders can't be pasted — drag them into the window to import",
   // Task 144: version tree conversation rounds (second line per row). English
   // uses singular "turn" when turns is 1 — the singular keys bake the 1 in
   // ("共 1 轮 …") so both languages render correctly from one map.

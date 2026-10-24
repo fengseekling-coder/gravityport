@@ -27,6 +27,10 @@ type ElectronAPI = {
   writeClipboardText?: (text: string) => Promise<unknown>
   writeClipboardImage?: (path: string) => Promise<unknown>
   writeClipboardFiles?: (paths: string[]) => Promise<{ ok?: boolean; count?: number; skipped?: number; reason?: string }>
+  // 任务 239：右键空白处「粘贴」——主进程只回答剪贴板里有没有可导入内容，
+  // 再由主进程代按一次粘贴（webContents.paste），剪贴板内容不外传。
+  clipboardImportable?: () => Promise<boolean>
+  pasteFromClipboard?: () => Promise<unknown>
   startNativeDrag?: (paths: string[]) => Promise<unknown>
   libraryFileFlags?: (files: File[]) => Promise<boolean[]>
   setLocale?: (locale: string) => Promise<unknown>

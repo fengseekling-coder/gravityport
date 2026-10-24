@@ -66,7 +66,7 @@ function emptySource() {
     ${helpers}
     await waitFor(() => document.querySelector('.app'), 'app shell');
     await waitFor(() => emptyText().includes('素材库还是空的'), 'the empty library guidance');
-    const library = emptyText().includes('把图片或文件夹拖进窗口');
+    const library = emptyText().includes('把图片、视频或文件夹拖进窗口');
 
     (await waitFor(() => navButton('收藏'), 'favorites nav')).click();
     await waitFor(() => emptyText().includes('还没有收藏'), 'the empty favorites guidance');

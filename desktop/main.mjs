@@ -611,6 +611,32 @@ function registerIPC() {
     }
   });
 
+  // Task 239: blank-area 粘贴 import. The main process only answers whether
+  // the system clipboard holds importable content (raw image data, or files —
+  // macOS file copies expose a uri-list, Windows Explorer copies arrive as
+  // CF_HDROP); it never hands paths or bytes to the renderer. The import
+  // itself stays in the renderer's paste listener, which is why the second
+  // handler just performs one webContents.paste() on the main window.
+  ipcMain.handle("clipboard-importable", (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+    try {
+      if (!clipboard.readImage().isEmpty()) return true;
+      const formats = clipboard.availableFormats();
+      if (formats.includes("text/uri-list")) return true;
+      if (formats.some((format) => /FileName|FileGroupDescriptor|FileDrop|CF_HDROP/i.test(format))) return true;
+      if (process.platform === "win32" && clipboard.has("FileNameW")) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle("paste-from-clipboard", (event) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+    event.sender.paste();
+    return true;
+  });
+
   // Text copy uses Electron's native clipboard rather than the renderer Web
   // Clipboard API. Browser permissions are intentionally denied for the app's
   // local HTTP renderer, so navigator.clipboard.writeText() is not a reliable
