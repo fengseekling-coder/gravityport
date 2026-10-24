@@ -131,6 +131,10 @@ test("ingests Flow generated video bytes and dedupes them by content hash", asyn
   assert.equal(first.asset.source?.media_kind, "video");
   assert.equal(first.asset.business_fields?.media_kind, "video");
   assert.equal(first.asset.business_fields?.mime_type, "video/mp4");
+  // sampleMp4Bytes() has no moov, so the file read fails and the
+  // page-reported values are kept as the fallback.
+  assert.equal(first.asset.business_fields?.width, 1280);
+  assert.equal(first.asset.business_fields?.height, 720);
   assert.equal(first.asset.business_fields?.duration_seconds, 8);
   assert.equal(first.asset.theme, "Cinematic camera move across a futuristic city at dusk");
   assert.match(first.asset.asset, /\.mp4$/);
@@ -156,7 +160,8 @@ test("reads video dimensions and duration from the captured file, not the page-r
   const tempRoot = join(libraryDir, ".web-capture-tmp");
   // A real MP4 (72x128, ~2 s) with page-reported values that disagree: the
   // Jimeng page reports no dimensions at all and a rounded-up duration.
-  const mediaBase64 = (await readFile(join(import.meta.dirname, "fixtures", "video-metadata", "capture-72x128.mp4"))).toString("base64");
+  const fixtureBytes = await readFile(join(import.meta.dirname, "fixtures", "video-metadata", "capture-72x128.mp4"));
+  const mediaBase64 = fixtureBytes.toString("base64");
   const imported = await ingestWebCapture({
     store,
     tempRoot,
@@ -167,6 +172,19 @@ test("reads video dimensions and duration from the captured file, not the page-r
   assert.equal(imported.asset.business_fields?.width, 72);
   assert.equal(imported.asset.business_fields?.height, 128);
   assert.equal(imported.asset.business_fields?.duration_seconds, 2);
+
+  // Non-zero page values that disagree with the file lose to the file too.
+  const conflicting = Buffer.concat([fixtureBytes, Buffer.from("different-content")]);
+  const second = await ingestWebCapture({
+    store,
+    tempRoot,
+    projectId: "default",
+    input: { provider: "jimeng", mediaKind: "video", mediaBase64: conflicting.toString("base64"), mimeType: "video/mp4", width: 1000, height: 1000, durationSeconds: 30 },
+  });
+  assert.equal(second.status, "imported");
+  assert.equal(second.asset.business_fields?.width, 72);
+  assert.equal(second.asset.business_fields?.height, 128);
+  assert.equal(second.asset.business_fields?.duration_seconds, 2);
 });
 
 test("rejects video capture from unsupported providers and mismatched bytes", async () => {
