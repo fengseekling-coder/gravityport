@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { LIBRARY_DIR_NAME, LIBRARY_LOCATION_FILE } from "../lib/library-location.mjs";
-import { copyLibraryForRelocation } from "../lib/library-relocation.mjs";
+import { copyLibraryForRelocation, removeRelocationMarker, writeRelocationMarker } from "../lib/library-relocation.mjs";
 import { removeTestPath } from "./test-cleanup.mjs";
 import { spawnMcpServerAsClient, writePngFixture } from "./helpers/mcp-server-harness.mjs";
 
@@ -78,6 +78,33 @@ test("a copied desktop config keeps finding the library after it is moved", asyn
   assert.deepEqual(await searchIds(second, "lighthouse"), ["harbor-dusk"]);
   const asset = (await second.callToolStrict("asset_get", { assetId: "harbor-dusk" })).structuredContent.asset;
   assert.ok(resolve(asset.image_path).startsWith(movedLibrary), `asset resolves inside the moved library: ${asset.image_path}`);
+});
+
+test("tools/call answers LIBRARY_MOVING while the desktop relocates the library and recovers when it fails", async (t) => {
+  const fixture = await desktopLikeHome(t);
+  const defaultLibrary = join(fixture.home, LIBRARY_DIR_NAME);
+
+  const server = startAsClient(t, fixture);
+  await server.request("initialize", { protocolVersion: "2025-11-25" });
+  const imagePath = await writePngFixture(join(defaultLibrary, "imports", "seed.png"), { color: "#203040" });
+  await server.callToolStrict("asset_create", { assetId: "relocation-seed", imagePath, prompt: "seed before a move" });
+
+  // The user starts moving the library in Settings: the App writes the marker
+  // before it stops its runtime and copies. Even read-only tools must refuse
+  // — the old library is about to be deleted.
+  await writeRelocationMarker({ libraryDir: defaultLibrary, pid: 4242 });
+  const refusedWrite = await server.callTool("asset_create", { assetId: "mid-move", imagePath, prompt: "must not land" });
+  assert.equal(refusedWrite.isError, true);
+  assert.equal(refusedWrite.structuredContent.error.code, "LIBRARY_MOVING");
+  assert.match(refusedWrite.content[0].text, /is moving the library/);
+  const refusedRead = await server.callTool("asset_search", { query: "seed" });
+  assert.equal(refusedRead.isError, true);
+  assert.equal(refusedRead.structuredContent.error.code, "LIBRARY_MOVING");
+
+  // The move fails and the App removes the marker: the same connection works again.
+  await removeRelocationMarker({ libraryDir: defaultLibrary });
+  assert.deepEqual(await searchIds(server, "seed"), ["relocation-seed"]);
+  await stop(server);
 });
 
 test("a config that still uses the legacy MOSA_LIBRARY_LOCATION_FILE name is honored", async (t) => {

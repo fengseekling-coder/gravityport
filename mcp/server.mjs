@@ -13,6 +13,7 @@ import {
   resolveLibraryLocation,
 } from "../lib/library-location.mjs";
 import { acquireMosaRuntimeLock } from "../lib/runtime-lock.js";
+import { hasRelocationMarker } from "../lib/library-relocation.mjs";
 import { MCP_SERVER_VERSION } from "../lib/version-identities.mjs";
 
 const managerDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -658,6 +659,19 @@ function libraryMovedAway() {
   }
 }
 
+// The desktop App writes the relocation marker into the library root before
+// it stops its runtime and removes it when the move fails; while it exists
+// the old library is mid-copy and about to be deleted, so even read-only
+// tools must not touch it. An unreadable answer is treated as "moving" so a
+// broken stat never falls through into the doomed library.
+async function libraryRelocating() {
+  try {
+    return await hasRelocationMarker({ libraryDir });
+  } catch {
+    return true;
+  }
+}
+
 async function handleRequest(message) {
   const { id, method, params } = message;
   // JSON-RPC notifications (no `id`, e.g. notifications/initialized) must never
@@ -690,6 +704,18 @@ async function handleRequest(message) {
         content: [{ type: "text", text: message }],
         isError: true,
         structuredContent: { error: { code: "LIBRARY_MOVED", message } },
+      });
+      return;
+    }
+    // The same move, one step earlier: the marker is present from the moment
+    // the App starts copying until it either fails (marker removed, calls
+    // recover) or succeeds (library deleted, LIBRARY_MOVED above takes over).
+    if (await libraryRelocating()) {
+      const message = "GravityPort is moving the library. Try again after it restarts.";
+      sendResult(id, {
+        content: [{ type: "text", text: message }],
+        isError: true,
+        structuredContent: { error: { code: "LIBRARY_MOVING", message } },
       });
       return;
     }
