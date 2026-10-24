@@ -2,7 +2,7 @@
 
 把 **ChatGPT、Gemini、Flow、Google AI Studio、即梦（Jimeng）和 Midjourney 网页**中用户可见的生成媒体归档到本机 GravityPort。ChatGPT 支持图片提示词关联；Flow、Google AI Studio、即梦与 Midjourney 同时支持已识别的视频，Gemini、Flow、Google AI Studio、即梦与 Midjourney 的页面可见 Prompt 均明确标为未验证。
 
-> 本扩展随 GravityPort 一同采用 [PolyForm Noncommercial License 1.0.0](../../LICENSE)：允许非商业使用、修改和传播；商业用途须另行取得书面授权。
+> 本扩展随 GravityPort 一同采用 [PolyForm Shield License 1.0.0](../../LICENSE)：可以免费使用、修改和转发（包括商业场景）；不允许用它的代码做和 GravityPort 竞争的产品。
 
 ## 首次配置
 

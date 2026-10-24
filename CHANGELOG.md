@@ -4,6 +4,10 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ## Unreleased
 
+### License
+
+- Releases after 0.3.5 move from the PolyForm Noncommercial License 1.0.0 to the PolyForm Shield License 1.0.0. Using GravityPort at work and for client projects is now permitted without separate permission. Using GravityPort's code to provide a competing product, including renamed or lightly modified copies, is not permitted, even when offered for free. Copies obtained under earlier terms keep them.
+
 ### Desktop & MCP
 
 - Moving the library in Settings no longer risks losing AI-assistant writes: the desktop now marks the library before copying, the built-in MCP server refuses tool calls with a "moving the library" error for the duration (and answers normally again if the move fails), and the copy is aborted and rolled back if the source database changes while it is being copied.

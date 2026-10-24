@@ -3,7 +3,7 @@
 English | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml)
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
+[![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#downloads)
 
 > **Local visual memory for AI creation.**
@@ -146,12 +146,12 @@ Policies and history:
 
 ## License
 
-GravityPort is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+GravityPort is source-available under the [PolyForm Shield License 1.0.0](LICENSE).
 
-- Noncommercial personal, educational, research, hobby, modification, and distribution uses are permitted under the license terms.
-- Commercial use, paid services, client delivery, commercial platform integration, or other anticipated commercial applications require a separate written license from the copyright holder. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
-- Redistributions must preserve the license terms and required copyright notice.
+- Anyone can use GravityPort for free, including at work and for client projects.
+- You can modify it and share copies, as long as you keep the license terms and the required copyright notice.
+- You may not use GravityPort's code to provide a product that competes with GravityPort, including renamed or lightly modified copies, even when offered for free. If you are unsure whether your use competes, see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
 
-GravityPort is source-available software, not OSI-approved open-source software.
+GravityPort is source-available software, not OSI-approved open-source software. Releases up to 0.3.5 were published under the PolyForm Noncommercial License 1.0.0, and copies obtained under those terms keep them.
 
 Third-party attribution is documented separately in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and does not change GravityPort's own license terms.

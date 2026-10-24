@@ -2,7 +2,7 @@
   "name": "mosa",
   "version": "0.3.5",
   "private": true,
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "PolyForm-Shield-1.0.0",
   "type": "module",
   "main": "desktop/main.mjs",
   "config": {

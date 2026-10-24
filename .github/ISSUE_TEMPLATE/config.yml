@@ -6,6 +6,6 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/fengseekling-coder/gravityport/security/advisories/new
     about: Report vulnerabilities privately. Do not open a public Issue.
-  - name: Commercial licensing
+  - name: Licensing questions
     url: https://github.com/fengseekling-coder/gravityport/blob/main/COMMERCIAL-LICENSE.md
-    about: Read the process for requesting separate written authorization.
+    about: Read what the license permits and how to ask about other terms.

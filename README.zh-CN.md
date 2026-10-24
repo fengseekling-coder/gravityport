@@ -3,7 +3,7 @@
 [English](README.md) | 简体中文
 
 [![CI](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml)
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
+[![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#下载)
 
 > **为 AI 创作留住本地视觉记忆。**
@@ -146,12 +146,12 @@ npm run desktop:package:windows
 
 ## 许可
 
-GravityPort 采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，是 source-available（源码可得）软件。
+GravityPort 采用 [PolyForm Shield License 1.0.0](LICENSE)，是 source-available（源码公开）软件。
 
-- 在许可条款允许的范围内，可以进行非商业的个人使用、教育、研究、爱好、修改和分发。
-- 商业使用、付费服务、客户交付、商业平台集成，或其他可预期的商业应用，需要版权持有方另行书面授权，见 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)。
-- 再分发必须保留许可条款和要求的版权声明。
+- 任何人都可以免费使用，包括工作中使用和接单使用。
+- 可以修改，也可以转发副本，但必须保留许可条款和要求的版权声明。
+- 不允许用 GravityPort 的代码做和它竞争的产品，包括改名或稍作修改后发布，免费提供也不行。拿不准自己的用法算不算竞争，见 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)。
 
-GravityPort 是 source-available 软件，不是经 OSI 认可的开源软件。
+GravityPort 是 source-available 软件，不是经 OSI 认可的开源软件。0.3.5 及更早的版本按 PolyForm Noncommercial License 1.0.0 发布，按当时条款取得的副本继续适用当时的条款。
 
 第三方署名另行记录在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，不改变 GravityPort 自身的许可条款。

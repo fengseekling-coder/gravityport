@@ -6,7 +6,7 @@ Use the channel that matches the request:
 - Reproducible bugs: [Bug report](https://github.com/fengseekling-coder/gravityport/issues/new?template=bug_report.yml)
 - Feature ideas: [Feature request](https://github.com/fengseekling-coder/gravityport/issues/new?template=feature_request.yml)
 - Security vulnerabilities: follow [SECURITY.md](SECURITY.md) and do not open a public Issue
-- Commercial-use requests: follow [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)
+- Licensing questions: see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)
 
 Before posting, remove real Prompts, user media, Tokens, cookies, credentials, session identifiers, local absolute paths, and other private data. Use placeholders and minimal reproducible sample data.
 
