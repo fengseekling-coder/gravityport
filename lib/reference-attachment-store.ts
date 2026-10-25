@@ -5,6 +5,12 @@ import { basename, extname, join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
 
+// A reference is captured before the generation it feeds lands, so a prune
+// fired in that window (trash purge, permanent delete, empty trash) must not
+// treat the not-yet-referenced attachment as unreachable. Attachments seen
+// within this window survive; the next prune after it removes them as before.
+const REFERENCE_PRUNE_GRACE_MS = 24 * 60 * 60 * 1000;
+
 type ReferenceInput = {
   projectId?: string;
   bytes: Buffer;
@@ -36,6 +42,7 @@ export type ReferenceUsage = {
 export type ReferenceAttachment = {
   id: string;
   project_id: string;
+  last_seen_at: string;
   content_sha256: string;
   pixel_sha256: string;
   pixel_hash_version: string;
@@ -67,7 +74,7 @@ export function createReferenceAttachmentStore(libraryDir: string) {
     return pending;
   }
 
-  function pruneUnused(projectId: string, referencedIds: Iterable<string>): Promise<{ removed: number; retained: number; failed: number }> {
+  function pruneUnused(projectId: string, referencedIds: Iterable<string>, nowMs: number = Date.now()): Promise<{ removed: number; retained: number; failed: number }> {
     const cleanProjectId = cleanSegment(projectId || "default", "default");
     const keep = new Set([...referencedIds].map((value) => String(value || "").trim()).filter(Boolean));
     const pending = saveQueue.then(() => withProjectWriteLock(root, cleanProjectId, async () => {
@@ -80,6 +87,10 @@ export function createReferenceAttachmentStore(libraryDir: string) {
       let failed = 0;
       for (const attachment of indexed) {
         if (keep.has(attachment.id)) {
+          retained.push(attachment);
+          continue;
+        }
+        if (nowMs - await attachmentLastSeenMs(attachment, filesRoot) < REFERENCE_PRUNE_GRACE_MS) {
           retained.push(attachment);
           continue;
         }
@@ -146,6 +157,7 @@ export function createReferenceAttachmentStore(libraryDir: string) {
     const attachment: ReferenceAttachment = {
       id,
       project_id: projectId,
+      last_seen_at: new Date().toISOString(),
       content_sha256: contentHash,
       pixel_sha256: pixelHash,
       pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : "",
@@ -177,6 +189,7 @@ export function createReferenceAttachmentStore(libraryDir: string) {
       return parsed.filter((item) => item && typeof item === "object").map((item) => ({
         ...item,
         project_id: cleanProjectId,
+        last_seen_at: String(item.last_seen_at || ""),
         pixel_sha256: String(item.pixel_sha256 || ""),
         pixel_hash_version: String(item.pixel_hash_version || ""),
         provider_asset_id: String(item.provider_asset_id || ""),
@@ -207,6 +220,22 @@ export function createReferenceAttachmentStore(libraryDir: string) {
 function cleanSegment(value: unknown, fallback: string): string {
   const cleaned = String(value || "").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 160);
   return cleaned || fallback;
+}
+
+// The grace clock is the server-written last_seen_at; captured_at comes from
+// the extension and may be wrong. Index entries older than the field fall
+// back to the file's mtime, and an unreadable file counts as long ago so the
+// prune can still reclaim its index row.
+async function attachmentLastSeenMs(attachment: ReferenceAttachment, filesRoot: string): Promise<number> {
+  const recorded = Date.parse(String(attachment.last_seen_at || ""));
+  if (!Number.isNaN(recorded) && recorded > 0) return recorded;
+  const fileName = cleanSegment(attachment.file_name, "");
+  if (!fileName) return 0;
+  try {
+    return (await stat(join(filesRoot, fileName))).mtimeMs;
+  } catch {
+    return 0;
+  }
 }
 
 function safeExtension(value: string): string {
@@ -272,6 +301,7 @@ async function appendReferenceUsage(indexPath: string, indexed: ReferenceAttachm
     : [...usages, usage].slice(-100);
   const updated: ReferenceAttachment = {
     ...existing,
+    last_seen_at: new Date().toISOString(),
     provider: existing.provider || usage.provider,
     page_url: existing.page_url || usage.page_url,
     conversation_id: existing.conversation_id || usage.conversation_id,
