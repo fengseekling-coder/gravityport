@@ -1,14 +1,30 @@
 {
   "schema": 1,
   "unreleased": {
-    "zh": [
-      "浏览器扩展 0.15.40：修复即梦新生成的图收不进来的问题，现在收的是原图（如 1440×2560）。"
-    ],
-    "en": [
-      "Extension 0.15.40 fixes Jimeng captures: new generations now arrive as full-size originals (for example 1440×2560)."
-    ]
+    "zh": [],
+    "en": []
   },
   "releases": [
+    {
+      "version": "0.3.6",
+      "date": "2026-10-25",
+      "zh": [
+        "视频按原比例显示，并自动生成封面（跳过开头的黑场）；详情里能看到视频时长。",
+        "Codex 和 Grok 收录的图会带上你当时说的话（用户指令）；已有的 Codex 图打开 App 后自动补上。",
+        "即梦收录按对话窗口自动分组：同一个窗口里的多次生成会堆在一起。",
+        "直接 ⌘V（Windows 上 Ctrl+V）或在空白处右键「粘贴」，就能把复制的图片、视频和截图收进素材库；在分组或堆叠里粘贴会直接放进去。",
+        "浏览器扩展 0.15.40：修复即梦新生成的图收不进来的问题，现在收的是原图（如 1440×2560）。",
+        "许可放宽：现在可以在工作和客户项目里使用 GravityPort。"
+      ],
+      "en": [
+        "Videos keep their real shape and get a proper poster that skips black intros; the details panel shows their duration.",
+        "Codex and Grok images now keep what you asked for (User instruction); existing Codex images are filled in when the app opens.",
+        "Jimeng captures stack by conversation window, so several generations from one window sit together.",
+        "Paste with ⌘V (Ctrl+V on Windows) or right-click Paste on an empty area to import copied images, videos and screenshots; pasting inside a group or stack files them there.",
+        "Extension 0.15.40 fixes Jimeng captures: new generations now arrive as full-size originals (for example 1440×2560).",
+        "Looser license: you can now use GravityPort at work and for client projects."
+      ]
+    },
     {
       "version": "0.3.5",
       "date": "2026-10-23",

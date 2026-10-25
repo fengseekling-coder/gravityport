@@ -2,7 +2,7 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
-## Unreleased
+## 0.3.6 — 2026-10-25 / Preview
 
 ### License
 

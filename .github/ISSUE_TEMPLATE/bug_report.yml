@@ -22,7 +22,7 @@ body:
     attributes:
       label: GravityPort version or commit
       description: The desktop app shows its version in Settings → About. For a source checkout, use the commit SHA.
-      placeholder: 0.3.5 or commit SHA
+      placeholder: 0.3.6 or commit SHA
     validations:
       required: true
   - type: dropdown
