@@ -7,6 +7,7 @@ export interface CodexGenerationMetadata {
   taskId: string;
   prompt: string;
   promptStatus: string;
+  userMessage: string | null;
   sessionPath: string | null;
   sessionUpdatedAt: string | null;
   callId: string | null;
@@ -129,6 +130,7 @@ export function createCodexSessionIndex({ sessionsDir }: { sessionsDir: string }
         taskId: cleanTaskId,
         prompt: selected.lastUserPrompt,
         promptStatus: selected.lastUserPrompt ? "task-user-prompt" : "not-available-in-session",
+        userMessage: selected.lastUserPrompt || null,
         sessionPath: selected.sessionPath,
         sessionUpdatedAt: selected.mtimeMs ? new Date(selected.mtimeMs).toISOString() : null,
         callId: null,
@@ -258,6 +260,7 @@ function parseSessionLine(state: SessionState, line: Buffer, lineStart: number, 
     taskId: state.taskId,
     prompt,
     promptStatus: prompt ? "image-generation-revised-prompt" : "image-generation-prompt-unavailable",
+    userMessage: state.lastUserPrompt || null,
     sessionPath: state.sessionPath,
     sessionUpdatedAt: sessionMtimeMs ? new Date(sessionMtimeMs).toISOString() : null,
     callId: imagePayload.callId,
@@ -331,6 +334,7 @@ function mergeSessionImageEvent(previous: CodexSessionImageEvent, next: CodexSes
     ...next,
     prompt: next.prompt || previous.prompt,
     promptStatus: next.prompt ? next.promptStatus : previous.promptStatus,
+    userMessage: next.userMessage || previous.userMessage,
     savedPath: next.savedPath || previous.savedPath,
     resultAvailable: next.resultAvailable || previous.resultAvailable,
     model: next.model || previous.model,
@@ -367,6 +371,7 @@ function emptyTaskMetadata(taskId: string): CodexTaskMetadata {
       taskId,
       prompt: "",
       promptStatus: "not-available",
+      userMessage: null,
       sessionPath: null,
       sessionUpdatedAt: null,
       callId: null,

@@ -262,12 +262,148 @@ test("does not downgrade revised prompt provenance when only task fallback remai
   });
 
   const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
-  assert.deepEqual(result.updated, []);
+  // The task fallback now backfills the missing user message; it must not
+  // touch the prompt or its revised provenance.
+  assert.deepEqual(result.updated, ["verified-provenance"]);
   const asset = await store.getAsset("default", "verified-provenance");
   assert.equal(asset.prompt, "Verified revised prompt");
   assert.equal(asset.source.prompt_status, "image-generation-revised-prompt");
+  assert.equal(asset.business_fields.prompt_status, "image-generation-revised-prompt");
   assert.equal(asset.source.codex_image_generation_call_id, "verified-call");
+  assert.equal(asset.source.user_message, "Task-level fallback prompt");
+  assert.equal(asset.business_fields.user_message, "Task-level fallback prompt");
   assert.equal(asset.source.model, undefined);
+});
+
+test("archives Codex images with the user's message in source and business fields", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-user-msg-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f10";
+  const imagePath = join(imagesDir, taskId, "exec-user-msg.png");
+  const sessionPath = join(sessionsDir, `rollout-test-${taskId}.jsonl`);
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(imagePath, pngFixture(640, 960));
+  await writeFile(sessionPath, [
+    { type: "turn_context", payload: { model: "gpt-5.6-terra" } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "帮我做一张书封" }] } },
+    { type: "event_msg", timestamp: "2026-10-25T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "exec-user-msg", saved_path: imagePath, revised_prompt: "Book cover, warm palette, bold serif title." } },
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+
+  const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
+  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.equal(result.imported.length, 1);
+  const asset = result.imported[0];
+  assert.equal(asset.source.user_message, "帮我做一张书封");
+  assert.equal(asset.business_fields.user_message, "帮我做一张书封");
+  assert.equal(asset.prompt, "Book cover, warm palette, bold serif title.");
+});
+
+test("reprocesses an archived Codex image when the session gains a user message and writes the backfill once", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-backfill-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f11";
+  const imagePath = join(imagesDir, taskId, "exec-backfill.png");
+  const sessionPath = join(sessionsDir, `rollout-test-${taskId}.jsonl`);
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(imagePath, pngFixture(512, 512));
+  const imageEvent = { type: "event_msg", timestamp: "2026-10-25T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "exec-backfill", saved_path: imagePath, revised_prompt: "Book cover, warm palette, bold serif title." } };
+  await writeFile(sessionPath, `${JSON.stringify(imageEvent)}\n`);
+
+  const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
+  const processedSignatures = new Map();
+  const options = { store, imagesDir, sessionsDir, processedSignatures };
+  const first = await reconcileCodexGeneratedImages(options);
+  assert.equal(first.imported.length, 1);
+  const assetId = first.imported[0].id;
+
+  await writeFile(sessionPath, `${JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "帮我做一张书封" }] } })}\n${JSON.stringify(imageEvent)}\n`);
+  const second = await reconcileCodexGeneratedImages(options);
+  assert.deepEqual(second.updated, [assetId]);
+  const backfilled = await store.getAsset("default", assetId);
+  assert.equal(backfilled.source.user_message, "帮我做一张书封");
+  assert.equal(backfilled.business_fields.user_message, "帮我做一张书封");
+  assert.equal(backfilled.prompt, "Book cover, warm palette, bold serif title.");
+  assert.equal(backfilled.source.prompt_status, "image-generation-revised-prompt");
+
+  const third = await reconcileCodexGeneratedImages(options);
+  assert.deepEqual(third.updated, []);
+});
+
+test("backfills the user message on an archived Codex image without touching prompt provenance", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-msg-only-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f12";
+  const imagePath = join(imagesDir, taskId, "exec-msg-only.png");
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await writeFile(imagePath, pngFixture(700, 500));
+
+  const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
+  await store.createAsset({ assetId: "msg-only", imagePath, prompt: "", sourceType: "codex-generated" });
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(join(sessionsDir, `rollout-test-${taskId}.jsonl`), `${JSON.stringify({
+    type: "response_item",
+    payload: { type: "message", role: "user", content: [{ type: "input_text", text: "帮我做一张书封" }] },
+  })}\n`);
+
+  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.deepEqual(result.updated, ["msg-only"]);
+  const asset = await store.getAsset("default", "msg-only");
+  assert.equal(asset.source.user_message, "帮我做一张书封");
+  assert.equal(asset.business_fields.user_message, "帮我做一张书封");
+  assert.equal(asset.prompt, "");
+  assert.notEqual(asset.source.prompt_status, "task-user-prompt");
+  assert.notEqual(asset.business_fields.prompt_status, "task-user-prompt");
+
+  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.deepEqual(second.updated, []);
+});
+
+test("keeps an existing Codex user message even when the session has a newer one", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-keep-msg-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f13";
+  const imagePath = join(imagesDir, taskId, "exec-keep-msg.png");
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await writeFile(imagePath, pngFixture(480, 480));
+
+  const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
+  await store.createAsset({
+    assetId: "keep-msg",
+    imagePath,
+    prompt: "Verified revised prompt",
+    sourceType: "codex-generated",
+    business_fields: { prompt_status: "image-generation-revised-prompt", user_message: "第一次的指令" },
+    source: { prompt_status: "image-generation-revised-prompt", user_message: "第一次的指令" },
+  });
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(join(sessionsDir, `rollout-test-${taskId}.jsonl`), `${JSON.stringify({
+    type: "response_item",
+    payload: { type: "message", role: "user", content: [{ type: "input_text", text: "后来的新指令" }] },
+  })}\n`);
+
+  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.deepEqual(result.updated, []);
+  const asset = await store.getAsset("default", "keep-msg");
+  assert.equal(asset.source.user_message, "第一次的指令");
+  assert.equal(asset.business_fields.user_message, "第一次的指令");
 });
 
 test("does not infer an unmatched image model from the task's final turn", async (t) => {

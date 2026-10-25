@@ -146,9 +146,44 @@ test("Codex session index reads code-mode image_gen extension items and strips t
   const generation = metadata.imageEvents.get(savedPath);
   assert.equal(generation.prompt, "Use case: precise-object-edit.");
   assert.equal(generation.promptStatus, "image-generation-revised-prompt");
+  assert.equal(generation.userMessage, "顶部空缺用模型填满");
   assert.equal(generation.callId, callId);
   const pending = index.pendingResults();
   assert.equal(pending.length, 1);
   assert.equal(pending[0].savedPath, savedPath);
   assert.equal(await index.loadResult(pending[0]), result);
+});
+
+test("Codex session index records the user message current at each image event", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-user-msg-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const sessionsDir = join(root, "sessions");
+  const taskId = "01a1362c-734c-77a1-9ee1-44eac822f19a";
+  const savedPathA = join(root, "generated_images", taskId, "a.png");
+  const savedPathB = join(root, "generated_images", taskId, "b.png");
+  const sessionPath = join(sessionsDir, `rollout-test-${taskId}.jsonl`);
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(sessionPath, [
+    { type: "turn_context", payload: { model: "gpt-5.6-terra" } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "帮我做一张书封" }] } },
+    { type: "event_msg", timestamp: "2026-10-25T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "ig-msg-a", saved_path: savedPathA, revised_prompt: "Book cover, warm palette." } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "再画一张同风格的海报" }] } },
+    { type: "event_msg", timestamp: "2026-10-25T10:05:00.000Z", payload: { type: "image_generation_end", call_id: "ig-msg-b", saved_path: savedPathB, revised_prompt: "Matching poster, cool palette." } },
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+
+  const index = createCodexSessionIndex({ sessionsDir });
+  await index.scan();
+  const metadata = index.metadataForTask(taskId);
+  assert.equal(metadata.imageEvents.get(savedPathA).userMessage, "帮我做一张书封");
+  assert.equal(metadata.imageEvents.get(savedPathB).userMessage, "再画一张同风格的海报");
+  assert.equal(metadata.fallback.userMessage, "再画一张同风格的海报");
+
+  const sessionWithoutUser = [
+    { type: "event_msg", timestamp: "2026-10-25T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "ig-msg-a", saved_path: savedPathA, revised_prompt: "Book cover, warm palette." } },
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n";
+  await writeFile(sessionPath, sessionWithoutUser);
+  const freshIndex = createCodexSessionIndex({ sessionsDir });
+  await freshIndex.scan();
+  const noUser = freshIndex.metadataForTask(taskId);
+  assert.equal(noUser.imageEvents.get(savedPathA).userMessage, null);
 });

@@ -333,6 +333,7 @@ async function ingestFilesystemCandidate({
       business_fields: {
         auto_archived: true,
         prompt_status: generation.promptStatus,
+        user_message: generation.userMessage || null,
         file_bytes: candidate.fileStat.size,
         width: imageInfo.width,
         height: imageInfo.height,
@@ -351,6 +352,7 @@ async function ingestFilesystemCandidate({
         codex_session_event_key: generation.eventKey,
         model: generation.model,
         prompt_status: generation.promptStatus,
+        user_message: generation.userMessage || null,
         content_sha256: contentHash,
         pixel_sha256: pixelHash || null,
         pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
@@ -495,6 +497,7 @@ async function ingestOneSessionResult({
       business_fields: {
         auto_archived: true,
         prompt_status: generation.promptStatus,
+        user_message: generation.userMessage || null,
         file_bytes: fileStat.size,
         width: imageInfo.width,
         height: imageInfo.height,
@@ -514,6 +517,7 @@ async function ingestOneSessionResult({
         codex_recovered_from_session: true,
         model: generation.model,
         prompt_status: generation.promptStatus,
+        user_message: generation.userMessage || null,
         content_sha256: contentHash,
         pixel_sha256: pixelHash || null,
         pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
@@ -548,6 +552,7 @@ function generationForSessionResult(event: CodexSessionImageEvent, task: CodexTa
     ...event,
     prompt: task.fallback.prompt,
     promptStatus: task.fallback.promptStatus,
+    userMessage: event.userMessage || task.fallback.userMessage,
     model: event.model || task.fallback.model,
   };
 }
@@ -592,8 +597,26 @@ function createBridgeAssetLookup(store: Store, projectId: string) {
   };
 }
 
+function assetUserMessage(asset: StoredAsset): string {
+  const value = asset.source?.user_message ?? asset.business_fields?.user_message;
+  return typeof value === "string" ? value.trim() : "";
+}
+
 async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, generation: GenerationMetadata): Promise<boolean> {
-  if (generation.promptStatus !== "image-generation-revised-prompt") return false;
+  const existingUserMessage = assetUserMessage(asset);
+  const nextUserMessage = generation.userMessage || null;
+  const userMessageChanged = !existingUserMessage && Boolean(nextUserMessage);
+  if (generation.promptStatus !== "image-generation-revised-prompt") {
+    if (!userMessageChanged) return false;
+    // User-message-only backfill: an older generation may carry the user's
+    // words without a revisable prompt, and that must not touch the prompt
+    // or its provenance status.
+    await store.updateMetadata(asset.project_id, asset.id, {
+      business_fields: { ...(asset.business_fields || {}), user_message: nextUserMessage },
+      source: { ...(asset.source || {}), user_message: nextUserMessage },
+    });
+    return true;
+  }
 
   const nextTheme = promptTheme(generation.prompt);
   const promptChanged = asset.prompt !== generation.prompt;
@@ -606,15 +629,17 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     model: generation.model || asset.source?.model || null,
     prompt_status: generation.promptStatus,
   };
+  if (userMessageChanged) nextSource.user_message = nextUserMessage;
   const sourceChanged = [
     "codex_session_path",
     "codex_image_generation_call_id",
     "codex_image_generated_at",
     "model",
     "prompt_status",
+    "user_message",
   ].some((key) => asset.source?.[key] !== nextSource[key]);
   const businessStatusChanged = asset.business_fields?.prompt_status !== generation.promptStatus;
-  if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged) return false;
+  if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged && !userMessageChanged) return false;
 
   // Session mtime is provenance, not business identity. Record the freshest
   // value only when a real prompt/call/model/provenance upgrade already
@@ -627,6 +652,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     business_fields: {
       ...(asset.business_fields || {}),
       prompt_status: generation.promptStatus,
+      ...(userMessageChanged ? { user_message: nextUserMessage } : {}),
     },
     source: nextSource,
   });
@@ -634,7 +660,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
 }
 
 function candidateSignature(candidate: ImageCandidate, generation: GenerationMetadata): string {
-  return [candidate.fileStat.size, candidate.fileStat.mtimeMs, generation.promptStatus, generation.sessionPath || "", generation.callId || "", generation.generatedAt || "", generation.model || "", generation.prompt].join("\u001f");
+  return [candidate.fileStat.size, candidate.fileStat.mtimeMs, generation.promptStatus, generation.sessionPath || "", generation.callId || "", generation.generatedAt || "", generation.model || "", generation.prompt, generation.userMessage || ""].join("\u001f");
 }
 function pruneProcessedSignatures(cache: Map<string, string>, livePaths: string[]): void {
   const live = new Set(livePaths);
