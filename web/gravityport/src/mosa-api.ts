@@ -426,6 +426,22 @@ export async function updateAssetMetadata(project: string, id: string, patch: { 
   return normalizeAsset(result.asset || {}, project)
 }
 
+/** Uploads a renderer-extracted video poster frame; the server re-encodes it
+ * to the thumbnail tier and stores it as thumbnails/<id>.webp. Raw-body call
+ * for the Blob (requestJson only speaks JSON). */
+export async function uploadVideoPoster(project: string, id: string, poster: Blob): Promise<void> {
+  const result = await fetch(`/api/assets/${e(project)}/${e(id)}/poster`, {
+    method: "POST",
+    headers: { "content-type": poster.type || "image/webp", ...mosaMutationHeaders("POST") },
+    body: poster,
+    credentials: "same-origin",
+  })
+  if (!result.ok) {
+    const data = await result.json().catch(() => ({})) as JsonValue
+    throw new Error(String(data.error || `HTTP ${result.status}`))
+  }
+}
+
 type BatchResult = { id: string; ok?: boolean; error?: string }
 
 /** What the server actually confirmed for a batch action. Callers must speak

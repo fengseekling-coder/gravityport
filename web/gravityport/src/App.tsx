@@ -58,13 +58,14 @@ import { buildReleaseNoteBlocks } from "./release-notes-view"
 import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
-  toggleAssetFavorite, updateAssetMetadata, moveAssetsToTrash, setAssetsGroup,
+  toggleAssetFavorite, updateAssetMetadata, uploadVideoPoster, moveAssetsToTrash, setAssetsGroup,
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
   moveAssetsToStack, openLibraryFolder,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
   type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
   fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
 } from "./mosa-api"
+import { VideoPosterQueue } from "./video-poster"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
 
@@ -541,6 +542,13 @@ export default function App() {
   const sentinelRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const assetsRef = useRef<MosaAsset[]>([])
+  // Task 248 — one serial poster queue per app run; it tracks which assets
+  // were already attempted so nothing retries within this run.
+  const videoPosterQueueRef = useRef<VideoPosterQueue | null>(null)
+  if (!videoPosterQueueRef.current) {
+    videoPosterQueueRef.current = new VideoPosterQueue((target, blob) =>
+      uploadVideoPoster(target.project_id, target.id, blob))
+  }
   const viewKeyRef = useRef("")
   // Task 152 scroll restore. committedViewKeyRef is the view key of the cards
   // actually displayed: the load effect's viewKeyRef flips the moment a switch
@@ -878,6 +886,30 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project])
+  // Task 248 — video posters. Only mounted video cards whose thumbnail_url
+  // still falls back to the video file itself lack a stored poster; hand each
+  // to the serial extraction queue. The gallery window keeps this naturally
+  // bounded: only cards near the viewport are mounted, so scrolling in is
+  // what schedules an old video, and once a poster is stored the SSE
+  // "derivatives" flush reloads the view and the card renders an <img>.
+  useEffect(() => {
+    const grid = gridRef.current
+    const queue = videoPosterQueueRef.current
+    if (!grid || !queue || preview) return
+    const mounted = grid.querySelectorAll<HTMLElement>(".asset-card[data-asset-id]")
+    const byId = new Map(assets.map((asset) => [asset.id, asset]))
+    for (const card of mounted) {
+      const asset = byId.get(card.dataset.assetId || "")
+      if (asset && asset.mediaKind === "video" && isVideoUrl(asset.thumbnail_url)) {
+        queue.enqueue({
+          id: asset.id,
+          project_id: asset.project_id,
+          thumbnail_url: asset.thumbnail_url,
+          duration_seconds: asset.duration_seconds,
+        })
+      }
+    }
+  }, [assets, galleryWindow, preview])
   // Version-consistency check: runs once at startup. On mismatch, the gallery
   // shows an error state and reportRendererReady is never called so the
   // main-process update machinery does not roll back the installed update.

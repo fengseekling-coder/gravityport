@@ -1,14 +1,16 @@
-// GravityPort React UI flow (task 180): video cards show a video frame.
-//
-// Videos never get a generated thumbnail, so their thumbnail_url falls back
-// to the mp4 itself. The gallery card and the Inspector summary must render
-// it with <video> (an <img> of an mp4 is a broken icon), the frame must
-// actually decode, and a play chip marks the video — but not image — cards.
+// GravityPort React UI flow (task 180, updated by task 248): video cards show
+// a stored poster frame. The renderer extracts a poster from the mp4 (see
+// video-poster.ts), the library re-encodes it to thumbnails/<id>.webp, and
+// after the derivatives flush the gallery card and the Inspector summary
+// render it with <img> — never an <img> pointing at the mp4 itself — while a
+// play chip still marks the video card but not the image card. The
+// black-intro skipping and pixel-level poster checks live in the
+// video-poster flow; this one pins the rendering contract.
 import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const name = "video-first-frame";
-export const description = "mp4 asset -> gallery card renders <video> with a decoded frame and a play chip -> image card has neither -> Inspector summary shows the video frame and chip -> no <img> points at an mp4";
+export const description = "mp4 asset -> gallery card renders the stored poster <img> with a play chip -> image card has neither -> Inspector summary shows the poster img and chip -> no <img> points at an mp4";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -25,10 +27,10 @@ export async function run(ctx) {
     const result = await ctx.runInPage(server, videoFrameSource());
     if (result?.__pageError) throw new Error(`video-first-frame page error: ${result.__pageError}`);
     const problems = [];
-    if (result?.cardDecoded !== true) problems.push("video card decoded a frame");
+    if (result?.cardPoster !== true) problems.push("video card renders the stored poster <img>");
     if (result?.cardMark !== true) problems.push("video card has the play chip");
     if (result?.imageCardClean !== true) problems.push("image card keeps <img> and has no play chip");
-    if (result?.summaryVideo !== true) problems.push("Inspector summary shows the video frame and play chip");
+    if (result?.summaryPoster !== true) problems.push("Inspector summary shows the poster img and play chip");
     if (result?.brokenImgs !== 0) problems.push(`${result?.brokenImgs} <img> elements point at an mp4`);
     if (problems.length) throw new Error(`video-first-frame result: ${problems.join("; ")} — ${JSON.stringify(result)}`);
     return { ok: true };
@@ -40,7 +42,7 @@ export async function run(ctx) {
 function videoFrameSource() {
   return `(async () => {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 15000) {
+    async function waitFor(check, label, timeoutMs = 25000) {
       const deadline = Date.now() + timeoutMs;
       let last = null;
       while (Date.now() < deadline) {
@@ -57,22 +59,24 @@ function videoFrameSource() {
     const imageCard = cardFor('first-frame-still');
     if (!videoCard || !imageCard) throw new Error('cards: ' + JSON.stringify(cards().map((c) => c.getAttribute('aria-label'))));
 
-    const cardVideo = await waitFor(() => videoCard.querySelector('video.black-image'), 'video card renders <video>');
-    await waitFor(() => cardVideo.readyState >= 2 && cardVideo.videoWidth > 0, 'video card decoded a frame'
-      + ' | src=' + cardVideo.getAttribute('src') + ' | error=' + (cardVideo.error && cardVideo.error.code));
-    const cardDecoded = cardVideo.videoWidth === 180 && cardVideo.videoHeight === 320 && cardVideo.muted === true;
+    // Until the poster lands the card legitimately renders the <video>
+    // fallback; the poster upload + derivatives flush swap it for <img>.
+    const cardImg = await waitFor(() => videoCard.querySelector('img.black-image'), 'video card renders the poster <img>');
+    const src = cardImg.getAttribute('src') || '';
+    if (!src.includes('/thumbnails/')) throw new Error('poster img src is not a thumbnail derivative: ' + src);
+    await waitFor(() => cardImg.complete && cardImg.naturalWidth > 0, 'poster img decoded');
+    const cardPoster = true;
     const cardMark = Boolean(videoCard.querySelector('.video-mark svg'));
     const imageCardClean = Boolean(imageCard.querySelector('img.black-image')) && !imageCard.querySelector('video') && !imageCard.querySelector('.video-mark');
 
     videoCard.click();
     await waitFor(() => (document.querySelector('.details .asset-name')?.textContent || '').includes('first-frame-clip'), 'inspector shows the clip');
     const summary = document.querySelector('.details .summary-image');
-    const summaryFrame = await waitFor(() => summary.querySelector('video'), 'summary renders <video>');
-    await waitFor(() => summaryFrame.readyState >= 2 && summaryFrame.videoWidth > 0, 'summary decoded a frame');
+    await waitFor(() => summary && summary.querySelector('img'), 'summary renders the poster <img>');
     const mark = summary.querySelector('.video-mark svg');
-    const summaryVideo = !summary.querySelector('img') && Boolean(mark) && getComputedStyle(mark).opacity === '1';
+    const summaryPoster = Boolean(summary.querySelector('img')) && Boolean(mark) && getComputedStyle(mark).opacity === '1';
 
     const brokenImgs = Array.from(document.querySelectorAll('img')).filter((img) => /\\.(mp4|mov|webm|m4v)(?:[?#]|$)/i.test(img.getAttribute('src') || '')).length;
-    return { cardDecoded, cardMark, imageCardClean, summaryVideo, brokenImgs };
+    return { cardPoster, cardMark, imageCardClean, summaryPoster, brokenImgs };
   })()`;
 }

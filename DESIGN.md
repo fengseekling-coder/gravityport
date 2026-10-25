@@ -113,7 +113,7 @@
 | 工具栏下拉 | `ToolbarSelect.tsx` | 列表 `.toolbar-select-menu` 最窄 176px，选项 32px 高，已选项打 `--ui-accent` 勾 |
 | 列数 | `ColumnControl.tsx` | 弹层 192px，滑杆 + 2/3/4/5/6/8 刻度 |
 | 侧栏 | `.sidebar`、`.nav-row`、`.section-toggle` | 行高 36px，当前项 `--ui-selected` 底加 `aria-current="page"` |
-| 图片卡片 | `.asset-card` | 黑底，小标 `.stack-mark` `.video-mark` `.trash-countdown` `.favorite-mark`，名字条 `.card-name`；名字条显示时，收藏心形落在名字条右端、和最后一行对齐，名字给它让出位置 |
+| 图片卡片 | `.asset-card` | 黑底，小标 `.stack-mark` `.video-mark` `.trash-countdown` `.favorite-mark`，名字条 `.card-name`；名字条显示时，收藏心形落在名字条右端、和最后一行对齐，名字给它让出位置。视频卡片封面：界面在后台从视频里抽一帧（跳过片头黑场）存进素材库，之后和图片一样用 `thumbnails/<id>.webp`；抽帧失败或还没完成时，退回显示视频开头附近的某一帧，播放标记始终在 |
 | 拖动缩略图 | `.card-drag-ghost` | 跟着指针的缩略图；拖多张时右下角数量角标 `.card-drag-ghost-count`：`--ui-primary` 底、`--ui-primary-text` 字 |
 | 详情栏 | `.details` | 概要 → 属性小格 → 标签 → 色板 → 提示词 → 用户指令 → 参考图 → 版本树 → 素材路径 |
 | 右键菜单 | `.context-menu`、`.context-submenu` | 宽 192 / 200px，项高 32px，危险项 `.danger` 放最后一段；子菜单和主菜单同一种表面（`--ui-raised` 底、`--ui-shadow`），小标题 11px `--ui-muted`，分隔线 `--ui-line`；菜单内容以 `context-menus.ts` 为准 |

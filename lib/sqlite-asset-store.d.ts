@@ -163,6 +163,7 @@ export interface SqliteAssetStore {
   recordAutomaticIngestSuppression(projectId: string, record: Record<string, unknown>): Promise<Record<string, unknown> | null>;
   recentAssets(options: { projectId: string; hoursAgo: number; limit: number }): Promise<StoredAsset[]>;
   queueDerivative(projectId: string, assetId: string, kind: string): Promise<void>;
+  saveVideoPoster(projectId: string, assetId: string, image: Buffer): Promise<StoredAsset>;
   readDerivative(projectId: string, assetId: string, kind: string): Promise<{ stream: NodeJS.ReadableStream; fileName: string }>;
   close(): void;
   storage: string;
