@@ -68,9 +68,11 @@ type ThreadQueryResult = ThreadQueryPayload | ThreadQueryFailure | null;
 // The worker runs the synchronous SQLite I/O off the main thread: opening the
 // multi-gigabyte database can block for hundreds of milliseconds on a cold
 // page cache, far above the event-loop budget. It is CJS source evaluated
-// inline (no file inside the asar archive is reachable from a plain Node
-// worker), and the better-sqlite3 entry is resolved on the main thread where
-// Electron's patched require can redirect to the unpacked copy.
+// inline, and the better-sqlite3 entry is resolved on the main thread. Workers
+// in the packaged app read app.asar like the main thread does (and Electron
+// loads the native binary from app.asar.unpacked itself), so the resolved
+// path is passed through unchanged: only the .node prebuild is unpacked, the
+// package's JS entry exists inside app.asar only.
 const WORKER_SOURCE = String.raw`
 const { parentPort, workerData } = require("node:worker_threads");
 const Database = require(workerData.betterSqliteEntry);
@@ -107,12 +109,7 @@ parentPort.on("message", (request) => {
 
 function resolveBetterSqliteEntry(): string | null {
   try {
-    const requireFromModule = createRequire(import.meta.url);
-    const resolved = requireFromModule.resolve("better-sqlite3");
-    // Forge's auto-unpack-natives moves the package next to the asar archive;
-    // a plain Node worker cannot read inside the archive, so hand it the
-    // unpacked copy when running from a packaged app.
-    return resolved.includes("app.asar") ? resolved.replace("app.asar", "app.asar.unpacked") : resolved;
+    return createRequire(import.meta.url).resolve("better-sqlite3");
   } catch {
     return null;
   }
@@ -239,6 +236,9 @@ export function createCodexThreadHistoryReader(options: { dir?: string | null; d
       const fail = (message: string) => {
         cleanup();
         worker = null;
+        // A worker that failed once (missing module, crashed) is not respawned
+        // for every thread of every scan; this run uses the sync path.
+        workerPermanentlyFailed = true;
         warnOnce(`codex thread history worker failed (${message}); retrying synchronously`);
         resolvePromise(null);
       };
