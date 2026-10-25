@@ -19,6 +19,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 
 ### Web Capture
 
+- Jimeng captures now stack by conversation window: images and videos generated in the same Jimeng window (the `workspace` in the page address) auto-stack together instead of one stack per generation, and generations without a window keep their own stack. Already-saved Jimeng assets are regrouped once when the library opens — stacks you renamed, manually organized, or pulled assets out of are left alone.
 - Extension 0.15.40: Jimeng's full-size originals (`aigc_resize:0:0.png`, e.g. 1440×2560) are now captured. Their URL carries no size, so 0.15.39 treated them as 0-pixel images and silently skipped every new Jimeng generation; the size now comes from the response. Midjourney also treats jobs that render within 8 seconds of the page opening as history, so a page that shows only one or two old jobs no longer auto-captures them.
 
 ## 0.3.5 — 2026-10-23 / Preview
