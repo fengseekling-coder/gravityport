@@ -263,6 +263,33 @@ test("migration 17 respects exclusions and manual stacks", async (t) => {
   assert.equal(manual.members, "jm-x4,jm-x5", "manual stack members never move");
 });
 
+test("migration 17 leaves Jimeng assets the user moved into another source's auto stack", async (t) => {
+  const { store, sourcePath, libraryDir, projectRoot, close } = await createFixtureStore(t);
+  await ingest(store, sourcePath, "jm-o1", "2026-10-20T15:00:00.000Z", jimengSource("rec-f1"));
+  await ingest(store, sourcePath, "jm-o2", "2026-10-20T15:01:00.000Z", jimengSource("rec-f2"));
+  await ingest(store, sourcePath, "jm-o3", "2026-10-20T15:02:00.000Z", jimengSource("rec-f3"));
+  await ingest(store, sourcePath, "gpt-o1", "2026-10-20T15:03:00.000Z", { type: "web-chatgpt", conversation_id: "chat-o" });
+  close();
+  const db = openRaw(libraryDir);
+  const window = "https://jimeng.jianying.com/ai-tool/generate?workspace=333000444555&type=video";
+  for (const id of ["jm-o1", "jm-o2", "jm-o3"]) addPageUrl(db, id, window);
+  insertAutoStack(db, "stack-chat", "web-chatgpt:chat-o");
+  addMember(db, "stack-chat", "gpt-o1", 0);
+  addMember(db, "stack-chat", "jm-o1", 1);
+  addMember(db, "stack-chat", "jm-o2", 2);
+  rewindToSchema16(db);
+  db.close();
+
+  const reopened = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+  t.after(() => reopened.close());
+  const raw = openRaw(libraryDir);
+  t.after(() => raw.close());
+  const stacks = stackRows(raw);
+  assert.equal(stacks.length, 1, "no window stack is built from a single loose asset");
+  assert.equal(stacks[0].id, "stack-chat");
+  assert.equal(stacks[0].members, "gpt-o1,jm-o1,jm-o2", "the user's placement in the ChatGPT stack stays");
+});
+
 test("migration 17 runs once and later opens change nothing", async (t) => {
   const { store, sourcePath, libraryDir, projectRoot, close } = await createFixtureStore(t);
   await ingest(store, sourcePath, "jm-o1", "2026-10-20T15:00:00.000Z", jimengSource("rec-f1"));
