@@ -3263,6 +3263,22 @@ export default function App() {
       notify(tr("更新失败，请稍后重试"))
     }
   }
+  // Task 253 — the one-line sidebar reminder above 用户中心. The label is
+  // split around the version string so the number can carry its own weight
+  // while the surrounding text truncates; everything the row shows comes from
+  // the staged-update state, the click stays restartToUpdate.
+  const updateReadyLine = (() => {
+    if (!updateReady) return null
+    const versionText = updateReady.version || ""
+    const label = fill(tr("新版本 {version}"), { version: versionText })
+    const at = versionText ? label.indexOf(versionText) : -1
+    return {
+      title: fill(tr("重启并更新到 v{version}"), { version: versionText }),
+      head: at >= 0 ? label.slice(0, at) : label,
+      versionText: at >= 0 ? versionText : "",
+      tail: at >= 0 ? label.slice(at + versionText.length) : "",
+    }
+  })()
   const cancelUpdateDownload = () => {
     desktopAPI()?.cancelUpdateDownload?.()
     setUpdateState(current => current.phase === "downloading"
@@ -3518,23 +3534,30 @@ export default function App() {
             </nav>
           </div>
         ))}
+        {updateReadyLine && (
+          <div className="update-ready-slot">
+            <button
+              className="update-ready-line"
+              disabled={restartPending}
+              title={updateReadyLine.title}
+              aria-label={updateReadyLine.title}
+              onClick={restartToUpdate}
+            >
+              <span className="update-ready-dot" aria-hidden="true" />
+              <span className="update-ready-label">
+                {updateReadyLine.head}
+                {updateReadyLine.versionText && <strong className="update-ready-version">{updateReadyLine.versionText}</strong>}
+                {updateReadyLine.tail}
+              </span>
+              <span className="update-ready-action">{restartPending ? tr("正在更新…") : tr("重启更新")}</span>
+            </button>
+          </div>
+        )}
         <button className="user-button" onClick={() => setSettings(true)}>
           <Icon name="user" size={14} />
           <span>{tr("用户中心")}</span>
           <Icon name="settings" size={14} />
         </button>
-        {updateReady && (
-          <button
-            className="user-button"
-            style={{ marginTop: "var(--space-2)" }}
-            disabled={restartPending}
-            title={fill(tr("重启并更新到 v{version}"), { version: updateReady.version || "" })}
-            onClick={restartToUpdate}
-          >
-            <Icon name="enter" size={14} />
-            <span>{fill(tr("重启并更新到 v{version}"), { version: updateReady.version || "" })}</span>
-          </button>
-        )}
       </aside>
       {(groupRename || groupDeleteConfirm || groupMerge || groupStats) && <div className="group-dialog-backdrop" role="presentation">
         <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("分组管理")}>
