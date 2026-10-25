@@ -3044,6 +3044,10 @@ img.black-image {
      keep the none above so they stay drag-proof; the stage handlers also step
      aside for the video so panning never fights the controls. */
   pointer-events: auto;
+}.app video.viewer-image::-webkit-media-controls-fullscreen-button {
+  /* controlsList="nofullscreen" only greys this button out in this Chromium;
+     the app's own 全屏 lives in the zoom bar. */
+  display: none;
 }.app .viewer-nav {
   position: absolute;
   top: calc(50% - 52px);
