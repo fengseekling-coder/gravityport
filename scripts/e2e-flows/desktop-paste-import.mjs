@@ -13,10 +13,12 @@
 // stack; paste into a focused search field imports nothing; pasting inside
 // 收藏 imports without favoriting and points at 「所有素材」; a library file
 // pasted back is skipped with the 已在素材库中 toast; a text-only clipboard
-// offers no blank-area 粘贴.
+// offers no blank-area 粘贴; and Finder-style copies without a media file
+// (webloc / txt, always carrying the file icon TIFF) offer no 粘贴 either,
+// while notes.txt + a png offers exactly one import of that png (task 245).
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { copyFile, readFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import sharp from "sharp";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
@@ -323,17 +325,91 @@ export async function run(ctx) {
     });
 
     // ── 7) Text-only clipboard: the blank-area menu has no 粘贴 ──
+    // The 粘贴 entry patches into an open menu after the async
+    // clipboard-importable IPC answers, so counting the moment the menu opens
+    // judges nothing — wait past the patch window first (task 245).
+    const menuPasteCount = async () => cdp.evaluate(
+      `[...document.querySelectorAll('.context-menu button')].filter((b) => b.textContent.trim() === '粘贴').length`,
+    );
+    const closeMenu = async (label) => {
+      await pressEscape(cdp);
+      await waitFor(`!document.querySelector('.context-menu')`, `${label} menu closed`);
+    };
     await step("text-only clipboard: the blank-area menu offers no 粘贴", async () => {
       await writeClipboardText("just text, nothing to import");
       await rightClickBlank(cdp);
       await waitFor(`Boolean(document.querySelector('.context-menu'))`, "blank menu open");
-      const pasteItems = await cdp.evaluate(
-        `[...document.querySelectorAll('.context-menu button')].filter((b) => b.textContent.trim() === '粘贴').length`,
-      );
+      await sleep(800);
+      const pasteItems = await menuPasteCount();
       if (pasteItems !== 0) throw new Error(`blank menu offered ${pasteItems} 粘贴 entries for a text clipboard`);
-      await pressEscape(cdp);
-      await waitFor(`!document.querySelector('.context-menu')`, "menu closed");
+      await closeMenu("text-only");
     });
+
+    // ── 8-10) Finder-style file copies (task 245, darwin only) ──
+    // A Finder copy always carries the file's icon as a TIFF, so readImage()
+    // is non-empty for EVERY file copy: these steps pin that the blank-area
+    // 粘贴 judges by the files' extensions, not by that image. The Windows
+    // clipboard writer cannot express a files+icon copy (Set-Clipboard -Path
+    // has no icon), so the steps only run on macOS.
+    if (process.platform === "darwin") {
+      const weblocPath = join(ctx.fixturesDir, "链接 & 测试.webloc");
+      await writeFile(weblocPath, [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0"><dict><key>URL</key><string>https://example.com/e2e</string></dict></plist>',
+        "",
+      ].join("\n"), "utf8");
+      const notesPath = join(ctx.fixturesDir, "notes.txt");
+      await writeFile(notesPath, "plain text, nothing to import\n", "utf8");
+      const mediaPath = await makePng("desktop-paste-x.png", [10, 200, 200]);
+
+      const assertNoPasteInMenu = async (label) => {
+        await rightClickBlank(cdp);
+        await waitFor(`Boolean(document.querySelector('.context-menu'))`, `${label} menu open`);
+        await sleep(800);
+        const pasteItems = await menuPasteCount();
+        if (pasteItems !== 0) throw new Error(`${label}: blank menu offered 粘贴 for a media-less file copy`);
+        await closeMenu(label);
+      };
+
+      await step("webloc-only Finder copy (with icon) offers no 粘贴", async () => {
+        await writeClipboardFilesWithIcon([weblocPath]);
+        await assertNoPasteInMenu("webloc");
+      });
+
+      await step("notes.txt Finder copy (with icon) offers no 粘贴", async () => {
+        await writeClipboardFilesWithIcon([notesPath]);
+        await assertNoPasteInMenu("notes");
+      });
+
+      await step("notes.txt + png Finder copy imports only the png via 粘贴", async () => {
+        await writeClipboardFilesWithIcon([notesPath, mediaPath]);
+        const before = (await total()).length;
+        await rightClickBlank(cdp);
+        await waitFor(`Boolean(document.querySelector('.context-menu'))`, "mixed-copy menu open");
+        await waitFor(
+          `[...document.querySelectorAll('.context-menu button')].some((b) => b.textContent.trim() === '粘贴')`,
+          "mixed-copy menu 粘贴 item",
+          4000,
+        );
+        await clickCenter(cdp, `[...document.querySelectorAll('.context-menu button')].find((b) => b.textContent.trim() === '粘贴')`);
+        const probe = await pasteProbe();
+        await waitForTotal(before + 1, "mixed-copy paste imported one asset");
+        await sleep(800); // let any duplicate import land before counting
+        const assets = await total();
+        if (assets.length !== before + 1) {
+          throw new Error(`mixed copy imported ${assets.length - before} assets (probe: ${JSON.stringify(probe)})`);
+        }
+        const imported = assets.filter((asset) =>
+          [asset.id, asset.name, asset.image_path].some((value) => String(value || "").includes("desktop-paste-x")));
+        if (imported.length !== 1) throw new Error(`desktop-paste-x import count ${imported.length}`);
+        const notes = assets.filter((asset) =>
+          [asset.id, asset.name, asset.image_path].some((value) => String(value || "").includes("notes")));
+        if (notes.length) throw new Error("notes.txt was imported");
+      });
+    } else {
+      console.log("[desktop-paste-import] skip task-245 steps: Finder-style files+icon clipboard copies are darwin-only (Windows Set-Clipboard cannot carry icons)");
+    }
 
     if (failures.length) throw new Error(`${failures.length} desktop-paste-import step(s) failed:\n- ${failures.join("\n- ")}`);
     return { seeded: SEED_COUNT, steps: "all passed" };
@@ -408,6 +484,42 @@ if back.count != urls.count {
     }
     return runClipboardCommand("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-Command",
       `Set-Clipboard -LiteralPath @(${paths.map((path) => `'${path.replace(/'/g, "''")}'`).join(",")})`]);
+  });
+}
+
+// A Finder copy of files: every file's NSURL plus its icon as TIFF (task 245).
+// The icon is what made readImage() non-empty for every file copy and masked
+// the importable judgment. No filenames plist is written by hand — AppKit
+// refuses PasteboardType("NSFilenamesPboardType") as an invalid UTI, but
+// synthesizes that exact plist for legacy readers (Electron's clipboard.read)
+// from the file-url items, which the Electron reader probe confirmed.
+function writeClipboardFilesWithIcon(paths) {
+  withRetry(() => {
+    if (process.platform !== "darwin") throw new Error("files-with-icon clipboard write is darwin-only");
+    execFileSync("swift", ["-", ...paths], {
+      input: `import AppKit
+let pb = NSPasteboard.general
+pb.clearContents()
+let paths = Array(CommandLine.arguments.dropFirst())
+var items: [NSPasteboardItem] = []
+for path in paths {
+  let item = NSPasteboardItem()
+  if !item.setString(NSURL(fileURLWithPath: path).absoluteString ?? "", forType: .fileURL) { exit(2) }
+  guard let tiff = NSWorkspace.shared.icon(forFile: path).tiffRepresentation,
+        item.setData(tiff, forType: .tiff) else { exit(3) }
+  items.append(item)
+}
+pb.writeObjects(items)
+let back = (pb.pasteboardItems ?? []).compactMap { $0.string(forType: .fileURL) }
+let tiff = pb.data(forType: .tiff)
+if back.count != paths.count || tiff == nil {
+  FileHandle.standardError.write("pasteboard holds \\(back.count) of \\(paths.count) file urls, tiff \\(tiff?.count ?? 0) bytes".data(using: .utf8)!)
+  exit(1)
+}
+`,
+      encoding: "utf8",
+    });
+    return true;
   });
 }
 

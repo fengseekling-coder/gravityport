@@ -24,6 +24,7 @@ import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.m
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
 import { openExternalLinkOutcome } from "./open-external-link.mjs";
 import { writeClipboardFiles } from "./clipboard-files.mjs";
+import { clipboardImportable } from "./clipboard-importable.mjs";
 import { mosaClientTokenFingerprint, resolveAllowedFolderPath } from "../lib/server-security.js";
 import { isUrlLikePath } from "../lib/path-safety.mjs";
 import {
@@ -612,20 +613,16 @@ function registerIPC() {
   });
 
   // Task 239: blank-area 粘贴 import. The main process only answers whether
-  // the system clipboard holds importable content (raw image data, or files —
-  // macOS file copies expose a uri-list, Windows Explorer copies arrive as
-  // CF_HDROP); it never hands paths or bytes to the renderer. The import
-  // itself stays in the renderer's paste listener, which is why the second
-  // handler just performs one webContents.paste() on the main window.
+  // the system clipboard holds importable content (task 245: on macOS files
+  // are judged by their extensions — a Finder copy always carries the file
+  // icon as an image, so readImage() says yes for any file); it never hands
+  // paths or bytes to the renderer. The import itself stays in the renderer's
+  // paste listener, which is why the second handler just performs one
+  // webContents.paste() on the main window.
   ipcMain.handle("clipboard-importable", (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
     try {
-      if (!clipboard.readImage().isEmpty()) return true;
-      const formats = clipboard.availableFormats();
-      if (formats.includes("text/uri-list")) return true;
-      if (formats.some((format) => /FileName|FileGroupDescriptor|FileDrop|CF_HDROP/i.test(format))) return true;
-      if (process.platform === "win32" && clipboard.has("FileNameW")) return true;
-      return false;
+      return clipboardImportable({ platform: process.platform, clipboard });
     } catch {
       return false;
     }
