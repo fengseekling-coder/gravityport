@@ -2204,15 +2204,16 @@ img.black-image {
   color: var(--ui-text);
 }.app .asset-properties {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: var(--space-1);
   margin: var(--space-4) 0 0;
   padding: 0;
   border: 0;
 }.app .property-tag {
   display: inline-flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   justify-content: center;
   white-space: nowrap;
@@ -3038,6 +3039,15 @@ img.black-image {
   background: #000;
   border-radius: var(--radius-control);
   pointer-events: none;
+}.app video.viewer-image {
+  /* Native controls need real pointer events (scrubber, volume, play). Images
+     keep the none above so they stay drag-proof; the stage handlers also step
+     aside for the video so panning never fights the controls. */
+  pointer-events: auto;
+}.app video.viewer-image::-webkit-media-controls-fullscreen-button {
+  /* controlsList="nofullscreen" only greys this button out in this Chromium;
+     the app's own 全屏 lives in the zoom bar. */
+  display: none;
 }.app .viewer-nav {
   position: absolute;
   top: calc(50% - 52px);
