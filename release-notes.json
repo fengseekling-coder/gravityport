@@ -1,8 +1,16 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": [],
-    "en": []
+    "zh": {
+      "fixed": [
+        "修复了即梦带参考图生成的图片和视频收录后缺少参考图的问题。（浏览器扩展 0.15.41）"
+      ]
+    },
+    "en": {
+      "fixed": [
+        "Fixed an issue where Jimeng images and videos generated from reference images were captured without their references. (Browser extension 0.15.41)"
+      ]
+    }
   },
   "releases": [
     {
