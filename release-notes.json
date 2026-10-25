@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "unreleased": {
     "zh": [],
     "en": []
@@ -8,22 +8,40 @@
     {
       "version": "0.3.6",
       "date": "2026-10-25",
-      "zh": [
-        "视频按原比例显示，并自动生成封面（跳过开头的黑场）；详情里能看到视频时长。",
-        "Codex 和 Grok 收录的图会带上你当时说的话（用户指令）；已有的 Codex 图打开 App 后自动补上。",
-        "即梦收录按对话窗口自动分组：同一个窗口里的多次生成会堆在一起。",
-        "直接 ⌘V（Windows 上 Ctrl+V）或在空白处右键「粘贴」，就能把复制的图片、视频和截图收进素材库；在分组或堆叠里粘贴会直接放进去。",
-        "浏览器扩展 0.15.40：修复即梦新生成的图收不进来的问题，现在收的是原图（如 1440×2560）。",
-        "许可放宽：现在可以在工作和客户项目里使用 GravityPort。"
-      ],
-      "en": [
-        "Videos keep their real shape and get a proper poster that skips black intros; the details panel shows their duration.",
-        "Codex and Grok images now keep what you asked for (User instruction); existing Codex images are filled in when the app opens.",
-        "Jimeng captures stack by conversation window, so several generations from one window sit together.",
-        "Paste with ⌘V (Ctrl+V on Windows) or right-click Paste on an empty area to import copied images, videos and screenshots; pasting inside a group or stack files them there.",
-        "Extension 0.15.40 fixes Jimeng captures: new generations now arrive as full-size originals (for example 1440×2560).",
-        "Looser license: you can now use GravityPort at work and for client projects."
-      ]
+      "zh": {
+        "new": [
+          "支持粘贴导入：按 ⌘V（Windows 为 Ctrl+V），或在空白处右键选择「粘贴」，即可将剪贴板中的图片、视频和截图导入素材库。在分组或堆叠内粘贴，素材将直接归入其中。",
+          "Codex、Grok 收录的素材现可保留用户指令。已有的 Codex 素材会在启动后自动补全。",
+          "即梦素材按对话窗口自动分组。"
+        ],
+        "improved": [
+          "视频按原始比例显示，并自动生成封面，跳过片头黑场。",
+          "详情面板新增视频时长。"
+        ],
+        "fixed": [
+          "修复了即梦新生成的图片无法收录的问题，现收录原图。（浏览器扩展 0.15.40）"
+        ],
+        "other": [
+          "许可协议更新：现可用于工作及客户项目。"
+        ]
+      },
+      "en": {
+        "new": [
+          "Paste to import: press ⌘V (Ctrl+V on Windows) or right-click an empty area and choose Paste to add copied images, videos and screenshots to your library. Pasting inside a group or stack adds them there.",
+          "Codex and Grok captures now keep the user instruction. Existing Codex assets are filled in after launch.",
+          "Jimeng captures are grouped automatically by conversation window."
+        ],
+        "improved": [
+          "Videos display at their original aspect ratio with an automatic poster that skips black opening frames.",
+          "The details panel now shows video duration."
+        ],
+        "fixed": [
+          "Fixed an issue where new Jimeng generations were not captured. Full-resolution originals are now saved. (Browser extension 0.15.40)"
+        ],
+        "other": [
+          "License update: GravityPort can now be used for work and client projects."
+        ]
+      }
     },
     {
       "version": "0.3.5",

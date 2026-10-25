@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 
-import { formatNotesText, notesForVersion, readReleaseNotes } from "../lib/release-notes.mjs";
+import { formatManifestNotes, formatNotesText, notesForVersion, readReleaseNotes } from "../lib/release-notes.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const repoNotesPath = join(repositoryRoot, "release-notes.json");
@@ -30,7 +30,7 @@ after(async () => {
 });
 
 const validData = {
-  schema: 1,
+  schema: 2,
   unreleased: { zh: ["下个版本的说明"], en: ["Next release note"] },
   releases: [
     { version: "1.1.0", date: "2026-10-01", zh: ["第一条"], en: ["First"] },
@@ -38,10 +38,22 @@ const validData = {
   ],
 };
 
+const sectionedData = {
+  schema: 2,
+  releases: [
+    {
+      version: "2.0.0",
+      date: "2026-10-25",
+      zh: { new: ["新功能一"], improved: ["优化一"], fixed: ["修复一"], other: ["其他一"] },
+      en: { new: ["New one"], improved: ["Improved one"], fixed: ["Fixed one"], other: ["Other one"] },
+    },
+  ],
+};
+
 describe("readReleaseNotes", () => {
   it("accepts the release-notes.json shipped in the repository", () => {
     const data = readReleaseNotes(repoNotesPath);
-    assert.equal(data.schema, 1);
+    assert.equal(data.schema, 2);
     assert.ok(Array.isArray(data.releases) && data.releases.length > 0);
   });
 
@@ -65,12 +77,12 @@ describe("readReleaseNotes", () => {
     assert.throws(() => readReleaseNotes(path), /releases\[0\].*zh\[0\]/);
   });
 
-  it("rejects a sentence longer than 200 characters with the exact line position", async () => {
+  it("rejects a sentence longer than 300 characters with the exact line position", async () => {
     const path = await fixturePath({
       ...validData,
-      releases: [{ version: "1.1.0", date: "2026-10-01", zh: ["一".repeat(201)], en: ["First"] }],
+      releases: [{ version: "1.1.0", date: "2026-10-01", zh: ["一".repeat(301)], en: ["First"] }],
     });
-    assert.throws(() => readReleaseNotes(path), /releases\[0\].*zh\[0\].*200/);
+    assert.throws(() => readReleaseNotes(path), /releases\[0\].*zh\[0\].*300/);
   });
 
   it("rejects a duplicated version with the entry position", async () => {
@@ -101,14 +113,90 @@ describe("readReleaseNotes", () => {
     });
     assert.throws(() => readReleaseNotes(emptyRelease), /releases\[0\].*\.zh/);
   });
+
+  it("accepts a sectioned release entry", async () => {
+    const path = await fixturePath(sectionedData);
+    const data = readReleaseNotes(path);
+    assert.equal(data.releases.length, 1);
+  });
+
+  it("accepts a sectioned unreleased, including an all-empty one", async () => {
+    const filled = await fixturePath({
+      ...validData,
+      unreleased: { zh: { new: ["计划中的新功能"] }, en: { new: ["Planned"] } },
+    });
+    assert.doesNotThrow(() => readReleaseNotes(filled));
+    const empty = await fixturePath({
+      ...validData,
+      unreleased: { zh: { new: [] }, en: { other: [] } },
+    });
+    assert.doesNotThrow(() => readReleaseNotes(empty));
+  });
+
+  it("rejects a key outside the four sections with the field position", async () => {
+    const path = await fixturePath({
+      ...validData,
+      releases: [{ version: "2.0.0", date: "2026-10-25", zh: { new: ["一"], featured: ["二"] }, en: { new: ["One"], featured: ["Two"] } }],
+    });
+    assert.throws(() => readReleaseNotes(path), /releases\[0\].*zh.*featured/);
+  });
+
+  it("rejects zh and en of different shapes", async () => {
+    const path = await fixturePath({
+      ...validData,
+      releases: [{ version: "2.0.0", date: "2026-10-25", zh: ["平铺"], en: { new: ["Sectioned"] } }],
+    });
+    assert.throws(() => readReleaseNotes(path), /releases\[0\].*同一种形状/);
+  });
+
+  it("rejects a release entry whose sections are all empty", async () => {
+    const path = await fixturePath({
+      ...validData,
+      releases: [{ version: "2.0.0", date: "2026-10-25", zh: { new: [] }, en: { other: [] } }],
+    });
+    assert.throws(() => readReleaseNotes(path), /releases\[0\].*zh.*全为空/);
+  });
+
+  it("rejects an empty section line with the section position", async () => {
+    const path = await fixturePath({
+      ...validData,
+      releases: [{ version: "2.0.0", date: "2026-10-25", zh: { new: ["  "] }, en: { new: ["One"] } }],
+    });
+    assert.throws(() => readReleaseNotes(path), /releases\[0\].*zh\.new\[0\]/);
+  });
+
+  it("rejects a section line longer than 300 characters with the section position", async () => {
+    const path = await fixturePath({
+      ...validData,
+      releases: [{ version: "2.0.0", date: "2026-10-25", zh: { fixed: ["一".repeat(301)] }, en: { fixed: ["One"] } }],
+    });
+    assert.throws(() => readReleaseNotes(path), /releases\[0\].*zh\.fixed\[0\].*300/);
+  });
 });
 
 describe("notesForVersion", () => {
-  it("finds an entry and returns its sentences and date", () => {
+  it("finds an entry and wraps a legacy flat list into one sectionless group", () => {
     assert.deepEqual(notesForVersion(validData, "1.1.0"), {
-      zh: ["第一条"],
-      en: ["First"],
+      zh: [{ key: null, lines: ["第一条"] }],
+      en: [{ key: null, lines: ["First"] }],
       date: "2026-10-01",
+    });
+  });
+
+  it("normalizes a sectioned entry into the fixed-order groups, skipping empty ones", () => {
+    const data = {
+      schema: 2,
+      releases: [{
+        version: "2.0.0",
+        date: "2026-10-25",
+        zh: { fixed: ["修复一"], new: ["新功能一"], other: [] },
+        en: { new: ["New one"] },
+      }],
+    };
+    assert.deepEqual(notesForVersion(data, "2.0.0"), {
+      zh: [{ key: "new", lines: ["新功能一"] }, { key: "fixed", lines: ["修复一"] }],
+      en: [{ key: "new", lines: ["New one"] }],
+      date: "2026-10-25",
     });
   });
 
@@ -126,6 +214,22 @@ describe("formatNotesText", () => {
   it("joins one bullet-prefixed sentence per line", () => {
     assert.equal(formatNotesText(["第一条", "第二条"]), "• 第一条\n• 第二条");
     assert.equal(formatNotesText(["only"]), "• only");
+  });
+});
+
+describe("formatManifestNotes", () => {
+  it("prefixes sectioned entries so old App versions render a readable flat list", () => {
+    const groups = [
+      { key: "new", lines: ["新功能一", "新功能二"] },
+      { key: "fixed", lines: ["修复一"] },
+    ];
+    assert.equal(formatManifestNotes(groups, "zh"), "• 新增：新功能一\n• 新增：新功能二\n• 修复：修复一");
+    assert.equal(formatManifestNotes(groups, "en"), "• New: 新功能一\n• New: 新功能二\n• Fixed: 修复一");
+  });
+
+  it("leaves legacy flat groups unprefixed", () => {
+    assert.equal(formatManifestNotes([{ key: null, lines: ["第一条", "第二条"] }], "zh"), "• 第一条\n• 第二条");
+    assert.equal(formatManifestNotes([{ key: null, lines: ["First"] }], "en"), "• First");
   });
 });
 
@@ -175,7 +279,7 @@ describe("write-build-identity release-notes gate", () => {
   }
 
   const gateNotes = {
-    schema: 1,
+    schema: 2,
     unreleased: { zh: ["一条"], en: ["One"] },
     releases: [{ version: gateVersion, date: "2026-10-17", zh: ["说明"], en: ["Note"] }],
   };
@@ -202,7 +306,7 @@ describe("write-build-identity release-notes gate", () => {
   it("still validates the file format for a development build", async () => {
     const result = await runGate({
       distribution: null,
-      releaseNotes: { schema: 2, unreleased: {}, releases: [] },
+      releaseNotes: { schema: 3, unreleased: {}, releases: [] },
     });
     assert.equal(result.ok, false);
     assert.match(result.stderr, /schema/);

@@ -4646,9 +4646,14 @@ export default function App() {
                               <h4>{block.title}</h4>
                               {block.date ? <span>{block.date}</span> : null}
                             </div>
-                            <ul>
-                              {block.lines.map((line, lineIndex) => <li key={lineIndex}>{line}</li>)}
-                            </ul>
+                            {block.groups.map((group, groupIndex) => (
+                              <div key={groupIndex} className="release-group">
+                                {group.heading ? <h5 className="release-group-heading">{group.heading}</h5> : null}
+                                <ul>
+                                  {group.lines.map((line, lineIndex) => <li key={lineIndex}>{line}</li>)}
+                                </ul>
+                              </div>
+                            ))}
                           </section>
                         ))}
                         <section className="settings-section release-notes">

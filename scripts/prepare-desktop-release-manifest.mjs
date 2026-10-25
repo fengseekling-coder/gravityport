@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parseUpdateManifest, macosUpdateFileNameForAppName, windowsUpdateFileNameForPayloadExeName, MACOS_TEAM_IDENTIFIER_PATTERN, MACOS_UPDATE_APP_NAMES, WINDOWS_UPDATE_EXE_NAMES, WINDOWS_SIGNER_THUMBPRINT_PATTERN } from "../desktop/update-service.mjs";
 import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
-import { formatNotesText, notesForVersion, readReleaseNotes } from "../lib/release-notes.mjs";
+import { formatManifestNotes, notesForVersion, readReleaseNotes } from "../lib/release-notes.mjs";
 import { releaseProductNames } from "./release-product.mjs";
 import {
   normalizeReleaseManifestTrust,
@@ -181,8 +181,8 @@ export function resolveManifestNotes({ notesZh = "", notesEn = "", version, rele
   const entry = notesForVersion(data, version);
   if (!entry) throw new Error(`release-notes.json 缺少 ${version} 的更新说明`);
   return {
-    zh: zh || formatNotesText(entry.zh),
-    en: en || formatNotesText(entry.en),
+    zh: zh || formatManifestNotes(entry.zh, "zh"),
+    en: en || formatManifestNotes(entry.en, "en"),
   };
 }
 

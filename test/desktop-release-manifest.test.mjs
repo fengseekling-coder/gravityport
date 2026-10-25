@@ -449,7 +449,7 @@ test("resolveManifestNotes fills missing languages from release-notes.json, one 
   try {
     const sourcePath = join(root, "release-notes.json");
     await writeFile(sourcePath, JSON.stringify({
-      schema: 1,
+      schema: 2,
       unreleased: { zh: ["占位"], en: ["Placeholder"] },
       releases: [
         { version: "0.4.0", date: "2026-10-17", zh: ["第一条说明", "第二条说明"], en: ["First note", "Second note"] },
@@ -458,6 +458,26 @@ test("resolveManifestNotes fills missing languages from release-notes.json, one 
     assert.deepEqual(
       resolveManifestNotes({ version: "0.4.0", releaseNotesPath: sourcePath }),
       { zh: "• 第一条说明\n• 第二条说明", en: "• First note\n• Second note" },
+    );
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveManifestNotes prefixes sectioned entries so old App versions read the flat list", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-release-notes-source-"));
+  try {
+    const sourcePath = join(root, "release-notes.json");
+    await writeFile(sourcePath, JSON.stringify({
+      schema: 2,
+      unreleased: { zh: ["占位"], en: ["Placeholder"] },
+      releases: [
+        { version: "0.4.0", date: "2026-10-17", zh: { new: ["第一条"], fixed: ["修复条"] }, en: { new: ["First note"], fixed: ["Fixed note"] } },
+      ],
+    }), "utf8");
+    assert.deepEqual(
+      resolveManifestNotes({ version: "0.4.0", releaseNotesPath: sourcePath }),
+      { zh: "• 新增：第一条\n• 修复：修复条", en: "• New: First note\n• Fixed: Fixed note" },
     );
   } finally {
     await removeTestPath(root, { recursive: true, force: true });
@@ -476,7 +496,7 @@ test("resolveManifestNotes fails with the gate error when the version has no ent
   try {
     const sourcePath = join(root, "release-notes.json");
     await writeFile(sourcePath, JSON.stringify({
-      schema: 1,
+      schema: 2,
       unreleased: { zh: ["占位"], en: ["Placeholder"] },
       releases: [{ version: "0.4.0", date: "2026-10-17", zh: ["说明"], en: ["Note"] }],
     }), "utf8");
