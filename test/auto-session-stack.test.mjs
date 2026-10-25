@@ -371,6 +371,32 @@ test("images without a session identity leave no exclusions behind", async (t) =
   assert.deepEqual(exclusionRows(libraryDir), [], "no session key, no tombstone");
 });
 
+test("permanently deleting an asset clears its auto-stack exclusion so a re-import can stack", async (t) => {
+  const { store, sourcePath, libraryDir } = await createFixtureStore(t);
+  await ingest(store, sourcePath, "p1", "2026-06-01T00:00:00.000Z", chatgptSource("conv-p"));
+  await ingest(store, sourcePath, "p2", "2026-06-02T00:00:00.000Z", chatgptSource("conv-p"));
+  await ingest(store, sourcePath, "p3", "2026-06-03T00:00:00.000Z", chatgptSource("conv-p"));
+  const stack = await stackOf(store, "default");
+  assert.ok(stack, "three session images auto-stack");
+  await store.removeAssetsFromStack("default", stack.id, ["p1"]);
+  assert.deepEqual(exclusionRows(libraryDir), [{ asset_id: "p1", session_key: "web-chatgpt:conv-p" }]);
+
+  await store.deleteAsset("default", "p1");
+  await store.permanentlyDeleteAsset("default", "p1");
+  assert.deepEqual(exclusionRows(libraryDir), [], "permanent delete removes the exclusion tombstone");
+
+  // Web capture derives asset ids from content, so re-importing the same file
+  // reuses the id; with the tombstone gone it must stack again.
+  await ingest(store, sourcePath, "p1", "2026-06-05T00:00:00.000Z", chatgptSource("conv-p"));
+  const rebuilt = await stackOf(store, "default");
+  assert.ok(rebuilt, "the surviving stack absorbs the re-imported image");
+  assert.deepEqual(
+    (await store.listAssetStackAssets("default", rebuilt.id)).assets.map((asset) => asset.id),
+    ["p2", "p3", "p1"],
+    "the re-imported image joins the stack it was once pulled out of",
+  );
+});
+
 test("a renamed auto stack keeps its name even when later images carry a session title", async (t) => {
   const { store, sourcePath } = await createFixtureStore(t);
   await ingest(store, sourcePath, "k1", "2026-06-01T00:00:00.000Z", chatgptSource("conv-k"));

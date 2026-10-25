@@ -2392,12 +2392,91 @@ test("reference attachment pruning keeps reachable shared references and removes
   const first = await referenceStore.save(referenceFixture(await noiseImage(62), "c1", "2026-08-13T10:00:00.000Z"));
   const second = await referenceStore.save(referenceFixture(await noiseImage(63), "c2", "2026-08-13T10:00:01.000Z"));
 
-  const result = await referenceStore.pruneUnused("default", new Set([first.attachment.id]));
+  // Both saves are inside the 24h grace window, so jump the prune clock past
+  // it to exercise the reachable/unreachable split this test pins down.
+  const result = await referenceStore.pruneUnused("default", new Set([first.attachment.id]), Date.now() + 25 * 60 * 60 * 1000);
   assert.deepEqual(result, { removed: 1, retained: 1, failed: 0 });
   assert.deepEqual((await referenceStore.list("default")).map((item) => item.id), [first.attachment.id]);
   const files = await readdir(join(root, "reference-attachments", "default", "files"));
   assert.deepEqual(files, [first.attachment.file_name]);
   assert.notEqual(first.attachment.id, second.attachment.id);
+});
+
+// Backdates one index entry (and its file) to simulate an attachment that has
+// sat unused; stripLastSeen reproduces entries written before the field
+// existed, which must fall back to the file's mtime.
+async function backdateReference(root, attachmentId, ageMs, { stripLastSeen = false } = {}) {
+  const projectRoot = join(root, "reference-attachments", "default");
+  const indexPath = join(projectRoot, "index.json");
+  const items = JSON.parse(await readFile(indexPath, "utf8"));
+  const item = items.find((entry) => entry.id === attachmentId);
+  assert.ok(item, `attachment ${attachmentId} present in index`);
+  const oldTime = new Date(Date.now() - ageMs);
+  if (stripLastSeen) delete item.last_seen_at;
+  else item.last_seen_at = oldTime.toISOString();
+  await writeFile(indexPath, `${JSON.stringify(items, null, 2)}\n`, "utf8");
+  await utimes(join(projectRoot, "files", item.file_name), oldTime, oldTime);
+}
+
+test("an unused reference attachment survives pruning for 24 hours, then is removed", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-reference-grace-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const referenceStore = createReferenceAttachmentStore(root);
+  const saved = await referenceStore.save(referenceFixture(await noiseImage(64), "c1", "2026-08-13T10:00:00.000Z"));
+
+  const immediate = await referenceStore.pruneUnused("default", new Set());
+  assert.deepEqual(immediate, { removed: 0, retained: 1, failed: 0 }, "a just-captured reference is inside the grace window");
+  assert.deepEqual(await referenceStore.list("default"), [saved.attachment]);
+
+  const later = await referenceStore.pruneUnused("default", new Set(), Date.now() + 25 * 60 * 60 * 1000);
+  assert.deepEqual(later, { removed: 1, retained: 0, failed: 0 }, "once the grace window has passed the unused reference goes");
+  assert.deepEqual(await referenceStore.list("default"), [], "index entry removed");
+  assert.deepEqual(await readdir(join(root, "reference-attachments", "default", "files")), [], "file removed");
+});
+
+test("attachments recorded before last_seen_at fall back to the file's mtime", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-reference-grace-old-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const referenceStore = createReferenceAttachmentStore(root);
+  const staleDays = await referenceStore.save(referenceFixture(await noiseImage(65), "c1", "2026-08-13T10:00:00.000Z"));
+  const staleHours = await referenceStore.save(referenceFixture(await noiseImage(66), "c2", "2026-08-13T10:00:01.000Z"));
+  await backdateReference(root, staleDays.attachment.id, 2 * 24 * 60 * 60 * 1000, { stripLastSeen: true });
+  await backdateReference(root, staleHours.attachment.id, 60 * 60 * 1000, { stripLastSeen: true });
+
+  const result = await referenceStore.pruneUnused("default", new Set());
+  assert.deepEqual(result, { removed: 1, retained: 1, failed: 0 });
+  assert.deepEqual((await referenceStore.list("default")).map((item) => item.id), [staleHours.attachment.id]);
+  const files = await readdir(join(root, "reference-attachments", "default", "files"));
+  assert.deepEqual(files, [staleHours.attachment.file_name]);
+});
+
+test("a duplicate capture refreshes the grace window", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-reference-grace-refresh-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const referenceStore = createReferenceAttachmentStore(root);
+  const bytes = await noiseImage(67);
+  const first = await referenceStore.save(referenceFixture(bytes, "c1", "2026-08-13T10:00:00.000Z"));
+  await backdateReference(root, first.attachment.id, 2 * 24 * 60 * 60 * 1000);
+
+  const again = await referenceStore.save(referenceFixture(bytes, "c2", "2026-08-13T11:00:00.000Z"));
+  assert.equal(again.created, false, "same bytes re-captured dedupes onto the existing attachment");
+  const listed = await referenceStore.list("default");
+  assert.ok(Date.parse(listed[0].last_seen_at) > Date.now() - 60_000, "the dedupe path rewrites last_seen_at");
+
+  const result = await referenceStore.pruneUnused("default", new Set());
+  assert.deepEqual(result, { removed: 0, retained: 1, failed: 0 }, "the refreshed timestamp keeps the attachment inside the window");
+});
+
+test("a referenced attachment is retained no matter how old it is", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-reference-grace-kept-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const referenceStore = createReferenceAttachmentStore(root);
+  const saved = await referenceStore.save(referenceFixture(await noiseImage(68), "c1", "2026-08-13T10:00:00.000Z"));
+  await backdateReference(root, saved.attachment.id, 3 * 24 * 60 * 60 * 1000);
+
+  const result = await referenceStore.pruneUnused("default", new Set([saved.attachment.id]));
+  assert.deepEqual(result, { removed: 0, retained: 1, failed: 0 });
+  assert.deepEqual((await referenceStore.list("default")).map((item) => item.id), [saved.attachment.id]);
 });
 
 test("reference attachments dedupe re-encodes by current display pixels", async (t) => {
