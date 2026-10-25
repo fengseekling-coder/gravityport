@@ -3,6 +3,11 @@ import Icon from "./Icon"
 import { translate, type Language } from "./i18n"
 
 const CONTROLS_IDLE_MS = 2000
+// Vertical breathing room around the fitted media: 16px top (the top half of
+// the old flat 32px margin) and the floating zoom bar plus this gap at the
+// bottom, so fit never tucks the picture under the bar.
+const FIT_PAD_TOP = 16
+const CONTROLS_GAP = 8
 
 export default function ImageViewer({ width, height, src, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, message }: {
   width: number; height: number; src?: string; isVideo?: boolean; language: Language; disabled: boolean
@@ -13,9 +18,16 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
   message: string
 }) {
   const stage = useRef<HTMLDivElement>(null)
+  const controlsBar = useRef<HTMLDivElement>(null)
   const drag = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [manualScale, setManualScale] = useState<number | null>(null)
+  // Where "fit" may render, measured from the real zoom bar: `height` is the
+  // usable band between FIT_PAD_TOP and the bar's top edge, `lift` shifts the
+  // media's center up into that band (the media centers in the band, not the
+  // stage, so the top pad stays 16px while the bottom clears the bar). Null
+  // until the first measurement falls back to the old flat 32px margin.
+  const [fitBox, setFitBox] = useState<{ height: number; lift: number } | null>(null)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   // normalizeAsset fills missing dimensions with 1, so a props pair ≤1 means
   // "size unknown". The media still renders (and still fires load events), and
@@ -52,14 +64,22 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
     return () => { if (idleTimer.current !== null) window.clearTimeout(idleTimer.current) }
   }, [])
   const tr = (text: string) => translate(text, language)
-  const fitScale = Math.max(.01, Math.min((size.width - 48) / usedWidth, (size.height - 32) / usedHeight, 1))
+  const fitHeight = fitBox ? fitBox.height : size.height - FIT_PAD_TOP * 2
+  const fitScale = Math.max(.01, Math.min((size.width - 48) / usedWidth, fitHeight / usedHeight, 1))
   const scale = manualScale ?? fitScale
+  // Manual zoom recenters on the stage again — once the picture is bigger than
+  // (or freed from) the fit band, panning math owns the placement and the bar
+  // is allowed to sit on top of it.
+  const fitLift = manualScale === null ? fitBox?.lift ?? 0 : 0
   const clampPan = (x: number, y: number, zoom = scale) => {
     const maxX = Math.max(0, (usedWidth * zoom - size.width) / 2)
     const maxY = Math.max(0, (usedHeight * zoom - size.height) / 2)
     return { x: Math.max(-maxX, Math.min(maxX, x)), y: Math.max(-maxY, Math.min(maxY, y)) }
   }
   const renderedPan = clampPan(pan.x, pan.y)
+  // fitLift is a signed y-offset (negative = up): add it after the -50%
+  // centering so fit mode rests 16px from the top and reserve from the bottom.
+  const mediaTransform = `translate(-50%, calc(-50% + ${fitLift}px)) translate(${renderedPan.x}px, ${renderedPan.y}px)`
   const fit = () => { setManualScale(null); setPan({ x: 0, y: 0 }) }
   const zoomTo = (next: number, point = { x: 0, y: 0 }) => {
     const zoom = Math.min(4, Math.max(.05, next))
@@ -74,6 +94,33 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
     })
     observer.observe(stage.current)
     return () => observer.disconnect()
+  }, [])
+  useEffect(() => {
+    const stageElement = stage.current
+    const controlsElement = controlsBar.current
+    if (!stageElement || !controlsElement) return
+    const measure = () => {
+      const stageRect = stageElement.getBoundingClientRect()
+      const controlsRect = controlsElement.getBoundingClientRect()
+      const bottomEdge = controlsRect.top - stageRect.top - CONTROLS_GAP
+      if (!(bottomEdge > 0)) return
+      setFitBox({ height: bottomEdge - FIT_PAD_TOP, lift: (FIT_PAD_TOP - (stageRect.height - bottomEdge)) / 2 })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(stageElement)
+    observer.observe(controlsElement)
+    return () => observer.disconnect()
+  }, [])
+  useEffect(() => {
+    // This Chromium build still renders the media controls' fullscreen button
+    // despite controlsList="nofullscreen". The app's own 全屏 is CSS-only, so
+    // an OS fullscreen reached from those controls is always wrong — leave it.
+    const exitForeignFullscreen = () => {
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+    }
+    document.addEventListener("fullscreenchange", exitForeignFullscreen)
+    return () => document.removeEventListener("fullscreenchange", exitForeignFullscreen)
   }, [])
   useEffect(() => {
     const element = stage.current
@@ -107,9 +154,19 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
   }, [scale, pan, size, disabled, onNavigate])
   const pannable = usedWidth * scale > size.width || usedHeight * scale > size.height
   return <div className="image-viewer" onPointerMove={revealControls}>
-    <div ref={stage} className={`viewer-stage ${pannable ? "pannable" : ""} ${dragging ? "dragging" : ""}`} aria-label={tr("图片预览")} onDoubleClick={() => manualScale === null ? zoomTo(1) : fit()}
+    <div ref={stage} className={`viewer-stage ${pannable ? "pannable" : ""} ${dragging ? "dragging" : ""}`} aria-label={tr("图片预览")}
+      onDoubleClick={event => {
+        // Native video controls own their surface: a double-click there must
+        // not toggle fit/1:1 (and Chromium's controls add no fullscreen of
+        // their own — asserted in the viewer-video-controls e2e).
+        if (event.target instanceof HTMLVideoElement) return
+        manualScale === null ? zoomTo(1) : fit()
+      }}
       onContextMenu={event => { event.preventDefault(); onContextMenu(event.clientX, event.clientY) }}
       onPointerDown={event => {
+        // Pressing on the video would setPointerCapture on the stage and steal
+        // every later pointer event from the native controls (scrubber, volume).
+        if (event.target instanceof HTMLVideoElement) return
         if (!pannable || event.button !== 0 || disabled) return
         stage.current?.setPointerCapture(event.pointerId)
         drag.current = { x: event.clientX, y: event.clientY, panX: renderedPan.x, panY: renderedPan.y }
@@ -123,14 +180,14 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
       onPointerCancel={() => { drag.current = null; setDragging(false) }}
       onLostPointerCapture={() => { drag.current = null; setDragging(false) }}>
       {src && isVideo
-        ? <video className="viewer-image" src={src} controls autoPlay loop onLoadedMetadata={event => probeSize(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: `translate(-50%, -50%) translate(${renderedPan.x}px, ${renderedPan.y}px)` }} />
+        ? <video className="viewer-image" src={src} controls autoPlay loop controlsList="nofullscreen nodownload noremoteplayback" disablePictureInPicture onLoadedMetadata={event => probeSize(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />
         : src
-          ? <img className="viewer-image" src={src} alt="" draggable={false} onLoad={event => probeSize(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: `translate(-50%, -50%) translate(${renderedPan.x}px, ${renderedPan.y}px)`, objectFit: "contain" }} />
-          : <div className="viewer-image" style={{ width: usedWidth * scale, height: usedHeight * scale, transform: `translate(-50%, -50%) translate(${renderedPan.x}px, ${renderedPan.y}px)` }} />}
+          ? <img className="viewer-image" src={src} alt="" draggable={false} onLoad={event => probeSize(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform, objectFit: "contain" }} />
+          : <div className="viewer-image" style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />}
     </div>
     <button className="viewer-nav viewer-previous" aria-label={tr("上一个素材")} onClick={() => onNavigate(-1)}><Icon name="left" size={24} /></button>
     <button className="viewer-nav viewer-next" aria-label={tr("下一个素材")} onClick={() => onNavigate(1)}><Icon name="right" size={24} /></button>
-    <div className={`viewer-controls ${controlsIdle ? "is-idle" : ""}`} role="group" aria-label={tr("缩放控制")}
+    <div ref={controlsBar} className={`viewer-controls ${controlsIdle ? "is-idle" : ""}`} role="group" aria-label={tr("缩放控制")}
       onPointerEnter={() => { pointerOnControls.current = true; setControlsIdle(false) }}
       onPointerLeave={() => { pointerOnControls.current = false; revealControls() }}>
       <button aria-label={tr("缩小")} title={tr("缩小")} disabled={scale <= .05} onClick={() => zoomTo(scale / 1.25)}><Icon name="minus" size={16} /></button>
