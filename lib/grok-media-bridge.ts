@@ -19,14 +19,14 @@ const PROMPT_RANK: Record<string, number> = { "not-available": 0, "session-user-
 interface StoredAsset { source?: Record<string, unknown>; id?: string; image_path?: string; project_id?: string; prompt?: string; theme?: string; business_fields?: Record<string, unknown>; created_at?: string; [key: string]: unknown; }
 interface Store { createAsset(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<Record<string, unknown>>; listAssets(filters: Record<string, unknown>): Promise<StoredAsset[]>; findAssetBySourcePath?(projectId: string, sourcePath: string): Promise<StoredAsset | null>; findAssetByContentHash?(projectId: string, contentHash: string): Promise<StoredAsset | null>; findAssetByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset | null>; updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<void>; [key: string]: unknown; }
 interface MediaCandidate { mediaPath: string; discoveredPath: string; relativePath: string; sessionId: string; sessionPath: string | null; mediaFolder: string; mediaKind: string; fileName: string; fileStem: string; fileStat: Stats; generatedAt: string; }
-interface GenerationMetadata { sessionId: string; prompt: string; promptStatus: string; sessionPath: string | null; sessionUpdatedAt: string | null; callId: string | null; generatedAt: string | null; model: string | null; toolName: string | null; aspectRatio: string | null; matched: boolean; }
+interface GenerationMetadata { sessionId: string; prompt: string; promptStatus: string; userMessage: string | null; sessionPath: string | null; sessionUpdatedAt: string | null; callId: string | null; generatedAt: string | null; model: string | null; toolName: string | null; aspectRatio: string | null; matched: boolean; }
 interface SessionMetadata { sessionId: string; sessionPath: string | null; mediaPrompts: Map<string, GenerationMetadata>; }
 interface CachedSessionMetadata { mtimeMs: number; size: number; metadata: SessionMetadata; warnings: string[]; }
 interface MediaInfo { width: number | null; height: number | null; ratio: string; mimeType: string; bytes: number; media_kind: string; }
 interface BridgeStatus { sessionsDir: string; enabled: boolean; watching: boolean; polling: boolean; busy: boolean; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastWarning: string | null; }
 interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated: string[]; candidates: number; warnings: string[]; queued?: boolean; }
 interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconcile(): Promise<ReconcileResult>; scheduleReconcile(): void; status(): BridgeStatus; }
-interface MediaPromptCall { toolName: string; prompt: string; contextUserPrompt: string; aspectRatio: string | null; model: string; callId: string; }
+interface MediaPromptCall { toolName: string; prompt: string; contextUserPrompt: string; userPrompt: string; aspectRatio: string | null; model: string; callId: string; }
 
 export function createGrokMediaBridge(options: { store?: Store; sessionsDir?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; signal?: AbortSignal; } = {}): Bridge {
   const store = options.store;
@@ -121,7 +121,7 @@ export async function reconcileGrokMedia(options: { store: Store; sessionsDir: s
       continue;
     }
     const mediaInfo = await readMediaInfo(candidate.mediaPath, candidate.fileStat, candidate.mediaKind);
-    try { const asset = await createAutomaticAssetWithCollisionFallback(store, { projectId, imagePath: candidate.mediaPath, asset: candidate.fileName, assetId: buildGrokAssetId(candidate), prompt: generation.prompt, skill: "Grok automatic archive", ratio: mediaInfo.ratio || generation.aspectRatio || "", theme: promptTheme(generation.prompt), tags: ["grok", "auto-archived", candidate.mediaKind], created_at: candidate.generatedAt, sourceType: "grok-generated", business_fields: { auto_archived: true, media_kind: candidate.mediaKind, prompt_status: generation.promptStatus, file_bytes: candidate.fileStat.size, width: mediaInfo.width, height: mediaInfo.height, mime_type: mediaInfo.mimeType }, source: { generation_tool: generation.toolName || `grok-${candidate.mediaKind}`, media_kind: candidate.mediaKind, grok_media_path: candidate.mediaPath, grok_session_id: candidate.sessionId || null, grok_session_path: generation.sessionPath || candidate.sessionPath || null, grok_session_folder: candidate.mediaFolder, grok_output_file: candidate.fileName, grok_generated_at: candidate.generatedAt, grok_tool_call_id: generation.callId, model: generation.model, prompt_status: generation.promptStatus, content_sha256: contentHash, pixel_sha256: pixelHash || null, pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null, media_metadata: mediaInfo } }, { trustedSourceRoots: [rootReal], ingestMode: "automatic" }); lookup.remember(asset as StoredAsset); contentHashes.add(contentHash); processedSignatures?.set(candidate.mediaPath, signature); imported.push(asset); } catch (error) { if (isAutomaticImportSuppressed(error)) { skipped.push({ path: candidate.mediaPath, reason: "suppressed-after-delete" }); processedSignatures?.set(candidate.mediaPath, signature); } else if (isAutomaticIngestDuplicate(error)) { skipped.push({ path: candidate.mediaPath, reason: automaticDuplicateReason(error) }); processedSignatures?.set(candidate.mediaPath, signature); } else skipped.push({ path: candidate.mediaPath, reason: "import-failed", error: error instanceof Error ? error.message : String(error) }); }
+    try { const asset = await createAutomaticAssetWithCollisionFallback(store, { projectId, imagePath: candidate.mediaPath, asset: candidate.fileName, assetId: buildGrokAssetId(candidate), prompt: generation.prompt, skill: "Grok automatic archive", ratio: mediaInfo.ratio || generation.aspectRatio || "", theme: promptTheme(generation.prompt), tags: ["grok", "auto-archived", candidate.mediaKind], created_at: candidate.generatedAt, sourceType: "grok-generated", business_fields: { auto_archived: true, media_kind: candidate.mediaKind, prompt_status: generation.promptStatus, user_message: generation.userMessage || null, file_bytes: candidate.fileStat.size, width: mediaInfo.width, height: mediaInfo.height, mime_type: mediaInfo.mimeType }, source: { generation_tool: generation.toolName || `grok-${candidate.mediaKind}`, media_kind: candidate.mediaKind, grok_media_path: candidate.mediaPath, grok_session_id: candidate.sessionId || null, grok_session_path: generation.sessionPath || candidate.sessionPath || null, grok_session_folder: candidate.mediaFolder, grok_output_file: candidate.fileName, grok_generated_at: candidate.generatedAt, grok_tool_call_id: generation.callId, model: generation.model, prompt_status: generation.promptStatus, user_message: generation.userMessage || null, content_sha256: contentHash, pixel_sha256: pixelHash || null, pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null, media_metadata: mediaInfo } }, { trustedSourceRoots: [rootReal], ingestMode: "automatic" }); lookup.remember(asset as StoredAsset); contentHashes.add(contentHash); processedSignatures?.set(candidate.mediaPath, signature); imported.push(asset); } catch (error) { if (isAutomaticImportSuppressed(error)) { skipped.push({ path: candidate.mediaPath, reason: "suppressed-after-delete" }); processedSignatures?.set(candidate.mediaPath, signature); } else if (isAutomaticIngestDuplicate(error)) { skipped.push({ path: candidate.mediaPath, reason: automaticDuplicateReason(error) }); processedSignatures?.set(candidate.mediaPath, signature); } else skipped.push({ path: candidate.mediaPath, reason: "import-failed", error: error instanceof Error ? error.message : String(error) }); }
   }
   return { imported, skipped, updated, candidates: candidates.length, warnings };
 }
@@ -199,8 +199,8 @@ function createBridgeAssetLookup(store: Store, projectId: string) {
 }
 
 function metadataForCandidate(sessionMeta: SessionMetadata | undefined, candidate: MediaCandidate): GenerationMetadata {
-  if (!sessionMeta) return { sessionId: candidate.sessionId, prompt: "", promptStatus: "not-available", sessionPath: candidate.sessionPath || null, sessionUpdatedAt: null, callId: null, generatedAt: null, model: null, toolName: null, aspectRatio: null, matched: false };
-  return sessionMeta.mediaPrompts.get(candidate.mediaPath) || sessionMeta.mediaPrompts.get(candidate.discoveredPath) || { sessionId: sessionMeta.sessionId, prompt: "", promptStatus: "not-available", sessionPath: candidate.sessionPath || sessionMeta.sessionPath, sessionUpdatedAt: null, callId: null, generatedAt: null, model: null, toolName: null, aspectRatio: null, matched: false };
+  if (!sessionMeta) return { sessionId: candidate.sessionId, prompt: "", promptStatus: "not-available", userMessage: null, sessionPath: candidate.sessionPath || null, sessionUpdatedAt: null, callId: null, generatedAt: null, model: null, toolName: null, aspectRatio: null, matched: false };
+  return sessionMeta.mediaPrompts.get(candidate.mediaPath) || sessionMeta.mediaPrompts.get(candidate.discoveredPath) || { sessionId: sessionMeta.sessionId, prompt: "", promptStatus: "not-available", userMessage: null, sessionPath: candidate.sessionPath || sessionMeta.sessionPath, sessionUpdatedAt: null, callId: null, generatedAt: null, model: null, toolName: null, aspectRatio: null, matched: false };
 }
 
 function candidateSignature(candidate: MediaCandidate, generation: GenerationMetadata): string {
@@ -214,6 +214,7 @@ function candidateSignature(candidate: MediaCandidate, generation: GenerationMet
     generation.model || "",
     generation.toolName || "",
     generation.prompt,
+    generation.userMessage || "",
   ].join("\u001f");
 }
 function pruneProcessedSignatures(cache: Map<string, string>, livePaths: string[]): void {
@@ -257,7 +258,7 @@ async function readSessionMetadataFile(sessionId: string, sessionPath: string | 
   for (const line of raw.split("\n")) {
     if (!line) continue; let event: Record<string, unknown>; try { event = JSON.parse(line); } catch { parseFailures += 1; continue; }
     if (event?.type === "user") { const text = extractUserPromptText(event); if (text) latestUserPrompt = text; continue; }
-    if (event?.type === "assistant") { currentModel = String(event.model_id || currentModel || "").trim() || currentModel; for (const call of (event.tool_calls as Array<Record<string, unknown>>) || []) { const name = String(call?.name || "").trim(); if (!MEDIA_TOOLS.has(name)) continue; const callId = String(call?.id || "").trim(); if (!callId) continue; const args = parseJsonObject(call.arguments); const toolPrompt = String(args.prompt || "").trim(); pendingCalls.set(callId, { toolName: name, prompt: toolPrompt, contextUserPrompt: toolPrompt ? "" : latestUserPrompt, aspectRatio: String(args.aspect_ratio || args.aspectRatio || "").trim() || null, model: currentModel || "", callId }); } continue; }
+    if (event?.type === "assistant") { currentModel = String(event.model_id || currentModel || "").trim() || currentModel; for (const call of (event.tool_calls as Array<Record<string, unknown>>) || []) { const name = String(call?.name || "").trim(); if (!MEDIA_TOOLS.has(name)) continue; const callId = String(call?.id || "").trim(); if (!callId) continue; const args = parseJsonObject(call.arguments); const toolPrompt = String(args.prompt || "").trim(); pendingCalls.set(callId, { toolName: name, prompt: toolPrompt, contextUserPrompt: toolPrompt ? "" : latestUserPrompt, userPrompt: latestUserPrompt, aspectRatio: String(args.aspect_ratio || args.aspectRatio || "").trim() || null, model: currentModel || "", callId }); } continue; }
     if (event?.type !== "tool_result") continue;
     const callId = String(event.tool_call_id || "").trim(); if (!callId) continue;
     const pending = pendingCalls.get(callId); const result = parseJsonObject(event.content);
@@ -267,10 +268,10 @@ async function readSessionMetadataFile(sessionId: string, sessionPath: string | 
     if (!(await isCanonicalChildPath(sessionsRoot, canonical))) { warnings.push(`session ${sessionId}: rejected tool_result path`); continue; }
     const toolPrompt = pending?.prompt || ""; let prompt = toolPrompt; let promptStatus = toolPrompt ? "generation-tool-prompt" : "not-available";
     if (!toolPrompt && pending?.contextUserPrompt) { prompt = pending.contextUserPrompt; promptStatus = "session-user-prompt"; }
-    const entry: GenerationMetadata = { sessionId, prompt, promptStatus, sessionPath, sessionUpdatedAt: chatStat.mtime.toISOString(), callId, generatedAt: null, model: pending?.model || currentModel, toolName: pending?.toolName || null, aspectRatio: pending?.aspectRatio || null, matched: Boolean(pending) };
+    const entry: GenerationMetadata = { sessionId, prompt, promptStatus, userMessage: pending?.userPrompt || null, sessionPath, sessionUpdatedAt: chatStat.mtime.toISOString(), callId, generatedAt: null, model: pending?.model || currentModel, toolName: pending?.toolName || null, aspectRatio: pending?.aspectRatio || null, matched: Boolean(pending) };
     const prior = mediaPrompts.get(canonical);
     if (prior && prior.promptStatus === "generation-tool-prompt" && entry.promptStatus !== "generation-tool-prompt") { /* keep stronger */ }
-    else if (prior && prior.callId && prior.callId !== entry.callId && prior.prompt && entry.prompt && prior.prompt !== entry.prompt) { warnings.push(`session ${sessionId}: ambiguous tool matches for ${basename(canonical)}`); mediaPrompts.set(canonical, { sessionId, prompt: "", promptStatus: "not-available", sessionPath, sessionUpdatedAt: null, callId: null, generatedAt: null, model: null, toolName: null, aspectRatio: null, matched: false }); }
+    else if (prior && prior.callId && prior.callId !== entry.callId && prior.prompt && entry.prompt && prior.prompt !== entry.prompt) { warnings.push(`session ${sessionId}: ambiguous tool matches for ${basename(canonical)}`); mediaPrompts.set(canonical, { sessionId, prompt: "", promptStatus: "not-available", userMessage: null, sessionPath, sessionUpdatedAt: null, callId: null, generatedAt: null, model: null, toolName: null, aspectRatio: null, matched: false }); }
     else { mediaPrompts.set(canonical, entry); }
     if (pending) pendingCalls.delete(callId);
   }
@@ -323,6 +324,11 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
   const promptChanged = canUpgradePrompt && Boolean(generation.prompt) && asset.prompt !== generation.prompt;
   const themeChanged = Boolean(nextTheme) && asset.theme !== nextTheme;
   const assetSource = (asset.source as Record<string, unknown> | undefined) || {};
+  const existingUserMessage = [assetSource.user_message, (asset.business_fields as Record<string, unknown> | undefined)?.user_message]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .find((value) => value) || "";
+  const nextUserMessage = generation.userMessage || null;
+  const userMessageChanged = !existingUserMessage && Boolean(nextUserMessage);
   const nextSource: Record<string, unknown> = {
     ...assetSource,
     grok_session_path: generation.sessionPath || assetSource.grok_session_path || null,
@@ -332,6 +338,7 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
     media_kind: candidate?.mediaKind || assetSource.media_kind || null,
   };
   if (canUpgradePrompt && generation.promptStatus) nextSource.prompt_status = generation.promptStatus;
+  if (userMessageChanged) nextSource.user_message = nextUserMessage;
   if (candidate?.mediaPath && !assetSource.grok_media_path) nextSource.grok_media_path = candidate.mediaPath;
   else if (candidate?.mediaPath && assetSource.grok_media_path !== candidate.mediaPath) {
     nextSource.grok_alternate_paths = uniquePaths([
@@ -339,10 +346,10 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
       candidate.mediaPath,
     ].filter((p) => p !== assetSource.grok_media_path && p !== assetSource.path));
   }
-  const sourceChanged = ["grok_session_path", "grok_tool_call_id", "model", "generation_tool", "prompt_status", "grok_media_path"].some((key) => assetSource[key] !== nextSource[key])
+  const sourceChanged = ["grok_session_path", "grok_tool_call_id", "model", "generation_tool", "prompt_status", "grok_media_path", "user_message"].some((key) => assetSource[key] !== nextSource[key])
     || JSON.stringify(assetSource.grok_alternate_paths || []) !== JSON.stringify(nextSource.grok_alternate_paths || []);
   const businessStatusChanged = canUpgradePrompt && generation.promptStatus && (asset.business_fields as Record<string, unknown> | undefined)?.prompt_status !== generation.promptStatus;
-  if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged) return false;
+  if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged && !userMessageChanged) return false;
   await (store as unknown as { updateMetadata: (projectId: string, assetId: string, metadata: Record<string, unknown>) => Promise<void> }).updateMetadata(
     asset.project_id as string,
     asset.id as string,
@@ -352,6 +359,7 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
       business_fields: {
         ...((asset.business_fields as Record<string, unknown>) || {}),
         ...(businessStatusChanged ? { prompt_status: generation.promptStatus } : {}),
+        ...(userMessageChanged ? { user_message: nextUserMessage } : {}),
       },
       source: nextSource,
     },

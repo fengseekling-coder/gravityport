@@ -823,6 +823,131 @@ test("rejects session when summary.json is an out-of-root symlink even with safe
   assert.equal(summaryCheck.reason, "symlink-rejected");
 });
 
+test("records the user message current at each Grok tool call", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-user-msg-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const sessionsDir = join(root, "sessions");
+  const sessionPath = join(sessionsDir, WORKSPACE, SESSION_ID);
+  const firstPath = join(sessionPath, "images", "cover.png");
+  const secondPath = join(sessionPath, "images", "poster.png");
+  await mkdir(join(sessionPath, "images"), { recursive: true });
+  await writeFile(join(sessionPath, "summary.json"), JSON.stringify({ info: { id: SESSION_ID }, current_model_id: "grok-4.5" }));
+  await writeFile(firstPath, pngFixture(64, 48));
+  await writeFile(secondPath, pngFixture(48, 64));
+  await writeFile(join(sessionPath, "chat_history.jsonl"), [
+    JSON.stringify({
+      type: "user",
+      content: [{ type: "text", text: "<user_query>\n帮我做一张书封\n</user_query>" }],
+      prompt_index: 0,
+    }),
+    JSON.stringify({
+      type: "assistant",
+      tool_calls: [{ id: "call-cover", name: "image_gen", arguments: JSON.stringify({ prompt: "cover illustration, warm palette" }) }],
+      model_id: "grok-4.5-build",
+    }),
+    JSON.stringify({ type: "tool_result", tool_call_id: "call-cover", content: JSON.stringify({ path: firstPath, filename: "cover.png" }) }),
+    JSON.stringify({
+      type: "user",
+      content: [{ type: "text", text: "<user_query>\n再画一张同风格的海报\n</user_query>" }],
+      prompt_index: 1,
+    }),
+    JSON.stringify({
+      type: "assistant",
+      tool_calls: [{ id: "call-poster", name: "image_gen", arguments: JSON.stringify({ prompt: "poster artwork, cool palette" }) }],
+      model_id: "grok-4.5-build",
+    }),
+    JSON.stringify({ type: "tool_result", tool_call_id: "call-poster", content: JSON.stringify({ path: secondPath, filename: "poster.png" }) }),
+  ].join("\n") + "\n");
+
+  const store = createAssetStore({ projectRoot, managerDir });
+  const result = await reconcileGrokMedia({ store, sessionsDir });
+  assert.equal(result.imported.length, 2);
+  const cover = result.imported.find((asset) => asset.source.grok_output_file === "cover.png");
+  const poster = result.imported.find((asset) => asset.source.grok_output_file === "poster.png");
+  assert.equal(cover.source.user_message, "帮我做一张书封");
+  assert.equal(cover.business_fields.user_message, "帮我做一张书封");
+  assert.equal(cover.prompt, "cover illustration, warm palette");
+  assert.equal(poster.source.user_message, "再画一张同风格的海报");
+  assert.equal(poster.business_fields.user_message, "再画一张同风格的海报");
+  assert.equal(poster.prompt, "poster artwork, cool palette");
+});
+
+test("reprocesses an archived Grok image when the chat gains a user message and writes the backfill once", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-backfill-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const sessionsDir = join(root, "sessions");
+  const sessionPath = join(sessionsDir, WORKSPACE, SESSION_ID);
+  const imagePath = join(sessionPath, "images", "sig.png");
+  await mkdir(join(sessionPath, "images"), { recursive: true });
+  await writeFile(join(sessionPath, "summary.json"), JSON.stringify({ info: { id: SESSION_ID }, current_model_id: "grok-4.5" }));
+  await writeFile(imagePath, pngFixture(64, 48));
+  const assistant = {
+    type: "assistant",
+    tool_calls: [{ id: "call-sig", name: "image_gen", arguments: JSON.stringify({ prompt: "sig tool prompt" }) }],
+    model_id: "grok-4.5-build",
+  };
+  const toolResult = { type: "tool_result", tool_call_id: "call-sig", content: JSON.stringify({ path: imagePath, filename: "sig.png" }) };
+  await writeFile(join(sessionPath, "chat_history.jsonl"), [assistant, toolResult].map((row) => JSON.stringify(row)).join("\n") + "\n");
+
+  const store = createAssetStore({ projectRoot, managerDir });
+  const processedSignatures = new Map();
+  const options = { store, sessionsDir, processedSignatures };
+  const first = await reconcileGrokMedia(options);
+  assert.equal(first.imported.length, 1);
+  const assetId = first.imported[0].id;
+  assert.equal(first.imported[0].source.user_message, null);
+  assert.equal(first.imported[0].business_fields.user_message, null);
+
+  await writeFile(join(sessionPath, "chat_history.jsonl"), [
+    JSON.stringify({ type: "user", content: [{ type: "text", text: "<user_query>\n给机器人画一张海报\n</user_query>" }], prompt_index: 0 }),
+    JSON.stringify(assistant),
+    JSON.stringify(toolResult),
+  ].join("\n") + "\n");
+  const second = await reconcileGrokMedia(options);
+  assert.deepEqual(second.updated, [assetId]);
+  const backfilled = await store.getAsset("default", assetId);
+  assert.equal(backfilled.source.user_message, "给机器人画一张海报");
+  assert.equal(backfilled.business_fields.user_message, "给机器人画一张海报");
+  assert.equal(backfilled.prompt, "sig tool prompt");
+  assert.equal(backfilled.source.prompt_status, "generation-tool-prompt");
+
+  const third = await reconcileGrokMedia(options);
+  assert.deepEqual(third.updated, []);
+});
+
+test("keeps an existing Grok user message even when the chat has a newer one", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-keep-msg-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const fixture = await createGrokSessionFixture(root);
+  const store = createAssetStore({ projectRoot, managerDir });
+  const first = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  assert.equal(first.imported.length, 1);
+  const assetId = first.imported[0].id;
+  assert.equal(first.imported[0].source.user_message, "Call the image_gen tool with this prompt.");
+
+  await writeFile(join(fixture.sessionPath, "chat_history.jsonl"), [
+    JSON.stringify({ type: "user", content: [{ type: "text", text: "<user_query>\n换一条新指令再画一张\n</user_query>" }], prompt_index: 0 }),
+    JSON.stringify({
+      type: "assistant",
+      tool_calls: [{ id: "call-test-media-1", name: "image_gen", arguments: JSON.stringify({ prompt: "一只红色机甲在雨夜城市中行走，电影级灯光，横向构图", aspect_ratio: "16:9" }) }],
+      model_id: "grok-4.5-build",
+    }),
+    JSON.stringify({ type: "tool_result", tool_call_id: "call-test-media-1", content: JSON.stringify({ path: fixture.mediaPath, filename: "1.png" }) }),
+  ].join("\n") + "\n");
+
+  const second = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  assert.deepEqual(second.updated, []);
+  const asset = await store.getAsset("default", assetId);
+  assert.equal(asset.source.user_message, "Call the image_gen tool with this prompt.");
+  assert.equal(asset.business_fields.user_message, "Call the image_gen tool with this prompt.");
+});
+
 test("sha256File streams file contents instead of loading the whole file", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-grok-hash-"));
   deferTestPathRemoval(root, { recursive: true, force: true });

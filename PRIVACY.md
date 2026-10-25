@@ -9,7 +9,7 @@ GravityPort is a local-first creative asset library. It does not operate a Gravi
 Depending on the features you enable, GravityPort may read:
 
 - generated media under the configured Codex generated-image root;
-- matching local Codex session records used to recover Prompt and provenance;
+- matching local Codex session records used to recover Prompt and provenance, and Codex's conversation-history database (`thread_history_*.sqlite` under the Codex home folder), which GravityPort opens read-only, only for conversations it already saw images from, to read the saved path and revised Prompt of image-generation records and the user message of that turn — never image data and never other conversations. Setting `GRAVITYPORT_DISABLE_BRIDGES=codex` disables this read as well;
 - media and matching `chat_history.jsonl` records under the configured Grok sessions root;
 - the dedicated GravityPort Cowart canvas and the canvases of projects where Cowart was launched from Codex, found in local Codex session records from the last 14 days;
 - ChatGPT web images and message-scoped context sent by the optional Chrome extension, including from conversations you used in the ChatGPT desktop app (see [ChatGPT desktop app conversations](#chatgpt-desktop-app-conversations));

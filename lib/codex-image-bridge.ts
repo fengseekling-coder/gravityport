@@ -11,6 +11,7 @@ import {
   type CodexSessionIndex,
   type CodexTaskMetadata,
 } from "./codex-session-index.js";
+import { createCodexThreadHistoryReader } from "./codex-thread-history.js";
 import {
   cleanupCodexSessionRecoveryRoot,
   removeCodexSessionStagedImage,
@@ -35,22 +36,23 @@ interface StoredAsset {
   [key: string]: unknown;
 }
 interface Store { createAsset(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<StoredAsset>; listAssets(filters: Record<string, unknown>): Promise<StoredAsset[]>; findAssetBySourcePath?(projectId: string, sourcePath: string): Promise<StoredAsset | null>; findAssetByContentHash?(projectId: string, contentHash: string): Promise<StoredAsset | null>; findAssetByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset | null>; updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<void>; codexImagesDir: string; assetsRoot: string; [key: string]: unknown; }
-interface BridgeStatus { imagesDir: string; sessionsDir: string; enabled: boolean; watching: boolean; watchingImages: boolean; watchingSessions: boolean; polling: boolean; busy: boolean; pendingSessionResults: number; lastSessionBytesRead: number; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; }
+interface BridgeStatus { imagesDir: string; sessionsDir: string; threadHistoryPath: string | null; enabled: boolean; watching: boolean; watchingImages: boolean; watchingSessions: boolean; polling: boolean; busy: boolean; pendingSessionResults: number; lastSessionBytesRead: number; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastWarning: string | null; }
 interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated?: string[]; candidates: number; sessionBytesRead?: number; queued?: boolean; }
 interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconcile(): Promise<ReconcileResult>; scheduleReconcile(): void; status(): BridgeStatus; }
 
-export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; signal?: AbortSignal; } = {}): Bridge {
+export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; signal?: AbortSignal; } = {}): Bridge {
   const store = options.store;
   if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Codex image bridge requires a GravityPort store.");
   const imagesDir = resolve(options.imagesDir || store.codexImagesDir);
-  const { codexSessionsDir: sessionsDir } = resolveSourceLocations({
-    overrides: { codexSessionsDir: options.sessionsDir },
+  const { codexSessionsDir: sessionsDir, codexThreadHistoryDir } = resolveSourceLocations({
+    overrides: { codexSessionsDir: options.sessionsDir, codexThreadHistoryDir: options.threadHistoryDir },
   });
+  const threadHistory = createCodexThreadHistoryReader({ dir: codexThreadHistoryDir, dbPath: options.threadHistoryPath || null });
   const projectId = options.projectId || DEFAULT_PROJECT_ID;
   const debounceMs = options.debounceMs != null && Number.isFinite(options.debounceMs) ? Math.max(0, options.debounceMs) : 500;
   const pollIntervalMs = options.pollIntervalMs != null && Number.isFinite(options.pollIntervalMs) ? Math.max(250, options.pollIntervalMs) : 30000;
   const processedSignatures = new Map<string, string>();
-  const sessionIndex = createCodexSessionIndex({ sessionsDir });
+  const sessionIndex = createCodexSessionIndex({ sessionsDir, threadHistory });
   let imageWatcher: FSWatcher | null = null;
   let sessionWatcher: FSWatcher | null = null;
   let poller: ReturnType<typeof setInterval> | null = null;
@@ -60,6 +62,7 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
   const state: Omit<BridgeStatus, "watching" | "watchingImages" | "watchingSessions" | "polling" | "busy"> = {
     imagesDir,
     sessionsDir,
+    threadHistoryPath: options.threadHistoryPath || (options.threadHistoryDir ? resolve(options.threadHistoryDir) : codexThreadHistoryDir),
     enabled: false,
     pendingSessionResults: 0,
     lastSessionBytesRead: 0,
@@ -69,6 +72,7 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
     totalImported: 0,
     lastSkippedCount: 0,
     lastError: null,
+    lastWarning: null,
   };
   async function reconcile(): Promise<ReconcileResult> {
     if (!enabled) return { imported: [], skipped: [], queued: true, candidates: 0 };
@@ -92,6 +96,7 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
         state.lastSkippedCount = result.skipped.length;
         state.totalImported += result.imported.length;
         state.lastError = null;
+        state.lastWarning = threadHistory.warnings().at(-1) || null;
         if (result.imported.length > 0) state.lastImportedAt = state.lastScanAt;
         return result;
       } catch (error) {
@@ -163,20 +168,23 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
   return { start, stop, reconcile, scheduleReconcile, status: apiStatus };
 }
 
-export async function reconcileCodexGeneratedImages(options: { store: Store; imagesDir?: string; sessionsDir?: string; projectId?: string; knownHashes?: Set<string> | null; processedSignatures?: Map<string, string> | null; }): Promise<ReconcileResult> {
+export async function reconcileCodexGeneratedImages(options: { store: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; knownHashes?: Set<string> | null; processedSignatures?: Map<string, string> | null; }): Promise<ReconcileResult> {
   const { store, projectId = DEFAULT_PROJECT_ID } = options;
   const imagesDir = resolve(options.imagesDir || store.codexImagesDir);
-  const { codexSessionsDir: sessionsDir } = resolveSourceLocations({
-    overrides: { codexSessionsDir: options.sessionsDir },
+  const { codexSessionsDir: sessionsDir, codexThreadHistoryDir } = resolveSourceLocations({
+    overrides: { codexSessionsDir: options.sessionsDir, codexThreadHistoryDir: options.threadHistoryDir },
   });
   return reconcileCodexSources({
     store,
     imagesDir,
     sessionsDir,
     projectId,
-    processedSignatures: options.processedSignatures || new Map<string, string>(),
-    sessionIndex: createCodexSessionIndex({ sessionsDir }),
-    knownHashes: options.knownHashes || new Set<string>(),
+    processedSignatures: options.processedSignatures || new Map(),
+    sessionIndex: createCodexSessionIndex({
+      sessionsDir,
+      threadHistory: createCodexThreadHistoryReader({ dir: codexThreadHistoryDir, dbPath: options.threadHistoryPath || null }),
+    }),
+    knownHashes: options.knownHashes || new Set(),
   });
 }
 
@@ -196,6 +204,22 @@ async function reconcileCodexSources(options: {
   const sessionScan = await sessionIndex.scan();
   if (!shouldContinue()) return { imported: [], skipped: [], updated: [], candidates: 0, sessionBytesRead: sessionScan.bytesRead };
   const candidates = await readCodexImageCandidates(imagesDir);
+  // Warm the thread-history cache for exactly the tasks this scan cares about
+  // (their image folders, plus pending session results). The database queries
+  // are synchronous, so this happens here in async context with yields, and
+  // the per-candidate metadataForTask calls below only read cache.
+  const threadRequests = new Map<string, string[]>();
+  for (const candidate of candidates) {
+    if (!candidate.taskId) continue;
+    const list = threadRequests.get(candidate.taskId) || [];
+    list.push(candidate.imagePath);
+    threadRequests.set(candidate.taskId, list);
+  }
+  for (const event of sessionIndex.pendingResults()) {
+    if (event.taskId && !threadRequests.has(event.taskId)) threadRequests.set(event.taskId, event.savedPath ? [event.savedPath] : []);
+  }
+  await sessionIndex.prefetchThreadHistory([...threadRequests].map(([taskId, seenPaths]) => ({ taskId, seenPaths })));
+  if (!shouldContinue()) return { imported: [], skipped: [], updated: [], candidates: 0, sessionBytesRead: sessionScan.bytesRead };
   pruneProcessedSignatures(processedSignatures, candidates.map((candidate) => candidate.imagePath));
   const lookup = createBridgeAssetLookup(store, projectId);
   const contentHashes = options.knownHashes || new Set<string>();
@@ -333,6 +357,7 @@ async function ingestFilesystemCandidate({
       business_fields: {
         auto_archived: true,
         prompt_status: generation.promptStatus,
+        user_message: generation.userMessage || null,
         file_bytes: candidate.fileStat.size,
         width: imageInfo.width,
         height: imageInfo.height,
@@ -351,6 +376,8 @@ async function ingestFilesystemCandidate({
         codex_session_event_key: generation.eventKey,
         model: generation.model,
         prompt_status: generation.promptStatus,
+        user_message: generation.userMessage || null,
+        codex_generation_origin: generation.origin || null,
         content_sha256: contentHash,
         pixel_sha256: pixelHash || null,
         pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
@@ -495,6 +522,7 @@ async function ingestOneSessionResult({
       business_fields: {
         auto_archived: true,
         prompt_status: generation.promptStatus,
+        user_message: generation.userMessage || null,
         file_bytes: fileStat.size,
         width: imageInfo.width,
         height: imageInfo.height,
@@ -514,6 +542,8 @@ async function ingestOneSessionResult({
         codex_recovered_from_session: true,
         model: generation.model,
         prompt_status: generation.promptStatus,
+        user_message: generation.userMessage || null,
+        codex_generation_origin: generation.origin || null,
         content_sha256: contentHash,
         pixel_sha256: pixelHash || null,
         pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
@@ -548,6 +578,7 @@ function generationForSessionResult(event: CodexSessionImageEvent, task: CodexTa
     ...event,
     prompt: task.fallback.prompt,
     promptStatus: task.fallback.promptStatus,
+    userMessage: event.userMessage || null,
     model: event.model || task.fallback.model,
   };
 }
@@ -592,8 +623,26 @@ function createBridgeAssetLookup(store: Store, projectId: string) {
   };
 }
 
+function assetUserMessage(asset: StoredAsset): string {
+  const value = asset.source?.user_message ?? asset.business_fields?.user_message;
+  return typeof value === "string" ? value.trim() : "";
+}
+
 async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, generation: GenerationMetadata): Promise<boolean> {
-  if (generation.promptStatus !== "image-generation-revised-prompt") return false;
+  const existingUserMessage = assetUserMessage(asset);
+  const nextUserMessage = generation.userMessage || null;
+  const userMessageChanged = !existingUserMessage && Boolean(nextUserMessage);
+  if (generation.promptStatus !== "image-generation-revised-prompt") {
+    if (!userMessageChanged) return false;
+    // User-message-only backfill: an older generation may carry the user's
+    // words without a revisable prompt, and that must not touch the prompt
+    // or its provenance status.
+    await store.updateMetadata(asset.project_id, asset.id, {
+      business_fields: { ...(asset.business_fields || {}), user_message: nextUserMessage },
+      source: { ...(asset.source || {}), user_message: nextUserMessage },
+    });
+    return true;
+  }
 
   const nextTheme = promptTheme(generation.prompt);
   const promptChanged = asset.prompt !== generation.prompt;
@@ -605,16 +654,20 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     codex_image_generated_at: generation.generatedAt || asset.source?.codex_image_generated_at || null,
     model: generation.model || asset.source?.model || null,
     prompt_status: generation.promptStatus,
+    codex_generation_origin: generation.origin || asset.source?.codex_generation_origin || null,
   };
+  if (userMessageChanged) nextSource.user_message = nextUserMessage;
   const sourceChanged = [
     "codex_session_path",
     "codex_image_generation_call_id",
     "codex_image_generated_at",
     "model",
     "prompt_status",
+    "user_message",
+    "codex_generation_origin",
   ].some((key) => asset.source?.[key] !== nextSource[key]);
   const businessStatusChanged = asset.business_fields?.prompt_status !== generation.promptStatus;
-  if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged) return false;
+  if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged && !userMessageChanged) return false;
 
   // Session mtime is provenance, not business identity. Record the freshest
   // value only when a real prompt/call/model/provenance upgrade already
@@ -627,6 +680,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     business_fields: {
       ...(asset.business_fields || {}),
       prompt_status: generation.promptStatus,
+      ...(userMessageChanged ? { user_message: nextUserMessage } : {}),
     },
     source: nextSource,
   });
@@ -634,7 +688,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
 }
 
 function candidateSignature(candidate: ImageCandidate, generation: GenerationMetadata): string {
-  return [candidate.fileStat.size, candidate.fileStat.mtimeMs, generation.promptStatus, generation.sessionPath || "", generation.callId || "", generation.generatedAt || "", generation.model || "", generation.prompt].join("\u001f");
+  return [candidate.fileStat.size, candidate.fileStat.mtimeMs, generation.promptStatus, generation.sessionPath || "", generation.callId || "", generation.generatedAt || "", generation.model || "", generation.prompt, generation.userMessage || ""].join("\u001f");
 }
 function pruneProcessedSignatures(cache: Map<string, string>, livePaths: string[]): void {
   const live = new Set(livePaths);
