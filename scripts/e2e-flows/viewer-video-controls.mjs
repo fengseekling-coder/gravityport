@@ -325,9 +325,13 @@ async function runDesktopPhase(ctx) {
     await doubleClick(videoCardPoint);
     await waitForValue(`(() => { const v = document.querySelector('.image-viewer video.viewer-image'); return Boolean(v && v.readyState >= 1 && v.videoWidth > 0); })()`, 'viewer video metadata');
 
-    // Zoom in once: the portrait clip then overflows the stage vertically
-    // (panning is possible) while a side band of stage background stays
-    // visible for the positive-control pan drag.
+    // Hide the inspector first so the stage is wide enough on small CI
+    // windows (Windows runners), then zoom in once: the portrait clip
+    // overflows the stage vertically (panning is possible) while side bands
+    // of stage background stay visible for the positive-control pan drag.
+    const toolbarDetailButton = `Array.from(document.querySelectorAll('.toolbar-right button')).find((b) => /隐藏详情|显示详情|Hide details|Show details/.test(b.textContent || ''))`;
+    await evaluate(`(() => { const b = ${toolbarDetailButton}; if (b && /隐藏详情|Hide details/.test(b.textContent || '')) b.click(); })()`);
+    await sleep(300);
     await evaluate(`Array.from(document.querySelectorAll('.viewer-controls button')).find((b) => b.title === '放大')?.click()`);
     await sleep(300);
 
@@ -343,7 +347,13 @@ async function runDesktopPhase(ctx) {
 
     // Positive control: the same trusted drag on a stage point that is
     // verifiably OUTSIDE the media box pans the picture.
-    const backgroundPoint = { x: stageBox.x + 20, y: stageBox.y + stageBox.height / 2 };
+    // Use whichever side band is wider, measured from the real boxes.
+    const leftBand = before.x - stageBox.x;
+    const rightBand = stageBox.x + stageBox.width - (before.x + before.width);
+    const backgroundPoint = {
+      x: leftBand >= rightBand ? stageBox.x + leftBand / 2 : before.x + before.width + rightBand / 2,
+      y: stageBox.y + stageBox.height / 2,
+    };
     const backgroundOutsideMedia = backgroundPoint.x < before.x - 4 || backgroundPoint.x > before.x + before.width + 4;
     await drag(backgroundPoint, { x: backgroundPoint.x, y: backgroundPoint.y + 70 });
     const afterStageDrag = await mediaBox();
@@ -418,6 +428,9 @@ async function runDesktopPhase(ctx) {
     if (!dblclickStayedWindowed) desktopFailures.push(`double-click on the video changed state (fullscreenElement=${fullscreenElement}, appClass=${appFullscreenClass}, zoom ${zoomBefore} -> ${zoomAfterDblclick})`);
     if (!nativeFsButtonBackedOut) desktopFailures.push("clicking the native fullscreen button left an OS fullscreen (exit guard did not revert it)");
 
+    // Bring the inspector back for the property-tag checks below.
+    await evaluate(`(() => { const b = ${toolbarDetailButton}; if (b && /显示详情|Show details/.test(b.textContent || '')) b.click(); })()`);
+    await sleep(300);
     await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
     await waitForValue(`!document.querySelector('.image-viewer')`, 'viewer closed after Escape');
