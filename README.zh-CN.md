@@ -6,14 +6,19 @@
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#下载)
 
-> **为 AI 创作留住本地视觉记忆。**
-> 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
-
-GravityPort 是一个本地优先的 AI 生成素材库：图片、视频、Prompt、来源与版本历史都保存在你自己的电脑上。它把 Codex、Grok Build CLI、Cowart 的产出，以及通过可选的网页采集扩展从 ChatGPT、Gemini、Flow、Google AI Studio、即梦、Midjourney 收录的内容，收进同一个库。
+> **AI 素材管理工具，支持 ChatGPT · Gemini · Flow · Google AI Studio · Codex · Grok · 即梦。**
 
 ![GravityPort 画廊与检视器](docs/images/gravityport-app.webp)
 
-**本地优先 · Prompt 与来源 · 版本历史 · 无 GravityPort 云账户**
+| 功能 | 说明 |
+| --- | --- |
+| **纯本地存储** | 数据不上云，所有素材均保存在本地电脑 |
+| **自动收录** | 图片、视频生成即入库，免去手动保存 |
+| **完整创作溯源** | 同步保留提示词、参考图与来源，随时查看 |
+| **多轮版本树** | 同一对话的多轮修改，版本脉络一眼看清 |
+| **自动分组** | 按来源与对话窗口，自动归类同组素材 |
+| **内置 MCP** | 连接 Claude、Codex，直接检索与调用素材库 |
+| **免费下载** | macOS · Windows · [gravityport.azhuilab.com](https://gravityport.azhuilab.com) |
 
 [下载](#下载) · [第一次打开](#第一次打开) · [中文使用指南](docs/guide.zh-CN.md) · [隐私](PRIVACY.md) · [文档](#文档)
 
@@ -41,19 +46,23 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 
 ## 主要功能
 
-### 把上下文和素材存在一起
+### 完整创作溯源
 
 把生成的图片和视频连同可用的 Prompt、来源、模型或工具信息、时间戳和出处一起归档。某个 Prompt 不可用时，GravityPort 会如实记录，而不是编造一个。
+
+### 自动分组
+
+素材一进库就按来源归到侧栏的「智能分组」里；同一个对话窗口、同一个 Flow 项目或同一个 Codex 任务的生成会自动叠成一组堆叠。你拆出或解散过的不会再被叠回，起过名的堆叠保留名字。
 
 ### 拖拽整理
 
 在同一个画廊里浏览和搜索：列数可调，支持框选和多选。把卡片拖到侧栏分组即可归档，拖到另一张卡上即可创建或加入堆叠，在堆叠内拖动即可重新排序，拖出窗口即可把文件交给其他应用。通过拖拽新建或加入的堆叠，几秒内可以撤销。
 
-### 在版本树上迭代
+### 多轮版本树
 
 检视器展示每张素材的版本树：来自同一个 ChatGPT 对话的生成按对话轮次分组，可以逐轮查看图片是怎么演变过来的。同一家族中的任意两个版本都可以并排比较。
 
-### 让 AI 代理检索你的素材库
+### 内置 MCP
 
 内置的 MCP 服务器让 Claude、Codex 等 MCP 客户端可以在同一个本地素材库里列出、搜索和记录素材、Prompt、版本与生成历史。`asset_search` 支持文本和时间范围。桌面版自带这个服务：在「设置 → 连接」里复制 Claude Desktop、Claude Code 或 Codex 的现成配置即可接入，不用装 Node.js，也不用下载源码；从源码运行用 `npm run mcp`。配置方法和工具清单见 [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口)。
 
