@@ -18,5 +18,5 @@ $FFMPEG -y \
   -f lavfi -i "testsrc2=s=640x360:r=15:d=2.5" \
   -filter_complex "[0][1]concat=n=2:v=1:a=0" \
   -c:v libx264 -pix_fmt yuv420p -movflags +faststart \
-  <repo>/test/fixtures/black-intro.mp4
+  <repo>/test/fixtures/video-poster/black-intro.mp4
 ```
