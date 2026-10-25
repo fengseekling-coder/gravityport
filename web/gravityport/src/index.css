@@ -1917,6 +1917,48 @@ img.black-image {
 }.app .user-button:hover {
   background: var(--ui-hover);
   color: var(--ui-text);
+}.app .update-ready-slot {
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: var(--space-2);
+}.app .update-ready-slot + .user-button {
+  margin-top: 0;
+}.app .update-ready-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--space-8);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--ui-hover);
+  color: var(--ui-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}.app .update-ready-line:not(:disabled):hover {
+  background: var(--ui-selected);
+}.app .update-ready-line:disabled {
+  cursor: default;
+}.app .update-ready-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-accent);
+}.app .update-ready-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}.app .update-ready-version {
+  color: var(--ui-text);
+  font-weight: 500;
+}.app .update-ready-action {
+  flex-shrink: 0;
+  color: var(--ui-text);
 }.app .settings-modal {
   background: var(--ui-panel);
   border: 0;

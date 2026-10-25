@@ -90,6 +90,10 @@ const english: Record<string, string> = {
   // 任务 231：主进程后台下好更新包后的常驻重启按钮
   "重启并更新": "Restart to update",
   "重启并更新到 v{version}": "Restart to update to v{version}",
+  // 任务 253：侧栏「用户中心」上方的单行更新提醒
+  "新版本 {version}": "v{version} ready",
+  "重启更新": "Restart",
+  "正在更新…": "Updating…",
   "发布于 {date}": "Released on {date}",
   "正在检查…": "Checking…",
   // app-lifecycle: rename notice (task 116)
