@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import { deferTestPathRemoval } from "./test-cleanup.mjs";
 import { createCodexThreadHistoryReader } from "../lib/codex-thread-history.js";
 
 const THREAD_ID = "01a1362c-734c-77a1-9ee1-44eac822f2a1";
+const OTHER_THREAD_ID = "01a1362c-734c-77a1-9ee1-44eac822f2a2";
 const RESULT_TOKEN = "RESULT-PAYLOAD-STUB";
 
 const SCHEMA = [
@@ -36,6 +37,7 @@ async function createThreadHistoryFixture(options = {}) {
   // rollout_ordinal is unique per thread in the real schema; the fixture hands
   // them out in insertion order so tests read like the conversation they seed.
   let ordinalSeq = 0;
+  let mtimeBias = 0;
   const fixture = {
     root,
     dbPath,
@@ -63,24 +65,31 @@ async function createThreadHistoryFixture(options = {}) {
           savedPath,
         }));
     },
+    /** Bump the database mtime deterministically: same-second writes must not
+     * produce identical fingerprints in the cache tests. */
+    async advanceMtime() {
+      mtimeBias += 2_000;
+      const next = new Date(Date.now() + mtimeBias);
+      await utimes(dbPath, next, next);
+    },
     exec(sql) { db.exec(sql); },
     close() { db.close(); },
   };
   return fixture;
 }
 
-function seedTwoTurnConversation(fixture, { imagePathA, imagePathB, result = "" } = {}) {
-  fixture.insertTurn(THREAD_ID, "turn-1", "um-1");
-  fixture.insertUserMessage(THREAD_ID, "turn-1", "um-1", "帮我做一张书封");
-  fixture.insertImageGeneration(THREAD_ID, "turn-1", "ig-1", {
+function seedTwoTurnConversation(fixture, { threadId = THREAD_ID, imagePathA, imagePathB, result = "" } = {}) {
+  fixture.insertTurn(threadId, "turn-1", "um-1");
+  fixture.insertUserMessage(threadId, "turn-1", "um-1", "帮我做一张书封");
+  fixture.insertImageGeneration(threadId, "turn-1", "ig-1", {
     savedPath: imagePathA,
     revisedPrompt: "Book cover, warm palette.",
     result,
     completedAtMs: 1_774_000_000_000,
   });
-  fixture.insertTurn(THREAD_ID, "turn-2", "um-2");
-  fixture.insertUserMessage(THREAD_ID, "turn-2", "um-2", "再画一张同风格的海报");
-  fixture.insertImageGeneration(THREAD_ID, "turn-2", "ig-2", {
+  fixture.insertTurn(threadId, "turn-2", "um-2");
+  fixture.insertUserMessage(threadId, "turn-2", "um-2", "再画一张同风格的海报");
+  fixture.insertImageGeneration(threadId, "turn-2", "ig-2", {
     savedPath: imagePathB,
     revisedPrompt: "Matching poster, cool palette.",
     result,
@@ -96,6 +105,7 @@ test("reads per-turn user messages from the thread-history database", async () =
   fixture.close();
 
   const reader = createCodexThreadHistoryReader({ dir: fixture.root });
+  await reader.prefetchThreads([{ taskId: THREAD_ID, seenPaths: [imagePathA, imagePathB] }]);
   const events = reader.imageEventsForThread(THREAD_ID);
   assert.equal(events.size, 2);
   const first = events.get(imagePathA);
@@ -110,6 +120,7 @@ test("reads per-turn user messages from the thread-history database", async () =
   assert.equal(second.userMessage, "再画一张同风格的海报");
   assert.equal(second.generatedAt, new Date(1_774_000_100_000).toISOString());
   assert.deepEqual(reader.warnings(), []);
+  assert.equal(reader.stats().dbOpens, 1);
 });
 
 test("never surfaces the generation result payload", async () => {
@@ -123,12 +134,12 @@ test("never surfaces the generation result payload", async () => {
   fixture.close();
 
   const reader = createCodexThreadHistoryReader({ dbPath: fixture.dbPath });
+  await reader.prefetchThreads([{ taskId: THREAD_ID, seenPaths: [imagePath] }]);
   const events = reader.imageEventsForThread(THREAD_ID);
   assert.equal(events.size, 2);
   const serialized = JSON.stringify([...events.values()]);
   assert.ok(!serialized.includes(RESULT_TOKEN), "the base64 result must not be read into JS");
   assert.ok(Buffer.byteLength(serialized) < 100_000, "metadata stays small");
-  assert.equal(reader.stats().dbOpens, 1);
 });
 
 test("records null when the image's turn has no user message", async () => {
@@ -139,6 +150,7 @@ test("records null when the image's turn has no user message", async () => {
   fixture.close();
 
   const reader = createCodexThreadHistoryReader({ dbPath: fixture.dbPath });
+  await reader.prefetchThreads([{ taskId: THREAD_ID, seenPaths: [imagePath] }]);
   const events = reader.imageEventsForThread(THREAD_ID);
   assert.equal(events.size, 1);
   assert.equal(events.get(imagePath).userMessage, null);
@@ -165,47 +177,120 @@ test("prefers first_user_item_id and otherwise the nearest earlier user message"
   fixture.close();
 
   const reader = createCodexThreadHistoryReader({ dbPath: fixture.dbPath });
+  await reader.prefetchThreads([{ taskId: THREAD_ID, seenPaths: [firstPath, missingRefPath, laterPath] }]);
   const events = reader.imageEventsForThread(THREAD_ID);
   assert.equal(events.get(firstPath).userMessage, "第一条消息");
   assert.equal(events.get(missingRefPath).userMessage, "悬空引用前的消息");
   assert.equal(events.get(laterPath).userMessage, null);
 });
 
-test("strips the attachment preamble from database user messages", async () => {
+test("strips the attachment preamble and leading context tags from database user messages", async () => {
   const fixture = await createThreadHistoryFixture();
-  const imagePath = join(fixture.root, "generated_images", THREAD_ID, "wrapped.png");
+  const wrappedPath = join(fixture.root, "generated_images", THREAD_ID, "wrapped.png");
+  const taggedPath = join(fixture.root, "generated_images", THREAD_ID, "tagged.png");
   const wrapped = "# Files mentioned by the user:\n\n## codex-clipboard-x.png: /tmp/codex-clipboard-x.png\nImage attachment: true\n\n## My request:\n顶部空缺用模型填满";
   fixture.insertTurn(THREAD_ID, "turn-wrapped", "um-w");
   fixture.insertUserMessage(THREAD_ID, "turn-wrapped", "um-w", wrapped);
-  fixture.insertImageGeneration(THREAD_ID, "turn-wrapped", "ig-w", { savedPath: imagePath, revisedPrompt: "Use case: precise-object-edit." });
+  fixture.insertImageGeneration(THREAD_ID, "turn-wrapped", "ig-w", { savedPath: wrappedPath, revisedPrompt: "Use case: precise-object-edit." });
+  fixture.insertTurn(THREAD_ID, "turn-tagged", "um-t");
+  fixture.insertUserMessage(THREAD_ID, "turn-tagged", "um-t", '<in-app-browser-context url="https://example.com">page title</in-app-browser-context>做一张海报');
+  fixture.insertImageGeneration(THREAD_ID, "turn-tagged", "ig-t", { savedPath: taggedPath, revisedPrompt: "Use case: poster." });
   fixture.close();
 
   const reader = createCodexThreadHistoryReader({ dbPath: fixture.dbPath });
-  assert.equal(reader.imageEventsForThread(THREAD_ID).get(imagePath).userMessage, "顶部空缺用模型填满");
+  await reader.prefetchThreads([{ taskId: THREAD_ID, seenPaths: [wrappedPath, taggedPath] }]);
+  const events = reader.imageEventsForThread(THREAD_ID);
+  assert.equal(events.get(wrappedPath).userMessage, "顶部空缺用模型填满");
+  assert.equal(events.get(taggedPath).userMessage, "做一张海报");
 });
 
-test("caches thread queries until the database changes", async () => {
+test("does not re-query a thread when the database changed but no new image appeared", async () => {
   const fixture = await createThreadHistoryFixture();
-  const imagePath = join(fixture.root, "generated_images", THREAD_ID, "a.png");
-  seedTwoTurnConversation(fixture, { imagePathA: imagePath, imagePathB: join(fixture.root, "generated_images", THREAD_ID, "b.png") });
+  const imagePathA = join(fixture.root, "generated_images", THREAD_ID, "a.png");
+  const imagePathB = join(fixture.root, "generated_images", THREAD_ID, "b.png");
+  const otherPath = join(fixture.root, "generated_images", OTHER_THREAD_ID, "c.png");
+  seedTwoTurnConversation(fixture, { imagePathA, imagePathB });
+  fixture.insertTurn(OTHER_THREAD_ID, "turn-o", "um-o");
+  fixture.insertUserMessage(OTHER_THREAD_ID, "turn-o", "um-o", "另一个对话的消息");
+  fixture.insertImageGeneration(OTHER_THREAD_ID, "turn-o", "ig-o", { savedPath: otherPath, revisedPrompt: "Other thread." });
   fixture.close();
 
   const reader = createCodexThreadHistoryReader({ dbPath: fixture.dbPath });
-  const first = reader.imageEventsForThread(THREAD_ID);
-  assert.equal(first.size, 2);
-  assert.equal(reader.stats().threadQueries, 1);
-  reader.imageEventsForThread(THREAD_ID);
-  assert.equal(reader.stats().threadQueries, 1);
-  assert.equal(reader.stats().cacheHits, 1);
-
-  const write = new Database(fixture.dbPath);
-  write.prepare("INSERT INTO thread_items (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type) VALUES (?, ?, ?, ?, ?, ?, 'imageGeneration')")
-    .run(THREAD_ID, "turn-1", "ig-late", 99, 3_000, JSON.stringify({ type: "imageGeneration", id: "ig-late", revisedPrompt: "Late arrival.", savedPath: join(fixture.root, "generated_images", THREAD_ID, "late.png") }));
-  write.close();
-
-  const refreshed = reader.imageEventsForThread(THREAD_ID);
-  assert.equal(refreshed.size, 3);
+  await reader.prefetchThreads([
+    { taskId: THREAD_ID, seenPaths: [imagePathA, imagePathB] },
+    { taskId: OTHER_THREAD_ID, seenPaths: [otherPath] },
+  ]);
   assert.equal(reader.stats().threadQueries, 2);
+
+  // The database changes (another conversation grows) but neither cached
+  // conversation gained an image: both must stay cached without a query.
+  const write = new Database(fixture.dbPath);
+  write.prepare("INSERT INTO thread_items (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type) VALUES (?, 'turn-x', 'ig-x', 99, 4_000, ?, 'imageGeneration')")
+    .run(OTHER_THREAD_ID, JSON.stringify({ type: "imageGeneration", id: "ig-x", revisedPrompt: "Unrelated.", savedPath: join(fixture.root, "generated_images", OTHER_THREAD_ID, "unseen.png") }));
+  write.close();
+  await fixture.advanceMtime();
+
+  await reader.prefetchThreads([
+    { taskId: THREAD_ID, seenPaths: [imagePathA, imagePathB] },
+    { taskId: OTHER_THREAD_ID, seenPaths: [otherPath] },
+  ]);
+  assert.equal(reader.stats().threadQueries, 2, "no new image must mean no re-query");
+  assert.equal(reader.imageEventsForThread(THREAD_ID).size, 2);
+});
+
+test("re-queries only the thread that gained an image after the database changed", async () => {
+  const fixture = await createThreadHistoryFixture();
+  const imagePathA = join(fixture.root, "generated_images", THREAD_ID, "a.png");
+  const imagePathB = join(fixture.root, "generated_images", THREAD_ID, "b.png");
+  const newPath = join(fixture.root, "generated_images", THREAD_ID, "late.png");
+  const otherPath = join(fixture.root, "generated_images", OTHER_THREAD_ID, "c.png");
+  seedTwoTurnConversation(fixture, { imagePathA, imagePathB });
+  fixture.insertTurn(OTHER_THREAD_ID, "turn-o", "um-o");
+  fixture.insertUserMessage(OTHER_THREAD_ID, "turn-o", "um-o", "另一个对话的消息");
+  fixture.insertImageGeneration(OTHER_THREAD_ID, "turn-o", "ig-o", { savedPath: otherPath, revisedPrompt: "Other thread." });
+  fixture.close();
+
+  const reader = createCodexThreadHistoryReader({ dbPath: fixture.dbPath });
+  await reader.prefetchThreads([
+    { taskId: THREAD_ID, seenPaths: [imagePathA, imagePathB] },
+    { taskId: OTHER_THREAD_ID, seenPaths: [otherPath] },
+  ]);
+  assert.equal(reader.stats().threadQueries, 2);
+
+  // A new image lands under THREAD_ID and the database records it: only that
+  // one thread is re-queried, the other stays on cache.
+  const write = new Database(fixture.dbPath);
+  write.prepare("INSERT INTO thread_items (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type) VALUES (?, 'turn-1', 'ig-late', 99, 3_000, ?, 'imageGeneration')")
+    .run(THREAD_ID, JSON.stringify({ type: "imageGeneration", id: "ig-late", revisedPrompt: "Late arrival.", savedPath: newPath }));
+  write.close();
+  await fixture.advanceMtime();
+
+  await reader.prefetchThreads([
+    { taskId: THREAD_ID, seenPaths: [imagePathA, imagePathB, newPath] },
+    { taskId: OTHER_THREAD_ID, seenPaths: [otherPath] },
+  ]);
+  assert.equal(reader.stats().threadQueries, 3, "only the thread with the new image is re-queried");
+  const events = reader.imageEventsForThread(THREAD_ID);
+  assert.equal(events.size, 3);
+  assert.equal(events.get(newPath).prompt, "Late arrival.");
+  assert.equal(reader.imageEventsForThread(OTHER_THREAD_ID).size, 1);
+});
+
+test("does not re-query an unmatched image while the database stays unchanged", async () => {
+  const fixture = await createThreadHistoryFixture();
+  const imagePathA = join(fixture.root, "generated_images", THREAD_ID, "a.png");
+  const unmatchedPath = join(fixture.root, "generated_images", THREAD_ID, "unmatched.png");
+  seedTwoTurnConversation(fixture, { imagePathA, imagePathB: join(fixture.root, "generated_images", THREAD_ID, "b.png") });
+  fixture.close();
+
+  const reader = createCodexThreadHistoryReader({ dbPath: fixture.dbPath });
+  const scan = [{ taskId: THREAD_ID, seenPaths: [imagePathA, unmatchedPath] }];
+  await reader.prefetchThreads(scan);
+  assert.equal(reader.stats().threadQueries, 1);
+  assert.equal(reader.imageEventsForThread(THREAD_ID).has(unmatchedPath), false);
+
+  await reader.prefetchThreads(scan);
+  assert.equal(reader.stats().threadQueries, 1, "an image that never matches must not cause a query storm");
 });
 
 test("skips the source with a warning when the database is unusable", async () => {
@@ -213,12 +298,14 @@ test("skips the source with a warning when the database is unusable", async () =
   deferTestPathRemoval(root, { recursive: true, force: true });
 
   const missing = createCodexThreadHistoryReader({ dbPath: join(root, "thread_history_9.sqlite") });
+  await missing.prefetchThreads([{ taskId: THREAD_ID, seenPaths: [] }]);
   assert.equal(missing.imageEventsForThread(THREAD_ID).size, 0);
   assert.ok(missing.warnings().some((warning) => /unavailable/.test(warning)), "missing file must warn");
 
   const emptyDir = join(root, "empty");
   await mkdir(emptyDir, { recursive: true });
   const quiet = createCodexThreadHistoryReader({ dir: emptyDir });
+  await quiet.prefetchThreads([{ taskId: THREAD_ID, seenPaths: [] }]);
   assert.equal(quiet.imageEventsForThread(THREAD_ID).size, 0);
   assert.deepEqual(quiet.warnings(), [], "a directory without any database is a normal state, not a warning");
 
@@ -227,12 +314,14 @@ test("skips the source with a warning when the database is unusable", async () =
   wrongSchema.exec("CREATE TABLE thread_items (thread_id TEXT, turn_id TEXT, item_id TEXT)");
   wrongSchema.close();
   const wrongSchemaReader = createCodexThreadHistoryReader({ dbPath: wrongSchemaPath });
+  await wrongSchemaReader.prefetchThreads([{ taskId: THREAD_ID, seenPaths: [] }]);
   assert.equal(wrongSchemaReader.imageEventsForThread(THREAD_ID).size, 0);
   assert.ok(wrongSchemaReader.warnings().some((warning) => /no such column/i.test(warning)), "missing columns must warn");
 
   const corruptPath = join(root, "thread_history_2.sqlite");
   await writeFile(corruptPath, Buffer.from("this is definitely not a sqlite database".repeat(100)));
   const corrupt = createCodexThreadHistoryReader({ dbPath: corruptPath });
+  await corrupt.prefetchThreads([{ taskId: THREAD_ID, seenPaths: [] }]);
   assert.equal(corrupt.imageEventsForThread(THREAD_ID).size, 0);
   assert.ok(corrupt.warnings().some((warning) => /not a database|could not be opened/i.test(warning)), "corrupt file must warn");
 });

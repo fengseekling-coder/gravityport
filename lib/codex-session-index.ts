@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
-import type { CodexThreadHistorySource } from "./codex-thread-history.js";
+import type { CodexThreadHistorySource, CodexThreadHistoryThreadRequest } from "./codex-thread-history.js";
 
 export interface CodexGenerationMetadata {
   taskId: string;
@@ -71,6 +71,9 @@ export const MAX_CODEX_SESSION_EVENT_LINE_BYTES = 192 * 1024 * 1024;
 
 export interface CodexSessionIndex {
   scan(): Promise<CodexSessionScanResult>;
+  /** Warm the thread-history cache for the given tasks (async, yields the
+   * event loop between threads); metadataForTask afterwards reads only cache. */
+  prefetchThreadHistory(requests: CodexThreadHistoryThreadRequest[]): Promise<void>;
   metadataForTask(taskId: string): CodexTaskMetadata;
   pendingResults(): CodexSessionImageEvent[];
   acknowledgeResult(eventKey: string): void;
@@ -215,7 +218,12 @@ export function createCodexSessionIndex({ sessionsDir, threadHistory }: { sessio
   }
   function reset(): void { states.clear(); pending.clear(); }
 
-  return { scan, metadataForTask, pendingResults, acknowledgeResult, loadResult, reset };
+  async function prefetchThreadHistory(requests: CodexThreadHistoryThreadRequest[]): Promise<void> {
+    if (!threadHistory) return;
+    await threadHistory.prefetchThreads(requests);
+  }
+
+  return { scan, prefetchThreadHistory, metadataForTask, pendingResults, acknowledgeResult, loadResult, reset };
 }
 
 async function scanSessionAppend(state: SessionState, info: Stats, pending: Map<string, CodexSessionImageEvent>): Promise<number> {
@@ -285,8 +293,9 @@ function parseSessionLine(state: SessionState, line: Buffer, lineStart: number, 
   if (message?.type === "message" && message.role === "user") {
     for (const part of Array.isArray(message.content) ? message.content : []) {
       const item = asObject(part);
-      const text = cleanText(item?.text);
-      if (item?.type === "input_text" && isUserPrompt(text)) state.lastUserPrompt = stripAttachmentPreamble(text);
+      if (item?.type !== "input_text") continue;
+      const cleaned = cleanUserPromptText(cleanText(item?.text));
+      if (cleaned) state.lastUserPrompt = cleaned;
     }
     return;
   }
@@ -440,6 +449,34 @@ async function walkJsonlFiles(root: string): Promise<string[]> {
 function removePendingForSession(pending: Map<string, CodexSessionImageEvent>, sessionPath: string): void {
   const prefix = `${sessionPath}::`;
   for (const key of pending.keys()) if (key.startsWith(prefix)) pending.delete(key);
+}
+
+/** Codex prepends generated context blocks to some user turns (e.g.
+ * `<in-app-browser-context>…</in-app-browser-context>` for its built-in
+ * browser); strip every leading paired tag block so only the user's own words
+ * remain. An opening tag without its closer stops the stripping, and the
+ * unchanged text then fails isUserPrompt as before. */
+export function stripLeadingContextTags(text: string): string {
+  let rest = text.trim();
+  for (;;) {
+    const open = /^<([A-Za-z][A-Za-z0-9_-]*)\b[^>]*>/.exec(rest);
+    if (!open) return rest;
+    const tagName = open[1];
+    const closeTag = `</${tagName}>`;
+    const close = rest.indexOf(closeTag);
+    if (close < 0) return rest;
+    rest = rest.slice(close + closeTag.length).trim();
+  }
+}
+
+/** Shared cleanup for user-message text on both the JSONL and the
+ * thread-history database paths: strip leading context tags, reject what is
+ * not a user prompt (empty, unclosed tag prefix, environment noise), then
+ * drop the attachment preamble. Returns "" when the text must be ignored. */
+export function cleanUserPromptText(text: string): string {
+  const stripped = stripLeadingContextTags(text);
+  if (!isUserPrompt(stripped)) return "";
+  return stripAttachmentPreamble(stripped);
 }
 
 export function isUserPrompt(text: string): boolean {

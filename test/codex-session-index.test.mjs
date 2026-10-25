@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 // @ts-ignore - better-sqlite3 is consumed as an untyped runtime dependency in this repository.
 import Database from "better-sqlite3";
-import { createCodexSessionIndex } from "../lib/codex-session-index.js";
+import { createCodexSessionIndex, cleanUserPromptText, stripLeadingContextTags } from "../lib/codex-session-index.js";
 import { createCodexThreadHistoryReader } from "../lib/codex-thread-history.js";
 import { decodeCodexSessionImageResult } from "../lib/codex-session-recovery.js";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
@@ -268,6 +268,7 @@ test("Codex session index prefers JSONL events and fills gaps from the thread-hi
   const threadHistory = createCodexThreadHistoryReader({ dbPath });
   const index = createCodexSessionIndex({ sessionsDir, threadHistory });
   await index.scan();
+  await index.prefetchThreadHistory([{ taskId, seenPaths: [bothPath, dbOnlyPath] }]);
   const metadata = index.metadataForTask(taskId);
   assert.equal(metadata.imageEvents.size, 2);
   assert.equal(metadata.imageEvents.get(bothPath).prompt, "JSONL wins clashes.");
@@ -285,9 +286,64 @@ test("Codex session index prefers JSONL events and fills gaps from the thread-hi
   db2.prepare("INSERT INTO thread_items (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type) VALUES (?, 'turn-1', 'ig-m', 1, 2_000, ?, 'imageGeneration')")
     .run(dbOnlyTaskId, JSON.stringify({ type: "imageGeneration", id: "ig-m", revisedPrompt: "Migrated conversation.", savedPath: migratedPath }));
   db2.close();
+  await index.prefetchThreadHistory([{ taskId: dbOnlyTaskId, seenPaths: [migratedPath] }]);
   const migrated = index.metadataForTask(dbOnlyTaskId);
   assert.equal(migrated.imageEvents.get(migratedPath)?.prompt, "Migrated conversation.");
   assert.equal(migrated.fallback.prompt, "");
   assert.equal(migrated.fallback.promptStatus, "not-available");
   assert.equal(migrated.fallback.userMessage, null);
+});
+
+test("stripLeadingContextTags strips paired leading tags and keeps the user's words", () => {
+  const tagged = '<in-app-browser-context url="https://example.com">page context</in-app-browser-context>做一张海报';
+  assert.equal(stripLeadingContextTags(tagged), "做一张海报");
+  const doubled = "<environment_context>x</environment_context><recommended_plugins>y</recommended_plugins>真正的指令";
+  assert.equal(stripLeadingContextTags(doubled), "真正的指令");
+  // Only environment noise remains: empty after stripping, so the prompt is rejected.
+  assert.equal(stripLeadingContextTags("<environment_context>only noise</environment_context>"), "");
+  // An opening tag without its closer keeps the text unchanged (and rejected).
+  assert.equal(stripLeadingContextTags("<unclosed-tag 剩下的文字"), "<unclosed-tag 剩下的文字");
+  assert.equal(stripLeadingContextTags("普通用户消息"), "普通用户消息");
+});
+
+test("cleanUserPromptText chains tag stripping with the user-prompt filter", () => {
+  assert.equal(cleanUserPromptText('<in-app-browser-context url="https://example.com">ctx</in-app-browser-context>做一张海报'), "做一张海报");
+  assert.equal(cleanUserPromptText("<environment_context>only noise</environment_context>"), "");
+  assert.equal(cleanUserPromptText("<recommended_plugins>x</recommended_plugins>"), "");
+  assert.equal(cleanUserPromptText("<no closing tag here"), "");
+  const wrapped = "# Files mentioned by the user:\n\n## codex-clipboard-x.png: /tmp/codex-clipboard-x.png\n\n## My request:\n顶部空缺用模型填满";
+  assert.equal(cleanUserPromptText(wrapped), "顶部空缺用模型填满");
+});
+
+test("jsonl user prompts strip leading context tags before they become the task prompt", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-session-tags-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const sessionsDir = join(root, "sessions");
+  const taskId = "01a1362c-734c-77a1-9ee1-44eac822f2d0";
+  const sessionPath = join(sessionsDir, `rollout-test-${taskId}.jsonl`);
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(sessionPath, [
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: '<in-app-browser-context url="https://example.com">page context</in-app-browser-context>给我做一张横版海报' }],
+      },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "<environment_context>second turn noise only</environment_context>" }],
+      },
+    },
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+
+  const index = createCodexSessionIndex({ sessionsDir });
+  await index.scan();
+  const metadata = index.metadataForTask(taskId);
+  // The tagged message is cleaned; the noise-only second turn does not replace it.
+  assert.equal(metadata.fallback.prompt, "给我做一张横版海报");
 });

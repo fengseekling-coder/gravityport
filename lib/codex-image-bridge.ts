@@ -204,6 +204,22 @@ async function reconcileCodexSources(options: {
   const sessionScan = await sessionIndex.scan();
   if (!shouldContinue()) return { imported: [], skipped: [], updated: [], candidates: 0, sessionBytesRead: sessionScan.bytesRead };
   const candidates = await readCodexImageCandidates(imagesDir);
+  // Warm the thread-history cache for exactly the tasks this scan cares about
+  // (their image folders, plus pending session results). The database queries
+  // are synchronous, so this happens here in async context with yields, and
+  // the per-candidate metadataForTask calls below only read cache.
+  const threadRequests = new Map<string, string[]>();
+  for (const candidate of candidates) {
+    if (!candidate.taskId) continue;
+    const list = threadRequests.get(candidate.taskId) || [];
+    list.push(candidate.imagePath);
+    threadRequests.set(candidate.taskId, list);
+  }
+  for (const event of sessionIndex.pendingResults()) {
+    if (event.taskId && !threadRequests.has(event.taskId)) threadRequests.set(event.taskId, event.savedPath ? [event.savedPath] : []);
+  }
+  await sessionIndex.prefetchThreadHistory([...threadRequests].map(([taskId, seenPaths]) => ({ taskId, seenPaths })));
+  if (!shouldContinue()) return { imported: [], skipped: [], updated: [], candidates: 0, sessionBytesRead: sessionScan.bytesRead };
   pruneProcessedSignatures(processedSignatures, candidates.map((candidate) => candidate.imagePath));
   const lookup = createBridgeAssetLookup(store, projectId);
   const contentHashes = options.knownHashes || new Set<string>();
