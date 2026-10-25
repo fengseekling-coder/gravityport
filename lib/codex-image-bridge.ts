@@ -11,6 +11,7 @@ import {
   type CodexSessionIndex,
   type CodexTaskMetadata,
 } from "./codex-session-index.js";
+import { createCodexThreadHistoryReader } from "./codex-thread-history.js";
 import {
   cleanupCodexSessionRecoveryRoot,
   removeCodexSessionStagedImage,
@@ -35,22 +36,23 @@ interface StoredAsset {
   [key: string]: unknown;
 }
 interface Store { createAsset(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<StoredAsset>; listAssets(filters: Record<string, unknown>): Promise<StoredAsset[]>; findAssetBySourcePath?(projectId: string, sourcePath: string): Promise<StoredAsset | null>; findAssetByContentHash?(projectId: string, contentHash: string): Promise<StoredAsset | null>; findAssetByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset | null>; updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<void>; codexImagesDir: string; assetsRoot: string; [key: string]: unknown; }
-interface BridgeStatus { imagesDir: string; sessionsDir: string; enabled: boolean; watching: boolean; watchingImages: boolean; watchingSessions: boolean; polling: boolean; busy: boolean; pendingSessionResults: number; lastSessionBytesRead: number; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; }
+interface BridgeStatus { imagesDir: string; sessionsDir: string; threadHistoryPath: string | null; enabled: boolean; watching: boolean; watchingImages: boolean; watchingSessions: boolean; polling: boolean; busy: boolean; pendingSessionResults: number; lastSessionBytesRead: number; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastWarning: string | null; }
 interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated?: string[]; candidates: number; sessionBytesRead?: number; queued?: boolean; }
 interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconcile(): Promise<ReconcileResult>; scheduleReconcile(): void; status(): BridgeStatus; }
 
-export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; signal?: AbortSignal; } = {}): Bridge {
+export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; signal?: AbortSignal; } = {}): Bridge {
   const store = options.store;
   if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Codex image bridge requires a GravityPort store.");
   const imagesDir = resolve(options.imagesDir || store.codexImagesDir);
-  const { codexSessionsDir: sessionsDir } = resolveSourceLocations({
-    overrides: { codexSessionsDir: options.sessionsDir },
+  const { codexSessionsDir: sessionsDir, codexThreadHistoryDir } = resolveSourceLocations({
+    overrides: { codexSessionsDir: options.sessionsDir, codexThreadHistoryDir: options.threadHistoryDir },
   });
+  const threadHistory = createCodexThreadHistoryReader({ dir: codexThreadHistoryDir, dbPath: options.threadHistoryPath || null });
   const projectId = options.projectId || DEFAULT_PROJECT_ID;
   const debounceMs = options.debounceMs != null && Number.isFinite(options.debounceMs) ? Math.max(0, options.debounceMs) : 500;
   const pollIntervalMs = options.pollIntervalMs != null && Number.isFinite(options.pollIntervalMs) ? Math.max(250, options.pollIntervalMs) : 30000;
   const processedSignatures = new Map<string, string>();
-  const sessionIndex = createCodexSessionIndex({ sessionsDir });
+  const sessionIndex = createCodexSessionIndex({ sessionsDir, threadHistory });
   let imageWatcher: FSWatcher | null = null;
   let sessionWatcher: FSWatcher | null = null;
   let poller: ReturnType<typeof setInterval> | null = null;
@@ -60,6 +62,7 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
   const state: Omit<BridgeStatus, "watching" | "watchingImages" | "watchingSessions" | "polling" | "busy"> = {
     imagesDir,
     sessionsDir,
+    threadHistoryPath: options.threadHistoryPath || (options.threadHistoryDir ? resolve(options.threadHistoryDir) : codexThreadHistoryDir),
     enabled: false,
     pendingSessionResults: 0,
     lastSessionBytesRead: 0,
@@ -69,6 +72,7 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
     totalImported: 0,
     lastSkippedCount: 0,
     lastError: null,
+    lastWarning: null,
   };
   async function reconcile(): Promise<ReconcileResult> {
     if (!enabled) return { imported: [], skipped: [], queued: true, candidates: 0 };
@@ -92,6 +96,7 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
         state.lastSkippedCount = result.skipped.length;
         state.totalImported += result.imported.length;
         state.lastError = null;
+        state.lastWarning = threadHistory.warnings().at(-1) || null;
         if (result.imported.length > 0) state.lastImportedAt = state.lastScanAt;
         return result;
       } catch (error) {
@@ -163,20 +168,23 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
   return { start, stop, reconcile, scheduleReconcile, status: apiStatus };
 }
 
-export async function reconcileCodexGeneratedImages(options: { store: Store; imagesDir?: string; sessionsDir?: string; projectId?: string; knownHashes?: Set<string> | null; processedSignatures?: Map<string, string> | null; }): Promise<ReconcileResult> {
+export async function reconcileCodexGeneratedImages(options: { store: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; knownHashes?: Set<string> | null; processedSignatures?: Map<string, string> | null; }): Promise<ReconcileResult> {
   const { store, projectId = DEFAULT_PROJECT_ID } = options;
   const imagesDir = resolve(options.imagesDir || store.codexImagesDir);
-  const { codexSessionsDir: sessionsDir } = resolveSourceLocations({
-    overrides: { codexSessionsDir: options.sessionsDir },
+  const { codexSessionsDir: sessionsDir, codexThreadHistoryDir } = resolveSourceLocations({
+    overrides: { codexSessionsDir: options.sessionsDir, codexThreadHistoryDir: options.threadHistoryDir },
   });
   return reconcileCodexSources({
     store,
     imagesDir,
     sessionsDir,
     projectId,
-    processedSignatures: options.processedSignatures || new Map<string, string>(),
-    sessionIndex: createCodexSessionIndex({ sessionsDir }),
-    knownHashes: options.knownHashes || new Set<string>(),
+    processedSignatures: options.processedSignatures || new Map(),
+    sessionIndex: createCodexSessionIndex({
+      sessionsDir,
+      threadHistory: createCodexThreadHistoryReader({ dir: codexThreadHistoryDir, dbPath: options.threadHistoryPath || null }),
+    }),
+    knownHashes: options.knownHashes || new Set(),
   });
 }
 
@@ -353,6 +361,7 @@ async function ingestFilesystemCandidate({
         model: generation.model,
         prompt_status: generation.promptStatus,
         user_message: generation.userMessage || null,
+        codex_generation_origin: generation.origin || null,
         content_sha256: contentHash,
         pixel_sha256: pixelHash || null,
         pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
@@ -518,6 +527,7 @@ async function ingestOneSessionResult({
         model: generation.model,
         prompt_status: generation.promptStatus,
         user_message: generation.userMessage || null,
+        codex_generation_origin: generation.origin || null,
         content_sha256: contentHash,
         pixel_sha256: pixelHash || null,
         pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
@@ -552,7 +562,7 @@ function generationForSessionResult(event: CodexSessionImageEvent, task: CodexTa
     ...event,
     prompt: task.fallback.prompt,
     promptStatus: task.fallback.promptStatus,
-    userMessage: event.userMessage || task.fallback.userMessage,
+    userMessage: event.userMessage || null,
     model: event.model || task.fallback.model,
   };
 }
@@ -628,6 +638,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     codex_image_generated_at: generation.generatedAt || asset.source?.codex_image_generated_at || null,
     model: generation.model || asset.source?.model || null,
     prompt_status: generation.promptStatus,
+    codex_generation_origin: generation.origin || asset.source?.codex_generation_origin || null,
   };
   if (userMessageChanged) nextSource.user_message = nextUserMessage;
   const sourceChanged = [
@@ -637,6 +648,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     "model",
     "prompt_status",
     "user_message",
+    "codex_generation_origin",
   ].some((key) => asset.source?.[key] !== nextSource[key]);
   const businessStatusChanged = asset.business_fields?.prompt_status !== generation.promptStatus;
   if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged && !userMessageChanged) return false;

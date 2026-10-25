@@ -4,6 +4,8 @@ import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+// @ts-ignore - better-sqlite3 is consumed as an untyped runtime dependency in this repository.
+import Database from "better-sqlite3";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { createCodexImageBridge, reconcileCodexGeneratedImages } from "../lib/codex-image-bridge.js";
 
@@ -262,16 +264,12 @@ test("does not downgrade revised prompt provenance when only task fallback remai
   });
 
   const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
-  // The task fallback now backfills the missing user message; it must not
-  // touch the prompt or its revised provenance.
-  assert.deepEqual(result.updated, ["verified-provenance"]);
+  assert.deepEqual(result.updated, []);
   const asset = await store.getAsset("default", "verified-provenance");
   assert.equal(asset.prompt, "Verified revised prompt");
   assert.equal(asset.source.prompt_status, "image-generation-revised-prompt");
-  assert.equal(asset.business_fields.prompt_status, "image-generation-revised-prompt");
   assert.equal(asset.source.codex_image_generation_call_id, "verified-call");
-  assert.equal(asset.source.user_message, "Task-level fallback prompt");
-  assert.equal(asset.business_fields.user_message, "Task-level fallback prompt");
+  assert.equal(asset.source.user_message, undefined);
   assert.equal(asset.source.model, undefined);
 });
 
@@ -339,37 +337,98 @@ test("reprocesses an archived Codex image when the session gains a user message 
   assert.deepEqual(third.updated, []);
 });
 
-test("backfills the user message on an archived Codex image without touching prompt provenance", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "mosa-codex-msg-only-"));
+test("does not guess a user message from the task fallback", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-no-guess-"));
   deferTestPathRemoval(root, { recursive: true, force: true });
   const projectRoot = join(root, "project");
   const managerDir = join(projectRoot, "mosa");
   const imagesDir = join(root, "generated_images");
   const sessionsDir = join(root, "sessions");
   const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f12";
-  const imagePath = join(imagesDir, taskId, "exec-msg-only.png");
+  const imagePath = join(imagesDir, taskId, "exec-no-guess.png");
   await mkdir(join(imagesDir, taskId), { recursive: true });
   await writeFile(imagePath, pngFixture(700, 500));
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
-  await store.createAsset({ assetId: "msg-only", imagePath, prompt: "", sourceType: "codex-generated" });
+  await store.createAsset({ assetId: "no-guess", imagePath, prompt: "", sourceType: "codex-generated" });
   await mkdir(sessionsDir, { recursive: true });
   await writeFile(join(sessionsDir, `rollout-test-${taskId}.jsonl`), `${JSON.stringify({
     type: "response_item",
     payload: { type: "message", role: "user", content: [{ type: "input_text", text: "帮我做一张书封" }] },
   })}\n`);
 
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
-  assert.deepEqual(result.updated, ["msg-only"]);
-  const asset = await store.getAsset("default", "msg-only");
-  assert.equal(asset.source.user_message, "帮我做一张书封");
-  assert.equal(asset.business_fields.user_message, "帮我做一张书封");
+  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir, threadHistoryPath: join(root, "missing.sqlite") });
+  assert.deepEqual(result.updated, []);
+  const asset = await store.getAsset("default", "no-guess");
+  assert.equal(asset.source.user_message, undefined);
+  assert.equal(asset.business_fields.user_message, undefined);
   assert.equal(asset.prompt, "");
   assert.notEqual(asset.source.prompt_status, "task-user-prompt");
-  assert.notEqual(asset.business_fields.prompt_status, "task-user-prompt");
+});
 
-  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
-  assert.deepEqual(second.updated, []);
+test("archives Codex images from the thread-history database with the turn's user message", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-db-archive-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f14";
+  const imagePath = join(imagesDir, taskId, "db-archive.png");
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await writeFile(imagePath, pngFixture(640, 960));
+  const fixture = await createThreadHistoryDbFixture(root, taskId, [
+    { savedPath: imagePath, itemId: "ig-db", revisedPrompt: "Book cover, warm palette, bold serif title.", userMessage: "帮我做一张书封" },
+  ]);
+  fixture.close();
+
+  const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
+  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir, threadHistoryPath: fixture.dbPath });
+  assert.equal(result.imported.length, 1);
+  const asset = result.imported[0];
+  assert.equal(asset.prompt, "Book cover, warm palette, bold serif title.");
+  assert.equal(asset.source.prompt_status, "image-generation-revised-prompt");
+  assert.equal(asset.source.user_message, "帮我做一张书封");
+  assert.equal(asset.business_fields.user_message, "帮我做一张书封");
+  assert.equal(asset.source.codex_generation_origin, "codex-thread-history");
+  assert.equal(asset.source.codex_image_generation_call_id, "ig-db");
+});
+
+test("upgrades an archived Codex image once the thread-history database appears", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-db-upgrade-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f15";
+  const imagePath = join(imagesDir, taskId, "db-upgrade.png");
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await writeFile(imagePath, pngFixture(512, 512));
+
+  const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
+  const options = { store, imagesDir, sessionsDir, threadHistoryPath: join(root, "absent", "thread_history_1.sqlite") };
+  const first = await reconcileCodexGeneratedImages(options);
+  assert.equal(first.imported.length, 1);
+  const assetId = first.imported[0].id;
+  assert.equal(first.imported[0].source.prompt_status, "not-available");
+
+  await mkdir(join(root, "absent"), { recursive: true });
+  const fixture = await createThreadHistoryDbFixture(join(root, "absent"), taskId, [
+    { savedPath: imagePath, itemId: "ig-up", revisedPrompt: "Upgraded revised prompt.", userMessage: "升级用的指令" },
+  ]);
+  fixture.close();
+  const second = await reconcileCodexGeneratedImages(options);
+  assert.deepEqual(second.updated, [assetId]);
+  const upgraded = await store.getAsset("default", assetId);
+  assert.equal(upgraded.prompt, "Upgraded revised prompt.");
+  assert.equal(upgraded.source.prompt_status, "image-generation-revised-prompt");
+  assert.equal(upgraded.source.user_message, "升级用的指令");
+  assert.equal(upgraded.business_fields.user_message, "升级用的指令");
+  assert.equal(upgraded.source.codex_generation_origin, "codex-thread-history");
+
+  const third = await reconcileCodexGeneratedImages(options);
+  assert.deepEqual(third.updated, []);
 });
 
 test("keeps an existing Codex user message even when the session has a newer one", async (t) => {
@@ -524,6 +583,37 @@ function pngFixture(width, height) {
   image.writeUInt32BE(width, 16);
   image.writeUInt32BE(height, 20);
   return image;
+}
+
+async function createThreadHistoryDbFixture(dir, taskId, generations) {
+  const dbPath = join(dir, "thread_history_1.sqlite");
+  const db = new Database(dbPath);
+  db.exec([
+    "CREATE TABLE thread_items (thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, item_id TEXT NOT NULL, rollout_ordinal INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, item_json TEXT NOT NULL, item_type TEXT NOT NULL DEFAULT '', updated_at_ordinal INTEGER NOT NULL DEFAULT 0, started_at_ms INTEGER, completed_at_ms INTEGER, PRIMARY KEY (thread_id, turn_id, item_id))",
+    "CREATE TABLE thread_turns (thread_id TEXT NOT NULL, turn_id TEXT NOT NULL, rollout_ordinal INTEGER NOT NULL, status TEXT NOT NULL, error_json TEXT, started_at INTEGER, completed_at INTEGER, duration_ms INTEGER, first_user_item_id TEXT, final_agent_item_id TEXT, rollout_byte_offset INTEGER, rollout_end_ordinal INTEGER, rollout_end_byte_offset INTEGER, root_turn_id TEXT, PRIMARY KEY (thread_id, turn_id))",
+  ].join(";"));
+  generations.forEach((generation, index) => {
+    const turnId = `turn-${index + 1}`;
+    db.prepare("INSERT INTO thread_turns (thread_id, turn_id, rollout_ordinal, status, first_user_item_id) VALUES (?, ?, ?, 'completed', ?)")
+      .run(taskId, turnId, index, generation.userMessage ? `um-${index + 1}` : null);
+    if (generation.userMessage) {
+      db.prepare("INSERT INTO thread_items (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, item_json, item_type) VALUES (?, ?, ?, ?, ?, ?, 'userMessage')")
+        .run(taskId, turnId, `um-${index + 1}`, 1, 1_000, JSON.stringify({
+          type: "userMessage",
+          id: `um-${index + 1}`,
+          content: [{ type: "text", text: generation.userMessage }],
+        }));
+    }
+    db.prepare("INSERT INTO thread_items (thread_id, turn_id, item_id, rollout_ordinal, created_at_ms, completed_at_ms, item_json, item_type) VALUES (?, ?, ?, ?, ?, ?, ?, 'imageGeneration')")
+      .run(taskId, turnId, generation.itemId, 2, 2_000, 3_000, JSON.stringify({
+        type: "imageGeneration",
+        id: generation.itemId,
+        status: "completed",
+        revisedPrompt: generation.revisedPrompt,
+        savedPath: generation.savedPath,
+      }));
+  });
+  return { dbPath, close() { db.close(); } };
 }
 
 async function waitFor(condition, timeoutMs = 2000) {

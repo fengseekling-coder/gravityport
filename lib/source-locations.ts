@@ -4,6 +4,7 @@ import * as nodePath from "node:path";
 const SOURCE_ENV_KEYS = Object.freeze({
   codexImagesDir: "CODEX_GENERATED_IMAGES_DIR",
   codexSessionsDir: "CODEX_SESSIONS_DIR",
+  codexThreadHistoryDir: "CODEX_THREAD_HISTORY_DIR",
   grokSessionsDir: "GROK_SESSIONS_DIR",
   cowartCanvasDir: "COWART_MOSA_CANVAS_DIR",
   cowartRegistryPath: "MOSA_COWART_REGISTRY_PATH",
@@ -12,6 +13,7 @@ const SOURCE_ENV_KEYS = Object.freeze({
 export interface SourceLocationOverrides {
   codexImagesDir?: string;
   codexSessionsDir?: string;
+  codexThreadHistoryDir?: string;
   grokSessionsDir?: string;
   cowartCanvasDir?: string;
   cowartRegistryPath?: string;
@@ -21,6 +23,7 @@ export interface SourceLocationEnvironment {
   CODEX_HOME?: string;
   CODEX_GENERATED_IMAGES_DIR?: string;
   CODEX_SESSIONS_DIR?: string;
+  CODEX_THREAD_HISTORY_DIR?: string;
   GROK_SESSIONS_DIR?: string;
   COWART_MOSA_CANVAS_DIR?: string;
   MOSA_COWART_REGISTRY_PATH?: string;
@@ -30,6 +33,7 @@ export interface SourceLocationEnvironment {
 export interface SourceLocations {
   codexImagesDir: string;
   codexSessionsDir: string;
+  codexThreadHistoryDir: string;
   grokSessionsDir: string;
   cowartCanvasDir: string;
   cowartRegistryPath: string;
@@ -57,6 +61,7 @@ export function resolveSourceLocations({
   return {
     codexImagesDir: configured("codexImagesDir", pathApi.join(codexRoot, "generated_images")),
     codexSessionsDir: configured("codexSessionsDir", pathApi.join(codexRoot, "sessions")),
+    codexThreadHistoryDir: configured("codexThreadHistoryDir", codexRoot),
     grokSessionsDir: configured("grokSessionsDir", pathApi.join(home, ".grok", "sessions")),
     cowartCanvasDir: configured("cowartCanvasDir", pathApi.join(codexRoot, "cowart-data", "mosa")),
     cowartRegistryPath: configured("cowartRegistryPath", pathApi.join(codexRoot, "mosa", "cowart-projects.json")),

@@ -2,6 +2,7 @@ import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
+import type { CodexThreadHistorySource } from "./codex-thread-history.js";
 
 export interface CodexGenerationMetadata {
   taskId: string;
@@ -14,6 +15,8 @@ export interface CodexGenerationMetadata {
   eventKey: string | null;
   generatedAt: string | null;
   model: string | null;
+  /** Where the generation record was recovered from (e.g. the thread-history database). */
+  origin?: string | null;
 }
 
 export interface CodexTaskMetadata {
@@ -75,7 +78,7 @@ export interface CodexSessionIndex {
   reset(): void;
 }
 
-export function createCodexSessionIndex({ sessionsDir }: { sessionsDir: string }): CodexSessionIndex {
+export function createCodexSessionIndex({ sessionsDir, threadHistory }: { sessionsDir: string; threadHistory?: CodexThreadHistorySource | null }): CodexSessionIndex {
   const root = resolve(sessionsDir);
   const states = new Map<string, SessionState>();
   const pending = new Map<string, CodexSessionImageEvent>();
@@ -118,19 +121,57 @@ export function createCodexSessionIndex({ sessionsDir }: { sessionsDir: string }
 
   function metadataForTask(taskId: string): CodexTaskMetadata {
     const cleanTaskId = String(taskId || "").trim();
-    let selected: SessionState | null = null;
+    const matching: SessionState[] = [];
     for (const state of states.values()) {
-      if (state.taskId !== cleanTaskId) continue;
+      if (state.taskId === cleanTaskId) matching.push(state);
+    }
+    // One conversation may be paginated across several JSONL files; merge their
+    // image events, letting the file with the newer mtime win a savedPath clash.
+    const imageEvents = new Map<string, CodexGenerationMetadata>();
+    for (const state of [...matching].sort((left, right) => left.mtimeMs - right.mtimeMs)) {
+      for (const [savedPath, metadata] of state.imageEvents) imageEvents.set(savedPath, metadata);
+    }
+    // Conversations migrated off JSONL live only in the thread-history database;
+    // its records fill savedPaths the session files never saw (JSONL wins clashes).
+    const historyEvents = threadHistory ? threadHistory.imageEventsForThread(cleanTaskId) : null;
+    if (historyEvents) {
+      for (const [savedPath, metadata] of historyEvents) {
+        if (!imageEvents.has(savedPath)) imageEvents.set(savedPath, metadata);
+      }
+    }
+    if (!matching.length && !imageEvents.size) return emptyTaskMetadata(cleanTaskId);
+    let selected: SessionState | null = null;
+    for (const state of matching) {
       if (!selected || state.mtimeMs > selected.mtimeMs) selected = state;
     }
-    if (!selected) return emptyTaskMetadata(cleanTaskId);
+    if (!selected) {
+      return {
+        taskId: cleanTaskId,
+        fallback: {
+          taskId: cleanTaskId,
+          prompt: "",
+          promptStatus: "not-available",
+          userMessage: null,
+          sessionPath: null,
+          sessionUpdatedAt: null,
+          callId: null,
+          eventKey: null,
+          generatedAt: null,
+          model: null,
+        },
+        imageEvents,
+      };
+    }
     return {
       taskId: cleanTaskId,
       fallback: {
         taskId: cleanTaskId,
+        // The fallback prompt keeps its JSONL meaning, but the user message is
+        // only recorded for images that matched a generation record; the task's
+        // last utterance must not be attributed to unmatched images.
         prompt: selected.lastUserPrompt,
         promptStatus: selected.lastUserPrompt ? "task-user-prompt" : "not-available-in-session",
-        userMessage: selected.lastUserPrompt || null,
+        userMessage: null,
         sessionPath: selected.sessionPath,
         sessionUpdatedAt: selected.mtimeMs ? new Date(selected.mtimeMs).toISOString() : null,
         callId: null,
@@ -138,7 +179,7 @@ export function createCodexSessionIndex({ sessionsDir }: { sessionsDir: string }
         generatedAt: null,
         model: null,
       },
-      imageEvents: new Map(selected.imageEvents),
+      imageEvents,
     };
   }
   function pendingResults(): CodexSessionImageEvent[] {
@@ -320,7 +361,7 @@ function isImageGenExtensionItem(item: Record<string, unknown>): boolean {
 
 /** Codex wraps a user turn that carries pasted files in a preamble listing them;
  * the user's own words follow the "## My request:" heading. */
-function stripAttachmentPreamble(text: string): string {
+export function stripAttachmentPreamble(text: string): string {
   if (!text.startsWith("# Files mentioned by the user")) return text;
   const marker = text.indexOf("## My request:");
   if (marker < 0) return text;
@@ -401,7 +442,7 @@ function removePendingForSession(pending: Map<string, CodexSessionImageEvent>, s
   for (const key of pending.keys()) if (key.startsWith(prefix)) pending.delete(key);
 }
 
-function isUserPrompt(text: string): boolean {
+export function isUserPrompt(text: string): boolean {
   return Boolean(text)
     && text.length <= 12000
     && !text.startsWith("<")
