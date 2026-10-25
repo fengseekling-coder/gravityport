@@ -485,14 +485,21 @@
   // The app attaches references to the generation at the moment the finished
   // asset lands (matched by generation_context_id), so every reference of a
   // record must be ingested before the record's media. References of one
-  // record go out in parallel and are sent once per history id.
+  // record go out in parallel and are sent once per history id. A later scan
+  // that sees the same record while a reference is still uploading waits for
+  // that upload too, so its media can never overtake the references.
+  const referenceUploads = new Map();
   async function captureRecordReferences(record) {
     const historyId = record.historyId || "";
-    await Promise.all((record.referenceUrls || []).map(async (referenceUrl) => {
+    await Promise.all((record.referenceUrls || []).map((referenceUrl) => {
       const key = `jimeng:ref:${historyId}:${resourceKeyForUrl(referenceUrl) || referenceUrl}`;
-      if (seen.has(key)) return;
+      const pending = referenceUploads.get(key);
+      if (pending) return pending;
+      if (seen.has(key)) return undefined;
       rememberSeen(key);
-      await captureReference(referenceUrl, record);
+      const upload = captureReference(referenceUrl, record).finally(() => referenceUploads.delete(key));
+      referenceUploads.set(key, upload);
+      return upload;
     }));
   }
 

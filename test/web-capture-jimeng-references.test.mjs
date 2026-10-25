@@ -377,6 +377,29 @@ test("automatic video capture ingests both references before the video, and a re
   assert.equal(capture.ingested.length, count, "a replayed record must not re-ingest references or media");
 });
 
+test("a poll arriving while references upload still waits for them before sending the video", async () => {
+  // Each ingest takes 800ms, so the second scan (≈300ms after the replay)
+  // runs while both references are still uploading.
+  const capture = createCaptureSandbox({ delayMs: 800 });
+  await new Promise((resolve) => setImmediate(resolve));
+  const text = JSON.stringify(videoRecordFixture(Date.now()));
+  deliverHookResponse(capture, text);
+
+  const refs = () => capture.ingested.filter((entry) => entry.payload.isReference);
+  const videos = () => capture.ingested.filter((entry) => entry.payload.mediaKind === "video" && !entry.payload.isReference);
+  assert.ok(await waitFor(() => refs().length >= 2), "both references start uploading");
+  deliverHookResponse(capture, text);
+
+  assert.ok(await waitFor(() => videos().length >= 1 && videos()[0].resolvedAt > 0), "the video is ingested");
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.equal(refs().length, 2, "references are sent once");
+  assert.equal(videos().length, 1, "the video is sent once");
+  assert.ok(
+    videos()[0].calledAt >= Math.max(...refs().map((ref) => ref.resolvedAt)),
+    "the replayed scan must not send the video before the references finished",
+  );
+});
+
 test("automatic image capture also ingests its reference before the image", async () => {
   const capture = createCaptureSandbox();
   await new Promise((resolve) => setImmediate(resolve));
