@@ -35,8 +35,15 @@ export async function run(ctx) {
     const notes = JSON.parse(await readFile(join(ctx.rootDir, "release-notes.json"), "utf8"));
     // Between a release and the next recorded change, `unreleased` is empty and
     // the dev About page renders the placeholder instead of real lines.
-    const zhDevLines = notes.unreleased.zh.length > 0 ? notes.unreleased.zh : ["还没有记录"];
-    const enDevLines = notes.unreleased.en.length > 0 ? notes.unreleased.en : ["Nothing recorded yet"];
+    // `unreleased` may be a flat list or sectioned (schema 2); the renderer
+    // reports the lines of all groups in section order.
+    const flatLines = (value) => Array.isArray(value)
+      ? value
+      : ["new", "improved", "fixed", "other"].flatMap((key) => (Array.isArray(value?.[key]) ? value[key] : []));
+    const zhUnreleased = flatLines(notes.unreleased.zh);
+    const enUnreleased = flatLines(notes.unreleased.en);
+    const zhDevLines = zhUnreleased.length > 0 ? zhUnreleased : ["还没有记录"];
+    const enDevLines = enUnreleased.length > 0 ? enUnreleased : ["Nothing recorded yet"];
     const status = await ctx.api(server.origin, "GET", "/api/health");
     if (status.distribution !== "development") {
       throw new Error(`this flow asserts the development branch; dist was built as ${status.distribution} — run npm run build without MOSA_RELEASE_DISTRIBUTION first`);

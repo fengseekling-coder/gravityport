@@ -22,7 +22,7 @@
   const TIME_KEYS = ["finish_time", "created_time", "create_time", "created_at", "submit_time", "c_time", "insert_time", "update_time"];
   const RECORD_ID_KEYS = ["history_record_id", "history_id", "record_id"];
   const ITEM_ID_KEYS = ["item_id", "id", "local_item_id"];
-  const REFERENCE_KEYS = ["image_refs", "image_refs_url", "ref_images", "reference_images"];
+  const MAX_REFERENCE_IMAGES = 8;
   const RESIZE_PATTERN = /aigc_resize[:_-](\d{2,5})[:_-](\d{2,5})/i;
   const RESOURCE_ID_PATTERN = /\/([A-Za-z0-9_-]{8,})~tplv-/;
   const MAX_WALK_NODES = 60_000;
@@ -188,6 +188,54 @@
   }
 
   /**
+   * Reference images for one generation record, in the order `resources`
+   * lists them (observed on the live API 2026-10-25: `resources[]` carries
+   * `type: "image"` entries with `image_info.image_url`, max 3 per record;
+   * the same images also appear under task.aigc_image_params…, which is
+   * ignored here). Frame sources under task (first/last frame of a video
+   * generation) are a fallback. Dedup by resource id, cap at 8.
+   */
+  function jimengReferenceInfos(record) {
+    const urls = [];
+    const byKey = new Set();
+    const addUrl = (value) => {
+      const info = mediaUrlInfo(value);
+      if (!info || info.kind !== "image") return;
+      const key = info.resourceId || info.url;
+      if (byKey.has(key)) return;
+      byKey.add(key);
+      urls.push(info.url);
+    };
+    const resources = Array.isArray(record.resources) ? record.resources : [];
+    for (const resource of resources) {
+      if (!resource || typeof resource !== "object" || resource.type !== "image") continue;
+      const imageInfo = resource.image_info && typeof resource.image_info === "object" ? resource.image_info : {};
+      if (imageInfo.image_url) {
+        addUrl(imageInfo.image_url);
+        continue;
+      }
+      const coverMap = imageInfo.cover_url_map && typeof imageInfo.cover_url_map === "object" ? imageInfo.cover_url_map : {};
+      const largest = Object.entries(coverMap)
+        .filter(([size]) => Number(size) > 0)
+        .sort((a, b) => Number(b[0]) - Number(a[0]))[0];
+      if (largest) addUrl(largest[1]);
+    }
+    const task = record.task && typeof record.task === "object" ? record.task : {};
+    const videoInputs = task.original_input && typeof task.original_input === "object" && Array.isArray(task.original_input.video_gen_inputs)
+      ? task.original_input.video_gen_inputs
+      : [];
+    const frames = [
+      task.first_frame_image,
+      task.last_frame_image,
+      ...videoInputs.flatMap((input) => [input?.first_frame_image, input?.last_frame_image]),
+    ];
+    for (const frame of frames) {
+      if (frame && typeof frame === "object") addUrl(String(frame.image_url || frame.url || ""));
+    }
+    return urls.slice(0, MAX_REFERENCE_IMAGES);
+  }
+
+  /**
    * Walk one /mweb/v1/ JSON response and extract finished generation items.
    * Record containers are recognized structurally (objects carrying an
    * item_list), so poll responses, history listings and conversation feeds
@@ -238,25 +286,7 @@
           extracted.model = extracted.model || context.model;
           extracted.historyId = context.recordId;
           extracted.generationStatus = node.status === 30 ? "failed" : node.status === 10 || node.status === 50 ? "completed" : "in_progress";
-          const referenceUrls = [];
-          for (const key of REFERENCE_KEYS) {
-            const value = node[key] ?? item[key];
-            if (typeof value === "string") referenceUrls.push(value);
-            else if (Array.isArray(value)) {
-              for (const entry of value) {
-                if (typeof entry === "string") referenceUrls.push(entry);
-                else if (entry && typeof entry === "object" && typeof entry.url === "string") referenceUrls.push(entry.url);
-                else if (entry && typeof entry === "object" && typeof entry.image_url === "string") referenceUrls.push(entry.image_url);
-              }
-            }
-          }
-          for (const frame of [item.first_frame_image, item.last_frame_image, node.first_frame_image, node.last_frame_image]) {
-            if (frame && typeof frame === "object") referenceUrls.push(String(frame.url || frame.image_url || ""));
-          }
-          extracted.referenceUrls = [...new Set(referenceUrls
-            .map((value) => mediaUrlInfo(value))
-            .filter((info) => info && info.kind === "image" && info.resourceId)
-            .map((info) => info.url))].slice(0, 8);
+          extracted.referenceUrls = jimengReferenceInfos(node);
           records.push(extracted);
         }
       }
@@ -452,6 +482,32 @@
     }
   }
 
+  // The app attaches references to the generation at the moment the finished
+  // asset lands (matched by generation_context_id), so every reference of a
+  // record must be ingested before the record's media. References of one
+  // record go out in parallel and are sent once per history id. A later scan
+  // that sees the same record while a reference is still uploading waits for
+  // that upload too, so its media can never overtake the references.
+  const referenceUploads = new Map();
+  async function captureRecordReferences(record) {
+    const historyId = record.historyId || "";
+    await Promise.all((record.referenceUrls || []).map((referenceUrl) => {
+      const key = `jimeng:ref:${historyId}:${resourceKeyForUrl(referenceUrl) || referenceUrl}`;
+      const pending = referenceUploads.get(key);
+      if (pending) return pending;
+      if (seen.has(key)) return undefined;
+      rememberSeen(key);
+      const upload = captureReference(referenceUrl, record).finally(() => referenceUploads.delete(key));
+      referenceUploads.set(key, upload);
+      return upload;
+    }));
+  }
+
+  async function captureRecordWithReferences(record, mediaKind) {
+    await captureRecordReferences(record);
+    return captureRecordMedia(record, mediaKind);
+  }
+
   async function captureRecordMedia(record, mediaKind) {
     return withCaptureSlot(async () => {
       const media = mediaKind === "video" ? record.video : record.image;
@@ -516,12 +572,11 @@
       if (!hasImage && !hasVideo) continue;
       if (hasVideo && !seen.has(`jimeng:video:${mediaKey}`)) {
         debugLog("new video, capturing", mediaKey, urlForLog(record.video.url));
-        void captureRecordMedia(record, "video");
+        void captureRecordWithReferences(record, "video");
       }
       if (hasImage && !seen.has(`jimeng:image:${mediaKey}`)) {
         debugLog("new image, capturing", mediaKey, urlForLog(record.image.url), `${record.image.width || 0}x${record.image.height || 0}`);
-        for (const referenceUrl of record.referenceUrls) void captureReference(referenceUrl, record);
-        void captureRecordMedia(record, "image");
+        void captureRecordWithReferences(record, "image");
       }
     }
   }
@@ -714,6 +769,7 @@
             identity: learned?.record.identity || "",
             historyId: learned?.record.historyId || "",
           });
+          if (learned?.record?.referenceUrls?.length) await captureRecordReferences(learned.record);
           const response = await sendIngest(payload);
           showToast(response?.ok ? "已保存到 GravityPort" : (response?.error || "保存失败"), !response?.ok);
           sendResponse(response || { ok: false });
@@ -763,6 +819,7 @@
         identity: learned?.record.identity || "",
         historyId: learned?.record.historyId || "",
       });
+      if (learned?.record?.referenceUrls?.length) await captureRecordReferences(learned.record);
       const response = await sendIngest(payload);
       showToast(response?.ok ? "已保存到 GravityPort" : (response?.error || "保存失败"), !response?.ok);
       sendResponse(response || { ok: false });
