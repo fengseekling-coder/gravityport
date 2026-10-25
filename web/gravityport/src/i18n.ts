@@ -11,6 +11,7 @@ const english: Record<string, string> = {
   "新版本 {version} 更新内容": "What’s new in {version}", "当前版本 {version} 更新内容": "What’s new in {version}",
   "下个版本（开发中）": "Next version (in development)", "还没有记录": "Nothing recorded yet",
   "这个版本没有更新说明": "No release notes for this version",
+  "新增": "New", "优化": "Improvements", "修复": "Fixes",
   "存储位置": "Storage location", "打开": "Open", "修改": "Change", "保存": "Save",
   "路径已复制，请在系统文件管理器中打开": "Path copied. Open it in your system file manager.",
   "浏览器无法直接打开本地文件夹，请手动复制路径": "The browser cannot open local folders. Please copy the path manually.",

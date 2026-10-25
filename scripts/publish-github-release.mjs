@@ -15,6 +15,12 @@ import { parseArgs } from "node:util";
 
 import { formatNotesText, notesForVersion, readReleaseNotes } from "../lib/release-notes.mjs";
 
+/** GitHub Release headings per section, per language (not the manifest prefixes). */
+const GITHUB_SECTION_HEADINGS = {
+  zh: { new: "新增", improved: "优化", fixed: "修复", other: "其他" },
+  en: { new: "New", improved: "Improvements", fixed: "Fixes", other: "Other" },
+};
+
 export const DEFAULT_GITHUB_REPO = "fengseekling-coder/gravityport";
 export const DOWNLOAD_PAGE_URL = "https://gravityport.azhuilab.com/#download";
 
@@ -33,19 +39,31 @@ export function releaseChannelFlags(version) {
     : ["--prerelease=false", "--latest"];
 }
 
+/** One language's notes as body lines. Legacy flat groups keep the bullet
+ * list; sectioned groups become ### headings with dash lists. */
+export function releaseNotesMarkdown(groups, language) {
+  if (groups.length === 1 && groups[0].key === null) {
+    return ["", ...formatNotesText(groups[0].lines).split("\n"), ""];
+  }
+  const headings = GITHUB_SECTION_HEADINGS[language];
+  const lines = [""];
+  for (const group of groups) {
+    lines.push(`### ${headings[group.key]}`);
+    for (const line of group.lines) lines.push(`- ${line}`);
+    lines.push("");
+  }
+  return lines;
+}
+
 export function githubReleaseBody({ zh, en }) {
   return [
     `安装包请从 ${DOWNLOAD_PAGE_URL} 下载。`,
     `Download: ${DOWNLOAD_PAGE_URL}`,
     "",
     "## 更新内容",
-    "",
-    formatNotesText(zh),
-    "",
+    ...releaseNotesMarkdown(zh, "zh"),
     "## What's new",
-    "",
-    formatNotesText(en),
-    "",
+    ...releaseNotesMarkdown(en, "en"),
   ].join("\n");
 }
 

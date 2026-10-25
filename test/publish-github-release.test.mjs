@@ -10,6 +10,7 @@ import {
   DEFAULT_GITHUB_REPO,
   DOWNLOAD_PAGE_URL,
   githubReleaseBody,
+  githubReleaseBodyForVersion,
   githubReleaseCreateArgs,
   githubReleaseEditArgs,
   main,
@@ -22,9 +23,10 @@ let notesPath;
 let assetPath;
 
 const NOTES = {
-  schema: 1,
+  schema: 2,
   unreleased: { zh: [], en: [] },
   releases: [
+    { version: "0.3.2", date: "2026-11-02", zh: { new: ["新功能一"], fixed: ["修复一"] }, en: { new: ["New one"], fixed: ["Fixed one"] } },
     { version: "0.3.1", date: "2026-11-01", zh: ["正式版第一句", "正式版第二句"], en: ["Final first", "Final second"] },
     { version: "0.3.0-rc.1", date: "2026-10-31", zh: ["过渡版说明"], en: ["Transition note"] },
   ],
@@ -62,14 +64,31 @@ function fakeRunner({ tagOnOrigin = true, releaseExists = false } = {}) {
 const mutating = (calls) => calls.filter(([command, , sub]) => command === "gh" && ["create", "edit", "upload"].includes(sub));
 
 describe("githubReleaseBody", () => {
-  it("starts with the download page and lists both languages from the entry", () => {
-    const body = githubReleaseBody({ zh: ["第一句", "第二句"], en: ["First", "Second"] });
+  it("starts with the download page and keeps the flat bullet list for legacy groups", () => {
+    const body = githubReleaseBody({ zh: [{ key: null, lines: ["第一句", "第二句"] }], en: [{ key: null, lines: ["First", "Second"] }] });
     const lines = body.split("\n");
     assert.equal(lines[0], `安装包请从 ${DOWNLOAD_PAGE_URL} 下载。`);
     assert.equal(lines[1], `Download: ${DOWNLOAD_PAGE_URL}`);
     assert.ok(body.includes("## 更新内容\n\n• 第一句\n• 第二句\n"));
     assert.ok(body.includes("## What's new\n\n• First\n• Second\n"));
     assert.ok(body.indexOf("## 更新内容") < body.indexOf("## What's new"));
+  });
+
+  it("renders sectioned groups as ### headings with dash lists", () => {
+    const body = githubReleaseBody({
+      zh: [{ key: "new", lines: ["新功能一"] }, { key: "fixed", lines: ["修复一"] }],
+      en: [{ key: "new", lines: ["New one"] }, { key: "fixed", lines: ["Fixed one"] }],
+    });
+    assert.ok(body.includes("## 更新内容\n\n### 新增\n- 新功能一\n\n### 修复\n- 修复一\n"));
+    assert.ok(body.includes("## What's new\n\n### New\n- New one\n\n### Fixes\n- Fixed one\n"));
+    assert.ok(body.indexOf("### 新增") < body.indexOf("### 修复"));
+    assert.ok(body.indexOf("## 更新内容") < body.indexOf("## What's new"));
+  });
+
+  it("builds the sectioned body from the release-notes.json entry", () => {
+    const body = githubReleaseBodyForVersion(NOTES, "0.3.2");
+    assert.ok(body.includes("### 新增\n- 新功能一"));
+    assert.ok(body.includes("### Fixes\n- Fixed one"));
   });
 });
 
