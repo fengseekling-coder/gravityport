@@ -758,7 +758,7 @@ test("SQLite schema v1 upgrades once without changing completed migration state"
   assert.notEqual(schemaAfterUpgrade.updated_at, originalTimestamp);
   assert.deepEqual(migrationState, { value: "completed", updated_at: originalTimestamp });
   assert.deepEqual(migrationDetails, { value: '{"verified":true}', updated_at: originalTimestamp });
-  assert.deepEqual(migrationVersions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  assert.deepEqual(migrationVersions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17]);
   assert.equal(parentIndex.name, "asset_versions_parent_idx");
   assert.equal(pixelColumn.name, "pixel_sha256");
   assert.equal(pixelIndex.name, "assets_project_pixel_hash_idx");
