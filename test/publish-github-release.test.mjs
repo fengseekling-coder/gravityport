@@ -79,8 +79,8 @@ describe("githubReleaseBody", () => {
       zh: [{ key: "new", lines: ["新功能一"] }, { key: "fixed", lines: ["修复一"] }],
       en: [{ key: "new", lines: ["New one"] }, { key: "fixed", lines: ["Fixed one"] }],
     });
-    assert.ok(body.includes("## 更新内容\n### 新增\n- 新功能一\n\n### 修复\n- 修复一\n"));
-    assert.ok(body.includes("## What's new\n### New\n- New one\n\n### Fixes\n- Fixed one\n"));
+    assert.ok(body.includes("## 更新内容\n\n### 新增\n- 新功能一\n\n### 修复\n- 修复一\n"));
+    assert.ok(body.includes("## What's new\n\n### New\n- New one\n\n### Fixes\n- Fixed one\n"));
     assert.ok(body.indexOf("### 新增") < body.indexOf("### 修复"));
     assert.ok(body.indexOf("## 更新内容") < body.indexOf("## What's new"));
   });

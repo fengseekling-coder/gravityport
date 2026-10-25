@@ -46,7 +46,7 @@ export function releaseNotesMarkdown(groups, language) {
     return ["", ...formatNotesText(groups[0].lines).split("\n"), ""];
   }
   const headings = GITHUB_SECTION_HEADINGS[language];
-  const lines = [];
+  const lines = [""];
   for (const group of groups) {
     lines.push(`### ${headings[group.key]}`);
     for (const line of group.lines) lines.push(`- ${line}`);
