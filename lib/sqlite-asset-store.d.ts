@@ -151,6 +151,10 @@ export interface SqliteAssetStore {
   renameGroup(projectId: string, groupName: string, nextGroupName: string): Promise<Record<string, unknown>>;
   deleteGroup(projectId: string, groupName: string, options?: { deleteAssets?: boolean }): Promise<Record<string, unknown>>;
   findAssetByContentHash(projectId: string, contentHash: string): Promise<StoredAsset | null>;
+  /** Absolute original path inside this library whose content hash matches, or "" — trash rows included, live rows preferred. Callers must re-hash the file before trusting it. */
+  findOriginalByContentHash(projectId: string, contentHash: string): Promise<string>;
+  isReferenceHardlinkMigrationDone(): Promise<boolean>;
+  completeReferenceHardlinkMigration(): Promise<void>;
   findAssetBySourcePath(projectId: string, sourcePath: string): Promise<StoredAsset | null>;
   findAssetByPixelHash(projectId: string, pixelHash: string): Promise<StoredAsset | null>;
   libraryRevision(projectId?: string): Promise<string>;
