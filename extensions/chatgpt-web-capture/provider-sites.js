@@ -39,6 +39,16 @@
   // budget applies only inside the already-selected single user-prompt block.
   const AI_STUDIO_PROMPT_MAX_NODES = 12_000;
   const AI_STUDIO_MAX_PREVIOUS_TURNS = 16;
+  // A "generation block" is a maximal run of consecutive user turns followed
+  // by its model turns. The block id anchors on the run's first turn id because
+  // that turn exists from the moment an upload lands, while later text turns
+  // can still be appended to the same block.
+  const AI_STUDIO_BLOCK_MAX_TURNS = 64;
+  // Reference images are page-local uploads: a much smaller floor than the
+  // generated-output gate is enough, and no viewport-area threshold applies.
+  const AI_STUDIO_REF_MIN_EDGE = 32;
+  const AI_STUDIO_REF_MAX_PER_BLOCK = 8;
+  const AI_STUDIO_REF_BLOCKS_MAX = 64;
   const MIN_EDGE = 512;
   const MIN_VISIBLE_AREA = 96 * 96;
   const CAPTURE_CONCURRENCY = 2;
@@ -59,6 +69,17 @@
   const flowMediaProbeInFlight = new Set();
   const flowProbeFailures = new Map();
   const promptRetryStates = new Map();
+  // AI Studio generation blocks. User-uploaded reference images are remembered
+  // per block id and only sent when that block's generated media is captured.
+  // These tables intentionally survive URL changes: the first automatic run
+  // renames /prompts/new_chat to /prompts/<id> while the same turns stay
+  // mounted, and a collapsed turn keeps its blob: URL readable even after the
+  // <img> element is removed. Block ids are page-visit turn ids, so stale
+  // entries cannot collide across conversations.
+  const aiStudioBlockReferences = new Map();
+  const aiStudioSentOutputs = new Map();
+  const aiStudioReferenceUploads = new Map();
+  const aiStudioOutputReplays = new Set();
   let lastProviderUrl = location.href;
   let autoCapture = false;
   let scanTimer = null;
@@ -554,6 +575,144 @@
     return null;
   }
 
+  function aiStudioTurnRole(turn) {
+    if (String(turn?.tagName || "").toUpperCase() !== "MS-CHAT-TURN") return "";
+    if (directTurnContainer(turn, "user")) return "user";
+    if (directTurnContainer(turn, "model")) return "model";
+    return "";
+  }
+
+  function aiStudioMediaTurn(media) {
+    const turn = ancestorWithTag(media, "ms-chat-turn");
+    const sessionContent = turn?.parentElement;
+    if (!turn || !sessionContent?.classList?.contains("chat-session-content")) return null;
+    return turn;
+  }
+
+  // The generation block id is the id of the first turn of the consecutive
+  // user-turn run that owns the media's block: for a model turn, walk back
+  // over model turns (collapsed shells included) to the first user turn, then
+  // to that user run's first turn. Without a resolvable first user turn or a
+  // turn-<UUID> id there is no block id, and the output is sent as before.
+  function aiStudioGenerationContextIdForTurn(turn) {
+    let role = aiStudioTurnRole(turn);
+    if (!role) return "";
+    if (role === "model") {
+      let previous = turn.previousElementSibling;
+      let userTurn = null;
+      for (let count = 0; previous && count < AI_STUDIO_BLOCK_MAX_TURNS; count += 1) {
+        const previousRole = aiStudioTurnRole(previous);
+        if (previousRole === "user") {
+          userTurn = previous;
+          break;
+        }
+        if (previousRole !== "model") break;
+        previous = previous.previousElementSibling;
+      }
+      if (!userTurn) return "";
+      turn = userTurn;
+      role = "user";
+    }
+    let first = turn;
+    let bounded = false;
+    for (let count = 0; count < AI_STUDIO_BLOCK_MAX_TURNS; count += 1) {
+      const previous = first.previousElementSibling;
+      if (!previous || aiStudioTurnRole(previous) !== role) {
+        bounded = true;
+        break;
+      }
+      first = previous;
+    }
+    if (!bounded) return "";
+    const id = elementAttribute(first, "id");
+    return id.startsWith("turn-") ? `ai-studio-turn:${id.slice("turn-".length)}` : "";
+  }
+
+  function aiStudioGenerationContextIdForMedia(media) {
+    const turn = aiStudioMediaTurn(media);
+    return turn ? aiStudioGenerationContextIdForTurn(turn) : "";
+  }
+
+  function aiStudioReferenceCandidate(img) {
+    if (!(img instanceof HTMLImageElement) || !img.complete) return null;
+    const turn = aiStudioMediaTurn(img);
+    if (!turn || aiStudioTurnRole(turn) !== "user") return null;
+    if (ancestorWithTag(img, "ms-thought-chunk") || !ancestorWithTag(img, "ms-image-chunk")) return null;
+    const source = imageSourceFor(img);
+    if (source?.kind !== "local" || !source.url.startsWith("blob:")) return null;
+    const width = Number(img.naturalWidth || img.width || 0);
+    const height = Number(img.naturalHeight || img.height || 0);
+    if (width < AI_STUDIO_REF_MIN_EDGE || height < AI_STUDIO_REF_MIN_EDGE) return null;
+    if (!nodeIsRendered(img)) return null;
+    const generationContextId = aiStudioGenerationContextIdForTurn(turn);
+    if (!generationContextId) return null;
+    return { generationContextId, url: source.url, width, height };
+  }
+
+  // Remember user-uploaded reference images in memory only. Nothing is sent
+  // here: references of a block go out only when that block's generated media
+  // is captured.
+  function recordAiStudioReferences() {
+    for (const img of document.images || []) {
+      const candidate = aiStudioReferenceCandidate(img);
+      if (!candidate) continue;
+      const entries = aiStudioBlockReferences.get(candidate.generationContextId);
+      if (entries?.some((entry) => entry.url === candidate.url)) continue;
+      const reference = { url: candidate.url, width: candidate.width, height: candidate.height };
+      const next = entries ? [...entries, reference] : [reference];
+      aiStudioBlockReferences.delete(candidate.generationContextId);
+      aiStudioBlockReferences.set(candidate.generationContextId, next.slice(-AI_STUDIO_REF_MAX_PER_BLOCK));
+      while (aiStudioBlockReferences.size > AI_STUDIO_REF_BLOCKS_MAX) {
+        aiStudioBlockReferences.delete(aiStudioBlockReferences.keys().next().value);
+      }
+    }
+  }
+
+  async function sendAiStudioReference(generationContextId, reference) {
+    try {
+      const response = await fetch(reference.url, { credentials: "same-origin", cache: "no-cache" });
+      if (!response.ok) return false;
+      const blob = await response.blob();
+      if (!blob || blob.size < 100 || blob.size > MAX_LOCAL_IMAGE_BYTES) return false;
+      await chrome.runtime.sendMessage({
+        type: "mosa.ingest",
+        payload: {
+          provider: "google-ai-studio",
+          mediaKind: "image",
+          mimeType: blob.type || mimeTypeForUrl(reference.url),
+          imageBase64: arrayBufferToBase64(await blob.arrayBuffer()),
+          width: reference.width,
+          height: reference.height,
+          pageUrl: location.href,
+          promptStatus: "not-available",
+          captureMode: "automatic",
+          capturedAt: new Date().toISOString(),
+          localMediaIdentity: reference.url,
+          generationContextId,
+          isReference: true,
+        },
+      });
+      return true;
+    } catch {
+      // An optional reference failure never blocks the generated output.
+      return false;
+    }
+  }
+
+  async function sendAiStudioBlockReferences(generationContextId) {
+    const references = aiStudioBlockReferences.get(generationContextId) || [];
+    await Promise.all(references.map((reference) => {
+      const key = `ai-studio:ref:${generationContextId}:${reference.url}`;
+      const pending = aiStudioReferenceUploads.get(key);
+      if (pending) return pending;
+      if (seen.has(key)) return undefined;
+      rememberSeen(key);
+      const upload = sendAiStudioReference(generationContextId, reference).finally(() => aiStudioReferenceUploads.delete(key));
+      aiStudioReferenceUploads.set(key, upload);
+      return upload;
+    }));
+  }
+
   function visiblePromptForProvider(provider, media) {
     if (provider === "gemini") return media instanceof HTMLImageElement ? geminiVisibleUserPromptForImage(media) : null;
     if (provider === "flow") return media instanceof HTMLVideoElement ? flowVisiblePromptForVideo(media) : flowVisiblePromptForImage(media);
@@ -842,9 +1001,9 @@
     }
   }
 
-  async function sendCapture(provider, source, media, { captureMode = "automatic", mediaKind = "image", trustMediaMetrics = true } = {}) {
+  async function sendCapture(provider, source, media, { captureMode = "automatic", mediaKind = "image", trustMediaMetrics = true, generationContextId = "" } = {}) {
     return withCaptureSlot(async () => {
-      if (!extensionAlive()) return { response: { ok: false, error: "GravityPort extension is unavailable." }, hasPrompt: false };
+      if (!extensionAlive()) return { response: { ok: false, error: "GravityPort extension is unavailable." }, hasPrompt: false, providerPrompt: null };
       const capturePageUrl = location.href;
       const video = mediaKind === "video";
       const providerPrompt = visiblePromptForProvider(provider, media);
@@ -862,16 +1021,17 @@
         height: trustMediaMetrics ? (video ? Number(media?.videoHeight || media?.naturalHeight || media?.height || 0) : Number(media?.naturalHeight || media?.height || 0)) : 0,
         durationSeconds: trustMediaMetrics && video && Number.isFinite(Number(media?.duration)) ? Number(media.duration) : null,
       };
+      if (generationContextId) payload.generationContextId = generationContextId;
       if (providerPrompt) Object.assign(payload, providerPrompt);
       if (source.kind === "local" && source.url.startsWith("blob:")) {
         const bytes = video ? await bytesFromVisibleVideo(source, media) : await bytesFromVisibleImage(source, media);
         if (location.href !== capturePageUrl) {
-          return { response: { ok: false, error: "Provider page changed before capture completed." }, hasPrompt: Boolean(providerPrompt?.prompt) };
+          return { response: { ok: false, error: "Provider page changed before capture completed." }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
         }
         payload.mimeType = bytes.mimeType;
         if (video) {
           const response = await sendChunkedVideo(payload, bytes.blob);
-          return { response, hasPrompt: Boolean(providerPrompt?.prompt) };
+          return { response, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
         }
         payload.imageBase64 = bytes.imageBase64;
       } else {
@@ -881,13 +1041,13 @@
         else payload.imageUrl = source.url;
       }
       if (location.href !== capturePageUrl) {
-        return { response: { ok: false, error: "Provider page changed before capture completed." }, hasPrompt: Boolean(providerPrompt?.prompt) };
+        return { response: { ok: false, error: "Provider page changed before capture completed." }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
       }
       const response = await chrome.runtime.sendMessage({
         type: "mosa.ingest",
         payload,
       });
-      return { response, hasPrompt: Boolean(providerPrompt?.prompt) };
+      return { response, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
     });
   }
 
@@ -970,6 +1130,125 @@
     }
   }
 
+  function rememberAiStudioSentOutput(generationContextId, source, media, mediaKind, providerPrompt, referenceCountAtSend) {
+    const video = mediaKind === "video";
+    const entry = {
+      url: source.url,
+      mediaKind,
+      mimeType: source.mimeType || "",
+      width: video ? Number(media?.videoWidth || media?.naturalWidth || media?.width || 0) : Number(media?.naturalWidth || media?.width || 0),
+      height: video ? Number(media?.videoHeight || media?.naturalHeight || media?.height || 0) : Number(media?.naturalHeight || media?.height || 0),
+      durationSeconds: video && Number.isFinite(Number(media?.duration)) ? Number(media.duration) : null,
+      prompt: providerPrompt?.prompt || "",
+      promptStatus: providerPrompt?.promptStatus || "",
+      promptSource: providerPrompt?.promptSource || "",
+      // The references sent before this output are the baseline a later
+      // replay is measured against.
+      referenceCountAtSend,
+    };
+    const entries = (aiStudioSentOutputs.get(generationContextId) || [])
+      .filter((candidate) => candidate.url !== entry.url);
+    entries.push(entry);
+    aiStudioSentOutputs.delete(generationContextId);
+    aiStudioSentOutputs.set(generationContextId, entries);
+    while (aiStudioSentOutputs.size > AI_STUDIO_REF_BLOCKS_MAX) {
+      aiStudioSentOutputs.delete(aiStudioSentOutputs.keys().next().value);
+    }
+  }
+
+  // A recorded output's media may already be unmounted when a late reference
+  // appears, so this read skips the visibility gate. Only blob: URLs this page
+  // itself captured successfully earlier are ever passed in.
+  async function aiStudioBytesFromRecordedUrl(url, mediaKind) {
+    const response = await fetch(url, { credentials: "same-origin", cache: "no-cache" });
+    if (!response.ok) throw new Error(`Recorded media download failed (${response.status})`);
+    const blob = await response.blob();
+    const minimumBytes = mediaKind === "video" ? 1024 : 100;
+    const maximumBytes = mediaKind === "video" ? MAX_LOCAL_VIDEO_BYTES : MAX_LOCAL_IMAGE_BYTES;
+    if (!blob || blob.size < minimumBytes) throw new Error("Recorded media empty/too small");
+    if (blob.size > maximumBytes) throw new Error("Recorded media exceeds GravityPort capture size limit.");
+    return blob;
+  }
+
+  async function replayAiStudioOutput(generationContextId, entry) {
+    try {
+      const blob = await aiStudioBytesFromRecordedUrl(entry.url, entry.mediaKind);
+      const payload = {
+        provider: "google-ai-studio",
+        mediaKind: entry.mediaKind,
+        mimeType: blob.type || entry.mimeType || mimeTypeForUrl(entry.url, entry.mediaKind),
+        pageUrl: location.href,
+        promptStatus: entry.promptStatus || "not-available",
+        captureMode: "automatic",
+        capturedAt: new Date().toISOString(),
+        localMediaIdentity: entry.url,
+        generationContextId,
+        width: entry.width || 0,
+        height: entry.height || 0,
+        durationSeconds: entry.durationSeconds ?? null,
+      };
+      if (entry.prompt) {
+        payload.prompt = entry.prompt;
+        payload.promptSource = entry.promptSource;
+      }
+      if (entry.mediaKind === "video") {
+        await sendChunkedVideo(payload, blob);
+      } else {
+        payload.imageBase64 = arrayBufferToBase64(await blob.arrayBuffer());
+        await chrome.runtime.sendMessage({ type: "mosa.ingest", payload });
+      }
+    } catch {
+      // The original capture already succeeded; a replay is best-effort.
+    }
+  }
+
+  // When a block holds more references than an already-sent output saw at its
+  // send time, send the new references and then re-send that output under the
+  // same block id so the app can attach the late references. A
+  // (block, output, reference count) combination replays at most once; the
+  // check itself runs on every scan and would otherwise replay on every scan.
+  async function replayAiStudioBlockOutputs(generationContextId) {
+    const entries = aiStudioSentOutputs.get(generationContextId);
+    if (!entries?.length) return;
+    const referenceCount = (aiStudioBlockReferences.get(generationContextId) || []).length;
+    if (!entries.some((entry) => referenceCount > (entry.referenceCountAtSend || 0))) return;
+    await sendAiStudioBlockReferences(generationContextId);
+    for (const entry of entries) {
+      if (referenceCount <= (entry.referenceCountAtSend || 0)) continue;
+      const key = `ai-studio:replay:${generationContextId}:${entry.url}:${referenceCount}`;
+      if (aiStudioOutputReplays.has(key)) continue;
+      aiStudioOutputReplays.add(key);
+      await replayAiStudioOutput(generationContextId, entry);
+    }
+  }
+
+  async function captureAiStudioOutput(provider, source, media, mediaKind) {
+    try {
+      const generationContextId = aiStudioGenerationContextIdForMedia(media);
+      // References must land before the generated media so the app can attach
+      // them at the moment the asset is created. Reference uploads run outside
+      // the capture slot on purpose: the slot is reserved for the media itself.
+      // Count the references actually sent ahead of this output. One that
+      // renders while the output is in flight must still trigger a replay.
+      const referenceCountAtSend = (aiStudioBlockReferences.get(generationContextId) || []).length;
+      if (generationContextId) await sendAiStudioBlockReferences(generationContextId);
+      const { response, hasPrompt, providerPrompt } = await sendCapture(provider, source, media, {
+        mediaKind,
+        generationContextId,
+      });
+      if (!response?.ok) {
+        seen.delete(source.url);
+        return;
+      }
+      if (generationContextId) {
+        rememberAiStudioSentOutput(generationContextId, source, media, mediaKind, providerPrompt, referenceCountAtSend);
+      }
+      if (!hasPrompt) schedulePromptRetry(provider, source, mediaKind);
+    } catch {
+      seen.delete(source.url);
+    }
+  }
+
   function scan() {
     const provider = currentProvider();
     if (!provider || !autoCapture) return;
@@ -980,6 +1259,18 @@
       flowProbeFailures.clear();
       clearAllPromptRetries();
     }
+    // Record AI Studio user-turn reference images before outputs are scanned.
+    // A block that already has successfully sent outputs and now holds more
+    // references than at their send time gets its outputs replayed once per
+    // reference count, so late-rendered references still get attached.
+    if (provider === "google-ai-studio") {
+      recordAiStudioReferences();
+      for (const generationContextId of aiStudioBlockReferences.keys()) {
+        if (aiStudioSentOutputs.has(generationContextId)) {
+          void replayAiStudioBlockOutputs(generationContextId);
+        }
+      }
+    }
     for (const img of document.images || []) {
       if (provider === "flow" && flowMediaIdFromImage(img)) {
         void captureFlowMediaThumbnail(img);
@@ -989,6 +1280,10 @@
       const source = imageSourceFor(img);
       if (!source || seen.has(source.url)) continue;
       rememberSeen(source.url);
+      if (provider === "google-ai-studio") {
+        void captureAiStudioOutput(provider, source, img, "image");
+        continue;
+      }
       sendCapture(provider, source, img)
         .then(({ response, hasPrompt }) => {
           // Authentication, origin, or service failures must remain retryable.
@@ -1004,6 +1299,10 @@
         const source = videoSourceFor(video);
         if (!source || seen.has(source.url)) continue;
         rememberSeen(source.url);
+        if (provider === "google-ai-studio") {
+          void captureAiStudioOutput(provider, source, video, "video");
+          continue;
+        }
         sendCapture(provider, source, video, { mediaKind: "video" })
           .then(({ response, hasPrompt }) => {
             if (!response?.ok) seen.delete(source.url);
