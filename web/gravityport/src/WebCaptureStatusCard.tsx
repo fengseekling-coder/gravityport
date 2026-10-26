@@ -168,15 +168,20 @@ export function WebCaptureStatusCardView({
         </p>
       ) : null}
       <div className="web-capture-toggle">
-        <label className="web-capture-toggle-row">
-          <input
-            type="checkbox"
-            checked={deletionSyncEnabled === true}
-            disabled={deletionSyncEnabled === undefined || deletionSyncSaving}
-            onChange={(event) => onDeletionSyncChange(event.target.checked)}
-          />
+        <div className="web-capture-toggle-row">
           <span>{t("即梦站内删除作品时，同步移进回收站")}</span>
-        </label>
+          <button
+            type="button"
+            className={`settings-switch ${deletionSyncEnabled === true ? "enabled" : ""}`}
+            role="switch"
+            aria-checked={deletionSyncEnabled === true}
+            aria-label={t("即梦站内删除作品时，同步移进回收站")}
+            disabled={deletionSyncEnabled === undefined || deletionSyncSaving}
+            onClick={() => onDeletionSyncChange(deletionSyncEnabled !== true)}
+          >
+            <span />
+          </button>
+        </div>
         <p className="web-capture-toggle-note">
           {t("在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动")}
         </p>

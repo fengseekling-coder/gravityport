@@ -351,22 +351,25 @@ test("refresh stays enabled after the promise settles (no stuck disabled state)"
 });
 
 test("the deletion sync switch renders loaded, unknown and failing states (task 258)", () => {
-  // Loaded: an enabled checkbox with the exact task copy and the keep note.
+  // Loaded: the shared settings switch, on, with the exact task copy and the keep note.
   const enabled = renderCard({});
   assert.match(enabled, /即梦站内删除作品时，同步移进回收站/);
   assert.match(enabled, /在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动/);
-  assert.match(enabled, /checked/);
+  assert.match(enabled, /class="settings-switch enabled"/);
+  assert.match(enabled, /role="switch"/);
+  assert.match(enabled, /aria-checked="true"/);
   assert.doesNotMatch(enabled, /同步设置保存失败/);
 
-  // Still loading: the checkbox is visible but disabled and unchecked — the
-  // switch decides trash moves, so it must never show a guessed state.
+  // Still loading: the switch is visible but disabled and off — it decides
+  // trash moves, so it must never show a guessed state.
   const loading = renderCard({ deletionSyncEnabled: undefined });
   assert.match(loading, /disabled/);
-  assert.doesNotMatch(loading, /checked/);
+  assert.match(loading, /aria-checked="false"/);
 
-  // Saving keeps the checkbox disabled without changing its value.
+  // Saving keeps the switch disabled without changing its value.
   const saving = renderCard({ deletionSyncSaving: true });
   assert.match(saving, /disabled/);
+  assert.match(saving, /aria-checked="true"/);
 
   // A failed save surfaces the error line next to the switch.
   assert.match(renderCard({ deletionSyncError: true }), /同步设置保存失败/);
