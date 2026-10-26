@@ -1130,7 +1130,7 @@
     }
   }
 
-  function rememberAiStudioSentOutput(generationContextId, source, media, mediaKind, providerPrompt) {
+  function rememberAiStudioSentOutput(generationContextId, source, media, mediaKind, providerPrompt, referenceCountAtSend) {
     const video = mediaKind === "video";
     const entry = {
       url: source.url,
@@ -1142,9 +1142,9 @@
       prompt: providerPrompt?.prompt || "",
       promptStatus: providerPrompt?.promptStatus || "",
       promptSource: providerPrompt?.promptSource || "",
-      // References of this block were all sent before this output, so their
-      // count at send time is the baseline a later replay is measured against.
-      referenceCountAtSend: (aiStudioBlockReferences.get(generationContextId) || []).length,
+      // The references sent before this output are the baseline a later
+      // replay is measured against.
+      referenceCountAtSend,
     };
     const entries = (aiStudioSentOutputs.get(generationContextId) || [])
       .filter((candidate) => candidate.url !== entry.url);
@@ -1228,6 +1228,9 @@
       // References must land before the generated media so the app can attach
       // them at the moment the asset is created. Reference uploads run outside
       // the capture slot on purpose: the slot is reserved for the media itself.
+      // Count the references actually sent ahead of this output. One that
+      // renders while the output is in flight must still trigger a replay.
+      const referenceCountAtSend = (aiStudioBlockReferences.get(generationContextId) || []).length;
       if (generationContextId) await sendAiStudioBlockReferences(generationContextId);
       const { response, hasPrompt, providerPrompt } = await sendCapture(provider, source, media, {
         mediaKind,
@@ -1238,7 +1241,7 @@
         return;
       }
       if (generationContextId) {
-        rememberAiStudioSentOutput(generationContextId, source, media, mediaKind, providerPrompt);
+        rememberAiStudioSentOutput(generationContextId, source, media, mediaKind, providerPrompt, referenceCountAtSend);
       }
       if (!hasPrompt) schedulePromptRetry(provider, source, mediaKind);
     } catch {

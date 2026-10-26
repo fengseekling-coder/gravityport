@@ -124,7 +124,9 @@ function createHarness({
   blobs = new Map(),
   fetchFailures = new Set(),
   rejectIngest = null,
+  holdReferenceIngest = false,
 } = {}) {
+  const heldReferenceIngests = [];
   const root = new FakeElement("html");
   const context = {
     URL,
@@ -160,6 +162,7 @@ function createHarness({
     blobBytes: blobs,
     fetchFailures,
     rejectIngest,
+    heldReferenceIngests,
     __pendingTimers: [],
     setTimeout: (fn) => { context.__pendingTimers.push(fn); return context.__pendingTimers.length; },
     clearTimeout: () => {},
@@ -191,6 +194,9 @@ function createHarness({
           if (message.type === "mosa.getSettings") return { ok: true, settings: { autoCapture: true } };
           if (message.type === "mosa.ingest" && rejectIngest?.(message.payload)) {
             return { ok: false, error: "rejected by test" };
+          }
+          if (holdReferenceIngest && message.type === "mosa.ingest" && message.payload?.isReference) {
+            return new Promise((resolve) => heldReferenceIngests.push(() => resolve({ ok: true })));
           }
           return { ok: true };
         },
@@ -531,6 +537,29 @@ test("a failing reference fetch or a rejected reference ingest does not block th
   assert.equal(output.length, 1, "the finished image is still sent");
   assert.equal(output[0].generationContextId, BLOCK1_ID);
   assert.equal(output[0].localMediaIdentity, OUTPUT_BLOB);
+});
+
+test("the finished image waits until every reference ingest has completed", async () => {
+  const blobs = standardBlobs();
+  const { context } = createHarness({ blobs, holdReferenceIngest: true });
+  buildStandardConversation(context.document.documentElement);
+
+  await settle();
+  await runScan(context);
+
+  const whileHeld = ingestPayloads(context);
+  assert.equal(whileHeld.filter((p) => p.isReference).length, 2, "both references were sent");
+  assert.equal(whileHeld.filter((p) => !p.isReference).length, 0, "the output must not go out while a reference ingest is still pending");
+
+  context.heldReferenceIngests.shift()();
+  await settle();
+  assert.equal(ingestPayloads(context).filter((p) => !p.isReference).length, 0, "one reference is still pending");
+
+  context.heldReferenceIngests.shift()();
+  await settle();
+  const output = ingestPayloads(context).filter((p) => !p.isReference);
+  assert.equal(output.length, 1);
+  assert.equal(output[0].generationContextId, BLOCK1_ID);
 });
 
 test("an image outside the chat session (the editor draft) is not a reference", async () => {
