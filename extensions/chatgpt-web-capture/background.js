@@ -142,6 +142,7 @@ function senderAllowedForMessage(message, sender) {
   if (message.type === "mosa.reportConversationTurns") return context.provider === "chatgpt";
   if (message.type === "mosa.probeFlowMedia") return context.provider === "flow";
   if (message.type === "mosa.fetchMidjourneyOriginal") return context.provider === "midjourney";
+  if (message.type === "mosa.reportProviderDeletions") return context.provider === "jimeng";
   if (["mosa.beginVideoTransfer", "mosa.videoTransferChunk", "mosa.commitVideoTransfer", "mosa.abortVideoTransfer"].includes(message.type)) {
     return context.provider === "flow" || context.provider === "google-ai-studio" || context.provider === "jimeng" || context.provider === "midjourney";
   }
@@ -537,6 +538,31 @@ function reportConversationTurnsThrottled(payload = {}) {
         });
     }, TURN_BINDING_REPORT_THROTTLE_MS);
   });
+}
+
+async function reportProviderDeletionsToMosa(payload = {}) {
+  const provider = String(payload?.provider || "").trim().toLowerCase();
+  const rawItems = Array.isArray(payload?.items) ? payload.items : [];
+  const items = rawItems
+    .map((entry) => ({
+      recordId: String(entry?.recordId || "").trim().slice(0, 128),
+      itemId: String(entry?.itemId || "").trim(),
+    }))
+    .filter((entry) => /^\d{1,32}$/.test(entry.itemId))
+    .slice(0, 200);
+  if (provider !== "jimeng" || !items.length) return { reported: false, reason: "empty" };
+  const settings = await getSettings();
+  const token = String(settings.mosaToken || "").trim();
+  if (!token) return { reported: false, reason: "no-token" };
+  const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
+  const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-provider-deletions`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ provider, items }),
+    cache: "no-cache",
+  }, 3_000);
+  await response.arrayBuffer().catch(() => {});
+  return { reported: response.ok, status: response.status };
 }
 
 async function mosaReachable() {
@@ -954,6 +980,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     reportConversationTurnsThrottled(message.payload)
       .then((result) => sendResponse({ ok: true, ...result }))
       .catch(() => sendResponse({ ok: true, reported: false }));
+    return true;
+  }
+
+  if (message.type === "mosa.reportProviderDeletions") {
+    // Best effort deletion sync: never surface failures to the page.
+    reportProviderDeletionsToMosa(message.payload)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
     return true;
   }
 

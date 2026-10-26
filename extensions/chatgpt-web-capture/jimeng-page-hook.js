@@ -5,7 +5,11 @@
  * Requests and responses are never modified; only same-origin /mweb/v1/
  * endpoints are observed, and no request headers or credentials leave the
  * page through this channel — only the response body text the page itself
- * already received.
+ * already received. The one exception in scope is the site's own delete
+ * call (/mweb/v1/remove_history): when the site confirms a deletion, the
+ * deleted work item ids from that request body are forwarded so GravityPort
+ * can move matching captures to its trash; URL query parameters, headers,
+ * cookies and every other request body stay unobserved.
  */
 (function mosaJimengPageHook() {
   if (window.__mosaJimengHookInstalled) return;
@@ -44,6 +48,68 @@
   });
 
   const MAX_RESPONSE_TEXT = 4 * 1024 * 1024;
+  // The site's own delete call. The request body carries the deleted item ids
+  // ({"item_id_list_map":{"<recordId>":["<itemId>",…]}}); on a confirmed
+  // success only those ids — never headers, cookies, or URL query parameters —
+  // travel to the content script so GravityPort can move the matching
+  // captures to its trash.
+  const REMOVAL_PATH = "/mweb/v1/remove_history";
+
+  function isJimengRemovalUrl(value) {
+    if (typeof value !== "string" || !value) return false;
+    try {
+      return new URL(value, location.href).pathname === REMOVAL_PATH;
+    } catch {
+      return false;
+    }
+  }
+
+  function parseRemovalRequestItems(requestText) {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(requestText || ""));
+    } catch {
+      return [];
+    }
+    const map = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed.item_id_list_map : null;
+    if (!map || typeof map !== "object" || Array.isArray(map)) return [];
+    const items = [];
+    for (const [recordId, itemIds] of Object.entries(map)) {
+      if (!Array.isArray(itemIds)) continue;
+      for (const itemId of itemIds) {
+        if (typeof itemId !== "string" && typeof itemId !== "number") continue;
+        const clean = String(itemId).trim();
+        if (!/^\d{1,32}$/.test(clean)) continue;
+        items.push({ recordId: String(recordId).slice(0, 128), itemId: clean });
+      }
+    }
+    return items;
+  }
+
+  // The site confirms with HTTP 200 and ret "0" (string or number); anything
+  // else is treated as "not deleted" and never forwarded.
+  function removalSucceeded(status, ret) {
+    return status === 200 && (ret === "0" || ret === 0);
+  }
+
+  function removalRetFromText(text) {
+    try {
+      return JSON.parse(String(text || "")).ret;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function forwardRemovalObservation(requestText, status, ret) {
+    if (!portPost || !removalSucceeded(status, ret)) return;
+    const items = parseRemovalRequestItems(requestText);
+    if (!items.length) return;
+    try {
+      portPost({ type: "jimeng-deletion-observed", success: true, items });
+    } catch {
+      // The content side may be gone (navigation); nothing to do.
+    }
+  }
 
   function isJimengApiUrl(value) {
     if (typeof value !== "string" || !value) return false;
@@ -88,6 +154,18 @@
         promise.then((response) => {
           void forwardFetchResponse(requestUrl, response);
         }).catch(() => {});
+        if (isJimengRemovalUrl(requestUrl)) {
+          // The site currently posts remove_history over XMLHttpRequest; this
+          // path keeps the same observation working if it moves to fetch.
+          const requestText = typeof init?.body === "string" ? init.body : "";
+          promise.then((response) => {
+            (async () => {
+              if (response.status !== 200) return;
+              const ret = removalRetFromText(await response.clone().text());
+              forwardRemovalObservation(requestText, response.status, ret);
+            })().catch(() => {});
+          }).catch(() => {});
+        }
       }
       return promise;
     };
@@ -101,11 +179,15 @@
   };
   XMLHttpRequest.prototype.send = function mosaHookedSend(...args) {
     if (isJimengApiUrl(this.__mosaRequestUrl)) {
+      const removal = isJimengRemovalUrl(this.__mosaRequestUrl);
+      const requestText = removal && typeof args[0] === "string" ? args[0] : "";
       this.addEventListener("load", () => {
         try {
           if (this.responseType === "" || this.responseType === "text") {
+            if (removal) forwardRemovalObservation(requestText, this.status, removalRetFromText(this.responseText));
             forwardResponse(this.__mosaRequestUrl, this.responseText);
           } else if (this.responseType === "json" && this.response != null) {
+            if (removal) forwardRemovalObservation(requestText, this.status, this.response?.ret);
             forwardResponse(this.__mosaRequestUrl, JSON.stringify(this.response));
           }
         } catch {

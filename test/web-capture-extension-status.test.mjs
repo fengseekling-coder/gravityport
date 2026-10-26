@@ -179,6 +179,10 @@ const viewBase = {
   retried: false,
   onRefresh: noop,
   onRetry: noop,
+  deletionSyncEnabled: true,
+  deletionSyncSaving: false,
+  deletionSyncError: false,
+  onDeletionSyncChange: noop,
 };
 
 const renderCard = (overrides = {}) =>
@@ -344,4 +348,31 @@ test("refresh stays enabled after the promise settles (no stuck disabled state)"
   assert.match(renderCard({ refreshing: true }), /disabled/);
   const idle = renderCard({ status: bridgeStatus() });
   assert.doesNotMatch(idle, /disabled/);
+});
+
+test("the deletion sync switch renders loaded, unknown and failing states (task 258)", () => {
+  // Loaded: an enabled checkbox with the exact task copy and the keep note.
+  const enabled = renderCard({});
+  assert.match(enabled, /即梦站内删除作品时，同步移进回收站/);
+  assert.match(enabled, /在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动/);
+  assert.match(enabled, /checked/);
+  assert.doesNotMatch(enabled, /同步设置保存失败/);
+
+  // Still loading: the checkbox is visible but disabled and unchecked — the
+  // switch decides trash moves, so it must never show a guessed state.
+  const loading = renderCard({ deletionSyncEnabled: undefined });
+  assert.match(loading, /disabled/);
+  assert.doesNotMatch(loading, /checked/);
+
+  // Saving keeps the checkbox disabled without changing its value.
+  const saving = renderCard({ deletionSyncSaving: true });
+  assert.match(saving, /disabled/);
+
+  // A failed save surfaces the error line next to the switch.
+  assert.match(renderCard({ deletionSyncError: true }), /同步设置保存失败/);
+
+  // English rendering of the new copy.
+  const english = renderCard({ language: "en" });
+  assert.match(english, /Move Jimeng deletions to Trash/);
+  assert.match(english, /Assets you favorited, rated, grouped, or tagged in GravityPort are not moved\./);
 });

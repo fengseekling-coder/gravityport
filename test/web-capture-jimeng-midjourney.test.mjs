@@ -117,8 +117,8 @@ test("provider policy recognizes Jimeng and Midjourney pages and videos", () => 
   assert.equal(policy.supportsVideo("chatgpt"), false);
 });
 
-test("manifest declares the two new sites, their CDNs, and 0.15.41", () => {
-  assert.equal(manifest.version, "0.15.41");
+test("manifest declares the two new sites, their CDNs, and 0.15.42", () => {
+  assert.equal(manifest.version, "0.15.42");
   for (const host of [
     "https://jimeng.jianying.com/*",
     "https://*.byteimg.com/*",

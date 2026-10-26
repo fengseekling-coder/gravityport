@@ -27,6 +27,9 @@
   const RESOURCE_ID_PATTERN = /\/([A-Za-z0-9_-]{8,})~tplv-/;
   const MAX_WALK_NODES = 60_000;
   const MAX_RESPONSE_TEXT = 4 * 1024 * 1024;
+  // One deletion report carries at most this many item ids; a bigger batch is
+  // the extension's own bug, so the tail is dropped rather than forwarded.
+  const MAX_DELETION_ITEMS = 200;
   const FRESH_SLACK_MS = 120_000;
   const MIN_AUTO_IMAGE_EDGE = 512;
   const SEEN_MAX = 2048;
@@ -430,6 +433,26 @@
     return chrome.runtime.sendMessage({ type: "mosa.ingest", payload });
   }
 
+  // The page hook saw the site confirm a delete (remove_history). Hand the
+  // deleted item ids to the background worker so the app can move matching
+  // captures to its trash. Best effort: a failed report (app closed, worker
+  // restarted) is dropped — the site already deleted the work, and the next
+  // deletion reports naturally.
+  function reportProviderDeletions(rawItems) {
+    const items = [];
+    const seen = new Set();
+    for (const entry of Array.isArray(rawItems) ? rawItems : []) {
+      const itemId = String(entry?.itemId || "").trim();
+      if (!/^\d{1,32}$/.test(itemId) || seen.has(itemId)) continue;
+      seen.add(itemId);
+      items.push({ recordId: String(entry?.recordId || "").slice(0, 128), itemId });
+      if (items.length >= MAX_DELETION_ITEMS) break;
+    }
+    if (!items.length) return;
+    chrome.runtime.sendMessage({ type: "mosa.reportProviderDeletions", payload: { provider: "jimeng", items } })
+      .catch(() => {});
+  }
+
   function basePayload(record, mediaKind, mediaUrl) {
     return {
       provider: "jimeng",
@@ -615,6 +638,9 @@
       port.addEventListener("message", (portEvent) => {
         const message = portEvent.data;
         if (message?.type === "jimeng-api-response") onHookResponse(String(message.text || ""));
+        if (message?.type === "jimeng-deletion-observed" && message.success === true) {
+          reportProviderDeletions(message.items);
+        }
       });
       port.start?.();
     });

@@ -10,8 +10,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
+  fetchProviderDeletionSettings,
   fetchWebCaptureStatus,
   requestWebCaptureRetry,
+  updateProviderDeletionSettings,
   type MosaWebCaptureStatus,
 } from "./mosa-api.js"
 import { translate, type Language } from "./i18n.js"
@@ -79,6 +81,11 @@ export type WebCaptureStatusCardViewProps = {
   retried: boolean
   onRefresh: () => void
   onRetry: () => void
+  /** undefined while the deletion-sync switch has not loaded yet. */
+  deletionSyncEnabled: boolean | undefined
+  deletionSyncSaving: boolean
+  deletionSyncError: boolean
+  onDeletionSyncChange: (enabled: boolean) => void
 }
 
 export function WebCaptureStatusCardView({
@@ -91,6 +98,10 @@ export function WebCaptureStatusCardView({
   retried,
   onRefresh,
   onRetry,
+  deletionSyncEnabled,
+  deletionSyncSaving,
+  deletionSyncError,
+  onDeletionSyncChange,
 }: WebCaptureStatusCardViewProps) {
   const t = (text: string) => translate(text, language)
   const loading = status === undefined
@@ -156,6 +167,21 @@ export function WebCaptureStatusCardView({
           {t("最近一次错误")}：{lastError}
         </p>
       ) : null}
+      <div className="web-capture-toggle">
+        <label className="web-capture-toggle-row">
+          <input
+            type="checkbox"
+            checked={deletionSyncEnabled === true}
+            disabled={deletionSyncEnabled === undefined || deletionSyncSaving}
+            onChange={(event) => onDeletionSyncChange(event.target.checked)}
+          />
+          <span>{t("即梦站内删除作品时，同步移进回收站")}</span>
+        </label>
+        <p className="web-capture-toggle-note">
+          {t("在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动")}
+        </p>
+        {deletionSyncError ? <p className="web-capture-error">{t("同步设置保存失败")}</p> : null}
+      </div>
     </section>
   )
 }
@@ -165,6 +191,9 @@ export function WebCaptureStatusCard({ language }: { language: Language }) {
   const [refreshing, setRefreshing] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const [retried, setRetried] = useState(false)
+  const [deletionSyncEnabled, setDeletionSyncEnabled] = useState<boolean | undefined>(() => undefined)
+  const [deletionSyncSaving, setDeletionSyncSaving] = useState(false)
+  const [deletionSyncError, setDeletionSyncError] = useState(false)
   const retriedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const load = useCallback(() => {
@@ -176,6 +205,11 @@ export function WebCaptureStatusCard({ language }: { language: Language }) {
         if (!controller.signal.aborted) setStatus(null)
       })
       .finally(() => setRefreshing(false))
+    fetchProviderDeletionSettings(controller.signal)
+      .then((next) => setDeletionSyncEnabled(next.jimengDeleteSyncEnabled))
+      .catch(() => {
+        if (!controller.signal.aborted) setDeletionSyncEnabled(undefined)
+      })
     return controller
   }, [])
 
@@ -203,6 +237,19 @@ export function WebCaptureStatusCard({ language }: { language: Language }) {
       .finally(() => setRetrying(false))
   }
 
+  // No optimistic flip: the checkbox keeps the server's last known value until
+  // the save answers, so a failed save never shows a state the server disagrees
+  // with (the switch decides whether captures move to the trash).
+  const changeDeletionSync = (enabled: boolean) => {
+    if (deletionSyncEnabled === undefined || deletionSyncSaving) return
+    setDeletionSyncSaving(true)
+    setDeletionSyncError(false)
+    updateProviderDeletionSettings({ jimengDeleteSyncEnabled: enabled })
+      .then((next) => setDeletionSyncEnabled(next.jimengDeleteSyncEnabled))
+      .catch(() => setDeletionSyncError(true))
+      .finally(() => setDeletionSyncSaving(false))
+  }
+
   return (
     <WebCaptureStatusCardView
       language={language}
@@ -214,6 +261,10 @@ export function WebCaptureStatusCard({ language }: { language: Language }) {
       retried={retried}
       onRefresh={load}
       onRetry={retry}
+      deletionSyncEnabled={deletionSyncEnabled}
+      deletionSyncSaving={deletionSyncSaving}
+      deletionSyncError={deletionSyncError}
+      onDeletionSyncChange={changeDeletionSync}
     />
   )
 }

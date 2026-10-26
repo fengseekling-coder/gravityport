@@ -67,3 +67,24 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+.web-capture-toggle {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--ui-line);
+}
+
+.web-capture-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ui-text);
+  font-size: 12px;
+}
+
+.web-capture-toggle-note {
+  margin: 4px 0 0;
+  padding-left: 22px;
+  color: var(--ui-secondary);
+  font-size: 12px;
+}
