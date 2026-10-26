@@ -67,3 +67,28 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+.web-capture-toggle {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--ui-line);
+}
+
+.web-capture-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--ui-text);
+  font-size: 12px;
+}
+
+.web-capture-toggle-row button.settings-switch:disabled {
+  opacity: 0.5;
+}
+
+.web-capture-toggle-note {
+  margin: 4px 0 0;
+  color: var(--ui-secondary);
+  font-size: 12px;
+}

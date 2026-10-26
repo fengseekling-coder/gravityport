@@ -179,6 +179,10 @@ const viewBase = {
   retried: false,
   onRefresh: noop,
   onRetry: noop,
+  deletionSyncEnabled: true,
+  deletionSyncSaving: false,
+  deletionSyncError: false,
+  onDeletionSyncChange: noop,
 };
 
 const renderCard = (overrides = {}) =>
@@ -344,4 +348,34 @@ test("refresh stays enabled after the promise settles (no stuck disabled state)"
   assert.match(renderCard({ refreshing: true }), /disabled/);
   const idle = renderCard({ status: bridgeStatus() });
   assert.doesNotMatch(idle, /disabled/);
+});
+
+test("the deletion sync switch renders loaded, unknown and failing states (task 258)", () => {
+  // Loaded: the shared settings switch, on, with the exact task copy and the keep note.
+  const enabled = renderCard({});
+  assert.match(enabled, /即梦站内删除作品时，同步移进回收站/);
+  assert.match(enabled, /在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动/);
+  assert.match(enabled, /class="settings-switch enabled"/);
+  assert.match(enabled, /role="switch"/);
+  assert.match(enabled, /aria-checked="true"/);
+  assert.doesNotMatch(enabled, /同步设置保存失败/);
+
+  // Still loading: the switch is visible but disabled and off — it decides
+  // trash moves, so it must never show a guessed state.
+  const loading = renderCard({ deletionSyncEnabled: undefined });
+  assert.match(loading, /disabled/);
+  assert.match(loading, /aria-checked="false"/);
+
+  // Saving keeps the switch disabled without changing its value.
+  const saving = renderCard({ deletionSyncSaving: true });
+  assert.match(saving, /disabled/);
+  assert.match(saving, /aria-checked="true"/);
+
+  // A failed save surfaces the error line next to the switch.
+  assert.match(renderCard({ deletionSyncError: true }), /同步设置保存失败/);
+
+  // English rendering of the new copy.
+  const english = renderCard({ language: "en" });
+  assert.match(english, /Move Jimeng deletions to Trash/);
+  assert.match(english, /Assets you favorited, rated, grouped, or tagged in GravityPort are not moved\./);
 });

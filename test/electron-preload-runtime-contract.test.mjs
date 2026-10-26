@@ -451,16 +451,32 @@ test("real Electron preload smoke (opt-in)", { skip: process.env.MOSA_ELECTRON_P
     "the desktop renderer consumes the runtime capability out of the visible URL fragment");
   const clientToken = state.clientToken;
   assert.ok(clientToken, "the desktop renderer retains the runtime client capability in session storage");
-  const createResponse = await fetch(`${origin}/api/assets/create`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-mosa-client-token": clientToken,
-    },
-    body: JSON.stringify({ projectId: "default", imagePath: fixturePath, prompt: "preload smoke fixture" }),
-  });
-  assert.equal(createResponse.status, 200, await createResponse.text());
-  const cardReady = await waitForRendererValue(client, `document.querySelectorAll('.asset-card').length`, (value) => Number(value) > 0);
+  const createFixture = async (imagePath, prompt) => {
+    const response = await fetch(`${origin}/api/assets/create`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-mosa-client-token": clientToken,
+      },
+      body: JSON.stringify({ projectId: "default", imagePath, prompt }),
+    });
+    assert.equal(response.status, 200, await response.text());
+  };
+  const cardCount = `document.querySelectorAll('.asset-card').length`;
+  await createFixture(fixturePath, "preload smoke fixture");
+  let cardReady = await waitForRendererValue(client, cardCount, (value) => Number(value) > 0);
+  if (!(Number(cardReady) > 0)) {
+    // The renderer does not refetch on its first library-events connection,
+    // so a create that lands before that stream opens is never announced. By
+    // now the stream has had 10s to open: a second create can only reach the
+    // gallery through the live refresh path, which is what this checks.
+    const secondFixturePath = join(assetsDir, "preload-smoke-2.png");
+    // A 2x2 red PNG: different bytes and pixels, so neither content nor pixel
+    // dedupe can fold it into the first fixture.
+    await writeFile(secondFixturePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWO4o6FxR0ODAUIBACOuBLGwh8F2AAAAAElFTkSuQmCC", "base64"));
+    await createFixture(secondFixturePath, "preload smoke fixture (after live sync opened)");
+    cardReady = await waitForRendererValue(client, cardCount, (value) => Number(value) > 0);
+  }
   assert.equal(Number(cardReady) > 0, true, "the created asset arrives through the live library refresh path");
   await evaluate(client, `document.querySelector('.asset-card')?.click(); true`);
   const actionState = JSON.parse(await waitForRendererValue(client, `JSON.stringify({

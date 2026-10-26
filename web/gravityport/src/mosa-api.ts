@@ -379,6 +379,25 @@ export async function requestWebCaptureRetry(): Promise<number> {
   return Math.max(0, Number(data.retryRequestId || 0))
 }
 
+export type MosaProviderDeletionSettings = {
+  jimengDeleteSyncEnabled: boolean
+}
+
+/** GET /api/web-capture/provider-deletion-settings — the "move provider-site
+ * deletions to the Trash" switch that the server's deletion-sync ingest route
+ * reads (default on when the library has no saved value). */
+export async function fetchProviderDeletionSettings(signal?: AbortSignal): Promise<MosaProviderDeletionSettings> {
+  const data = await requestJson<JsonValue>("/api/web-capture/provider-deletion-settings", { signal })
+  return { jimengDeleteSyncEnabled: data?.jimengDeleteSyncEnabled !== false }
+}
+
+export async function updateProviderDeletionSettings(
+  patch: Partial<MosaProviderDeletionSettings>,
+): Promise<MosaProviderDeletionSettings> {
+  const data = await requestJson<JsonValue>("/api/web-capture/provider-deletion-settings", { method: "POST", body: patch })
+  return { jimengDeleteSyncEnabled: data?.jimengDeleteSyncEnabled !== false }
+}
+
 function buildAssetParams(q: AssetQuery, options: { limit: number; cursor?: string; includeTotal?: boolean }) {
   const params = new URLSearchParams({
     project: q.project, q: q.q, sort: q.sort, limit: String(options.limit),
