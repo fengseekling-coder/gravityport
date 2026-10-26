@@ -153,6 +153,22 @@ test("createAsset keeps a caller-supplied file size", async (t) => {
   assert.equal(asset.business_fields.source_note, "reported by the page");
 });
 
+test("createAsset keeps the keys of JSON-string business_fields while adding the size", async (t) => {
+  const { projectRoot, libraryDir, filesDir } = await createLibraryRoot(t);
+  const stagedPath = join(filesDir, "string-fields.png");
+  await writeFile(stagedPath, ONE_PIXEL_PNG);
+  const { store } = openStore(t, projectRoot, libraryDir);
+  const asset = await store.createAsset({
+    imagePath: stagedPath,
+    fileName: "string-fields.png",
+    assetId: "string-fields-image",
+    business_fields: JSON.stringify({ client_note: "sent as a string" }),
+  }, { trustedSourceRoots: [filesDir] });
+  const staged = await stat(stagedPath);
+  assert.equal(asset.business_fields.file_bytes, staged.size);
+  assert.equal(asset.business_fields.client_note, "sent as a string");
+});
+
 // --- the one-time backfill pass ---
 
 test("backfill fills missing sizes at open, includes trash rows, and preserves every other key", async (t) => {
