@@ -93,6 +93,8 @@ interface Store {
   permanentlyDeleteAsset?(projectId: string, assetId: string): Promise<unknown>;
   recordGenerationEvent?(input: Metadata): Promise<Metadata>;
   findAssetByContentHash?(projectId: string, contentHash: string): Promise<StoredAsset | null>;
+  /** Absolute library-original path with identical content, or "" when the store cannot answer. */
+  findOriginalByContentHash?(projectId: string, contentHash: string): Promise<string>;
   findAssetByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset | null>;
   findAssetsByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset[]>;
   findAssetByProviderIdentity?(projectId: string, provider: string, providerAssetId?: string, logicalOutputId?: string): Promise<StoredAsset | null>;
@@ -453,9 +455,11 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
   const referenceLibraryDir = store.libraryDir || (store.assetsRoot ? dirname(store.assetsRoot) : dirname(tempRoot));
   const referenceStore = options.referenceStore || createReferenceAttachmentStore(resolve(referenceLibraryDir));
   if (isReference) {
+    const linkSource = await findReferenceHardlinkSource(store, projectId, contentHash);
     const saved = await referenceStore.save({
       projectId, bytes: imageBytes, extension: ext, mimeType, width: imageMetadata.width, height: imageMetadata.height,
       provider, pageUrl, conversationId, messageId, generationContextId, providerAssetId, capturedAt, userMessage,
+      linkSource,
     });
     return {
       status: saved.created ? "imported" : "skipped",
@@ -1289,6 +1293,20 @@ async function isTrustedPixelMatch(store: Store, asset: StoredAsset, pixelHash: 
 }
 
 const MAX_TURN_REFERENCES = 8;
+
+// A reference whose bytes already exist as a managed library original can be
+// stored as a hard link to it instead of a second copy. The reference store
+// re-hashes the candidate file before linking, so a stale database hash can
+// only cost the link, never correctness.
+async function findReferenceHardlinkSource(store: Store, projectId: string, contentHash: string): Promise<string | undefined> {
+  const finder = store.findOriginalByContentHash;
+  if (typeof finder !== "function") return undefined;
+  try {
+    return (await finder.call(store, projectId, contentHash)) || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 async function turnReferences(store: Store, projectAssets: () => Promise<StoredAsset[]>, referenceStore: ReturnType<typeof createReferenceAttachmentStore>, projectId: string, { conversationId, generationContextId, capturedAt, selfAssetId }: { conversationId: string; generationContextId: string; capturedAt: string; selfAssetId: string }): Promise<Metadata[]> {
   if (!conversationId && !generationContextId) return [];

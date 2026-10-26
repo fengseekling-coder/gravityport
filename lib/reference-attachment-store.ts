@@ -1,9 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { basename, extname, join, resolve, sep } from "node:path";
+import fsPromises from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
+
+// link() goes through the fs/promises default-export object (property lookup
+// at call time, not an ESM binding) so the failure fallback can be exercised
+// by tests that substitute fsPromises.link with EXDEV/EPERM throws.
 
 // A reference is captured before the generation it feeds lands, so a prune
 // fired in that window (trash purge, permanent delete, empty trash) must not
@@ -26,6 +31,11 @@ type ReferenceInput = {
   providerAssetId?: string;
   capturedAt: string;
   userMessage?: string;
+  // Absolute path of a managed library original with identical content. When
+  // supplied and verified, the attachment file is created as a hard link to it
+  // so the duplicated bytes occupy disk once. Any failure falls back to
+  // writing the bytes as a standalone file.
+  linkSource?: string;
 };
 
 export type ReferenceUsage = {
@@ -59,6 +69,19 @@ export type ReferenceAttachment = {
   user_message: string;
   attachment_url: string;
   usages: ReferenceUsage[];
+  // "hardlink" when the file on disk is a hard link to a library original
+  // with identical content; "copy" (or absent, for pre-existing entries) when
+  // the attachment owns a standalone file.
+  storage?: "hardlink" | "copy";
+};
+
+export type HardlinkMigrationStats = {
+  projects: number;
+  scanned: number;
+  replaced: number;
+  skipped: number;
+  failed: number;
+  alreadyDone: boolean;
 };
 
 export function createReferenceAttachmentStore(libraryDir: string) {
@@ -148,7 +171,8 @@ export function createReferenceAttachmentStore(libraryDir: string) {
     const fileName = `${id}${extension}`;
     const filePath = join(filesRoot, fileName);
     const temporary = join(filesRoot, `.${id}-${randomUUID()}.tmp`);
-    await writeFile(temporary, input.bytes, { flag: "wx" });
+    const linked = await tryLinkSource(input.linkSource, contentHash, temporary, dirname(root));
+    if (!linked) await writeFile(temporary, input.bytes, { flag: "wx" });
     try {
       await rename(temporary, filePath);
     } catch (error) {
@@ -174,6 +198,7 @@ export function createReferenceAttachmentStore(libraryDir: string) {
       user_message: String(input.userMessage || ""),
       attachment_url: attachmentUrl(projectId, fileName),
       usages: [usage],
+      storage: linked ? "hardlink" : "copy",
     };
     const items = [...await list(projectId), attachment];
     await writeReferenceIndex(indexPath, items);
@@ -214,7 +239,153 @@ export function createReferenceAttachmentStore(libraryDir: string) {
     return { stream: createReadStream(resolved), fileName: basename(resolved) };
   }
 
-  return { root, save, list, read, pruneUnused };
+  // One-shot conversion of pre-existing duplicate attachments into hard links
+  // against their matching library originals. Every file swap is independently
+  // atomic (link to a temp name, then rename over the attachment), so an
+  // interrupted pass can simply run again; the caller's completion flag is
+  // written only after the whole pass, and entries already linked (same
+  // dev+ino) are skipped.
+  function migrateToHardLinks(input: {
+    findOriginalPath: (projectId: string, contentSha256: string) => Promise<string>;
+    isDone: () => Promise<boolean>;
+    markDone: () => Promise<void>;
+  }): Promise<HardlinkMigrationStats> {
+    const pending = saveQueue.then(async () => {
+      if (await input.isDone()) {
+        return { projects: 0, scanned: 0, replaced: 0, skipped: 0, failed: 0, alreadyDone: true };
+      }
+      let projectIds: string[] = [];
+      try {
+        projectIds = (await readdir(root, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name)
+          .filter((name) => cleanSegment(name, "") === name)
+          .sort();
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+      }
+      const totals = { projects: 0, scanned: 0, replaced: 0, skipped: 0, failed: 0, alreadyDone: false };
+      for (const projectId of projectIds) {
+        const result = await withProjectWriteLock(root, projectId, () => migrateProjectToHardLinks(root, projectId, input.findOriginalPath));
+        totals.projects += 1;
+        totals.scanned += result.scanned;
+        totals.replaced += result.replaced;
+        totals.skipped += result.skipped;
+        totals.failed += result.failed;
+      }
+      await input.markDone();
+      return totals;
+    });
+    saveQueue = pending.catch(() => undefined);
+    return pending;
+  }
+
+  return { root, save, list, read, pruneUnused, migrateToHardLinks };
+}
+
+async function migrateProjectToHardLinks(root: string, projectId: string, findOriginalPath: (projectId: string, contentSha256: string) => Promise<string>): Promise<{ scanned: number; replaced: number; skipped: number; failed: number }> {
+  const filesRoot = join(root, projectId, "files");
+  let names: string[];
+  try {
+    names = await readdir(filesRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { scanned: 0, replaced: 0, skipped: 0, failed: 0 };
+    throw error;
+  }
+  let scanned = 0;
+  let replaced = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const name of names) {
+    // Dot-prefixed names are in-flight writer temporaries and lock files.
+    if (name.startsWith(".")) continue;
+    const filePath = join(filesRoot, name);
+    const fileStat = await lstat(filePath).catch(() => null);
+    if (!fileStat?.isFile()) continue;
+    scanned += 1;
+    const contentHash = await sha256File(filePath).catch(() => "");
+    if (!contentHash) {
+      failed += 1;
+      continue;
+    }
+    const originalPath = String(await findOriginalPath(projectId, contentHash).catch(() => "") || "");
+    if (!originalPath) {
+      skipped += 1;
+      continue;
+    }
+    const originalStat = await lstat(originalPath).catch(() => null);
+    if (!originalStat?.isFile()) {
+      skipped += 1;
+      continue;
+    }
+    const sameFile = originalStat.dev === fileStat.dev && originalStat.ino === fileStat.ino;
+    if (sameFile) {
+      skipped += 1;
+      continue;
+    }
+    const temporary = join(filesRoot, `.${cleanSegment(name, "ref")}-${randomUUID()}.tmp`);
+    try {
+      await fsPromises.link(originalPath, temporary);
+      // Trust the file, never the database hash. Hashing the freshly linked
+      // name reads the exact inode that will replace the attachment, so an
+      // original swapped between lookup and link can never slip through.
+      const linkedHash = await sha256File(temporary).catch(() => "");
+      if (!linkedHash || linkedHash !== contentHash) {
+        await unlink(temporary).catch(() => {});
+        skipped += 1;
+        continue;
+      }
+      await rename(temporary, filePath);
+      replaced += 1;
+    } catch {
+      // Any failure leaves this attachment untouched and processing continues.
+      await unlink(temporary).catch(() => {});
+      failed += 1;
+    }
+  }
+  return { scanned, replaced, skipped, failed };
+}
+
+// Best-effort hard link for a new attachment. The source must be a regular
+// file inside the same library root as the reference store, link() must
+// succeed, and the linked name's bytes must hash to the attachment's content
+// hash; on any mismatch or failure the temporary is removed and the caller
+// falls back to writing the bytes itself.
+async function tryLinkSource(linkSource: string | undefined, contentHash: string, temporary: string, libraryRoot: string): Promise<boolean> {
+  const source = String(linkSource || "").trim();
+  if (!source) return false;
+  const resolved = resolve(source);
+  if (!isPathInside(resolve(libraryRoot), resolved)) return false;
+  const sourceStat = await lstat(resolved).catch(() => null);
+  if (!sourceStat?.isFile()) return false;
+  try {
+    await fsPromises.link(resolved, temporary);
+  } catch {
+    // Unsupported filesystems (EXDEV/EPERM/ENOTSUP/EMLINK/…) and anything
+    // else: fall back to a standalone copy, never fail the save.
+    return false;
+  }
+  // Hash the linked name, not the source path: it is the exact inode the
+  // attachment will point at, so a source replaced mid-way cannot slip in.
+  const linkedHash = await sha256File(temporary).catch(() => "");
+  if (linkedHash === contentHash) return true;
+  await unlink(temporary).catch(() => {});
+  return false;
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  return child === parent || child.startsWith(`${parent}${sep}`);
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  await new Promise<void>((resolveHash, rejectHash) => {
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.once("error", rejectHash);
+    stream.once("end", () => resolveHash());
+  });
+  return hash.digest("hex");
 }
 
 function cleanSegment(value: unknown, fallback: string): string {
