@@ -6,14 +6,19 @@ English | [简体中文](README.zh-CN.md)
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#downloads)
 
-> **Local visual memory for AI creation.**
-> 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
-
-GravityPort is a local-first library for AI-generated images, videos, Prompts, provenance, and version history. It keeps creative output from Codex, Grok Build CLI, Cowart, and an optional Web Capture extension for ChatGPT, Gemini, Flow, Google AI Studio, Jimeng, and Midjourney in one library on your own computer.
+> **AI asset manager for ChatGPT · Gemini · Flow · Google AI Studio · Codex · Grok · Jimeng.**
 
 ![GravityPort gallery with the Inspector open](docs/images/gravityport-app.webp)
 
-**Local-first · Prompt & provenance · Version history · No GravityPort cloud account**
+| Feature | What you get |
+| --- | --- |
+| **100% Local** | Nothing goes to the cloud. Every asset stays on your computer. |
+| **Auto-Capture** | Images and videos land in your library as they're generated. No manual saving. |
+| **Prompts & Context** | Prompts, reference images and sources are kept with every asset. |
+| **Version Tree** | Every round of edits in a conversation, laid out at a glance. |
+| **Smart Stacks** | Assets are grouped automatically by source and conversation. |
+| **Built-in MCP** | Connect Claude or Codex to search and use your library directly. |
+| **Free Download** | macOS · Windows · [gravityport.azhuilab.com](https://gravityport.azhuilab.com) |
 
 [Downloads](#downloads) · [First launch](#first-launch) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
 
@@ -41,19 +46,23 @@ GravityPort reconnects each asset with the context that makes it reusable: its a
 
 ## What you can do
 
-### Keep the context with the asset
+### Prompts & Context
 
 Archive generated images and videos together with their available Prompt, source, model or tool context, timestamps, and provenance. GravityPort records when a Prompt is unavailable instead of inventing one.
+
+### Smart Stacks
+
+Every asset is filed under its source in the sidebar's smart groups as it arrives. Generations from the same conversation window, Flow project, or Codex task stack into one card on their own. Assets you pull out or unstack are never stacked again, and named stacks keep their names.
 
 ### Organize by drag and drop
 
 Browse and search one gallery with adjustable column counts, marquee selection, and multi-select. Drag cards onto a sidebar group to file them, onto another card to build or join a stack, inside a stack to reorder it, or out of the window to hand the files to another app. A stack built or joined by drag can be undone for a few seconds.
 
-### Iterate on the version tree
+### Version Tree
 
 The Inspector shows each asset's version tree, with generations from a ChatGPT conversation grouped by conversation round so you can see how the image evolved turn by turn. Any two versions in a family can be compared side by side.
 
-### Let AI agents search your library
+### Built-in MCP
 
 The built-in MCP server lets Claude, Codex, and other MCP clients list, search, and record assets, Prompts, versions, and generation history in the same local library. `asset_search` combines text and a time range. The desktop app ships the server: copy a ready-made config for Claude Desktop, Claude Code, or Codex from Settings → Connect, with no Node.js or source checkout needed. From source, run `npm run mcp`. See [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口) for setup and the tool list.
 
