@@ -27,6 +27,8 @@ export function scheduleReferenceHardlinkMigration(store: unknown, libraryDir: s
       markDone: () => typed.completeReferenceHardlinkMigration(),
     })))
     .catch((error: unknown) => {
+      // A store closed before the pass finished just retries on the next open.
+      if (/database connection is not open/i.test(String((error as Error)?.message || ""))) return;
       console.warn(`[MOSA] reference hard-link migration skipped: ${(error as Error)?.message || error}`);
     });
 }

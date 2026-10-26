@@ -313,13 +313,6 @@ async function migrateProjectToHardLinks(root: string, projectId: string, findOr
       skipped += 1;
       continue;
     }
-    // Trust the file, never the database hash: re-read the candidate original
-    // and only link when its current bytes match the attachment byte for byte.
-    const originalHash = await sha256File(originalPath).catch(() => "");
-    if (!originalHash || originalHash !== contentHash) {
-      skipped += 1;
-      continue;
-    }
     const originalStat = await lstat(originalPath).catch(() => null);
     if (!originalStat?.isFile()) {
       skipped += 1;
@@ -333,6 +326,15 @@ async function migrateProjectToHardLinks(root: string, projectId: string, findOr
     const temporary = join(filesRoot, `.${cleanSegment(name, "ref")}-${randomUUID()}.tmp`);
     try {
       await fsPromises.link(originalPath, temporary);
+      // Trust the file, never the database hash. Hashing the freshly linked
+      // name reads the exact inode that will replace the attachment, so an
+      // original swapped between lookup and link can never slip through.
+      const linkedHash = await sha256File(temporary).catch(() => "");
+      if (!linkedHash || linkedHash !== contentHash) {
+        await unlink(temporary).catch(() => {});
+        skipped += 1;
+        continue;
+      }
       await rename(temporary, filePath);
       replaced += 1;
     } catch {
@@ -345,9 +347,10 @@ async function migrateProjectToHardLinks(root: string, projectId: string, findOr
 }
 
 // Best-effort hard link for a new attachment. The source must be a regular
-// file inside the same library root as the reference store, its current bytes
-// must hash to the attachment's content hash, and link() must succeed; on any
-// mismatch or failure the caller falls back to writing the bytes itself.
+// file inside the same library root as the reference store, link() must
+// succeed, and the linked name's bytes must hash to the attachment's content
+// hash; on any mismatch or failure the temporary is removed and the caller
+// falls back to writing the bytes itself.
 async function tryLinkSource(linkSource: string | undefined, contentHash: string, temporary: string, libraryRoot: string): Promise<boolean> {
   const source = String(linkSource || "").trim();
   if (!source) return false;
@@ -355,16 +358,19 @@ async function tryLinkSource(linkSource: string | undefined, contentHash: string
   if (!isPathInside(resolve(libraryRoot), resolved)) return false;
   const sourceStat = await lstat(resolved).catch(() => null);
   if (!sourceStat?.isFile()) return false;
-  const sourceHash = await sha256File(resolved).catch(() => "");
-  if (sourceHash !== contentHash) return false;
   try {
     await fsPromises.link(resolved, temporary);
-    return true;
   } catch {
     // Unsupported filesystems (EXDEV/EPERM/ENOTSUP/EMLINK/…) and anything
     // else: fall back to a standalone copy, never fail the save.
     return false;
   }
+  // Hash the linked name, not the source path: it is the exact inode the
+  // attachment will point at, so a source replaced mid-way cannot slip in.
+  const linkedHash = await sha256File(temporary).catch(() => "");
+  if (linkedHash === contentHash) return true;
+  await unlink(temporary).catch(() => {});
+  return false;
 }
 
 function isPathInside(parent: string, child: string): boolean {
