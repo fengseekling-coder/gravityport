@@ -2,6 +2,23 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.7 — 2026-10-26 / Preview
+
+### Desktop
+
+- Release notes are now grouped into New / Improvements / Fixes / Other in Settings → 关于 and on the GitHub release; older app versions still read the update feed as a flat list.
+- The sidebar update reminder is a single line above 用户中心 that appears only once a new version has finished downloading in the background.
+- The viewer's video controls are usable again (the native controls were covered), 适合窗口 leaves room for the zoom bar instead of fitting the video underneath it, and the property tags in the details panel wrap instead of crowding together.
+- Reference images that are byte-identical to an original already in the library are stored as a hard link to it, so the bytes occupy disk space once; deleting the asset keeps the reference readable, and the other way round. On filesystems without hard links (for example exFAT) a standalone copy is kept. Existing duplicates are converted once in the background the first time the library opens.
+- Manually imported and Cowart assets now record their file size, so the details panel shows it instead of —; existing assets (Trash included) are filled in once when the library opens.
+- Newly captured reference images are kept for 24 hours even before a generation links to them, so a cleanup that runs between capturing a reference and archiving its result no longer removes it. Permanently deleting an asset also clears its auto-stack exclusion records.
+
+### Web Capture
+
+- Extension 0.15.41: Jimeng reference images are read from the site's own `resources` field and captured before the generated image or video, so Jimeng videos keep their references too.
+- Extension 0.15.42: deleting a work on the Jimeng website moves the matching GravityPort asset to the Trash (recoverable) once the site confirms the deletion. Assets you favorited, rated, grouped or tagged are left alone, and the 即梦站内删除作品时，同步移进回收站 switch on the browser-extension card in Settings turns it off. Only the deleted work ids leave the page; see `PRIVACY.md`.
+- Extension 0.15.43: Google AI Studio reference images (images in the user turns of a conversation) are captured and linked to the image generated from them. References are uploaded only when the conversation actually produced an image, and before that image is archived.
+
 ## 0.3.6 — 2026-10-25 / Preview
 
 ### License

@@ -1,20 +1,48 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {
-      "fixed": [
-        "修复了即梦带参考图生成的图片和视频收录后缺少参考图的问题。（浏览器扩展 0.15.41）",
-        "修复了 Google AI Studio 带参考图生成的图片收录后缺少参考图的问题。（浏览器扩展 0.15.43）"
-      ]
-    },
-    "en": {
-      "fixed": [
-        "Fixed an issue where Jimeng images and videos generated from reference images were captured without their references. (Browser extension 0.15.41)",
-        "Fixed an issue where Google AI Studio images generated from reference images were captured without their references. (Browser extension 0.15.43)"
-      ]
-    }
+    "zh": {},
+    "en": {}
   },
   "releases": [
+    {
+      "version": "0.3.7",
+      "date": "2026-10-26",
+      "zh": {
+        "new": [
+          "在即梦网站中删除作品后，GravityPort 中对应的素材将同步移入回收站；已收藏、评分、分组或添加标签的素材不受影响，可在设置中关闭。（浏览器扩展 0.15.43）"
+        ],
+        "improved": [
+          "参考图与素材库中已有的图片完全相同时，仅占用一份磁盘空间。",
+          "侧栏的更新提醒改为「用户中心」上方的单行提示。"
+        ],
+        "fixed": [
+          "修复了即梦带参考图生成的图片和视频收录后缺少参考图的问题。（浏览器扩展 0.15.41）",
+          "修复了 Google AI Studio 带参考图生成的图片收录后缺少参考图的问题。（浏览器扩展 0.15.43）",
+          "修复了预览视频时播放控件无法操作、缩放栏遮挡画面的问题。",
+          "修复了详情面板中属性标签排列拥挤的问题。",
+          "修复了刚收录的参考图可能被误清理的问题。",
+          "修复了手动导入和 Cowart 素材在详情中不显示文件大小的问题。"
+        ]
+      },
+      "en": {
+        "new": [
+          "Deleting a work on the Jimeng website now moves the matching GravityPort asset to the Trash. Assets that are favorited, rated, grouped or tagged are left untouched. This can be turned off in Settings. (Browser extension 0.15.43)"
+        ],
+        "improved": [
+          "Reference images identical to an image already in the library now take up disk space only once.",
+          "The sidebar update reminder is now a single line above the user center."
+        ],
+        "fixed": [
+          "Fixed an issue where Jimeng images and videos generated from reference images were captured without their references. (Browser extension 0.15.41)",
+          "Fixed an issue where Google AI Studio images generated from reference images were captured without their references. (Browser extension 0.15.43)",
+          "Fixed an issue where video playback controls could not be used in the viewer and the zoom bar covered the video.",
+          "Fixed an issue where property tags in the details panel were crowded together.",
+          "Fixed an issue where newly captured reference images could be cleaned up by mistake.",
+          "Fixed an issue where manually imported and Cowart assets showed no file size in the details panel."
+        ]
+      }
+    },
     {
       "version": "0.3.6",
       "date": "2026-10-25",
