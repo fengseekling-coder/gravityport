@@ -440,6 +440,12 @@ test("derived URLs carry a content version that changes with the bytes and stays
   assert.notEqual(after.thumbnail_url, before.thumbnail_url);
   assert.notEqual(after.medium_url, before.medium_url);
   assert.notEqual(after.preview_url, before.preview_url);
+  // The gallery reads through the paged listing: it must hand out the same
+  // versioned URLs, or the gallery keeps showing the cached old pixels.
+  const listed = (await store.listAssetPage({ projectId: "default", limit: 50 })).assets.find((asset) => asset.id === first.asset.id);
+  assert.equal(listed?.thumbnail_url, after.thumbnail_url);
+  assert.equal(listed?.medium_url, after.medium_url);
+  assert.equal(listed?.preview_url, after.preview_url);
 
   // Without derivatives the fallback is the original URL itself (a replacement
   // always writes a new original file name), stable on every read.
