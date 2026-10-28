@@ -12,6 +12,7 @@ import { join } from "node:path";
 import test from "node:test";
 import sharp from "sharp";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
+import { processDerivativeJob } from "../lib/derivative-worker.js";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import { ingestWebCapture } from "../lib/web-capture-ingest.js";
 
@@ -405,6 +406,11 @@ test("a second provider id for identical bytes is appended, never overwritten", 
 
 test("derived URLs carry a content version that changes with the bytes and stays stable otherwise", async (t) => {
   const { store, tempRoot } = await createTestStore(t, "mosa-upgrade-url-version-");
+  const runDerivatives = async () => {
+    for (let job = await store.claimDerivativeJob(); job; job = await store.claimDerivativeJob()) {
+      assert.equal((await processDerivativeJob(store, job)).ok, true);
+    }
+  };
   const providerAssetId = "file-upgrade-url-version";
   const first = await captureImage(store, tempRoot, {
     imageBase64: (await noiseImage(1024, 1024, 5, "jpeg")).toString("base64"),
@@ -412,10 +418,13 @@ test("derived URLs carry a content version that changes with the bytes and stays
     providerAssetId,
     capturedAt: "2026-10-28T10:00:00.000Z",
   });
-  const versionPattern = /\?v=[0-9a-f]{12}$/;
-  const urlBefore = (await store.getAsset("default", first.asset.id)).thumbnail_url;
-  assert.match(urlBefore, versionPattern);
-  assert.equal((await store.getAsset("default", first.asset.id)).thumbnail_url, urlBefore);
+  await runDerivatives();
+  // Derivative files keep the same `<id>.webp` name across a replacement, so
+  // only the ?v= content version can tell the one-year cache the bytes changed.
+  const derivedPattern = (tier) => new RegExp(`/${tier}/${first.asset.id}\\.webp\\?v=[0-9a-f]{12}$`);
+  const before = await store.getAsset("default", first.asset.id);
+  assert.match(before.thumbnail_url, derivedPattern("thumbnails"));
+  assert.equal((await store.getAsset("default", first.asset.id)).thumbnail_url, before.thumbnail_url);
 
   await captureImage(store, tempRoot, {
     imageBase64: (await noiseImage(2048, 2048, 13, "jpeg")).toString("base64"),
@@ -423,18 +432,24 @@ test("derived URLs carry a content version that changes with the bytes and stays
     providerAssetId,
     capturedAt: "2026-10-28T10:01:00.000Z",
   });
+  await runDerivatives();
   const after = await store.getAsset("default", first.asset.id);
-  assert.match(after.thumbnail_url, versionPattern);
-  assert.match(after.preview_url, versionPattern);
-  assert.match(after.medium_url, versionPattern);
-  assert.notEqual(after.thumbnail_url, urlBefore);
-  // An untouched asset keeps serving the exact same URLs on every read.
+  assert.match(after.thumbnail_url, derivedPattern("thumbnails"));
+  assert.match(after.medium_url, derivedPattern("mediums"));
+  assert.match(after.preview_url, derivedPattern("previews"));
+  assert.notEqual(after.thumbnail_url, before.thumbnail_url);
+  assert.notEqual(after.medium_url, before.medium_url);
+  assert.notEqual(after.preview_url, before.preview_url);
+
+  // Without derivatives the fallback is the original URL itself (a replacement
+  // always writes a new original file name), stable on every read.
   const untouched = await captureImage(store, tempRoot, {
     imageBase64: (await noiseImage(512, 512, 23)).toString("base64"),
     capturedAt: "2026-10-28T10:02:00.000Z",
   });
-  const untouchedUrl = untouched.asset.thumbnail_url;
-  assert.equal((await store.getAsset("default", untouched.asset.id)).thumbnail_url, untouchedUrl);
+  const untouchedAsset = await store.getAsset("default", untouched.asset.id);
+  assert.equal(untouchedAsset.thumbnail_url, untouchedAsset.image_url);
+  assert.equal((await store.getAsset("default", untouched.asset.id)).thumbnail_url, untouchedAsset.thumbnail_url);
 });
 
 test("copies and versions never answer the identity lookup; the ingested original is the one replaced", async (t) => {

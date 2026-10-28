@@ -59,8 +59,7 @@ test("saveVideoPoster stores a thumbnail-tier webp and records it like derivativ
   const { root, generated, store } = await createStore(t, "mosa-video-poster-store-");
   const created = await createVideoAsset(store, generated, "poster-store-1");
   assert.equal(created.thumbnail_path, null, "imported video starts without a poster");
-  // Task 280: the poster-less fallback URL carries the content version too.
-  assert.equal(created.thumbnail_url, `/library/default/images/${encodeURIComponent(created.asset)}?v=${created.content_sha256.slice(0, 12)}`);
+  assert.equal(created.thumbnail_url, `/library/default/images/${encodeURIComponent(created.asset)}`);
 
   const updated = await store.saveVideoPoster("default", "poster-store-1", await makePosterJpeg());
   assert.equal(updated.thumbnail_ready, true);
