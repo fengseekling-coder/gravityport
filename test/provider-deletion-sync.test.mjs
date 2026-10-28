@@ -196,7 +196,6 @@ test("every organized kind the 2026-10-28 ruling adds is kept", async () => {
     for (const [name, itemId] of Object.entries(cases)) {
       ingested[name] = await ingestJimengCapture(store, "default", { itemId });
     }
-    await store.updateMetadata("default", ingested.curated.id, { tags: ["风景"] });
     // 手动堆叠成员：createAssetStack 建的栈 origin 默认 'manual'（迁移 4194）。
     const stackHelper = await ingestJimengCapture(store, "default", { itemId: "7700970082708589807" });
     const manualStackSummary = await store.createAssetStack("default", [ingested.manualStack.id, stackHelper.id]);
