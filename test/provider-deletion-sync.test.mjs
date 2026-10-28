@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import vm from "node:vm";
+import Database from "better-sqlite3";
 import sharp from "sharp";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
@@ -57,9 +58,13 @@ async function makeLibrary() {
 }
 
 let nextImageSeed = 1;
-async function ingestJimengCapture(store, projectId, { itemId, recordId = "49017522166284" }) {
-  const base64 = await jpegBase64(nextImageSeed);
-  nextImageSeed += 1;
+async function ingestJimengCapture(store, projectId, { itemId, recordId, imageBase64, captureMode } = {}) {
+  // Default to a session per item id: two captures sharing a conversation are
+  // auto-stacked at ingest (task 249), which the stacking cases below build
+  // explicitly instead.
+  const cleanRecordId = recordId ?? `rec-${itemId}`;
+  const base64 = imageBase64 ?? await jpegBase64(nextImageSeed);
+  if (imageBase64 == null) nextImageSeed += 1;
   const imported = await ingestWebCapture({
     store,
     tempRoot: join(store.libraryDir, ".web-capture-tmp"),
@@ -70,8 +75,41 @@ async function ingestJimengCapture(store, projectId, { itemId, recordId = "49017
       imageBase64: base64,
       mimeType: "image/jpeg",
       providerAssetId: itemId,
-      conversationId: recordId,
-      generationContextId: recordId,
+      conversationId: cleanRecordId,
+      generationContextId: cleanRecordId,
+      pageUrl: "https://jimeng.jianying.com/ai-tool/asset",
+      captureMode,
+    },
+  });
+  assert.equal(imported.status, "imported");
+  return imported.asset;
+}
+
+// Minimal ftyp-headered MP4 (sampleMp4Bytes pattern in
+// web-capture-same-id-upgrade.test.mjs) so the real store accepts a video.
+function sampleMp4Bytes() {
+  const bytes = Buffer.alloc(96 * 1024, 7);
+  bytes.writeUInt32BE(24, 0);
+  bytes.write("ftyp", 4, "ascii");
+  bytes.write("isom", 8, "ascii");
+  bytes.writeUInt32BE(0x200, 12);
+  bytes.write("isom", 16, "ascii");
+  bytes.write("mp42", 20, "ascii");
+  return bytes;
+}
+
+async function ingestJimengVideo(store, projectId, itemId) {
+  const imported = await ingestWebCapture({
+    store,
+    tempRoot: join(store.libraryDir, ".web-capture-tmp"),
+    projectId,
+    input: {
+      provider: "jimeng",
+      mediaKind: "video",
+      mediaBase64: sampleMp4Bytes().toString("base64"),
+      mimeType: "video/mp4",
+      providerAssetId: itemId,
+      generationStatus: "completed",
       pageUrl: "https://jimeng.jianying.com/ai-tool/asset",
     },
   });
@@ -97,9 +135,15 @@ test("an unorganized jimeng capture moves to the trash and can be restored", asy
     });
     assert.deepEqual(result, { trashed: 1, kept: 0, notFound: 0 });
     assert.equal(await assetInTrash(store, "default", asset.id), true);
-    // 移进回收站 = recoverable, not a permanent delete.
+    // 移进回收站带原因（280 的原因码，281 开始写入）。
+    const trashed = await store.getAsset("default", asset.id);
+    assert.equal(trashed.trash_reason?.code, "provider-deleted:jimeng");
+    assert.ok(String(trashed.trash_reason?.at || "").trim());
+    // Recoverable, not a permanent delete; restoring clears the reason.
     await store.restoreAsset("default", asset.id);
     assert.equal(await assetInTrash(store, "default", asset.id), false);
+    const restored = await store.getAsset("default", asset.id);
+    assert.equal(restored.trash_reason, undefined);
   } finally {
     store.close?.();
   }
@@ -130,6 +174,244 @@ test("favorited, rated, grouped and tagged captures are kept", async () => {
     assert.deepEqual(result, { trashed: 0, kept: 4, notFound: 0 });
     for (const asset of [favorited, rated, grouped, tagged]) {
       assert.equal(await assetInTrash(store, "default", asset.id), false);
+    }
+  } finally {
+    store.close?.();
+  }
+});
+
+test("every organized kind the 2026-10-28 ruling adds is kept", async () => {
+  const { libraryDir, store } = await makeLibrary();
+  try {
+    await store.ensureProject("default");
+    const ingested = {};
+    const cases = {
+      manualStack: "7700970082708589801",
+      curated: "7700970082708589802",
+      curationNote: "7700970082708589803",
+      archived: "7700970082708589804",
+      userEditedAt: "7700970082708589805",
+      promptUserEditedAt: "7700970082708589806",
+    };
+    for (const [name, itemId] of Object.entries(cases)) {
+      ingested[name] = await ingestJimengCapture(store, "default", { itemId });
+    }
+    await store.updateMetadata("default", ingested.curated.id, { tags: ["风景"] });
+    // 手动堆叠成员：createAssetStack 建的栈 origin 默认 'manual'（迁移 4194）。
+    const stackHelper = await ingestJimengCapture(store, "default", { itemId: "7700970082708589807" });
+    const manualStackSummary = await store.createAssetStack("default", [ingested.manualStack.id, stackHelper.id]);
+    assert.equal(manualStackSummary.origin, "manual");
+    await store.updateCuration("default", ingested.curated.id, { curated: true });
+    await store.updateCuration("default", ingested.curationNote.id, { note: "构图很好" });
+    await store.archiveAsset("default", ingested.archived.id);
+    await store.updateMetadata("default", ingested.userEditedAt.id, { source: { user_edited_at: "2026-10-28T08:00:00.000Z" } });
+    await store.updateMetadata("default", ingested.promptUserEditedAt.id, { source: { prompt_user_edited_at: "2026-10-28T08:00:00.000Z" } });
+
+    const result = await applyProviderDeletions({ store, libraryDir }, {
+      provider: "jimeng",
+      items: Object.values(cases).map((itemId) => ({ recordId: "49017522166284", itemId })),
+    });
+    assert.deepEqual(result, { trashed: 0, kept: 6, notFound: 0 });
+    for (const asset of Object.values(ingested)) {
+      assert.equal(await assetInTrash(store, "default", asset.id), false);
+    }
+    // 收录方式、category、只改备注（未知元数据）都不在保护范围内，单独验。
+    const categorized = await ingestJimengCapture(store, "default", { itemId: "7700970082708589810" });
+    await store.updateMetadata("default", categorized.id, { category: "人物" });
+    const noteOnly = await ingestJimengCapture(store, "default", { itemId: "7700970082708589811" });
+    await store.updateMetadata("default", noteOnly.id, { note: "随手记" });
+    const manualCapture = await ingestJimengCapture(store, "default", { itemId: "7700970082708589812", captureMode: "manual" });
+    // 自动堆叠成员：同一会话的第二张入库即堆（任务 249），origin 不是 manual。
+    const autoStack = await ingestJimengCapture(store, "default", { itemId: "7700970082708589808", recordId: "49017522166284" });
+    const autoStackSibling = await ingestJimengCapture(store, "default", { itemId: "7700970082708589809", recordId: "49017522166284" });
+    assert.notEqual(autoStack.id, autoStackSibling.id);
+    const autoPage = await store.listAssetPage({ projectId: "default", limit: 0, collapseStacks: true });
+    let autoStackSummary = null;
+    for (const entry of autoPage.assets.filter((node) => node.stack)) {
+      const summary = await store.getAssetStack("default", entry.stack.id);
+      const members = await store.listAssetStackAssets("default", entry.stack.id);
+      if (members.assets.some((member) => member.id === autoStack.id)) autoStackSummary = summary;
+    }
+    assert.ok(autoStackSummary, "the same-session pair is auto-stacked at ingest");
+    assert.equal(autoStackSummary.origin, "auto");
+    const negative = await applyProviderDeletions({ store, libraryDir }, {
+      provider: "jimeng",
+      items: [
+        { recordId: "49017522166284", itemId: "7700970082708589808" },
+        { recordId: "49017522166284", itemId: "7700970082708589810" },
+        { recordId: "49017522166284", itemId: "7700970082708589811" },
+        { recordId: "49017522166284", itemId: "7700970082708589812" },
+      ],
+    });
+    assert.deepEqual(negative, { trashed: 4, kept: 0, notFound: 0 });
+    for (const asset of [autoStack, categorized, noteOnly, manualCapture]) {
+      assert.equal(await assetInTrash(store, "default", asset.id), true);
+      // 自动堆叠成员进回收站也带原因。
+      const row = await store.getAsset("default", asset.id);
+      assert.equal(row.trash_reason?.code, "provider-deleted:jimeng");
+    }
+  } finally {
+    store.close?.();
+  }
+});
+
+test("a duplicate and its original are both kept for the same item id", async () => {
+  const { libraryDir, store } = await makeLibrary();
+  try {
+    await store.ensureProject("default");
+    const original = await ingestJimengCapture(store, "default", { itemId: "7700970082708589821" });
+    const duplicate = await store.duplicateAsset("default", original.id);
+    const result = await applyProviderDeletions({ store, libraryDir }, {
+      provider: "jimeng",
+      items: [{ recordId: "49017522166284", itemId: "7700970082708589821" }],
+    });
+    // 副本不再带编号，组里只有本体；本体靠「有派生引用」保住。
+    assert.deepEqual(result, { trashed: 0, kept: 1, notFound: 0 });
+    assert.equal(await assetInTrash(store, "default", original.id), false);
+    assert.equal(await assetInTrash(store, "default", duplicate.id), false);
+  } finally {
+    store.close?.();
+  }
+});
+
+test("a version and its original are both kept, including the legacy both-match shape", async () => {
+  const { libraryDir, store } = await makeLibrary();
+  try {
+    await store.ensureProject("default");
+    // 新式版本：不带编号，本体靠子版本关系保住。
+    const original = await ingestJimengCapture(store, "default", { itemId: "7700970082708589831" });
+    const version = await store.createAssetVersion("default", original.id, {
+      version_change: "只改提示词",
+      prompt: "新提示词",
+    });
+    const fresh = await applyProviderDeletions({ store, libraryDir }, {
+      provider: "jimeng",
+      items: [{ recordId: "49017522166284", itemId: "7700970082708589831" }],
+    });
+    assert.deepEqual(fresh, { trashed: 0, kept: 1, notFound: 0 });
+    assert.equal(await assetInTrash(store, "default", original.id), false);
+    assert.equal(await assetInTrash(store, "default", version.id), false);
+
+    // 263 的绕过场景（旧数据：版本和本体都带编号，版本更新、排前面）。
+    const legacyOriginal = await ingestJimengCapture(store, "default", { itemId: "7700970082708589832" });
+    const legacyVersion = await store.createAssetVersion("default", legacyOriginal.id, {
+      version_change: "只改提示词",
+      prompt: "另一版提示词",
+    });
+    const rawDb = new Database(join(libraryDir, "mosa.db"));
+    try {
+      rawDb.prepare(`
+        UPDATE assets SET provider_asset_id = ?,
+          source_json = json_set(source_json, '$.provider_asset_id', ?)
+        WHERE project_id = ? AND id = ?
+      `).run("7700970082708589832", "7700970082708589832", "default", legacyVersion.id);
+    } finally {
+      rawDb.close();
+    }
+    const legacy = await applyProviderDeletions({ store, libraryDir }, {
+      provider: "jimeng",
+      items: [{ recordId: "49017522166284", itemId: "7700970082708589832" }],
+    });
+    assert.deepEqual(legacy, { trashed: 0, kept: 2, notFound: 0 });
+    assert.equal(await assetInTrash(store, "default", legacyOriginal.id), false);
+    assert.equal(await assetInTrash(store, "default", legacyVersion.id), false);
+  } finally {
+    store.close?.();
+  }
+});
+
+test("same bytes recaptured under another item id keep the asset when either id is deleted", async () => {
+  const { libraryDir, store } = await makeLibrary();
+  try {
+    await store.ensureProject("default");
+    // 走 280 的真路径：同字节第二个编号并入 merged_provider_asset_ids。
+    const bytes = await jpegBase64(nextImageSeed);
+    nextImageSeed += 1;
+    const first = await ingestJimengCapture(store, "default", { itemId: "7700970082708589841", imageBase64: bytes });
+    const second = await ingestWebCapture({
+      store,
+      tempRoot: join(store.libraryDir, ".web-capture-tmp"),
+      projectId: "default",
+      input: {
+        provider: "jimeng",
+        mediaKind: "image",
+        imageBase64: bytes,
+        mimeType: "image/jpeg",
+        providerAssetId: "7700970082708589842",
+        conversationId: "rec-7700970082708589842",
+        generationContextId: "rec-7700970082708589842",
+        pageUrl: "https://jimeng.jianying.com/ai-tool/asset",
+      },
+    });
+    assert.equal(second.status, "skipped");
+    assert.equal(second.asset.id, first.id);
+    const merged = await store.getAsset("default", first.id);
+    assert.deepEqual(merged.source.merged_provider_asset_ids, ["7700970082708589842"]);
+    const result = await applyProviderDeletions({ store, libraryDir }, {
+      provider: "jimeng",
+      items: [{ recordId: "49017522166284", itemId: "7700970082708589841" }],
+    });
+    assert.deepEqual(result, { trashed: 0, kept: 1, notFound: 0 });
+    assert.equal(await assetInTrash(store, "default", first.id), false);
+  } finally {
+    store.close?.();
+  }
+});
+
+test("system tags follow the capture pipeline per asset, not the tag name", async () => {
+  const { libraryDir, store } = await makeLibrary();
+  try {
+    await store.ensureProject("default");
+    // 图片上的 "video" 和即梦素材上的 "chatgpt" 都是用户标签 → 保留。
+    const imageTaggedVideo = await ingestJimengCapture(store, "default", { itemId: "7700970082708589851" });
+    await store.updateMetadata("default", imageTaggedVideo.id, { tags: ["video"] });
+    const taggedChatgpt = await ingestJimengCapture(store, "default", { itemId: "7700970082708589852" });
+    await store.updateMetadata("default", taggedChatgpt.id, { tags: ["chatgpt"] });
+    // 视频素材的 "video" 是系统标签（media_kind = video），只有系统标签 → 移走。
+    const video = await ingestJimengVideo(store, "default", "7700970082708589853");
+    const result = await applyProviderDeletions({ store, libraryDir }, {
+      provider: "jimeng",
+      items: [
+        { recordId: "49017522166284", itemId: "7700970082708589851" },
+        { recordId: "49017522166284", itemId: "7700970082708589852" },
+        { recordId: "49017522166284", itemId: "7700970082708589853" },
+      ],
+    });
+    assert.deepEqual(result, { trashed: 1, kept: 2, notFound: 0 });
+    assert.equal(await assetInTrash(store, "default", imageTaggedVideo.id), false);
+    assert.equal(await assetInTrash(store, "default", taggedChatgpt.id), false);
+    assert.equal(await assetInTrash(store, "default", video.id), true);
+  } finally {
+    store.close?.();
+  }
+});
+
+test("new duplicates and versions record the provider item id as provenance only", async () => {
+  const { libraryDir, store } = await makeLibrary();
+  try {
+    await store.ensureProject("default");
+    const original = await ingestJimengCapture(store, "default", { itemId: "7700970082708589871" });
+    const duplicate = await store.duplicateAsset("default", original.id);
+    const version = await store.createAssetVersion("default", original.id, {
+      version_change: "微调提示词",
+      prompt: "微调后的提示词",
+    });
+    const rawDb = new Database(join(libraryDir, "mosa.db"));
+    try {
+      for (const derived of [duplicate, version]) {
+        const row = rawDb.prepare("SELECT provider_asset_id, logical_output_id, source_json FROM assets WHERE project_id = ? AND id = ?")
+          .get("default", derived.id);
+        assert.equal(row.provider_asset_id, "");
+        assert.equal(row.logical_output_id, "");
+        const source = JSON.parse(row.source_json);
+        assert.equal(source.provider_asset_id, undefined);
+        assert.equal(source.logical_output_id, undefined);
+        assert.equal(source.derived_from_provider_asset_id, "7700970082708589871");
+      }
+      assert.equal(duplicate.source.duplicated_from, original.id);
+      assert.equal(version.parent_asset_id, original.id);
+    } finally {
+      rawDb.close();
     }
   } finally {
     store.close?.();
@@ -288,10 +570,40 @@ test("the settings file defaults to enabled and persists explicit changes", asyn
     { jimengDeleteSyncEnabled: false },
   );
   assert.deepEqual(await readProviderDeletionSettings(libraryDir), { jimengDeleteSyncEnabled: false });
-  // A corrupt file falls back to the default instead of throwing.
-  await writeFile(join(libraryDir, ".provider-deletion-sync.json"), "{not json", "utf8");
-  assert.deepEqual(await readProviderDeletionSettings(libraryDir), { jimengDeleteSyncEnabled: true });
   await rm(join(libraryDir, ".provider-deletion-sync.json"), { force: true });
+  assert.deepEqual(await readProviderDeletionSettings(libraryDir), { jimengDeleteSyncEnabled: true });
+});
+
+test("a settings file that exists but does not parse means off, warned once", async () => {
+  const { libraryDir, store } = await makeLibrary();
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  try {
+    await writeFile(join(libraryDir, ".provider-deletion-sync.json"), "{bad json", "utf8");
+    // 本文件里第一次坏文件读取 → 告警一次，按「关」。
+    assert.deepEqual(await readProviderDeletionSettings(libraryDir), { jimengDeleteSyncEnabled: false });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /provider-deletion-sync\.json/);
+
+    await store.ensureProject("default");
+    const asset = await ingestJimengCapture(store, "default", { itemId: "7700970082708589861" });
+    const result = await applyProviderDeletions({ store, libraryDir }, {
+      provider: "jimeng",
+      items: [{ recordId: "49017522166284", itemId: "7700970082708589861" }],
+    });
+    assert.deepEqual(result, { trashed: 0, kept: 0, notFound: 1, disabled: true });
+    assert.equal(await assetInTrash(store, "default", asset.id), false);
+    // 同进程内的后续读取不再重复告警。
+    await applyProviderDeletions({ store, libraryDir }, {
+      provider: "jimeng",
+      items: [{ recordId: "49017522166284", itemId: "7700970082708589862" }],
+    });
+    assert.equal(warnings.length, 1);
+  } finally {
+    console.warn = originalWarn;
+    store.close?.();
+  }
 });
 
 // -------------------------------------------------------------------- route
