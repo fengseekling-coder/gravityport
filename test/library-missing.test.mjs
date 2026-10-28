@@ -296,7 +296,10 @@ test("MCP follows the desktop's own location file when the config does not name 
   const projectRoot = join(home, "project");
   const libraryDir = join(home, LIBRARY_DIR_NAME);
   seedCompletedSqliteLibrary({ projectRoot, libraryDir });
-  const locationFilePath = desktopDefaultLocationFilePath(home);
+  // Same config roots the MCP harness pins inside HOME; never the real ones.
+  const locationFilePath = desktopDefaultLocationFilePath(home, {
+    env: { XDG_CONFIG_HOME: join(home, ".config"), APPDATA: join(home, "AppData", "Roaming") },
+  });
   await mkdir(resolve(locationFilePath, ".."), { recursive: true });
   writeLibraryLocationFile(locationFilePath, libraryDir);
 

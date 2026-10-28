@@ -101,7 +101,17 @@ export function spawnMcpServerAsClient(t, { command = process.execPath, args = [
     && !readGravityPortEnv(env, "GRAVITYPORT_LIBRARY_LOCATION_FILE")) {
     throw new Error("Refusing to spawn the MCP server without GRAVITYPORT_LIBRARY_DIR or GRAVITYPORT_LIBRARY_LOCATION_FILE.");
   }
-  const child = spawn(command, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  // The server follows the desktop App's own library-location.json, which
+  // lives under XDG_CONFIG_HOME on Linux and APPDATA on Windows, not under
+  // HOME. Pin those (and the Windows home) inside the throwaway HOME so a real
+  // App's location file can never leak into, or be written by, a test.
+  const isolatedEnv = {
+    ...env,
+    USERPROFILE: env.HOME,
+    XDG_CONFIG_HOME: join(env.HOME, ".config"),
+    APPDATA: join(env.HOME, "AppData", "Roaming"),
+  };
+  const child = spawn(command, args, { cwd, env: isolatedEnv, stdio: ["pipe", "pipe", "pipe"] });
   const handle = new McpServerProcess(child);
   t.after(() => handle.terminateIfRunning());
   return handle;

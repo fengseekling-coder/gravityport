@@ -25,10 +25,16 @@ export const name = "sidebar-update-line";
 export const description =
   "sidebar update-ready line: single-row reminder above 用户中心 (position, 32px, one line, zh/en copy) -> click restarts (install called once, disabled, 正在更新…) -> null config renders nothing";
 
-// desktop/main.mjs, inside the get-update-ready handler body (1-based line):
-// the first paused frame evaluates the swap with ipcMain in scope. Keep in
-// sync if that handler moves.
-const GET_UPDATE_READY_BREAKPOINT_LINE = 847;
+// desktop/main.mjs, the first line inside the get-update-ready handler body
+// (0-based for Debugger.setBreakpointByUrl, i.e. the handler line + 1): the
+// first paused frame evaluates the swap with ipcMain in scope. Located from
+// the source so edits elsewhere in main.mjs never move it off the handler.
+const GET_UPDATE_READY_BREAKPOINT_LINE = await (async () => {
+  const source = await readFile(new URL("../../desktop/main.mjs", import.meta.url), "utf8");
+  const handlerIndex = source.split("\n").findIndex((line) => line.includes('ipcMain.handle("get-update-ready"'));
+  if (handlerIndex < 0) throw new Error("get-update-ready handler not found in desktop/main.mjs");
+  return handlerIndex + 1;
+})();
 
 const REPLACE_HANDLERS_ON_FRAME = `(() => {
   globalThis.__e2eUpdateLine = { config: { version: "9.9.9" }, installs: 0 };

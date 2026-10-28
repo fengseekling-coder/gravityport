@@ -365,8 +365,10 @@ test("real Electron preload smoke (opt-in)", { skip: process.env.MOSA_ELECTRON_P
   const userDataDir = await mkdtemp(join(tmpdir(), "mosa-preload-smoke-user-data-"));
   const assetsDir = join(libraryDir, "assets");
   await mkdir(assetsDir, { recursive: true });
+  // The import fixture is written only after the App is up: an image under
+  // assets/ with no mosa.db is a library that lost its database, which the
+  // App refuses to open (lib/asset-store.mjs). Starting empty is a first run.
   const fixturePath = join(assetsDir, "preload-smoke.png");
-  await writeFile(fixturePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
 
   const [cdpPort, desktopPort] = await Promise.all([reserveFreePort(), reserveFreePort()]);
   const child = spawn(electronPath, [`--remote-debugging-port=${cdpPort}`, `--user-data-dir=${userDataDir}`, root], {
@@ -463,6 +465,7 @@ test("real Electron preload smoke (opt-in)", { skip: process.env.MOSA_ELECTRON_P
     assert.equal(response.status, 200, await response.text());
   };
   const cardCount = `document.querySelectorAll('.asset-card').length`;
+  await writeFile(fixturePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
   await createFixture(fixturePath, "preload smoke fixture");
   let cardReady = await waitForRendererValue(client, cardCount, (value) => Number(value) > 0);
   if (!(Number(cardReady) > 0)) {
