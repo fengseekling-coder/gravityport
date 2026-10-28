@@ -1,8 +1,16 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {},
-    "en": {}
+    "zh": {
+      "fixed": [
+        "修复了同一张图片再次收录时可能覆盖原图或清空提示词的问题。现仅在新图更清晰时替换，被替换的旧图移入回收站。"
+      ]
+    },
+    "en": {
+      "fixed": [
+        "Fixed an issue where capturing the same image again could overwrite the original or clear its prompt. The image is now replaced only by a sharper version, and the previous one moves to the Trash."
+      ]
+    }
   },
   "releases": [
     {

@@ -346,7 +346,7 @@ test("SQLite group Trash move is atomic metadata work and does not touch managed
 
 test("SQLite deleteAsset is a soft-delete and permanent deletion stages files before removing the row", async (t) => {
   const source = await readFile(new URL("../lib/sqlite-asset-store.mjs", import.meta.url), "utf8");
-  const start = source.indexOf("async deleteAsset(projectId, assetId)");
+  const start = source.indexOf("async deleteAsset(projectId, assetId, context = {})");
   const end = source.indexOf("async restoreAsset(projectId, assetId)", start);
   assert.ok(start > -1 && end > start, "deleteAsset is present");
   const body = source.slice(start, end);
@@ -1076,9 +1076,10 @@ test("derivative job writes WebP previews without changing the original", async 
   const result = await processDerivativeJob(store, job);
   assert.equal(result.ok, true);
   const updated = await store.getAsset("default", asset.id);
-  assert.match(updated.thumbnail_url, /thumbnails\/image\.webp$/);
-  assert.match(updated.medium_url, /mediums\/image\.webp$/);
-  assert.match(updated.preview_url, /previews\/image\.webp$/);
+  // Task 280: derived URLs carry a content version (?v=) for cache busting.
+  assert.match(updated.thumbnail_url, /thumbnails\/image\.webp\?v=[0-9a-f]{12}$/);
+  assert.match(updated.medium_url, /mediums\/image\.webp\?v=[0-9a-f]{12}$/);
+  assert.match(updated.preview_url, /previews\/image\.webp\?v=[0-9a-f]{12}$/);
   assert.equal(updated.business_fields.width, 1200);
   assert.equal(updated.business_fields.height, 800);
   const [thumbnail, medium, preview] = await Promise.all([

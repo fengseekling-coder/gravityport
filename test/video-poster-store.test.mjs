@@ -63,7 +63,7 @@ test("saveVideoPoster stores a thumbnail-tier webp and records it like derivativ
 
   const updated = await store.saveVideoPoster("default", "poster-store-1", await makePosterJpeg());
   assert.equal(updated.thumbnail_ready, true);
-  assert.match(updated.thumbnail_url, /^\/library\/default\/thumbnails\/poster-store-1\.webp$/);
+  assert.match(updated.thumbnail_url, /^\/library\/default\/thumbnails\/poster-store-1\.webp\?v=[0-9a-f]{12}$/);
   assert.equal(updated.thumbnail_path, join(store.thumbnailsDir("default"), "poster-store-1.webp"));
   assert.ok(existsSync(updated.thumbnail_path), "poster file must exist on disk");
 
@@ -178,7 +178,7 @@ test("poster API route validates content type and size, and serves the stored po
   const ok = await fetch(posterUrl, { method: "POST", headers: { ...headers, "content-type": "image/jpeg" }, body: await makePosterJpeg() });
   assert.equal(ok.status, 201);
   const payload = await ok.json();
-  assert.match(payload.asset.thumbnail_url, new RegExp(`^/library/default/thumbnails/${created.id}\\.webp$`));
+  assert.match(payload.asset.thumbnail_url, new RegExp(`^/library/default/thumbnails/${created.id}\\.webp\\?v=[0-9a-f]{12}$`));
 
   const repeat = await fetch(posterUrl, { method: "POST", headers: { ...headers, "content-type": "image/jpeg" }, body: await makePosterJpeg() });
   assert.equal(repeat.status, 409);
@@ -231,5 +231,5 @@ test("poster file follows permanent deletion and library relocation", async (t) 
   assert.equal(relocated.thumbnail_ready, true);
   assert.ok(relocated.thumbnail_path.startsWith(resolve(destinationLibraryDir)), `poster path rebased into destination, got ${relocated.thumbnail_path}`);
   assert.ok(existsSync(relocated.thumbnail_path), "poster file must exist at the rebased path");
-  assert.match(relocated.thumbnail_url, /^\/library\/default\/thumbnails\/poster-follow-2\.webp$/);
+  assert.match(relocated.thumbnail_url, /^\/library\/default\/thumbnails\/poster-follow-2\.webp\?v=[0-9a-f]{12}$/);
 });

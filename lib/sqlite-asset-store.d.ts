@@ -123,7 +123,7 @@ export interface SqliteAssetStore {
   assetFileInfo(projectId: string, fileName: string): Promise<{ size: number }>;
   assetReadStream(projectId: string, fileName: string, options?: { start?: number; end?: number }): Promise<NodeJS.ReadableStream>;
   archiveAsset(projectId: string, assetId: string): Promise<StoredAsset>;
-  deleteAsset(projectId: string, assetId: string): Promise<Record<string, unknown>>;
+  deleteAsset(projectId: string, assetId: string, context?: { reason?: string }): Promise<Record<string, unknown>>;
   restoreAsset(projectId: string, assetId: string): Promise<StoredAsset>;
   permanentlyDeleteAsset(projectId: string, assetId: string): Promise<Record<string, unknown>>;
   purgeExpiredTrash(options?: { nowMs?: number; retentionMs?: number }): Promise<{ due: number; removed: number; failed: number }>;
@@ -156,6 +156,8 @@ export interface SqliteAssetStore {
   isReferenceHardlinkMigrationDone(): Promise<boolean>;
   completeReferenceHardlinkMigration(): Promise<void>;
   findAssetBySourcePath(projectId: string, sourcePath: string): Promise<StoredAsset | null>;
+  /** Provider-identity lookup for media replacement: `mediaKind` ("image" | "video") pins the media type, copies and versions never match. */
+  findAssetByProviderIdentity(projectId: string, provider: string, providerAssetId?: string, logicalOutputId?: string, mediaKind?: string): Promise<StoredAsset | null>;
   findAssetByPixelHash(projectId: string, pixelHash: string): Promise<StoredAsset | null>;
   libraryRevision(projectId?: string): Promise<string>;
   libraryChangeState(projectId?: string): Promise<{ revision: number; oldestRevision: number | null }>;

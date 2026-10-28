@@ -97,7 +97,7 @@ interface Store {
   findOriginalByContentHash?(projectId: string, contentHash: string): Promise<string>;
   findAssetByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset | null>;
   findAssetsByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset[]>;
-  findAssetByProviderIdentity?(projectId: string, provider: string, providerAssetId?: string, logicalOutputId?: string): Promise<StoredAsset | null>;
+  findAssetByProviderIdentity?(projectId: string, provider: string, providerAssetId?: string, logicalOutputId?: string, mediaKind?: string): Promise<StoredAsset | null>;
   listAssetsByConversation?(projectId: string, conversationId: string): Promise<StoredAsset[]>;
   libraryDir?: string;
   assetsRoot?: string;
@@ -298,9 +298,10 @@ async function upgradeWebCaptureMetadata({ store, projectId, input }: { store: S
   const providerAssetId = String(input.providerAssetId || input.provider_asset_id || "").trim();
   const logicalOutputId = logicalCaptureKey(projectId, provider, input);
   const sourceMediaUrl = sanitizeStoredMediaUrl(input.sourceMediaUrl || input.source_media_url);
+  const upgradeMediaKind = String(input.mediaKind || input.media_kind || "image").trim().toLowerCase() === "video" ? "video" : "image";
   let assets: StoredAsset[] | null = null;
   let asset = typeof store.findAssetByProviderIdentity === "function"
-    ? await store.findAssetByProviderIdentity(projectId, provider, providerAssetId, logicalOutputId)
+    ? await store.findAssetByProviderIdentity(projectId, provider, providerAssetId, logicalOutputId, upgradeMediaKind)
     : null;
   if (!asset && typeof store.findAssetByProviderIdentity !== "function") {
     const listedAssets = await Promise.all([
@@ -557,13 +558,18 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
   let logicalExistingForReplacement: StoredAsset | null = null;
   if (providerAssetId || logicalOutputId) {
     const logicalExisting = typeof store.findAssetByProviderIdentity === "function"
-      ? await store.findAssetByProviderIdentity(projectId, provider, providerAssetId, logicalOutputId)
+      ? await store.findAssetByProviderIdentity(projectId, provider, providerAssetId, logicalOutputId, "image")
       : findLogicalProviderAsset(await projectAssets(), provider, providerAssetId, logicalOutputId);
     if (logicalExisting) {
       const existingHash = String(logicalExisting.source?.content_sha256 || "").trim();
       if (existingHash === contentHash) return finalizeDuplicate(logicalExisting);
       if (["completed", "failed", "cancelled"].includes(generationStatus)
-        && typeof store.replaceAssetMedia === "function") {
+        && typeof store.replaceAssetMedia === "function"
+        && isProviderMediaUpgrade(logicalExisting, {
+          pixels: imageMetadata.width * imageMetadata.height,
+          mediaVariant: normalizeMediaVariant(input.mediaVariant ?? input.media_variant),
+          generationStatus,
+        })) {
         logicalExistingForReplacement = logicalExisting;
       } else {
         return finalizeDuplicate(logicalExisting);
@@ -658,7 +664,6 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
         contentHash,
         pixelHash,
         pixelHashVersion: pixelHash ? PIXEL_HASH_VERSION : "",
-        prompt,
         business_fields: assetInput.business_fields,
         source: assetInput.source,
       }, { trustedSourceRoots: [tempRoot], ingestMode: captureMode });
@@ -1250,6 +1255,60 @@ function logicalCaptureKey(projectId: string, provider: string, input: WebCaptur
   return `${projectId}\u001f${provider}\u001foutput:${generationCallId}\u001f${generationContextId}\u001f${messageId}\u001f${mediaUrl}`;
 }
 function onceProjectListing(store: Store, projectId: string): () => Promise<StoredAsset[]> { let pending: Promise<StoredAsset[]> | null = null; return () => { if (!pending) pending = Promise.all([store.listAssets({ projectId }), store.listAssets({ projectId, archived: true }).catch(() => [])]).then(([a, b]) => [...a, ...b]); return pending; }; }
+const TERMINAL_GENERATION_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+function storedGenerationStatus(asset: StoredAsset): string {
+  return normalizeGenerationStatus(asset.source?.generation_status ?? asset.business_fields?.generation_status);
+}
+
+function storedPixelCount(asset: StoredAsset): number {
+  const width = Number(asset.business_fields?.width ?? asset.source?.width) || 0;
+  const height = Number(asset.business_fields?.height ?? asset.source?.height) || 0;
+  return width > 0 && height > 0 ? width * height : 0;
+}
+
+/**
+ * "Same provider id arrived again" may only ever replace media upward
+ * (user rule 2026-10-28): a preview or an equal/smaller re-encode must never
+ * destroy archived pixels. A provisional capture holds the slot for its
+ * terminal result, an archived preview may be replaced by the original, and an
+ * archived original only yields to strictly more pixels. When dimensions are
+ * unreadable the conservative branch applies — an unreadable *incoming* image
+ * never upgrades, while unreadable *stored* dimensions cannot prove a
+ * downgrade of a provisional capture, so the terminal result still lands.
+ */
+function isProviderMediaUpgrade(existing: StoredAsset, incoming: { pixels: number; mediaVariant: string; generationStatus: string }): boolean {
+  if (!TERMINAL_GENERATION_STATUSES.has(incoming.generationStatus)) return false;
+  const existingTerminal = TERMINAL_GENERATION_STATUSES.has(storedGenerationStatus(existing));
+  const existingVariant = normalizeMediaVariant(existing.source?.media_variant);
+  const existingPixels = storedPixelCount(existing);
+  if (incoming.mediaVariant === "preview") {
+    // Only a strictly larger preview may replace a preview; an archived
+    // original must never be downgraded to a preview.
+    return existingTerminal && existingVariant === "preview"
+      && incoming.pixels > 0 && existingPixels > 0 && incoming.pixels > existingPixels;
+  }
+  if (!existingTerminal) {
+    return incoming.pixels === 0 || existingPixels === 0 || incoming.pixels >= existingPixels;
+  }
+  if (existingVariant === "preview") return true;
+  return incoming.pixels > 0 && existingPixels > 0 && incoming.pixels > existingPixels;
+}
+
+// The first-archived provider id stays in source.provider_asset_id; later ids
+// observed for the same bytes are appended here (deduped, bounded) so identity
+// history grows without ever rewriting the archived one.
+const MERGED_PROVIDER_ASSET_IDS_LIMIT = 20;
+
+function mergeProviderAssetIds(current: unknown, incomingId: string, archivedId: string): string[] {
+  const clean = String(incomingId || "").trim();
+  if (!clean || clean === String(archivedId || "").trim()) return Array.isArray(current) ? current.map((entry) => String(entry)) : [];
+  const merged = (Array.isArray(current) ? current : [])
+    .map((entry) => String(entry || "").trim())
+    .filter((entry) => entry && entry !== String(archivedId || "").trim());
+  if (!merged.includes(clean)) merged.push(clean);
+  return merged.slice(0, MERGED_PROVIDER_ASSET_IDS_LIMIT);
+}
 function findLogicalProviderAsset(assets: StoredAsset[], provider: string, providerAssetId: string, logicalOutputId = ""): StoredAsset | null {
   const wantedProvider = String(provider || "").trim().toLowerCase();
   const wantedAssetId = String(providerAssetId || "").trim();
@@ -1420,10 +1479,15 @@ async function mergeDuplicateGenerationRecipe(
   const nextGenerationStatus = normalizeGenerationStatus(input.generationStatus);
   const statusChanged = nextGenerationStatus !== "unknown" && nextGenerationStatus !== currentGenerationStatus;
   const referencesChanged = referenceIdentityList(currentReferences) !== referenceIdentityList(mergedReferences);
+  // A second provider asset id for the same bytes is a distinct identity event:
+  // the archived id stays, the newcomer is appended to merged_provider_asset_ids.
+  const incomingProviderAssetId = String(input.providerAssetId || "").trim();
+  const currentProviderAssetId = String(existing.source?.provider_asset_id || "").trim();
+  const providerAssetIdChanged = Boolean(incomingProviderAssetId && currentProviderAssetId && incomingProviderAssetId !== currentProviderAssetId);
   // Plain prompt/user-message upgrades are handled by maybeUpgradePrompt below.
   // This merge exists specifically for a distinct generation occurrence or a
   // late-arriving reference set, otherwise it would swallow the normal upgrade signal.
-  if (!contextChanged && !referencesChanged && !statusChanged) return { asset: existing, merged: false };
+  if (!contextChanged && !referencesChanged && !statusChanged && !providerAssetIdChanged) return { asset: existing, merged: false };
 
   const updated = await store.updateMetadata(existing.project_id, existing.id, {
     references: mergedReferences,
@@ -1434,7 +1498,10 @@ async function mergeDuplicateGenerationRecipe(
       provider_tool_call_id: input.providerToolCallId || existing.source?.provider_tool_call_id || null,
       provider_generation_call_id: input.providerGenerationCallId || existing.source?.provider_generation_call_id || null,
       provider_response_id: input.providerResponseId || existing.source?.provider_response_id || null,
-      provider_asset_id: input.providerAssetId || existing.source?.provider_asset_id || null,
+      provider_asset_id: currentProviderAssetId || input.providerAssetId || null,
+      merged_provider_asset_ids: providerAssetIdChanged
+        ? mergeProviderAssetIds(existing.source?.merged_provider_asset_ids, incomingProviderAssetId, currentProviderAssetId)
+        : existing.source?.merged_provider_asset_ids,
       generation_status: statusChanged ? nextGenerationStatus : existing.source?.generation_status || currentGenerationStatus,
       verification_level: existing.source?.verification_level || "observed",
       message_id: input.messageId || existing.source?.message_id || null,
@@ -1457,11 +1524,13 @@ async function mergeDuplicateGenerationRecipe(
       prompt_scope: existing.business_fields?.prompt_scope || existing.source?.prompt_scope || input.promptScope || null,
       user_message: mergedUserMessage(existing.business_fields?.user_message, input.userMessage) || null,
     },
-    recipe_change_summary: contextChanged
-      ? "Generation occurrence merged"
-      : referencesChanged
-        ? "Generation references merged"
-        : "Generation status updated",
+    recipe_change_summary: providerAssetIdChanged
+      ? "Provider asset identity merged"
+      : contextChanged
+        ? "Generation occurrence merged"
+        : referencesChanged
+          ? "Generation references merged"
+          : "Generation status updated",
   });
   return { asset: updated, merged: true };
 }

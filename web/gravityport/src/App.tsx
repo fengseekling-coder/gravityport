@@ -32,7 +32,7 @@ import { generationTreeRows, generationDisplay, relatedChoices, type GenerationD
 import { computeConversationRounds, conversationRoundRows, roundCompareSelection, roundLine, type ConversationRoundRow } from "./conversation-rounds"
 import VersionCompare, { type VersionCompareEntry } from "./version-compare"
 import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
-import { aspectRatioLabel, formatVideoDuration, describeSource, promptNotice, resolveReferences } from "./inspector-info"
+import { aspectRatioLabel, formatVideoDuration, describeSource, promptNotice, trashReasonNotice, resolveReferences } from "./inspector-info"
 import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, removeTagFromStored, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
@@ -3348,6 +3348,7 @@ export default function App() {
   const sourceInfo = asset ? describeSource(asset, language) : null
   const headerLine = sourceInfo ? inspectorHeaderLine(sourceInfo, tr) : ""
   const promptNoticeInfo = asset ? promptNotice(asset) : null
+  const trashReasonInfo = asset ? trashReasonNotice(asset) : null
   const startPromptEdit = () => {
     if (!asset) return
     setPromptEdit({ project: asset.project_id, assetId: asset.id, draft: asset.prompt || "" })
@@ -3981,6 +3982,7 @@ export default function App() {
                 </button>
               </div>
               <span className="muted">{headerLine}</span>
+              {trashReasonInfo && <span className="trash-reason">{tr(trashReasonInfo.text)}</span>}
               <button className="summary-preview" onClick={() => setPreview(true)}>{tr("打开预览")}<Icon name="right" size={12} /></button>
             </div>
           </div>
