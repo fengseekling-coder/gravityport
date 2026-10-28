@@ -7,6 +7,8 @@ import test from "node:test";
 // @ts-ignore - better-sqlite3 is consumed as an untyped runtime dependency in this repository.
 import Database from "better-sqlite3";
 import { createAssetStore } from "../lib/asset-store.mjs";
+import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
 import { createCodexImageBridge, reconcileCodexGeneratedImages } from "../lib/codex-image-bridge.js";
 
 test("archives Codex generated images with task metadata and avoids duplicates", async (t) => {
@@ -623,3 +625,95 @@ async function waitFor(condition, timeoutMs = 2000) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+test("keeps user-edited prompts across Codex reconciliation while untouched assets still upgrade", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-user-edit-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir: join(root, "library") });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+
+  const writeSession = async (taskId, callId, imagePath, revisedPrompt) => {
+    const sessionPath = join(sessionsDir, "2026", "10", "28", `rollout-${taskId}.jsonl`);
+    await mkdir(join(sessionsDir, "2026", "10", "28"), { recursive: true });
+    await writeFile(sessionPath, [
+      { type: "turn_context", payload: { model: "gpt-5.6-terra" } },
+      { type: "event_msg", timestamp: "2026-10-28T10:00:00.000Z", payload: { type: "image_generation_end", call_id: callId, saved_path: imagePath, revised_prompt: revisedPrompt } },
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+    return sessionPath;
+  };
+
+  const pathA = join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f11", "edited.png");
+  const pathB = join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f12", "kept.png");
+  await mkdir(join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f11"), { recursive: true });
+  await mkdir(join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f12"), { recursive: true });
+  await writeFile(pathA, pngFixture(1024, 1536));
+  await writeFile(pathB, pngFixture(800, 600));
+  const promptA = "Use case: stylized-concept\nAsset type: premium sci-fi keyframe, 2:3 portrait\nPrimary request: original prompt for the edited image.";
+  const promptB = "Use case: stylized-concept\nAsset type: premium sci-fi keyframe, 2:3 portrait\nPrimary request: original prompt for the untouched image.";
+  await writeSession("019f776f-f6d5-7692-b9e5-dd280fc09f11", "call-edit", pathA, promptA);
+  await writeSession("019f776f-f6d5-7692-b9e5-dd280fc09f12", "call-keep", pathB, promptB);
+
+  const first = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.equal(first.imported.length, 2);
+  const assetA = first.imported.find((asset) => asset.source.codex_task_id === "019f776f-f6d5-7692-b9e5-dd280fc09f11");
+  const assetB = first.imported.find((asset) => asset.source.codex_task_id === "019f776f-f6d5-7692-b9e5-dd280fc09f12");
+  assert.equal(assetA.prompt, promptA);
+
+  // The UI PATCH entry point: stamp markers the way lib/api/asset-routes.mjs does.
+  await store.updateMetadata("default", assetA.id, withUserEditMarkers(await store.getAsset("default", assetA.id), { prompt: "USER EDIT: luminous vertical megacity" }));
+
+  const revisedA = `${promptA} Revised after the user edit.`;
+  const revisedB = `${promptB} Revised while nobody was looking.`;
+  await writeSession("019f776f-f6d5-7692-b9e5-dd280fc09f11", "call-edit", pathA, revisedA);
+  await writeSession("019f776f-f6d5-7692-b9e5-dd280fc09f12", "call-keep", pathB, revisedB);
+
+  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.deepEqual(second.updated, [assetB.id], "only the untouched asset is rewritten");
+  const afterA = await store.getAsset("default", assetA.id);
+  const afterB = await store.getAsset("default", assetB.id);
+  assert.equal(afterA.prompt, "USER EDIT: luminous vertical megacity", "the user edit must survive reconciliation");
+  assert.equal(afterB.prompt, revisedB, "the untouched asset must still follow the session");
+  assert.ok(afterA.source.prompt_user_edited_at);
+});
+
+test("a user-renamed Codex asset keeps its theme while its prompt still upgrades", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-user-theme-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir: join(root, "library") });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+
+  const imagePath = join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f13", "renamed.png");
+  await mkdir(join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f13"), { recursive: true });
+  await writeFile(imagePath, pngFixture(640, 480));
+  const sessionPath = join(sessionsDir, "2026", "10", "28", "rollout-019f776f-f6d5-7692-b9e5-dd280fc09f13.jsonl");
+  await mkdir(join(sessionsDir, "2026", "10", "28"), { recursive: true });
+  const writeSession = (revisedPrompt) => writeFile(sessionPath, [
+    { type: "turn_context", payload: { model: "gpt-5.6-terra" } },
+    { type: "event_msg", timestamp: "2026-10-28T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "call-theme", saved_path: imagePath, revised_prompt: revisedPrompt } },
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+  const promptV1 = "Use case: stylized-concept\nAsset type: neon harbor skyline\nPrimary request: first revision of the prompt.";
+  await writeSession(promptV1);
+
+  const first = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.equal(first.imported.length, 1);
+  const asset = first.imported[0];
+
+  // Rename only: the prompt keeps no marker, so upgrades stay possible.
+  await store.updateMetadata("default", asset.id, withUserEditMarkers(await store.getAsset("default", asset.id), { theme: "用户起的名字" }));
+
+  const promptV2 = "Use case: stylized-concept\nAsset type: neon harbor skyline at dawn\nPrimary request: second revision of the prompt.";
+  await writeSession(promptV2);
+  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.ok(second.updated.includes(asset.id), "the prompt upgrade must still happen");
+
+  const after = await store.getAsset("default", asset.id);
+  assert.equal(after.prompt, promptV2);
+  assert.equal(after.theme, "用户起的名字", "the user rename must not be recomputed from the new prompt");
+  assert.ok(after.source.theme_user_edited_at);
+});

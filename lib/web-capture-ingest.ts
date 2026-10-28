@@ -7,6 +7,7 @@ import { readVideoMetadataFromFile } from "./video-metadata.js";
 import { createdAtTimestamp } from "./recent-window.js";
 import { createReferenceAttachmentStore, type ReferenceAttachment } from "./reference-attachment-store.js";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
+import { isPromptUserEdited, isThemeUserEdited } from "./user-edit-marker.mjs";
 
 const DEFAULT_PROJECT_ID = "default";
 const DEFAULT_TEMP_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1558,30 +1559,6 @@ function promptRank(status: string, text: unknown, priority = 0): number {
     + Math.min(String(text || "").trim().length, 5000);
 }
 
-function placeHints(text: unknown): string[] {
-  const value = String(text || "");
-  const hints: string[] = [];
-  const rules: Array<[RegExp, string]> = [
-    [/北京|beijing/i, "beijing"],
-    [/上海|shanghai/i, "shanghai"],
-    [/东京|tokyo/i, "tokyo"],
-    [/曼谷|bangkok/i, "bangkok"],
-    [/首尔|seoul/i, "seoul"],
-    [/巴黎|paris/i, "paris"],
-    [/伦敦|london/i, "london"],
-  ];
-  for (const [pattern, key] of rules) {
-    if (pattern.test(value)) hints.push(key);
-  }
-  return hints;
-}
-
-function mentionsAnyPlace(text: unknown, hints: string[]): boolean {
-  if (!hints.length) return false;
-  const lower = String(text || "").toLowerCase();
-  return hints.some((hint) => lower.includes(hint));
-}
-
 function captureOccurrenceKey(value: Record<string, unknown>): string {
   return [
     value.provider,
@@ -1704,18 +1681,29 @@ async function maybeUpgradePrompt(store: Store, existing: StoredAsset, next: Pro
   const nextPriority = Math.max(0, Number(next.promptPriority) || 0);
   const currentRank = promptRank(currentStatus, currentPrompt, currentPriority);
   const nextRank = promptRank(nextStatus, nextPrompt, nextPriority);
-  const places = placeHints(userMessage || nextPrompt);
-  const placeUpgrade = places.length > 0
-    && mentionsAnyPlace(userMessage || nextPrompt, places)
-    && !mentionsAnyPlace(currentPrompt, places)
-    && (mentionsAnyPlace(nextPrompt, places) || /user edit|Generation caption|requested a different region/i.test(nextPrompt));
-  if (!placeUpgrade && nextRank <= currentRank && !(nextPrompt.length > currentPrompt.length + 40 && nextRank >= currentRank)) {
+  // Ranking and length only: no content heuristics.
+  if (nextRank <= currentRank && !(nextPrompt.length > currentPrompt.length + 40 && nextRank >= currentRank)) {
     return null;
   }
 
+  // A prompt a human typed through a marked entry point wins over every
+  // recapture. The page's status/priority describe a prompt we are not
+  // keeping, so only the user's own words may still fill in; writing the rest
+  // would rewrite the asset on every repeated observation of the same image.
+  if (isPromptUserEdited(existing)) {
+    const merged = mergedUserMessage(currentUserMessage, userMessage);
+    if (merged === currentUserMessage) return null;
+    return store.updateMetadata(existing.project_id, existing.id, {
+      source: { ...(existing.source || {}), user_message: merged },
+      business_fields: { ...(existing.business_fields || {}), user_message: merged },
+    });
+  }
+
+  // The theme is derived from the page prompt, so it is only written alongside
+  // a prompt that is actually being upgraded, and never over a user rename.
   return store.updateMetadata(existing.project_id, existing.id, {
     prompt: nextPrompt,
-    theme: promptTheme(nextPrompt, providerLabelFor(next.provider || existing.source?.provider)),
+    ...(isThemeUserEdited(existing) ? {} : { theme: promptTheme(nextPrompt, providerLabelFor(next.provider || existing.source?.provider)) }),
     source: {
       ...(existing.source || {}),
       prompt_status: nextStatus,

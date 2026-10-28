@@ -19,6 +19,7 @@ import {
   type StagedCodexSessionImage,
 } from "./codex-session-recovery.js";
 import { resolveSourceLocations } from "./source-locations.js";
+import { isPromptUserEdited, isThemeUserEdited } from "./user-edit-marker.mjs";
 
 const IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"]);
 const DEFAULT_PROJECT_ID = "default";
@@ -645,8 +646,11 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
   }
 
   const nextTheme = promptTheme(generation.prompt);
-  const promptChanged = asset.prompt !== generation.prompt;
-  const themeChanged = Boolean(nextTheme) && asset.theme !== nextTheme;
+  // A prompt or theme a human typed through a marked entry point wins over
+  // the session file forever; the theme is only ever recomputed alongside a
+  // prompt that is actually being upgraded.
+  const promptChanged = !isPromptUserEdited(asset) && asset.prompt !== generation.prompt;
+  const themeChanged = !isThemeUserEdited(asset) && promptChanged && Boolean(nextTheme) && asset.theme !== nextTheme;
   const nextSource: Record<string, unknown> = {
     ...(asset.source || {}),
     codex_session_path: generation.sessionPath || asset.source?.codex_session_path || null,

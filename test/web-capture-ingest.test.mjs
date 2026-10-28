@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import sharp from "sharp";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
 import { createReferenceAttachmentStore } from "../lib/reference-attachment-store.js";
 import {
   cleanupWebCaptureTemp,
@@ -2748,4 +2749,228 @@ test("a title arriving with a session's second image names the auto stack", asyn
   assert.ok(stack, "the second same-session image created the auto stack");
   const summary = await store.getAssetStack("default", stack.id);
   assert.equal(summary.name, "Stacked Conversation", "the auto stack is named after the conversation title");
+});
+
+test("keeps user-edited prompts on web recapture while untouched assets still upgrade", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-web-user-edit-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+  const bridge = createWebCaptureIngest({
+    store,
+    libraryDir,
+    projectId: "default",
+    token: "user-edit-secret",
+    allowedOrigins: ["chrome-extension://example-extension"],
+  });
+
+  const shortPrompt = "A flat red square";
+  const initial = await bridge.ingest({
+    provider: "flow",
+    imageBase64: (await noiseImage(251)).toString("base64"),
+    mimeType: "image/png",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=user-edit-a",
+    prompt: shortPrompt,
+    promptStatus: "provider-visible-prompt",
+    generationStatus: "completed",
+  }, "user-edit-secret");
+  assert.equal(initial.status, "imported");
+
+  // The UI PATCH entry point: stamp markers the way lib/api/asset-routes.mjs does.
+  await store.updateMetadata("default", initial.asset.id, withUserEditMarkers(
+    await store.getAsset("default", initial.asset.id),
+    { prompt: "USER EDIT: A flat vermilion square with torn edges" },
+  ));
+
+  const longerPrompt = "A flat vermilion square with torn edges, shot on medium-format film, soft studio lighting, extremely detailed texture, editorial composition";
+  const recaptured = await bridge.upgradeMetadata({
+    provider: "flow",
+    mediaKind: "image",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=user-edit-a",
+    prompt: longerPrompt,
+    promptStatus: "provider-visible-prompt",
+    promptSource: "flow-visible-prompt",
+    promptPriority: 50,
+    generationStatus: "completed",
+  }, "user-edit-secret");
+  assert.equal(recaptured.upgraded, false, "a user-edited prompt is not upgraded, and nothing else about it is rewritten");
+  assert.equal(recaptured.asset.prompt, "USER EDIT: A flat vermilion square with torn edges", "the user edit must survive the recapture");
+  assert.equal(recaptured.asset.theme, initial.asset.theme, "the theme derived from the page prompt must not be written either");
+  assert.ok(recaptured.asset.source.prompt_user_edited_at);
+
+  // Seeing the same image again must not rewrite the asset each time.
+  const beforeRepeat = (await store.getAsset("default", initial.asset.id)).updated_at;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const repeated = await bridge.upgradeMetadata({
+    provider: "flow",
+    mediaKind: "image",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=user-edit-a",
+    prompt: longerPrompt,
+    promptStatus: "provider-visible-prompt",
+    promptSource: "flow-visible-prompt",
+    promptPriority: 50,
+    generationStatus: "completed",
+  }, "user-edit-secret");
+  assert.equal(repeated.upgraded, false);
+  assert.equal((await store.getAsset("default", initial.asset.id)).updated_at, beforeRepeat, "a repeated observation is a no-op");
+
+  // Control: an untouched asset with the same history still follows the page.
+  const control = await bridge.ingest({
+    provider: "flow",
+    imageBase64: (await noiseImage(252)).toString("base64"),
+    mimeType: "image/png",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=user-edit-b",
+    prompt: shortPrompt,
+    promptStatus: "provider-visible-prompt",
+    generationStatus: "completed",
+  }, "user-edit-secret");
+  const controlUpgraded = await bridge.upgradeMetadata({
+    provider: "flow",
+    mediaKind: "image",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=user-edit-b",
+    prompt: longerPrompt,
+    promptStatus: "provider-visible-prompt",
+    promptSource: "flow-visible-prompt",
+    promptPriority: 50,
+    generationStatus: "completed",
+  }, "user-edit-secret");
+  assert.equal(controlUpgraded.upgraded, true);
+  assert.equal(controlUpgraded.asset.prompt, longerPrompt, "the untouched asset must still upgrade");
+  assert.notEqual(controlUpgraded.asset.prompt, control.asset.prompt);
+});
+
+test("a user-renamed web asset keeps its theme while its prompt still upgrades", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-web-user-theme-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+  const bridge = createWebCaptureIngest({
+    store,
+    libraryDir,
+    projectId: "default",
+    token: "user-theme-secret",
+    allowedOrigins: ["chrome-extension://example-extension"],
+  });
+
+  const initial = await bridge.ingest({
+    provider: "flow",
+    imageBase64: (await noiseImage(253)).toString("base64"),
+    mimeType: "image/png",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=user-theme",
+    prompt: "A flat red square",
+    promptStatus: "provider-visible-prompt",
+    generationStatus: "completed",
+  }, "user-theme-secret");
+
+  // Rename only: the prompt keeps no marker, so upgrades stay possible.
+  await store.updateMetadata("default", initial.asset.id, withUserEditMarkers(
+    await store.getAsset("default", initial.asset.id),
+    { theme: "狐狸（我改的）" },
+  ));
+
+  const longerPrompt = "A flat red square with visible brush texture, soft studio lighting, extremely detailed, editorial photography, medium format film look";
+  const upgraded = await bridge.upgradeMetadata({
+    provider: "flow",
+    mediaKind: "image",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=user-theme",
+    prompt: longerPrompt,
+    promptStatus: "provider-visible-prompt",
+    promptSource: "flow-visible-prompt",
+    promptPriority: 50,
+    generationStatus: "completed",
+  }, "user-theme-secret");
+  assert.equal(upgraded.upgraded, true);
+  assert.equal(upgraded.asset.prompt, longerPrompt, "the prompt upgrade must still happen");
+  assert.equal(upgraded.asset.theme, "狐狸（我改的）", "the user rename must survive the upgrade");
+});
+
+test("user-message backfill still runs after the markers and keeps them intact", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-web-user-message-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+  const bridge = createWebCaptureIngest({
+    store,
+    libraryDir,
+    projectId: "default",
+    token: "user-message-secret",
+    allowedOrigins: ["chrome-extension://example-extension"],
+  });
+
+  const initial = await bridge.ingest({
+    provider: "flow",
+    imageBase64: (await noiseImage(254)).toString("base64"),
+    mimeType: "image/png",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=user-message",
+    prompt: "A flat red square",
+    promptStatus: "provider-visible-prompt",
+    generationStatus: "completed",
+  }, "user-message-secret");
+  await store.updateMetadata("default", initial.asset.id, withUserEditMarkers(
+    await store.getAsset("default", initial.asset.id),
+    { prompt: "USER EDIT: A flat red square" },
+  ));
+
+  const backfilled = await bridge.upgradeMetadata({
+    provider: "flow",
+    mediaKind: "image",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=user-message",
+    userMessage: "做一张红色的正方形",
+    generationStatus: "completed",
+  }, "user-message-secret");
+  assert.equal(backfilled.upgraded, true);
+  assert.equal(backfilled.asset.source.user_message, "做一张红色的正方形", "user-message backfill is untouched by the markers");
+  assert.equal(backfilled.asset.prompt, "USER EDIT: A flat red square");
+  assert.ok(backfilled.asset.source.prompt_user_edited_at, "the marker must survive the backfill write");
+});
+
+test("city-name heuristics no longer force a prompt upgrade on their own", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-web-no-place-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+  const bridge = createWebCaptureIngest({
+    store,
+    libraryDir,
+    projectId: "default",
+    token: "no-place-secret",
+    allowedOrigins: ["chrome-extension://example-extension"],
+  });
+
+  const initial = await bridge.ingest({
+    provider: "flow",
+    imageBase64: (await noiseImage(255)).toString("base64"),
+    mimeType: "image/png",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=no-place",
+    prompt: "A flat red square",
+    promptStatus: "provider-visible-prompt",
+    generationStatus: "completed",
+  }, "no-place-secret");
+  assert.equal(initial.status, "imported");
+
+  // Shorter, same rank, only distinguished by a city name — the deleted place
+  // table would have forced this through before (promptRank also counts text
+  // length, so the replacement must be shorter than the stored prompt).
+  const sameRank = await bridge.upgradeMetadata({
+    provider: "flow",
+    mediaKind: "image",
+    sourceMediaUrl: "https://flow-content.google/output.png?media_id=no-place",
+    prompt: "Beijing square",
+    promptStatus: "provider-visible-prompt",
+    generationStatus: "completed",
+  }, "no-place-secret");
+  assert.equal(sameRank.upgraded, false);
+  assert.equal(sameRank.asset.prompt, "A flat red square");
 });
