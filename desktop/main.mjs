@@ -13,7 +13,7 @@ import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../li
 import { validateRuntimeIsolation } from "../lib/runtime-isolation-guard.mjs";
 import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
 import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../lib/import-staging.mjs";
-import { getDesktopText, getNotificationTextForAssetsImported, getUpdateNotificationText } from "./notification-i18n.mjs";
+import { getDesktopText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getUpdateNotificationText } from "./notification-i18n.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
@@ -42,7 +42,7 @@ import {
   MOSA_LIBRARY_NOT_FOUND,
   resolveLibraryLocation,
   writeLibraryLocationFile,
-  writeLibraryLocationFileIfMissing,
+  writeLibraryLocationFromSuccessfulOpen,
 } from "../lib/library-location.mjs";
 import { getBuildIdentity } from "../lib/build-identity.mjs";
 import { MOSA_SERVICE_PROTOCOL_VERSION } from "../lib/version-identities.mjs";
@@ -120,12 +120,18 @@ function saveLibraryDir(nextLibraryDir) {
  * it successfully. Libraries that were never moved have no location file, so
  * a later disappearance of the default-location library would otherwise fall
  * through to "no library anywhere" and silently create a fresh empty one.
- * Never overwrites a recorded move; the rename-notice decision above runs
- * before any of this, so the backfill cannot turn a fresh install into an
- * "old user" signal for that notice.
+ * Skipped when MOSA_LIBRARY_DIR names an explicit (developer/test) library —
+ * that temporary path must never become the recorded location. Never
+ * overwrites a recorded move; the rename-notice decision above runs before
+ * any of this, so the backfill cannot turn a fresh install into an "old
+ * user" signal for that notice.
  */
 function recordLibraryLocationAfterSuccessfulOpen() {
-  const recorded = writeLibraryLocationFileIfMissing(LIBRARY_LOCATION_PATH, libraryDir);
+  const recorded = writeLibraryLocationFromSuccessfulOpen({
+    envLibraryDir: process.env.MOSA_LIBRARY_DIR,
+    locationFilePath: LIBRARY_LOCATION_PATH,
+    libraryDir,
+  });
   if (recorded) console.info(`[MOSA] recorded the library location for the first time: ${libraryDir}`);
   return recorded;
 }
@@ -1668,7 +1674,14 @@ function reportStartupFailure(error) {
     console.info(`[MOSA] startup load aborted during shutdown: ${message}`);
     return;
   }
-  dialog.showErrorBox(getDesktopText("startupErrorTitle", currentLocale), message);
+  // A broken library (missing mosa.db, incomplete state) gets its own dialog
+  // in the current language; everything else keeps the generic startup title
+  // with the raw error message.
+  const libraryFailure = getLibraryStartupFailureText(error, currentLocale);
+  dialog.showErrorBox(
+    libraryFailure ? libraryFailure.title : getDesktopText("startupErrorTitle", currentLocale),
+    libraryFailure ? libraryFailure.body : message,
+  );
   shuttingDown = true;
   stopBridgeNotificationPoll();
   void Promise.allSettled([

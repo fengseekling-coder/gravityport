@@ -51,6 +51,12 @@ const desktopTranslations = {
     menuZoom: "缩放",
     menuBringAllToFront: "将全部置于最前",
     startupErrorTitle: "GravityPort 无法启动",
+    libraryDatabaseMissingTitle: "素材库的数据库文件不见了",
+    libraryDatabaseMissingBody: "素材库在 {libraryDir}，里面的 mosa.db 找不到了。请从备份恢复 mosa.db 后重新打开 GravityPort。",
+    libraryStateInvalidTitle: "素材库状态不完整",
+    libraryStateInvalidBody: "素材库在 {libraryDir}，数据库没有标记为已就绪。请从备份恢复素材库后重新打开 GravityPort。",
+    librarySqliteMissingTitle: "素材库的数据库文件不见了",
+    librarySqliteMissingBody: "素材库在 {libraryDir}，迁移后的 mosa.db 找不到了。请从备份恢复 mosa.db 后重新打开 GravityPort。",
   },
   en: {
     menuFile: "File",
@@ -81,6 +87,12 @@ const desktopTranslations = {
     menuZoom: "Zoom",
     menuBringAllToFront: "Bring All to Front",
     startupErrorTitle: "GravityPort could not start",
+    libraryDatabaseMissingTitle: "Your library's database is missing",
+    libraryDatabaseMissingBody: "The library is at {libraryDir}, but its mosa.db file is missing. Restore mosa.db from a backup, then open GravityPort again.",
+    libraryStateInvalidTitle: "Your library is in an incomplete state",
+    libraryStateInvalidBody: "The library is at {libraryDir}, and its database was never marked as ready. Restore the library from a backup, then open GravityPort again.",
+    librarySqliteMissingTitle: "Your library's database is missing",
+    librarySqliteMissingBody: "The library is at {libraryDir}, but its migrated mosa.db file is missing. Restore mosa.db from a backup, then open GravityPort again.",
   },
 };
 
@@ -94,6 +106,30 @@ export function getDesktopText(key, locale) {
   }
   const language = locale === "zh" || locale === "en" ? locale : "zh";
   return desktopTranslations[language][key];
+}
+
+// Library errors the store layer throws during startup (lib/asset-store.mjs);
+// each maps to its own title/body pair in the desktopTranslations table.
+const LIBRARY_STARTUP_ERROR_KEYS = {
+  MOSA_LIBRARY_DATABASE_MISSING: ["libraryDatabaseMissingTitle", "libraryDatabaseMissingBody"],
+  MOSA_LIBRARY_STATE_INVALID: ["libraryStateInvalidTitle", "libraryStateInvalidBody"],
+  SQLITE_LIBRARY_MISSING: ["librarySqliteMissingTitle", "librarySqliteMissingBody"],
+};
+
+/**
+ * Startup-failure dialog text for a broken-library error, in one language
+ * only. Returns null for anything else so generic startup errors keep using
+ * the generic startupErrorTitle + error message. The error carries the
+ * library directory (error.libraryDir); the body names it.
+ */
+export function getLibraryStartupFailureText(error, locale) {
+  const keys = error && LIBRARY_STARTUP_ERROR_KEYS[error.code];
+  if (!keys) return null;
+  const libraryDir = typeof error.libraryDir === "string" ? error.libraryDir : "";
+  return {
+    title: getDesktopText(keys[0], locale),
+    body: getDesktopText(keys[1], locale).replace(/\{libraryDir\}/g, libraryDir),
+  };
 }
 
 /**

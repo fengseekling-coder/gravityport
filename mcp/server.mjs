@@ -78,13 +78,26 @@ try {
 // layout as the desktop runtime.
 const desktopMode = Boolean(process.versions.electron || locationFile);
 const explicitLibraryDir = desktopMode || process.env.MOSA_LIBRARY_DIR ? libraryDir : null;
-const store = createAssetStore({
-  projectRoot,
-  managerDir,
-  libraryDir,
-  explicitLibraryDir,
-  ...(desktopMode ? { assetsRoot: join(libraryDir, "assets"), generatedImagesDir: join(libraryDir, "imports") } : {}),
-});
+let store;
+try {
+  store = createAssetStore({
+    projectRoot,
+    managerDir,
+    libraryDir,
+    explicitLibraryDir,
+    ...(desktopMode ? { assetsRoot: join(libraryDir, "assets"), generatedImagesDir: join(libraryDir, "imports") } : {}),
+  });
+} catch (error) {
+  // A configured directory that holds a broken library (managed media without
+  // mosa.db, a database that never completed) must stop the server with the
+  // store's bilingual message — never fall through to any other location.
+  if (error?.code === "MOSA_LIBRARY_DATABASE_MISSING" || error?.code === "MOSA_LIBRARY_STATE_INVALID"
+    || error?.code === "SQLITE_LIBRARY_MISSING") {
+    process.stderr.write(`${error.message}\n`);
+    process.exit(1);
+  }
+  throw error;
+}
 // Record the mosa.db file identity (device + inode) the store was opened
 // against. A later move or deletion of the library changes or removes that
 // file; every tool call re-stats it so no write can land in a library that is

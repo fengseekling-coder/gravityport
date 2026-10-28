@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { getNotificationTextForAssetsImported } from "../desktop/notification-i18n.mjs";
+import { getLibraryStartupFailureText, getNotificationTextForAssetsImported } from "../desktop/notification-i18n.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -65,4 +65,45 @@ test("main.mjs no longer registers an open-folder IPC handler", async () => {
 test("the React shell syncs the resolved locale to the main process", async () => {
   const appSource = await readFile(resolve(repositoryRoot, "web/gravityport/src/App.tsx"), "utf8");
   assert.match(appSource, /desktopAPI\(\)\?\.setLocale\?\.\(language === "en" \? "en" : "zh"\)/);
+});
+
+test("getLibraryStartupFailureText picks one language per library error code", () => {
+  const databaseMissing = { code: "MOSA_LIBRARY_DATABASE_MISSING", libraryDir: "/tmp/Lib" };
+  const zhMissing = getLibraryStartupFailureText(databaseMissing, "zh");
+  assert.equal(zhMissing.title, "素材库的数据库文件不见了");
+  assert.match(zhMissing.body, /^素材库在 \/tmp\/Lib，/);
+  assert.match(zhMissing.body, /mosa\.db/);
+  assert.doesNotMatch(zhMissing.body, /Restore|GravityPort again/);
+  const enMissing = getLibraryStartupFailureText(databaseMissing, "en");
+  assert.equal(enMissing.title, "Your library's database is missing");
+  assert.match(enMissing.body, /^The library is at \/tmp\/Lib, /);
+  assert.doesNotMatch(enMissing.body, /素材库/);
+
+  const stateInvalid = { code: "MOSA_LIBRARY_STATE_INVALID", libraryDir: "/tmp/State" };
+  const zhState = getLibraryStartupFailureText(stateInvalid, "zh");
+  assert.equal(zhState.title, "素材库状态不完整");
+  assert.match(zhState.body, /素材库在 \/tmp\/State，/);
+  const enState = getLibraryStartupFailureText(stateInvalid, "en");
+  assert.equal(enState.title, "Your library is in an incomplete state");
+  assert.match(enState.body, /The library is at \/tmp\/State, /);
+
+  const sqliteMissing = { code: "SQLITE_LIBRARY_MISSING", libraryDir: "/tmp/Migrated" };
+  const zhSqlite = getLibraryStartupFailureText(sqliteMissing, "zh");
+  assert.equal(zhSqlite.title, "素材库的数据库文件不见了");
+  assert.match(zhSqlite.body, /迁移后的 mosa\.db/);
+  const enSqlite = getLibraryStartupFailureText(sqliteMissing, "en");
+  assert.equal(enSqlite.title, "Your library's database is missing");
+  assert.match(enSqlite.body, /migrated mosa\.db/);
+});
+
+test("getLibraryStartupFailureText returns null for unrelated errors", () => {
+  assert.equal(getLibraryStartupFailureText(new Error("boom"), "zh"), null);
+  assert.equal(getLibraryStartupFailureText({ code: "SOMETHING_ELSE", libraryDir: "/x" }, "en"), null);
+  assert.equal(getLibraryStartupFailureText(null, "zh"), null);
+});
+
+test("reportStartupFailure shows the library dialog through the i18n table", async () => {
+  const source = await readFile(resolve(repositoryRoot, "desktop/main.mjs"), "utf8");
+  assert.match(source, /getLibraryStartupFailureText\(error,\s*currentLocale\)/);
+  assert.match(source, /libraryFailure \? libraryFailure\.title : getDesktopText\("startupErrorTitle", currentLocale\)/);
 });

@@ -5,19 +5,22 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createAssetStore, libraryHasManagedMedia } from "../lib/asset-store.mjs";
+import { createAssetStore } from "../lib/asset-store.mjs";
 import {
   defaultLibraryDir,
   desktopDefaultLocationFilePath,
   directoryHasLibrary,
   ensureSqliteMigrationMarker,
   hasLegacyJsonState,
+  libraryHasManagedMedia,
   LIBRARY_DIR_NAME,
   MosaLibraryNotFoundError,
   resolveLibraryLocation,
   writeLibraryLocationFile,
   writeLibraryLocationFileIfMissing,
+  writeLibraryLocationFromSuccessfulOpen,
 } from "../lib/library-location.mjs";
+import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 import { createMcpWorkspace, spawnMcpServerAsClient, startMcpServer, writePngFixture } from "./helpers/mcp-server-harness.mjs";
 
@@ -216,11 +219,17 @@ test("libraryHasManagedMedia finds media under assets/ but ignores other files a
   assert.equal(libraryHasManagedMedia(libraryDir), true);
 });
 
-test("directoryHasLibrary follows the tightened legacy judgment", async (t) => {
+test("directoryHasLibrary counts managed media as a library; hasLegacyJsonState stays strict", async (t) => {
   const home = await tempHome(t);
   const libraryDir = join(home, "lib");
   await seedManagedImages(libraryDir);
-  assert.equal(directoryHasLibrary(libraryDir), false);
+  // A broken library (media, no mosa.db) IS a library for location selection:
+  // it must be selected and then reported by createAssetStore, never skipped
+  // in favor of a fresh library in the other default folder.
+  assert.equal(directoryHasLibrary(libraryDir), true);
+  // The backend-selection judgment stays strict: images alone are not legacy
+  // JSON state, so opening still reports the missing database.
+  assert.equal(hasLegacyJsonState({ libraryDir, explicitLibraryDir: libraryDir }), false);
   const metadataDir = join(libraryDir, "assets", "default", "metadata");
   await mkdir(metadataDir, { recursive: true });
   await writeFile(join(metadataDir, "asset-1.json"), "{}");
@@ -413,4 +422,130 @@ test("MCP answers LIBRARY_DATABASE_CHANGED when mosa.db is swapped for another f
   assert.equal(await readFile(join(workspace.libraryDir, "mosa.db"), "utf8"), "not a database");
   server.child.kill("SIGTERM");
   await server.waitForExit();
+});
+test("a broken default library is selected and reported, not skipped for a fresh one", async (t) => {
+  const home = await tempHome(t);
+  const legacyLibrary = join(home, "MOSA Library");
+  await seedManagedImages(legacyLibrary);
+
+  const resolution = resolveLibraryLocation({ homeDir: home });
+  assert.equal(resolution.libraryDir, resolve(legacyLibrary));
+  assert.equal(resolution.source, "legacy-default");
+
+  assert.throws(
+    () => createAssetStore({ projectRoot: home, managerDir: home, libraryDir: resolution.libraryDir, explicitLibraryDir: resolution.libraryDir }),
+    (error) => error?.code === "MOSA_LIBRARY_DATABASE_MISSING",
+  );
+  assert.equal(existsSync(join(home, LIBRARY_DIR_NAME)), false);
+});
+
+test("a marker without mosa.db in the default location is selected and reported", async (t) => {
+  const home = await tempHome(t);
+  const legacyLibrary = join(home, "MOSA Library");
+  await seedManagedImages(legacyLibrary);
+  ensureSqliteMigrationMarker(legacyLibrary);
+
+  const resolution = resolveLibraryLocation({ homeDir: home });
+  assert.equal(resolution.libraryDir, resolve(legacyLibrary));
+  assert.equal(resolution.source, "legacy-default");
+
+  assert.throws(
+    () => createAssetStore({ projectRoot: home, managerDir: home, libraryDir: resolution.libraryDir, explicitLibraryDir: resolution.libraryDir }),
+    (error) => error?.code === "SQLITE_LIBRARY_MISSING",
+  );
+  assert.equal(existsSync(join(home, LIBRARY_DIR_NAME)), false);
+});
+
+test("a broken GravityPort Library is selected as new-default, not new-default-fresh", async (t) => {
+  const home = await tempHome(t);
+  const library = join(home, LIBRARY_DIR_NAME);
+  await seedManagedImages(library);
+
+  const resolution = resolveLibraryLocation({ homeDir: home });
+  assert.equal(resolution.libraryDir, resolve(library));
+  assert.equal(resolution.source, "new-default");
+  assert.throws(
+    () => createAssetStore({ projectRoot: home, managerDir: home, libraryDir: resolution.libraryDir, explicitLibraryDir: resolution.libraryDir }),
+    (error) => error?.code === "MOSA_LIBRARY_DATABASE_MISSING",
+  );
+});
+
+test("the runtime without an explicit libraryDir reports the broken default instead of creating one", async (t) => {
+  const home = await tempHome(t);
+  const savedHome = process.env.HOME;
+  process.env.HOME = home;
+  t.after(() => { process.env.HOME = savedHome; });
+  await seedManagedImages(join(home, "MOSA Library"));
+
+  // Production shape (no QA markers): QA/debug mode requires an explicit
+  // MOSA_LIBRARY_DIR by design, so the implicit-default path only exists for
+  // `npm start` style runs. No libraryDir/assetsRoot passed — exactly the
+  // path mosa-runtime.mjs takes when the caller does not name a library.
+  await assert.rejects(
+    () => startMosaRuntime({
+      port: 0,
+      projectRoot: home,
+      managerDir: home,
+      cowartProjectDir: join(home, "desktop-data"),
+      appDir: join(home, "dist"),
+      generatedImagesDir: join(home, "generated-images"),
+      codexImagesDir: join(home, "codex-images"),
+      codexSessionsDir: join(home, "codex-sessions"),
+      grokSessionsDir: join(home, "grok-sessions"),
+      cowartCanvasDir: join(home, "cowart-canvas"),
+      cowartRegistryPath: join(home, "state", "cowart-projects.json"),
+    }),
+    (error) => error?.code === "MOSA_LIBRARY_DATABASE_MISSING",
+  );
+  assert.equal(existsSync(join(home, LIBRARY_DIR_NAME)), false);
+});
+
+test("MCP exits non-zero for an env-configured directory holding only managed media", async (t) => {
+  const workspace = await createMcpWorkspace(t);
+  // Reduce the seeded library to managed media only: no mosa.db, no marker.
+  for (const entry of await readdir(workspace.libraryDir)) {
+    await rm(join(workspace.libraryDir, entry), { recursive: true, force: true });
+  }
+  await seedManagedImages(workspace.libraryDir);
+
+  const server = startMcpServer(t, workspace);
+  const exit = await server.waitForExit();
+  assert.equal(exit.code, 1);
+  // The store's bilingual message reaches stderr; nothing was created.
+  assert.match(server.stderr, /素材库缺少数据库文件 mosa\.db/);
+  assert.match(server.stderr, /is missing its mosa\.db database/);
+  assert.equal(existsSync(join(workspace.libraryDir, "mosa.db")), false);
+});
+
+test("the startup backfill skips recording when MOSA_LIBRARY_DIR is set", async (t) => {
+  const home = await tempHome(t);
+  const library = join(home, LIBRARY_DIR_NAME);
+  const locationFile = join(home, "user-data", "library-location.json");
+
+  assert.equal(writeLibraryLocationFromSuccessfulOpen({
+    envLibraryDir: join(home, "temporary-library"),
+    locationFilePath: locationFile,
+    libraryDir: library,
+  }), false);
+  assert.equal(existsSync(locationFile), false);
+});
+
+test("the startup backfill records once without MOSA_LIBRARY_DIR and never twice", async (t) => {
+  const home = await tempHome(t);
+  const library = join(home, LIBRARY_DIR_NAME);
+  await mkdir(library, { recursive: true });
+  const locationFile = join(home, "user-data", "library-location.json");
+
+  assert.equal(writeLibraryLocationFromSuccessfulOpen({
+    envLibraryDir: undefined,
+    locationFilePath: locationFile,
+    libraryDir: library,
+  }), true);
+  assert.deepEqual(JSON.parse(await readFile(locationFile, "utf8")), { path: resolve(library) });
+  assert.equal(writeLibraryLocationFromSuccessfulOpen({
+    envLibraryDir: undefined,
+    locationFilePath: locationFile,
+    libraryDir: join(home, "somewhere-else"),
+  }), false);
+  assert.deepEqual(JSON.parse(await readFile(locationFile, "utf8")), { path: resolve(library) });
 });

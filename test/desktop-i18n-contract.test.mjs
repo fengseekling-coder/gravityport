@@ -120,7 +120,11 @@ test("startup failures route the localized title while preserving the raw error 
 
   assert.match(reportStartupFailure, /const message\s*=\s*error instanceof Error\s*\?\s*error\.message\s*:\s*String\(error\)/);
   assert.match(reportStartupFailure, /getDesktopText\s*\(\s*"startupErrorTitle"\s*,\s*currentLocale\s*\)/);
-  assert.match(reportStartupFailure, /dialog\.showErrorBox\s*\([\s\S]*,\s*message\s*\)/);
+  // Broken-library errors get their own localized title/body from the i18n
+  // table; every other failure keeps the raw error message.
+  assert.match(reportStartupFailure, /getLibraryStartupFailureText\s*\(\s*error,\s*currentLocale\s*\)/);
+  assert.match(reportStartupFailure, /dialog\.showErrorBox\s*\(/);
+  assert.match(reportStartupFailure, /libraryFailure\s*\?\s*libraryFailure\.body\s*:\s*message/);
 });
 
 test("package metadata stays frozen and the runtime preload preserves its approved surface", async () => {

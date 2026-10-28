@@ -251,16 +251,18 @@ describe("directoryHasLibrary", () => {
     assert.equal(directoryHasLibrary(""), false);
   });
 
-  it("does not treat a media-only assets tree as a library (an SQLite library that lost mosa.db)", async () => {
+  it("treats a media-only assets tree as a library (an SQLite library that lost mosa.db)", async () => {
     const home = await tempHome();
     deferTestPathRemoval(home, { recursive: true, force: true });
     const mediaOnlyDir = join(home, "media-only-lib");
     const imagesDir = join(mediaOnlyDir, "assets", "default", "images");
     await mkdir(imagesDir, { recursive: true });
     await writeFile(join(imagesDir, "hash.png"), "fixture");
-    assert.equal(directoryHasLibrary(mediaOnlyDir), false);
+    // Managed media alone IS a library: selecting it must lead to the store's
+    // MOSA_LIBRARY_DATABASE_MISSING error, never to a fresh library elsewhere.
+    assert.equal(directoryHasLibrary(mediaOnlyDir), true);
 
-    // Prompts and groups.json are real legacy metadata and do count.
+    // Prompts and groups.json are real legacy metadata and also count.
     const promptsDir = join(mediaOnlyDir, "assets", "default", "prompts");
     await mkdir(promptsDir, { recursive: true });
     await writeFile(join(promptsDir, "asset-1.txt"), "prompt text");
