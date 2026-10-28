@@ -56,7 +56,7 @@ const desktopTranslations = {
     libraryStateInvalidTitle: "素材库状态不完整",
     libraryStateInvalidBody: "素材库在 {libraryDir}，数据库没有标记为已就绪。请从备份恢复素材库后重新打开 GravityPort。",
     librarySqliteMissingTitle: "素材库的数据库文件不见了",
-    librarySqliteMissingBody: "素材库在 {libraryDir}，迁移后的 mosa.db 找不到了。请从备份恢复 mosa.db 后重新打开 GravityPort。",
+    librarySqliteMissingBody: "素材库在 {libraryDir}，里面的 mosa.db 找不到了。请从备份恢复 mosa.db 后重新打开 GravityPort。",
   },
   en: {
     menuFile: "File",
@@ -92,7 +92,7 @@ const desktopTranslations = {
     libraryStateInvalidTitle: "Your library is in an incomplete state",
     libraryStateInvalidBody: "The library is at {libraryDir}, and its database was never marked as ready. Restore the library from a backup, then open GravityPort again.",
     librarySqliteMissingTitle: "Your library's database is missing",
-    librarySqliteMissingBody: "The library is at {libraryDir}, but its migrated mosa.db file is missing. Restore mosa.db from a backup, then open GravityPort again.",
+    librarySqliteMissingBody: "The library is at {libraryDir}, but its mosa.db file is missing. Restore mosa.db from a backup, then open GravityPort again.",
   },
 };
 

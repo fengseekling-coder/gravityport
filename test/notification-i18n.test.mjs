@@ -90,10 +90,10 @@ test("getLibraryStartupFailureText picks one language per library error code", (
   const sqliteMissing = { code: "SQLITE_LIBRARY_MISSING", libraryDir: "/tmp/Migrated" };
   const zhSqlite = getLibraryStartupFailureText(sqliteMissing, "zh");
   assert.equal(zhSqlite.title, "素材库的数据库文件不见了");
-  assert.match(zhSqlite.body, /迁移后的 mosa\.db/);
+  assert.match(zhSqlite.body, /\/tmp\/Migrated.*mosa\.db/);
   const enSqlite = getLibraryStartupFailureText(sqliteMissing, "en");
   assert.equal(enSqlite.title, "Your library's database is missing");
-  assert.match(enSqlite.body, /migrated mosa\.db/);
+  assert.match(enSqlite.body, /\/tmp\/Migrated.*mosa\.db/);
 });
 
 test("getLibraryStartupFailureText returns null for unrelated errors", () => {

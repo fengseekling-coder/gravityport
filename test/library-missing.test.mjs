@@ -143,7 +143,11 @@ test("a marker without mosa.db is still reported as a missing migrated library",
 
   assert.throws(
     () => createAssetStore({ projectRoot, managerDir: projectRoot, libraryDir, explicitLibraryDir: libraryDir }),
-    (error) => error?.code === "SQLITE_LIBRARY_MISSING",
+    // The desktop dialog and the MCP stderr both name the library from these.
+    (error) => error?.code === "SQLITE_LIBRARY_MISSING"
+      && error.libraryDir === resolve(libraryDir)
+      && error.message.includes(resolve(libraryDir))
+      && /mosa\.db/.test(error.message),
   );
 });
 
