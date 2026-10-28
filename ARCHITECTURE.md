@@ -116,9 +116,11 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 
 `mcp/server.mjs` 是独立的 JSON-RPC over stdio MCP 服务。它直接打开同一资产存储，
 不创建额外的 HTTP 端口：SQLite 库依靠 WAL 与桌面/Web 运行时并存；JSON 兼容库必须独占
-运行时锁，不能与正在运行的 App 同时写入。MCP 只看 `GRAVITYPORT_LIBRARY_DIR` 和默认库位置，
-不读取桌面版的 `library-location.json`，桌面版改过库位置时需为 MCP 显式设置
-`GRAVITYPORT_LIBRARY_DIR`。本地视觉检索已移除：`asset_search` 只做文本与时间检索，老客户端
+运行时锁，不能与正在运行的 App 同时写入。库位置按 `GRAVITYPORT_LIBRARY_DIR`、配置里的
+`GRAVITYPORT_LIBRARY_LOCATION_FILE`、桌面版 userData 下的 `library-location.json`
+（无复制配置时兜底读取）的顺序解析；任何位置都找不到库时报错退出，MCP 永远不新建素材库。
+开库后每次工具调用前都会核对 `mosa.db` 的设备号与 inode，库被移动或删除时拒绝读写并返回
+`LIBRARY_DATABASE_CHANGED`。本地视觉检索已移除：`asset_search` 只做文本与时间检索，老客户端
 缓存旧 schema 传来的 `visual: true` 会被接受并忽略。当前工具覆盖：
 
 - `asset_create`、`asset_list`、`asset_get`

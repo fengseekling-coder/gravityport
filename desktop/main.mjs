@@ -41,6 +41,8 @@ import {
   MOSA_LIBRARY_LOCATION_FILE_UNREADABLE,
   MOSA_LIBRARY_NOT_FOUND,
   resolveLibraryLocation,
+  writeLibraryLocationFile,
+  writeLibraryLocationFileIfMissing,
 } from "../lib/library-location.mjs";
 import { getBuildIdentity } from "../lib/build-identity.mjs";
 import { MOSA_SERVICE_PROTOCOL_VERSION } from "../lib/version-identities.mjs";
@@ -108,11 +110,24 @@ const productionLibraryDirs = [legacyDefaultLibraryDir(homeDir), defaultLibraryD
 
 function saveLibraryDir(nextLibraryDir) {
   mkdirSync(dirname(LIBRARY_LOCATION_PATH), { recursive: true });
-  const temporaryPath = `${LIBRARY_LOCATION_PATH}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify({ path: resolve(nextLibraryDir) })}\n`, "utf8");
-  // The userData directory is local and same-volume, so a rename gives us an
-  // atomic preference switch without ever exposing a partially-written path.
-  renameSync(temporaryPath, LIBRARY_LOCATION_PATH);
+  // Shared atomic writer (temporary file + rename) so the startup backfill
+  // below and the relocation handler produce byte-identical files.
+  writeLibraryLocationFile(LIBRARY_LOCATION_PATH, nextLibraryDir);
+}
+
+/**
+ * Startup backfill: record the current library the first time the App opens
+ * it successfully. Libraries that were never moved have no location file, so
+ * a later disappearance of the default-location library would otherwise fall
+ * through to "no library anywhere" and silently create a fresh empty one.
+ * Never overwrites a recorded move; the rename-notice decision above runs
+ * before any of this, so the backfill cannot turn a fresh install into an
+ * "old user" signal for that notice.
+ */
+function recordLibraryLocationAfterSuccessfulOpen() {
+  const recorded = writeLibraryLocationFileIfMissing(LIBRARY_LOCATION_PATH, libraryDir);
+  if (recorded) console.info(`[MOSA] recorded the library location for the first time: ${libraryDir}`);
+  return recorded;
 }
 
 // Locale at startup-failure time. The renderer has not run yet when the
@@ -1461,6 +1476,14 @@ async function ensureDesktopService() {
     }
     service = nextService;
     await releaseDesktopStartupHandoff();
+    // The library is open and usable — record its location for the next
+    // launch (no-op when the user has already moved the library and the
+    // location file exists). A failure here never blocks a running library.
+    try {
+      recordLibraryLocationAfterSuccessfulOpen();
+    } catch (error) {
+      console.warn(`[MOSA] could not record the library location: ${error?.message || error}`);
+    }
     if (nextService.mode === "owned") {
       // A relocation that crashed mid-copy leaves its marker in the library;
       // the MCP would keep refusing this healthy library until it is gone.

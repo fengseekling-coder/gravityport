@@ -1,13 +1,17 @@
 import "../lib/apply-env-aliases.mjs";
 import readline from "node:readline";
 import { homedir } from "node:os";
+import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stat } from "node:fs/promises";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
 import { buildAssetProvenanceBundle } from "../lib/provenance-bundle.mjs";
 import {
+  desktopDefaultLocationFilePath,
+  LIBRARY_DATABASE_FILE,
   MOSA_LIBRARY_LOCATION_FILE_UNREADABLE,
   MOSA_LIBRARY_NOT_FOUND,
   resolveLibraryLocation,
@@ -24,23 +28,46 @@ const projectRoot = resolve(process.env.MOSA_PROJECT_DIR || (process.versions.el
 // config copied from Settings keeps following the library after it is moved.
 // No log sink here: the MCP stdio protocol owns stdout.
 const locationFile = process.env.MOSA_LIBRARY_LOCATION_FILE ? resolve(process.env.MOSA_LIBRARY_LOCATION_FILE) : "";
+// A hand-written config (no MOSA_LIBRARY_LOCATION_FILE) still follows the
+// library the desktop App itself uses, and the MCP server never creates a
+// library: allowCreate=false turns "nothing found anywhere" into an error.
 function resolveCurrentLibraryDir() {
   return resolveLibraryLocation({
     homeDir: homedir(),
     envLibraryDir: process.env.MOSA_LIBRARY_DIR,
     locationFile,
+    allowCreate: false,
+    fallbackLocationFile: desktopDefaultLocationFilePath(homedir()),
   }).libraryDir;
+}
+function describeLibraryStartupError(error) {
+  if (error?.code === MOSA_LIBRARY_NOT_FOUND) {
+    const lines = [
+      error.libraryDir
+        ? `在 ${error.libraryDir} 没有找到 GravityPort 素材库。请先打开 GravityPort；MCP 不会新建素材库。`
+        : "没有找到 GravityPort 素材库。请先打开 GravityPort；MCP 不会新建素材库。",
+    ];
+    if (error.recordedLibraryDir) lines.push(`GravityPort 记录的素材库位置是 ${error.recordedLibraryDir}。`);
+    lines.push(
+      error.libraryDir
+        ? `No GravityPort library was found at ${error.libraryDir}. Open GravityPort first; the MCP server never creates a library.`
+        : "No GravityPort library was found. Open GravityPort first; the MCP server never creates a library.",
+    );
+    if (error.recordedLibraryDir) lines.push(`GravityPort last recorded the library at ${error.recordedLibraryDir}.`);
+    return lines.join("\n");
+  }
+  if (error?.code === MOSA_LIBRARY_LOCATION_FILE_UNREADABLE) {
+    return `读不出素材库位置记录文件：${error.locationFile}。GravityPort could not read its library location file: ${error.locationFile}`;
+  }
+  return null;
 }
 let libraryDir;
 try {
   libraryDir = resolveCurrentLibraryDir();
 } catch (error) {
-  if (error?.code === MOSA_LIBRARY_NOT_FOUND) {
-    process.stderr.write(`GravityPort library not found at ${error.libraryDir}. Open GravityPort once, or reconnect the drive it lives on.\n`);
-    process.exit(1);
-  }
-  if (error?.code === MOSA_LIBRARY_LOCATION_FILE_UNREADABLE) {
-    process.stderr.write(`GravityPort could not read its library location file: ${error.locationFile}\n`);
+  const described = describeLibraryStartupError(error);
+  if (described) {
+    process.stderr.write(`${described}\n`);
     process.exit(1);
   }
   throw error;
@@ -58,6 +85,19 @@ const store = createAssetStore({
   explicitLibraryDir,
   ...(desktopMode ? { assetsRoot: join(libraryDir, "assets"), generatedImagesDir: join(libraryDir, "imports") } : {}),
 });
+// Record the mosa.db file identity (device + inode) the store was opened
+// against. A later move or deletion of the library changes or removes that
+// file; every tool call re-stats it so no write can land in a library that is
+// no longer the one this server opened. The legacy JSON backend has no
+// mosa.db to watch; its moves are covered by the location-file check below.
+const databasePath = join(libraryDir, LIBRARY_DATABASE_FILE);
+let databaseIdentity = null;
+try {
+  const databaseInfo = statSync(databasePath);
+  if (databaseInfo.isFile()) databaseIdentity = { dev: databaseInfo.dev, ino: databaseInfo.ino };
+} catch {
+  databaseIdentity = null;
+}
 // SQLite uses WAL plus insert-only managed filenames for safe App+MCP coexistence.
 //
 // SQLite WAL mode lets one writer and many readers operate concurrently against
@@ -662,6 +702,22 @@ function libraryMovedAway() {
   }
 }
 
+// The second half of the move/delete guard, for servers that were started
+// without a location file (hand-written configs): the mosa.db this server
+// opened must still be the same file. Deleted (ENOENT) or replaced by another
+// file (the App recreating a library, a cloud-sync conflict) both count —
+// either way the library this process holds is gone, and answering success
+// would silently lose the write.
+async function libraryDatabaseChanged() {
+  if (!databaseIdentity) return false;
+  try {
+    const databaseInfo = await stat(databasePath);
+    return databaseInfo.dev !== databaseIdentity.dev || databaseInfo.ino !== databaseIdentity.ino;
+  } catch {
+    return true;
+  }
+}
+
 // The desktop App writes the relocation marker into the library root before
 // it stops its runtime and removes it when the move fails; while it exists
 // the old library is mid-copy and about to be deleted, so even read-only
@@ -719,6 +775,20 @@ async function handleRequest(message) {
         content: [{ type: "text", text: message }],
         isError: true,
         structuredContent: { error: { code: "LIBRARY_MOVING", message } },
+      });
+      return;
+    }
+    // Without a copied config there is no location file to notice a move, so
+    // the database file itself is the witness: deleted, or swapped for another
+    // file (App recreating the library, cloud-sync conflict) both mean the
+    // library this server opened is gone. Nothing is written; the caller must
+    // reconnect the way the App's Settings → Connection page describes.
+    if (await libraryDatabaseChanged()) {
+      const message = `素材库已被移动或删除（原位置 ${libraryDir}）。请在 GravityPort 的 设置 → 连接 重新复制 MCP 配置并重启 AI 助手。The GravityPort library has been moved or deleted (was at ${libraryDir}). Copy the MCP configuration again from GravityPort's Settings → Connection and restart your AI assistant.`;
+      sendResult(id, {
+        content: [{ type: "text", text: message }],
+        isError: true,
+        structuredContent: { error: { code: "LIBRARY_DATABASE_CHANGED", message } },
       });
       return;
     }
