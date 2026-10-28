@@ -274,7 +274,7 @@ command = "node"
 args = ["/absolute/path/to/gravityport/mcp/server.mjs"]
 ```
 
-其他 MCP 客户端同样填写 `node` 和 `mcp/server.mjs` 的绝对路径即可，也可以用 `npm run mcp` 启动。没有额外配置时，MCP 按与桌面版相同的规则查找默认素材库。要指定素材库，可在客户端配置的 `env` 里设置下面任一变量：
+其他 MCP 客户端同样填写 `node` 和 `mcp/server.mjs` 的绝对路径即可，也可以用 `npm run mcp` 启动。推荐直接从「设置 → 连接」复制配置：它自带桌面版记录的素材库位置，挪库后不用改。手动配置且不设置环境变量时，MCP 会跟随桌面版当前使用的素材库；素材库被挪走后原位置不再有库，手动配置会因找不到库而报错，请重新从「设置 → 连接」复制。MCP 永远不新建素材库；要指定素材库，可在客户端配置的 `env` 里设置下面任一变量：
 
 - `GRAVITYPORT_LIBRARY_DIR`：素材库的绝对路径，优先级最高。
 - `GRAVITYPORT_LIBRARY_LOCATION_FILE`：桌面版的 `library-location.json`（macOS 在 `~/Library/Application Support/mosa/`），跟随桌面版里挪过的位置。

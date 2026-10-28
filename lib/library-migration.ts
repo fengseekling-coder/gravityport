@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 
@@ -9,6 +9,7 @@ import { dirname, join, resolve } from "node:path";
  */
 // @ts-ignore - .mjs module with separate .d.ts declaration
 import { createSqliteAssetStore } from "./sqlite-asset-store.mjs";
+import { ensureSqliteMigrationMarker } from "./library-location.mjs";
 
 interface LegacyMetadata { id: string; asset: string; parent_asset_id?: string; parentAssetId?: string; source?: Record<string, unknown>; [key: string]: unknown; }
 interface LegacyRecord { projectId: string; metadataPath: string; imagePath: string; metadata: LegacyMetadata; }
@@ -71,7 +72,9 @@ export async function migrateLegacyLibrary(options: { managerDir?: string; legac
     await store.setMigrationState("completed", report as unknown as Record<string, unknown>);
     // The backup directory is created before import starts, so only this marker
     // is filesystem-level proof that migration actually reached completion.
-    await writeFile(join(libraryDir, ".sqlite-migration-completed"), "completed\n", "utf8");
+    // Shared with createAssetStore()'s backfill so both writers produce the
+    // same bytes at the same path.
+    ensureSqliteMigrationMarker(libraryDir);
     return report;
   } catch (error) { await store.setMigrationState("failed", { ...report, error: error instanceof Error ? error.message : String(error) }); throw error; } finally { store.close(); }
 }

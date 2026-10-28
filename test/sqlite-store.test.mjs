@@ -711,6 +711,11 @@ test("runtime storage selection cannot bypass migration completion", async (t) =
   const setup = createSqliteAssetStore({ projectRoot, managerDir, libraryDir });
   await setup.setMigrationState("migrating", { verified: false });
   setup.close();
+  // An incomplete migration may only fall back to JSON when genuine legacy
+  // metadata exists; without it the store refuses (see library-missing tests).
+  const legacyMetadataDir = join(libraryDir, "assets", "default", "metadata");
+  await mkdir(legacyMetadataDir, { recursive: true });
+  await writeFile(join(legacyMetadataDir, "asset-1.json"), JSON.stringify({ id: "asset-1", asset: "asset-1.png" }));
 
   const beforeMigration = createAssetStore({ projectRoot, managerDir, libraryDir, storage: "sqlite" });
   assert.equal(beforeMigration.storageKind, "json");

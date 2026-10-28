@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import sharp from "sharp";
+import { createAssetStore } from "../../lib/asset-store.mjs";
 import { readGravityPortEnv } from "../../lib/env-aliases.mjs";
 import { removeTestPath } from "../test-cleanup.mjs";
 
@@ -13,7 +14,7 @@ import { removeTestPath } from "../test-cleanup.mjs";
 // instead of a silent default.
 const REQUIRED_ENV_VARS = ["HOME", "MOSA_PROJECT_DIR", "MOSA_LIBRARY_DIR", "CODEX_GENERATED_IMAGES_DIR"];
 
-export async function createMcpWorkspace(t, { prefix = "mosa-mcp-" } = {}) {
+export async function createMcpWorkspace(t, { prefix = "mosa-mcp-", jsonLibrary = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), prefix));
   t.after(() => removeTestPath(root, { recursive: true, force: true }));
   const workspace = {
@@ -23,6 +24,32 @@ export async function createMcpWorkspace(t, { prefix = "mosa-mcp-" } = {}) {
   };
   await mkdir(workspace.libraryDir, { recursive: true });
   await mkdir(workspace.imagesDir, { recursive: true });
+  // The MCP server never creates a library, so every workspace seeds a real
+  // fresh (completed) SQLite library before the server starts, with the same
+  // layout the server resolves for an explicitly configured library. The JSON
+  // variant instead seeds a genuine legacy 0.1.x JSON library (per-asset
+  // metadata files, no mosa.db) so createAssetStore picks the JSON backend.
+  if (jsonLibrary) {
+    const metadataDir = join(workspace.libraryDir, "assets", "default", "metadata");
+    await mkdir(metadataDir, { recursive: true });
+    await writeFile(
+      join(metadataDir, "legacy-asset.json"),
+      `${JSON.stringify({ id: "legacy-asset", asset: "legacy-asset.png", created_at: "2023-01-01T00:00:00.000Z" })}\n`,
+      "utf8",
+    );
+    await mkdir(join(workspace.libraryDir, "assets", "default", "images"), { recursive: true });
+    await writeFile(join(workspace.libraryDir, "assets", "default", "images", "legacy-asset.png"), "fixture");
+  } else {
+    const seedStore = createAssetStore({
+      projectRoot: workspace.root,
+      managerDir: workspace.root,
+      libraryDir: workspace.libraryDir,
+      explicitLibraryDir: workspace.libraryDir,
+      assetsRoot: join(workspace.libraryDir, "assets"),
+      generatedImagesDir: join(workspace.libraryDir, "imports"),
+    });
+    seedStore.close();
+  }
   return workspace;
 }
 
@@ -64,14 +91,27 @@ export function startMcpServer(t, workspace, { env: extraEnv } = {}) {
  * Spawn the MCP server exactly as an AI client would from a copied desktop
  * config: a chosen command, arguments, working directory, and environment.
  * HOME must still be a throwaway directory, and the library must be named
- * either directly or through a library-location file.
+ * either directly or through a library-location file (unless the caller opts
+ * out, e.g. to test the server following the desktop's own location file).
  */
-export function spawnMcpServerAsClient(t, { command = process.execPath, args = ["mcp/server.mjs"], cwd = process.cwd(), env }) {
+export function spawnMcpServerAsClient(t, { command = process.execPath, args = ["mcp/server.mjs"], cwd = process.cwd(), env, allowMissingLibraryEnv = false }) {
   if (!env?.HOME) throw new Error("Refusing to spawn the MCP server without a throwaway HOME.");
-  if (!readGravityPortEnv(env, "GRAVITYPORT_LIBRARY_DIR") && !readGravityPortEnv(env, "GRAVITYPORT_LIBRARY_LOCATION_FILE")) {
+  if (!allowMissingLibraryEnv
+    && !readGravityPortEnv(env, "GRAVITYPORT_LIBRARY_DIR")
+    && !readGravityPortEnv(env, "GRAVITYPORT_LIBRARY_LOCATION_FILE")) {
     throw new Error("Refusing to spawn the MCP server without GRAVITYPORT_LIBRARY_DIR or GRAVITYPORT_LIBRARY_LOCATION_FILE.");
   }
-  const child = spawn(command, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  // The server follows the desktop App's own library-location.json, which
+  // lives under XDG_CONFIG_HOME on Linux and APPDATA on Windows, not under
+  // HOME. Pin those (and the Windows home) inside the throwaway HOME so a real
+  // App's location file can never leak into, or be written by, a test.
+  const isolatedEnv = {
+    ...env,
+    USERPROFILE: env.HOME,
+    XDG_CONFIG_HOME: join(env.HOME, ".config"),
+    APPDATA: join(env.HOME, "AppData", "Roaming"),
+  };
+  const child = spawn(command, args, { cwd, env: isolatedEnv, stdio: ["pipe", "pipe", "pipe"] });
   const handle = new McpServerProcess(child);
   t.after(() => handle.terminateIfRunning());
   return handle;

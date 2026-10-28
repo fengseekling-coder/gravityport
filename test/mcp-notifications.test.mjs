@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { createAssetStore } from "../lib/asset-store.mjs";
 
 // JSON-RPC 2.0: a notification (a request without `id`) must never be answered.
 // MCP clients send notifications/initialized right after initialize; the server
@@ -12,6 +13,17 @@ import test from "node:test";
 test("MCP stays silent on notifications and keeps answering requests", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-mcp-notify-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  const libraryDir = join(root, "library");
+  // The MCP server never creates a library, so seed one before starting it.
+  const seedStore = createAssetStore({
+    projectRoot: root,
+    managerDir: root,
+    libraryDir,
+    explicitLibraryDir: libraryDir,
+    assetsRoot: join(libraryDir, "assets"),
+    generatedImagesDir: join(libraryDir, "imports"),
+  });
+  seedStore.close();
   const server = spawn(process.execPath, ["mcp/server.mjs"], {
     cwd: process.cwd(),
     env: {

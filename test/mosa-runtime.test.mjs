@@ -9,6 +9,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { pipeStreamToResponse } from "../lib/http-response.mjs";
+import { createAssetStore } from "../lib/asset-store.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import { processDerivativeJob } from "../lib/derivative-worker.js";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
@@ -416,6 +417,10 @@ test("historical orphan derivative sweep is post-listen maintenance and the work
 test("shutdown awaits the in-flight orphan sweep without leaking it", async (t) => {
   const root = await makeTemporaryRoot(t, "mosa-runtime-orphan-shutdown-");
   const libraryDir = join(root, "library");
+  // A completed library first: the runtime must open a real library (it may
+  // no longer initialize one inside a directory that already holds media).
+  const seedStore = createAssetStore({ projectRoot: root, managerDir: root, libraryDir, explicitLibraryDir: libraryDir });
+  seedStore.close();
   const projectDir = join(libraryDir, "assets", "default");
   await mkdir(join(projectDir, "previews"), { recursive: true });
   await mkdir(join(projectDir, "mediums"), { recursive: true });

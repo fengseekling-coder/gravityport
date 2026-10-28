@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -51,12 +50,10 @@ test("two MCP servers can interleave writes into the same SQLite library and rea
 });
 
 test("JSON storage grants an exclusive runtime lock and hands it to the next server on exit", async (t) => {
-  const workspace = await createMcpWorkspace(t);
-  // A meaningful file under <library>/assets marks the directory as legacy JSON
-  // state, which is the condition createAssetStore requires to pick the JSON
-  // backend instead of initializing a fresh SQLite library.
-  await mkdir(join(workspace.libraryDir, "assets", "default"), { recursive: true });
-  await writeFile(join(workspace.libraryDir, "assets", "default", "legacy-state.json"), "{}\n");
+  const workspace = await createMcpWorkspace(t, { jsonLibrary: true });
+  // createMcpWorkspace({ jsonLibrary: true }) seeds a genuine legacy JSON
+  // library (per-asset metadata files, no mosa.db) — the condition
+  // createAssetStore requires to pick the JSON backend instead of SQLite.
 
   const lockPath = join(workspace.libraryDir, RUNTIME_LOCK_FILE);
   const first = startMcpServer(t, workspace);
@@ -91,7 +88,9 @@ test("JSON storage grants an exclusive runtime lock and hands it to the next ser
   const third = startMcpServer(t, workspace);
   await third.request("initialize", { protocolVersion: "2025-11-25" });
   const list = await third.callToolStrict("asset_list", { projectId: "default" });
-  assert.deepEqual(list.structuredContent.assets.map((asset) => asset.id), ["solo-asset"]);
+  // The seeded legacy fixture asset is part of the JSON library the third
+  // server took over, next to what the first server wrote.
+  assert.deepEqual(list.structuredContent.assets.map((asset) => asset.id).sort(), ["legacy-asset", "solo-asset"]);
 });
 
 test("the MCP server exits on its own when stdin closes", async (t) => {

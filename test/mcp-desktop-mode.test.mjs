@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { createAssetStore } from "../lib/asset-store.mjs";
 import { LIBRARY_DIR_NAME, LIBRARY_LOCATION_FILE } from "../lib/library-location.mjs";
 import { copyLibraryForRelocation, removeRelocationMarker, writeRelocationMarker } from "../lib/library-relocation.mjs";
 import { removeTestPath } from "./test-cleanup.mjs";
@@ -19,7 +20,19 @@ async function desktopLikeHome(t) {
   const clientCwd = join(root, "client-cwd");
   await mkdir(userData, { recursive: true });
   await mkdir(clientCwd, { recursive: true });
-  return { root, home, clientCwd, locationFile: join(userData, LIBRARY_LOCATION_FILE) };
+  // The MCP server never creates a library, so seed the library the desktop
+  // App would have created here (fresh, completed) before any server starts.
+  const defaultLibrary = join(home, LIBRARY_DIR_NAME);
+  const seedStore = createAssetStore({
+    projectRoot: root,
+    managerDir: root,
+    libraryDir: defaultLibrary,
+    explicitLibraryDir: defaultLibrary,
+    assetsRoot: join(defaultLibrary, "assets"),
+    generatedImagesDir: join(defaultLibrary, "imports"),
+  });
+  seedStore.close();
+  return { root, home, clientCwd, defaultLibrary, locationFile: join(userData, LIBRARY_LOCATION_FILE) };
 }
 
 /** The env a config copied from Settings carries, plus the throwaway HOME. */
@@ -121,7 +134,7 @@ test("a config that still uses the legacy MOSA_LIBRARY_LOCATION_FILE name is hon
   });
   const exit = await server.waitForExit();
   assert.equal(exit.code, 1);
-  assert.match(server.stderr, /GravityPort library not found at .*Legacy Drive/);
+  assert.match(server.stderr, /No GravityPort library was found at .*Legacy Drive/);
 });
 
 test("a location file naming a missing library fails on stderr and keeps stdout clean", async (t) => {
@@ -134,7 +147,8 @@ test("a location file naming a missing library fails on stderr and keeps stdout 
   server.child.stdout.on("data", (chunk) => { stdout += chunk; });
   const exit = await server.waitForExit();
   assert.equal(exit.code, 1);
-  assert.match(server.stderr, /GravityPort library not found at .*Unplugged Drive/);
+  assert.match(server.stderr, /No GravityPort library was found at .*Unplugged Drive/);
+  assert.match(server.stderr, /没有找到 GravityPort 素材库/);
   assert.equal(stdout, "");
   assert.deepEqual(server.responses, []);
 });

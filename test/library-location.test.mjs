@@ -23,12 +23,14 @@ const repositoryRoot = resolve(import.meta.dirname, "..");
 
 /**
  * Minimal legacy JSON library: the same shape hasLegacyJsonState() treats as
- * meaningful legacy state (a project directory holding real files).
+ * meaningful legacy state — a project directory holding real per-asset JSON
+ * metadata. Images alone do not count (an SQLite library that lost mosa.db
+ * must never be mistaken for this).
  */
 async function seedLegacyJsonLibrary(libraryDir) {
-  const imagesDir = join(libraryDir, "assets", "default", "images");
-  await mkdir(imagesDir, { recursive: true });
-  await writeFile(join(imagesDir, "asset.png"), "fixture");
+  const metadataDir = join(libraryDir, "assets", "default", "metadata");
+  await mkdir(metadataDir, { recursive: true });
+  await writeFile(join(metadataDir, "asset-1.json"), JSON.stringify({ id: "asset-1", asset: "asset-1.png" }));
 }
 
 function tempHome() {
@@ -247,6 +249,24 @@ describe("directoryHasLibrary", () => {
     await seedLegacyJsonLibrary(jsonDir);
     assert.equal(directoryHasLibrary(jsonDir), true);
     assert.equal(directoryHasLibrary(""), false);
+  });
+
+  it("treats a media-only assets tree as a library (an SQLite library that lost mosa.db)", async () => {
+    const home = await tempHome();
+    deferTestPathRemoval(home, { recursive: true, force: true });
+    const mediaOnlyDir = join(home, "media-only-lib");
+    const imagesDir = join(mediaOnlyDir, "assets", "default", "images");
+    await mkdir(imagesDir, { recursive: true });
+    await writeFile(join(imagesDir, "hash.png"), "fixture");
+    // Managed media alone IS a library: selecting it must lead to the store's
+    // MOSA_LIBRARY_DATABASE_MISSING error, never to a fresh library elsewhere.
+    assert.equal(directoryHasLibrary(mediaOnlyDir), true);
+
+    // Prompts and groups.json are real legacy metadata and also count.
+    const promptsDir = join(mediaOnlyDir, "assets", "default", "prompts");
+    await mkdir(promptsDir, { recursive: true });
+    await writeFile(join(promptsDir, "asset-1.txt"), "prompt text");
+    assert.equal(directoryHasLibrary(mediaOnlyDir), true);
   });
 });
 
