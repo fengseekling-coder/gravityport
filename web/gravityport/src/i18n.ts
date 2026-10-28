@@ -314,6 +314,9 @@ const english: Record<string, string> = {
   "即梦站内删除作品时，同步移进回收站": "Move Jimeng deletions to Trash",
   "在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动": "Assets you favorited, rated, grouped, or tagged in GravityPort are not moved.",
   "同步设置保存失败": "Saving the sync setting failed",
+  // Task 280: trash reason line in the details panel
+  "已被同一张图的更清晰版本替换": "Replaced by a sharper version of the same image",
+  "因在即梦网站中删除而移入回收站": "Moved to Trash after deletion on Jimeng",
 }
 
 export function translate(text: string, language: Language): string {

@@ -43,6 +43,30 @@ type PromptNotice = {
   text: string
 } | null
 
+type TrashReasonNotice = {
+  key: "trashReplacedByBetterVersion" | "trashProviderDeletedJimeng"
+  text: string
+} | null
+
+const TRASH_REASON_TEXTS: Record<string, TrashReasonNotice> = {
+  "replaced-by-better-version": {
+    key: "trashReplacedByBetterVersion",
+    text: "已被同一张图的更清晰版本替换",
+  },
+  "provider-deleted:jimeng": {
+    key: "trashProviderDeletedJimeng",
+    text: "因在即梦网站中删除而移入回收站",
+  },
+}
+
+/** One-line reason shown in the details panel while an asset is in Trash.
+ * Unknown codes stay silent — only reasons this build can explain are shown. */
+export function trashReasonNotice(asset: MosaAsset): TrashReasonNotice {
+  if (!asset.deleted_at) return null
+  const code = String(asset.trash_reason?.code || "").trim()
+  return TRASH_REASON_TEXTS[code] || null
+}
+
 /**
  * Resolve reference images for the asset.
  * Returns null when still loading (web-* sources without recipe history yet),

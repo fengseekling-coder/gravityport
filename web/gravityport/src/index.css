@@ -2331,6 +2331,12 @@ img.black-image {
   font-size: 12px;
   line-height: var(--space-4);
   color: var(--ui-muted);
+}.app .trash-reason {
+  display: block;
+  margin: 0 0 var(--space-1);
+  font-size: 12px;
+  line-height: var(--space-4);
+  color: var(--ui-muted);
 }.app .reading-toggle {
   padding: 0 var(--space-1);
   margin-top: var(--space-1);

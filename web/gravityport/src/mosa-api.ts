@@ -38,6 +38,8 @@ export type MosaAsset = {
   duration_seconds: number | null
   format: string
   deleted_at: string | null
+  /** Why the asset sits in Trash ({ code, at }); null when none was recorded. */
+  trash_reason: { code: string; at: string } | null
   child_asset_ids: string[]
   stack: { id: string; count: number; name: string; match_count?: number } | null
   source: Record<string, unknown>
@@ -225,6 +227,12 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     duration_seconds: Number.isFinite(durationRaw) && durationRaw > 0 ? durationRaw : null,
     format: path.match(/\.([a-z0-9]+)$/i)?.[1]?.toUpperCase() || "",
     deleted_at: input.deleted_at ? String(input.deleted_at) : null,
+    trash_reason: input.trash_reason && typeof input.trash_reason === "object" && !Array.isArray(input.trash_reason)
+      ? {
+          code: String((input.trash_reason as Record<string, unknown>).code || ""),
+          at: String((input.trash_reason as Record<string, unknown>).at || ""),
+        }
+      : null,
     child_asset_ids: asStringArray(input.child_asset_ids),
     stack: stackRaw ? {
       id: String(stackRaw.id || ""),
