@@ -4,13 +4,15 @@
     "zh": {
       "fixed": [
         "修复了同一张图片再次收录时可能覆盖原图或清空提示词的问题。现仅在新图更清晰时替换，被替换的旧图移入回收站。",
-        "修复了在即梦网站删除作品后，已精选、归档、手动堆叠或修改过提示词的素材，以及复制出的副本和版本仍被移入回收站的问题。因站内删除而移入回收站的素材，会在详情中注明原因。"
+        "修复了在即梦网站删除作品后，已精选、归档、手动堆叠或修改过提示词的素材，以及复制出的副本和版本仍被移入回收站的问题。因站内删除而移入回收站的素材，会在详情中注明原因。",
+        "修复了素材库的数据库文件丢失或素材库被移动后，可能新建空素材库继续收录，或 AI 助手仍写入原位置的问题。现会停止并提示素材库所在位置。"
       ]
     },
     "en": {
       "fixed": [
         "Fixed an issue where capturing the same image again could overwrite the original or clear its prompt. The image is now replaced only by a sharper version, and the previous one moves to the Trash.",
-        "Fixed an issue where deleting a work on the Jimeng website could still move curated, archived, manually stacked or prompt-edited assets, as well as duplicates and versions, to the Trash. Assets moved for this reason now show it in the details panel."
+        "Fixed an issue where deleting a work on the Jimeng website could still move curated, archived, manually stacked or prompt-edited assets, as well as duplicates and versions, to the Trash. Assets moved for this reason now show it in the details panel.",
+        "Fixed an issue where a library whose database file was lost, or that had been moved, could be replaced by a new empty library that kept capturing, or AI assistants could keep writing to the old location. GravityPort now stops and shows where the library is."
       ]
     }
   },
