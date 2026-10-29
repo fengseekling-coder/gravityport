@@ -3805,7 +3805,7 @@ export default function App() {
           </div>
         </header>
         {preview ? (
-          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} message={toast?.text ?? ""} />
+          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} originalSrc={asset?.mediaKind === "video" ? undefined : asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} message={toast?.text ?? ""} />
         ) : pinterestActive ? (
           <PinterestView
             key={pinterestViewKey}
