@@ -180,6 +180,9 @@ test("Google adapters read only eligible page-local bytes and keep CDN URLs remo
   assert.match(providerSource, /const HANDOFF_RETRY_MAX_ATTEMPTS = 2;/);
   assert.match(providerSource, /const HANDOFF_RETRY_GAP_MS = 60_000;/);
   assert.match(providerSource, /setTimeout\(\(\) => seen\.delete\(key\), HANDOFF_RETRY_GAP_MS\)/);
+  // A page that changed mid-capture never reached the background; it must stay
+  // retryable instead of locking the key for the rest of the page.
+  assert.equal(providerSource.match(/error: "Provider page changed before capture completed\.", retryable: true \}/g)?.length, 2);
   assert.match(providerSource, /!changes\.autoCapture && !changes\.mosaBaseUrl && !changes\.mosaToken/);
   assert.match(providerSource, /seen\.clear\(\);/);
   assert.doesNotMatch(providerSource, /chrome\.cookies|document\.cookie|authorization/i);

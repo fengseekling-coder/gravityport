@@ -982,3 +982,29 @@ test("a failed queue write while GravityPort is offline lets the page try again"
   assert.equal(response?.ok, false, "nothing was kept, so this is a plain failure");
   assert.equal(response.retryable, true, "the page may try again, a bounded number of times");
 });
+
+test("App offline: a later re-send of the same capture with new bytes replaces the stored bytes", async () => {
+  const harness = await createHarness();
+  const first = fakeImageBase64(1024);
+  const later = fakeImageBase64(4096);
+  const payload = (imageBase64) => ({
+    provider: "chatgpt",
+    mediaKind: "image",
+    imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_resend&cid=conv1",
+    imageBase64,
+    mimeType: "image/png",
+    promptStatus: "not-available",
+  });
+
+  for (const imageBase64 of [first, later]) {
+    const response = await harness.dispatchMessage({ type: "mosa.ingest", payload: payload(imageBase64) }, senderFor(CHATGPT_TAB_URL));
+    assert.equal(response?.result?.status, "queued");
+  }
+  assert.equal((await harness.readQueue()).length, 1, "one capture stays one ticket");
+  assert.equal(harness.mediaEntries().length, 1);
+
+  harness.fetchHarness.setAppOnline(true);
+  harness.fireAlarm();
+  await waitFor(async () => (await harness.readQueue()).length === 0, { label: "re-sent capture delivered" });
+  assert.equal(JSON.parse(ingestCalls(harness).at(-1).body).imageBase64, later, "the bytes the page sent last are delivered");
+});

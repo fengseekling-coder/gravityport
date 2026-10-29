@@ -1046,7 +1046,7 @@
       if (source.kind === "local" && source.url.startsWith("blob:")) {
         const bytes = video ? await bytesFromVisibleVideo(source, media) : await bytesFromVisibleImage(source, media);
         if (location.href !== capturePageUrl) {
-          return { response: { ok: false, error: "Provider page changed before capture completed." }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
+          return { response: { ok: false, error: "Provider page changed before capture completed.", retryable: true }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
         }
         payload.mimeType = bytes.mimeType;
         if (video) {
@@ -1061,7 +1061,7 @@
         else payload.imageUrl = source.url;
       }
       if (location.href !== capturePageUrl) {
-        return { response: { ok: false, error: "Provider page changed before capture completed." }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
+        return { response: { ok: false, error: "Provider page changed before capture completed.", retryable: true }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
       }
       const response = await chrome.runtime.sendMessage({
         type: "mosa.ingest",

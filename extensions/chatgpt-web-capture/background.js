@@ -601,7 +601,7 @@ async function prefetchQueuedMediaBytes(payload, replayPayload, id) {
 }
 
 // True when the queue already holds this capture and its stored bytes survived.
-// A page that re-sends the same capture must not download or write it again.
+// A page that re-sends the same URL capture must not download it again.
 async function queuedBytesAlreadyStored(id) {
   const queue = await readCaptureQueue();
   const ticket = queue.find((item) => item.id === id);
@@ -614,18 +614,18 @@ async function enqueueCapture(payload) {
   const id = stableCaptureKey(payload);
   let replayPayload = queueReplayPayload(payload, id);
   if (!replayPayload) return null;
-  const bytesStored = await queuedBytesAlreadyStored(id);
   if (replayPayload.queuedMediaId) {
-    if (!bytesStored) {
-      const base64 = payload.mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
-      const bytes = base64ToBytes(base64);
-      await captureMediaPut({
-        key: `capture:${id}`,
-        blob: new Blob([bytes], { type: payload.mimeType || (payload.mediaKind === "video" ? "video/mp4" : "image/png") }),
-        updatedAt: Date.now(),
-      });
-    }
-  } else if (payload.mediaKind !== "video" && !bytesStored && !(await mosaReachable())) {
+    // Bytes the page sends now always replace the stored copy: a forced
+    // re-send (provisional then final image) carries the better bytes, and
+    // writing them costs no download.
+    const base64 = payload.mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
+    const bytes = base64ToBytes(base64);
+    await captureMediaPut({
+      key: `capture:${id}`,
+      blob: new Blob([bytes], { type: payload.mimeType || (payload.mediaKind === "video" ? "video/mp4" : "image/png") }),
+      updatedAt: Date.now(),
+    });
+  } else if (payload.mediaKind !== "video" && !(await queuedBytesAlreadyStored(id)) && !(await mosaReachable())) {
     // URL-only ticket while GravityPort is offline: this provider URL is as
     // fresh as it will ever be, so fetch the media once now and upgrade the
     // ticket to bytes. Videos stay URL tickets — replay streams them, and a
