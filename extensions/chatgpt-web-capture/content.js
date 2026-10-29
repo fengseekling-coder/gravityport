@@ -77,6 +77,18 @@
   const MAX_BLOB_ASSETS = 400;
   let generationRegistry = null;
   const failedAt = new Map(); // key -> timestamp, retry after cooldown
+  // Automatic hand-off (review 294 B). A queued or refused capture is never sent
+  // again by itself. A retryable answer, or a message that got no answer, gets
+  // two more automatic tries 60 s apart. Failed page-side byte reads get three
+  // automatic tries in all.
+  const DELIVERY_RETRY_MAX = 2;
+  const DELIVERY_RETRY_GAP_MS = 60_000;
+  const PAGE_READ_ATTEMPTS_MAX = 3;
+  const deliveryRetries = new Map(); // key -> { count, nextAt }
+  const deliveryRefusedKeys = new Set(); // keys the background refused for good
+  const pageReadFailures = new Map(); // key -> failed page-side byte reads
+  const queuedToastKeys = new Set(); // keys whose "queued" notice already showed
+  const errorToastKeys = new Set(); // "key message" pairs whose error already showed
   const sizeFailureStates = new Map(); // stable image identity -> bounded small-file retry state
   // The conversation endpoint is enough to recover a caption that was rendered
   // from ChatGPT's cache, but was never seen by the page network hook.
@@ -1747,6 +1759,10 @@
     if (force) return true;
     if (isSavedCandidate(candidate)) return false;
     if (isSizeFailureBlocked(candidate)) return false;
+    if (deliveryRefusedKeys.has(key)) return false;
+    const retry = deliveryRetries.get(key);
+    if (retry && Date.now() < retry.nextAt) return false;
+    if ((pageReadFailures.get(key) || 0) >= PAGE_READ_ATTEMPTS_MAX) return false;
     const domRecovered = candidate?.el instanceof HTMLImageElement
       && candidate.el.complete
       && candidate.el.naturalWidth > 0
@@ -1755,6 +1771,26 @@
     const failed = failedAt.get(key);
     if (failed && Date.now() - failed < 8_000) return false;
     return true;
+  }
+
+  // Records why an automatic capture failed (review 294 B). A refusal stops
+  // automatic retries for the key; a lost or retryable answer allows two more,
+  // 60 s apart; a failed page-side byte read counts toward the three tries.
+  function noteAutomaticFailure(key, error) {
+    if (error?.deliveryState === "refused") {
+      rememberSet(deliveryRefusedKeys, key);
+      return;
+    }
+    if (error?.deliveryState) {
+      const retry = deliveryRetries.get(key) || { count: 0, nextAt: 0 };
+      if (retry.count >= DELIVERY_RETRY_MAX) {
+        rememberSet(deliveryRefusedKeys, key);
+        return;
+      }
+      deliveryRetries.set(key, { count: retry.count + 1, nextAt: Date.now() + DELIVERY_RETRY_GAP_MS });
+      return;
+    }
+    pageReadFailures.set(key, (pageReadFailures.get(key) || 0) + 1);
   }
 
   async function ingestCandidate(candidate, { silentSkip = false, reason = "manual", force = false, generationContextId = "" } = {}) {
@@ -1856,13 +1892,24 @@
           captureMode: manual ? "manual" : "automatic",
           capturedAt: new Date().toISOString(),
         },
+      }).catch((sendError) => {
+        // No answer at all: the background may never have received the capture.
+        if (sendError && typeof sendError === "object") sendError.deliveryState = "lost";
+        throw sendError;
       });
-      if (!response?.ok) throw new Error(response?.error || "Unknown extension error");
+      if (!response?.ok) {
+        const refused = new Error(response?.error || "Unknown extension error");
+        refused.deliveryState = response?.retryable === true ? "retryable" : "refused";
+        throw refused;
+      }
 
       const result = response.result;
       rememberSavedCandidate(candidate, resolved.generationStatus);
       failedAt.delete(key);
       sizeFailureStates.delete(key);
+      deliveryRetries.delete(key);
+      deliveryRefusedKeys.delete(key);
+      pageReadFailures.delete(key);
       for (const identity of candidateLookupKeys(candidate)) failedNetworkIdentityKeys.delete(identity);
       rememberSavedPrompt(candidate, resolved);
 
@@ -1881,7 +1928,15 @@
         });
       }
 
-      if (result.status === "imported") {
+      if (result.status === "queued") {
+        // The background keeps the capture until GravityPort is open again, so
+        // the page does not send it again. Say so once, without an error tone.
+        setStatus("已排队 · GravityPort 打开后自动入库");
+        if (!queuedToastKeys.has(key)) {
+          rememberSet(queuedToastKeys, key);
+          showToast("已排队 · GravityPort 打开后自动入库");
+        }
+      } else if (result.status === "imported") {
         const label = resolved.prompt ? resolved.promptStatus : "no-caption";
         showToast(`GravityPort 入库 ✓ ${label}`);
         setStatus(`已入库 · ${label} · 共${savedKeys.size}`);
@@ -1907,11 +1962,16 @@
         if (reason === "network" && !candidate.el) {
           for (const identity of candidateLookupKeys(candidate)) failedNetworkIdentityKeys.add(identity);
         }
+        if (!manual) noteAutomaticFailure(key, error);
       }
       // Always surface manual errors; auto stays quiet for pure size junk.
       // An optional reference failure never alarms the user, in either path.
+      // Automatic captures show the same error for a key only once.
       const optionalReferenceFailure = reason === "auto-reference";
-      if (!silentSkip || (!optionalReferenceFailure && !/too small|IMAGE_TOO_SMALL/i.test(msg))) {
+      const errorToastKey = `${key}\u0001${msg}`;
+      const showError = !silentSkip || (!optionalReferenceFailure && !/too small|IMAGE_TOO_SMALL/i.test(msg));
+      if (showError && (manual || !errorToastKeys.has(errorToastKey))) {
+        rememberSet(errorToastKeys, errorToastKey);
         showToast(msg, true);
       }
       if (optionalReferenceFailure) setStatus(`参考图跳过: ${msg.slice(0, 60)}`);

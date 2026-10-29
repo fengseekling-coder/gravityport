@@ -106,6 +106,20 @@ async function diagnoseMosaConnection(baseUrl) {
   }
 }
 
+// A deliberately incomplete ingest request exercises the real Bearer-token
+// path without writing an asset. A valid token reaches image validation.
+async function probeIngestToken(baseUrl, token) {
+  const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ provider: "chatgpt", mimeType: "image/png", imageBase64: "" }),
+  }, 5000);
+  return { status: response.status, data: await response.json() };
+}
+
 document.getElementById("test").addEventListener("click", async () => {
   setStatus("测试中…", "success");
   let baseUrl;
@@ -138,30 +152,36 @@ document.getElementById("test").addEventListener("click", async () => {
     return;
   }
   try {
-    // A deliberately incomplete ingest request exercises the real Bearer-token
-    // path without writing an asset. A valid token reaches image validation.
-    const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ provider: "chatgpt", mimeType: "image/png", imageBase64: "" }),
-    }, 5000);
-    const data = await response.json();
-    if (response.status === 400 && data.code === "WEB_CAPTURE_BAD_IMAGE") {
+    let probe = await probeIngestToken(baseUrl, token);
+    if (probe.status === 401 && probe.data.code === "WEB_CAPTURE_UNAUTHORIZED") {
+      // The saved Token is often just stale after GravityPort re-paired. Ask the
+      // background to pair once more and retest with the Token it got back.
+      const repaired = await chrome.runtime.sendMessage({ type: "mosa.repairPairing" }).catch(() => null);
+      if (repaired?.ok && repaired.settings?.mosaToken) {
+        baseUrl = normalizeBaseUrl(repaired.settings.mosaBaseUrl || baseUrl);
+        token = repaired.settings.mosaToken;
+        tokenEl.value = token;
+        baseUrlEl.value = baseUrl;
+        probe = await probeIngestToken(baseUrl, token);
+        if (probe.status === 400 && probe.data.code === "WEB_CAPTURE_BAD_IMAGE") {
+          setStatus("已重新配对，连接和 Token 验证成功。", "success");
+          return;
+        }
+      }
+    }
+    if (probe.status === 400 && probe.data.code === "WEB_CAPTURE_BAD_IMAGE") {
       setStatus("连接和 Token 验证成功。", "success");
       return;
     }
-    if (response.status === 401 && data.code === "WEB_CAPTURE_UNAUTHORIZED") {
+    if (probe.status === 401 && probe.data.code === "WEB_CAPTURE_UNAUTHORIZED") {
       setStatus("Token 不匹配。请填写当前 GravityPort 服务配置的 Token。", "error");
       return;
     }
-    if (response.status === 403) {
+    if (probe.status === 403) {
       setStatus("扩展来源未获服务端批准。请检查 GRAVITYPORT_WEB_CAPTURE_ORIGINS。", "error");
       return;
     }
-    throw new Error(data.error || `HTTP ${response.status}`);
+    throw new Error(probe.data.error || `HTTP ${probe.status}`);
   } catch (error) {
     setStatus(`连接失败：${error instanceof Error ? error.message : String(error)}`, "error");
   }
