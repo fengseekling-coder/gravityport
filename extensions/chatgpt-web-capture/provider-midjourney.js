@@ -68,6 +68,20 @@
     return info ? `${info.jobId}:${info.index}` : "";
   }
 
+  // Counts only the jobs that are really new for the batch rule. A job already
+  // on the page at load (baseline) or already captured in this page
+  // (handledJobIds) is not a new card, so it must not turn the next single
+  // new job into a "batch" that gets treated as history (review 294 C).
+  function newJobIdsForBatch(entries, baseline, handledJobIds) {
+    const ids = new Set();
+    for (const entry of entries || []) {
+      const jobId = entry?.info?.jobId;
+      if (!jobId || baseline.has(jobId) || handledJobIds.has(jobId)) continue;
+      ids.add(jobId);
+    }
+    return ids;
+  }
+
   // Test seam for the pure URL + baseline rules.
   globalThis.MosaMidjourneyCapture = Object.freeze({
     parseMidjourneyMediaUrl,
@@ -78,6 +92,7 @@
     isBatchBaselineInsertion(newJobCount) {
       return Number(newJobCount || 0) >= BATCH_BASELINE_JOB_CARDS;
     },
+    newJobIdsForBatch,
   });
   if (typeof chrome === "undefined" || !chrome?.runtime?.id) return;
 
@@ -92,6 +107,12 @@
   let lastProviderUrl = location.href;
   const seen = new Set();
   const baseline = new Set();
+  // Jobs this page has already started capturing as new cards (review 294 C).
+  const handledJobIds = new Set();
+  // Automatic retries per dedupe key: at most two, at least 60 s apart.
+  const RETRY_MAX_ATTEMPTS = 2;
+  const RETRY_GAP_MS = 60_000;
+  const retryAttempts = new Map();
   let captureInFlight = 0;
   const captureWaiters = [];
 
@@ -106,6 +127,29 @@
     seen.delete(key);
     seen.add(key);
     while (seen.size > SEEN_MAX) seen.delete(seen.values().next().value);
+  }
+
+  function rememberHandledJob(jobId) {
+    if (!jobId) return;
+    handledJobIds.delete(jobId);
+    handledJobIds.add(jobId);
+    while (handledJobIds.size > SEEN_MAX) handledJobIds.delete(handledJobIds.values().next().value);
+  }
+
+  // Automatic hand-off (review 294 B). The background keeps a queued or
+  // refused capture, so the key stays. Only a retryable answer, or a message
+  // that never got an answer, frees the key, and then only twice and 60 s apart.
+  function releaseSeenForRetry(key) {
+    const attempts = retryAttempts.get(key) || 0;
+    if (attempts >= RETRY_MAX_ATTEMPTS) return;
+    retryAttempts.delete(key);
+    retryAttempts.set(key, attempts + 1);
+    while (retryAttempts.size > SEEN_MAX) retryAttempts.delete(retryAttempts.keys().next().value);
+    setTimeout(() => seen.delete(key), RETRY_GAP_MS);
+  }
+
+  function handOffNeedsRetry(response) {
+    return !response || (response.ok === false && response.retryable === true);
   }
 
   function showToast(message, isError = false, durationMs = 3600) {
@@ -326,10 +370,10 @@
       }
       try {
         const response = await sendIngest(payload);
-        if (!response?.ok && automatic) seen.delete(key);
+        if (automatic && handOffNeedsRetry(response)) releaseSeenForRetry(key);
         return response || { ok: false };
       } catch (error) {
-        if (automatic) seen.delete(key);
+        if (automatic) releaseSeenForRetry(key);
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
     });
@@ -356,10 +400,10 @@
       payload.mediaVariant = "original";
       try {
         const response = await sendIngest(payload);
-        if (!response?.ok && automatic) seen.delete(key);
+        if (automatic && handOffNeedsRetry(response)) releaseSeenForRetry(key);
         return response || { ok: false };
       } catch (error) {
-        if (automatic) seen.delete(key);
+        if (automatic) releaseSeenForRetry(key);
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
     });
@@ -383,6 +427,7 @@
     if (location.href !== lastProviderUrl) {
       lastProviderUrl = location.href;
       seen.clear();
+      handledJobIds.clear();
       firstScanDone = false;
     }
     const images = Array.from(document.images || [])
@@ -402,7 +447,7 @@
     const nowMs = Date.now();
     const newEntries = [...images.map((entry) => ({ ...entry, mediaKind: "image" })), ...videos.map((entry) => ({ ...entry, mediaKind: "video" }))]
       .filter((entry) => !baseline.has(entry.info.jobId));
-    const newJobIds = new Set(newEntries.map((entry) => entry.info.jobId));
+    const newJobIds = globalThis.MosaMidjourneyCapture.newJobIdsForBatch(newEntries, baseline, handledJobIds);
     const batchBaseline = globalThis.MosaMidjourneyCapture.isBatchBaselineInsertion(newJobIds.size);
     for (const entry of newEntries) {
       // Lazy-loaded history pages in: (a) inside the scroll window right after
@@ -415,6 +460,7 @@
         continue;
       }
       debugLog("new job, capturing", entry.mediaKind, `${entry.info.jobId}:${entry.info.index}`);
+      rememberHandledJob(entry.info.jobId);
       if (entry.mediaKind === "image") void captureImage(entry.img, entry.info, "automatic");
       else void captureVideo(entry.video, entry.info, "automatic");
     }

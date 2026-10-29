@@ -357,6 +357,26 @@
     while (seen.size > SEEN_MAX) seen.delete(seen.values().next().value);
   }
 
+  // Automatic hand-off (review 294 B). The background keeps a queued or
+  // refused capture, so the key stays. Only a retryable answer, or a message
+  // that never got an answer, frees the key, and then only twice and 60 s apart.
+  const RETRY_MAX_ATTEMPTS = 2;
+  const RETRY_GAP_MS = 60_000;
+  const retryAttempts = new Map();
+
+  function releaseSeenForRetry(key) {
+    const attempts = retryAttempts.get(key) || 0;
+    if (attempts >= RETRY_MAX_ATTEMPTS) return;
+    retryAttempts.delete(key);
+    retryAttempts.set(key, attempts + 1);
+    while (retryAttempts.size > SEEN_MAX) retryAttempts.delete(retryAttempts.keys().next().value);
+    setTimeout(() => seen.delete(key), RETRY_GAP_MS);
+  }
+
+  function handOffNeedsRetry(response) {
+    return !response || (response.ok === false && response.retryable === true);
+  }
+
   function showToast(message, isError = false, durationMs = 3600) {
     let toast = document.getElementById("mosa-provider-capture-toast");
     if (!toast) {
@@ -542,12 +562,12 @@
       try {
         const response = await sendIngest(payload);
         if (!response?.ok) {
-          seen.delete(key);
+          if (handOffNeedsRetry(response)) releaseSeenForRetry(key);
           return { ok: false, error: response?.error };
         }
         return { ok: true };
       } catch (error) {
-        seen.delete(key);
+        releaseSeenForRetry(key);
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
       }
     });

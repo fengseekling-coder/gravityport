@@ -44,7 +44,7 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.43");
+  assert.equal(manifest.version, "0.15.44");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -171,8 +171,15 @@ test("Google adapters read only eligible page-local bytes and keep CDN URLs remo
   assert.match(providerSource, /if \(source\.kind === "local" && source\.url\.startsWith\("blob:"\)\) \{/);
   assert.match(providerSource, /!isVisibleGeneratedImage\(image\)/);
   assert.match(providerSource, /if \(source\?\.kind !== "local" \|\| !isVisibleGeneratedImage\(img\)\)/);
-  assert.match(providerSource, /if \(!response\?\.ok\) seen\.delete\(source\.url\)/);
-  assert.match(providerSource, /\.catch\(\(\) => seen\.delete\(source\.url\)\)/);
+  // Review 294 B: a queued or refused answer keeps the dedupe key. Only a
+  // retryable answer or a lost message frees it, at most twice and 60 s apart.
+  // The 401/503 ticket staying in the background queue is proven in
+  // web-capture-background-queue.test.mjs.
+  assert.match(providerSource, /if \(handOffNeedsRetry\(response\)\) releaseSeenForRetry\(source\.url\)/);
+  assert.match(providerSource, /\.catch\(\(\) => releaseSeenForRetry\(source\.url\)\)/);
+  assert.match(providerSource, /const HANDOFF_RETRY_MAX_ATTEMPTS = 2;/);
+  assert.match(providerSource, /const HANDOFF_RETRY_GAP_MS = 60_000;/);
+  assert.match(providerSource, /setTimeout\(\(\) => seen\.delete\(key\), HANDOFF_RETRY_GAP_MS\)/);
   assert.match(providerSource, /!changes\.autoCapture && !changes\.mosaBaseUrl && !changes\.mosaToken/);
   assert.match(providerSource, /seen\.clear\(\);/);
   assert.doesNotMatch(providerSource, /chrome\.cookies|document\.cookie|authorization/i);
@@ -243,7 +250,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.43");
+  assert.equal(manifest.version, "0.15.44");
   // Storage keys and the pairing product identifier stay "mosa" so old
   // extensions keep working with the renamed App and vice versa.
   assert.match(backgroundSource, /if \(identity\?\.product !== "mosa"\) continue;/);
@@ -1834,7 +1841,7 @@ test("binds prompt and asset when one image call splits them across nested reque
 });
 
 test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.43");
+  assert.equal(manifest.version, "0.15.44");
   assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
   assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
   assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);
@@ -3623,6 +3630,7 @@ function currentChatGptAutoCaptureHarness() {
     "MAX_BLOB_ASSETS", "SESSION_CACHE_MAX", "SIZE_FAILURE_LIMIT", "SIZE_FAILURE_BACKOFF_MS",
     "AUTO_STABILITY_DELAY_MS", "AUTO_IN_PROGRESS_STALE_MS", "AUTO_PARTIAL_FALLBACK_MS", "DOM_MEDIA_GRACE_MS",
     "SESSION_TITLE_MAX_LENGTH", "SESSION_TITLE_PLACEHOLDERS", "SYSTEM_HINT_LABEL_LINES",
+    "DELIVERY_RETRY_MAX", "DELIVERY_RETRY_GAP_MS", "PAGE_READ_ATTEMPTS_MAX",
   ].map((name) => new RegExp(`const ${name} = [^;]+;`).exec(contentSource)?.[0]);
   assert.ok(constants.every(Boolean), "auto-capture constants should be extractable from content.js");
 
@@ -3640,7 +3648,7 @@ function currentChatGptAutoCaptureHarness() {
     "markSizeFailure", "isSizeFailureBlocked", "normalizeGenerationStatus", "isTerminalGenerationStatus",
     "isSavedCandidate", "rememberSavedCandidate", "savedGenerationStatusForCandidate", "rememberSavedPrompt",
     "clearAutoStability", "scheduleAutoStabilityRetry", "autoCandidateReadiness",
-    "isArchiveWorthyCandidate", "canAttempt", "enqueueAuto", "ingestCandidate", "findCandidateForMeta", "resolvePrompt",
+    "isArchiveWorthyCandidate", "canAttempt", "noteAutomaticFailure", "enqueueAuto", "ingestCandidate", "findCandidateForMeta", "resolvePrompt",
     "bytesFromUrlOrImg", "waitForRenderedCandidate", "renderedCandidateFor", "originalBytesFromUrl", "canvasBytesFromImage",
     "arrayBufferToBase64", "decodedImageDimensions",
     "userMessageForCandidate", "stripSystemHintLabelLines", "messageScopeForCandidate", "domCaptionForCandidate", "messageIdsForCandidate", "messageIdForCandidate",
@@ -3700,6 +3708,8 @@ function currentChatGptAutoCaptureHarness() {
     capturedCandidates: new Map(), savedPromptRanks: new Map(), referenceSyncKeys: new Set(),
     failedNetworkIdentityKeys: new Set(), promptUpgradeInFlight: new Set(),
     failedAt: new Map(), sizeFailureStates: new Map(),
+    deliveryRetries: new Map(), deliveryRefusedKeys: new Set(), pageReadFailures: new Map(),
+    queuedToastKeys: new Set(), errorToastKeys: new Set(),
     autoStabilityStates: new Map(), autoStabilityTimers: new Map(), savedGenerationStatuses: new Map(),
     conversationEpoch: 0, activeConversationId: "conversation-test", autoCapture: true,
     generationRegistry: null,
@@ -5033,4 +5043,73 @@ test("conversation titles are reported only while automatic capture is on", asyn
   // Switching auto capture on (at boot or later) reports the open conversation once.
   assert.match(source, /scheduleScan\(true\);\n {6}scheduleSessionTitleReport\(0\);\n {6}if \(desktopSyncRun\) startDesktopSyncWatch\(\);/);
   assert.match(source, /requestCurrentConversationRefresh\(null\);\n {6}scheduleScan\(true\);\n {6}scheduleSessionTitleReport\(0\);\n {4}\} else \{/);
+});
+
+// Review 294 B/C: the page's hand-off rules for ChatGPT, on the gallery harness
+// above, with a clock the test can move.
+function chatGptHandOffHarness(answer) {
+  const harness = currentChatGptAutoCaptureHarness();
+  const { context, registry } = harness;
+  const clock = { now: 1_700_000_000_000 };
+  context.Date = class FakeDate extends Date {
+    constructor(...args) {
+      if (args.length) super(...args);
+      else super(clock.now);
+    }
+
+    static now() {
+      return clock.now;
+    }
+  };
+  context.showToast = (message, isError = false) => { context.toasts.push({ message, isError }); };
+  context.runtimeSend = async (message) => {
+    context.ingestMessages.push(message);
+    return typeof answer === "function" ? answer(context.ingestMessages.length) : answer;
+  };
+  context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID });
+  registry.remember(galleryGenerationEvidence());
+  context.images.push(new context.HTMLImageElement({ src: GALLERY_BLOB_URL }));
+  const attempt = async (minutesLater = 0) => {
+    clock.now += minutesLater;
+    context.enqueueDomCandidateForImage(GALLERY_BLOB_URL, "blob-asset");
+    await flushAutoCapture();
+  };
+  return { context, clock, attempt };
+}
+
+test("ChatGPT: a queued capture is not sent again and says it is queued, not failed", async () => {
+  const { context, clock, attempt } = chatGptHandOffHarness({ ok: true, result: { status: "queued", reason: "mosa-unavailable" } });
+  await attempt();
+  assert.equal(context.ingestMessages.length, 1);
+  assert.equal(context.statusTexts.at(-1), "已排队 · GravityPort 打开后自动入库");
+  assert.equal(context.toasts.filter((toast) => toast.isError).length, 0, "a queued capture never shows an error");
+  const notices = context.toasts.filter((toast) => toast.message === "已排队 · GravityPort 打开后自动入库");
+  assert.equal(notices.length, 1, "the queued notice shows once for this key");
+
+  await attempt(180_000);
+  assert.equal(context.ingestMessages.length, 1, "three minutes later the queued capture is still not re-sent");
+  assert.ok(clock.now > 0);
+});
+
+test("ChatGPT: a retryable failure is tried twice, 60 s apart, and its error shows once", async () => {
+  const { context, attempt } = chatGptHandOffHarness({ ok: false, error: "GravityPort is closed", retryable: true });
+  await attempt();
+  assert.equal(context.ingestMessages.length, 1);
+  await attempt(30_000);
+  assert.equal(context.ingestMessages.length, 1, "no retry before 60 s");
+  await attempt(31_000);
+  assert.equal(context.ingestMessages.length, 2, "first automatic retry after 60 s");
+  await attempt(60_000);
+  assert.equal(context.ingestMessages.length, 3, "second automatic retry after another 60 s");
+  await attempt(600_000);
+  assert.equal(context.ingestMessages.length, 3, "then the key is kept");
+  const errors = context.toasts.filter((toast) => toast.isError);
+  assert.equal(errors.length, 1, "the same error for the same image shows once");
+});
+
+test("ChatGPT: a refused capture (not retryable) is never sent again automatically", async () => {
+  const { context, attempt } = chatGptHandOffHarness({ ok: false, error: "bad image", retryable: false });
+  await attempt();
+  await attempt(600_000);
+  assert.equal(context.ingestMessages.length, 1);
 });
