@@ -3,6 +3,7 @@
   "unreleased": {
     "zh": {
       "improved": [
+        "放大查看图片，或在高分辨率屏幕上查看大图时，查看器会自动换用原图显示，细节更清晰。",
         "软件内更新改为使用系统网络设置，开启系统代理的电脑也能检查和下载更新。",
         "安装更新前会检查磁盘空间；Windows 版还会检查 AI 助手是否正在通过 MCP 使用 GravityPort，并提示先退出。",
         "macOS 版安装更新时占用的临时磁盘空间减少约一半。"
@@ -20,6 +21,7 @@
     },
     "en": {
       "improved": [
+        "The viewer now switches to the original image when you zoom in, or when large images are shown on high-resolution screens, for sharper detail.",
         "In-app updates now use the system network settings, so computers that go through a system proxy can check for and download updates.",
         "Updates now check free disk space before installing. On Windows, GravityPort also checks whether an AI assistant is using it through MCP and asks you to quit the assistant first.",
         "Installing an update on macOS now needs about half as much temporary disk space."
