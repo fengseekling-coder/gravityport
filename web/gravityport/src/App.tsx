@@ -45,7 +45,7 @@ import {
 } from "./gallery-scroll-memory"
 import { deriveEmptyState } from "./empty-state"
 import { describeGroupStats } from "./group-stats"
-import { createResyncOnReconnect } from "./live-sync-resync"
+import { createResyncOnReconnect, createSseRefreshGate, type SseRefreshGate } from "./live-sync-resync"
 import {
   checkVersionConsistency,
   createReadyGate,
@@ -646,6 +646,25 @@ export default function App() {
     ...(cursor ? { cursor } : {}),
   })
   const pendingViewerReloadRef = useRef(false)
+  // Task 292 bridge, until review high-8's incremental refresh replaces this
+  // whole path: SSE-triggered gallery refreshes must never abort the load
+  // currently in flight. During an import they hold off entirely (new cards
+  // land through the per-batch inserts instead); otherwise at most ONE
+  // follow-up refresh is queued and fires when the in-flight load commits or
+  // fails. User-initiated refreshes bypass this gate on purpose.
+  const importingRef = useRef(false)
+  const galleryLoadingRef = useRef(false)
+  const sseRefreshGateRef = useRef<SseRefreshGate | null>(null)
+  if (!sseRefreshGateRef.current) {
+    sseRefreshGateRef.current = createSseRefreshGate({
+      isBlocked: () => importingRef.current || galleryLoadingRef.current,
+      refresh: () => setRefreshKey(value => value + 1),
+    })
+  }
+  // Import batches that arrived while the user was scrolled away from the top
+  // of an insert-eligible view; the toast's 查看 button (or the next batch
+  // landing while the user is back at the top) flushes them at the front.
+  const pendingImportCardsRef = useRef<MosaAsset[]>([])
   // Project-switch transaction: the last project whose gallery actually
   // loaded, plus the view snapshot to restore when a later switch fails.
   const lastGoodProjectRef = useRef(project)
@@ -678,6 +697,9 @@ export default function App() {
     // still shows the outgoing view.
     const isViewSwitch = viewKeyRef.current !== viewKey
     if (isViewSwitch) {
+      // Task 292 bridge: a queued SSE refresh is bound to the view it waited
+      // behind; the fresh view reloads on its own.
+      sseRefreshGateRef.current?.takePending()
       const leavingKey = committedViewKeyRef.current
       const live = liveScrollRef.current
       if (leavingKey) {
@@ -722,6 +744,7 @@ export default function App() {
       anchorIndexRef.current = -1
     }
     setLoading(true)
+    galleryLoadingRef.current = true
     setLoadError("")
     const run = async () => {
       try {
@@ -826,7 +849,10 @@ export default function App() {
         }
         setLoadError(errorMessage(error))
       } finally {
-        if (!controller.signal.aborted) setLoading(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+          galleryLoadingRef.current = false
+        }
       }
     }
     void run()
@@ -854,6 +880,16 @@ export default function App() {
     pendingScrollRestoreRef.current = { viewKey: committedViewKeyRef.current, reveal: true }
   }, [preview])
   const refreshNavigation = () => setRefreshKey(value => value + 1)
+  // Task 292 bridge: an SSE refresh that arrived while the gallery was busy
+  // loading fires here, after that load committed or failed — the queued
+  // refresh must never abort the load it waited behind (import batches keep
+  // the gallery alive in the meantime, and at most one refresh queues up).
+  useEffect(() => {
+    if (loading) return
+    if (!sseRefreshGateRef.current?.takePending()) return
+    refreshNavigation()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading])
   const lastMetaProjectRef = useRef("")
   useEffect(() => {
     const controller = new AbortController()
@@ -884,7 +920,10 @@ export default function App() {
   useEffect(() => {
     // Reconnects refresh once too: a library-changed event sent while the
     // stream was down is never replayed.
-    const resync = createResyncOnReconnect({ onResync: () => refreshNavigation() })
+    // Task 292 bridge: pushed refreshes never abort the load in flight —
+    // during an import they hold off entirely (per-batch inserts carry the
+    // new cards), otherwise one refresh queues behind the current load.
+    const resync = createResyncOnReconnect({ onResync: () => sseRefreshGateRef.current?.request() })
     const stream = new EventSource(`/api/library-events?project=${encodeURIComponent(project)}`)
     stream.addEventListener("open", () => {
       resync.handleOpen()
@@ -2528,6 +2567,49 @@ export default function App() {
   useEffect(() => {
     if (!preview) setViewerFullscreen(false)
   }, [preview])
+  // ── Task 292: live import cards ──
+  // A finished batch puts its cards straight into the loaded gallery instead
+  // of waiting for the end-of-import refresh, but only where prepending is
+  // what the next real refresh would show anyway: the all-assets view (the
+  // stack being imported into counts), newest-first, no search, and a type
+  // filter that admits the batch. The check reads the live view key, not the
+  // closure — the user can switch views while a long import still runs.
+  const importLiveInsertView = (batch: MosaAsset[]) => {
+    let view: unknown[] = []
+    try { view = JSON.parse(viewKeyRef.current || "[]") as unknown[] } catch { return false }
+    const [viewProject, viewActive, viewQuery, viewSort, viewType, viewStackId] = view as string[]
+    const typeAdmits = (item: MosaAsset) => viewType === "all"
+      || (viewType === "image" ? item.mediaKind === "image" : item.mediaKind === "video")
+    return viewProject === project
+      && viewActive === "所有素材"
+      && !viewQuery
+      && viewSort === "newest"
+      && (stackId ? viewStackId === stackId : !viewStackId)
+      && batch.every(typeAdmits)
+  }
+  // Only a viewport-top opinion, deliberately: the grid is unmounted while
+  // the viewer is open, which then reads as "scrolled away" and holds cards.
+  const galleryNearTop = () => {
+    const grid = gridRef.current
+    return grid != null && grid.scrollTop < grid.clientHeight
+  }
+  // Prepends at the front of the loaded window (newest-first), dropping ids
+  // the window already shows — a viewer-close refresh may have delivered the
+  // same batch first. The layout effects own windowing and scroll holding.
+  const prependImportAssets = (incoming: MosaAsset[]) => {
+    if (!incoming.length) return
+    setAssets(old => {
+      const seen = new Set(old.map(item => item.id))
+      const fresh = incoming.filter(item => !seen.has(item.id))
+      return fresh.length ? [...fresh, ...old] : old
+    })
+  }
+  const flushHeldImportCards = () => {
+    const held = pendingImportCardsRef.current
+    pendingImportCardsRef.current = []
+    prependImportAssets(held)
+    return held.length
+  }
   // Local file import through the staged pipeline (task 130): 40-file batches
   // of stage → create → cleanup, optional target stack and group, live
   // progress in the toast.
@@ -2540,6 +2622,8 @@ export default function App() {
       const lower = name.toLowerCase()
       return supported.some(ext => lower.endsWith(ext.toLowerCase()))
     }
+    pendingImportCardsRef.current = []
+    importingRef.current = true
     setImporting(true)
     try {
       const result = await runImport(files, {
@@ -2548,9 +2632,34 @@ export default function App() {
         ...(groupName ? { groupName } : {}),
         isSupported,
         onProgress: progress => {
-          notify(fillNamed("正在导入 {completed}/{total} · 成功 {imported} · 失败 {failed}", {
+          const arrived = progress.assets
+          if (arrived.length && importLiveInsertView(arrived)) {
+            if (galleryNearTop()) {
+              // Back at (or near) the top: held cards and this batch land now.
+              const held = pendingImportCardsRef.current
+              pendingImportCardsRef.current = []
+              prependImportAssets([...held, ...arrived])
+            } else {
+              // Scrolled away: inserting at the front would reshuffle the
+              // whole grid under the user's eyes, so hold and offer 查看.
+              pendingImportCardsRef.current.push(...arrived)
+            }
+          }
+          const text = fillNamed("正在导入 {completed}/{total} · 成功 {imported} · 失败 {failed}", {
             completed: progress.completed, total: progress.total, imported: progress.imported, failed: progress.failed,
-          }))
+          })
+          if (pendingImportCardsRef.current.length) {
+            notifyWithAction(text, { label: tr("查看"), run: () => {
+              flushHeldImportCards()
+              // Write the scroll position before the prepend's re-render
+              // reads it: the layout hold keys off the pre-change scrollTop,
+              // and 0 there means "at the top, nothing to hold".
+              const grid = gridRef.current
+              if (grid) grid.scrollTop = 0
+            } })
+          } else {
+            notify(text)
+          }
         },
       })
       const firstReason = result.errors[0]?.reason
@@ -2577,6 +2686,9 @@ export default function App() {
       }
       // The navigation key reloads the current view too (inside a stack, the
       // stack's members), without a 正在刷新 toast replacing the result above.
+      // Task 292 bridge: this refresh IS the one the import suppressed SSE
+      // events queued up — consume the marker so no second refresh follows.
+      sseRefreshGateRef.current?.takePending()
       refreshNavigation()
       if (result.createdIds.length) {
         notify(`${baseText}${tr("· 正在检查相似的图…")}`)
@@ -2586,9 +2698,13 @@ export default function App() {
       }
       return result.createdIds
     } catch (error) {
+      // Task 292 bridge: a thrown import still owes the gallery one refresh
+      // for the SSE events the import gate held back.
+      if (sseRefreshGateRef.current?.takePending()) refreshNavigation()
       notify(errorMessage(error))
       return []
     } finally {
+      importingRef.current = false
       setImporting(false)
     }
   }
@@ -2713,6 +2829,13 @@ export default function App() {
   // toast and nothing imports. Files that already live in the library (a card
   // dragged out of the window and dropped back) are skipped, never re-imported.
   const importDroppedFiles = (dataTransfer: DataTransfer | null, groupName?: string) => {
+    // Task 292 bridge: from the user's point of view the import starts at the
+    // drop, but the multi-second entry scan precedes importFiles — an SSE
+    // refresh landing in that window would still churn the gallery for
+    // nothing. Hold the gate open across the scan; importFiles re-sets it and
+    // every path below either reaches importFiles (whose finally clears it)
+    // or clears it here.
+    importingRef.current = true
     const topLevel = Array.from(dataTransfer?.files || [])
     const scan = collectDroppedFiles(dataTransfer, {
       onScanProgress: count => notify(fillNamed("正在扫描拖入的文件…已找到 {count} 个", { count })),
@@ -2725,12 +2848,16 @@ export default function App() {
       .then(([result, flagged]) => {
         const { files, skipped } = excludeLibraryFiles(result.files, topLevel.filter((_, index) => flagged[index] === true))
         if (skipped && !files.length) {
+          importingRef.current = false
           notify(fillNamed("{count} 个文件已在素材库中，没有重复导入", { count: skipped }))
           return
         }
         return importFiles(files, groupName)
       })
-      .catch(error => notify(errorMessage(error)))
+      .catch(error => {
+        importingRef.current = false
+        notify(errorMessage(error))
+      })
   }
   // Paste-to-import continuation (task 239): mirrors importDroppedFiles —
   // folders expand through the entry scan when the paste offers entries,

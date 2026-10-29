@@ -1,6 +1,7 @@
 import { mkdir, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import sharp from "./sharp-runtime.js";
+import { orientedImageDimensions } from "./image-dimensions.js";
 import { extractImagePalette, type PaletteColor } from "./image-palette.js";
 import { computePerceptualHash } from "./perceptual-hash.js";
 import {
@@ -63,10 +64,10 @@ async function generateDerivatives(job: DerivativeProcessorJob) {
   );
   const sharpInputOptions = { animated: false, limitInputPixels: MAX_DERIVATIVE_INPUT_PIXELS } as const;
   const metadata = await sharp(job.original_path, sharpInputOptions).metadata();
-  const orientation = Number(metadata.orientation) || 1;
-  const swapsAxes = orientation >= 5 && orientation <= 8;
-  const width = swapsAxes ? Number(metadata.height) : Number(metadata.width);
-  const height = swapsAxes ? Number(metadata.width) : Number(metadata.height);
+  // Task 292: createAsset reads the same dimensions at import time through
+  // this shared helper; both write-backs must agree or each card would jump
+  // between ratios twice.
+  const { width, height } = orientedImageDimensions(metadata);
 
   // Write every derivative to a temp file first, then rename them into place
   // only once all three encoded successfully. If anything fails, this run's
