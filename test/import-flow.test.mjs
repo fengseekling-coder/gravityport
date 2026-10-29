@@ -8,6 +8,7 @@ import test from "node:test";
 import { createJsonAssetStore, SUPPORTED_MEDIA_EXTENSIONS } from "../lib/asset-store.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
+import { uniquePngBytes } from "./helpers/unique-image.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const ONE_PIXEL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==", "base64");
@@ -126,8 +127,10 @@ test("import rejections reach the client as 400 with a code, and the format list
   // instead of aborting the whole drop when one file is bad.
   const batchImageA = join(generated, "batch-a.png");
   const batchImageB = join(generated, "batch-b.png");
-  await writeFile(batchImageA, ONE_PIXEL_PNG);
-  await writeFile(batchImageB, ONE_PIXEL_PNG);
+  // Distinct bytes: manual imports of identical files now skip as
+  // already-in-library, and this batch asserts per-item import results.
+  await writeFile(batchImageA, await uniquePngBytes(1));
+  await writeFile(batchImageB, await uniquePngBytes(2));
   const importedBatch = await fetch(`${runtime.url}/api/assets/import-batch`, {
     method: "POST",
     headers: { "content-type": "application/json" },

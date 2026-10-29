@@ -12,6 +12,7 @@
  */
 
 import { stageImportFile, requestJson, setAssetsGroup } from "./mosa-api.js";
+import type { ImportExistingLocation } from "./mosa-api.js";
 import { collectDroppedFiles, excludeLibraryFiles } from "./collect-dropped-files.js";
 
 // Re-export for convenience
@@ -35,12 +36,19 @@ export interface ImportError {
   reason: string
 }
 
+/** A dropped file whose bytes the library already holds outside Trash (task 291). */
+export interface AlreadyInLibraryEntry {
+  fileName: string
+  existingAsset: ImportExistingLocation
+}
+
 export interface ImportResult {
   imported: number
   failed: number
   skipped: number
   createdIds: string[]
   errors: ImportError[]
+  alreadyInLibrary: AlreadyInLibraryEntry[]
 }
 
 export interface RunImportOptions {
@@ -162,6 +170,7 @@ export async function runImport(
     skipped,
     createdIds: [],
     errors: [],
+    alreadyInLibrary: [],
   }
 
   if (!total) return result
@@ -233,6 +242,8 @@ export async function runImport(
             index: number
             ok: boolean
             asset?: { id: string }
+            skipped?: "already-in-library"
+            existingAsset?: ImportExistingLocation
             error?: string
           }>
         }
@@ -245,12 +256,19 @@ export async function runImport(
         const failedPaths: string[] = []
         let batchImported = 0
         let batchFailed = 0
-        
+
         for (let i = 0; i < stagedItems.length; i++) {
           const itemResult = importResult.results?.find((r) => r.index === i)
           if (itemResult?.ok && itemResult.asset?.id) {
             result.createdIds.push(itemResult.asset.id)
             batchImported += 1
+          } else if (itemResult?.ok && itemResult.skipped === "already-in-library" && itemResult.existingAsset) {
+            // Task 291: identical bytes skipped by the server; the staged file
+            // was already cleaned up there.
+            result.alreadyInLibrary.push({
+              fileName: stagedItems[i].file.name,
+              existingAsset: itemResult.existingAsset,
+            })
           } else {
             failedPaths.push(stagedItems[i].path)
             result.errors.push({

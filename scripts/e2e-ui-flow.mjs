@@ -100,6 +100,19 @@ const HELPERS = `
     const context = canvas.getContext('2d');
     context.fillStyle = color;
     context.fillRect(0, 0, canvas.width, canvas.height);
+    // Seeded block noise: solid fills all share one perceptual hash, and
+    // manual-import dedupe (task 291) would list them as possible duplicates
+    // and open the review dialog. Each name now gets its own pattern.
+    let seed = 2166136261;
+    for (const ch of name) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
+    for (let y = 0; y < 24; y += 3) {
+      for (let x = 0; x < 32; x += 4) {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        const level = seed >>> 24;
+        context.fillStyle = 'rgba(' + level + ',' + level + ',' + level + ',0.7)';
+        context.fillRect(x, y, 4, 3);
+      }
+    }
     const blob = await new Promise((resolveBlob, rejectBlob) => canvas.toBlob(
       (value) => (value ? resolveBlob(value) : rejectBlob(new Error('canvas.toBlob produced no blob'))),
       'image/png',

@@ -44,7 +44,7 @@ type PromptNotice = {
 } | null
 
 type TrashReasonNotice = {
-  key: "trashReplacedByBetterVersion" | "trashProviderDeletedJimeng"
+  key: "trashReplacedByBetterVersion" | "trashProviderDeletedJimeng" | "trashDuplicateImportIdentical" | "trashDuplicateImportUser"
   text: string
 } | null
 
@@ -56,6 +56,14 @@ const TRASH_REASON_TEXTS: Record<string, TrashReasonNotice> = {
   "provider-deleted:jimeng": {
     key: "trashProviderDeletedJimeng",
     text: "因在即梦网站中删除而移入回收站",
+  },
+  "duplicate-import:identical": {
+    key: "trashDuplicateImportIdentical",
+    text: "导入时发现与库里的图完全相同，已移入回收站",
+  },
+  "duplicate-import:user": {
+    key: "trashDuplicateImportUser",
+    text: "导入后确认为重复，已移入回收站",
   },
 }
 

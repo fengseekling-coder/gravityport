@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
+import { uniquePngBytes } from "./helpers/unique-image.mjs";
 import { DISABLEABLE_BRIDGES } from "../lib/runtime-bridges.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 
@@ -17,17 +18,13 @@ const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
  * Minimal 1×1 PNG (67 bytes) used as a fixture image so that createAsset can
  * resolve a readable source path without touching any real user media.
  */
-const TINY_PNG = Buffer.from(
-  "89504e470d0a1a0a0000000d49484452000000010000000108020000009001" +
-  "2e00000000c494441547801636000020000000500010d0a2db40000000049454e44ae426082",
-  "hex",
-);
-
-async function createFixtureImage(dir) {
+// Manual imports of identical bytes now skip as already-in-library, so each
+// imported fixture needs its own bytes (task 291).
+async function createFixtureImage(dir, seed = 0) {
   const imagesDir = join(dir, "fixture-images");
   await mkdir(imagesDir, { recursive: true });
-  const filePath = join(imagesDir, "fixture.png");
-  await writeFile(filePath, TINY_PNG);
+  const filePath = join(imagesDir, `fixture-${seed}.png`);
+  await writeFile(filePath, await uniquePngBytes(seed));
   return filePath;
 }
 
@@ -107,7 +104,6 @@ describe("runtime isolation with all bridges disabled", () => {
 
     const libraryDir = join(root, "library");
     const opts = runtimeOptions(root);
-    const fixtureImage = await createFixtureImage(root);
 
     const runtime = await startMosaRuntime({
       ...opts,
@@ -124,7 +120,7 @@ describe("runtime isolation with all bridges disabled", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           asset: `fixture-${i}`,
-          imagePath: fixtureImage,
+          imagePath: await createFixtureImage(root, i),
         }),
       });
       assert.equal(res.status, 200, `createAsset fixture-${i} should succeed`);
@@ -196,7 +192,6 @@ describe("environment-only server startup isolation", () => {
     deferTestPathRemoval(root, { recursive: true, force: true });
 
     const libraryDir = join(root, "library");
-    const fixtureImage = await createFixtureImage(root);
     const managerAssets = await snapshotDirectory(join(repositoryRoot, "assets", "default"));
     const child = spawn(process.execPath, ["server.mjs"], {
       cwd: repositoryRoot,
@@ -221,7 +216,7 @@ describe("environment-only server startup isolation", () => {
       const response = await fetch(`${url}/api/assets/create`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ asset: `e2e-fixture-${i}`, imagePath: fixtureImage }),
+        body: JSON.stringify({ asset: `e2e-fixture-${i}`, imagePath: await createFixtureImage(root, i) }),
       });
       assert.equal(response.status, 200, `server.mjs should create fixture ${i}`);
     }

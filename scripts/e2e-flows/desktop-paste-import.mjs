@@ -89,8 +89,29 @@ export async function run(ctx) {
     // unavailable here and direct-path creates would be refused. The clipboard
     // fixtures never touch the API — they only need to exist on disk, outside
     // the library, so the already-in-library skip cannot fire on them.
+    // Name-seeded block noise over the tint: solid fills all share one
+    // perceptual hash, and pasting one next to the seeds would open the
+    // manual-import review dialog (task 291) in the middle of the flow.
     const makePng = (fileName, [r, g, b]) => new Promise((resolvePng, rejectPng) => {
-      sharp({ create: { width: 32, height: 24, channels: 4, background: { r, g, b, alpha: 1 } } })
+      const raw = Buffer.alloc(32 * 24 * 4);
+      let seed = 2166136261;
+      for (const ch of fileName) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
+      for (let y = 0; y < 24; y += 3) {
+        for (let x = 0; x < 32; x += 4) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          const level = seed >>> 24;
+          for (let py = y; py < y + 3; py += 1) {
+            for (let px = x; px < x + 4; px += 1) {
+              const offset = (py * 32 + px) * 4;
+              raw[offset] = Math.round(0.3 * r + 0.7 * level);
+              raw[offset + 1] = Math.round(0.3 * g + 0.7 * level);
+              raw[offset + 2] = Math.round(0.3 * b + 0.7 * level);
+              raw[offset + 3] = 255;
+            }
+          }
+        }
+      }
+      sharp(raw, { raw: { width: 32, height: 24, channels: 4 } })
         .png()
         .toFile(join(ctx.fixturesDir, fileName))
         .then(() => resolvePng(join(ctx.fixturesDir, fileName)))
@@ -131,6 +152,12 @@ export async function run(ctx) {
     const filePngA = await makePng("desktop-paste-alpha.png", [220, 40, 40]);
     const filePngB = await makePng("desktop-paste-beta.png", [40, 200, 60]);
     const filePngC = await makePng("desktop-paste-gamma.png", [90, 60, 210]);
+    // Steps 2 and 3 each paste an image the library has never seen: step 1
+    // already imported alpha and beta, and pasting those again is a skip
+    // (same bytes) or an automatic trash of the new copy (same pixels) since
+    // manual-import dedupe (task 291).
+    const filePngD = await makePng("desktop-paste-delta.png", [200, 160, 40]);
+    const filePngE = await makePng("desktop-paste-epsilon.png", [40, 160, 200]);
     const fileMp4 = join(ctx.fixturesDir, "desktop-paste-clip.mp4");
     await copyFile(join(ctx.rootDir, "test", "fixtures", "video-first-frame.mp4"), fileMp4);
 
@@ -230,7 +257,7 @@ export async function run(ctx) {
       await clickCenter(cdp, `document.querySelector('.sidebar .group-row[aria-label="${GROUP_NAME}"]')`);
       await waitFor(`[...document.querySelectorAll('.sidebar .group-row')].some((row) => row.getAttribute('aria-current') === 'page' && row.getAttribute('aria-label') === '${GROUP_NAME}')`,
       "group view active");
-      await writeClipboardImage(filePngA);
+      await writeClipboardImage(filePngD);
       await dispatchPasteCommand(cdp);
       await waitFor(`document.querySelectorAll('.asset-card').length === 1`, "pasted card lands in the group view");
       const assets = await total();
@@ -250,7 +277,7 @@ export async function run(ctx) {
 
     // ── 3) File into the open stack via the blank-area menu 粘贴 ──
     await step("blank-area menu 粘贴 imports a file into the open stack", async () => {
-      await writeClipboardFiles([filePngB]);
+      await writeClipboardFiles([filePngE]);
       // Back to 所有素材, then open the stack with a real double click.
       await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="所有素材"]')`);
       await waitFor(`[...document.querySelectorAll('.asset-card[aria-label]')].some((card) => card.getAttribute('aria-label').includes('堆叠'))`, "stack card visible");

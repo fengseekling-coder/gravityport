@@ -398,10 +398,14 @@ test("historical orphan derivative sweep is post-listen maintenance and the work
   } while (orphansRemaining > 0 && Date.now() < sweepDeadline);
   assert.equal(orphansRemaining, 0, "historical orphans must be reclaimed after startup without blocking it");
   assert.equal(await fileExists(join(projectDir, "thumbnails", "seed-asset.webp")), true, "referenced derivatives are never touched by the sweep");
+  // Distinct bytes from seed.png: identical bytes now skip as
+  // already-in-library instead of creating the second asset.
+  const postSweepPath = join(sourcesDir, "post-sweep.png");
+  await sharp({ create: { width: 96, height: 64, channels: 3, background: { r: 60, g: 100, b: 180 } } }).png().toFile(postSweepPath);
   const create = await fetch(runtime.url + "/api/assets/create", {
     method: "POST",
     headers: { "content-type": "application/json", "x-mosa-client-token": runtime.clientToken },
-    body: JSON.stringify({ projectId: "default", assetId: "post-sweep-asset", imagePath: sourcePath, prompt: "after sweep" }),
+    body: JSON.stringify({ projectId: "default", assetId: "post-sweep-asset", imagePath: postSweepPath, prompt: "after sweep" }),
   });
   assert.equal(create.status, 200);
   const thumbnailDeadline = Date.now() + 15000;

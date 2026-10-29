@@ -2,6 +2,7 @@ import { mkdir, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import sharp from "./sharp-runtime.js";
 import { extractImagePalette, type PaletteColor } from "./image-palette.js";
+import { computePerceptualHash } from "./perceptual-hash.js";
 import {
   derivativeTempFileName,
   publishDerivativeFile,
@@ -97,6 +98,15 @@ async function generateDerivatives(job: DerivativeProcessorJob) {
     palette = [];
   }
 
+  // The perceptual hash rides along the same way, from the same thumbnail, so
+  // manual-import dedupe never has to decode the original again.
+  let perceptualHash = "";
+  try {
+    perceptualHash = await computePerceptualHash(job.thumbnailPath);
+  } catch {
+    perceptualHash = "";
+  }
+
   return {
     previewPath: job.previewPath,
     mediumPath: job.mediumPath,
@@ -104,6 +114,7 @@ async function generateDerivatives(job: DerivativeProcessorJob) {
     width,
     height,
     palette,
+    perceptualHash,
     processorPid: process.pid,
   };
 }

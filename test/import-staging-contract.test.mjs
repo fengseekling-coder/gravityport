@@ -481,7 +481,8 @@ test("Electron drag/drop uses the same byte-stream staging path as Web", async (
 test("unsupported imports fail honestly with a toast and never open a modal", async () => {
   const app = await readFile(join(root, "web", "gravityport", "src", "App.tsx"), "utf8");
   // 全部格式不支持：明确报「导入失败」，绝不假装成功，也绝不弹任何导入对话框。
-  assert.match(app, /if \(!result\.imported && !result\.failed\) notify\("导入失败"\)/);
+  // (任务 291 起提示条由多条计数组合而成,「导入失败」仍是全败分支的第一句。)
+  assert.match(app, /!result\.imported && !result\.failed\)[\s\S]{0,80}?notify\("导入失败"\)/);
   assert.match(app, /部分素材导入失败/, "partial batch failures surface as their own message");
   assert.doesNotMatch(app, /openImportModal|importModal/, "no import path opens any dialog");
 });

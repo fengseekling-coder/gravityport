@@ -115,6 +115,19 @@ export interface SqliteAssetStore {
   dissolveAssetStack(projectId: string, stackId: string): Promise<{ id: string; assetIds: string[]; dissolved: true }>;
   getAsset(projectId: string, assetId: string): Promise<StoredAsset | null>;
   ensureAssetPalette(projectId: string, assetId: string): Promise<StoredAsset | null>;
+  /** Task 291 manual-import dedupe: per-batch similarity state. Read-only except the lazy pixel-digest cache column. */
+  similarCheckState(projectId: string, assetIds: string[]): Promise<{
+    pending: string[];
+    unchecked: string[];
+    identical: Array<{ newAssetId: string; existingAssetId: string }>;
+    matches: Array<{ newAssetId: string; existingAssetId: string; distance: number; newWidth: number; newHeight: number; existingWidth: number; existingHeight: number; clearer: boolean }>;
+  }>;
+  /** One-shot background backfill of perceptual hashes from published thumbnails; no-op once done. */
+  startPerceptualHashBackfill(): void;
+  /** Cached display-pixel digest ("", never computed) — forwarded to replaceAssetMedia on "replace with sharper". */
+  cachedPerceptualPixelDigest(projectId: string, assetId: string): Promise<string>;
+  /** Server-side re-verification for /api/import/resolve; { ok: false, code } rejects without touching anything. */
+  verifyImportResolve(projectId: string, action: Record<string, unknown>): Promise<{ ok: boolean; code?: string }>;
   createAsset(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<StoredAsset>;
   updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<StoredAsset>;
   updateCuration(projectId: string, assetId: string, input: Record<string, unknown>): Promise<StoredAsset>;
