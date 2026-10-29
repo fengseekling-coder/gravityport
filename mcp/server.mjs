@@ -8,6 +8,7 @@ import { stat } from "node:fs/promises";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
+import { createAssetViaGate, untrustedCreateSource } from "../lib/library-ingest.mjs";
 import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
 import { buildAssetProvenanceBundle } from "../lib/provenance-bundle.mjs";
 import {
@@ -227,7 +228,7 @@ function toolDefinitions() {
   return [
     {
       name: TOOL_ASSET_CREATE,
-      description: "Copy a generated image into the GravityPort library and save prompt recipe metadata. Codex's <CODEX_HOME>/generated_images task folders are supported and recorded as the source; CODEX_HOME defaults to the user's .codex directory. Imports are restricted to trusted roots: Codex's generated_images folder (<CODEX_HOME>/generated_images, or the directory named by CODEX_GENERATED_IMAGES_DIR) and the GravityPort library's own folders (assets/ and imports/ inside the library directory). An imagePath anywhere else, such as a project or Downloads folder, is rejected with IMAGE_PATH_NOT_READABLE; copy the file under an allowed root first.",
+      description: "Copy a generated image into the GravityPort library and save prompt recipe metadata. Codex's <CODEX_HOME>/generated_images task folders are supported and recorded as the source; CODEX_HOME defaults to the user's .codex directory. Imports are restricted to trusted roots: Codex's generated_images folder (<CODEX_HOME>/generated_images, or the directory named by CODEX_GENERATED_IMAGES_DIR) and the GravityPort library's own folders (assets/ and imports/ inside the library directory). An imagePath anywhere else, such as a project or Downloads folder, is rejected with IMAGE_PATH_NOT_READABLE; copy the file under an allowed root first. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
       inputSchema: {
         type: "object",
         properties: {
@@ -512,7 +513,29 @@ async function handleToolCall(id, params) {
     return;
   }
   if (params?.name === TOOL_ASSET_CREATE) {
-    const asset = await store.createAsset(args);
+    const projectId = args.projectId || "default";
+    // Creation goes through the shared ingest gate (lib/library-ingest.mjs,
+    // ARCHITECTURE.md §8): identical bytes already in the library (outside
+    // Trash) answer with the stored asset instead of a copy, and hashes the
+    // caller claims in `source` are never trusted — the store recomputes them.
+    const { source, ...rest } = args;
+    const input = source && typeof source === "object" && !Array.isArray(source)
+      ? { ...rest, source: untrustedCreateSource(source) }
+      : args;
+    const created = await createAssetViaGate(store, input, { skipIdenticalBytes: true });
+    if (!created.ok) {
+      if (created.skipped.reason !== "already-in-library") throw created.error;
+      const located = created.skipped.existingAsset?.id
+        ? await store.getAsset(projectId, created.skipped.existingAsset.id).catch(() => null)
+        : null;
+      const asset = located || created.skipped.existingAsset;
+      sendResult(id, {
+        content: [{ type: "text", text: `Asset already in library: ${asset.id} (identical bytes); returned the existing asset.` }],
+        structuredContent: { asset, deduplicated: true },
+      });
+      return;
+    }
+    const asset = created.asset;
     sendResult(id, { content: [{ type: "text", text: `Saved asset ${asset.id} at ${asset.image_path}` }], structuredContent: { asset } });
     return;
   }

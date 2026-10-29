@@ -7,6 +7,7 @@ import test from "node:test";
 import sharp from "sharp";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { ingestWebCapture } from "../lib/web-capture-ingest.js";
 import { createCowartAssetBridge, reconcileCowartAssets } from "../lib/cowart-bridge.js";
 
 test("archives Cowart page assets once and keeps MOSA-origin images out", async (t) => {
@@ -337,3 +338,96 @@ async function waitFor(condition, timeoutMs = 2000) {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+// Large deterministic fixture so the web-capture path accepts it (it rejects
+// captures under 20 KiB) and the same bytes can seed a Cowart canvas.
+async function noisyPngFixture(width = 320, height = 240) {
+  const raw = Buffer.alloc(width * height * 3);
+  for (let index = 0; index < raw.length; index += 1) raw[index] = (index * 29 + Math.floor(index / width) * 19) & 255;
+  return sharp(raw, { raw: { width, height, channels: 3 } }).png({ compressionLevel: 0 }).toBuffer();
+}
+
+function canvasFixture(records) {
+  return JSON.stringify({ store: records });
+}
+
+test("a Cowart rematch of another channel's image only records an occurrence", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-cowart-other-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+
+  const imageBytes = await noisyPngFixture();
+  const web = await ingestWebCapture({
+    store,
+    tempRoot: join(libraryDir, ".web-capture-tmp"),
+    projectId: "default",
+    input: {
+      provider: "chatgpt",
+      imageBase64: imageBytes.toString("base64"),
+      mimeType: "image/png",
+      prompt: "web caption prompt A",
+      prompt_status: "visible-caption",
+      conversationId: "conv-web-1",
+    },
+  });
+  assert.equal(web.status, "imported");
+
+  const canvasDir = join(root, "cowart-data", "mosa");
+  const pageDir = join(canvasDir, "pages", "page");
+  const pageAssetsDir = join(pageDir, "assets");
+  await mkdir(pageAssetsDir, { recursive: true });
+  await writeFile(join(pageAssetsDir, "web-copy.png"), imageBytes);
+  await writeFile(join(pageDir, "cowart-canvas.json"), canvasFixture({
+    "asset:web-copy": { id: "asset:web-copy", typeName: "asset", type: "image", props: { name: "web-copy.png", src: "/page-assets/page/web-copy.png" }, meta: {} },
+    "shape:web-copy": { id: "shape:web-copy", typeName: "shape", type: "image", props: { assetId: "asset:web-copy", w: 320, h: 240, altText: "canvas alt text" }, meta: {} },
+  }), "utf8");
+
+  const first = await reconcileCowartAssets({ store, canvasDir });
+  assert.equal(first.imported.length, 0);
+  assert.equal(first.skipped.some((item) => item.reason === "already-archived-same-content"), true);
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 1, "no second asset is built");
+
+  const asset = await store.getAsset("default", web.asset.id);
+  assert.equal(asset.prompt, "web caption prompt A");
+  assert.equal(asset.source.prompt_status, "visible-caption");
+  const cowartOccurrences = asset.source.capture_occurrences.filter((entry) => entry.provider === "cowart");
+  assert.equal(cowartOccurrences.length, 1);
+  assert.equal(cowartOccurrences[0].conversation_id, "page:page");
+
+  await reconcileCowartAssets({ store, canvasDir });
+  const reread = await store.getAsset("default", web.asset.id);
+  assert.equal(reread.source.capture_occurrences.filter((entry) => entry.provider === "cowart").length, 1, "the same observation is recorded once");
+});
+
+test("a Cowart page asset whose file bytes changed at the same path archives as a new asset", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-cowart-replace-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const canvasDir = join(root, "cowart-data", "mosa");
+  const pageDir = join(canvasDir, "pages", "page");
+  const pageAssetsDir = join(pageDir, "assets");
+  await mkdir(pageAssetsDir, { recursive: true });
+  const imagePath = join(pageAssetsDir, "bear.png");
+  await writeFile(imagePath, await noisyPngFixture(64, 48));
+  await writeFile(join(pageDir, "cowart-canvas.json"), canvasFixture({
+    "asset:bear": { id: "asset:bear", typeName: "asset", type: "image", props: { name: "bear.png", src: "/page-assets/page/bear.png" }, meta: {} },
+    "shape:bear": { id: "shape:bear", typeName: "shape", type: "image", props: { assetId: "asset:bear", w: 64, h: 48, altText: "草原背景的小熊" }, meta: {} },
+  }), "utf8");
+
+  const store = createAssetStore({ projectRoot, managerDir, cowartCanvasDir: canvasDir });
+  const first = await reconcileCowartAssets({ store, canvasDir });
+  assert.equal(first.imported.length, 1);
+
+  // Same canvas path, new bytes: a fresh asset is archived, never a version.
+  await writeFile(imagePath, await noisyPngFixture(96, 64));
+  const second = await reconcileCowartAssets({ store, canvasDir });
+  assert.equal(second.imported.length, 1);
+  const assets = await store.listAssets({ projectId: "default" });
+  assert.equal(assets.length, 2);
+  assert.notEqual(second.imported[0].id, first.imported[0].id);
+});

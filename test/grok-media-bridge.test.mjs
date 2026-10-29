@@ -6,8 +6,10 @@ import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import sharp from "sharp";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { ingestWebCapture } from "../lib/web-capture-ingest.js";
 import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
 import { buildGrokAssetId, createGrokMediaBridge, reconcileGrokMedia, sha256File, __test } from "../lib/grok-media-bridge.js";
 
@@ -680,6 +682,71 @@ test("deduplicates by content hash and can upgrade provenance from a later Grok 
   const upgraded = await store.getAsset("default", first.imported[0].id);
   assert.equal(upgraded.prompt, "upgraded tool prompt");
   assert.equal(upgraded.source.prompt_status, "generation-tool-prompt");
+  // The second session path that carried the same bytes is kept as provenance
+  // (stored canonicalized, like every Grok media path).
+  assert.deepEqual(upgraded.source.grok_alternate_paths, [await realpath(copyPath)]);
+});
+
+// Large deterministic fixture so the web-capture path accepts it (it rejects
+// captures under 20 KiB) and the same bytes can seed a Grok session.
+async function noisyPngFixture(width = 320, height = 240) {
+  const raw = Buffer.alloc(width * height * 3);
+  for (let index = 0; index < raw.length; index += 1) raw[index] = (index * 31 + Math.floor(index / width) * 17) & 255;
+  return sharp(raw, { raw: { width, height, channels: 3 } }).png({ compressionLevel: 0 }).toBuffer();
+}
+
+test("a Grok recapture of another channel's image only records an occurrence", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-c2-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+
+  const imageBytes = await noisyPngFixture();
+  const web = await ingestWebCapture({
+    store,
+    tempRoot: join(libraryDir, ".web-capture-tmp"),
+    projectId: "default",
+    input: {
+      provider: "chatgpt",
+      imageBase64: imageBytes.toString("base64"),
+      mimeType: "image/png",
+      prompt: "web caption prompt A",
+      prompt_status: "visible-caption",
+      conversationId: "conv-web-1",
+      pageUrl: "https://chatgpt.com/c/conv-web-1",
+    },
+  });
+  assert.equal(web.status, "imported");
+
+  // The very same bytes turn up inside a Grok session whose tool prompt ranks
+  // higher on the shared table — the ownership rule must still keep the web
+  // capture's prompt, instruction, tool, model, and status untouched.
+  const fixture = await createGrokSessionFixture(root, { toolPrompt: "grok session prompt B" });
+  await writeFile(fixture.mediaPath, imageBytes);
+
+  const first = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  assert.equal(first.imported.length, 0);
+  assert.equal(first.skipped.some((item) => item.reason === "already-archived-same-content"), true);
+  assert.equal(first.updated.length, 0);
+
+  const asset = await store.getAsset("default", web.asset.id);
+  assert.equal(asset.prompt, "web caption prompt A");
+  assert.equal(asset.source.prompt_status, "visible-caption");
+  assert.equal(asset.source.generation_tool, "web-ui");
+  assert.notEqual(asset.source.model, "grok-4.5-build");
+  const grokOccurrences = asset.source.capture_occurrences.filter((entry) => entry.provider === "grok");
+  assert.equal(grokOccurrences.length, 1);
+  assert.equal(grokOccurrences[0].conversation_id, SESSION_ID);
+  assert.equal(grokOccurrences[0].capture_mode, "automatic");
+
+  const second = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  assert.equal(second.imported.length, 0);
+  assert.equal(second.updated.length, 0);
+  const reread = await store.getAsset("default", web.asset.id);
+  assert.equal(reread.source.capture_occurrences.filter((entry) => entry.provider === "grok").length, 1, "the same Grok observation is recorded once");
 });
 
 test("bridge start/stop reports health fields and metadata warnings", async (t) => {
@@ -1023,7 +1090,10 @@ test("keeps user-edited prompts across Grok reconciliation while untouched asset
     await writeFile(chatPath, rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
   };
   await rewriteChat(fixtureA, "revised tool prompt for the edited image");
-  await rewriteChat(fixtureB, "revised tool prompt for the untouched image");
+  // Same rank must still upgrade when strictly longer (shared prompt rank
+  // table, lib/prompt-rank.mjs): the rewritten session prompt for the
+  // untouched asset is a superset of the archived one.
+  await rewriteChat(fixtureB, "revised tool prompt for the untouched image, with more detail");
 
   const second = await reconcileGrokMedia({ store, sessionsDir: root });
   assert.deepEqual(second.updated, [assetB.id], "only the untouched asset is rewritten");
@@ -1031,7 +1101,7 @@ test("keeps user-edited prompts across Grok reconciliation while untouched asset
   const afterB = await store.getAsset("default", assetB.id);
   assert.equal(afterA.prompt, "USER EDIT: red mech in the rain", "the user edit must survive reconciliation");
   assert.equal(afterA.theme, "用户起的名字", "the user rename must survive reconciliation");
-  assert.equal(afterB.prompt, "revised tool prompt for the untouched image", "the untouched asset must still follow the session");
+  assert.equal(afterB.prompt, "revised tool prompt for the untouched image, with more detail", "the untouched asset must still follow the session");
   assert.ok(afterA.source.prompt_user_edited_at);
   assert.ok(afterA.source.theme_user_edited_at);
 });

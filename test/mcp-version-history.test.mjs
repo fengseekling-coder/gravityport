@@ -14,9 +14,14 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
   const libraryDir = join(root, "library");
   const imagePath = join(root, "generated-images", "fixture.png");
   const replacementPath = join(root, "generated-images", "replacement.png");
+  // Distinct bytes for the version-change bypass probe: asset_create skips
+  // identical bytes already in the library (outside Trash), and the version
+  // created below already holds replacement.png's bytes.
+  const bypassPath = join(root, "generated-images", "bypass.png");
   await mkdir(join(root, "generated-images"), { recursive: true });
   await sharp({ create: { width: 8, height: 8, channels: 4, background: "#243047" } }).png().toFile(imagePath);
   await sharp({ create: { width: 8, height: 8, channels: 4, background: "#c43d38" } }).png().toFile(replacementPath);
+  await sharp({ create: { width: 8, height: 8, channels: 4, background: "#2a7d4f" } }).png().toFile(bypassPath);
 
   const store = createSqliteAssetStore({ projectRoot: root, managerDir: process.cwd(), libraryDir });
   await store.createAsset({ assetId: "root", imagePath, prompt: "original", style: "editorial" });
@@ -162,7 +167,7 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     method: "tools/call",
     params: {
       name: "asset_create",
-      arguments: { projectId: "default", assetId: "bypass", imagePath: replacementPath, parent_asset_id: "root" },
+      arguments: { projectId: "default", assetId: "bypass", imagePath: bypassPath, parent_asset_id: "root" },
     },
   });
   assert.equal(bypass.error, undefined);
