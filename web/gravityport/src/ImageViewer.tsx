@@ -9,8 +9,8 @@ const CONTROLS_IDLE_MS = 2000
 const FIT_PAD_TOP = 16
 const CONTROLS_GAP = 8
 
-export default function ImageViewer({ width, height, src, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, message }: {
-  width: number; height: number; src?: string; isVideo?: boolean; language: Language; disabled: boolean
+export default function ImageViewer({ width, height, src, originalSrc, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, message }: {
+  width: number; height: number; src?: string; originalSrc?: string; isVideo?: boolean; language: Language; disabled: boolean
   fullscreen: boolean
   onNavigate: (direction: number) => void
   onToggleFullscreen: () => void
@@ -36,14 +36,25 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
   // dimensions never touch this path.
   const [probed, setProbed] = useState<{ src: string; width: number; height: number } | null>(null)
   const propsSizeKnown = width > 1 && height > 1
-  const probedForSrc = !propsSizeKnown && probed && probed.src === src ? probed : null
+  // The original replaces the preview only after it has decoded. `loadedOriginal`
+  // names the originalSrc that is ready, and `previewMeasure` the preview's long
+  // edge measured for `src`, so neither can leak onto a different source.
+  const [loadedOriginal, setLoadedOriginal] = useState<string | null>(null)
+  const [previewMeasure, setPreviewMeasure] = useState<{ src: string; edge: number } | null>(null)
+  const displaySrc = originalSrc && loadedOriginal === originalSrc ? originalSrc : src
+  const previewEdge = previewMeasure && previewMeasure.src === src ? previewMeasure.edge : 0
+  const probedForSrc = !propsSizeKnown && probed && probed.src === displaySrc ? probed : null
   const usedWidth = propsSizeKnown ? width : (probedForSrc?.width || width)
   const usedHeight = propsSizeKnown ? height : (probedForSrc?.height || height)
   const probeSize = (element: HTMLImageElement | HTMLVideoElement) => {
-    if (propsSizeKnown || !src) return
+    if (propsSizeKnown || !displaySrc) return
     const measuredWidth = element instanceof HTMLVideoElement ? element.videoWidth : element.naturalWidth
     const measuredHeight = element instanceof HTMLVideoElement ? element.videoHeight : element.naturalHeight
-    if (measuredWidth > 0 && measuredHeight > 0) setProbed({ src, width: measuredWidth, height: measuredHeight })
+    if (measuredWidth > 0 && measuredHeight > 0) setProbed({ src: displaySrc, width: measuredWidth, height: measuredHeight })
+  }
+  const onImageLoad = (element: HTMLImageElement) => {
+    if (src && displaySrc === src) setPreviewMeasure({ src, edge: Math.max(element.naturalWidth, element.naturalHeight) })
+    probeSize(element)
   }
   const [dragging, setDragging] = useState(false)
   // The zoom bar floats over the picture and fades out after the pointer rests
@@ -67,6 +78,12 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
   const fitHeight = fitBox ? fitBox.height : size.height - FIT_PAD_TOP * 2
   const fitScale = Math.max(.01, Math.min((size.width - 48) / usedWidth, fitHeight / usedHeight, 1))
   const scale = manualScale ?? fitScale
+  // Swap to the original only while the preview is on screen, when the original
+  // is bigger than the preview and this view needs more device pixels than the
+  // preview holds. Fit mode and manual zoom share the same rule.
+  const originalEdge = Math.max(usedWidth, usedHeight)
+  const needsOriginal = !isVideo && !!originalSrc && originalSrc !== src && displaySrc === src && previewEdge > 0
+    && originalEdge > previewEdge && originalEdge * scale * window.devicePixelRatio > previewEdge * 1.05
   // Manual zoom recenters on the stage again — once the picture is bigger than
   // (or freed from) the fit band, panning math owns the placement and the bar
   // is allowed to sit on top of it.
@@ -152,6 +169,34 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
   }, [scale, pan, size, disabled, onNavigate])
+  // The original is requested at most once per asset, even if its decode fails.
+  // Manual zoom loads at once; fit waits 200ms so a run of arrow-key flips does
+  // not pull every original on the way. Once the request has started, input
+  // changes cancel nothing: the decode must still land (unmount clears it).
+  const originalRequested = useRef<string | null>(null)
+  const originalLoader = useRef<HTMLImageElement | null>(null)
+  useEffect(() => {
+    if (!needsOriginal || !originalSrc || originalRequested.current === originalSrc) return
+    const load = (url: string) => {
+      const image = new Image()
+      originalRequested.current = url
+      originalLoader.current = image
+      image.src = url
+      image.decode().then(() => {
+        if (originalLoader.current === image) setLoadedOriginal(url)
+      }, () => {})
+    }
+    if (manualScale !== null) {
+      load(originalSrc)
+      return
+    }
+    const timer = window.setTimeout(() => load(originalSrc), 200)
+    return () => window.clearTimeout(timer)
+  }, [needsOriginal, manualScale, scale, originalSrc])
+  useEffect(() => () => {
+    if (originalLoader.current) originalLoader.current.src = ""
+    originalLoader.current = null
+  }, [])
   const pannable = usedWidth * scale > size.width || usedHeight * scale > size.height
   return <div className="image-viewer" onPointerMove={revealControls}>
     <div ref={stage} className={`viewer-stage ${pannable ? "pannable" : ""} ${dragging ? "dragging" : ""}`} aria-label={tr("图片预览")}
@@ -182,7 +227,7 @@ export default function ImageViewer({ width, height, src, isVideo, language, dis
       {src && isVideo
         ? <video className="viewer-image" src={src} controls autoPlay loop controlsList="nofullscreen nodownload noremoteplayback" disablePictureInPicture onLoadedMetadata={event => probeSize(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />
         : src
-          ? <img className="viewer-image" src={src} alt="" draggable={false} onLoad={event => probeSize(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform, objectFit: "contain" }} />
+          ? <img className="viewer-image" src={displaySrc} alt="" draggable={false} onLoad={event => onImageLoad(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform, objectFit: "contain" }} />
           : <div className="viewer-image" style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />}
     </div>
     <button className="viewer-nav viewer-previous" aria-label={tr("上一个素材")} onClick={() => onNavigate(-1)}><Icon name="left" size={24} /></button>
