@@ -2,19 +2,37 @@
   "schema": 2,
   "unreleased": {
     "zh": {
+      "improved": [
+        "软件内更新改为使用系统网络设置，开启系统代理的电脑也能检查和下载更新。",
+        "安装更新前会检查磁盘空间；Windows 版还会检查 AI 助手是否正在通过 MCP 使用 GravityPort，并提示先退出。",
+        "macOS 版安装更新时占用的临时磁盘空间减少约一半。"
+      ],
       "fixed": [
         "修复了同一张图片再次收录时可能覆盖原图或清空提示词的问题。现仅在新图更清晰时替换，被替换的旧图移入回收站。",
         "修复了在即梦网站删除作品后，已精选、归档、手动堆叠或修改过提示词的素材，以及复制出的副本和版本仍被移入回收站的问题。因站内删除而移入回收站的素材，会在详情中注明原因。",
         "修复了素材库的数据库文件丢失或素材库被移动后，可能新建空素材库继续收录，或 AI 助手仍写入原位置的问题。现会停止并提示素材库所在位置。",
-        "修复了在 GravityPort 中或通过 AI 助手修改的提示词和名称，会在重启或再次收录后被改回的问题。"
+        "修复了在 GravityPort 中或通过 AI 助手修改的提示词和名称，会在重启或再次收录后被改回的问题。",
+        "修复了更新安装失败时没有提示、反复显示「重启更新」的问题。现会说明原因；同一版本两次未装上时，引导前往官网下载。"
+      ],
+      "other": [
+        "为软件内更新增加备用签名钥匙。"
       ]
     },
     "en": {
+      "improved": [
+        "In-app updates now use the system network settings, so computers that go through a system proxy can check for and download updates.",
+        "Updates now check free disk space before installing. On Windows, GravityPort also checks whether an AI assistant is using it through MCP and asks you to quit the assistant first.",
+        "Installing an update on macOS now needs about half as much temporary disk space."
+      ],
       "fixed": [
         "Fixed an issue where capturing the same image again could overwrite the original or clear its prompt. The image is now replaced only by a sharper version, and the previous one moves to the Trash.",
         "Fixed an issue where deleting a work on the Jimeng website could still move curated, archived, manually stacked or prompt-edited assets, as well as duplicates and versions, to the Trash. Assets moved for this reason now show it in the details panel.",
         "Fixed an issue where a library whose database file was lost, or that had been moved, could be replaced by a new empty library that kept capturing, or AI assistants could keep writing to the old location. GravityPort now stops and shows where the library is.",
-        "Fixed an issue where prompts and names edited in GravityPort or through an AI assistant could be reverted after a restart or when the image was captured again."
+        "Fixed an issue where prompts and names edited in GravityPort or through an AI assistant could be reverted after a restart or when the image was captured again.",
+        "Fixed an issue where a failed update install showed no message and kept offering Restart to Update. GravityPort now shows the reason, and after two failed installs of the same version it points to the website download."
+      ],
+      "other": [
+        "Added a backup signing key for in-app updates."
       ]
     }
   },

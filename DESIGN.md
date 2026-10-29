@@ -113,7 +113,7 @@
 | 工具栏下拉 | `ToolbarSelect.tsx` | 列表 `.toolbar-select-menu` 最窄 176px，选项 32px 高，已选项打 `--ui-accent` 勾 |
 | 列数 | `ColumnControl.tsx` | 弹层 192px，滑杆 + 2/3/4/5/6/8 刻度 |
 | 侧栏 | `.sidebar`、`.nav-row`、`.section-toggle` | 行高 36px，当前项 `--ui-selected` 底加 `aria-current="page"` |
-| 侧栏更新提醒 | `.update-ready-slot`、`.update-ready-line` | 更新包下好后的单行提醒，在「用户中心」上方：高 32px、12px 字、`--radius-control`，`--ui-hover` 底悬停加深到 `--ui-selected`；左侧 6px `--ui-accent` 圆点，文字 `--ui-secondary`（版本号 `--ui-text` 字重 500）超长省略号截断，右侧「重启更新」`--ui-text` 保持完整；点击整行即重启更新，更新中禁用并显示「正在更新…」，`title`/`aria-label` 保留完整句子 同一版本装失败两次后不再显示，改由系统对话框引导去官网下载 |
+| 侧栏更新提醒 | `.update-ready-slot`、`.update-ready-line` | 更新包下好后的单行提醒，在「用户中心」上方：高 32px、12px 字、`--radius-control`，`--ui-hover` 底悬停加深到 `--ui-selected`；左侧 6px `--ui-accent` 圆点，文字 `--ui-secondary`（版本号 `--ui-text` 字重 500）超长省略号截断，右侧「重启更新」`--ui-text` 保持完整；点击整行即重启更新，更新中禁用并显示「正在更新…」，`title`/`aria-label` 保留完整句子；同一版本装失败两次后不再显示，改由系统对话框引导去官网下载 |
 | 图片卡片 | `.asset-card` | 黑底，小标 `.stack-mark` `.video-mark` `.trash-countdown` `.favorite-mark`，名字条 `.card-name`；名字条显示时，收藏心形落在名字条右端、和最后一行对齐，名字给它让出位置。视频卡片封面：界面在后台从视频里抽一帧（跳过片头黑场）存进素材库，之后和图片一样用 `thumbnails/<id>.webp`；抽帧失败或还没完成时，退回显示视频开头附近的某一帧，播放标记始终在 |
 | 拖动缩略图 | `.card-drag-ghost` | 跟着指针的缩略图；拖多张时右下角数量角标 `.card-drag-ghost-count`：`--ui-primary` 底、`--ui-primary-text` 字 |
 | 详情栏 | `.details` | 概要 → 属性小格 → 标签 → 色板 → 提示词 → 用户指令 → 参考图 → 版本树 → 素材路径。回收站里的素材带回收站原因（`.trash-reason`，12px `--ui-muted` 一行，跟在概要来源行下面）：素材带 `trash_reason` 记录时显示，已知原因两种（被更清晰版本替换、即梦站内删除），未知代码不显示 |

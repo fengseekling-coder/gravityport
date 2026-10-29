@@ -99,8 +99,11 @@ export function findExternalInstallProcesses({ installDir, selfPid, processes })
 
 /** Lists every process with its parent and executable path via PowerShell/CIM. */
 export async function listWindowsProcesses({ runPowerShell = runPowerShellCommand } = {}) {
+  // UTF-8 output so install paths with non-ASCII folder names (a Chinese user
+  // name, for example) still match; the console code page would mangle them.
   const output = await runPowerShell(
-    "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath | ConvertTo-Json -Compress",
+    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+      + "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath | ConvertTo-Json -Compress",
   );
   const parsed = JSON.parse(String(output || "[]") || "[]");
   const list = Array.isArray(parsed) ? parsed : [parsed];
