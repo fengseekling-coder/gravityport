@@ -3,7 +3,7 @@ import "../lib/apply-env-aliases.mjs";
 // activation policy before any heavy import lets the process check in with
 // Launch Services as a regular app. See desktop/quiet-test-mode.mjs.
 import "./quiet-test-mode.mjs";
-import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, screen, session, shell, Notification } from "electron";
+import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net, screen, session, shell, Notification } from "electron";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, readdir, rm, stat } from "node:fs/promises";
 import { userInfo } from "node:os";
@@ -87,6 +87,11 @@ function releaseManifestVerificationTrusts() {
     expectedServiceIdentity.releaseManifestTrust,
     expectedServiceIdentity.releaseManifestBackupTrust,
   );
+}
+// Update requests use Chromium's network stack so the system proxy and the
+// system certificate store apply; Node's built-in fetch ignores both.
+function systemNetworkFetch(url, init) {
+  return net.fetch(url, init);
 }
 // `desktopDataDir` is the *actual* userData after Chromium applied the QA
 // --user-data-dir override (if any). It is deliberately NOT the production
@@ -336,6 +341,7 @@ const updateScheduler = createUpdateScheduler({
     installLocation: process.platform === "darwin" ? evaluateMacosInstallLocation(process.execPath) : null,
   }),
   checkForUpdate: () => checkForMosaUpdate({
+    fetchImpl: systemNetworkFetch,
     currentVersion: app.getVersion(),
     currentDistribution: expectedServiceIdentity.distribution,
     releaseManifestTrust: releaseManifestVerificationTrusts(),
@@ -348,12 +354,14 @@ const updateScheduler = createUpdateScheduler({
   downloadUpdate: (release, { signal }) => (
     process.platform === "darwin"
       ? downloadMacosUpdate({
+        fetchImpl: systemNetworkFetch,
         artifact: release.macArtifact,
         version: release.latestVersion,
         stagingRoot: MACOS_UPDATE_STAGING_ROOT,
         signal,
       })
       : downloadWindowsUpdate({
+        fetchImpl: systemNetworkFetch,
         artifact: release.windowsArtifact,
         version: release.latestVersion,
         stagingRoot: WINDOWS_UPDATE_STAGING_ROOT,
@@ -898,6 +906,7 @@ function registerIPC() {
         macosUpdateDownloadController = controller;
         try {
           const release = await checkForMosaUpdate({
+            fetchImpl: systemNetworkFetch,
             currentVersion: app.getVersion(),
             currentDistribution: expectedServiceIdentity.distribution,
             releaseManifestTrust: releaseManifestVerificationTrusts(),
@@ -916,6 +925,7 @@ function registerIPC() {
             };
           }
           const download = await downloadMacosUpdate({
+            fetchImpl: systemNetworkFetch,
             artifact: release.macArtifact,
             version: release.latestVersion,
             stagingRoot: MACOS_UPDATE_STAGING_ROOT,
@@ -968,6 +978,7 @@ function registerIPC() {
       // Re-read the first-party manifest in the trusted main process instead of
       // accepting a renderer-supplied URL, filename or digest.
       const release = await checkForMosaUpdate({
+        fetchImpl: systemNetworkFetch,
         currentVersion: app.getVersion(),
         currentDistribution: expectedServiceIdentity.distribution,
         releaseManifestTrust: releaseManifestVerificationTrusts(),
@@ -981,6 +992,7 @@ function registerIPC() {
       const installedExeName = windowsInstalledExeName();
       if (!installedExeName) return { status: "unsupported", currentVersion: release.currentVersion };
       const download = await downloadWindowsUpdate({
+        fetchImpl: systemNetworkFetch,
         artifact: release.windowsArtifact,
         version: release.latestVersion,
         stagingRoot: WINDOWS_UPDATE_STAGING_ROOT,
@@ -1224,6 +1236,7 @@ function runUpdateCheck({ notify = false } = {}) {
   if (isolationContext.qaRun) return Promise.resolve({ status: "disabled", currentVersion });
   if (updateCheckPromise) return updateCheckPromise;
   updateCheckPromise = checkForMosaUpdate({
+    fetchImpl: systemNetworkFetch,
     currentVersion,
     currentDistribution: expectedServiceIdentity.distribution,
     releaseManifestTrust: releaseManifestVerificationTrusts(),
