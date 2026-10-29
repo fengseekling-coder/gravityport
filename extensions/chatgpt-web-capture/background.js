@@ -5,6 +5,9 @@ const DEFAULTS = {
   autoCapture: false,
 };
 const DISCOVERY_PORTS = [43517, 43518, 43519, 43520, 43521];
+// Same budget as the options page diagnostics; 700-900 ms missed a cold start.
+const MOSA_PROBE_TIMEOUT_MS = 3_000;
+const MOSA_DISCOVERY_RETRY_MS = 1_500;
 const STORAGE_KEYS = ["mosaBaseUrl", "mosaToken", "autoCapture"];
 const CAPTURE_QUEUE_KEY = "mosaCaptureQueueV1";
 const CAPTURE_QUEUE_ALARM = "mosa-capture-queue";
@@ -37,6 +40,9 @@ let queueDrainPromise;
 let queueMutationPromise = Promise.resolve();
 let queueStatusReportPromise;
 let lastSeenRetryRequestId = 0;
+// Queue tickets whose live POST is still running. The minute drain skips them,
+// so one capture is never posted twice at the same time (review 294 A.5).
+const liveDeliveryIds = new Set();
 const chunkedVideoTransfers = new Map();
 const VIDEO_TRANSFER_TTL_MS = 10 * 60 * 1000;
 
@@ -134,6 +140,9 @@ function senderAllowedForMessage(message, sender) {
   if (message?.type === "mosa.getSettings") {
     return extensionPageSender(sender) || Boolean(pageSenderContext(sender));
   }
+  // Re-pairing rewrites the stored Token, so only the extension's own pages
+  // may ask for it. Web page content scripts never can.
+  if (message?.type === "mosa.repairPairing") return extensionPageSender(sender);
   const context = pageSenderContext(sender);
   if (!context) return false;
   if (message.type === "mosa.fetchImage") return context.provider === "chatgpt";
@@ -591,11 +600,24 @@ async function prefetchQueuedMediaBytes(payload, replayPayload, id) {
   }
 }
 
+// True when the queue already holds this capture and its stored bytes survived.
+// A page that re-sends the same URL capture must not download it again.
+async function queuedBytesAlreadyStored(id) {
+  const queue = await readCaptureQueue();
+  const ticket = queue.find((item) => item.id === id);
+  if (!ticket?.payload?.queuedMediaId) return false;
+  const record = await captureMediaGet(`capture:${ticket.payload.queuedMediaId}`).catch(() => null);
+  return Boolean(record?.blob);
+}
+
 async function enqueueCapture(payload) {
   const id = stableCaptureKey(payload);
   let replayPayload = queueReplayPayload(payload, id);
   if (!replayPayload) return null;
   if (replayPayload.queuedMediaId) {
+    // Bytes the page sends now always replace the stored copy: a forced
+    // re-send (provisional then final image) carries the better bytes, and
+    // writing them costs no download.
     const base64 = payload.mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
     const bytes = base64ToBytes(base64);
     await captureMediaPut({
@@ -603,7 +625,7 @@ async function enqueueCapture(payload) {
       blob: new Blob([bytes], { type: payload.mimeType || (payload.mediaKind === "video" ? "video/mp4" : "image/png") }),
       updatedAt: Date.now(),
     });
-  } else if (payload.mediaKind !== "video" && !(await mosaReachable())) {
+  } else if (payload.mediaKind !== "video" && !(await queuedBytesAlreadyStored(id)) && !(await mosaReachable())) {
     // URL-only ticket while GravityPort is offline: this provider URL is as
     // fresh as it will ever be, so fetch the media once now and upgrade the
     // ticket to bytes. Videos stay URL tickets — replay streams them, and a
@@ -702,7 +724,14 @@ function mosaUnavailableError(message) {
 function ingestResponseError(message, status) {
   const error = new Error(message);
   error.status = Number(status) || 0;
+  error.source = "mosa";
   error.retryable = error.status === 0 || error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+  // 401/403 from GravityPort itself mean the pairing is broken, not that the
+  // capture is bad. The ticket must stay until the user re-pairs.
+  if (error.status === 401 || error.status === 403) {
+    error.kind = "pairing";
+    error.retryable = true;
+  }
   return error;
 }
 
@@ -712,9 +741,31 @@ function ingestResponseError(message, status) {
 function mediaDownloadError(message, status) {
   const error = new Error(message);
   error.status = Number(status) || 0;
+  error.source = "media";
   error.retryable = ![403, 404, 410].includes(error.status);
   if (!error.retryable) error.message = `${message}（网址已过期）`;
   return error;
+}
+
+// Content over the size limit never shrinks on retry. Rethrowing it at once
+// stops the download loop from fetching the same oversized file again.
+function captureSizeLimitError(label) {
+  const error = new Error(`${label} exceeds GravityPort capture size limit.`);
+  error.retryable = false;
+  error.sizeLimit = true;
+  return error;
+}
+
+// Three outcomes decide what happens to a failed delivery:
+// - transient: no status, timeout, 408/425/429/5xx. Keep the ticket and retry.
+// - pairing: GravityPort rejected our Token (or no Token is set). Keep the
+//   ticket; it is delivered once the user re-pairs.
+// - permanent: the content itself was refused. Drop the ticket.
+function classifyCaptureError(error) {
+  if (error?.code === "MOSA_UNAVAILABLE") return "transient";
+  if (error?.kind === "pairing" || /Token 未配置/.test(String(error?.message || ""))) return "pairing";
+  if (error?.retryable === false) return "permanent";
+  return "transient";
 }
 
 async function ingestWithQueue(payload = {}) {
@@ -726,6 +777,7 @@ async function ingestWithQueue(payload = {}) {
     // browser storage is temporarily unavailable, still let an online MOSA
     // receive the media instead of turning the backup path into a new outage.
   }
+  if (queueId) liveDeliveryIds.add(queueId);
   try {
     const result = await ingestToMosa(payload);
     await removeQueuedCapture(queueId).catch(() => {});
@@ -733,7 +785,21 @@ async function ingestWithQueue(payload = {}) {
     return result;
   } catch (error) {
     void reportCaptureQueueStatus();
+    const kind = classifyCaptureError(error);
+    if (kind === "permanent") {
+      await removeQueuedCapture(queueId).catch(() => {});
+      throw error;
+    }
+    if (queueId) {
+      // The ticket is safe in the queue. The page is told it was handed over,
+      // so it does not resend the same bytes; the drain delivers it later.
+      return { status: "queued", reason: kind === "pairing" ? "pairing" : "mosa-unavailable" };
+    }
+    // Nothing was kept, so the page is the only retry left. Let it try again.
+    error.retryable = true;
     throw error;
+  } finally {
+    if (queueId) liveDeliveryIds.delete(queueId);
   }
 }
 
@@ -787,13 +853,15 @@ function drainCaptureQueue() {
     const queue = await readCaptureQueue();
     if (!queue.length) return;
     for (const item of queue) {
+      // A live POST for this ticket is still running; it settles the ticket.
+      if (liveDeliveryIds.has(item.id)) continue;
       try {
         await ingestQueuedCapture(item);
         await removeQueuedCapture(item.id);
       } catch (error) {
         await markQueuedCaptureFailure(item.id, error);
         if (error?.code === "MOSA_UNAVAILABLE") break;
-        if (error?.retryable === false && Number(item.attempts || 0) + 1 >= CAPTURE_QUEUE_MAX_ATTEMPTS) {
+        if (classifyCaptureError(error) === "permanent" && Number(item.attempts || 0) + 1 >= CAPTURE_QUEUE_MAX_ATTEMPTS) {
           await removeQueuedCapture(item.id);
         }
       }
@@ -953,7 +1021,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((error) => sendResponse({
         ok: false,
         error: error instanceof Error ? error.message : String(error),
+        retryable: error?.retryable === true,
       }));
+    return true;
+  }
+
+  if (message.type === "mosa.repairPairing") {
+    // Options page "test connection" after a 401: pair again with GravityPort
+    // and hand the new Token back so the form can be refilled.
+    repairPairing()
+      .then((paired) => sendResponse({
+        ok: Boolean(paired),
+        settings: { mosaBaseUrl: paired?.baseUrl || "", mosaToken: paired?.token || "" },
+      }))
+      .catch(() => sendResponse({ ok: false, settings: { mosaBaseUrl: "", mosaToken: "" } }));
     return true;
   }
 
@@ -1072,17 +1153,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chunkedVideoTransfers.delete(transferId);
     (async () => {
       const queued = await enqueueVideoSpool(transfer.payload, transferId, transfer.totalBytes, transfer.totalChunks);
+      liveDeliveryIds.add(queued.id);
       try {
         const result = await ingestQueuedCapture(queued);
         await removeQueuedCapture(queued.id);
         sendResponse({ ok: true, result });
       } catch (error) {
         await markQueuedCaptureFailure(queued.id, error).catch(() => {});
-        if (error?.retryable === false) {
-          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        const kind = classifyCaptureError(error);
+        if (kind === "permanent") {
+          await removeQueuedCapture(queued.id).catch(() => {});
+          sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error), retryable: false });
           return;
         }
-        sendResponse({ ok: true, result: { status: "queued", reason: "mosa-temporarily-unavailable" } });
+        sendResponse({ ok: true, result: { status: "queued", reason: kind === "pairing" ? "pairing" : "mosa-unavailable" } });
+      } finally {
+        liveDeliveryIds.delete(queued.id);
       }
     })().catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
@@ -1182,10 +1268,19 @@ async function getSettings() {
 }
 
 async function discoverAndPairMosa() {
+  const first = await discoverAndPairMosaOnce();
+  if (first) return first;
+  // A cold-started GravityPort (Windows) can take longer than one probe round
+  // to start listening, so probe the whole port list once more after a pause.
+  await new Promise((resolve) => setTimeout(resolve, MOSA_DISCOVERY_RETRY_MS));
+  return discoverAndPairMosaOnce();
+}
+
+async function discoverAndPairMosaOnce() {
   for (const port of DISCOVERY_PORTS) {
     const baseUrl = `http://127.0.0.1:${port}`;
     try {
-      const health = await fetchWithTimeout(`${baseUrl}/api/health`, { cache: "no-cache" }, 700);
+      const health = await fetchWithTimeout(`${baseUrl}/api/health`, { cache: "no-cache" }, MOSA_PROBE_TIMEOUT_MS);
       if (!health.ok) continue;
       const identity = await health.json();
       if (identity?.product !== "mosa") continue;
@@ -1195,7 +1290,7 @@ async function discoverAndPairMosa() {
         headers: { "content-type": "application/json" },
         body: "{}",
         cache: "no-cache",
-      }, 900);
+      }, MOSA_PROBE_TIMEOUT_MS);
       if (!pair.ok) continue;
       const body = await pair.json();
       const token = String(body?.token || "").trim();
@@ -1217,7 +1312,7 @@ async function repairPairing() {
 
 async function ensureMosaAvailable(baseUrl) {
   try {
-    const response = await fetchWithTimeout(`${baseUrl}/api/health`, { cache: "no-cache" }, 900);
+    const response = await fetchWithTimeout(`${baseUrl}/api/health`, { cache: "no-cache" }, MOSA_PROBE_TIMEOUT_MS);
     if (!response.ok) return false;
     const body = await response.json();
     return body?.product === "mosa";
@@ -1226,14 +1321,73 @@ async function ensureMosaAvailable(baseUrl) {
   }
 }
 
-async function fetchWithTimeout(url, init, timeoutMs) {
+// Without coverBody the timer stops once headers arrive (the historical
+// behavior). With coverBody the timer stays armed for the body: call touch()
+// each time body data moves, and done() once the body is finished. touch()
+// re-arms it for idleTimeoutMs, so a body that keeps moving is never cut off.
+async function fetchWithTimeout(url, init, timeoutMs, { coverBody = false, idleTimeoutMs = timeoutMs } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
+  let timer = setTimeout(() => controller.abort(), timeoutMs);
+  const done = () => clearTimeout(timer);
+  if (!coverBody) {
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      done();
+    }
   }
+  const touch = () => {
+    done();
+    timer = setTimeout(() => controller.abort(), idleTimeoutMs);
+  };
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    touch();
+    return { response, touch, done };
+  } catch (error) {
+    done();
+    throw error;
+  }
+}
+
+function bodyIdleTimeoutMs(mediaKind) {
+  // Tests shorten the idle window through this global; production uses 15 s
+  // for images and 45 s for videos.
+  const override = Number(globalThis.__MOSA_TEST_BODY_IDLE_MS__);
+  if (override > 0) return override;
+  return mediaKind === "video" ? 45_000 : 15_000;
+}
+
+// Reads a response body chunk by chunk. touch() runs after every chunk so the
+// caller's idle timer only fires when the body stops moving.
+async function readBodyWithIdleTimeout(response, touch, maxBytes, label) {
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > maxBytes) throw captureSizeLimitError(label);
+    return new Uint8Array(buffer);
+  }
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    touch();
+    if (done) break;
+    if (!value?.byteLength) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      reader.cancel?.().catch?.(() => {});
+      throw captureSizeLimitError(label);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 async function probeFlowMedia(url) {
@@ -1413,8 +1567,13 @@ async function fetchMediaAsBase64(url, {
   const requestTimeoutMs = timeoutMs > 0 ? timeoutMs : mediaKind === "video" ? 45_000 : 15_000;
   let lastError = null;
   for (const init of attempts) {
+    let body = null;
     try {
-      const response = await fetchWithTimeout(url, init, requestTimeoutMs);
+      body = await fetchWithTimeout(url, init, requestTimeoutMs, {
+        coverBody: true,
+        idleTimeoutMs: bodyIdleTimeoutMs(mediaKind),
+      });
+      const { response } = body;
       if (!response.ok) {
         lastError = mediaDownloadError(`Failed to download ${label} (${response.status})`, response.status);
         continue;
@@ -1426,23 +1585,25 @@ async function fetchMediaAsBase64(url, {
       const declaredLength = Number(response.headers.get("content-length") || 0);
       if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
         response.body?.cancel?.().catch?.(() => {});
-        throw new Error(`${label === "video" ? "Video" : "Image"} exceeds GravityPort capture size limit.`);
+        throw captureSizeLimitError(label === "video" ? "Video" : "Image");
       }
-      const blob = await response.blob();
-      if (!blob || blob.size < 100) {
+      const bytes = await readBodyWithIdleTimeout(response, body.touch, maxBytes, label === "video" ? "Video" : "Image");
+      if (bytes.byteLength < 100) {
         lastError = new Error(`Downloaded ${label} empty/too small`);
         continue;
       }
-      if (blob.size > maxBytes) {
-        throw new Error(`${label === "video" ? "Video" : "Image"} exceeds GravityPort capture size limit.`);
-      }
-      const mimeType = blob.type || guessMime(url, mediaKind) || (mediaKind === "video" ? "video/mp4" : "image/png");
-      const buffer = await blob.arrayBuffer();
+      const headerType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim();
+      const mimeType = headerType || guessMime(url, mediaKind) || (mediaKind === "video" ? "video/mp4" : "image/png");
+      const buffer = bytes.buffer;
       return binary
         ? { mimeType, mediaBytes: buffer, finalUrl: response.url || url }
         : { mimeType, mediaBase64: bufferToBase64(buffer), finalUrl: response.url || url };
     } catch (error) {
+      // An oversized file is final: do not try the other credential modes.
+      if (error?.sizeLimit) throw error;
       lastError = error instanceof Error ? error : new Error(String(error));
+    } finally {
+      body?.done();
     }
   }
   throw lastError || new Error(`Failed to download ${label}`);
@@ -1601,7 +1762,9 @@ async function beginVideoUpload(payload, totalBytes, totalChunks, connection = n
     body: JSON.stringify({ metadata, totalBytes, totalChunks }),
   }, 30_000);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.uploadId) throw new Error(data.error || `GravityPort upload begin failed (${response.status})`);
+  if (!response.ok || !data.uploadId) {
+    throw ingestResponseError(data.error || `GravityPort upload begin failed (${response.status})`, response.ok ? 0 : response.status);
+  }
   return { baseUrl, token, uploadId: data.uploadId };
 }
 
@@ -1615,8 +1778,13 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
   let lastError = null;
   for (const init of attempts) {
     let upload = null;
+    let body = null;
     try {
-      const response = await fetchWithTimeout(mediaUrl, init, 45_000);
+      body = await fetchWithTimeout(mediaUrl, init, 45_000, {
+        coverBody: true,
+        idleTimeoutMs: bodyIdleTimeoutMs("video"),
+      });
+      const { response, touch } = body;
       if (!response.ok) {
         lastError = mediaDownloadError(`Failed to download video (${response.status})`, response.status);
         continue;
@@ -1626,7 +1794,7 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
       const declaredLength = Number(response.headers.get("content-length") || 0);
       if (Number.isFinite(declaredLength) && declaredLength > MAX_VIDEO_BYTES) {
         response.body?.cancel?.().catch?.(() => {});
-        throw new Error("Video exceeds GravityPort capture size limit.");
+        throw captureSizeLimitError("Video");
       }
       if (!response.body?.getReader) throw new Error("Remote video response is not streamable.");
       const mimeType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim()
@@ -1642,23 +1810,30 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
       const reader = response.body.getReader();
       while (true) {
         const { value, done } = await reader.read();
+        // The idle timer covers the body only: stop it before the commit.
+        touch();
         if (done) break;
         if (!value?.byteLength) continue;
         for (let offset = 0; offset < value.byteLength; offset += 3 * 1024 * 1024) {
           const chunk = value.subarray(offset, Math.min(value.byteLength, offset + 3 * 1024 * 1024));
           if (transfer.receivedBytes + chunk.byteLength > MAX_VIDEO_BYTES) {
-            throw new Error("Video exceeds GravityPort capture size limit.");
+            throw captureSizeLimitError("Video");
           }
           await appendVideoUploadChunk(transfer, transfer.nextIndex, chunk);
+          touch();
           transfer.receivedBytes += chunk.byteLength;
           transfer.nextIndex += 1;
         }
       }
+      body.done();
       if (transfer.receivedBytes < 64 * 1024) throw new Error("Downloaded video empty/too small");
       return await commitVideoUpload(transfer);
     } catch (error) {
       if (upload) await abortVideoUpload(upload).catch(() => {});
+      if (error?.sizeLimit) throw error;
       lastError = error instanceof Error ? error : new Error(String(error));
+    } finally {
+      body?.done();
     }
   }
   throw lastError || new Error("Failed to download video");
@@ -1677,7 +1852,7 @@ async function appendVideoUploadChunk(transfer, index, chunkBytes) {
   }, 30_000);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `GravityPort upload chunk failed (${response.status})`);
+    throw ingestResponseError(data.error || `GravityPort upload chunk failed (${response.status})`, response.status);
   }
 }
 
@@ -1688,7 +1863,7 @@ async function commitVideoUpload(transfer) {
     body: JSON.stringify({ uploadId: transfer.uploadId }),
   }, 90_000);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `GravityPort upload commit failed (${response.status})`);
+  if (!response.ok) throw ingestResponseError(data.error || `GravityPort upload commit failed (${response.status})`, response.status);
   return data;
 }
 

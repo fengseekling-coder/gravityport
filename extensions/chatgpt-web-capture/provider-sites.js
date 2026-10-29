@@ -97,6 +97,26 @@
     while (seen.size > SEEN_MAX) seen.delete(seen.values().next().value);
   }
 
+  // Automatic hand-off (review 294 B). The background keeps a queued or
+  // refused capture, so the key stays. Only a retryable answer, or a message
+  // that never got an answer, frees the key, and then only twice and 60 s apart.
+  const HANDOFF_RETRY_MAX_ATTEMPTS = 2;
+  const HANDOFF_RETRY_GAP_MS = 60_000;
+  const handoffRetryAttempts = new Map();
+
+  function releaseSeenForRetry(key) {
+    const attempts = handoffRetryAttempts.get(key) || 0;
+    if (attempts >= HANDOFF_RETRY_MAX_ATTEMPTS) return;
+    handoffRetryAttempts.delete(key);
+    handoffRetryAttempts.set(key, attempts + 1);
+    while (handoffRetryAttempts.size > SEEN_MAX) handoffRetryAttempts.delete(handoffRetryAttempts.keys().next().value);
+    setTimeout(() => seen.delete(key), HANDOFF_RETRY_GAP_MS);
+  }
+
+  function handOffNeedsRetry(response) {
+    return !response || (response.ok === false && response.retryable === true);
+  }
+
   function showToast(message, isError = false, durationMs = 3600) {
     let toast = document.getElementById("mosa-provider-capture-toast");
     if (!toast) {
@@ -798,9 +818,9 @@
         },
       })
         .then((response) => {
-          if (!response?.ok) seen.delete(state.sourceUrl);
+          if (handOffNeedsRetry(response)) releaseSeenForRetry(state.sourceUrl);
         })
-        .catch(() => seen.delete(state.sourceUrl));
+        .catch(() => releaseSeenForRetry(state.sourceUrl));
       return;
     }
     sendCapture(state.provider, state.source, media, {
@@ -808,9 +828,9 @@
       trustMediaMetrics: state.trustMediaMetrics,
     })
       .then(({ response }) => {
-        if (!response?.ok) seen.delete(state.sourceUrl);
+        if (handOffNeedsRetry(response)) releaseSeenForRetry(state.sourceUrl);
       })
-      .catch(() => seen.delete(state.sourceUrl));
+      .catch(() => releaseSeenForRetry(state.sourceUrl));
   }
 
   function schedulePromptRetry(provider, source, mediaKind = "image", {
@@ -1026,7 +1046,7 @@
       if (source.kind === "local" && source.url.startsWith("blob:")) {
         const bytes = video ? await bytesFromVisibleVideo(source, media) : await bytesFromVisibleImage(source, media);
         if (location.href !== capturePageUrl) {
-          return { response: { ok: false, error: "Provider page changed before capture completed." }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
+          return { response: { ok: false, error: "Provider page changed before capture completed.", retryable: true }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
         }
         payload.mimeType = bytes.mimeType;
         if (video) {
@@ -1041,7 +1061,7 @@
         else payload.imageUrl = source.url;
       }
       if (location.href !== capturePageUrl) {
-        return { response: { ok: false, error: "Provider page changed before capture completed." }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
+        return { response: { ok: false, error: "Provider page changed before capture completed.", retryable: true }, hasPrompt: Boolean(providerPrompt?.prompt), providerPrompt };
       }
       const response = await chrome.runtime.sendMessage({
         type: "mosa.ingest",
@@ -1103,7 +1123,9 @@
           mimeType: probe.mimeType || "video/mp4",
         };
         const result = await sendCapture("flow", videoSource, img, { mediaKind: "video", trustMediaMetrics: false });
-        if (!result?.response?.ok) seen.delete(key);
+        if (!result?.response?.ok) {
+          if (handOffNeedsRetry(result?.response)) releaseSeenForRetry(key);
+        }
         else if (!result.hasPrompt) schedulePromptRetry("flow", videoSource, "video", {
           lookupSource: source,
           lookupMediaKind: "image",
@@ -1115,7 +1137,9 @@
         rememberSeen(key);
         flowProbeFailures.delete(key);
         const result = await sendCapture("flow", source, img);
-        if (!result?.response?.ok) seen.delete(key);
+        if (!result?.response?.ok) {
+          if (handOffNeedsRetry(result?.response)) releaseSeenForRetry(key);
+        }
         else if (!result.hasPrompt) schedulePromptRetry("flow", source);
         return true;
       }
@@ -1237,7 +1261,7 @@
         generationContextId,
       });
       if (!response?.ok) {
-        seen.delete(source.url);
+        if (handOffNeedsRetry(response)) releaseSeenForRetry(source.url);
         return;
       }
       if (generationContextId) {
@@ -1245,7 +1269,7 @@
       }
       if (!hasPrompt) schedulePromptRetry(provider, source, mediaKind);
     } catch {
-      seen.delete(source.url);
+      releaseSeenForRetry(source.url);
     }
   }
 
@@ -1286,12 +1310,11 @@
       }
       sendCapture(provider, source, img)
         .then(({ response, hasPrompt }) => {
-          // Authentication, origin, or service failures must remain retryable.
-          // The background returns them as { ok: false } rather than rejecting.
-          if (!response?.ok) seen.delete(source.url);
-          else if (!hasPrompt) schedulePromptRetry(provider, source);
+          // Queued or refused captures keep the key; only a retryable answer frees it.
+          if (handOffNeedsRetry(response)) releaseSeenForRetry(source.url);
+          else if (response.ok && !hasPrompt) schedulePromptRetry(provider, source);
         })
-        .catch(() => seen.delete(source.url));
+        .catch(() => releaseSeenForRetry(source.url));
     }
     if (provider === "flow" || provider === "google-ai-studio") {
       for (const video of document.querySelectorAll?.("video") || []) {
@@ -1305,10 +1328,10 @@
         }
         sendCapture(provider, source, video, { mediaKind: "video" })
           .then(({ response, hasPrompt }) => {
-            if (!response?.ok) seen.delete(source.url);
-            else if (!hasPrompt) schedulePromptRetry(provider, source, "video");
+            if (handOffNeedsRetry(response)) releaseSeenForRetry(source.url);
+            else if (response.ok && !hasPrompt) schedulePromptRetry(provider, source, "video");
           })
-          .catch(() => seen.delete(source.url));
+          .catch(() => releaseSeenForRetry(source.url));
       }
     }
     attemptPendingPromptUpgrades();
