@@ -165,3 +165,43 @@ test("supervisor logs a missing library once and starts nothing while it is miss
   assert.match(warnings[0], /does not contain a library: \/moved/);
   assert.match(warnings[0], /not starting the background runtime and not creating a library/);
 });
+
+test("supervisor starts the runtime once the missing library comes back", async () => {
+  const warnings = [];
+  const signalTarget = new EventEmitter();
+  let probes = 0;
+  let spawnCount = 0;
+  const child = new EventEmitter();
+  child.pid = 4242;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = () => {
+    child.signalCode = "SIGTERM";
+    child.emit("exit", null, "SIGTERM");
+  };
+
+  await runSupervisor({
+    probe: async () => {
+      probes += 1;
+      if (probes <= 2) {
+        throw new MosaLibraryNotFoundError("The recorded library location does not contain a library: /moved", {
+          libraryDir: "/moved",
+        });
+      }
+      return { state: "unavailable" };
+    },
+    spawnRuntime: () => {
+      spawnCount += 1;
+      setImmediate(() => signalTarget.emit("SIGTERM"));
+      return child;
+    },
+    watchSources: () => ({ promise: new Promise(() => {}), close() {} }),
+    watchHandoff: () => ({ promise: new Promise(() => {}), close() {} }),
+    sleep: async () => {},
+    logger: { info() {}, warn: (line) => warnings.push(line) },
+    signalTarget,
+  });
+
+  assert.equal(spawnCount, 1);
+  assert.equal(warnings.filter((line) => /not creating a library/.test(line)).length, 1);
+});
