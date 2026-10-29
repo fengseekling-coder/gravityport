@@ -23,7 +23,7 @@ import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 
 export const name = "sidebar-update-line";
 export const description =
-  "sidebar update-ready line: single-row reminder above 用户中心 (position, 32px, one line, zh/en copy) -> click restarts (install called once, disabled, 正在更新…) -> null config renders nothing";
+  "sidebar update-ready line: single-row reminder above 用户中心 (position, 32px, one line, zh/en copy) -> click restarts (install called once, disabled, 正在更新…) -> dialog-already-shown install result re-enables without a toast, generic failure keeps 更新失败 -> null config renders nothing";
 
 // desktop/main.mjs, the first line inside the get-update-ready handler body
 // (0-based for Debugger.setBreakpointByUrl, i.e. the handler line + 1): the
@@ -37,13 +37,13 @@ const GET_UPDATE_READY_BREAKPOINT_LINE = await (async () => {
 })();
 
 const REPLACE_HANDLERS_ON_FRAME = `(() => {
-  globalThis.__e2eUpdateLine = { config: { version: "9.9.9" }, installs: 0 };
+  globalThis.__e2eUpdateLine = { config: { version: "9.9.9" }, installs: 0, result: undefined };
   ipcMain.removeHandler("get-update-ready");
   ipcMain.handle("get-update-ready", async () => globalThis.__e2eUpdateLine.config);
   ipcMain.removeHandler("download-and-install-update");
   ipcMain.handle("download-and-install-update", async () => {
     globalThis.__e2eUpdateLine.installs += 1;
-    return { status: "installing" };
+    return globalThis.__e2eUpdateLine.result || { status: "installing" };
   });
   return "replaced";
 })()`;
@@ -158,6 +158,39 @@ export async function run(ctx) {
     assertEqual(installs, 1, `downloadAndInstallUpdate called once (got ${installs})`);
     assertOk(clicked.cursor !== "pointer", `disabled row must not show a pointer (got ${clicked.cursor})`);
 
+    // Rounds 3b/3c (task 302): an install result whose system dialog the main
+    // process already raised (UPDATE_FAILED_TWICE) must re-enable the row with
+    // NO extra renderer toast; a generic failure (MACOS_UPDATE_FAILED) keeps
+    // the 更新失败 toast. The previous round left the row disabled with
+    // restartPending set, so a fresh mount (reload) resets it first.
+    await main.evaluate(`globalThis.__e2eUpdateLine.result = { status: "error", code: "UPDATE_FAILED_TWICE" }`);
+    await reloadAndSettle(cdp);
+    await waitForExpression(cdp, "Boolean(document.querySelector('.update-ready-line'))", "update-ready line (dialogged result)");
+    await installToastRecorder(cdp);
+    await cdp.evaluate(`document.querySelector('.update-ready-line').click()`);
+    await waitForExpression(
+      cdp,
+      `(() => { const line = document.querySelector('.update-ready-line'); return Boolean(line && !line.disabled); })()`,
+      "row re-enabled after UPDATE_FAILED_TWICE",
+    );
+    await sleep(1000);
+    const silentToasts = await cdp.evaluate(`window.__e2eUpdateToasts.filter((t) => t.includes('更新失败'))`);
+    assertOk(silentToasts.length === 0, `no 更新失败 toast after UPDATE_FAILED_TWICE (got ${JSON.stringify(silentToasts)})`);
+
+    await main.evaluate(`globalThis.__e2eUpdateLine.result = { status: "error", code: "MACOS_UPDATE_FAILED" }`);
+    await cdp.evaluate(`window.__e2eUpdateToasts.length = 0`);
+    await cdp.evaluate(`document.querySelector('.update-ready-line').click()`);
+    await waitForExpression(
+      cdp,
+      `(() => { const line = document.querySelector('.update-ready-line'); return Boolean(line && !line.disabled); })()`,
+      "row re-enabled after MACOS_UPDATE_FAILED",
+    );
+    await sleep(1000);
+    const failedToasts = await cdp.evaluate(`window.__e2eUpdateToasts.filter((t) => t.includes('更新失败'))`);
+    assertOk(failedToasts.some((t) => t.includes("更新失败，请稍后重试")), `更新失败 toast after MACOS_UPDATE_FAILED (got ${JSON.stringify(failedToasts)})`);
+    const installsAfterResults = await main.evaluate(`globalThis.__e2eUpdateLine.installs`);
+    assertEqual(installsAfterResults, 3, `downloadAndInstallUpdate called three times total (got ${installsAfterResults})`);
+
     // Round 4 (null): with the main process answering null the row renders
     // nothing after a fresh mount.
     await main.evaluate(`globalThis.__e2eUpdateLine.config = null`);
@@ -165,7 +198,7 @@ export async function run(ctx) {
     const absent = await cdp.evaluate(`({ present: Boolean(document.querySelector('.update-ready-line')) })`);
     assertEqual(absent.present, false, "no reminder row when getUpdateReady answers null");
 
-    return { ok: true, rounds: 4, screenshots };
+    return { ok: true, rounds: 6, screenshots };
   } catch (error) {
     failed = true;
     throw error;
@@ -256,6 +289,26 @@ function inspectLine() {
       dotSize: dotRect ? [dotRect.width, dotRect.height] : null,
     };
   })()`;
+}
+
+// Toasts vanish after ~2.6s but React reuses the .toast element in place when
+// one toast replaces a still-visible one, so each element's text is recorded
+// whenever it CHANGES (same rule as the about-update-install-result flow).
+async function installToastRecorder(cdp) {
+  await cdp.evaluate(`(() => {
+    window.__e2eUpdateToasts = [];
+    const seenText = new WeakMap();
+    const scan = () => {
+      document.querySelectorAll('.toast').forEach((el) => {
+        const text = el.textContent.trim();
+        if (!text || seenText.get(el) === text) return;
+        seenText.set(el, text);
+        window.__e2eUpdateToasts.push(text);
+      });
+    };
+    new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
+    scan();
+  })()`);
 }
 
 // Open the settings dialog from the 用户中心 button, flip the language on the

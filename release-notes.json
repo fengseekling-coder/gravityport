@@ -21,7 +21,8 @@
         "修复了 GravityPort 未打开时，浏览器扩展在网页上反复重发和重新下载同一张图片的问题。现由扩展暂存，GravityPort 打开后自动补收。（浏览器扩展 0.15.44）",
         "修复了 Midjourney 连续生成多个作品时，每隔几个作品会漏收一个的问题。（浏览器扩展 0.15.44）",
         "修复了 GravityPort 启动较慢时（如在 Windows 上），浏览器扩展无法自动配对的问题。（浏览器扩展 0.15.44）",
-        "修复了更新安装失败时没有提示、反复显示「重启更新」的问题。现会说明原因；同一版本两次未装上时，引导前往官网下载。"
+        "修复了更新安装失败时没有提示、反复显示「重启更新」的问题。现会说明原因；同一版本两次未装上时，引导前往官网下载。",
+        "修复了在「设置 → 关于」中下载更新出错后，按钮一直停在「正在下载」的问题。系统已弹出说明时，不再另外提示更新失败。"
       ],
       "other": [
         "为软件内更新增加备用签名钥匙。"
@@ -47,7 +48,8 @@
         "Fixed an issue where the browser extension kept resending and re-downloading the same image while GravityPort was closed. The extension now holds it and delivers it once GravityPort opens. (Browser extension 0.15.44)",
         "Fixed an issue where Midjourney could skip one work every few works when several were generated in a row. (Browser extension 0.15.44)",
         "Fixed an issue where the browser extension could not pair automatically when GravityPort started slowly, such as on Windows. (Browser extension 0.15.44)",
-        "Fixed an issue where a failed update install showed no message and kept offering Restart to Update. GravityPort now shows the reason, and after two failed installs of the same version it points to the website download."
+        "Fixed an issue where a failed update install showed no message and kept offering Restart to Update. GravityPort now shows the reason, and after two failed installs of the same version it points to the website download.",
+        "Fixed an issue where the update button in Settings → About stayed on Downloading after a download error. When a system dialog already explains the problem, no separate update-failed message appears."
       ],
       "other": [
         "Added a backup signing key for in-app updates."

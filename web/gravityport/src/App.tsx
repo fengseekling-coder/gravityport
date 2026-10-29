@@ -50,6 +50,7 @@ import {
   checkVersionConsistency,
   createReadyGate,
   fill,
+  installResultFeedback,
   mapUpdateResult,
   buildUpdateText,
   type UpdateUiState,
@@ -3524,6 +3525,20 @@ export default function App() {
       notify(String((error as Error)?.message || tr("暂时无法检查更新")))
     }
   }
+  // Task 302 — toast copy for the install-result table; every string already
+  // exists in i18n, so the map stays inside the update handlers.
+  const notifyInstallToast = (toast: "failed" | "current" | "move-to-applications") => {
+    if (toast === "failed") notify(tr("更新失败，请稍后重试"))
+    else if (toast === "current") notify(tr("已是最新版本"))
+    else if (toast === "move-to-applications") notify(tr("请先把 App 拖进『应用程序』文件夹再更新"))
+  }
+  // Leaves the downloading state for the clickable update button; a no-op once
+  // the phase has moved on (e.g. the user cancelled while the call was in
+  // flight). Shared by the install result, its catch and cancel.
+  const exitDownloadingState = () =>
+    setUpdateState(current => current.phase === "downloading"
+      ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false, notes: current.notes }
+      : current)
   const downloadAndInstallUpdate = async () => {
     const api = desktopAPI()
     if (!api?.downloadAndInstallUpdate) return
@@ -3531,11 +3546,14 @@ export default function App() {
     if (updateState.phase !== "available") return
     setUpdateState({ phase: "downloading", percent: 0, latestVersion: updateState.latestVersion, publishedAt: updateState.publishedAt, canInstallInApp: updateState.canInstallInApp, notes: updateState.notes })
     try {
-      await api.downloadAndInstallUpdate()
+      const feedback = installResultFeedback(await api.downloadAndInstallUpdate())
+      if (feedback.installing) return
+      if (feedback.nextPhase === "available") exitDownloadingState()
+      else if (feedback.nextPhase === "current") setUpdateState({ phase: "current" })
+      else setUpdateState({ phase: "unavailable", reason: "install-location-unsupported" })
+      if (feedback.toast) notifyInstallToast(feedback.toast)
     } catch (error) {
-      setUpdateState(current => current.phase === "downloading"
-        ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false, notes: current.notes }
-        : current)
+      exitDownloadingState()
       notify(tr("更新失败，请稍后重试"))
     }
   }
@@ -3549,10 +3567,10 @@ export default function App() {
     if (restartPending) return
     setRestartPending(true)
     try {
-      const result = await api.downloadAndInstallUpdate() as { status?: string } | undefined
-      if (result?.status === "installing") return
+      const feedback = installResultFeedback(await api.downloadAndInstallUpdate())
+      if (feedback.installing) return
       setRestartPending(false)
-      if (result?.status !== "cancelled") notify(tr("更新失败，请稍后重试"))
+      if (feedback.toast) notifyInstallToast(feedback.toast)
     } catch {
       setRestartPending(false)
       notify(tr("更新失败，请稍后重试"))
@@ -3576,9 +3594,7 @@ export default function App() {
   })()
   const cancelUpdateDownload = () => {
     desktopAPI()?.cancelUpdateDownload?.()
-    setUpdateState(current => current.phase === "downloading"
-      ? { phase: "available", latestVersion: current.latestVersion || "", publishedAt: current.publishedAt || "", canInstallInApp: current.canInstallInApp !== false, notes: current.notes }
-      : current)
+    exitDownloadingState()
   }
   const openDownloadPage = () => {
     desktopAPI()?.openDownloadPage?.().then(result => {

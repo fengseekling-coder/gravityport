@@ -1,0 +1,92 @@
+name: Desktop packaging
+
+# Slow macOS / Windows jobs (e2e, packaging, installer rehearsal; ~10 and ~22 min).
+# They run only when packaging-related files change, nightly on main,
+# or by hand before a release. They are not required for merging.
+
+on:
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "scripts/make-*"
+      - "scripts/*windows*"
+      - "scripts/*packag*"
+      - "scripts/verify-*"
+      - "scripts/desktop-*"
+      - "scripts/check-desktop-package-node.mjs"
+      - "test/desktop-*"
+      - "test/windows-*"
+      - "test/electron-preload-*"
+      - "test/path-safety*"
+      - "test/source-locations*"
+      - "package.json"
+      - "package-lock.json"
+      - ".nvmrc"
+      - ".github/workflows/desktop.yml"
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "scripts/make-*"
+      - "scripts/*windows*"
+      - "scripts/*packag*"
+      - "scripts/verify-*"
+      - "scripts/desktop-*"
+      - "scripts/check-desktop-package-node.mjs"
+      - "test/desktop-*"
+      - "test/windows-*"
+      - "test/electron-preload-*"
+      - "test/path-safety*"
+      - "test/source-locations*"
+      - "package.json"
+      - "package-lock.json"
+      - ".nvmrc"
+      - ".github/workflows/desktop.yml"
+  # 06:00 UTC = 22:00 Pacific standard time (23:00 during daylight saving time).
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  desktop-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: node -e "require('electron')"
+      - run: node -e "if (process.arch !== 'arm64') throw new Error('Expected arm64 macOS runner')"
+      - run: node --test test/desktop-packaging.test.mjs test/electron-preload-runtime-contract.test.mjs
+        env:
+          MOSA_ELECTRON_PRELOAD_SMOKE: "1"
+      - run: npm run test:e2e
+      - run: npm run desktop:package
+      - run: codesign --verify --deep --strict --verbose=2 out/GravityPort-darwin-arm64/GravityPort.app
+      - run: npm run qa:packaged:smoke
+
+  desktop-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: node -e "require('electron')"
+      - run: node -e "if (process.arch !== 'x64') throw new Error('Expected x64 Windows runner')"
+      - run: node --test test/desktop-packaging.test.mjs test/desktop-platform-adapter.test.mjs test/desktop-runtime-paths.test.mjs test/electron-preload-runtime-contract.test.mjs test/path-safety.test.mjs test/source-locations.test.mjs test/windows-updater.test.mjs test/windows-updater-install-rehearsal.test.mjs test/windows-installer.test.mjs
+        env:
+          MOSA_ELECTRON_PRELOAD_SMOKE: "1"
+      - run: npm run test:e2e
+      - run: npm run desktop:package:windows
+      - run: npm run qa:packaged:smoke
+      - run: npm run desktop:installer:windows
+      # Installs the installer just built for the runner's user, then upgrades
+      # and uninstalls it.
+      - run: node --test test/windows-installer-rehearsal.test.mjs
+        env:
+          MOSA_WINDOWS_INSTALLER_REHEARSAL: "1"
