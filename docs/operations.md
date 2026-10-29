@@ -200,7 +200,7 @@ Expected conditions:
 - `grok.sessionsDir` points at the configured Grok sessions root (default `~/.grok/sessions`).
 - `lastError` is empty or `null`.
 - `cowartDiscovery` is enabled when the service can read local Codex session records.
-- `webCapture.enabled` is true only when the active runtime has a local ingest Token and at least one approved extension origin. A standalone `npm start` runtime gets those values from explicit configuration; Packaged Desktop provisions them automatically for its fixed extension identities. Its providers list should contain `chatgpt`, `gemini`, `flow`, and `google-ai-studio`.
+- `webCapture.enabled` is true only when the active runtime has a local ingest Token and at least one approved extension origin. A standalone `npm start` runtime gets those values from explicit configuration; Packaged Desktop provisions them automatically for its fixed extension identities. Its providers list should contain `chatgpt`, `gemini`, `flow`, `google-ai-studio`, `jimeng`, and `midjourney`.
 
 Run an integrity check whenever a migration, repair, or service incident is resolved:
 
