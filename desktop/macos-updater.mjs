@@ -267,6 +267,9 @@ NEW_PID=""
 # on the previous version cannot open the library, so never roll back to it.
 SCHEMA_MARKER="$(dirname "$READY_FILE")/schema-upgrade-started.json"
 KEPT_NEW=0
+# Failure code for the log's first line; each step sets it before it runs, so
+# a failure reports the step that broke (see GP_UPDATE_FAILURE in the updater).
+STEP="UNKNOWN"
 
 if [ "$CURRENT_APP_NAME" != "$APP_NAME" ]; then CROSS_NAME=1; fi
 
@@ -299,7 +302,19 @@ rollback() {
   fi
 }
 
-trap 'code=$?; rollback; if [ "$KEPT_NEW" -eq 1 ]; then echo "macOS update helper kept the new version because it already upgraded the library (exit $code)" > "$LOG_PATH"; exit 34; fi; echo "macOS update helper failed (exit $code)" > "$LOG_PATH"; exit $code' HUP INT TERM EXIT
+on_exit() {
+  code=$?
+  rollback
+  if [ "$KEPT_NEW" -eq 1 ]; then
+    printf 'GP_UPDATE_KEPT_NEW exit=34\n' > "$LOG_PATH"
+    echo "macOS update helper kept the new version because it already upgraded the library (exit $code)" >> "$LOG_PATH"
+    exit 34
+  fi
+  printf 'GP_UPDATE_FAILURE code=%s exit=%s\n' "$STEP" "$code" > "$LOG_PATH"
+  echo "macOS update helper failed (exit $code)" >> "$LOG_PATH"
+  exit $code
+}
+trap on_exit HUP INT TERM EXIT
 
 while kill -0 "$TARGET_PID" 2>/dev/null; do sleep 0.25; done
 
@@ -308,11 +323,14 @@ while kill -0 "$TARGET_PID" 2>/dev/null; do sleep 0.25; done
 # touching anything; the trap clears the handoff, logs, and reopens the
 # previous app.
 if [ "$CROSS_NAME" -eq 1 ] && [ -e "$TARGET_APP" ]; then
+  STEP="TARGET_EXISTS"
   exit 33
 fi
 
+STEP="EXTRACT_FAILED"
 mkdir -p "$EXTRACT_DIR"
 /usr/bin/ditto -x -k "$ZIP_PATH" "$EXTRACT_DIR"
+STEP="VERIFY_FAILED"
 PAYLOAD_APP="$EXTRACT_DIR/$APP_NAME"
 test -x "$PAYLOAD_APP/Contents/MacOS/$EXEC_NAME"
 
@@ -339,7 +357,10 @@ else
   [ "$EXPECTED_DISTRIBUTION" = "preview" ]
 fi
 
-/usr/bin/ditto "$PAYLOAD_APP" "$REPLACEMENT_APP"
+# Moves within TRANSACTION_ROOT (one volume), so the payload is renamed rather
+# than copied: the install step never holds two full copies of the app.
+STEP="REPLACE_FAILED"
+mv "$PAYLOAD_APP" "$REPLACEMENT_APP"
 mv "$INSTALL_APP" "$BACKUP_APP"
 MOVED_ORIGINAL=1
 if [ "$CROSS_NAME" -eq 1 ]; then
@@ -347,6 +368,7 @@ if [ "$CROSS_NAME" -eq 1 ]; then
 else
   mv "$REPLACEMENT_APP" "$INSTALL_APP"
 fi
+STEP="NEW_VERSION_FAILED"
 rm -f "$READY_FILE" "$SCHEMA_MARKER"
 
 "$OPEN_BIN" -n "$TARGET_APP" --args "--mosa-update-ready-file=$READY_FILE"
