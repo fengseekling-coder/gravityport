@@ -152,6 +152,12 @@ export async function run(ctx) {
     const filePngA = await makePng("desktop-paste-alpha.png", [220, 40, 40]);
     const filePngB = await makePng("desktop-paste-beta.png", [40, 200, 60]);
     const filePngC = await makePng("desktop-paste-gamma.png", [90, 60, 210]);
+    // Steps 2 and 3 each paste an image the library has never seen: step 1
+    // already imported alpha and beta, and pasting those again is a skip
+    // (same bytes) or an automatic trash of the new copy (same pixels) since
+    // manual-import dedupe (task 291).
+    const filePngD = await makePng("desktop-paste-delta.png", [200, 160, 40]);
+    const filePngE = await makePng("desktop-paste-epsilon.png", [40, 160, 200]);
     const fileMp4 = join(ctx.fixturesDir, "desktop-paste-clip.mp4");
     await copyFile(join(ctx.rootDir, "test", "fixtures", "video-first-frame.mp4"), fileMp4);
 
@@ -251,7 +257,7 @@ export async function run(ctx) {
       await clickCenter(cdp, `document.querySelector('.sidebar .group-row[aria-label="${GROUP_NAME}"]')`);
       await waitFor(`[...document.querySelectorAll('.sidebar .group-row')].some((row) => row.getAttribute('aria-current') === 'page' && row.getAttribute('aria-label') === '${GROUP_NAME}')`,
       "group view active");
-      await writeClipboardImage(filePngA);
+      await writeClipboardImage(filePngD);
       await dispatchPasteCommand(cdp);
       await waitFor(`document.querySelectorAll('.asset-card').length === 1`, "pasted card lands in the group view");
       const assets = await total();
@@ -271,7 +277,7 @@ export async function run(ctx) {
 
     // ── 3) File into the open stack via the blank-area menu 粘贴 ──
     await step("blank-area menu 粘贴 imports a file into the open stack", async () => {
-      await writeClipboardFiles([filePngB]);
+      await writeClipboardFiles([filePngE]);
       // Back to 所有素材, then open the stack with a real double click.
       await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="所有素材"]')`);
       await waitFor(`[...document.querySelectorAll('.asset-card[aria-label]')].some((card) => card.getAttribute('aria-label').includes('堆叠'))`, "stack card visible");

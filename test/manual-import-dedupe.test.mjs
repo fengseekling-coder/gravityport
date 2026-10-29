@@ -605,6 +605,26 @@ test("import-batch returns already-in-library skips and cleans staged files", as
   await runtime.stop();
 });
 
+test("/api/assets/create keeps its contract: the same file twice answers with two new assets", async (t) => {
+  // The app imports through import-batch only; scripts and e2e seeds post one
+  // fixture to create many times and read body.asset.id every time.
+  const { root, runtime, generated, post } = await startDedupeRuntime(t, "mosa-dedupe-http-create-");
+  const fixture = await gradientFile(generated, "seed.png", "horizontal");
+  const first = await (await post("/api/assets/create", { projectId: "default", imagePath: fixture, prompt: "seed one" })).json();
+  const second = await (await post("/api/assets/create", { projectId: "default", imagePath: fixture, prompt: "seed two" })).json();
+  assert.ok(first.asset?.id, `first create: ${JSON.stringify(first)}`);
+  assert.ok(second.asset?.id, `second create: ${JSON.stringify(second)}`);
+  assert.notEqual(first.asset.id, second.asset.id);
+  assert.equal(second.skipped, undefined);
+  const database = new Database(join(root, "library", "mosa.db"), { readonly: true });
+  try {
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM assets WHERE deleted_at IS NULL").get().n, 2);
+  } finally {
+    database.close();
+  }
+  await runtime.stop();
+});
+
 test("resolve orchestration: identical pair trashes exactly one copy across two checks", async (t) => {
   const { root, runtime, generated, post } = await startDedupeRuntime(t, "mosa-dedupe-http-resolve-");
   const libraryDir = join(root, "library");
