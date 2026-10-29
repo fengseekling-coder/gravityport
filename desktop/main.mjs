@@ -236,9 +236,9 @@ if (!guard.ok) {
 // ensureInstallationId() call below, which mints anonymous-usage.json on a fresh
 // install — that file's existence is one of the old-user signals the decision
 // reads, so it must still be absent here on a first launch. The other userData
-// signal is library-location.json, which only saveLibraryDir() writes, from the
-// user-triggered "change-library-location" handler; nothing on the startup path
-// above writes it, so a fresh install cannot have it yet. It catches old users
+// signal is library-location.json, which saveLibraryDir() writes when the user
+// moves the library, and which the first successful open backfills (283); nothing
+// on the startup path above writes it, so a fresh install cannot have it yet. It catches old users
 // who moved their library (no ~/MOSA Library) and turned anonymous usage off
 // (no anonymous-usage.json). The legacy library directory
 // is only consulted when userData sits at the production default: QA and test

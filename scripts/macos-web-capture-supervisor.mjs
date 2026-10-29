@@ -11,7 +11,11 @@ import { DEFAULT_MOSA_DESKTOP_PORT, normalizeMosaPort } from "../lib/runtime-def
 import { probeMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
 import { safeCanonical } from "../lib/runtime-isolation-guard.mjs";
 import { pathsEqual } from "../lib/path-safety.mjs";
-import { resolveLibraryLocation } from "../lib/library-location.mjs";
+import {
+  MosaLibraryLocationFileError,
+  MosaLibraryNotFoundError,
+  resolveBackgroundLibraryDir,
+} from "../lib/library-location.mjs";
 import { verifyMosaRuntimeLockProcessIdentity } from "../lib/runtime-lock.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +28,21 @@ const DEFAULT_TAKEOVER_POLL_MS = 250;
 const DEFAULT_PROBE_TIMEOUT_MS = 1200;
 const DEFAULT_SOURCE_CHANGE_SETTLE_MS = 750;
 const DEFAULT_HANDOFF_POLL_MS = 250;
+
+/**
+ * The library this supervisor watches and starts the runtime for. Same lookup
+ * as the MCP server: the desktop location file counts, and nothing is created.
+ * Throws MosaLibraryNotFoundError / MosaLibraryLocationFileError when there is
+ * no library to attach to; the loop reports that and waits instead of starting.
+ */
+export function resolveSupervisorLibraryDir({ homeDir = homedir(), envLibraryDir = process.env.MOSA_LIBRARY_DIR } = {}) {
+  return resolveBackgroundLibraryDir({ homeDir, envLibraryDir });
+}
+
+/** Environment for the runtime this supervisor starts: attach only, never create. */
+export function backgroundRuntimeEnv(env = process.env) {
+  return { ...env, MOSA_BACKGROUND_RUNTIME: "1" };
+}
 
 export function watchOwnedRuntimeSources({
   watchImpl = watch,
@@ -77,7 +96,7 @@ export function watchOwnedRuntimeSources({
 
 export async function probeMosaOwner({
   port = process.env.MOSA_PORT || DEFAULT_MOSA_DESKTOP_PORT,
-  libraryDir = resolveLibraryLocation({ homeDir: homedir(), envLibraryDir: process.env.MOSA_LIBRARY_DIR }).libraryDir,
+  libraryDir = resolveSupervisorLibraryDir(),
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
   leaseProbe = () => probeRuntimeLease({ libraryDir }),
@@ -120,7 +139,7 @@ export async function probeMosaOwner({
 }
 
 export async function probeRuntimeLease({
-  libraryDir = resolveLibraryLocation({ homeDir: homedir(), envLibraryDir: process.env.MOSA_LIBRARY_DIR }).libraryDir,
+  libraryDir = resolveSupervisorLibraryDir(),
   readFileImpl = readFile,
   isProcessAlive = defaultIsProcessAlive,
   verifyProcessIdentity = verifyMosaRuntimeLockProcessIdentity,
@@ -142,7 +161,7 @@ export async function probeRuntimeLease({
 
 export function watchDesktopStartupHandoff({
   probe = () => probeMosaDesktopStartupHandoff({
-    libraryDir: resolveLibraryLocation({ homeDir: homedir(), envLibraryDir: process.env.MOSA_LIBRARY_DIR }).libraryDir,
+    libraryDir: resolveSupervisorLibraryDir(),
   }),
   pollMs = DEFAULT_HANDOFF_POLL_MS,
 } = {}) {
@@ -200,7 +219,7 @@ export async function runSupervisor({
   probe = () => probeMosaOwner(),
   spawnRuntime = () => spawn(process.execPath, [serverEntry], {
     cwd: repositoryRoot,
-    env: process.env,
+    env: backgroundRuntimeEnv(),
     stdio: "inherit",
   }),
   watchSources = () => watchOwnedRuntimeSources(),
@@ -218,6 +237,19 @@ export async function runSupervisor({
   let lastIdleReason = "";
   let lastHandoffAt = 0;
 
+  // A library that cannot be found (or whose location file is unreadable) is a
+  // state, not a crash: the loop logs it once and checks again later.
+  const probeOwner = async () => {
+    try {
+      return await probe();
+    } catch (error) {
+      if (error instanceof MosaLibraryNotFoundError || error instanceof MosaLibraryLocationFileError) {
+        return { state: "library-missing", reason: error.message };
+      }
+      throw error;
+    }
+  };
+
   const stop = () => {
     stopping = true;
     if (child && child.exitCode == null && child.signalCode == null) child.kill("SIGTERM");
@@ -227,7 +259,7 @@ export async function runSupervisor({
 
   try {
     while (!stopping) {
-      const current = await probe();
+      const current = await probeOwner();
       if (current.state === "attached" || current.state === "starting" || current.state === "handoff") {
         if (current.state === "handoff") lastHandoffAt = Date.now();
         if (lastIdleReason !== current.state) {
@@ -238,6 +270,15 @@ export async function runSupervisor({
               : "[MOSA supervisor] MOSA Desktop is starting and has requested runtime handoff; standing by.");
         }
         lastIdleReason = current.state;
+        await sleep(idlePollMs);
+        continue;
+      }
+      if (current.state === "library-missing") {
+        const reason = `library-missing:${current.reason}`;
+        if (lastIdleReason !== reason) {
+          logger.warn?.(`[MOSA supervisor] ${current.reason}; not starting the background runtime and not creating a library. Checking again in ${idlePollMs} ms.`);
+        }
+        lastIdleReason = reason;
         await sleep(idlePollMs);
         continue;
       }
@@ -252,7 +293,7 @@ export async function runSupervisor({
       lastIdleReason = "";
       const handoffCooldownMs = lastHandoffAt + Math.max(0, Number(controlledTakeoverGraceMs) || 0) - Date.now();
       if (handoffCooldownMs > 0) {
-        const handoff = await probe().catch(() => ({ state: "unavailable" }));
+        const handoff = await probeOwner().catch(() => ({ state: "unavailable" }));
         if (handoff.state === "handoff") {
           lastHandoffAt = Date.now();
           lastIdleReason = "handoff";
@@ -310,11 +351,12 @@ export async function runSupervisor({
       if (stopping) break;
 
       const replacement = await waitForReplacementOwner({
-        probe,
+        probe: probeOwner,
         sleep,
         graceMs: exit?.signal === "SIGTERM" ? controlledTakeoverGraceMs : takeoverGraceMs,
         pollMs: takeoverPollMs,
       });
+      if (replacement.state === "library-missing") continue;
       if (replacement.state === "attached" || replacement.state === "starting") {
         logger.info?.("[MOSA supervisor] background runtime yielded to another verified MOSA owner.");
         continue;
