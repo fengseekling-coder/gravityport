@@ -471,3 +471,19 @@ test("desktop main refuses in-app installs and offers the download page without 
   assert.ok(guard < handler.indexOf("downloadMacosUpdate("), "the trust check must run before any download");
   assert.match(source, /canInstallInApp: app\.isPackaged && canInstallUpdateInApp\(expectedServiceIdentity\.releaseManifestTrust\)/);
 });
+
+test("desktop main runs install preflight before any download and records the attempt only after the helper starts", () => {
+  const source = readFileSync(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  const handler = source.slice(source.indexOf('ipcMain.handle("download-and-install-update"'));
+  const end = handler.indexOf('ipcMain.handle("', 10) > 0 ? handler.indexOf('ipcMain.handle("', 10) : handler.length;
+  const body = handler.slice(0, end);
+  const twice = body.indexOf("updateFailedTwiceResult(");
+  assert.ok(twice > 0, "a version that failed twice is refused before download");
+  assert.ok(twice < body.indexOf("downloadMacosUpdate("), "the failed-twice check runs before the macOS download");
+  assert.ok(twice < body.indexOf("downloadWindowsUpdate("), "the failed-twice check runs before the Windows download");
+  assert.ok(body.indexOf("preflightFreeSpace({") < body.indexOf("downloadMacosUpdate("), "download space is checked before the macOS download");
+  assert.ok(body.indexOf("windowsInstallPreflight(installDir") < body.indexOf("downloadWindowsUpdate("), "Windows folder and MCP checks run before the Windows download");
+  assert.ok(body.indexOf("launchMacosUpdateHelper(") < body.indexOf("recordUpdateAttempt({ userDataDir: desktopDataDir, version: release.latestVersion, platform: \"macos\" })"));
+  assert.ok(body.indexOf("launchWindowsUpdateHelper(") < body.indexOf("platform: \"windows\""));
+  assert.ok(body.indexOf("platform: \"windows\"") < body.indexOf("app.exit(0)", body.indexOf("launchWindowsUpdateHelper(")), "the Windows attempt is recorded before the App exits");
+});

@@ -3,9 +3,9 @@ import "../lib/apply-env-aliases.mjs";
 // activation policy before any heavy import lets the process check in with
 // Launch Services as a regular app. See desktop/quiet-test-mode.mjs.
 import "./quiet-test-mode.mjs";
-import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, screen, session, shell, Notification } from "electron";
+import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net, screen, session, shell, Notification } from "electron";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
-import { access, readdir, rm, stat } from "node:fs/promises";
+import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,8 +17,24 @@ import { getDesktopText, getLibraryStartupFailureText, getNotificationTextForAss
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
+import { releaseManifestTrustSet } from "../lib/release-manifest-signature.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
+import {
+  failureCountFor,
+  failureRecordFor,
+  recordUpdateAttempt,
+  settleUpdateAttempt,
+  UPDATE_FAILURE_CONFIRMED_THRESHOLD,
+} from "./update-failures.mjs";
+import {
+  checkFreeSpace,
+  checkWindowsInstallDirWritable,
+  checkWindowsInstallProcesses,
+  formatBytesForDialog,
+  requiredDownloadBytes,
+  requiredInstallBytes,
+} from "./update-preflight.mjs";
 import { backgroundUpdateGatesPass, createUpdateScheduler, updateReadyNotificationCopy } from "./update-scheduler.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
@@ -78,6 +94,20 @@ const expectedServiceIdentity = Object.freeze({
   ...getBuildIdentity(join(appRoot, "web", "gravityport", "dist")),
   serviceProtocolVersion: MOSA_SERVICE_PROTOCOL_VERSION,
 });
+// Release manifests verify against the primary key or the offline backup key;
+// the signature's keyId picks which one. Computed per call so a malformed key
+// fails that update check, not app startup. Only the primary key gates in-app install.
+function releaseManifestVerificationTrusts() {
+  return releaseManifestTrustSet(
+    expectedServiceIdentity.releaseManifestTrust,
+    expectedServiceIdentity.releaseManifestBackupTrust,
+  );
+}
+// Update requests use Chromium's network stack so the system proxy and the
+// system certificate store apply; Node's built-in fetch ignores both.
+function systemNetworkFetch(url, init) {
+  return net.fetch(url, init);
+}
 // `desktopDataDir` is the *actual* userData after Chromium applied the QA
 // --user-data-dir override (if any). It is deliberately NOT the production
 // default: Electron rewrites userData before any JS runs, so the un-overridden
@@ -318,6 +348,7 @@ const MAX_RENDERER_CONSOLE_ERRORS = 32;
 // unsupported macOS install location, and a manual install that owns the
 // staging root all pause it.
 const updateScheduler = createUpdateScheduler({
+  isVersionBlocked: (version) => failureCountFor({ userDataDir: desktopDataDir, version }) >= UPDATE_FAILURE_CONFIRMED_THRESHOLD,
   gatesPass: () => backgroundUpdateGatesPass({
     isPackaged: app.isPackaged,
     qaRun: Boolean(isolationContext.qaRun),
@@ -326,9 +357,10 @@ const updateScheduler = createUpdateScheduler({
     installLocation: process.platform === "darwin" ? evaluateMacosInstallLocation(process.execPath) : null,
   }),
   checkForUpdate: () => checkForMosaUpdate({
+    fetchImpl: systemNetworkFetch,
     currentVersion: app.getVersion(),
     currentDistribution: expectedServiceIdentity.distribution,
-    releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+    releaseManifestTrust: releaseManifestVerificationTrusts(),
   }),
   artifactForPlatform: (release) => (
     process.platform === "darwin" ? release.macArtifact
@@ -338,12 +370,14 @@ const updateScheduler = createUpdateScheduler({
   downloadUpdate: (release, { signal }) => (
     process.platform === "darwin"
       ? downloadMacosUpdate({
+        fetchImpl: systemNetworkFetch,
         artifact: release.macArtifact,
         version: release.latestVersion,
         stagingRoot: MACOS_UPDATE_STAGING_ROOT,
         signal,
       })
       : downloadWindowsUpdate({
+        fetchImpl: systemNetworkFetch,
         artifact: release.windowsArtifact,
         version: release.latestVersion,
         stagingRoot: WINDOWS_UPDATE_STAGING_ROOT,
@@ -888,12 +922,15 @@ function registerIPC() {
         macosUpdateDownloadController = controller;
         try {
           const release = await checkForMosaUpdate({
+            fetchImpl: systemNetworkFetch,
             currentVersion: app.getVersion(),
             currentDistribution: expectedServiceIdentity.distribution,
-            releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+            releaseManifestTrust: releaseManifestVerificationTrusts(),
           });
           if (!release.updateAvailable) return { status: "current", currentVersion: release.currentVersion };
           if (!release.macArtifact) return { status: "unavailable", currentVersion: release.currentVersion };
+          const blocked = await updateFailedTwiceResult(release.latestVersion, release.currentVersion);
+          if (blocked) return blocked;
           const installLocation = evaluateMacosInstallLocation(process.execPath);
           if (!installLocation.installAppPath) return { status: "unsupported", currentVersion: release.currentVersion };
           if (!installLocation.supported) {
@@ -905,7 +942,13 @@ function registerIPC() {
               currentVersion: release.currentVersion,
             };
           }
+          await mkdir(MACOS_UPDATE_STAGING_ROOT, { recursive: true }).catch(() => {});
+          if (!(await preflightFreeSpace({
+            dir: MACOS_UPDATE_STAGING_ROOT,
+            requiredBytes: requiredDownloadBytes(release.macArtifact.size),
+          }))) return { status: "error", code: "PREFLIGHT_DISK_SPACE", currentVersion: release.currentVersion };
           const download = await downloadMacosUpdate({
+            fetchImpl: systemNetworkFetch,
             artifact: release.macArtifact,
             version: release.latestVersion,
             stagingRoot: MACOS_UPDATE_STAGING_ROOT,
@@ -916,6 +959,10 @@ function registerIPC() {
             },
           });
           if (macosUpdateDownloadController === controller) macosUpdateDownloadController = null;
+          if (!(await preflightFreeSpace({
+            dir: dirname(installLocation.installAppPath),
+            requiredBytes: requiredInstallBytes(release.macArtifact.size),
+          }))) return { status: "error", code: "PREFLIGHT_DISK_SPACE", currentVersion: release.currentVersion };
           await launchMacosUpdateHelper({
             zipPath: download.zipPath,
             installAppPath: installLocation.installAppPath,
@@ -926,6 +973,9 @@ function registerIPC() {
             processId: process.pid,
             libraryDir,
           });
+          // Recorded before the App exits so the next launch can tell whether
+          // the new version came up (see settleUpdateAttempt).
+          await recordUpdateAttempt({ userDataDir: desktopDataDir, version: release.latestVersion, platform: "macos" });
           shuttingDown = true;
           stopBridgeNotificationPoll();
           stopAnonymousUsageLifecycle();
@@ -958,9 +1008,10 @@ function registerIPC() {
       // Re-read the first-party manifest in the trusted main process instead of
       // accepting a renderer-supplied URL, filename or digest.
       const release = await checkForMosaUpdate({
+        fetchImpl: systemNetworkFetch,
         currentVersion: app.getVersion(),
         currentDistribution: expectedServiceIdentity.distribution,
-        releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+        releaseManifestTrust: releaseManifestVerificationTrusts(),
       });
       if (!release.updateAvailable) return { status: "current", currentVersion: release.currentVersion };
       if (!release.windowsArtifact) return { status: "unavailable", currentVersion: release.currentVersion };
@@ -970,7 +1021,18 @@ function registerIPC() {
       // or replaced.
       const installedExeName = windowsInstalledExeName();
       if (!installedExeName) return { status: "unsupported", currentVersion: release.currentVersion };
+      const blocked = await updateFailedTwiceResult(release.latestVersion, release.currentVersion);
+      if (blocked) return blocked;
+      const installDir = dirname(process.execPath);
+      await mkdir(WINDOWS_UPDATE_STAGING_ROOT, { recursive: true }).catch(() => {});
+      if (!(await preflightFreeSpace({
+        dir: WINDOWS_UPDATE_STAGING_ROOT,
+        requiredBytes: requiredDownloadBytes(release.windowsArtifact.size),
+      }))) return { status: "error", code: "PREFLIGHT_DISK_SPACE", currentVersion: release.currentVersion };
+      const beforeDownload = await windowsInstallPreflight(installDir, release.currentVersion);
+      if (beforeDownload) return beforeDownload;
       const download = await downloadWindowsUpdate({
+        fetchImpl: systemNetworkFetch,
         artifact: release.windowsArtifact,
         version: release.latestVersion,
         stagingRoot: WINDOWS_UPDATE_STAGING_ROOT,
@@ -981,9 +1043,16 @@ function registerIPC() {
         },
       });
       if (windowsUpdateDownloadController === controller) windowsUpdateDownloadController = null;
+      // The download took time: check the folder and the running assistants again.
+      if (!(await preflightFreeSpace({
+        dir: dirname(installDir),
+        requiredBytes: requiredInstallBytes(release.windowsArtifact.size),
+      }))) return { status: "error", code: "PREFLIGHT_DISK_SPACE", currentVersion: release.currentVersion };
+      const beforeLaunch = await windowsInstallPreflight(installDir, release.currentVersion);
+      if (beforeLaunch) return beforeLaunch;
       await launchWindowsUpdateHelper({
         zipPath: download.zipPath,
-        installDir: dirname(process.execPath),
+        installDir,
         currentExeName: installedExeName,
         payloadExeName: release.windowsArtifact.payloadExeName,
         signerThumbprint: release.windowsArtifact.signerThumbprint || "",
@@ -991,6 +1060,7 @@ function registerIPC() {
         expectedIdentity: release.buildIdentity,
         processId: process.pid,
       });
+      await recordUpdateAttempt({ userDataDir: desktopDataDir, version: release.latestVersion, platform: "windows" });
 
       // Give the external helper exclusive ownership of the replacement only
       // after MOSA has drained its local service and released SQLite/runtime locks.
@@ -1209,14 +1279,128 @@ function stopAnonymousUsageLifecycle() {
   usageReportTimer = null;
 }
 
+// Install failures and install preflight are system dialogs in the main process.
+// Copy lives in notification-i18n.mjs; the first button is the default.
+function updateDialogText(key, values = {}) {
+  return Object.entries(values).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)),
+    getDesktopText(key, currentLocale),
+  );
+}
+
+function showSystemDialog(options) {
+  const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  return owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options);
+}
+
+async function showUpdateFailureDialog({ version, count, code }) {
+  const reason = getDesktopText(`updateReason${code}`, currentLocale);
+  if (count >= UPDATE_FAILURE_CONFIRMED_THRESHOLD) {
+    const { response } = await showSystemDialog({
+      type: "warning",
+      message: updateDialogText("updateFailedTwiceTitle", { version }),
+      detail: updateDialogText("updateFailedTwiceBody", { reason }),
+      buttons: [updateDialogText("updateFailedTwiceDownload"), updateDialogText("updateFailedTwiceLater")],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response === 0) await shell.openExternal(MOSA_DOWNLOAD_PAGE_URL);
+    return;
+  }
+  await showSystemDialog({
+    type: "warning",
+    message: updateDialogText("updateFailedOnceTitle", { version }),
+    detail: updateDialogText("updateFailedOnceBody", { reason, currentVersion: app.getVersion() }),
+    buttons: [updateDialogText("updateFailedOnceButton")],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+}
+
+// Runs once per launch, after the first window is shown: if the last install
+// attempt did not come up, say so. A broken record never blocks startup.
+let updateAttemptSettled = false;
+function settleUpdateAttemptOnce() {
+  if (updateAttemptSettled) return;
+  updateAttemptSettled = true;
+  settleUpdateAttempt({ userDataDir: desktopDataDir, currentVersion: app.getVersion() })
+    .then((failure) => (failure ? showUpdateFailureDialog(failure) : undefined))
+    .catch((error) => console.warn(`[GravityPort] update failure notice unavailable: ${error?.message || error}`));
+}
+
+// Returns the blocking result for a version whose installs failed twice (its
+// dialog is already shown), or null when the install may be attempted.
+async function updateFailedTwiceResult(version, currentVersion) {
+  const record = failureRecordFor({ userDataDir: desktopDataDir, version });
+  if (!record || record.count < UPDATE_FAILURE_CONFIRMED_THRESHOLD) return null;
+  await showUpdateFailureDialog({ version, count: record.count, code: record.lastCode });
+  return { status: "error", code: "UPDATE_FAILED_TWICE", currentVersion };
+}
+
+// Free-space check. A failed stat is not treated as "no space": the install
+// itself then reports its own failure code.
+async function preflightFreeSpace({ dir, requiredBytes }) {
+  const result = await checkFreeSpace({ dir, requiredBytes }).catch(() => ({ ok: true }));
+  if (result.ok) return true;
+  await showSystemDialog({
+    type: "warning",
+    message: updateDialogText("updatePreflightSpaceTitle"),
+    detail: updateDialogText("updatePreflightSpaceBody", {
+      needed: formatBytesForDialog(requiredBytes),
+      available: formatBytesForDialog(result.availableBytes),
+    }),
+    buttons: [updateDialogText("updatePreflightSpaceButton")],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  return false;
+}
+
+// Windows gate before the helper starts: the install folder's parent must be
+// writable, and no other program (an AI assistant's MCP server) may hold files
+// inside the install folder. The MCP dialog retries until clear or cancelled.
+async function windowsInstallPreflight(installDir, currentVersion) {
+  if (!(await checkWindowsInstallDirWritable({ installDir }))) {
+    const { response } = await showSystemDialog({
+      type: "warning",
+      message: updateDialogText("updatePreflightWritableTitle"),
+      detail: updateDialogText("updatePreflightWritableBody"),
+      buttons: [updateDialogText("updatePreflightWritableDownload"), updateDialogText("updatePreflightWritableCancel")],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response === 0) await shell.openExternal(MOSA_DOWNLOAD_PAGE_URL);
+    return { status: "error", code: "PREFLIGHT_INSTALL_DIR_NOT_WRITABLE", currentVersion };
+  }
+  for (;;) {
+    const check = await checkWindowsInstallProcesses({ installDir, selfPid: process.pid });
+    if (check.ok) return null;
+    const { response } = await showSystemDialog({
+      type: "warning",
+      message: updateDialogText("updatePreflightMcpTitle"),
+      detail: updateDialogText("updatePreflightMcpBody"),
+      buttons: [updateDialogText("updatePreflightMcpRetry"), updateDialogText("updatePreflightMcpCancel")],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response !== 0) return { status: "cancelled", currentVersion };
+  }
+}
+
 function runUpdateCheck({ notify = false } = {}) {
   const currentVersion = app.getVersion();
   if (isolationContext.qaRun) return Promise.resolve({ status: "disabled", currentVersion });
   if (updateCheckPromise) return updateCheckPromise;
   updateCheckPromise = checkForMosaUpdate({
+    fetchImpl: systemNetworkFetch,
     currentVersion,
     currentDistribution: expectedServiceIdentity.distribution,
-    releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+    releaseManifestTrust: releaseManifestVerificationTrusts(),
   })
     .then((result) => {
       if (notify && result.updateAvailable && Notification.isSupported()) {
@@ -1394,6 +1578,7 @@ async function createMainWindow() {
   await windowRef.loadFile(startupShellPath);
   if (windowRef.isDestroyed()) return;
   showDesktopWindow(windowRef);
+  settleUpdateAttemptOnce();
 
   const activeService = await ensureDesktopService();
   if (windowRef.isDestroyed() || mainWindow !== windowRef) return;

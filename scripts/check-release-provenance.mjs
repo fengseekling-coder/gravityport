@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { normalizeReleaseManifestTrust } from "../lib/release-manifest-signature.mjs";
+import { normalizeReleaseManifestTrust, RELEASE_MANIFEST_BACKUP_KEY_ID } from "../lib/release-manifest-signature.mjs";
 import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -55,6 +55,12 @@ export function assertReleaseProvenance({
   }
   const distribution = normalizeDesktopDistribution(buildIdentity.distribution, { releaseOnly: true });
   normalizeReleaseManifestTrust(buildIdentity.releaseManifestTrust);
+  if (!buildIdentity.releaseManifestBackupTrust) {
+    throw new Error("Release build identity is missing releaseManifestBackupTrust.");
+  }
+  if (normalizeReleaseManifestTrust(buildIdentity.releaseManifestBackupTrust).keyId !== RELEASE_MANIFEST_BACKUP_KEY_ID) {
+    throw new Error(`Release build identity releaseManifestBackupTrust must carry key id ${RELEASE_MANIFEST_BACKUP_KEY_ID}.`);
+  }
   return { version: cleanVersion, head: cleanHead, tag: expectedTag, remoteBranches: normalizedRemoteBranches, distribution };
 }
 

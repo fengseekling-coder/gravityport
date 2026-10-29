@@ -3,7 +3,10 @@
   "unreleased": {
     "zh": {
       "improved": [
-        "放大查看图片，或在高分辨率屏幕上查看大图时，查看器会自动换用原图显示，细节更清晰。"
+        "放大查看图片，或在高分辨率屏幕上查看大图时，查看器会自动换用原图显示，细节更清晰。",
+        "软件内更新改为使用系统网络设置，开启系统代理的电脑也能检查和下载更新。",
+        "安装更新前会检查磁盘空间；Windows 版还会检查 AI 助手是否正在通过 MCP 使用 GravityPort，并提示先退出。",
+        "macOS 版安装更新时占用的临时磁盘空间减少约一半。"
       ],
       "fixed": [
         "修复了同一张图片再次收录时可能覆盖原图或清空提示词的问题。现仅在新图更清晰时替换，被替换的旧图移入回收站。",
@@ -12,12 +15,19 @@
         "修复了在 GravityPort 中或通过 AI 助手修改的提示词和名称，会在重启或再次收录后被改回的问题。",
         "修复了 GravityPort 未打开时，浏览器扩展在网页上反复重发和重新下载同一张图片的问题。现由扩展暂存，GravityPort 打开后自动补收。（浏览器扩展 0.15.44）",
         "修复了 Midjourney 连续生成多个作品时，每隔几个作品会漏收一个的问题。（浏览器扩展 0.15.44）",
-        "修复了 GravityPort 启动较慢时（如在 Windows 上），浏览器扩展无法自动配对的问题。（浏览器扩展 0.15.44）"
+        "修复了 GravityPort 启动较慢时（如在 Windows 上），浏览器扩展无法自动配对的问题。（浏览器扩展 0.15.44）",
+        "修复了更新安装失败时没有提示、反复显示「重启更新」的问题。现会说明原因；同一版本两次未装上时，引导前往官网下载。"
+      ],
+      "other": [
+        "为软件内更新增加备用签名钥匙。"
       ]
     },
     "en": {
       "improved": [
-        "The viewer now switches to the original image when you zoom in, or when large images are shown on high-resolution screens, for sharper detail."
+        "The viewer now switches to the original image when you zoom in, or when large images are shown on high-resolution screens, for sharper detail.",
+        "In-app updates now use the system network settings, so computers that go through a system proxy can check for and download updates.",
+        "Updates now check free disk space before installing. On Windows, GravityPort also checks whether an AI assistant is using it through MCP and asks you to quit the assistant first.",
+        "Installing an update on macOS now needs about half as much temporary disk space."
       ],
       "fixed": [
         "Fixed an issue where capturing the same image again could overwrite the original or clear its prompt. The image is now replaced only by a sharper version, and the previous one moves to the Trash.",
@@ -26,7 +36,11 @@
         "Fixed an issue where prompts and names edited in GravityPort or through an AI assistant could be reverted after a restart or when the image was captured again.",
         "Fixed an issue where the browser extension kept resending and re-downloading the same image while GravityPort was closed. The extension now holds it and delivers it once GravityPort opens. (Browser extension 0.15.44)",
         "Fixed an issue where Midjourney could skip one work every few works when several were generated in a row. (Browser extension 0.15.44)",
-        "Fixed an issue where the browser extension could not pair automatically when GravityPort started slowly, such as on Windows. (Browser extension 0.15.44)"
+        "Fixed an issue where the browser extension could not pair automatically when GravityPort started slowly, such as on Windows. (Browser extension 0.15.44)",
+        "Fixed an issue where a failed update install showed no message and kept offering Restart to Update. GravityPort now shows the reason, and after two failed installs of the same version it points to the website download."
+      ],
+      "other": [
+        "Added a backup signing key for in-app updates."
       ]
     }
   },

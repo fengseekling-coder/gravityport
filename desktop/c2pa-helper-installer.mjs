@@ -70,7 +70,9 @@ export async function checkForC2paHelperRelease({
   // The release manifest lists download sizes and hashes; trusting an
   // unsigned one would let a tampered feed pin arbitrary "verified" files.
   // Verification is therefore mandatory, not an optional hardening step.
-  if (!releaseManifestTrust) {
+  // Accepts one trusted key or a list (primary + backup); the signature's keyId picks the key.
+  const trusts = [releaseManifestTrust].flat().filter(Boolean);
+  if (!trusts.length) {
     throw installerError("TRUST_REQUIRED", "C2PA helper release check requires signed release manifest trust (from the build identity).");
   }
   if (typeof fetchImpl !== "function") throw installerError("FETCH_UNAVAILABLE", "C2PA helper release fetch is unavailable.");
@@ -88,7 +90,7 @@ export async function checkForC2paHelperRelease({
     const text = await response.text();
     if (Buffer.byteLength(text, "utf8") > RELEASE_MANIFEST_MAX_BYTES) throw installerError("RELEASE_INVALID", "GravityPort release manifest is too large.");
     const document = JSON.parse(text);
-    verifyReleaseManifestSignature(document, releaseManifestTrust);
+    verifyReleaseManifestSignature(document, trusts);
     return { supported: true, release: parseC2paHelperReleaseManifest(document, { platform, arch }) };
   } finally {
     clearTimeout(timeout);

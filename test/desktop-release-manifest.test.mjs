@@ -6,9 +6,16 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { parseUpdateManifest } from "../desktop/update-service.mjs";
-import { createReleaseManifestTrust, verifyReleaseManifestSignature } from "../lib/release-manifest-signature.mjs";
+import {
+  createReleaseManifestTrust,
+  releaseManifestBackupTrustFromRepository,
+  verifyReleaseManifestSignature,
+} from "../lib/release-manifest-signature.mjs";
 import { prepareDesktopReleaseManifest, resolveManifestNotes } from "../scripts/prepare-desktop-release-manifest.mjs";
 import { removeTestPath } from "./test-cleanup.mjs";
+
+// The backup key is public and committed; only its public half is read here.
+const REPOSITORY_ROOT = new URL("..", import.meta.url).pathname;
 
 async function fixtureArtifacts(version) {
   const root = await mkdtemp(join(tmpdir(), "mosa-release-manifest-"));
@@ -21,6 +28,7 @@ async function fixtureArtifacts(version) {
 
 const RELEASE_KEYS = generateKeyPairSync("ed25519");
 const RELEASE_TRUST = createReleaseManifestTrust(RELEASE_KEYS.publicKey);
+const BACKUP_TRUST = releaseManifestBackupTrustFromRepository(REPOSITORY_ROOT);
 
 function buildIdentity(version) {
   return {
@@ -30,6 +38,7 @@ function buildIdentity(version) {
     runtimeFingerprint: "c".repeat(64),
     distribution: "preview",
     releaseManifestTrust: RELEASE_TRUST,
+    releaseManifestBackupTrust: BACKUP_TRUST,
   };
 }
 

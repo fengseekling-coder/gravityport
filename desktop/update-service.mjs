@@ -347,7 +347,8 @@ export async function checkForMosaUpdate({
     const text = await response.text();
     if (Buffer.byteLength(text, "utf8") > UPDATE_MANIFEST_MAX_BYTES) throw new Error("Update manifest is too large.");
     const document = JSON.parse(text);
-    if (releaseManifestTrust) verifyReleaseManifestSignature(document, releaseManifestTrust);
+    const trusts = Array.isArray(releaseManifestTrust) ? releaseManifestTrust : [releaseManifestTrust].filter(Boolean);
+    if (trusts.length) verifyReleaseManifestSignature(document, trusts);
     const release = parseUpdateManifest(document);
     const distributionAllowed = !release.buildIdentity
       || canUpdateDistribution(currentDistribution, release.buildIdentity.distribution);

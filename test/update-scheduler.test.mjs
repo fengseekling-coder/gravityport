@@ -324,3 +324,35 @@ test("cancelDownload() aborts the in-flight background download but keeps the ca
   assert.equal(ready, 0, "an aborted download never announces update-ready");
   assert.equal(timers.scheduledCount(), 1, "the next scheduled check survives");
 });
+
+test("a version whose installs failed twice is neither downloaded nor announced, a newer one is", async (t) => {
+  const timers = manualTimers();
+  const root = await mkdtemp(join(tmpdir(), "mosa-update-sched-blocked-"));
+  t.after(() => removeTestPath(root, { recursive: true, force: true }));
+  let latest = "0.3.5";
+  let downloads = 0;
+  const ready = [];
+  const scheduler = createUpdateScheduler({
+    ...baseSchedulerOverrides(timers),
+    isVersionBlocked: (version) => version === "0.3.5",
+    checkForUpdate: async () => ({ ...RELEASE, latestVersion: latest }),
+    downloadUpdate: async () => {
+      downloads += 1;
+      return { zipPath: "/staging/zip" };
+    },
+    onUpdateReady: (payload) => ready.push(payload.version),
+    stagingRoot: root,
+    notifiedVersionsPath: join(root, "notified.json"),
+  });
+  await scheduler.start();
+  await timers.fire(UPDATE_FIRST_CHECK_DELAY_MS);
+  assert.equal(downloads, 0, "the blocked version is not downloaded");
+  assert.deepEqual(ready, []);
+  assert.equal(scheduler.readyPayload(), null);
+
+  latest = "0.3.6";
+  await timers.fire(UPDATE_FIRST_CHECK_DELAY_MS + UPDATE_CHECK_INTERVAL_MS);
+  assert.equal(downloads, 1, "a newer release is handled as usual");
+  assert.deepEqual(ready, ["0.3.6"]);
+  scheduler.stop();
+});

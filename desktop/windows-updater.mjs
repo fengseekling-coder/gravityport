@@ -341,6 +341,8 @@ ${windowsInstallProcessDrainScript()}
 
 $ErrorActionPreference = "Stop"
 $script:MosaLastMoveDiagnostic = $null
+# Failure code for the log's first line. Every step sets it before it runs.
+$script:MosaStep = "UNKNOWN"
 $parentDir = Split-Path -Parent $InstallDir
 $transactionRoot = Join-Path $parentDir (".MOSA-update-" + [Guid]::NewGuid().ToString("N"))
 $extractDir = Join-Path $transactionRoot "extracted"
@@ -411,9 +413,12 @@ try {
     }
   }
   Wait-Process -Id $TargetPid -ErrorAction SilentlyContinue
+  $script:MosaStep = "INSTALL_DIR_BUSY"
   Wait-MosaInstallProcessesExit -InstallDir $InstallDir
+  $script:MosaStep = "EXTRACT_FAILED"
   New-Item -ItemType Directory -Path $transactionRoot -Force | Out-Null
   Expand-Archive -LiteralPath $ZipPath -DestinationPath $extractDir -Force
+  $script:MosaStep = "VERIFY_FAILED"
   $flatPayloadExe = Join-Path $extractDir $PayloadExeName
   $nestedPayloadDir = $null
   $nestedPayloadExe = $null
@@ -458,6 +463,7 @@ try {
   # anything moves, so the portable directory and every relaunch path stay on
   # the current name. A failed rename throws while the original install is
   # still untouched, so the rollback below only has to relaunch it.
+  $script:MosaStep = "REPLACE_FAILED"
   if ($PayloadExeName -ne $CurrentExeName) {
     Rename-Item -LiteralPath $payloadExe -NewName $CurrentExeName -ErrorAction Stop
   }
@@ -465,11 +471,13 @@ try {
   Move-MosaDirectoryWithRetry -LiteralPath $InstallDir -Destination $backupDir
   $movedOriginal = $true
   try {
+    $script:MosaStep = "REPLACE_FAILED"
     Move-MosaDirectoryWithRetry -LiteralPath $payloadDir -Destination $InstallDir
     $newExe = Join-Path $InstallDir $CurrentExeName
     if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {
       throw "Updated MOSA executable is missing after replacement."
     }
+    $script:MosaStep = "NEW_VERSION_FAILED"
     Remove-Item -LiteralPath $ReadyFile -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $schemaUpgradeMarker -Force -ErrorAction SilentlyContinue
     $readyArgument = '--mosa-update-ready-file="' + $ReadyFile + '"'
@@ -515,7 +523,7 @@ try {
           Start-Process -FilePath $keptExe -WorkingDirectory $InstallDir -ErrorAction SilentlyContinue
         }
       }
-      ("Kept the new version because it already upgraded the library." + [Environment]::NewLine + ($_ | Out-String)) | Set-Content -LiteralPath $LogPath -Encoding UTF8
+      ("GP_UPDATE_KEPT_NEW exit=34" + [Environment]::NewLine + "Kept the new version because it already upgraded the library." + [Environment]::NewLine + ($_ | Out-String)) | Set-Content -LiteralPath $LogPath -Encoding UTF8
       exit 34
     }
     if ($newProcess -and -not $newProcess.HasExited) {
@@ -538,7 +546,7 @@ try {
   if (Test-Path -LiteralPath $oldExe -PathType Leaf) {
     Start-Process -FilePath $oldExe -WorkingDirectory $InstallDir -ErrorAction SilentlyContinue
   }
-  $errorText = ($_ | Out-String)
+  $errorText = "GP_UPDATE_FAILURE code=$($script:MosaStep) exit=1" + [Environment]::NewLine + ($_ | Out-String)
   if ($script:MosaLastMoveDiagnostic) {
     $errorText += [Environment]::NewLine + $script:MosaLastMoveDiagnostic + [Environment]::NewLine
   }

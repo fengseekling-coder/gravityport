@@ -12,7 +12,9 @@ import { formatManifestNotes, notesForVersion, readReleaseNotes } from "../lib/r
 import { releaseProductNames } from "./release-product.mjs";
 import {
   normalizeReleaseManifestTrust,
+  RELEASE_MANIFEST_BACKUP_KEY_ID,
   releaseManifestPrivateKeyFromEnvironment,
+  releaseManifestTrustSet,
   signReleaseManifest,
   verifyReleaseManifestSignature,
 } from "../lib/release-manifest-signature.mjs";
@@ -112,7 +114,15 @@ export async function prepareDesktopReleaseManifest({
     },
   };
 
-  const trust = normalizeReleaseManifestTrust(buildIdentity?.releaseManifestTrust);
+  const primaryTrust = normalizeReleaseManifestTrust(buildIdentity?.releaseManifestTrust);
+  if (!buildIdentity?.releaseManifestBackupTrust) {
+    throw new Error("Release build identity is missing releaseManifestBackupTrust.");
+  }
+  const backupTrust = normalizeReleaseManifestTrust(buildIdentity.releaseManifestBackupTrust);
+  if (backupTrust.keyId !== RELEASE_MANIFEST_BACKUP_KEY_ID) {
+    throw new Error(`Release build identity releaseManifestBackupTrust must carry key id ${RELEASE_MANIFEST_BACKUP_KEY_ID}.`);
+  }
+  const trust = releaseManifestTrustSet(primaryTrust, backupTrust);
   if (!signingPrivateKey) throw new Error("Release manifest signing private key is required.");
   const manifest = signReleaseManifest(unsignedManifest, {
     privateKey: signingPrivateKey,

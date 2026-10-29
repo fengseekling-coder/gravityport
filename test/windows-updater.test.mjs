@@ -641,3 +641,25 @@ test("Windows apply helper waits 120 seconds and never rolls back a library the 
   assert.ok(keep > 0 && keep < recovery.indexOf("Stop-Process -Id $newProcess.Id"), "the marker is checked before the new version is stopped");
   assert.ok(recovery.indexOf("exit 34") > keep && recovery.indexOf("exit 34") < recovery.indexOf("Move-MosaDirectoryWithRetry -LiteralPath $backupDir"), "keeping the new version exits before the previous copy is restored");
 });
+
+test("Windows apply helper sets a failure step before each step that can fail", () => {
+  const script = windowsUpdateHelperScript();
+  const lines = script.split("\n");
+  // The line after `$script:MosaStep = "<code>"` (within `within` lines) must hold the named step.
+  const expectations = [
+    ["INSTALL_DIR_BUSY", "Wait-MosaInstallProcessesExit", 1],
+    ["EXTRACT_FAILED", "Expand-Archive", 2],
+    ["VERIFY_FAILED", "$flatPayloadExe = ", 1],
+    ["REPLACE_FAILED", "Move-MosaDirectoryWithRetry -LiteralPath $InstallDir", 5],
+    ["NEW_VERSION_FAILED", "Remove-Item -LiteralPath $ReadyFile", 1],
+  ];
+  for (const [code, command, within] of expectations) {
+    const index = lines.findIndex((line) => line.includes(`$script:MosaStep = "${code}"`));
+    assert.ok(index >= 0, `${code} step is assigned`);
+    const following = lines.slice(index + 1, index + 1 + within + 1).join("\n");
+    assert.ok(following.includes(command), `${code} is set before "${command}"`);
+  }
+  assert.match(script, /\$script:MosaStep = "UNKNOWN"/, "the step starts as UNKNOWN");
+  assert.match(script, /GP_UPDATE_FAILURE code=\$\(\$script:MosaStep\) exit=1/, "the outer catch logs the failing step first");
+  assert.match(script, /GP_UPDATE_KEPT_NEW exit=34/, "the kept-new branch logs its own code");
+});

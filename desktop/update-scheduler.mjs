@@ -50,6 +50,9 @@ export function createUpdateScheduler({
   artifactForPlatform,
   downloadUpdate,
   isInstallInProgress = () => false,
+  // A version whose installs failed twice is not downloaded or announced again;
+  // the failure dialog points the user to the download page instead.
+  isVersionBlocked = () => false,
   onUpdateReady,
   showReadyNotification,
   stagingRoot,
@@ -65,7 +68,8 @@ export function createUpdateScheduler({
   let readyUpdate = null;
 
   function readyPayload() {
-    return readyUpdate ? { version: readyUpdate.version, notes: readyUpdate.notes } : null;
+    if (!readyUpdate || isVersionBlocked(readyUpdate.version)) return null;
+    return { version: readyUpdate.version, notes: readyUpdate.notes };
   }
 
   async function loadNotifiedVersions() {
@@ -102,6 +106,7 @@ export function createUpdateScheduler({
     try {
       const release = await checkForUpdate();
       if (stopped || !release?.updateAvailable) return;
+      if (isVersionBlocked(release.latestVersion)) return;
       if (!artifactForPlatform(release)) return;
       try {
         await downloadUpdate(release, { signal: downloadAbort.signal });

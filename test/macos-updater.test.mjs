@@ -224,7 +224,7 @@ test("macOS apply helper models a cross-name replacement with a guarded target a
   assert.match(script, /CROSS_NAME=1/);
   // The refusal runs after the previous app quit and with the trap armed, so
   // it clears the handoff, logs, and reopens the previous app.
-  assert.match(script, /trap 'code=\$\?; rollback;[\s\S]*while kill -0 "\$TARGET_PID"[\s\S]*if \[ "\$CROSS_NAME" -eq 1 \] && \[ -e "\$TARGET_APP" \]; then\n  exit 33\nfi/);
+  assert.match(script, /trap on_exit HUP INT TERM EXIT[\s\S]*while kill -0 "\$TARGET_PID"[\s\S]*if \[ "\$CROSS_NAME" -eq 1 \] && \[ -e "\$TARGET_APP" \]; then\n  STEP="TARGET_EXISTS"\n  exit 33\nfi/);
   assert.match(script, /elif \[ "\$MOVED_ORIGINAL" -eq 0 \] && \[ -d "\$INSTALL_APP" \] && ! kill -0 "\$TARGET_PID"/);
   assert.match(script, /if \[ -d "\$TARGET_APP" \]; then rm -rf "\$TARGET_APP"; fi/);
   assert.match(script, /PAYLOAD_APP="\$EXTRACT_DIR\/\$APP_NAME"/);
@@ -433,5 +433,31 @@ test("macOS apply helper waits 120 seconds and never rolls back a library the ne
   const keep = rollback.indexOf('[ -f "$SCHEMA_MARKER" ]');
   assert.ok(keep > 0 && keep < rollback.indexOf('kill -TERM "$NEW_PID"'), "the marker is checked before the new version is stopped");
   assert.ok(keep < rollback.indexOf('mv "$BACKUP_APP" "$INSTALL_APP"'), "the marker is checked before the previous version is restored");
-  assert.match(script, /if \[ "\$KEPT_NEW" -eq 1 \]; then echo "[^"]*kept the new version[^"]*" > "\$LOG_PATH"; exit 34; fi/);
+  assert.match(script, /on_exit\(\) \{[\s\S]*if \[ "\$KEPT_NEW" -eq 1 \]; then\n    printf 'GP_UPDATE_KEPT_NEW exit=34\\n' > "\$LOG_PATH"\n    echo "[^"]*kept the new version[^"]*" >> "\$LOG_PATH"\n    exit 34\n  fi/, "the kept-new branch logs its own code and exits 34");
+  assert.match(script, /printf 'GP_UPDATE_FAILURE code=%s exit=%s\\n' "\$STEP" "\$code" > "\$LOG_PATH"/, "every other exit logs the step that failed");
+});
+
+test("macOS apply helper renames the unpacked app into the transaction instead of copying it", () => {
+  const script = macosUpdateHelperScript();
+  assert.match(script, /mv "\$PAYLOAD_APP" "\$REPLACEMENT_APP"/);
+  assert.doesNotMatch(script, /ditto "\$PAYLOAD_APP" "\$REPLACEMENT_APP"/, "a second full copy would double the install-time disk use");
+  // The rollback never reads the payload path after the move.
+  const rollback = script.slice(script.indexOf("rollback() {"), script.indexOf("on_exit() {"));
+  assert.doesNotMatch(rollback, /REPLACEMENT_APP|PAYLOAD_APP|EXTRACT_DIR/);
+});
+
+test("macOS apply helper sets a failure step before each step that can fail", () => {
+  const script = macosUpdateHelperScript();
+  const stepBefore = [
+    ['EXTRACT_FAILED', /STEP="EXTRACT_FAILED"\nmkdir -p "\$EXTRACT_DIR"\n\/usr\/bin\/ditto -x -k "\$ZIP_PATH" "\$EXTRACT_DIR"/],
+    ['VERIFY_FAILED', /STEP="VERIFY_FAILED"\nPAYLOAD_APP=/],
+    ['TARGET_EXISTS', /STEP="TARGET_EXISTS"\n  exit 33/],
+    ['REPLACE_FAILED', /STEP="REPLACE_FAILED"\nmv "\$PAYLOAD_APP" "\$REPLACEMENT_APP"\nmv "\$INSTALL_APP" "\$BACKUP_APP"/],
+    ['NEW_VERSION_FAILED', /STEP="NEW_VERSION_FAILED"\nrm -f "\$READY_FILE" "\$SCHEMA_MARKER"/],
+  ];
+  for (const [code, pattern] of stepBefore) {
+    assert.match(script, pattern, `${code} is set right before the step it names`);
+  }
+  assert.match(script, /STEP="UNKNOWN"\n/, "the step starts as UNKNOWN for anything outside those steps");
+  assert.match(script, /printf 'GP_UPDATE_FAILURE code=%s exit=%s\\n' "\$STEP" "\$code" > "\$LOG_PATH"/);
 });

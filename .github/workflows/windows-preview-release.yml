@@ -97,7 +97,9 @@ jobs:
           const identity = JSON.parse(asar.extractFile(process.argv[1], require('path').normalize(identityPath)).toString('utf8'));
           const expected = JSON.parse(process.argv[2]);
           for (const [key, value] of Object.entries(expected)) {
-            const actual = key === 'keyId' ? identity.releaseManifestTrust?.keyId : identity[key];
+            const actual = key === 'keyId' ? identity.releaseManifestTrust?.keyId
+              : key === 'backupKeyId' ? identity.releaseManifestBackupTrust?.keyId
+              : identity[key];
             if (actual !== value) throw new Error(`Unexpected ${key}: ${actual || '(missing)'}`);
           }
           console.log(JSON.stringify({
@@ -114,6 +116,7 @@ jobs:
             gitSha = $env:RELEASE_SHA
             distribution = 'preview'
             keyId = '235d3651f80176bed99098cab6a4c6fe0581d0206e23f691af2c8bf88aa9839f'
+            backupKeyId = '3f5eb959cc022cfe8a532fb9dc17b44bdd46b243778943a3dacf728c83f1f5ec'
           }
           node -e $identityScript $asarFiles[0].FullName ($expected | ConvertTo-Json -Compress)
 
