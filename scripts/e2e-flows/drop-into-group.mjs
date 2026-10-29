@@ -73,7 +73,16 @@ function flowSource(groupName) {
     async function makeFile(name, type) {
       const canvas = document.createElement('canvas');
       canvas.width = 32; canvas.height = 24;
-      canvas.getContext('2d').fillRect(0, 0, 32, 24);
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#333333';
+      context.fillRect(0, 0, 32, 24);
+      // Each fixture carries a name-derived mark: manual imports of identical
+      // bytes skip as already-in-library (task 291), so the flow needs every
+      // file to hold distinct bytes.
+      let mark = 0;
+      for (const ch of name) mark = (mark + ch.charCodeAt(0)) % 28;
+      context.fillStyle = '#eeeeee';
+      context.fillRect(2 + mark, 2, 4, 20);
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
       return new File([blob], name, { type });
     }

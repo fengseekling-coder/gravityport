@@ -41,6 +41,8 @@ interface DerivativeProcessorResult extends Record<string, unknown> {
   height: number;
   /** Dominant colors of the 400px thumbnail, largest share first; [] when none could be computed. */
   palette: PaletteColor[];
+  /** "dhash64:<16 hex>" fingerprint of the 400px thumbnail; "" when it could not be computed. */
+  perceptualHash: string;
   processorPid: number;
 }
 

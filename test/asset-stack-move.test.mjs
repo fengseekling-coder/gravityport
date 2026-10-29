@@ -8,6 +8,7 @@ import Database from "better-sqlite3";
 
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { uniquePngBytes } from "./helpers/unique-image.mjs";
 
 const ONE_PIXEL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==", "base64");
 
@@ -251,7 +252,10 @@ async function startMoveRuntime(t) {
   deferTestPathRemoval(root, { recursive: true, force: true });
   const generated = join(root, "generated-images");
   await mkdir(generated, { recursive: true });
-  for (const id of ["a", "b", "c", "d"]) await writeFile(join(generated, `${id}.png`), ONE_PIXEL_PNG);
+  const ids = ["a", "b", "c", "d"];
+  for (let index = 0; index < ids.length; index += 1) {
+    await writeFile(join(generated, `${ids[index]}.png`), await uniquePngBytes(index + 1));
+  }
 
   const runtime = await startMosaRuntime({
     port: 0,

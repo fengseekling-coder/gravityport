@@ -13,8 +13,10 @@ import { deferTestPathRemoval } from "./test-cleanup.mjs";
 
 const repositoryRoot = join(import.meta.dirname, "..");
 
-async function writePng(filePath) {
-  await sharp({ create: { width: 96, height: 64, channels: 3, background: { r: 30, g: 120, b: 200 } } }).png().toFile(filePath);
+// Seed-varying red channel: manual imports of identical bytes now skip as
+// already-in-library, so multi-asset fixtures need distinct files.
+async function writePng(filePath, seed = 0) {
+  await sharp({ create: { width: 96, height: 64, channels: 3, background: { r: 30 + ((seed * 17) % 200), g: 120, b: 200 } } }).png().toFile(filePath);
 }
 
 async function fileExists(filePath) {
@@ -46,7 +48,7 @@ async function createSqliteLibrary(t, assetCount) {
   t.after(() => store.close());
   for (let index = 0; index < assetCount; index += 1) {
     const sourcePath = join(sourcesDir, `asset-${index}.png`);
-    await writePng(sourcePath);
+    await writePng(sourcePath, index + 1);
     await store.createAsset({ projectId: "default", assetId: `asset-${index}`, imagePath: sourcePath, prompt: `prompt ${index}` }, { ingestMode: "manual" });
   }
   for (;;) {
@@ -75,7 +77,7 @@ test("sqlite empty trash leaves zero orphan rows and zero orphan managed files",
   const sourcesDir = join(root, "project", "generated-images");
   for (let index = 100; index < 200; index += 1) {
     const sourcePath = join(sourcesDir, `bulk-${index}.png`);
-    await writePng(sourcePath);
+    await writePng(sourcePath, index);
     await store.createAsset({ projectId: "default", assetId: `bulk-${index}`, imagePath: sourcePath, prompt: `bulk ${index}` }, { ingestMode: "manual" });
   }
   for (;;) { const job = await store.claimDerivativeJob(); if (!job) break; await processDerivativeJob(store, job); }

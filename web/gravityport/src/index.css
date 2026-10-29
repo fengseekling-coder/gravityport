@@ -3776,3 +3776,110 @@ body.gp-card-dragging .toast {
   opacity: .4;
   cursor: default;
 }
+/* Task 291: 导入结果浮层(手动导入去重的清单确认)。规格照确认框:--ui-panel
+   底、--radius-panel、--ui-shadow、surface-in;层级 50 写进 DESIGN.md 层级表。 */
+.import-review-layer {
+  z-index: 50;
+}.import-review {
+  width: min(680px, calc(100vw - 40px));
+  max-height: min(640px, calc(100vh - 80px));
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-6);
+  border-radius: var(--radius-panel);
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  box-shadow: var(--ui-shadow);
+  animation: surface-in 320ms var(--ease-out) both;
+}.import-review h3 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -.5px;
+  margin: 0 0 6px;
+}.import-review .review-note {
+  font-size: 12px;
+  color: var(--ui-muted);
+  margin: 0 0 4px;
+}.import-review .review-scroll {
+  overflow-y: auto;
+  min-height: 0;
+}.import-review .review-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0 2px;
+}.import-review .review-section-head h4 {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ui-muted);
+  margin: 0;
+}.import-review .review-section-actions {
+  display: flex;
+  gap: 10px;
+}.import-review .review-section-actions button {
+  font-size: 12px;
+  color: var(--ui-secondary);
+}.import-review .review-section-actions button:hover {
+  color: var(--ui-text);
+}.import-review .review-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--ui-line);
+}.import-review .review-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
+  flex: none;
+}.import-review .review-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}.import-review .review-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}.import-review .review-name {
+  font-size: 12px;
+  color: var(--ui-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}.import-review .review-sub {
+  font-size: 12px;
+  color: var(--ui-muted);
+}.import-review .review-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+}.import-review .review-options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ui-secondary);
+}.import-review .review-options label:has(input:checked) {
+  color: var(--ui-text);
+}.import-review .review-options input {
+  accent-color: var(--ui-text);
+  margin: 0;
+}.import-review .review-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 12px;
+}.import-review .review-more {
+  display: block;
+  margin: 8px auto 0;
+  font-size: 12px;
+  color: var(--ui-secondary);
+}.import-review .review-more:hover {
+  color: var(--ui-text);
+}

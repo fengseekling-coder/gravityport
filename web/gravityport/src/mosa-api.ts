@@ -649,6 +649,53 @@ export async function moveAssetsToStack(project: string, assetIds: string[], tar
   }
 }
 
+// ─── Manual-import dedupe (task 291) ─────────────────────────────────────────
+
+export type ImportExistingLocation = {
+  id: string
+  groupName: string
+  stackId: string
+  stackName: string
+  archived: boolean
+}
+
+export type ImportSimilarMatch = {
+  newAssetId: string
+  existingAssetId: string
+  distance: number
+  newWidth: number
+  newHeight: number
+  existingWidth: number
+  existingHeight: number
+  clearer: boolean
+}
+
+export type ImportSimilarState = {
+  pending: string[]
+  unchecked: string[]
+  identical: Array<{ newAssetId: string; existingAssetId: string }>
+  matches: ImportSimilarMatch[]
+}
+
+export function fetchImportSimilarCheck(project: string, assetIds: string[], signal?: AbortSignal): Promise<ImportSimilarState> {
+  return requestJson<ImportSimilarState>("/api/import/similar-check", {
+    method: "POST",
+    body: { projectId: project, assetIds },
+    signal,
+  })
+}
+
+export type ImportResolveAction =
+  | { kind: "trash-new"; newAssetId: string; existingAssetId: string; reason?: "duplicate-import:user" | "duplicate-import:identical" }
+  | { kind: "replace-with-new"; newAssetId: string; existingAssetId: string }
+
+export function resolveImportDuplicates(project: string, actions: ImportResolveAction[]): Promise<JsonValue> {
+  return requestJson<JsonValue>("/api/import/resolve", {
+    method: "POST",
+    body: { projectId: project, actions },
+  })
+}
+
 /** Mutation headers for callers that must stream a raw body (import staging). */
 export function mosaMutationHeaders(method = "POST"): Record<string, string> {
   const verb = String(method || "GET").toUpperCase()

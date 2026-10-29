@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
+import { uniquePngBytes } from "./helpers/unique-image.mjs";
 import assert from "node:assert/strict";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
@@ -48,11 +49,6 @@ before(async () => {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-const ONE_PIXEL_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==",
-  "base64",
-);
 
 function mutationHeaders(runtime) {
   return { "content-type": "application/json", "x-mosa-client-token": runtime.clientToken };
@@ -585,8 +581,9 @@ async function startLibraryActionsRuntime() {
   deferTestPathRemoval(root, { recursive: true, force: true });
   const generated = join(root, "generated-images");
   await mkdir(generated, { recursive: true });
-  for (const id of ["a", "b", "c", "d", "e", "p", "q", "r", "x", "y"]) {
-    await writeFile(join(generated, `${id}.png`), ONE_PIXEL_PNG);
+  const fixtureIds = ["a", "b", "c", "d", "e", "p", "q", "r", "x", "y"];
+  for (let index = 0; index < fixtureIds.length; index += 1) {
+    await writeFile(join(generated, `${fixtureIds[index]}.png`), await uniquePngBytes(index + 1));
   }
 
   const runtime = await startMosaRuntime({

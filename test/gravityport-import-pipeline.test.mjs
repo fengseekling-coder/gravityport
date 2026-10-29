@@ -9,11 +9,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { after, afterEach, before, describe, it } from "node:test"
 import assert from "node:assert/strict"
-
-const ONE_PIXEL_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==",
-  "base64",
-)
+import { uniquePngBytes } from "./helpers/unique-image.mjs"
 
 const repositoryRoot = resolve(import.meta.dirname, "..")
 const uiRoot = join(repositoryRoot, "web", "gravityport")
@@ -642,7 +638,7 @@ describe("runImport against real MOSA runtime", () => {
     await mkdir(generated, { recursive: true })
 
     for (let i = 0; i < 45; i++) {
-      await writeFile(join(generated, `img${i}.png`), ONE_PIXEL_PNG)
+      await writeFile(join(generated, `img${i}.png`), await uniquePngBytes(i + 1))
     }
 
     const runtime = await startMosaRuntime({
@@ -696,7 +692,7 @@ describe("runImport against real MOSA runtime", () => {
     await mkdir(generated, { recursive: true })
 
     for (let i = 0; i < 7; i++) {
-      await writeFile(join(generated, `img${i}.png`), ONE_PIXEL_PNG)
+      await writeFile(join(generated, `img${i}.png`), await uniquePngBytes(i + 1))
     }
 
     const runtime = await startMosaRuntime({

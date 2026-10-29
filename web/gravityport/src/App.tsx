@@ -64,7 +64,10 @@ import {
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
   type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
   fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
+  fetchImportSimilarCheck, resolveImportDuplicates, type ImportSimilarState,
 } from "./mosa-api"
+import ImportReviewDialog, { type ImportReviewData, type ImportReviewDecision } from "./ImportReviewDialog"
+import type { AlreadyInLibraryEntry } from "./import-pipeline"
 import { VideoPosterQueue } from "./video-poster"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
@@ -397,6 +400,10 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [importing, setImporting] = useState(false)
+  // Task 291: finished imports queue their review lists; the first one shows
+  // once settings/viewer/confirmation dialogs are closed.
+  const [importReviewQueue, setImportReviewQueue] = useState<ImportReviewData[]>([])
+  const [importReviewBusy, setImportReviewBusy] = useState(false)
   const [loadError, setLoadError] = useState("")
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [pageTotal, setPageTotal] = useState<number | null>(null)
@@ -516,6 +523,12 @@ export default function App() {
   const [restartPending, setRestartPending] = useState(false)
   // Rename notice (task 116): shown once at first-screen render.
   const [renameNoticeOpen, setRenameNoticeOpen] = useState(false)
+  const activeImportReview = importReviewQueue[0]
+  const importReviewBlocked = Boolean(
+    settings || preview || deleting || permanentDeleteIds || emptyTrashConfirm || renameNoticeOpen
+    || groupRename || groupDeleteConfirm || groupMerge || groupStats || stackRename || groupCreateWithSelection
+    || stackDissolveConfirm || stackTrashConfirm,
+  )
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
   const [generationHistory, setGenerationHistory] = useState<MosaGenerationHistory | null>(null)
   const [relationBusy, setRelationBusy] = useState(false)
@@ -2541,13 +2554,36 @@ export default function App() {
         },
       })
       const firstReason = result.errors[0]?.reason
-      if (!result.imported && !result.failed) notify("导入失败")
-      else if (result.failed) notify(firstReason ? `${tr("部分素材导入失败")}：${firstReason}` : tr("部分素材导入失败"))
-      else if (result.skipped) notify(fillNamed("有 {count} 个文件格式不支持，已跳过", { count: result.skipped }))
-      else notify("导入完成")
+      const dupCount = result.alreadyInLibrary.length
+      let baseText: string
+      if (!result.imported && !result.failed && dupCount > 0) {
+        baseText = result.skipped > 0
+          ? fillNamed("{dup} 张已在素材库中，{skipped} 个文件格式不支持，没有导入", { dup: dupCount, skipped: result.skipped })
+          : fillNamed("{dup} 张已在素材库中，没有导入", { dup: dupCount })
+      } else if (result.imported > 0 && dupCount > 0) {
+        baseText = result.skipped > 0
+          ? fillNamed("已导入 {imported} 张，{skipped} 个文件格式不支持，{dup} 张已在素材库中", { imported: result.imported, skipped: result.skipped, dup: dupCount })
+          : fillNamed("已导入 {imported} 张，{dup} 张已在素材库中", { imported: result.imported, dup: dupCount })
+      } else if (!result.imported && !result.failed) {
+        notify("导入失败")
+        baseText = ""
+      } else if (result.failed) {
+        notify(firstReason ? `${tr("部分素材导入失败")}：${firstReason}` : tr("部分素材导入失败"))
+        baseText = ""
+      } else if (result.skipped) {
+        baseText = fillNamed("有 {count} 个文件格式不支持，已跳过", { count: result.skipped })
+      } else {
+        baseText = tr("导入完成")
+      }
       // The navigation key reloads the current view too (inside a stack, the
       // stack's members), without a 正在刷新 toast replacing the result above.
       refreshNavigation()
+      if (result.createdIds.length) {
+        notify(`${baseText}${tr("· 正在检查相似的图…")}`)
+        void queueImportReview(project, result.createdIds, groupName || "", stackId, stackName, result.alreadyInLibrary)
+      } else if (baseText) {
+        notify(baseText)
+      }
       return result.createdIds
     } catch (error) {
       notify(errorMessage(error))
@@ -2556,6 +2592,121 @@ export default function App() {
       setImporting(false)
     }
   }
+
+  // Task 291: poll the similar-check endpoint every 2s until every asset of
+  // this import has a perceptual hash (or is proven never to get one), move
+  // pixel-identical copies to Trash, then queue the review list. The list
+  // itself only renders once settings/viewer/confirmation dialogs are closed,
+  // and two imports queue up instead of overlapping.
+  const queueImportReview = async (
+    reviewProject: string,
+    assetIds: string[],
+    targetGroupName: string,
+    targetStackId: string,
+    targetStackName: string,
+    alreadyInLibrary: AlreadyInLibraryEntry[],
+  ) => {
+    try {
+      let state: ImportSimilarState | null = null
+      for (let attempt = 0; attempt < 150; attempt += 1) {
+        state = await fetchImportSimilarCheck(reviewProject, assetIds)
+        if (!state.pending.length) break
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+      }
+      // Give up silently when the check never settles; the toast already told
+      // the user the import landed.
+      if (!state || state.pending.length) return
+      if (state.identical.length) {
+        await resolveImportDuplicates(reviewProject, state.identical.map(({ newAssetId, existingAssetId }) => ({
+          kind: "trash-new" as const, newAssetId, existingAssetId, reason: "duplicate-import:identical" as const,
+        })))
+        refreshNavigation()
+      }
+      const elsewhereKept = alreadyInLibrary.filter(({ existingAsset }) => (
+        targetGroupName
+          ? existingAsset.groupName !== targetGroupName
+          : targetStackId
+            ? existingAsset.stackId !== targetStackId
+            : false
+      ))
+      if (!state.matches.length && !elsewhereKept.length) return
+      const fetchIds = [...new Set([
+        ...state.matches.flatMap((entry) => [entry.newAssetId, entry.existingAssetId]),
+        ...elsewhereKept.map((entry) => entry.existingAsset.id),
+      ])]
+      const fetched = await Promise.all(fetchIds.map((id) => fetchAsset(reviewProject, id).catch(() => null)))
+      const assetById = new Map(fetched.filter((asset): asset is MosaAsset => Boolean(asset)).map((asset) => [asset.id, asset]))
+      const matches = state.matches
+        .map((entry) => {
+          const newAsset = assetById.get(entry.newAssetId)
+          const existingAsset = assetById.get(entry.existingAssetId)
+          return newAsset && existingAsset ? { newAsset, existingAsset, clearer: entry.clearer } : null
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+      const elsewhere = elsewhereKept
+        .map(({ fileName, existingAsset }) => {
+          const asset = assetById.get(existingAsset.id)
+          if (!asset) return null
+          const locationLabel = existingAsset.stackId
+            ? fillNamed("堆叠「{stack}」", { stack: existingAsset.stackName || existingAsset.stackId })
+            : existingAsset.groupName
+              ? fillNamed("现在在：分组 {group}", { group: existingAsset.groupName })
+              : tr("未分组")
+          return {
+            existingAssetId: existingAsset.id,
+            fileName,
+            thumbnailUrl: asset.thumbnail_url,
+            locationLabel,
+            archived: existingAsset.archived,
+          }
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+      if (!matches.length && !elsewhere.length) return
+      setImportReviewQueue((queue) => [...queue, {
+        key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        project: reviewProject,
+        targetGroupName,
+        targetStackId,
+        targetStackName,
+        identicalCount: state!.identical.length,
+        elsewhere,
+        matches,
+      }])
+    } catch (error) {
+      console.warn(`[MOSA] import review failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  const dismissImportReview = () => setImportReviewQueue((queue) => queue.slice(1))
+
+  const applyImportReview = async (data: ImportReviewData, decision: ImportReviewDecision) => {
+    setImportReviewBusy(true)
+    try {
+      if (decision.elsewhereMoves.length) {
+        if (data.targetGroupName) await setAssetsGroup(data.project, decision.elsewhereMoves, data.targetGroupName)
+        else if (data.targetStackId) await moveAssetsToStack(data.project, decision.elsewhereMoves, data.targetStackId)
+      }
+      if (decision.matchChoices.length) {
+        const response = await resolveImportDuplicates(data.project, decision.matchChoices.map(({ newAssetId, existingAssetId, choice }) => (
+          choice === "replace-with-new"
+            ? { kind: "replace-with-new" as const, newAssetId, existingAssetId }
+            : { kind: "trash-new" as const, newAssetId, existingAssetId, reason: "duplicate-import:user" as const }
+        )))
+        const results = Array.isArray((response as { results?: unknown }).results)
+          ? (response as { results: Array<{ ok?: boolean }> }).results
+          : []
+        const failed = results.filter((entry) => entry.ok === false).length
+        if (failed > 0) notify(fillNamed("{failed} 项未能处理", { failed }))
+      }
+      dismissImportReview()
+      refreshNavigation()
+    } catch (error) {
+      notify(errorMessage(error))
+    } finally {
+      setImportReviewBusy(false)
+    }
+  }
+
   // Drop entry: collectDroppedFiles must be invoked synchronously inside the
   // drop handler — dataTransfer.items die after the event tick — and the scan
   // promise is awaited afterwards. A folder over the scan limit surfaces as a
@@ -4799,6 +4950,20 @@ export default function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {activeImportReview && !importReviewBlocked && (
+        <div
+          className="modal-layer import-review-layer"
+          onMouseDown={(event) => { if (event.target === event.currentTarget && !importReviewBusy) dismissImportReview() }}
+        >
+          <ImportReviewDialog
+            data={activeImportReview}
+            busy={importReviewBusy}
+            language={language}
+            onConfirm={(decision) => { void applyImportReview(activeImportReview, decision) }}
+            onCancel={() => { if (!importReviewBusy) dismissImportReview() }}
+          />
         </div>
       )}
       {marquee && (
