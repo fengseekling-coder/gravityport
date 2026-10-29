@@ -993,9 +993,11 @@
   }
 
   function promptQuality(promptStatus, prompt) {
+    // Order must match lib/prompt-rank.mjs PROMPT_STATUS_RANK; a test locks it.
     const rank = {
       "not-available": 0,
       "user-message": 1,
+      "provider-visible-prompt": 1,
       "visible-caption": 2,
       "generation-tool-prompt": 3,
     }[String(promptStatus || "")] ?? 0;

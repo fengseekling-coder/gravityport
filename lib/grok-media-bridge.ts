@@ -326,6 +326,9 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
   // the session file; the theme is only recomputed alongside a prompt that is
   // actually being upgraded.
   const promptChanged = !isPromptUserEdited(asset) && canUpgradePrompt && Boolean(generation.prompt) && asset.prompt !== generation.prompt;
+  // The provenance status describes the kept prompt, so an automatic channel
+  // never rewrites it over a user edit either.
+  const statusUpgradable = canUpgradePrompt && !isPromptUserEdited(asset);
   const themeChanged = !isThemeUserEdited(asset) && promptChanged && Boolean(nextTheme) && asset.theme !== nextTheme;
   const assetSource = (asset.source as Record<string, unknown> | undefined) || {};
   const existingUserMessage = [assetSource.user_message, (asset.business_fields as Record<string, unknown> | undefined)?.user_message]
@@ -341,7 +344,7 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
     generation_tool: generation.toolName || assetSource.generation_tool || null,
     media_kind: candidate?.mediaKind || assetSource.media_kind || null,
   };
-  if (canUpgradePrompt && generation.promptStatus) nextSource.prompt_status = generation.promptStatus;
+  if (statusUpgradable && generation.promptStatus) nextSource.prompt_status = generation.promptStatus;
   if (userMessageChanged) nextSource.user_message = nextUserMessage;
   if (candidate?.mediaPath && !assetSource.grok_media_path) nextSource.grok_media_path = candidate.mediaPath;
   else if (candidate?.mediaPath && assetSource.grok_media_path !== candidate.mediaPath) {
@@ -352,7 +355,7 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
   }
   const sourceChanged = ["grok_session_path", "grok_tool_call_id", "model", "generation_tool", "prompt_status", "grok_media_path", "user_message"].some((key) => assetSource[key] !== nextSource[key])
     || JSON.stringify(assetSource.grok_alternate_paths || []) !== JSON.stringify(nextSource.grok_alternate_paths || []);
-  const businessStatusChanged = canUpgradePrompt && generation.promptStatus && (asset.business_fields as Record<string, unknown> | undefined)?.prompt_status !== generation.promptStatus;
+  const businessStatusChanged = statusUpgradable && generation.promptStatus && (asset.business_fields as Record<string, unknown> | undefined)?.prompt_status !== generation.promptStatus;
   if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged && !userMessageChanged) return false;
   await (store as unknown as { updateMetadata: (projectId: string, assetId: string, metadata: Record<string, unknown>) => Promise<void> }).updateMetadata(
     asset.project_id as string,

@@ -7,7 +7,16 @@ import { readVideoMetadataFromFile } from "./video-metadata.js";
 import { createdAtTimestamp } from "./recent-window.js";
 import { createReferenceAttachmentStore, type ReferenceAttachment } from "./reference-attachment-store.js";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
-import { isPromptUserEdited, isThemeUserEdited } from "./user-edit-marker.mjs";
+import {
+  createIngestLookup,
+  ingestIntoLibrary,
+  mergedUserMessage,
+  normalizeGenerationStatus,
+  normalizeMediaVariant,
+  normalizePromptScope,
+  recordIngestOccurrence,
+  upgradePrompt,
+} from "./library-ingest.mjs";
 
 const DEFAULT_PROJECT_ID = "default";
 const DEFAULT_TEMP_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -64,8 +73,6 @@ const VIDEO_PROVIDERS = new Set(["flow", "google-ai-studio", "jimeng", "midjourn
 // as prompt_status="provider-visible-prompt" (still unverified by the provider).
 const PROVIDER_VISIBLE_PROMPT_PROVIDERS = new Set(["gemini", "flow", "google-ai-studio", "jimeng", "midjourney"]);
 const PROMPT_STATUSES = new Set(["user-message", "visible-caption", "not-available", "generation-tool-prompt", "provider-visible-prompt"]);
-const PROMPT_SCOPES = new Set(["output", "attempt", "message", ""]);
-const GENERATION_STATUSES = new Set(["unknown", "in_progress", "partial", "completed", "failed", "cancelled"]);
 const MIME_TO_FORMATS: Record<string, Set<string>> = { "image/png": new Set(["png"]), "image/jpeg": new Set(["jpeg"]), "image/webp": new Set(["webp"]), "image/gif": new Set(["gif"]), "image/avif": new Set(["avif", "heif"]) };
 export const WEB_CAPTURE_MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 export const WEB_CAPTURE_MAX_VIDEO_BYTES = 96 * 1024 * 1024;
@@ -300,28 +307,10 @@ async function upgradeWebCaptureMetadata({ store, projectId, input }: { store: S
   const logicalOutputId = logicalCaptureKey(projectId, provider, input);
   const sourceMediaUrl = sanitizeStoredMediaUrl(input.sourceMediaUrl || input.source_media_url);
   const upgradeMediaKind = String(input.mediaKind || input.media_kind || "image").trim().toLowerCase() === "video" ? "video" : "image";
-  let assets: StoredAsset[] | null = null;
-  let asset = typeof store.findAssetByProviderIdentity === "function"
-    ? await store.findAssetByProviderIdentity(projectId, provider, providerAssetId, logicalOutputId, upgradeMediaKind)
-    : null;
-  if (!asset && typeof store.findAssetByProviderIdentity !== "function") {
-    const listedAssets = await Promise.all([
-      store.listAssets({ projectId }),
-      store.listAssets({ projectId, archived: true }).catch(() => []),
-    ]).then(([active, archived]) => [...active, ...archived]);
-    assets = listedAssets;
-    asset = findLogicalProviderAsset(listedAssets, provider, providerAssetId, logicalOutputId);
-  }
+  const lookup = createIngestLookup(store, projectId);
+  let asset = await lookup.byProviderIdentity(provider, providerAssetId, logicalOutputId, upgradeMediaKind);
   if (!asset && sourceMediaUrl) {
-    let listedAssets = assets;
-    if (!listedAssets) {
-      listedAssets = await Promise.all([
-        store.listAssets({ projectId }),
-        store.listAssets({ projectId, archived: true }).catch(() => []),
-      ]).then(([active, archived]) => [...active, ...archived]);
-      assets = listedAssets;
-    }
-    asset = (listedAssets || []).find((candidate) => {
+    asset = (await onceProjectListing(store, projectId)()).find((candidate) => {
       if (String(candidate.source?.provider || "").trim().toLowerCase() !== provider) return false;
       const occurrences = Array.isArray(candidate.source?.capture_occurrences) ? candidate.source.capture_occurrences : [];
       return occurrences.some((entry) => sanitizeStoredMediaUrl((entry as Metadata)?.source_media_url) === sourceMediaUrl);
@@ -338,7 +327,7 @@ async function upgradeWebCaptureMetadata({ store, projectId, input }: { store: S
   const promptScope = normalizePromptScope(input.prompt_scope || input.promptScope);
   const model = String(input.model || "").trim();
   const userMessage = String(input.user_message || input.userMessage || "").trim();
-  const upgraded = await maybeUpgradePrompt(store, asset, {
+  const upgraded = await upgradePrompt(store, asset, {
     prompt,
     promptStatus: prompt ? suppliedPromptStatus : "not-available",
     userMessage,
@@ -347,8 +336,8 @@ async function upgradeWebCaptureMetadata({ store, projectId, input }: { store: S
     promptScope,
     model,
     provider,
-  });
-  if (upgraded) asset = upgraded;
+  }, { deriveTheme: deriveWebTheme });
+  if (upgraded) asset = upgraded as StoredAsset;
   asset = await maybeStoreRequestPrompt(store, asset, requestPromptFor(provider, input)) || asset;
 
   const generationStatus = normalizeGenerationStatus(input.generation_status || input.generationStatus);
@@ -474,48 +463,39 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
       contentHash,
     };
   }
-  const finalizeDuplicate = async (duplicate: StoredAsset): Promise<IngestResult> => {
-    const existingWithOccurrence = await recordCaptureOccurrence(store, duplicate, captureOccurrence) || duplicate;
-    // A provider-visible prompt must not upgrade an asset archived from a
-    // different provider when the bytes happen to be identical.
-    const existingProvider = String(existingWithOccurrence.source?.provider || "").trim().toLowerCase();
-    const duplicatePromptAllowed = normalizedPromptStatus !== "provider-visible-prompt" || existingProvider === provider;
-    const mergedRecipe = await mergeDuplicateGenerationRecipe(store, existingWithOccurrence, {
-      projectAssets,
-      referenceStore,
-      projectId,
-      conversationId,
-      generationContextId,
-      providerToolCallId,
-      providerGenerationCallId,
-      providerResponseId,
-      providerAssetId,
-      capturedAt,
-      messageId,
-      prompt: duplicatePromptAllowed ? prompt : "",
-      promptStatus: duplicatePromptAllowed ? normalizedPromptStatus : "not-available",
-      promptSource,
-      promptPriority: duplicatePromptAllowed ? promptPriority : 0,
-      promptScope: duplicatePromptAllowed ? promptScope : "",
-      generationStatus,
-      userMessage,
-      model,
-      provider,
-    });
-    const upgraded = await maybeUpgradePrompt(store, mergedRecipe.asset, {
-      prompt: duplicatePromptAllowed ? prompt : "",
-      promptStatus: duplicatePromptAllowed ? normalizedPromptStatus : "not-available",
-      userMessage,
-      promptSource,
-      promptPriority: duplicatePromptAllowed ? promptPriority : 0,
-      promptScope: duplicatePromptAllowed ? promptScope : "",
-      model,
-      provider,
-    });
-    const asset = await maybeStoreRequestPrompt(store, upgraded || mergedRecipe.asset, requestPrompt) || upgraded || mergedRecipe.asset;
+  // 图片收录走总入口 lib/library-ingest.mjs：查重、同编号换更清晰的、已有的
+  // 记出现/升级提示词、新建，全部由总入口按 ARCHITECTURE.md 的进库规矩执行；
+  // 本文件只负责拿到图和字段，以及网页各钩子的具体内容。
+  const explicitAssetId = String(input.assetId || "").trim();
+  let tempPath = "";
+  let tempFileName = "";
+  const onExistingRecipe = async (existing: StoredAsset, metadataUpgradeAllowed: boolean) => mergeDuplicateGenerationRecipe(store, existing, {
+    projectAssets,
+    referenceStore,
+    projectId,
+    conversationId,
+    generationContextId,
+    providerToolCallId,
+    providerGenerationCallId,
+    providerResponseId,
+    providerAssetId,
+    capturedAt,
+    messageId,
+    prompt: metadataUpgradeAllowed ? prompt : "",
+    promptStatus: metadataUpgradeAllowed ? normalizedPromptStatus : "not-available",
+    promptSource,
+    promptPriority: metadataUpgradeAllowed ? promptPriority : 0,
+    promptScope: metadataUpgradeAllowed ? promptScope : "",
+    generationStatus,
+    userMessage: metadataUpgradeAllowed ? userMessage : "",
+    model,
+    provider,
+  });
+  const onExistingObserved = async (asset: StoredAsset): Promise<StoredAsset> => {
+    const withRequestPrompt = await maybeStoreRequestPrompt(store, asset, requestPrompt) || asset;
     const titledAsset = generationSessionTitle
-      ? await maybeStoreSessionTitle(store, asset, generationSessionTitle) || asset
-      : asset;
+      ? await maybeStoreSessionTitle(store, withRequestPrompt, generationSessionTitle) || withRequestPrompt
+      : withRequestPrompt;
     // A re-observation of an already-archived image without any provider
     // identity used to append a fresh generation event on every capture (its
     // occurrence:<time> id never matches), so the history showed phantom
@@ -538,198 +518,172 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
         promptStatus: normalizedPromptStatus,
         promptScope,
         generationStatus,
-        references: asset.references,
+        references: titledAsset.references,
         capturedAt,
       });
     }
-    const sameBytes = titledAsset.source?.content_sha256 === contentHash;
-    return {
-      status: "skipped",
-      reason: upgraded
-        ? "already-archived-prompt-upgraded"
-        : mergedRecipe.merged
-          ? "already-archived-recipe-merged"
-          : sameBytes ? "already-archived-same-content" : "already-archived-same-pixels",
-      asset: titledAsset,
-      contentHash,
-      upgraded: Boolean(upgraded),
-      recipeMerged: mergedRecipe.merged,
-    };
+    return titledAsset;
   };
-  let logicalExistingForReplacement: StoredAsset | null = null;
-  if (providerAssetId || logicalOutputId) {
-    const logicalExisting = typeof store.findAssetByProviderIdentity === "function"
-      ? await store.findAssetByProviderIdentity(projectId, provider, providerAssetId, logicalOutputId, "image")
-      : findLogicalProviderAsset(await projectAssets(), provider, providerAssetId, logicalOutputId);
-    if (logicalExisting) {
-      const existingHash = String(logicalExisting.source?.content_sha256 || "").trim();
-      if (existingHash === contentHash) return finalizeDuplicate(logicalExisting);
-      if (["completed", "failed", "cancelled"].includes(generationStatus)
-        && typeof store.replaceAssetMedia === "function"
-        && isProviderMediaUpgrade(logicalExisting, {
-          pixels: imageMetadata.width * imageMetadata.height,
-          mediaVariant: normalizeMediaVariant(input.mediaVariant ?? input.media_variant),
-          generationStatus,
-        })) {
-        logicalExistingForReplacement = logicalExisting;
-      } else {
-        return finalizeDuplicate(logicalExisting);
-      }
-    }
-  }
-  if (!logicalExistingForReplacement) {
-    const existing = await findArchivedDuplicate(store, projectId, contentHash, pixelHash, projectAssets);
-    if (existing) return finalizeDuplicate(existing);
-  }
-  await mkdir(tempRoot, { recursive: true });
-  const tempName = `${providerConfig.tempPrefix}-${Date.now()}-${randomBytes(4).toString("hex")}${ext}`; const tempPath = join(tempRoot, tempName);
-  await writeFile(tempPath, imageBytes);
-  try {
-    const explicitAssetId = String(input.assetId || "").trim();
-    let assetId = sanitizeAssetId(explicitAssetId || `${providerConfig.assetIdPrefix}-${contentHash.slice(0, 12)}`, providerConfig.assetIdPrefix);
-    const references = await turnReferences(store, projectAssets, referenceStore, projectId, { conversationId, generationContextId, capturedAt, selfAssetId: assetId });
-    const assetInput = {
-      projectId,
-      imagePath: tempPath,
-      assetId,
-      fileName: tempName,
-      prompt,
-      skill: providerConfig.skill,
-      theme: promptTheme(prompt, providerConfig.label),
-      tags: [provider, "web-capture", captureMode === "manual" ? "manual-capture" : "auto-archived"],
-      category: "",
-      references,
-      created_at: capturedAt,
-      sourceType: providerConfig.sourceType,
-      business_fields: {
-        auto_archived: captureMode !== "manual",
-        capture_mode: captureMode,
-        generation_context_id: generationContextId || null,
-        capture_context_id: generationContextId || null,
-        verification_level: "observed",
-        is_reference: false,
-        capture_channel: "chrome-extension",
-        prompt_status: normalizedPromptStatus,
-        prompt_source: promptSource || null,
-        prompt_priority: promptPriority || 0,
-        prompt_scope: promptScope || null,
-        generation_status: generationStatus,
-        user_message: userMessage || null,
-        file_bytes: imageBytes.length,
-        mime_type: mimeType,
-        width: imageMetadata.width,
-        height: imageMetadata.height,
-      },
-      source: {
-        generation_tool: "web-ui",
-        provider,
-        type: providerConfig.sourceType,
-        capture_mode: captureMode,
-        // "original" or "preview": Midjourney previews are 640px WebPs while
-        // the full-size PNG is cookie-gated; the variant tells which was kept.
-        media_variant: normalizeMediaVariant(input.mediaVariant ?? input.media_variant),
-        generation_context_id: generationContextId || null,
-        capture_context_id: generationContextId || null,
-        generation_status: generationStatus,
-        provider_tool_call_id: providerToolCallId || null,
-        provider_generation_call_id: providerGenerationCallId || null,
-        provider_response_id: providerResponseId || null,
-        provider_asset_id: providerAssetId || null,
-        logical_output_id: logicalOutputId || null,
-        verification_level: "observed",
-        capture_occurrences: [captureOccurrence],
-        model: model || null,
-        page_url: pageUrl || null,
-        conversation_id: conversationId || null,
-        ...(generationSessionTitle ? { generation_session_title: generationSessionTitle } : {}),
-        message_id: messageId || null,
-        capture_session_id: captureSessionId || null,
-        generation_batch_id: generationBatchId || null,
-        prompt_status: normalizedPromptStatus,
-        prompt_source: promptSource || null,
-        prompt_priority: promptPriority || 0,
-        prompt_scope: promptScope || null,
-        user_message: userMessage || null,
-        generation_request_prompt: requestPrompt || null,
-        captured_at: capturedAt,
-        capture_extension_version: String(input.extensionVersion || input.extension_version || ""),
-        content_sha256: contentHash,
-        pixel_sha256: pixelHash || null,
-        pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
-      },
-    };
-    if (logicalExistingForReplacement && typeof store.replaceAssetMedia === "function") {
-      const replaced = await store.replaceAssetMedia(projectId, logicalExistingForReplacement.id, {
+  const replaceMedia = typeof store.replaceAssetMedia === "function"
+    ? async (existing: StoredAsset, prepared: { assetInput?: Record<string, unknown> } | null): Promise<StoredAsset> => {
+      const assetInput = (prepared?.assetInput || {}) as { business_fields?: Metadata; source?: Metadata };
+      return await store.replaceAssetMedia!.call(store, projectId, existing.id, {
         imagePath: tempPath,
-        fileName: tempName,
+        fileName: tempFileName,
         contentHash,
         pixelHash,
         pixelHashVersion: pixelHash ? PIXEL_HASH_VERSION : "",
         business_fields: assetInput.business_fields,
         source: assetInput.source,
       }, { trustedSourceRoots: [tempRoot], ingestMode: captureMode });
-      const merged = await finalizeDuplicate(replaced);
-      return {
-        ...merged,
-        status: "imported",
-        reason: "logical-output-media-upgraded",
-        asset: merged.asset || replaced,
-        contentHash,
-        replacedAssetId: logicalExistingForReplacement.id,
-      };
     }
-    let asset: StoredAsset;
-    try {
-      asset = await store.createAsset(assetInput, { trustedSourceRoots: [tempRoot], ingestMode: captureMode === "manual" ? "manual" : "automatic" });
-    } catch (error) {
-      // The compact deterministic ID is useful for ordinary captures, but two
-      // independent runtimes can reserve the same filename before either one
-      // publishes metadata. A unique candidate lets both attempts reach the
-      // store's transactional content/pixel identity check. It also keeps a
-      // genuine short-hash collision importable instead of misclassifying it.
-      if (explicitAssetId || !isAssetAlreadyExists(error)) throw error;
-      assetId = sanitizeAssetId(`${providerConfig.assetIdPrefix}-${contentHash.slice(0, 24)}-${randomBytes(4).toString("hex")}`, providerConfig.assetIdPrefix);
-      asset = await store.createAsset({ ...assetInput, assetId }, { trustedSourceRoots: [tempRoot], ingestMode: captureMode === "manual" ? "manual" : "automatic" });
-    }
-    await recordCapturedGeneration(store, asset, {
-      projectId,
-      provider,
-      generationContextId,
-      providerToolCallId,
-      providerGenerationCallId,
-      providerResponseId,
-      providerAssetId,
-      conversationId,
-      messageId,
-      generationBatchId,
-      model,
-      userMessage,
-      prompt,
-      promptStatus: normalizedPromptStatus,
-      promptScope,
-      generationStatus,
-      references: asset.references,
-      capturedAt,
-    });
+    : undefined;
+  const prepareMedia = async (): Promise<{ assetInput: Record<string, unknown>; fileName: string }> => {
+    await mkdir(tempRoot, { recursive: true });
+    const tempName = `${providerConfig.tempPrefix}-${Date.now()}-${randomBytes(4).toString("hex")}${ext}`;
+    tempPath = join(tempRoot, tempName);
+    tempFileName = tempName;
+    await writeFile(tempPath, imageBytes);
+    const captureAssetId = sanitizeAssetId(explicitAssetId || `${providerConfig.assetIdPrefix}-${contentHash.slice(0, 12)}`, providerConfig.assetIdPrefix);
+    const references = await turnReferences(store, projectAssets, referenceStore, projectId, { conversationId, generationContextId, capturedAt, selfAssetId: captureAssetId });
     return {
-      status: "imported",
-      asset,
-      contentHash,
+      fileName: tempName,
+      assetInput: {
+        projectId,
+        imagePath: tempPath,
+        assetId: captureAssetId,
+        fileName: tempName,
+        prompt,
+        skill: providerConfig.skill,
+        theme: promptTheme(prompt, providerConfig.label),
+        tags: [provider, "web-capture", captureMode === "manual" ? "manual-capture" : "auto-archived"],
+        category: "",
+        references,
+        created_at: capturedAt,
+        sourceType: providerConfig.sourceType,
+        business_fields: {
+          auto_archived: captureMode !== "manual",
+          capture_mode: captureMode,
+          generation_context_id: generationContextId || null,
+          capture_context_id: generationContextId || null,
+          verification_level: "observed",
+          is_reference: false,
+          capture_channel: "chrome-extension",
+          prompt_status: normalizedPromptStatus,
+          prompt_source: promptSource || null,
+          prompt_priority: promptPriority || 0,
+          prompt_scope: promptScope || null,
+          generation_status: generationStatus,
+          user_message: userMessage || null,
+          file_bytes: imageBytes.length,
+          mime_type: mimeType,
+          width: imageMetadata.width,
+          height: imageMetadata.height,
+        },
+        source: {
+          generation_tool: "web-ui",
+          provider,
+          type: providerConfig.sourceType,
+          capture_mode: captureMode,
+          // "original" or "preview": Midjourney previews are 640px WebPs while
+          // the full-size PNG is cookie-gated; the variant tells which was kept.
+          media_variant: normalizeMediaVariant(input.mediaVariant ?? input.media_variant),
+          generation_context_id: generationContextId || null,
+          capture_context_id: generationContextId || null,
+          generation_status: generationStatus,
+          provider_tool_call_id: providerToolCallId || null,
+          provider_generation_call_id: providerGenerationCallId || null,
+          provider_response_id: providerResponseId || null,
+          provider_asset_id: providerAssetId || null,
+          logical_output_id: logicalOutputId || null,
+          verification_level: "observed",
+          capture_occurrences: [captureOccurrence],
+          model: model || null,
+          page_url: pageUrl || null,
+          conversation_id: conversationId || null,
+          ...(generationSessionTitle ? { generation_session_title: generationSessionTitle } : {}),
+          message_id: messageId || null,
+          capture_session_id: captureSessionId || null,
+          generation_batch_id: generationBatchId || null,
+          prompt_status: normalizedPromptStatus,
+          prompt_source: promptSource || null,
+          prompt_priority: promptPriority || 0,
+          prompt_scope: promptScope || null,
+          user_message: userMessage || null,
+          generation_request_prompt: requestPrompt || null,
+          captured_at: capturedAt,
+          capture_extension_version: String(input.extensionVersion || input.extension_version || ""),
+          content_sha256: contentHash,
+          pixel_sha256: pixelHash || null,
+          pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
+        },
+      },
     };
-  } catch (error) {
-    if (isAutomaticImportSuppressed(error)) return { status: "skipped", reason: "suppressed-after-delete", contentHash };
-    if (isAutomaticIngestDuplicate(error)) {
-      const duplicateId = String((error as { assetId?: unknown }).assetId || "");
-      const duplicate = duplicateId
-        ? (await projectAssets()).find((asset) => asset.id === duplicateId)
-          || await findArchivedDuplicate(store, projectId, contentHash, pixelHash, projectAssets)
-        : await findArchivedDuplicate(store, projectId, contentHash, pixelHash, projectAssets);
-      if (duplicate) {
-        return finalizeDuplicate(duplicate);
-      }
-    }
-    throw error;
-  } finally { await rm(tempPath, { force: true }).catch(() => {}); }
+  };
+  const retryAssetId = explicitAssetId
+    ? undefined
+    : () => sanitizeAssetId(`${providerConfig.assetIdPrefix}-${contentHash.slice(0, 24)}-${randomBytes(4).toString("hex")}`, providerConfig.assetIdPrefix);
+  try {
+    // The compact deterministic ID is useful for ordinary captures, but two
+    // independent runtimes can reserve the same filename before either one
+    // publishes metadata. When no explicit id was requested, the gate retries
+    // once with a fresh candidate (`retryAssetId`), letting both attempts
+    // reach the store's transactional content/pixel identity check.
+    return (await ingestIntoLibrary(store, {
+      projectId,
+      identity: { provider, providerAssetId, logicalOutputId, mediaKind: "image" },
+      findExistingOrder: ["provider-identity", "content", "pixel"],
+      contentHash,
+      pixelHash,
+      incomingOwner: `web:${provider}`,
+      occurrence: captureOccurrence,
+      prompt: {
+        prompt,
+        promptStatus: normalizedPromptStatus,
+        userMessage,
+        promptSource,
+        promptPriority,
+        promptScope,
+        model,
+        provider,
+      },
+      deriveTheme: deriveWebTheme,
+      mediaUpgrade: {
+        pixels: imageMetadata.width * imageMetadata.height,
+        mediaVariant: normalizeMediaVariant(input.mediaVariant ?? input.media_variant),
+        generationStatus,
+      },
+      prepareMedia,
+      ...(replaceMedia ? { replaceMedia } : {}),
+      retryAssetId,
+      onExistingRecipe,
+      onExistingObserved,
+      onCreated: async (asset) => {
+        await recordCapturedGeneration(store, asset as StoredAsset, {
+          projectId,
+          provider,
+          generationContextId,
+          providerToolCallId,
+          providerGenerationCallId,
+          providerResponseId,
+          providerAssetId,
+          conversationId,
+          messageId,
+          generationBatchId,
+          model,
+          userMessage,
+          prompt,
+          promptStatus: normalizedPromptStatus,
+          promptScope,
+          generationStatus,
+          references: asset.references,
+          capturedAt,
+        });
+      },
+      trustedSourceRoots: [tempRoot],
+      ingestMode: captureMode === "manual" ? "manual" : "automatic",
+    })) as IngestResult;
+  } finally { if (tempPath) await rm(tempPath, { force: true }).catch(() => {}); }
 }
 
 async function ingestWebVideoCapture(options: {
@@ -742,6 +696,9 @@ async function ingestWebVideoCapture(options: {
   mediaFilePath?: string;
 }): Promise<IngestResult> {
   const { store, tempRoot, projectId, input, provider } = options;
+  // Dedupe stays content-hash only for video until the video path joins the
+  // gate (it has no provider identity yet); the lookup is the shared one.
+  const duplicateLookup = createIngestLookup(store, projectId);
   if (!VIDEO_PROVIDERS.has(provider)) throw webCaptureError(`Provider does not support web video capture: ${provider}.`, 400, "WEB_CAPTURE_BAD_VIDEO_PROVIDER");
   if (Boolean(input.is_reference ?? input.isReference)) throw webCaptureError("Video reference capture is not supported.", 400, "WEB_CAPTURE_BAD_VIDEO_REFERENCE");
   const providerConfig = PROVIDER_CONFIG[provider as ProviderId];
@@ -818,7 +775,7 @@ async function ingestWebVideoCapture(options: {
   const referenceStore = options.referenceStore || createReferenceAttachmentStore(resolve(referenceLibraryDir));
 
   const finalizeDuplicate = async (duplicate: StoredAsset): Promise<IngestResult> => {
-    const existingWithOccurrence = await recordCaptureOccurrence(store, duplicate, captureOccurrence) || duplicate;
+    const existingWithOccurrence = await recordIngestOccurrence(store, duplicate, captureOccurrence) || duplicate;
     const mergedRecipe = await mergeDuplicateGenerationRecipe(store, existingWithOccurrence, {
       projectAssets,
       referenceStore,
@@ -841,7 +798,7 @@ async function ingestWebVideoCapture(options: {
       model,
       provider,
     });
-    const upgraded = await maybeUpgradePrompt(store, mergedRecipe.asset, {
+    const upgraded = await upgradePrompt(store, mergedRecipe.asset, {
       prompt,
       promptStatus: normalizedPromptStatus,
       userMessage,
@@ -850,7 +807,7 @@ async function ingestWebVideoCapture(options: {
       promptScope,
       model,
       provider,
-    });
+    }, { deriveTheme: deriveWebTheme });
     const asset = upgraded || mergedRecipe.asset;
     await recordCapturedGeneration(store, asset, {
       projectId,
@@ -886,7 +843,7 @@ async function ingestWebVideoCapture(options: {
     };
   };
 
-  const existing = await findArchivedDuplicate(store, projectId, contentHash, "", projectAssets);
+  const existing = await duplicateLookup.byContentHash(contentHash);
   if (existing) {
     if (uploadedVideoPath) await rm(uploadedVideoPath, { force: true }).catch(() => {});
     return finalizeDuplicate(existing);
@@ -1009,8 +966,8 @@ async function ingestWebVideoCapture(options: {
     if (isAutomaticIngestDuplicate(error)) {
       const duplicateId = String((error as { assetId?: unknown }).assetId || "");
       const duplicate = duplicateId
-        ? (await projectAssets()).find((asset) => asset.id === duplicateId) || await findArchivedDuplicate(store, projectId, contentHash, "", projectAssets)
-        : await findArchivedDuplicate(store, projectId, contentHash, "", projectAssets);
+        ? (await projectAssets()).find((asset) => asset.id === duplicateId) || await duplicateLookup.byContentHash(contentHash)
+        : await duplicateLookup.byContentHash(contentHash);
       if (duplicate) return finalizeDuplicate(duplicate);
     }
     throw error;
@@ -1226,22 +1183,6 @@ function sanitizeStoredMediaUrl(value: unknown): string {
 
 function safeTokenEqual(provided: string, configured: string): boolean { if (!provided || !configured) return false; const a = Buffer.from(provided); const b = Buffer.from(configured); return a.length === b.length && timingSafeEqual(a, b); }
 function normalizeMime(value: string): string { const m = String(value || "image/png").trim().toLowerCase(); return m === "image/jpg" ? "image/jpeg" : m; }
-function normalizeMediaVariant(value: unknown): string { const variant = String(value || "").trim().toLowerCase(); return variant === "original" || variant === "preview" ? variant : ""; }
-function normalizePromptScope(value: unknown): string {
-  const scope = String(value || "").trim().toLowerCase();
-  return PROMPT_SCOPES.has(scope) ? scope : "";
-}
-function normalizeGenerationStatus(value: unknown): string {
-  const raw = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-  const aliases: Record<string, string> = {
-    complete: "completed", succeeded: "completed", success: "completed", done: "completed", finished: "completed",
-    failure: "failed", error: "failed", errored: "failed", rejected: "failed", timeout: "failed", timed_out: "failed",
-    canceled: "cancelled", aborted: "cancelled", stopped: "cancelled",
-    incomplete: "partial", running: "in_progress", generating: "in_progress", streaming: "in_progress", pending: "in_progress", queued: "in_progress",
-  };
-  const normalized = aliases[raw] || raw || "unknown";
-  return GENERATION_STATUSES.has(normalized) ? normalized : "unknown";
-}
 function logicalCaptureKey(projectId: string, provider: string, input: WebCaptureInput): string {
   const providerAssetId = String(input.providerAssetId || input.provider_asset_id || "").trim();
   if (providerAssetId) return `${projectId}\u001f${provider}\u001fasset:${providerAssetId}`;
@@ -1256,45 +1197,6 @@ function logicalCaptureKey(projectId: string, provider: string, input: WebCaptur
   return `${projectId}\u001f${provider}\u001foutput:${generationCallId}\u001f${generationContextId}\u001f${messageId}\u001f${mediaUrl}`;
 }
 function onceProjectListing(store: Store, projectId: string): () => Promise<StoredAsset[]> { let pending: Promise<StoredAsset[]> | null = null; return () => { if (!pending) pending = Promise.all([store.listAssets({ projectId }), store.listAssets({ projectId, archived: true }).catch(() => [])]).then(([a, b]) => [...a, ...b]); return pending; }; }
-const TERMINAL_GENERATION_STATUSES = new Set(["completed", "failed", "cancelled"]);
-
-function storedGenerationStatus(asset: StoredAsset): string {
-  return normalizeGenerationStatus(asset.source?.generation_status ?? asset.business_fields?.generation_status);
-}
-
-function storedPixelCount(asset: StoredAsset): number {
-  const width = Number(asset.business_fields?.width ?? asset.source?.width) || 0;
-  const height = Number(asset.business_fields?.height ?? asset.source?.height) || 0;
-  return width > 0 && height > 0 ? width * height : 0;
-}
-
-/**
- * "Same provider id arrived again" may only ever replace media upward
- * (user rule 2026-10-28): a preview or an equal/smaller re-encode must never
- * destroy archived pixels. A provisional capture holds the slot for its
- * terminal result, an archived preview may be replaced by the original, and an
- * archived original only yields to strictly more pixels. When dimensions are
- * unreadable the conservative branch applies — an unreadable *incoming* image
- * never upgrades, while unreadable *stored* dimensions cannot prove a
- * downgrade of a provisional capture, so the terminal result still lands.
- */
-function isProviderMediaUpgrade(existing: StoredAsset, incoming: { pixels: number; mediaVariant: string; generationStatus: string }): boolean {
-  if (!TERMINAL_GENERATION_STATUSES.has(incoming.generationStatus)) return false;
-  const existingTerminal = TERMINAL_GENERATION_STATUSES.has(storedGenerationStatus(existing));
-  const existingVariant = normalizeMediaVariant(existing.source?.media_variant);
-  const existingPixels = storedPixelCount(existing);
-  if (incoming.mediaVariant === "preview") {
-    // Only a strictly larger preview may replace a preview; an archived
-    // original must never be downgraded to a preview.
-    return existingTerminal && existingVariant === "preview"
-      && incoming.pixels > 0 && existingPixels > 0 && incoming.pixels > existingPixels;
-  }
-  if (!existingTerminal) {
-    return incoming.pixels === 0 || existingPixels === 0 || incoming.pixels >= existingPixels;
-  }
-  if (existingVariant === "preview") return true;
-  return incoming.pixels > 0 && existingPixels > 0 && incoming.pixels > existingPixels;
-}
 
 // The first-archived provider id stays in source.provider_asset_id; later ids
 // observed for the same bytes are appended here (deduped, bounded) so identity
@@ -1309,47 +1211,6 @@ function mergeProviderAssetIds(current: unknown, incomingId: string, archivedId:
     .filter((entry) => entry && entry !== String(archivedId || "").trim());
   if (!merged.includes(clean)) merged.push(clean);
   return merged.slice(0, MERGED_PROVIDER_ASSET_IDS_LIMIT);
-}
-function findLogicalProviderAsset(assets: StoredAsset[], provider: string, providerAssetId: string, logicalOutputId = ""): StoredAsset | null {
-  const wantedProvider = String(provider || "").trim().toLowerCase();
-  const wantedAssetId = String(providerAssetId || "").trim();
-  const wantedLogicalOutputId = String(logicalOutputId || "").trim();
-  if (!wantedProvider || (!wantedAssetId && !wantedLogicalOutputId)) return null;
-  return assets.find((asset) => (
-    String(asset.source?.provider || "").trim().toLowerCase() === wantedProvider
-    && (
-      (wantedAssetId && String(asset.source?.provider_asset_id || "").trim() === wantedAssetId)
-      || (wantedLogicalOutputId && String(asset.source?.logical_output_id || "").trim() === wantedLogicalOutputId)
-    )
-  )) || null;
-}
-async function findArchivedDuplicate(store: Store, projectId: string, contentHash: string, pixelHash: string, projectAssets: () => Promise<StoredAsset[]>): Promise<StoredAsset | null> {
-  const byBytes = typeof store.findAssetByContentHash === "function" ? await store.findAssetByContentHash(projectId, contentHash) : (await projectAssets()).find((a) => a.source?.content_sha256 === contentHash) || null;
-  if (byBytes) return byBytes;
-  if (!pixelHash) return null;
-  const indexedMatch = typeof store.findAssetByPixelHash === "function"
-    ? await store.findAssetByPixelHash(projectId, pixelHash)
-    : (await projectAssets()).find((a) => a.source?.pixel_sha256 === pixelHash) || null;
-  if (indexedMatch && await isTrustedPixelMatch(store, indexedMatch, pixelHash)) return indexedMatch;
-  const candidates = (typeof store.findAssetsByPixelHash === "function"
-    ? await store.findAssetsByPixelHash(projectId, pixelHash)
-    : (await projectAssets()).filter((asset) => asset.source?.pixel_sha256 === pixelHash))
-    .filter((asset) => asset.id !== indexedMatch?.id);
-  for (const candidate of candidates) if (await isTrustedPixelMatch(store, candidate, pixelHash)) return candidate;
-  return null;
-}
-
-async function isTrustedPixelMatch(store: Store, asset: StoredAsset, pixelHash: string): Promise<boolean> {
-  if (asset.source?.pixel_hash_version === PIXEL_HASH_VERSION) return true;
-  const imagePath = typeof asset.image_path === "string" ? asset.image_path : "";
-  if (!imagePath) return false;
-  const trusted = await safePixelDigest(imagePath, { limitInputPixels: WEB_CAPTURE_MAX_IMAGE_PIXELS }).then((hash) => hash === pixelHash, () => false);
-  if (!trusted) return false;
-  if (typeof store.updateMetadata === "function") {
-    const nextSource = { ...(asset.source || {}), pixel_sha256: pixelHash, pixel_hash_version: PIXEL_HASH_VERSION };
-    await store.updateMetadata(asset.project_id, asset.id, { source: nextSource }).then(() => { asset.source = nextSource; }, () => {});
-  }
-  return true;
 }
 
 const MAX_TURN_REFERENCES = 8;
@@ -1544,64 +1405,6 @@ function referenceIdentityList(references: unknown): string {
   }).filter(Boolean).sort().join("|");
 }
 
-const PROMPT_STATUS_RANK: Record<string, number> = {
-  "not-available": 0,
-  "user-message": 1,
-  "provider-visible-prompt": 1,
-  "visible-caption": 2,
-  "generation-tool-prompt": 3,
-};
-
-function promptRank(status: string, text: unknown, priority = 0): number {
-  const base = PROMPT_STATUS_RANK[status] ?? 0;
-  return Math.max(0, Number(priority) || 0) * 1_000_000
-    + base * 10000
-    + Math.min(String(text || "").trim().length, 5000);
-}
-
-function captureOccurrenceKey(value: Record<string, unknown>): string {
-  return [
-    value.provider,
-    value.type,
-    value.page_url,
-    value.conversation_id,
-    value.message_id,
-    value.generation_context_id,
-    value.capture_mode,
-  ].map((part) => String(part || "")).join("|");
-}
-
-async function recordCaptureOccurrence(
-  store: Store,
-  existing: StoredAsset,
-  occurrence: Record<string, unknown>,
-): Promise<StoredAsset | null> {
-  if (typeof store.updateMetadata !== "function") return null;
-  const current = Array.isArray(existing.source?.capture_occurrences)
-    ? existing.source.capture_occurrences.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
-    : [];
-  const key = captureOccurrenceKey(occurrence);
-  if (current.some((entry) => captureOccurrenceKey(entry) === key)) return existing;
-  return store.updateMetadata(existing.project_id, existing.id, {
-    source: {
-      ...(existing.source || {}),
-      capture_occurrences: [...current, occurrence].slice(-40),
-    },
-  });
-}
-
-interface PromptUpgrade {
-  prompt?: string;
-  promptStatus?: string;
-  userMessage?: string;
-  user_message?: string;
-  promptSource?: string;
-  promptPriority?: number;
-  promptScope?: string;
-  model?: string;
-  provider?: string;
-}
-
 // ChatGPT's live image tool call carries the Prompt the chat model wrote for
 // the image generator. It is kept beside the caption Prompt, never in place of
 // it, so it does not take part in Prompt ranking.
@@ -1632,98 +1435,6 @@ async function maybeStoreSessionTitle(store: Store, existing: StoredAsset, title
   });
 }
 
-// The first user instruction archived for an image wins: re-observations of
-// an already archived capture often carry the message of a different
-// conversation turn (virtual scrolling shows only partial history), so an
-// unrelated message must never replace the archived one. Only an empty slot
-// or a strict extension of the archived text may update it.
-function mergedUserMessage(current: unknown, incoming: unknown): string {
-  const existing = String(current || "").trim();
-  const next = String(incoming || "").trim();
-  if (!existing) return next;
-  if (!next) return existing;
-  if (next.startsWith(existing) && next.length > existing.length) return next;
-  return existing;
-}
-
-async function maybeUpgradePrompt(store: Store, existing: StoredAsset, next: PromptUpgrade = {}): Promise<StoredAsset | null> {
-  if (typeof store.updateMetadata !== "function") return null;
-  const nextPrompt = String(next.prompt || "").trim();
-  const userMessage = String(next.userMessage || next.user_message || "").trim();
-  const currentUserMessage = String(existing.source?.user_message || existing.business_fields?.user_message || "").trim();
-  if (!nextPrompt) {
-    const merged = mergedUserMessage(currentUserMessage, userMessage);
-    // Keeping the archived instruction is a no-op: writing metadata here would
-    // add a recipe snapshot for every repeated observation of the same image.
-    if (merged === currentUserMessage) return null;
-    return store.updateMetadata(existing.project_id, existing.id, {
-      source: {
-        ...(existing.source || {}),
-        prompt_source: next.promptSource || existing.source?.prompt_source || null,
-        user_message: merged,
-      },
-      business_fields: {
-        ...(existing.business_fields || {}),
-        prompt_source: next.promptSource || existing.business_fields?.prompt_source || null,
-        user_message: merged,
-      },
-    });
-  }
-
-  const currentPrompt = String(existing.prompt || "").trim();
-  const currentStatus = String(
-    existing.source?.prompt_status
-      || existing.business_fields?.prompt_status
-      || (currentPrompt ? "user-message" : "not-available"),
-  );
-  const nextStatus = next.promptStatus || "user-message";
-  const currentPriority = Number(existing.source?.prompt_priority || existing.business_fields?.prompt_priority) || 0;
-  const nextPriority = Math.max(0, Number(next.promptPriority) || 0);
-  const currentRank = promptRank(currentStatus, currentPrompt, currentPriority);
-  const nextRank = promptRank(nextStatus, nextPrompt, nextPriority);
-  // Ranking and length only: no content heuristics.
-  if (nextRank <= currentRank && !(nextPrompt.length > currentPrompt.length + 40 && nextRank >= currentRank)) {
-    return null;
-  }
-
-  // A prompt a human typed through a marked entry point wins over every
-  // recapture. The page's status/priority describe a prompt we are not
-  // keeping, so only the user's own words may still fill in; writing the rest
-  // would rewrite the asset on every repeated observation of the same image.
-  if (isPromptUserEdited(existing)) {
-    const merged = mergedUserMessage(currentUserMessage, userMessage);
-    if (merged === currentUserMessage) return null;
-    return store.updateMetadata(existing.project_id, existing.id, {
-      source: { ...(existing.source || {}), user_message: merged },
-      business_fields: { ...(existing.business_fields || {}), user_message: merged },
-    });
-  }
-
-  // The theme is derived from the page prompt, so it is only written alongside
-  // a prompt that is actually being upgraded, and never over a user rename.
-  return store.updateMetadata(existing.project_id, existing.id, {
-    prompt: nextPrompt,
-    ...(isThemeUserEdited(existing) ? {} : { theme: promptTheme(nextPrompt, providerLabelFor(next.provider || existing.source?.provider)) }),
-    source: {
-      ...(existing.source || {}),
-      prompt_status: nextStatus,
-      prompt_source: next.promptSource || existing.source?.prompt_source || null,
-      prompt_priority: nextPriority,
-      prompt_scope: normalizePromptScope(next.promptScope) || existing.source?.prompt_scope || null,
-      user_message: mergedUserMessage(existing.source?.user_message, next.userMessage) || null,
-      model: next.model || existing.source?.model || null,
-    },
-    business_fields: {
-      ...(existing.business_fields || {}),
-      prompt_status: nextStatus,
-      prompt_source: next.promptSource || existing.business_fields?.prompt_source || null,
-      prompt_priority: nextPriority,
-      prompt_scope: normalizePromptScope(next.promptScope) || existing.business_fields?.prompt_scope || null,
-      user_message: mergedUserMessage(existing.business_fields?.user_message, next.userMessage) || null,
-    },
-  });
-}
-
 const LEADING_UI_GLYPH_TOKENS = new Set([
   "play_circle", "play_arrow", "pause_circle", "stop_circle",
   "more_vert", "more_horiz", "fullscreen_exit", "open_in_full",
@@ -1747,3 +1458,6 @@ function promptTheme(prompt: string, providerLabel: string = PROVIDER_CONFIG.cha
 }
 function sanitizeAssetId(value: string, fallbackPrefix: string = PROVIDER_CONFIG.chatgpt.assetIdPrefix): string { return String(value || fallbackPrefix).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || `${fallbackPrefix}-${Date.now()}`; }
 function providerLabelFor(value: unknown): string { const config = PROVIDER_CONFIG[String(value || "").trim().toLowerCase() as ProviderId]; return config?.label || PROVIDER_CONFIG.chatgpt.label; }
+// Web's own name algorithm, handed to the ingest gate so prompt upgrades keep
+// recomputing the theme the way web captures always have.
+const deriveWebTheme = (nextPrompt: string, provider: unknown): string => promptTheme(nextPrompt, providerLabelFor(provider));

@@ -648,8 +648,11 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
   const nextTheme = promptTheme(generation.prompt);
   // A prompt or theme a human typed through a marked entry point wins over
   // the session file forever; the theme is only ever recomputed alongside a
-  // prompt that is actually being upgraded.
+  // prompt that is actually being upgraded. The provenance status describes
+  // the kept prompt, so an automatic channel never rewrites it over a user
+  // edit either.
   const promptChanged = !isPromptUserEdited(asset) && asset.prompt !== generation.prompt;
+  const statusUpgradable = !isPromptUserEdited(asset);
   const themeChanged = !isThemeUserEdited(asset) && promptChanged && Boolean(nextTheme) && asset.theme !== nextTheme;
   const nextSource: Record<string, unknown> = {
     ...(asset.source || {}),
@@ -657,7 +660,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     codex_image_generation_call_id: generation.callId || asset.source?.codex_image_generation_call_id || null,
     codex_image_generated_at: generation.generatedAt || asset.source?.codex_image_generated_at || null,
     model: generation.model || asset.source?.model || null,
-    prompt_status: generation.promptStatus,
+    prompt_status: statusUpgradable ? generation.promptStatus : asset.source?.prompt_status ?? generation.promptStatus,
     codex_generation_origin: generation.origin || asset.source?.codex_generation_origin || null,
   };
   if (userMessageChanged) nextSource.user_message = nextUserMessage;
@@ -670,7 +673,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     "user_message",
     "codex_generation_origin",
   ].some((key) => asset.source?.[key] !== nextSource[key]);
-  const businessStatusChanged = asset.business_fields?.prompt_status !== generation.promptStatus;
+  const businessStatusChanged = statusUpgradable && asset.business_fields?.prompt_status !== generation.promptStatus;
   if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged && !userMessageChanged) return false;
 
   // Session mtime is provenance, not business identity. Record the freshest
@@ -683,7 +686,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     ...(themeChanged ? { theme: nextTheme } : {}),
     business_fields: {
       ...(asset.business_fields || {}),
-      prompt_status: generation.promptStatus,
+      prompt_status: statusUpgradable ? generation.promptStatus : asset.business_fields?.prompt_status,
       ...(userMessageChanged ? { user_message: nextUserMessage } : {}),
     },
     source: nextSource,
