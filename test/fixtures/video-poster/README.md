@@ -8,11 +8,11 @@ the renderer's frame picker skips the black intro.
 The app itself never depends on ffmpeg; the committed file is the fixture.
 Regenerate and re-commit only if the expected metadata changes.
 
-Generated with `/Users/azhuilab/.local/node/bin/ffmpeg` (ffmpeg 6.0, no
+Generated with `ffmpeg` (ffmpeg 6.0, no
 ffprobe on this machine):
 
 ```sh
-FFMPEG=/Users/azhuilab/.local/node/bin/ffmpeg
+FFMPEG=ffmpeg
 $FFMPEG -y \
   -f lavfi -i "color=black:s=640x360:r=15:d=1.5" \
   -f lavfi -i "testsrc2=s=640x360:r=15:d=2.5" \
