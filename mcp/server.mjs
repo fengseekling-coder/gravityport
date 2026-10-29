@@ -8,6 +8,7 @@ import { stat } from "node:fs/promises";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
+import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
 import { buildAssetProvenanceBundle } from "../lib/provenance-bundle.mjs";
 import {
   desktopDefaultLocationFilePath,
@@ -551,12 +552,17 @@ async function handleToolCall(id, params) {
   }
   if (params?.name === TOOL_ASSET_UPDATE_METADATA) {
     const { projectId = "default", assetId, ...patch } = args;
-    const asset = await store.updateMetadata(projectId, assetId, patch);
+    // AI assistants edit on the user's behalf, so this counts as a human edit:
+    // stamp markers so automatic prompt/theme writers keep their hands off.
+    const current = await store.getAsset(projectId, assetId);
+    const asset = await store.updateMetadata(projectId, assetId, withUserEditMarkers(current, patch));
     sendResult(id, { content: [{ type: "text", text: `Updated asset ${asset.id}` }], structuredContent: { asset } });
     return;
   }
   if (params?.name === TOOL_ASSET_ATTACH_PROMPT) {
-    const asset = await store.updateMetadata(args.projectId || "default", args.assetId, { prompt: args.prompt });
+    const projectId = args.projectId || "default";
+    const current = await store.getAsset(projectId, args.assetId);
+    const asset = await store.updateMetadata(projectId, args.assetId, withUserEditMarkers(current, { prompt: args.prompt }));
     sendResult(id, { content: [{ type: "text", text: `Attached prompt to ${asset.id}` }], structuredContent: { asset } });
     return;
   }

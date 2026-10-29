@@ -6,6 +6,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { pipeline } from "node:stream/promises";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
 import { resolveSourceLocations } from "./source-locations.js";
+import { isPromptUserEdited, isThemeUserEdited } from "./user-edit-marker.mjs";
 
 const IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"]);
 const VIDEO_EXTENSIONS = new Set([".m4v", ".mov", ".mp4", ".webm"]);
@@ -321,8 +322,11 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
   const canUpgradePrompt = nextRank > currentRank
     || (nextRank === currentRank && nextRank > 0 && generation.prompt && generation.prompt !== (asset.prompt as string));
   const nextTheme = promptTheme(generation.prompt);
-  const promptChanged = canUpgradePrompt && Boolean(generation.prompt) && asset.prompt !== generation.prompt;
-  const themeChanged = Boolean(nextTheme) && asset.theme !== nextTheme;
+  // A prompt or theme a human typed through a marked entry point wins over
+  // the session file; the theme is only recomputed alongside a prompt that is
+  // actually being upgraded.
+  const promptChanged = !isPromptUserEdited(asset) && canUpgradePrompt && Boolean(generation.prompt) && asset.prompt !== generation.prompt;
+  const themeChanged = !isThemeUserEdited(asset) && promptChanged && Boolean(nextTheme) && asset.theme !== nextTheme;
   const assetSource = (asset.source as Record<string, unknown> | undefined) || {};
   const existingUserMessage = [assetSource.user_message, (asset.business_fields as Record<string, unknown> | undefined)?.user_message]
     .map((value) => (typeof value === "string" ? value.trim() : ""))

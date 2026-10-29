@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { createAssetStore } from "../lib/asset-store.mjs";
+import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
 import { buildGrokAssetId, createGrokMediaBridge, reconcileGrokMedia, sha256File, __test } from "../lib/grok-media-bridge.js";
 
 const SESSION_ID = "019f8f50-1f0d-7983-ab3f-544a0b5f7577";
@@ -969,4 +971,67 @@ test("sha256File streams file contents instead of loading the whole file", async
   assert.match(body, /createReadStream\(filePath\)/, "sha256File should stream via createReadStream(filePath)");
   assert.match(body, /pipeline\(createReadStream\(filePath\),\s*hash\)/, "sha256File should pipe through pipeline(..., hash) rather than loading bytes");
   assert.doesNotMatch(body, /readFile\(filePath/, "sha256File must not load the whole file via readFile");
+});
+
+test("keeps user-edited prompts across Grok reconciliation while untouched assets still upgrade", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-user-edit-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir: join(root, "library") });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+
+  const fixtureA = await createGrokSessionFixture(root, {
+    sessionId: "019f8f50-1f0d-7983-ab3f-544a0b5f7571",
+    workspace: "%2Ftmp%2Fmosa-grok-user-edit-a",
+    imageName: "edit.png",
+    toolPrompt: "original tool prompt for the edited image",
+  });
+  const fixtureB = await createGrokSessionFixture(root, {
+    sessionId: "019f8f50-1f0d-7983-ab3f-544a0b5f7572",
+    workspace: "%2Ftmp%2Fmosa-grok-user-edit-b",
+    imageName: "keep.png",
+    toolPrompt: "original tool prompt for the untouched image",
+  });
+  // Distinct pixels so the two assets do not dedupe against each other.
+  await writeFile(fixtureA.mediaPath, pngFixture(640, 480));
+  await writeFile(fixtureB.mediaPath, pngFixture(800, 600));
+
+  const first = await reconcileGrokMedia({ store, sessionsDir: root });
+  assert.equal(first.imported.length, 2);
+  const assetA = first.imported.find((asset) => asset.source.grok_session_id === "019f8f50-1f0d-7983-ab3f-544a0b5f7571");
+  const assetB = first.imported.find((asset) => asset.source.grok_session_id === "019f8f50-1f0d-7983-ab3f-544a0b5f7572");
+  assert.ok(assetA && assetB);
+
+  // The UI PATCH entry point: stamp markers the way lib/api/asset-routes.mjs does.
+  await store.updateMetadata("default", assetA.id, withUserEditMarkers(
+    await store.getAsset("default", assetA.id),
+    { prompt: "USER EDIT: red mech in the rain", theme: "用户起的名字" },
+  ));
+
+  const rewriteChat = async (fixture, toolPrompt) => {
+    const chatPath = join(fixture.sessionPath, "chat_history.jsonl");
+    const rows = (await readFile(chatPath, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
+    for (const row of rows) {
+      if (row.type === "assistant" && Array.isArray(row.tool_calls)) {
+        for (const call of row.tool_calls) {
+          const args = JSON.parse(call.arguments || "{}");
+          args.prompt = toolPrompt;
+          call.arguments = JSON.stringify(args);
+        }
+      }
+    }
+    await writeFile(chatPath, rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  };
+  await rewriteChat(fixtureA, "revised tool prompt for the edited image");
+  await rewriteChat(fixtureB, "revised tool prompt for the untouched image");
+
+  const second = await reconcileGrokMedia({ store, sessionsDir: root });
+  assert.deepEqual(second.updated, [assetB.id], "only the untouched asset is rewritten");
+  const afterA = await store.getAsset("default", assetA.id);
+  const afterB = await store.getAsset("default", assetB.id);
+  assert.equal(afterA.prompt, "USER EDIT: red mech in the rain", "the user edit must survive reconciliation");
+  assert.equal(afterA.theme, "用户起的名字", "the user rename must survive reconciliation");
+  assert.equal(afterB.prompt, "revised tool prompt for the untouched image", "the untouched asset must still follow the session");
+  assert.ok(afterA.source.prompt_user_edited_at);
+  assert.ok(afterA.source.theme_user_edited_at);
 });
