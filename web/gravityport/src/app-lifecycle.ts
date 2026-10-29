@@ -158,6 +158,39 @@ export function mapUpdateResult(result: UpdateCheckResult): UpdateUiState {
   return { phase: "error" };
 }
 
+export type InstallResultFeedback = {
+  installing: boolean
+  nextPhase: "available" | "current" | "unavailable"
+  toast: "failed" | "current" | "move-to-applications" | null
+}
+
+// The main process has already shown its own system dialog for these three
+// codes, so the renderer adds no toast on top of them.
+const DIALOG_ALREADY_SHOWN_CODES = new Set([
+  "PREFLIGHT_DISK_SPACE",
+  "PREFLIGHT_INSTALL_DIR_NOT_WRITABLE",
+  "UPDATE_FAILED_TWICE",
+])
+
+/**
+ * Maps a downloadAndInstallUpdate result to what the UI should do next
+ * (task 302): whether the app is quitting to install, which phase the update
+ * state moves to, and whether a renderer toast is still needed.
+ */
+export function installResultFeedback(result: { status?: string; code?: unknown; reason?: unknown } | null | undefined): InstallResultFeedback {
+  const status = typeof result?.status === "string" ? result.status : undefined;
+  if (status === "installing") return { installing: true, nextPhase: "available", toast: null };
+  if (status === "cancelled") return { installing: false, nextPhase: "available", toast: null };
+  if (status === "current") return { installing: false, nextPhase: "current", toast: "current" };
+  if (status === "unavailable" && result?.reason === "install-location-unsupported") {
+    return { installing: false, nextPhase: "unavailable", toast: "move-to-applications" };
+  }
+  if (status === "error" && typeof result?.code === "string" && DIALOG_ALREADY_SHOWN_CODES.has(result.code)) {
+    return { installing: false, nextPhase: "available", toast: null };
+  }
+  return { installing: false, nextPhase: "available", toast: "failed" };
+}
+
 /** Keeps only string-valued notes languages; drops the field when both are absent. */
 function sanitizeUpdateNotes(notes: UpdateCheckResult["notes"]): { zh?: string; en?: string } | undefined {
   if (!notes || typeof notes !== "object") return undefined;

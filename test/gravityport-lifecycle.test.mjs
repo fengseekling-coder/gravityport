@@ -2,6 +2,7 @@
 // The module ships as TypeScript inside web/gravityport, so it is compiled to a
 // temp directory with tsc before import (same approach as gravityport-interaction.test.mjs).
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { rm, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -189,6 +190,80 @@ describe("mapUpdateResult", () => {
     const fakeResult = undefined;
     const state = mapUpdateResult(fakeResult ?? {});
     assert.equal(state.phase, "error");
+  });
+});
+
+describe("installResultFeedback", () => {
+  let installResultFeedback;
+
+  before(() => {
+    ({ installResultFeedback } = lifecycle);
+  });
+
+  it('status: installing → installing, phase stays available, no toast', () => {
+    assert.deepEqual(installResultFeedback({ status: "installing" }), { installing: true, nextPhase: "available", toast: null });
+  });
+
+  it('status: cancelled → back to available, no toast', () => {
+    assert.deepEqual(installResultFeedback({ status: "cancelled" }), { installing: false, nextPhase: "available", toast: null });
+  });
+
+  it('error PREFLIGHT_DISK_SPACE → back to available, no toast (dialog already shown)', () => {
+    assert.deepEqual(installResultFeedback({ status: "error", code: "PREFLIGHT_DISK_SPACE" }), { installing: false, nextPhase: "available", toast: null });
+  });
+
+  it('error PREFLIGHT_INSTALL_DIR_NOT_WRITABLE → back to available, no toast (dialog already shown)', () => {
+    assert.deepEqual(installResultFeedback({ status: "error", code: "PREFLIGHT_INSTALL_DIR_NOT_WRITABLE" }), { installing: false, nextPhase: "available", toast: null });
+  });
+
+  it('error UPDATE_FAILED_TWICE → back to available, no toast (dialog already shown)', () => {
+    assert.deepEqual(installResultFeedback({ status: "error", code: "UPDATE_FAILED_TWICE" }), { installing: false, nextPhase: "available", toast: null });
+  });
+
+  it('status: current → current phase with the current toast', () => {
+    assert.deepEqual(installResultFeedback({ status: "current" }), { installing: false, nextPhase: "current", toast: "current" });
+  });
+
+  it('status: unavailable, reason: install-location-unsupported → unavailable phase with the move-to-applications toast', () => {
+    assert.deepEqual(installResultFeedback({ status: "unavailable", reason: "install-location-unsupported" }), { installing: false, nextPhase: "unavailable", toast: "move-to-applications" });
+  });
+
+  it('status: unavailable without a reason → back to available with the failed toast', () => {
+    assert.deepEqual(installResultFeedback({ status: "unavailable" }), { installing: false, nextPhase: "available", toast: "failed" });
+  });
+
+  it('error MACOS_UPDATE_FAILED → back to available with the failed toast', () => {
+    assert.deepEqual(installResultFeedback({ status: "error", code: "MACOS_UPDATE_FAILED" }), { installing: false, nextPhase: "available", toast: "failed" });
+  });
+
+  it('error WINDOWS_UPDATE_FAILED → back to available with the failed toast', () => {
+    assert.deepEqual(installResultFeedback({ status: "error", code: "WINDOWS_UPDATE_FAILED" }), { installing: false, nextPhase: "available", toast: "failed" });
+  });
+
+  it('status: unsupported → back to available with the failed toast', () => {
+    assert.deepEqual(installResultFeedback({ status: "unsupported", reason: "release-manifest-untrusted" }), { installing: false, nextPhase: "available", toast: "failed" });
+  });
+
+  it('unknown status / null / undefined → back to available with the failed toast', () => {
+    assert.deepEqual(installResultFeedback({ status: "something-new" }), { installing: false, nextPhase: "available", toast: "failed" });
+    assert.deepEqual(installResultFeedback(null), { installing: false, nextPhase: "available", toast: "failed" });
+    assert.deepEqual(installResultFeedback(undefined), { installing: false, nextPhase: "available", toast: "failed" });
+  });
+
+  // Contract: every preflight/failed-twice code the main process can return has
+  // already raised its own system dialog, so the renderer must stay quiet for
+  // each of them — and only for them (the two generic failure codes keep the
+  // toast). Reads desktop/main.mjs source text (read-only) so a future preflight
+  // code added there without updating the mapping is caught here.
+  it('every dialog-already-shown code in desktop/main.mjs maps to toast: null', () => {
+    const source = readFileSync(join(repositoryRoot, "desktop", "main.mjs"), "utf8");
+    const codes = [...new Set([...source.matchAll(/code: "((?:PREFLIGHT_[A-Z_]+)|UPDATE_FAILED_TWICE)"/g)].map((match) => match[1]))];
+    assert.ok(codes.length >= 3, `expected at least 3 dialog-already-shown codes in desktop/main.mjs, got ${JSON.stringify(codes)}`);
+    for (const code of codes) {
+      assert.equal(installResultFeedback({ status: "error", code }).toast, null, `code ${code} must not add a renderer toast`);
+    }
+    assert.equal(installResultFeedback({ status: "error", code: "MACOS_UPDATE_FAILED" }).toast, "failed");
+    assert.equal(installResultFeedback({ status: "error", code: "WINDOWS_UPDATE_FAILED" }).toast, "failed");
   });
 });
 
