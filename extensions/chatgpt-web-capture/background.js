@@ -219,12 +219,13 @@ function queueReplayPayload(payload = {}, id = "") {
 function promptPayloadRank(payload = {}) {
   const explicit = Number(payload.promptPriority || payload.prompt_priority) || 0;
   const status = String(payload.promptStatus || payload.prompt_status || "");
+  // Order must match lib/prompt-rank.mjs PROMPT_STATUS_RANK; a test locks it.
   const rank = {
     "not-available": 0,
     "user-message": 1,
-    "provider-visible-prompt": 2,
-    "visible-caption": 3,
-    "generation-tool-prompt": 4,
+    "provider-visible-prompt": 1,
+    "visible-caption": 2,
+    "generation-tool-prompt": 3,
   }[status] ?? 0;
   return explicit * 100 + rank;
 }

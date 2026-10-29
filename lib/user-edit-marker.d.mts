@@ -18,9 +18,14 @@ export interface UserEditMarkerAsset {
 
 /**
  * Merge user-edit markers into a human-provided patch. Returns the patch
- * unchanged when no text field really changed; otherwise returns a new patch
- * whose `source` merges the stored source underneath the patch source and
- * applies the markers last.
+ * unchanged when no text field really changed (except that marker keys in the
+ * patch's source are ignored); otherwise returns a new patch whose `source`
+ * merges the stored source underneath the patch source and applies the
+ * marker/status values last. A really-changed (non-empty) prompt also becomes
+ * prompt_status "user-edited" in source and business_fields; clearing the
+ * prompt is not an edit — the marker is removed, the status returns to
+ * not-available, and no user_edited_at is stamped unless another text field
+ * changed too. Callers can never set or clear the markers themselves.
  */
 export declare function withUserEditMarkers(
   current: UserEditMarkerAsset | null | undefined,
