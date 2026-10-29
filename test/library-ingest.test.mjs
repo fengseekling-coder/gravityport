@@ -17,7 +17,9 @@ import {
   ingestIntoLibrary,
   ingestOwnerOf,
   untrustedCreateSource,
+  upgradePrompt,
 } from "../lib/library-ingest.mjs";
+import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
 import { ingestWebCapture } from "../lib/web-capture-ingest.js";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 
@@ -396,4 +398,38 @@ test("ingestIntoLibrary creates through the gate and adopts a transactional dupl
   assert.equal(inLibrary.status, "skipped");
   assert.equal(inLibrary.reason, "already-in-library");
   assert.equal(inLibrary.existingAsset.id, "gate-race");
+});
+
+test("a hand-edited prompt keeps its text while the user's own instruction still fills in", async (t) => {
+  const { store, root } = await createTestStore(t, "mosa-gate-edited-user-message-");
+  const bytes = await noiseImage(640, 480, 71);
+  const created = await createAssetFromFile(store, root, "edited-user-message.png", bytes, {
+    sourceType: "web-chatgpt",
+    prompt: "A caption from the page",
+    source: { provider: "chatgpt", prompt_status: "visible-caption" },
+    business_fields: { prompt_status: "visible-caption" },
+  });
+  const edited = await store.updateMetadata("default", created.id, withUserEditMarkers(created, { prompt: "My own words" }));
+  assert.equal(edited.source.prompt_status, "user-edited");
+
+  // A recapture with a page prompt: the edited prompt stays, the empty
+  // instruction slot is filled even though "user-edited" outranks the page.
+  const upgraded = await upgradePrompt(store, edited, {
+    prompt: "A generation tool prompt",
+    promptStatus: "generation-tool-prompt",
+    userMessage: "draw a cat",
+    provider: "chatgpt",
+  });
+  assert.ok(upgraded, "the user's instruction is written");
+  assert.equal(upgraded.prompt, "My own words");
+  assert.equal(upgraded.source.prompt_status, "user-edited");
+  assert.equal(upgraded.source.user_message, "draw a cat");
+
+  // Repeating the same observation writes nothing.
+  assert.equal(await upgradePrompt(store, upgraded, {
+    prompt: "A generation tool prompt",
+    promptStatus: "generation-tool-prompt",
+    userMessage: "draw a cat",
+    provider: "chatgpt",
+  }), null);
 });
