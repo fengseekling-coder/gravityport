@@ -17,6 +17,7 @@ import { getDesktopText, getLibraryStartupFailureText, getNotificationTextForAss
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
+import { releaseManifestTrustSet } from "../lib/release-manifest-signature.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
 import { backgroundUpdateGatesPass, createUpdateScheduler, updateReadyNotificationCopy } from "./update-scheduler.mjs";
@@ -78,6 +79,15 @@ const expectedServiceIdentity = Object.freeze({
   ...getBuildIdentity(join(appRoot, "web", "gravityport", "dist")),
   serviceProtocolVersion: MOSA_SERVICE_PROTOCOL_VERSION,
 });
+// Release manifests verify against the primary key or the offline backup key;
+// the signature's keyId picks which one. Computed per call so a malformed key
+// fails that update check, not app startup. Only the primary key gates in-app install.
+function releaseManifestVerificationTrusts() {
+  return releaseManifestTrustSet(
+    expectedServiceIdentity.releaseManifestTrust,
+    expectedServiceIdentity.releaseManifestBackupTrust,
+  );
+}
 // `desktopDataDir` is the *actual* userData after Chromium applied the QA
 // --user-data-dir override (if any). It is deliberately NOT the production
 // default: Electron rewrites userData before any JS runs, so the un-overridden
@@ -328,7 +338,7 @@ const updateScheduler = createUpdateScheduler({
   checkForUpdate: () => checkForMosaUpdate({
     currentVersion: app.getVersion(),
     currentDistribution: expectedServiceIdentity.distribution,
-    releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+    releaseManifestTrust: releaseManifestVerificationTrusts(),
   }),
   artifactForPlatform: (release) => (
     process.platform === "darwin" ? release.macArtifact
@@ -890,7 +900,7 @@ function registerIPC() {
           const release = await checkForMosaUpdate({
             currentVersion: app.getVersion(),
             currentDistribution: expectedServiceIdentity.distribution,
-            releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+            releaseManifestTrust: releaseManifestVerificationTrusts(),
           });
           if (!release.updateAvailable) return { status: "current", currentVersion: release.currentVersion };
           if (!release.macArtifact) return { status: "unavailable", currentVersion: release.currentVersion };
@@ -960,7 +970,7 @@ function registerIPC() {
       const release = await checkForMosaUpdate({
         currentVersion: app.getVersion(),
         currentDistribution: expectedServiceIdentity.distribution,
-        releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+        releaseManifestTrust: releaseManifestVerificationTrusts(),
       });
       if (!release.updateAvailable) return { status: "current", currentVersion: release.currentVersion };
       if (!release.windowsArtifact) return { status: "unavailable", currentVersion: release.currentVersion };
@@ -1216,7 +1226,7 @@ function runUpdateCheck({ notify = false } = {}) {
   updateCheckPromise = checkForMosaUpdate({
     currentVersion,
     currentDistribution: expectedServiceIdentity.distribution,
-    releaseManifestTrust: expectedServiceIdentity.releaseManifestTrust,
+    releaseManifestTrust: releaseManifestVerificationTrusts(),
   })
     .then((result) => {
       if (notify && result.updateAvailable && Notification.isSupported()) {

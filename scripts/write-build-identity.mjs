@@ -18,7 +18,10 @@ import { fileURLToPath } from "node:url";
 import { computeRuntimeFingerprint, computeUiFingerprint } from "../lib/build-identity.mjs";
 import { readReleaseNotes, notesForVersion } from "../lib/release-notes.mjs";
 import { desktopDistributionFromEnvironment } from "../lib/release-distribution.mjs";
-import { releaseManifestTrustFromEnvironment } from "../lib/release-manifest-signature.mjs";
+import {
+  releaseManifestBackupTrustFromRepository,
+  releaseManifestTrustFromEnvironment,
+} from "../lib/release-manifest-signature.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -61,6 +64,11 @@ if (distribution !== "development" && !notesForVersion(releaseNotes, productVers
 
 // --- Write identity ---------------------------------------------------
 const releaseManifestTrust = releaseManifestTrustFromEnvironment(process.env);
+// A build that carries the primary key always carries the backup key too, so an
+// App keeps accepting updates signed with the backup if the primary is lost.
+const releaseManifestBackupTrust = releaseManifestTrust
+  ? releaseManifestBackupTrustFromRepository(root)
+  : null;
 const identity = {
   productVersion,
   gitSha,
@@ -68,6 +76,7 @@ const identity = {
   runtimeFingerprint,
   distribution,
   ...(releaseManifestTrust ? { releaseManifestTrust } : {}),
+  ...(releaseManifestBackupTrust ? { releaseManifestBackupTrust } : {}),
 };
 const outPath = join(appDir, "build-identity.json");
 writeFileSync(outPath, JSON.stringify(identity, null, 2) + "\n");

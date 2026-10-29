@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 
-import { createReleaseManifestTrust } from "../lib/release-manifest-signature.mjs";
+import { createReleaseManifestTrust, releaseManifestBackupTrustFromRepository } from "../lib/release-manifest-signature.mjs";
 import { assertReleaseProvenance } from "../scripts/check-release-provenance.mjs";
 import {
   assertMacosReleaseSignature,
@@ -14,6 +14,7 @@ import { assertWindowsReleaseSignature, verifyWindowsReleasePackage } from "../s
 const SHA = "a".repeat(40);
 const IDENTITY = "Developer ID Application: Example Studio (TEAM123456)";
 const RELEASE_TRUST = createReleaseManifestTrust(generateKeyPairSync("ed25519").publicKey);
+const BACKUP_TRUST = releaseManifestBackupTrustFromRepository(new URL("..", import.meta.url).pathname);
 
 test("release provenance requires clean, tagged, remotely reachable immutable source", () => {
   const base = {
@@ -30,6 +31,7 @@ test("release provenance requires clean, tagged, remotely reachable immutable so
       runtimeFingerprint: "c".repeat(64),
       distribution: "preview",
       releaseManifestTrust: RELEASE_TRUST,
+      releaseManifestBackupTrust: BACKUP_TRUST,
     },
   };
   assert.equal(assertReleaseProvenance(base).tag, "v0.2.1-rc.22");
@@ -146,4 +148,32 @@ test("Windows release verification covers every executable and native payload", 
   assert.match(command, /\.exe/);
   assert.match(command, /\.dll/);
   assert.match(command, /\.node/);
+});
+
+test("release provenance refuses a build without the pinned backup manifest key", () => {
+  const base = {
+    version: "0.3.8",
+    head: SHA,
+    status: "",
+    tags: ["v0.3.8"],
+    remoteBranches: ["origin/release/0.3.8"],
+    remoteTagSha: SHA,
+    buildIdentity: {
+      productVersion: "0.3.8",
+      gitSha: SHA,
+      uiFingerprint: "b".repeat(64),
+      runtimeFingerprint: "c".repeat(64),
+      distribution: "preview",
+      releaseManifestTrust: RELEASE_TRUST,
+    },
+  };
+  assert.throws(() => assertReleaseProvenance(base), /missing releaseManifestBackupTrust/);
+  assert.throws(
+    () => assertReleaseProvenance({ ...base, buildIdentity: { ...base.buildIdentity, releaseManifestBackupTrust: RELEASE_TRUST } }),
+    /must carry key id/,
+  );
+  assert.equal(
+    assertReleaseProvenance({ ...base, buildIdentity: { ...base.buildIdentity, releaseManifestBackupTrust: BACKUP_TRUST } }).tag,
+    "v0.3.8",
+  );
 });

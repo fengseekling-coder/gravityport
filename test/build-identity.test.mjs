@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import test, { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { getBuildIdentity, resetBuildIdentityCache, computeRuntimeFingerprint, computeUiFingerprint } from "../lib/build-identity.mjs";
+import {
+  RELEASE_MANIFEST_BACKUP_KEY_ID,
+  RELEASE_MANIFEST_BACKUP_PUBLIC_KEY_PATH,
+  createReleaseManifestTrust,
+} from "../lib/release-manifest-signature.mjs";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { MCP_SERVER_VERSION, MOSA_SERVICE_PROTOCOL_VERSION } from "../lib/version-identities.mjs";
 import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
@@ -315,3 +322,89 @@ function t_after_cleanup(dir) {
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
 }
 test.after(() => Promise.allSettled(cleanups.map((fn) => fn())));
+
+// Build gate for the pinned release keys: runs the real scripts/write-build-identity.mjs
+// inside a temp mini-repo so the real dist/ is never touched.
+describe("write-build-identity pins the backup release-manifest key", () => {
+  const gateVersion = "0.0.0-backup-key-test";
+  const gateNotes = {
+    schema: 2,
+    unreleased: { zh: ["一条"], en: ["One"] },
+    releases: [{ version: gateVersion, date: "2026-10-29", zh: ["说明"], en: ["Note"] }],
+  };
+
+  async function makeGateRepo() {
+    const root = await mkdtemp(join(tmpdir(), "mosa-backup-key-gate-"));
+    await mkdir(join(root, "scripts", "release-keys"), { recursive: true });
+    await mkdir(join(root, "web", "gravityport", "dist"), { recursive: true });
+    await cp(join(repositoryRoot, "lib"), join(root, "lib"), { recursive: true });
+    await cp(join(repositoryRoot, "scripts", "write-build-identity.mjs"), join(root, "scripts", "write-build-identity.mjs"));
+    await cp(
+      join(repositoryRoot, RELEASE_MANIFEST_BACKUP_PUBLIC_KEY_PATH),
+      join(root, RELEASE_MANIFEST_BACKUP_PUBLIC_KEY_PATH),
+    );
+    await cp(join(repositoryRoot, "server.mjs"), join(root, "server.mjs"));
+    await writeFile(join(root, "package.json"), JSON.stringify({ version: gateVersion }), "utf8");
+    await writeFile(join(root, "release-notes.json"), JSON.stringify(gateNotes), "utf8");
+    await writeFile(join(root, "web", "gravityport", "dist", "index.html"), "<!doctype html>", "utf8");
+    return root;
+  }
+
+  function runWriteBuildIdentity(root, extraEnv = {}) {
+    const env = { ...process.env, ...extraEnv };
+    delete env.MOSA_RELEASE_MANIFEST_PUBLIC_KEY;
+    if (!("MOSA_RELEASE_MANIFEST_PUBLIC_KEY_FILE" in extraEnv)) delete env.MOSA_RELEASE_MANIFEST_PUBLIC_KEY_FILE;
+    delete env.MOSA_RELEASE_DISTRIBUTION;
+    try {
+      execFileSync(process.execPath, [join(root, "scripts", "write-build-identity.mjs")], { env, stdio: ["ignore", "pipe", "pipe"] });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, stderr: String(error?.stderr || "") };
+    }
+  }
+
+  it("writes the backup trust next to the primary trust, keyed to the pinned backup id", async () => {
+    const root = await makeGateRepo();
+    try {
+      const primary = generateKeyPairSync("ed25519");
+      const primaryFile = join(root, "primary.pem");
+      await writeFile(primaryFile, primary.publicKey.export({ format: "pem", type: "spki" }).toString(), "utf8");
+      const result = runWriteBuildIdentity(root, { MOSA_RELEASE_MANIFEST_PUBLIC_KEY_FILE: primaryFile });
+      assert.equal(result.ok, true, result.stderr);
+      const identity = JSON.parse(await readFile(join(root, "web", "gravityport", "dist", "build-identity.json"), "utf8"));
+      assert.equal(identity.releaseManifestTrust.keyId, createReleaseManifestTrust(primary.publicKey).keyId);
+      assert.equal(identity.releaseManifestBackupTrust.keyId, RELEASE_MANIFEST_BACKUP_KEY_ID);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes no backup trust for a development build without a primary key", async () => {
+    const root = await makeGateRepo();
+    try {
+      const result = runWriteBuildIdentity(root);
+      assert.equal(result.ok, true, result.stderr);
+      const identity = JSON.parse(await readFile(join(root, "web", "gravityport", "dist", "build-identity.json"), "utf8"));
+      assert.equal("releaseManifestTrust" in identity, false);
+      assert.equal("releaseManifestBackupTrust" in identity, false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to build when the committed backup public key has been swapped", async () => {
+    const root = await makeGateRepo();
+    try {
+      const primary = generateKeyPairSync("ed25519");
+      const primaryFile = join(root, "primary.pem");
+      await writeFile(primaryFile, primary.publicKey.export({ format: "pem", type: "spki" }).toString(), "utf8");
+      const otherPem = generateKeyPairSync("ed25519").publicKey.export({ format: "pem", type: "spki" }).toString();
+      await writeFile(join(root, RELEASE_MANIFEST_BACKUP_PUBLIC_KEY_PATH), otherPem, "utf8");
+      const result = runWriteBuildIdentity(root, { MOSA_RELEASE_MANIFEST_PUBLIC_KEY_FILE: primaryFile });
+      assert.equal(result.ok, false);
+      assert.match(result.stderr, /does not match the expected/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
