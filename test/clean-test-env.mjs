@@ -22,6 +22,7 @@ const POLLUTING_MOSA_VARIABLES = [
   "MOSA_USER_DATA",
   "MOSA_QA_RUN",
   "MOSA_CLIENT_TOKEN",
+  "MOSA_BACKGROUND_RUNTIME",
   // GravityPort names of the user-facing switches (lib/env-aliases.mjs).
   "GRAVITYPORT_LIBRARY_DIR",
   "GRAVITYPORT_LIBRARY_LOCATION_FILE",
