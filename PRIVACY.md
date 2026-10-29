@@ -114,7 +114,7 @@ The optional extension:
 Its manifest host permissions are limited to the following explicit hosts/patterns: `chatgpt.com`, `chat.openai.com`, `*.oaiusercontent.com`, `images.openai.com`, `*.blob.core.windows.net`, `gemini.google.com`, `labs.google`, `flow.google.com`, `aistudio.google.com`, `*.googleusercontent.com`, `*.ggpht.com`, `storage.googleapis.com`, `generativelanguage.googleapis.com`, `flow-content.google`, `jimeng.jianying.com`, `*.byteimg.com`, `*.jimeng.com`, `*.vlabvod.com`, `www.midjourney.com`, `cdn.midjourney.com`, plus loopback `127.0.0.1` and `localhost` for delivery to GravityPort. The Azure Blob, ByteDance (`byteimg.com`, `jimeng.com`, `vlabvod.com`), and Midjourney CDN hosts are used for provider-served media bytes and are not GravityPort-operated endpoints. Its API permissions are `storage`, `contextMenus`, `alarms`, and `unlimitedStorage`:
 
 - `storage` saves the GravityPort address, the Web Capture Token, the auto-capture preference, and the bounded retry queue in `chrome.storage.local`, and the in-progress ChatGPT desktop app capture job (conversation id, window and tab ids, start time) in `chrome.storage.session`, which Chrome holds in memory and clears when the browser exits;
-- `contextMenus` provides the right-click "Save to GravityPort" menus;
+- `contextMenus` provides the right-click menu items for saving an image or a video to GravityPort by hand;
 - `alarms` drives the timer that retries queued captures;
 - `unlimitedStorage` lets the extension's local storage hold the media bytes of queued captures (capped at 512 MB in total) so an expired provider link does not lose them while GravityPort is closed.
 
