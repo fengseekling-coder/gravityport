@@ -89,8 +89,29 @@ export async function run(ctx) {
     // unavailable here and direct-path creates would be refused. The clipboard
     // fixtures never touch the API — they only need to exist on disk, outside
     // the library, so the already-in-library skip cannot fire on them.
+    // Name-seeded block noise over the tint: solid fills all share one
+    // perceptual hash, and pasting one next to the seeds would open the
+    // manual-import review dialog (task 291) in the middle of the flow.
     const makePng = (fileName, [r, g, b]) => new Promise((resolvePng, rejectPng) => {
-      sharp({ create: { width: 32, height: 24, channels: 4, background: { r, g, b, alpha: 1 } } })
+      const raw = Buffer.alloc(32 * 24 * 4);
+      let seed = 2166136261;
+      for (const ch of fileName) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
+      for (let y = 0; y < 24; y += 3) {
+        for (let x = 0; x < 32; x += 4) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          const level = seed >>> 24;
+          for (let py = y; py < y + 3; py += 1) {
+            for (let px = x; px < x + 4; px += 1) {
+              const offset = (py * 32 + px) * 4;
+              raw[offset] = Math.round(0.3 * r + 0.7 * level);
+              raw[offset + 1] = Math.round(0.3 * g + 0.7 * level);
+              raw[offset + 2] = Math.round(0.3 * b + 0.7 * level);
+              raw[offset + 3] = 255;
+            }
+          }
+        }
+      }
+      sharp(raw, { raw: { width: 32, height: 24, channels: 4 } })
         .png()
         .toFile(join(ctx.fixturesDir, fileName))
         .then(() => resolvePng(join(ctx.fixturesDir, fileName)))

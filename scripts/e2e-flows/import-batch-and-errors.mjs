@@ -37,12 +37,19 @@ function importSource() {
       const context = canvas.getContext('2d');
       context.fillStyle = '#333333';
       context.fillRect(0, 0, 32, 24);
-      // Name-derived mark: identical bytes now skip as already-in-library
-      // (task 291), and this flow drops two files that must both import.
-      let mark = 0;
-      for (const ch of name) mark = (mark + ch.charCodeAt(0)) % 28;
-      context.fillStyle = '#eeeeee';
-      context.fillRect(2 + mark, 2, 4, 20);
+      // Name-seeded block noise: identical bytes skip as already-in-library
+      // and look-alike images open the import review (task 291); this flow
+      // drops files that must all import quietly, so each gets its own pattern.
+      let seed = 2166136261;
+      for (const ch of name) seed = Math.imul(seed ^ ch.charCodeAt(0), 16777619) >>> 0;
+      for (let y = 0; y < 24; y += 3) {
+        for (let x = 0; x < 32; x += 4) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          const level = seed >>> 24;
+          context.fillStyle = 'rgba(' + level + ',' + level + ',' + level + ',0.7)';
+          context.fillRect(x, y, 4, 3);
+        }
+      }
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
       return new File([blob], name, { type });
     }
