@@ -2633,6 +2633,9 @@ export default function App() {
         isSupported,
         onProgress: progress => {
           const arrived = progress.assets
+          // Held cards belong to the insert-eligible view; once the user left
+          // it, its own reload (or the next visit) fetches them from the server.
+          if (!importLiveInsertView([])) pendingImportCardsRef.current = []
           if (arrived.length && importLiveInsertView(arrived)) {
             if (galleryNearTop()) {
               // Back at (or near) the top: held cards and this batch land now.
@@ -2650,6 +2653,11 @@ export default function App() {
           })
           if (pendingImportCardsRef.current.length) {
             notifyWithAction(text, { label: tr("查看"), run: () => {
+              // The toast can outlive the view the cards were held for.
+              if (!importLiveInsertView(pendingImportCardsRef.current)) {
+                pendingImportCardsRef.current = []
+                return
+              }
               flushHeldImportCards()
               // Write the scroll position before the prepend's re-render
               // reads it: the layout hold keys off the pre-change scrollTop,
@@ -2836,6 +2844,13 @@ export default function App() {
     // every path below either reaches importFiles (whose finally clears it)
     // or clears it here.
     importingRef.current = true
+    // A scan that ends without reaching importFiles releases the gate and
+    // re-asks for any refresh it held (still behind an in-flight load).
+    const releaseDropScanGate = () => {
+      if (importing) return
+      importingRef.current = false
+      if (sseRefreshGateRef.current?.takePending()) sseRefreshGateRef.current.request()
+    }
     const topLevel = Array.from(dataTransfer?.files || [])
     const scan = collectDroppedFiles(dataTransfer, {
       onScanProgress: count => notify(fillNamed("正在扫描拖入的文件…已找到 {count} 个", { count })),
@@ -2847,15 +2862,17 @@ export default function App() {
     void Promise.all([scan, flags])
       .then(([result, flagged]) => {
         const { files, skipped } = excludeLibraryFiles(result.files, topLevel.filter((_, index) => flagged[index] === true))
-        if (skipped && !files.length) {
-          importingRef.current = false
-          notify(fillNamed("{count} 个文件已在素材库中，没有重复导入", { count: skipped }))
+        if (!files.length) {
+          // importFiles returns early on an empty list without touching the
+          // gate, so release it here or every later SSE refresh stays held.
+          releaseDropScanGate()
+          if (skipped) notify(fillNamed("{count} 个文件已在素材库中，没有重复导入", { count: skipped }))
           return
         }
         return importFiles(files, groupName)
       })
       .catch(error => {
-        importingRef.current = false
+        releaseDropScanGate()
         notify(errorMessage(error))
       })
   }
