@@ -14,7 +14,6 @@ import {
   normalizeGenerationStatus,
   normalizeMediaVariant,
   normalizePromptScope,
-  recordIngestOccurrence,
   upgradePrompt,
 } from "./library-ingest.mjs";
 
@@ -696,9 +695,6 @@ async function ingestWebVideoCapture(options: {
   mediaFilePath?: string;
 }): Promise<IngestResult> {
   const { store, tempRoot, projectId, input, provider } = options;
-  // Dedupe stays content-hash only for video until the video path joins the
-  // gate (it has no provider identity yet); the lookup is the shared one.
-  const duplicateLookup = createIngestLookup(store, projectId);
   if (!VIDEO_PROVIDERS.has(provider)) throw webCaptureError(`Provider does not support web video capture: ${provider}.`, 400, "WEB_CAPTURE_BAD_VIDEO_PROVIDER");
   if (Boolean(input.is_reference ?? input.isReference)) throw webCaptureError("Video reference capture is not supported.", 400, "WEB_CAPTURE_BAD_VIDEO_REFERENCE");
   const providerConfig = PROVIDER_CONFIG[provider as ProviderId];
@@ -752,6 +748,7 @@ async function ingestWebVideoCapture(options: {
   const providerGenerationCallId = String(input.providerGenerationCallId || input.provider_generation_call_id || "").trim();
   const providerResponseId = String(input.providerResponseId || input.provider_response_id || "").trim();
   const providerAssetId = String(input.providerAssetId || input.provider_asset_id || "").trim();
+  const logicalOutputId = logicalCaptureKey(projectId, provider, input);
   const captureSessionId = conversationId ? `${provider}:${conversationId}` : "";
   const generationBatchId = captureSessionId && messageId ? `${captureSessionId}:${messageId}` : "";
   const capturedAt = String(input.capturedAt || input.captured_at || new Date().toISOString());
@@ -774,9 +771,30 @@ async function ingestWebVideoCapture(options: {
   const referenceLibraryDir = store.libraryDir || (store.assetsRoot ? dirname(store.assetsRoot) : dirname(tempRoot));
   const referenceStore = options.referenceStore || createReferenceAttachmentStore(resolve(referenceLibraryDir));
 
-  const finalizeDuplicate = async (duplicate: StoredAsset): Promise<IngestResult> => {
-    const existingWithOccurrence = await recordIngestOccurrence(store, duplicate, captureOccurrence) || duplicate;
-    const mergedRecipe = await mergeDuplicateGenerationRecipe(store, existingWithOccurrence, {
+  // The same-id "clearer version" decision needs the incoming file's own
+  // dimensions, so the temp file is written and its metadata read before any
+  // dedupe runs; every branch below removes the file on the way out.
+  let tempPath = "";
+  const tempName = `${providerConfig.tempPrefix}-video-${Date.now()}-${randomBytes(4).toString("hex")}${ext}`;
+  const explicitAssetId = String(input.assetId || "").trim();
+  try {
+    await mkdir(tempRoot, { recursive: true });
+    tempPath = uploadedVideoPath || join(tempRoot, tempName);
+    if (!uploadedVideoPath) await writeFile(tempPath, videoBytes!);
+    // Dimensions and duration read from the file itself are the truth; the
+    // values a provider page reports (e.g. Jimeng's fixed duration of 7 for a
+    // 6.08 s video, or 0×0 when its API carries none) are only the fallback
+    // for containers this parser cannot read (WebM, truncated files).
+    const fileVideoMeta = await readVideoMetadataFromFile(tempPath).catch(() => null);
+    const width = fileVideoMeta?.width || normalizeMediaMetric(input.width, 16_384);
+    const height = fileVideoMeta?.height || normalizeMediaMetric(input.height, 16_384);
+    const durationSeconds = fileVideoMeta?.durationSeconds || normalizeMediaMetric(input.durationSeconds ?? input.duration_seconds, 3600, true);
+    // "Clearer" is decided from file-read dimensions only (0 when unreadable,
+    // which never upgrades); page-reported values only backfill business_fields.
+    const filePixels = fileVideoMeta?.width && fileVideoMeta?.height
+      ? fileVideoMeta.width * fileVideoMeta.height
+      : 0;
+    const onExistingRecipe = async (existing: StoredAsset, metadataUpgradeAllowed: boolean) => mergeDuplicateGenerationRecipe(store, existing, {
       projectAssets,
       referenceStore,
       projectId,
@@ -788,191 +806,200 @@ async function ingestWebVideoCapture(options: {
       providerAssetId,
       capturedAt,
       messageId,
-      prompt,
-      promptStatus: normalizedPromptStatus,
+      prompt: metadataUpgradeAllowed ? prompt : "",
+      promptStatus: metadataUpgradeAllowed ? normalizedPromptStatus : "not-available",
       promptSource,
-      promptPriority,
-      promptScope,
+      promptPriority: metadataUpgradeAllowed ? promptPriority : 0,
+      promptScope: metadataUpgradeAllowed ? promptScope : "",
       generationStatus,
-      userMessage,
+      userMessage: metadataUpgradeAllowed ? userMessage : "",
       model,
       provider,
     });
-    const upgraded = await upgradePrompt(store, mergedRecipe.asset, {
-      prompt,
-      promptStatus: normalizedPromptStatus,
-      userMessage,
-      promptSource,
-      promptPriority,
-      promptScope,
-      model,
-      provider,
-    }, { deriveTheme: deriveWebTheme });
-    const asset = upgraded || mergedRecipe.asset;
-    await recordCapturedGeneration(store, asset, {
+    const onExistingObserved = async (asset: StoredAsset): Promise<StoredAsset> => {
+      // Same rule as images: a re-observation of an already-archived video
+      // without any provider identity used to append a fresh generation event
+      // on every capture, so the history showed phantom regenerations. Only
+      // identified observations may record an event.
+      if (providerGenerationCallId || generationContextId || messageId || providerAssetId) {
+        await recordCapturedGeneration(store, asset, {
+          projectId,
+          provider,
+          generationContextId,
+          providerToolCallId,
+          providerGenerationCallId,
+          providerResponseId,
+          providerAssetId,
+          conversationId,
+          messageId,
+          generationBatchId,
+          model,
+          userMessage,
+          prompt,
+          promptStatus: normalizedPromptStatus,
+          promptScope,
+          generationStatus,
+          references: asset.references,
+          capturedAt,
+        });
+      }
+      return asset;
+    };
+    const replaceMedia = typeof store.replaceAssetMedia === "function"
+      ? async (existing: StoredAsset, prepared: { assetInput?: Record<string, unknown> } | null): Promise<StoredAsset> => {
+        const assetInput = (prepared?.assetInput || {}) as { business_fields?: Metadata; source?: Metadata };
+        return await store.replaceAssetMedia!.call(store, projectId, existing.id, {
+          imagePath: tempPath,
+          fileName: tempName,
+          contentHash,
+          business_fields: assetInput.business_fields,
+          source: assetInput.source,
+        }, { trustedSourceRoots: [tempRoot], ingestMode: captureMode });
+      }
+      : undefined;
+    const prepareMedia = async (): Promise<{ assetInput: Record<string, unknown>; fileName: string }> => {
+      const assetId = sanitizeAssetId(explicitAssetId || `${providerConfig.assetIdPrefix}-video-${contentHash.slice(0, 12)}`, providerConfig.assetIdPrefix);
+      const references = await turnReferences(store, projectAssets, referenceStore, projectId, { conversationId, generationContextId, capturedAt, selfAssetId: assetId });
+      return {
+        fileName: tempName,
+        assetInput: {
+          projectId,
+          imagePath: tempPath,
+          assetId,
+          fileName: tempName,
+          prompt,
+          skill: providerConfig.skill,
+          theme: promptTheme(prompt, providerConfig.label),
+          tags: [provider, "web-capture", "video", captureMode === "manual" ? "manual-capture" : "auto-archived"],
+          category: "",
+          references,
+          created_at: capturedAt,
+          sourceType: providerConfig.sourceType,
+          business_fields: {
+            auto_archived: captureMode !== "manual",
+            capture_mode: captureMode,
+            generation_context_id: generationContextId || null,
+            capture_context_id: generationContextId || null,
+            verification_level: "observed",
+            is_reference: false,
+            capture_channel: "chrome-extension",
+            media_kind: "video",
+            prompt_status: normalizedPromptStatus,
+            prompt_source: promptSource || null,
+            prompt_priority: promptPriority || 0,
+            prompt_scope: promptScope || null,
+            generation_status: generationStatus,
+            user_message: userMessage || null,
+            file_bytes: videoSize,
+            mime_type: mimeType,
+            width: width || null,
+            height: height || null,
+            duration_seconds: durationSeconds || null,
+          },
+          source: {
+            generation_tool: "web-ui",
+            provider,
+            type: providerConfig.sourceType,
+            media_kind: "video",
+            capture_mode: captureMode,
+            media_variant: normalizeMediaVariant(input.mediaVariant ?? input.media_variant),
+            generation_context_id: generationContextId || null,
+            capture_context_id: generationContextId || null,
+            generation_status: generationStatus,
+            provider_tool_call_id: providerToolCallId || null,
+            provider_generation_call_id: providerGenerationCallId || null,
+            provider_response_id: providerResponseId || null,
+            provider_asset_id: providerAssetId || null,
+            logical_output_id: logicalOutputId || null,
+            verification_level: "observed",
+            capture_occurrences: [captureOccurrence],
+            model: model || null,
+            page_url: pageUrl || null,
+            conversation_id: conversationId || null,
+            message_id: messageId || null,
+            capture_session_id: captureSessionId || null,
+            generation_batch_id: generationBatchId || null,
+            prompt_status: normalizedPromptStatus,
+            prompt_source: promptSource || null,
+            prompt_priority: promptPriority || 0,
+            prompt_scope: promptScope || null,
+            user_message: userMessage || null,
+            captured_at: capturedAt,
+            capture_extension_version: String(input.extensionVersion || input.extension_version || ""),
+            content_sha256: contentHash,
+            pixel_sha256: null,
+            pixel_hash_version: null,
+          },
+        },
+      };
+    };
+    const retryAssetId = explicitAssetId
+      ? undefined
+      : () => sanitizeAssetId(`${providerConfig.assetIdPrefix}-video-${contentHash.slice(0, 24)}-${randomBytes(4).toString("hex")}`, providerConfig.assetIdPrefix);
+    // The compact deterministic ID is useful for ordinary captures, but two
+    // independent runtimes can reserve the same filename before either one
+    // publishes metadata. When no explicit id was requested, the gate retries
+    // once with a fresh candidate (`retryAssetId`), letting both attempts
+    // reach the store's transactional content identity check.
+    const result = (await ingestIntoLibrary(store, {
       projectId,
-      provider,
-      generationContextId,
-      providerToolCallId,
-      providerGenerationCallId,
-      providerResponseId,
-      providerAssetId,
-      conversationId,
-      messageId,
-      generationBatchId,
-      model,
-      userMessage,
-      prompt,
-      promptStatus: normalizedPromptStatus,
-      promptScope,
-      generationStatus,
-      references: asset.references,
-      capturedAt,
-    });
-    return {
-      status: "skipped",
-      reason: upgraded
-        ? "already-archived-prompt-upgraded"
-        : mergedRecipe.merged
-          ? "already-archived-recipe-merged"
-          : "already-archived-same-content",
-      asset,
+      identity: { provider, providerAssetId, logicalOutputId, mediaKind: "video" },
+      findExistingOrder: ["provider-identity", "content"],
       contentHash,
-      upgraded: Boolean(upgraded),
-      recipeMerged: mergedRecipe.merged,
-    };
-  };
-
-  const existing = await duplicateLookup.byContentHash(contentHash);
-  if (existing) {
-    if (uploadedVideoPath) await rm(uploadedVideoPath, { force: true }).catch(() => {});
-    return finalizeDuplicate(existing);
-  }
-  await mkdir(tempRoot, { recursive: true });
-  const tempName = `${providerConfig.tempPrefix}-video-${Date.now()}-${randomBytes(4).toString("hex")}${ext}`;
-  const tempPath = uploadedVideoPath || join(tempRoot, tempName);
-  if (!uploadedVideoPath) await writeFile(tempPath, videoBytes!);
-  // Dimensions and duration read from the file itself are the truth; the
-  // values a provider page reports (e.g. Jimeng's fixed duration of 7 for a
-  // 6.08 s video, or 0×0 when its API carries none) are only the fallback
-  // for containers this parser cannot read (WebM, truncated files).
-  const fileVideoMeta = await readVideoMetadataFromFile(tempPath).catch(() => null);
-  const width = fileVideoMeta?.width || normalizeMediaMetric(input.width, 16_384);
-  const height = fileVideoMeta?.height || normalizeMediaMetric(input.height, 16_384);
-  const durationSeconds = fileVideoMeta?.durationSeconds || normalizeMediaMetric(input.durationSeconds ?? input.duration_seconds, 3600, true);
-  try {
-    const explicitAssetId = String(input.assetId || "").trim();
-    let assetId = sanitizeAssetId(explicitAssetId || `${providerConfig.assetIdPrefix}-video-${contentHash.slice(0, 12)}`, providerConfig.assetIdPrefix);
-    const references = await turnReferences(store, projectAssets, referenceStore, projectId, { conversationId, generationContextId, capturedAt, selfAssetId: assetId });
-    const assetInput = {
-      projectId,
-      imagePath: tempPath,
-      assetId,
-      fileName: tempName,
-      prompt,
-      skill: providerConfig.skill,
-      theme: promptTheme(prompt, providerConfig.label),
-      tags: [provider, "web-capture", "video", captureMode === "manual" ? "manual-capture" : "auto-archived"],
-      category: "",
-      references,
-      created_at: capturedAt,
-      sourceType: providerConfig.sourceType,
-      business_fields: {
-        auto_archived: captureMode !== "manual",
-        capture_mode: captureMode,
-        generation_context_id: generationContextId || null,
-        capture_context_id: generationContextId || null,
-        verification_level: "observed",
-        is_reference: false,
-        capture_channel: "chrome-extension",
-        media_kind: "video",
-        prompt_status: normalizedPromptStatus,
-        prompt_source: promptSource || null,
-        prompt_priority: promptPriority || 0,
-        prompt_scope: promptScope || null,
-        generation_status: generationStatus,
-        user_message: userMessage || null,
-        file_bytes: videoSize,
-        mime_type: mimeType,
-        width: width || null,
-        height: height || null,
-        duration_seconds: durationSeconds || null,
-      },
-      source: {
-        generation_tool: "web-ui",
+      incomingOwner: `web:${provider}`,
+      occurrence: captureOccurrence,
+      prompt: {
+        prompt,
+        promptStatus: normalizedPromptStatus,
+        userMessage,
+        promptSource,
+        promptPriority,
+        promptScope,
+        model,
         provider,
-        type: providerConfig.sourceType,
-        media_kind: "video",
-        capture_mode: captureMode,
-        media_variant: normalizeMediaVariant(input.mediaVariant ?? input.media_variant),
-        generation_context_id: generationContextId || null,
-        capture_context_id: generationContextId || null,
-        generation_status: generationStatus,
-        provider_tool_call_id: providerToolCallId || null,
-        provider_generation_call_id: providerGenerationCallId || null,
-        provider_response_id: providerResponseId || null,
-        provider_asset_id: providerAssetId || null,
-        verification_level: "observed",
-        capture_occurrences: [captureOccurrence],
-        model: model || null,
-        page_url: pageUrl || null,
-        conversation_id: conversationId || null,
-        message_id: messageId || null,
-        capture_session_id: captureSessionId || null,
-        generation_batch_id: generationBatchId || null,
-        prompt_status: normalizedPromptStatus,
-        prompt_source: promptSource || null,
-        prompt_priority: promptPriority || 0,
-        prompt_scope: promptScope || null,
-        user_message: userMessage || null,
-        captured_at: capturedAt,
-        capture_extension_version: String(input.extensionVersion || input.extension_version || ""),
-        content_sha256: contentHash,
-        pixel_sha256: null,
-        pixel_hash_version: null,
       },
-    };
-    let asset: StoredAsset;
-    try {
-      asset = await store.createAsset(assetInput, { trustedSourceRoots: [tempRoot], ingestMode: captureMode === "manual" ? "manual" : "automatic" });
-    } catch (error) {
-      if (explicitAssetId || !isAssetAlreadyExists(error)) throw error;
-      assetId = sanitizeAssetId(`${providerConfig.assetIdPrefix}-video-${contentHash.slice(0, 24)}-${randomBytes(4).toString("hex")}`, providerConfig.assetIdPrefix);
-      asset = await store.createAsset({ ...assetInput, assetId }, { trustedSourceRoots: [tempRoot], ingestMode: captureMode === "manual" ? "manual" : "automatic" });
-    }
-    await recordCapturedGeneration(store, asset, {
-      projectId,
-      provider,
-      generationContextId,
-      providerToolCallId,
-      providerGenerationCallId,
-      providerResponseId,
-      providerAssetId,
-      conversationId,
-      messageId,
-      generationBatchId,
-      model,
-      userMessage,
-      prompt,
-      promptStatus: normalizedPromptStatus,
-      promptScope,
-      generationStatus,
-      references: asset.references,
-      capturedAt,
-    });
-    return { status: "imported", asset, contentHash };
-  } catch (error) {
-    if (isAutomaticImportSuppressed(error)) return { status: "skipped", reason: "suppressed-after-delete", contentHash };
-    if (isAutomaticIngestDuplicate(error)) {
-      const duplicateId = String((error as { assetId?: unknown }).assetId || "");
-      const duplicate = duplicateId
-        ? (await projectAssets()).find((asset) => asset.id === duplicateId) || await duplicateLookup.byContentHash(contentHash)
-        : await duplicateLookup.byContentHash(contentHash);
-      if (duplicate) return finalizeDuplicate(duplicate);
-    }
-    throw error;
+      deriveTheme: deriveWebTheme,
+      mediaUpgrade: {
+        pixels: filePixels,
+        mediaVariant: normalizeMediaVariant(input.mediaVariant ?? input.media_variant),
+        generationStatus,
+      },
+      prepareMedia,
+      ...(replaceMedia ? { replaceMedia } : {}),
+      retryAssetId,
+      onExistingRecipe,
+      onExistingObserved,
+      onCreated: async (asset) => {
+        await recordCapturedGeneration(store, asset as StoredAsset, {
+          projectId,
+          provider,
+          generationContextId,
+          providerToolCallId,
+          providerGenerationCallId,
+          providerResponseId,
+          providerAssetId,
+          conversationId,
+          messageId,
+          generationBatchId,
+          model,
+          userMessage,
+          prompt,
+          promptStatus: normalizedPromptStatus,
+          promptScope,
+          generationStatus,
+          references: asset.references,
+          capturedAt,
+        });
+      },
+      trustedSourceRoots: [tempRoot],
+      ingestMode: captureMode === "manual" ? "manual" : "automatic",
+    })) as IngestResult;
+    // Videos have no pixel identity: a same-id arrival the gate declined to
+    // upgrade keeps the video reason vocabulary instead of the pixel one.
+    if (result.reason === "already-archived-same-pixels") result.reason = "already-archived-same-content";
+    return result;
   } finally {
-    await rm(tempPath, { force: true }).catch(() => {});
+    if (tempPath) await rm(tempPath, { force: true }).catch(() => {});
   }
 }
 
@@ -1040,18 +1067,6 @@ function webCaptureError(message: string, statusCode: number, code: string): Err
   error.statusCode = statusCode;
   error.code = code;
   return error;
-}
-
-function isAutomaticImportSuppressed(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "AUTOMATIC_IMPORT_SUPPRESSED");
-}
-
-function isAutomaticIngestDuplicate(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "AUTOMATIC_INGEST_DUPLICATE");
-}
-
-function isAssetAlreadyExists(error: unknown): boolean {
-  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "ASSET_ALREADY_EXISTS");
 }
 
 async function inspectImageBytes(imageBytes: Buffer): Promise<{ format: string; width: number; height: number; pixelHash: string }> {

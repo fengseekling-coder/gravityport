@@ -602,15 +602,15 @@ flowchart TD
 | 扩展 · Flow（图片） | 暂无站点编号，字节 → 像素 | 同行「Reuse prompt」卡片 | 写 | 已接入总入口；同上 |
 | 扩展 · 即梦（图片） | 条目 id | 接口 JSON | 写 | 已接入总入口；只收之后新出的图；站内删除同步见 8.5 |
 | 扩展 · Midjourney（图片） | `jobId:index` | DOM | 写 | 已接入总入口；原图拿不到时存预览并标 `preview` |
-| 扩展视频（各站） | 只认字节，不认编号 | 同图片 | 每次都记 | 「只许换更清晰的」暂不适用（待接入总入口） |
+| 扩展视频（各站） | Midjourney `jobId:index`、即梦条目 id；Flow / AI Studio 暂无编号 | 同图片 | 有生成证据才记 | 已接入总入口；同编号只许换更清晰的，「更清晰」按文件里读出的宽高判断，读不出就不换 |
 | Codex | 来源路径 → 字节 → 像素 | 会话里的修订提示词，退回最后一条用户消息 | 不写 | 已接入总入口；只有主人能升级：字节/像素命中自己的图会升级提示词和出处字段，命中别家收的图只记一次出现 |
 | Grok Build CLI | 来源路径 → 字节 → 像素 | 会话工具调用参数 | 不写 | 已接入总入口；字节/像素命中自己的图会升级提示词和出处字段（另一路径的同字节文件记 `grok_alternate_paths`），命中别家收的图只记一次出现，不改提示词、用户指令、`generation_tool`、`model`、`prompt_status` |
 | Cowart | 来源路径 → 字节 → 像素 | 画布 alt text | 不写 | 已接入总入口；命中后从不升级元数据，只记一次出现；同一路径字节变了就新建一张 |
 | 手动导入（拖、选文件、粘贴） | — | 无 | 不写 | 已接入总入口（字节相同跳过、显示像素相同的新图进回收站、感知相似的进清单让用户选，#314） |
 | MCP `asset_create` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算 |
 
-写生成记录在总入口里是固定位置的调用方钩子；当前只有网页图片收录在用，Codex、
-Grok、Cowart 和手动导入不写。
+写生成记录在总入口里是固定位置的调用方钩子；当前只有网页收录（图片和视频）在用，
+Codex、Grok、Cowart 和手动导入不写。
 
 ### 8.2 认同一张图
 
@@ -623,9 +623,13 @@ Grok、Cowart 和手动导入不写。
 2. **文件字节**（`assets.content_sha256`）：跳过。
 3. **显示像素**（`assets.pixel_sha256` + `pixel_hash_version`）：跳过；存的是旧
    哈希版本时，要重新计算存储原图的像素哈希、对得上才算，并顺手把新哈希写回。
-4. **「删了不再自动收」名单**（`automatic_ingest_suppressions`，按字节+像素）：
-   自动收录命中就静默跳过（`suppressed-after-delete`）；手动导入、MCP、复制、
-   恢复会清掉对应记录。（该名单暂不按站点编号记——待接入总入口）
+4. **「删了不再自动收」名单**，记三样：字节（`automatic_ingest_suppressions`
+   按 content_sha256）、像素（同表按 pixel_sha256 + pixel_hash_version）、
+   站点编号（`automatic_ingest_identity_suppressions`，按
+   `provider_asset_id` / `logical_output_id` 拼出的编号 + 媒体类型）。
+   自动收录命中任一名单就静默跳过（`suppressed-after-delete`）；手动导入、MCP、复制、
+   恢复会清掉对应记录。换下来的旧原图（回收站原因 `replaced-by-better-version`）
+   被永久删除或 90 天清掉时不写编号名单——那个编号还活在换上去的那张图上。
 
 手动导入额外做感知相似检查（`asset_perceptual_hashes`，dHash，#314）：字节相同
 跳过；显示像素相同的新图自动进回收站（可恢复）；相似的进清单让用户选。
