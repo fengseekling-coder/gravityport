@@ -11,8 +11,8 @@
  * Folder scanning is handled by ./collect-dropped-files.ts
  */
 
-import { stageImportFile, requestJson, setAssetsGroup } from "./mosa-api.js";
-import type { ImportExistingLocation } from "./mosa-api.js";
+import { stageImportFile, requestJson, setAssetsGroup, normalizeAsset } from "./mosa-api.js";
+import type { ImportExistingLocation, MosaAsset } from "./mosa-api.js";
 import { collectDroppedFiles, excludeLibraryFiles } from "./collect-dropped-files.js";
 
 // Re-export for convenience
@@ -29,6 +29,9 @@ export interface ImportProgress {
   imported: number
   failed: number
   skipped: number
+  /** Task 292: the batch's successful imports, gallery-ready. Empty on the
+   * final "done" callback — each batch already delivered its own cards. */
+  assets: MosaAsset[]
 }
 
 export interface ImportError {
@@ -222,6 +225,9 @@ export async function runImport(
     }
 
     // ── Import batch ──
+    // Task 292: this batch's successes as gallery-ready assets, so the caller
+    // can put the cards on screen before the next batch returns.
+    const batchAssets: MosaAsset[] = []
     if (stagedItems.length > 0) {
       const batchItems = stagedItems.map((s) => ({ imagePath: s.path, fileName: s.file.name }))
       const requestBody: {
@@ -238,14 +244,14 @@ export async function runImport(
         type ImportBatchResponse = {
           imported: number
           failed: number
-          results: Array<{
-            index: number
-            ok: boolean
-            asset?: { id: string }
-            skipped?: "already-in-library"
-            existingAsset?: ImportExistingLocation
-            error?: string
-          }>
+            results: Array<{
+              index: number
+              ok: boolean
+              asset?: Record<string, unknown>
+              skipped?: "already-in-library"
+              existingAsset?: ImportExistingLocation
+              error?: string
+            }>
         }
         const importResult = await requestJson<ImportBatchResponse>("/api/assets/import-batch", {
           method: "POST",
@@ -259,8 +265,10 @@ export async function runImport(
 
         for (let i = 0; i < stagedItems.length; i++) {
           const itemResult = importResult.results?.find((r) => r.index === i)
-          if (itemResult?.ok && itemResult.asset?.id) {
-            result.createdIds.push(itemResult.asset.id)
+          const rawAsset = itemResult?.asset
+          if (itemResult?.ok && rawAsset && typeof rawAsset.id === "string" && rawAsset.id) {
+            result.createdIds.push(rawAsset.id)
+            batchAssets.push(normalizeAsset(rawAsset, project))
             batchImported += 1
           } else if (itemResult?.ok && itemResult.skipped === "already-in-library" && itemResult.existingAsset) {
             // Task 291: identical bytes skipped by the server; the staged file
@@ -307,6 +315,7 @@ export async function runImport(
       imported: result.imported,
       failed: result.failed,
       skipped,
+      assets: batchAssets,
     })
   }
 
@@ -319,6 +328,6 @@ export async function runImport(
     }
   }
 
-  onProgress?.({ phase: "done", total, completed, imported: result.imported, failed: result.failed, skipped })
+  onProgress?.({ phase: "done", total, completed, imported: result.imported, failed: result.failed, skipped, assets: [] })
   return result
 }

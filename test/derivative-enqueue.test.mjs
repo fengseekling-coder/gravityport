@@ -100,6 +100,70 @@ test("rebuild mode enqueues every eligible asset regardless of file state", asyn
   assert.equal(await store.enqueueMissingDerivatives({ mode: "rebuild" }), 2, "rebuild re-enqueues everything eligible");
 });
 
+test("claim order is newest first (task 292): the gallery's top card gets its thumbnails first", async (t) => {
+  // Explicit created_at values make the ordering independent of clock
+  // precision between the three createAsset calls.
+  const { store } = await createLibraryWithAssetsDated(t, [
+    ["oldest", "2026-01-01T00:00:01.000Z"],
+    ["middle", "2026-01-01T00:00:02.000Z"],
+    ["newest", "2026-01-01T00:00:03.000Z"],
+  ]);
+  assert.equal(await store.enqueueMissingDerivatives({ mode: "rebuild" }), 3);
+  const claimed = [];
+  for (let i = 0; i < 3; i += 1) {
+    const job = await store.claimDerivativeJob();
+    assert.ok(job, `claim ${i + 1} of 3`);
+    claimed.push(job.asset_id);
+  }
+  assert.deepEqual(claimed, ["newest", "middle", "oldest"]);
+  assert.equal(await store.claimDerivativeJob(), null, "the queue is drained");
+});
+
+test("a failed job becomes claimable again after its retry delay, still newest-first alongside pending work", async (t) => {
+  const { libraryDir, store } = await createLibraryWithAssetsDated(t, []);
+  // A file the processor cannot read → the job fails once.
+  const brokenPath = join(store.projectRoot, "generated-images", "broken.png");
+  await writeFile(brokenPath, "text, not pixels");
+  await store.createAsset({ assetId: "broken", imagePath: brokenPath, created_at: "2026-01-01T00:00:05.000Z" });
+  await store.enqueueMissingDerivatives({ mode: "rebuild" });
+
+  const first = await store.claimDerivativeJob();
+  assert.equal(first.asset_id, "broken", "the newest job claims first");
+  await store.completeDerivativeJob(first, { error: "Input image exceeds pixel limit" });
+
+  // Inside the 30s retry window a plain claim stays quiet…
+  assert.equal(await store.claimDerivativeJob(), null, "failed jobs wait out their retry delay");
+  // …but once the retry delay has passed the job is claimable again.
+  editLibraryRows(libraryDir, (database) => {
+    database.prepare("UPDATE derivative_jobs SET updated_at = ? WHERE asset_id = 'broken'")
+      .run(new Date(Date.now() - 31 * 1000).toISOString());
+  });
+  const retry = await store.claimDerivativeJob();
+  assert.equal(retry?.asset_id, "broken", "the retryable failure is claimed again");
+  assert.equal(retry.attempts, 1, "the claim payload reports the attempts before this claim");
+});
+
+async function createLibraryWithAssetsDated(t, datedAssetIds) {
+  // Same shape as createLibraryWithAssets, plus one explicit created_at per
+  // asset so claim-order tests do not depend on clock precision.
+  const root = await mkdtemp(join(tmpdir(), "mosa-derivative-claim-order-"));
+  const libraryDir = join(root, "library");
+  await mkdir(join(root, "generated-images"), { recursive: true });
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: join(root, "manager"), libraryDir });
+  t.after(() => store.close());
+  t.after(() => removeTestPath(root, { recursive: true, force: true }));
+
+  for (const [assetId, createdAt] of datedAssetIds) {
+    const imagePath = join(root, "generated-images", `${assetId}.png`);
+    await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 16 * (assetId.length % 8), g: 32, b: 64 } } })
+      .png()
+      .toFile(imagePath);
+    await store.createAsset({ assetId, imagePath, prompt: `prompt for ${assetId}`, created_at: createdAt });
+  }
+  return { root, libraryDir, store };
+}
+
 test("video, archived, and deleted assets are never enqueued", async (t) => {
   const { store } = await createLibraryWithAssets(t, ["keeper", "trashed"]);
   const videoPath = join(store.projectRoot, "generated-images", "clip.mp4");

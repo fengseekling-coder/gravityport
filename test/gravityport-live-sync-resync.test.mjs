@@ -150,3 +150,47 @@ describe("createResyncOnReconnect — default schedule/cancel", () => {
     ctrl.dispose();
   });
 });
+
+describe("createSseRefreshGate — task 292 bridge", () => {
+  function makeGate(blocked) {
+    let refreshes = 0;
+    const gate = lsr.createSseRefreshGate({
+      isBlocked: blocked,
+      refresh: () => { refreshes += 1; },
+    });
+    return { gate, count: () => refreshes };
+  }
+
+  it("an unblocked request refreshes immediately", () => {
+    const { gate, count } = makeGate(() => false);
+    gate.request();
+    assert.equal(count(), 1, "no import, no load — the refresh goes out at once");
+    assert.equal(gate.takePending(), false, "nothing was queued");
+  });
+
+  it("five changes while the gallery is loading never fire; the settled load owes exactly one refresh", () => {
+    const { gate, count } = makeGate(() => true);
+    for (let i = 0; i < 5; i += 1) gate.request();
+    assert.equal(count(), 0, "the in-flight load is never aborted");
+    assert.equal(gate.takePending(), true, "one follow-up is owed");
+    assert.equal(gate.takePending(), false, "at most one queues — no backlog");
+  });
+
+  it("five changes during an import hold off entirely; import end consumes the marker and fires its own refresh", () => {
+    const { gate, count } = makeGate(() => true);
+    for (let i = 0; i < 5; i += 1) gate.request();
+    assert.equal(count(), 0, "SSE refreshes stay silent while the import runs");
+    // Import end (success path): the import fires its own refresh and merely
+    // drops the queued marker — exactly one refresh for the whole import.
+    gate.takePending();
+    assert.equal(count(), 0, "the gate itself did not fire; the import's own refresh covers it");
+  });
+
+  it("a failed import fires the one queued refresh", () => {
+    const { gate, count } = makeGate(() => true);
+    gate.request();
+    gate.request();
+    assert.equal(gate.takePending(), true, "the thrown import still owes the gallery its refresh");
+    assert.equal(count(), 0, "firing is the caller's job; the marker is consumed");
+  });
+});

@@ -65,3 +65,48 @@ export function createResyncOnReconnect(hooks: ResyncHooks): ResyncController {
     },
   };
 }
+
+export interface SseRefreshGateHooks {
+  /** True while a refresh must not fire right now: an import is running, or
+   * the gallery has a load in flight. */
+  isBlocked: () => boolean;
+  /** The actual refresh (bumps the gallery's navigation key). */
+  refresh: () => void;
+}
+
+export interface SseRefreshGate {
+  /** An SSE push asked for a refresh. Fires `refresh` immediately unless
+   * blocked; while blocked it never aborts the work in flight — it queues at
+   * most ONE follow-up refresh, no matter how many pushes arrive. */
+  request: () => void;
+  /** The blocked work settled. Returns whether a follow-up refresh was owed
+   * and consumes the marker; the caller decides whether it still fires the
+   * refresh itself (import end always does) or owes one now (a committed or
+   * failed gallery load does). */
+  takePending: () => boolean;
+}
+
+/**
+ * Task 292 bridge, until review high-8's incremental refresh replaces this
+ * whole path: SSE-triggered gallery refreshes must never abort the load
+ * currently in flight, and during an import they hold off entirely (new
+ * cards land through per-batch inserts instead). User-initiated refreshes
+ * bypass the gate on purpose.
+ */
+export function createSseRefreshGate(hooks: SseRefreshGateHooks): SseRefreshGate {
+  let pending = false;
+  return {
+    request() {
+      if (!hooks.isBlocked()) {
+        hooks.refresh();
+        return;
+      }
+      pending = true;
+    },
+    takePending() {
+      const owed = pending;
+      pending = false;
+      return owed;
+    },
+  };
+}

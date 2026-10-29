@@ -318,6 +318,61 @@ describe("runImport with mocked fetch", () => {
     assert.equal(cleanupPaths.length, 1, "exactly 1 cleanup DELETE call for the failed item")
   })
 
+  it("task 292: onProgress carries each batch's successful assets, normalized; failures and skips are absent", async () => {
+    const progressEvents = []
+    let batchCallCount = 0
+    globalThis.fetch = async (url, init) => {
+      if (url === "/api/import/stage" && init?.method === "POST") {
+        const data = { path: `/staged/${Date.now()}-${Math.random()}` }
+        return { ok: true, json: async () => data, text: async () => JSON.stringify(data) }
+      }
+      if (url === "/api/import/stage" && init?.method === "DELETE") {
+        return { ok: true, json: async () => ({}), text: async () => "{}" }
+      }
+      if (url === "/api/assets/import-batch" && init?.method === "POST") {
+        batchCallCount += 1
+        const data = {
+          imported: 2,
+          failed: 1,
+          results: [
+            { index: 0, ok: true, asset: { id: `batch${batchCallCount}-a`, image_path: "a.png", business_fields: { width: 1200, height: 800 } } },
+            { index: 1, ok: true, skipped: "already-in-library", existingAsset: { id: "existing" } },
+            { index: 2, ok: false, error: "bad format" },
+          ],
+        }
+        return { ok: true, json: async () => data, text: async () => JSON.stringify(data) }
+      }
+      const data = {}
+      return { ok: false, status: 404, json: async () => data, text: async () => JSON.stringify(data) }
+    }
+
+    const files = [
+      new globalThis.File(["a"], "a.png", { type: "image/png" }),
+      new globalThis.File(["dup"], "dup.png", { type: "image/png" }),
+      new globalThis.File(["bad"], "bad.png", { type: "image/png" }),
+      new globalThis.File(["a2"], "a2.png", { type: "image/png" }),
+      new globalThis.File(["dup2"], "dup2.png", { type: "image/png" }),
+      new globalThis.File(["bad2"], "bad2.png", { type: "image/png" }),
+    ]
+    const result = await runImport(files, {
+      project: "proj-1",
+      isSupported: () => true,
+      onProgress: progress => progressEvents.push(progress),
+    })
+
+    assert.equal(result.imported, 1)
+    // 6 files = 1 batch of 40 → one importing event plus the done event.
+    const importingEvents = progressEvents.filter(p => p.phase === "importing")
+    assert.equal(importingEvents.length, 1)
+    const arrived = importingEvents[0].assets
+    assert.deepEqual(arrived.map(item => item.id), ["batch1-a"], "only the batch's success lands; failures and skips are absent")
+    assert.equal(arrived[0].width, 1200, "the asset arrives gallery-ready (normalizeAsset applied)")
+    assert.equal(arrived[0].height, 800)
+    assert.equal(arrived[0].project_id, "proj-1")
+    const doneEvent = progressEvents.find(p => p.phase === "done")
+    assert.deepEqual(doneEvent.assets, [], "the done event carries no assets — batches already delivered theirs")
+  })
+
   it("staging failure includes fileName in error", async () => {
     let attemptCount = 0
 
