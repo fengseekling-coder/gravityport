@@ -2,6 +2,10 @@
   "schema": 2,
   "unreleased": {
     "zh": {
+      "new": [
+        "手动导入时，与素材库中完全相同的图片会自动跳过，并提示「已在素材库中」。缩放、重新压缩或更换格式后的相似图片照常导入，导入完成后可逐张选择保留或删除，新图更清晰时可替换原图。",
+        "导入到分组或堆叠时，若图片已在素材库的其他位置，可选择保留原位置或移过来。"
+      ],
       "improved": [
         "放大查看图片，或在高分辨率屏幕上查看大图时，查看器会自动换用原图显示，细节更清晰。",
         "软件内更新改为使用系统网络设置，开启系统代理的电脑也能检查和下载更新。",
@@ -23,6 +27,10 @@
       ]
     },
     "en": {
+      "new": [
+        "Manual imports now skip files identical to an image already in the library. Resized, recompressed or converted copies are still imported, then listed for you to keep or delete, or to replace the original when the new copy is sharper.",
+        "When importing into a group or stack, images already elsewhere in the library can stay where they are or move in."
+      ],
       "improved": [
         "The viewer now switches to the original image when you zoom in, or when large images are shown on high-resolution screens, for sharper detail.",
         "In-app updates now use the system network settings, so computers that go through a system proxy can check for and download updates.",
