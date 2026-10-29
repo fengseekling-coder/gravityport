@@ -75,17 +75,16 @@ test("promptRank keeps the agreed formula: priority, then level, then length", (
   assert.equal(promptRank(undefined, undefined, undefined), 0);
 });
 
-test("dropping the legacy same-rank +40-chars clause does not change reachable behavior", () => {
-  // The old rule also upgraded when the rank merely tied but the text grew by
-  // more than 40 characters. Because length is part of the score, a tie with
-  // the same status and priority implies the same capped length, so the extra
-  // clause could only fire where it was already covered — or beyond the 5000
-  // length cap, which is not a real prompt. The reachable cases behave
-  // identically without it.
+test("the legacy same-rank +40-chars clause still applies past the 5000-character cap", () => {
   const stored = { prompt: "a", status: "visible-caption", priority: 0 };
   assert.equal(shouldUpgradePrompt(stored, { prompt: longerBy(stored.prompt, 41), status: "visible-caption", priority: 0 }), true);
   assert.equal(shouldUpgradePrompt(stored, { prompt: longerBy(stored.prompt, 1), status: "visible-caption", priority: 0 }), true, "any real length growth upgrades within a level");
   assert.equal(shouldUpgradePrompt(stored, { prompt: stored.prompt, status: "visible-caption", priority: 0 }), false, "an identical candidate does not");
+  // Past the cap the scores tie: only a text more than 40 characters longer wins.
+  const capped = { prompt: "y".repeat(5000), status: "visible-caption", priority: 0 };
+  assert.equal(shouldUpgradePrompt(capped, { prompt: "z".repeat(5041), status: "visible-caption", priority: 0 }), true);
+  assert.equal(shouldUpgradePrompt(capped, { prompt: "z".repeat(5040), status: "visible-caption", priority: 0 }), false);
+  assert.equal(shouldUpgradePrompt(capped, { prompt: "z".repeat(6000), status: "user-message", priority: 0 }), false, "a lower level never wins on length");
 });
 
 function shorter(text) {
