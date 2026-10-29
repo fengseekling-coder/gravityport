@@ -645,6 +645,42 @@ test("resolve orchestration: identical pair trashes exactly one copy across two 
   await runtime.stop();
 });
 
+test("overlapping identical resolves for one pair still trash exactly one copy", async (t) => {
+  const { root, runtime, generated, post } = await startDedupeRuntime(t, "mosa-dedupe-http-race-");
+  const libraryDir = join(root, "library");
+  const original = await gradientFile(generated, "original.png", "horizontal");
+  await post("/api/assets/create", { projectId: "default", assetId: "original", imagePath: original, prompt: "p" });
+  await waitThumbnail(libraryDir, "original");
+  const copy = join(generated, "copy.png");
+  await transformTo(original, copy, (p) => p.png({ compressionLevel: 0 }));
+  await post("/api/assets/create", { projectId: "default", assetId: "copy", imagePath: copy, prompt: "p" });
+  await waitThumbnail(libraryDir, "copy");
+
+  // No similar-check first: neither pixel digest is cached, so each
+  // verification awaits real decodes — the widest window for interleaving.
+  const [first, second] = await Promise.all([
+    post("/api/import/resolve", {
+      projectId: "default",
+      actions: [{ kind: "trash-new", newAssetId: "copy", existingAssetId: "original", reason: "duplicate-import:identical" }],
+    }).then((response) => response.json()),
+    post("/api/import/resolve", {
+      projectId: "default",
+      actions: [{ kind: "trash-new", newAssetId: "original", existingAssetId: "copy", reason: "duplicate-import:identical" }],
+    }).then((response) => response.json()),
+  ]);
+  const outcomes = [first.results[0], second.results[0]];
+  assert.equal(outcomes.filter((entry) => entry.ok).length, 1, JSON.stringify(outcomes));
+  assert.equal(outcomes.find((entry) => !entry.ok).code, "IMPORT_RESOLVE_ASSET_TRASHED");
+  const database = new Database(join(libraryDir, "mosa.db"), { readonly: true });
+  try {
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM assets WHERE deleted_at IS NOT NULL").get().n, 1);
+    assert.equal(database.prepare("SELECT COUNT(*) AS n FROM assets WHERE deleted_at IS NULL").get().n, 1);
+  } finally {
+    database.close();
+  }
+  await runtime.stop();
+});
+
 test("resolve rejects a smaller replacement and a self-pair without touching anything", async (t) => {
   const { root, runtime, generated, post } = await startDedupeRuntime(t, "mosa-dedupe-http-verify-");
   const libraryDir = join(root, "library");

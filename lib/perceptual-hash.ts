@@ -12,9 +12,9 @@ import sharp from "./sharp-runtime.js";
  * pixels stay the job of safePixelDigest, which candidates confirm lazily.
  */
 
+/** Change the name (e.g. "dhash64v2") if the thumbnail source tier or the bit
+ * layout ever changes: rows with another algorithm are treated as unchecked. */
 export const PERCEPTUAL_HASH_ALGORITHM = "dhash64";
-/** Bumped when the thumbnail source tier or the bit layout ever changes. */
-export const PERCEPTUAL_HASH_VERSION = "thumb-dhash-v1";
 
 const POPCOUNT = new Uint8Array(65536);
 for (let i = 1; i < 65536; i += 1) POPCOUNT[i] = POPCOUNT[i >> 1] + (i & 1);
