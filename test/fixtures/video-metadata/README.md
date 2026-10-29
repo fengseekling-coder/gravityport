@@ -5,11 +5,11 @@ Small videos read by `test/video-metadata.test.mjs` through
 committed files, so regenerate and re-commit them when the expected
 metadata changes.
 
-Generated with `/Users/azhuilab/.local/node/bin/ffmpeg` (ffmpeg 6.0, no
+Generated with `ffmpeg` (ffmpeg 6.0, no
 ffprobe on this machine) from `/tmp/vidfix`:
 
 ```sh
-FFMPEG=/Users/azhuilab/.local/node/bin/ffmpeg
+FFMPEG=ffmpeg
 mkdir -p /tmp/vidfix && cd /tmp/vidfix
 
 # moov in front (faststart), 72x128, 2 s

@@ -564,7 +564,172 @@ token 以 0600 权限原子写入 `userData`。画板与 Pin 通过 Pinterest AP
 截断，然后只向 `MOSA_FEEDBACK_URL`（默认 `https://gravityport.azhuilab.com/api/feedback`）转发
 一次请求；本地日志只记录提交结果状态，不记录内容。
 
-## 8. 配置与隐私边界
+## 8. 一张图的一生：进库机制规矩表
+
+本节是进库、认重、元数据、整理、删除和库位置的规矩表。**进库只有一个总入口：
+`lib/library-ingest.mjs` 的 `ingestIntoLibrary`；各通道只负责拿到图和字段。**
+认新旧、同编号换更清晰的、记出现、升级提示词、写生成记录的时机都在总入口里。
+**改了本节任何一条规矩的 PR，必须在同一个 PR 里改本节。**
+
+### 8.1 进库
+
+```mermaid
+flowchart TD
+    A[通道拿到图和字段] --> B{总入口：认新旧<br/>findExistingAsset}
+    B -->|站点编号命中，字节不同| C{只许换更清晰的<br/>isProviderMediaUpgrade}
+    C -->|允许| D[替换媒体，旧原图进回收站<br/>reason: logical-output-media-upgraded]
+    C -->|不允许| E[已有]
+    B -->|编号/字节/像素命中| E[已有]
+    D --> E
+    E --> F[记一次出现<br/>recordIngestOccurrence]
+    F --> G[调用方钩子：合并配方与参考图]
+    G --> H{谁收的图谁升级<br/>canUpgradeMetadata}
+    H -->|允许| I[按等级表升级提示词<br/>upgradePrompt]
+    H -->|不允许| J[调用方钩子：请求提示词/会话标题/生成记录]
+    I --> J
+    J --> K[返回 skipped 与原因]
+    B -->|没有命中| L[建素材<br/>createAssetViaGate：编号撞名重试一次，判重结果翻译成 skipped]
+    L --> M[自动堆叠：同会话满 2 张建堆]
+    M --> N[返回 imported]
+```
+
+各通道拿什么当编号、提示词从哪来、谁写生成记录：
+
+| 通道 | 拿什么当编号 | 提示词从哪来 | 谁写生成记录 | 特殊规矩 |
+| --- | --- | --- | --- | --- |
+| 扩展 · ChatGPT（图片） | 图片地址的站点编号（`provider_asset_id`）→ 字节 → 像素 | 接口里的生成提示词；兜底 DOM 说明文字 | 写（有生成证据才记） | 已接入总入口（各站图片都走 `ingestWebCapture`） |
+| 扩展 · Gemini / AI Studio（图片） | 暂无站点编号，字节 → 像素 | 前一轮用户消息的页面文字 | 写 | 已接入总入口；扩展暂不送站点编号，同一条生成换大图会各收一张 |
+| 扩展 · Flow（图片） | 暂无站点编号，字节 → 像素 | 同行「Reuse prompt」卡片 | 写 | 已接入总入口；同上 |
+| 扩展 · 即梦（图片） | 条目 id | 接口 JSON | 写 | 已接入总入口；只收之后新出的图；站内删除同步见 8.5 |
+| 扩展 · Midjourney（图片） | `jobId:index` | DOM | 写 | 已接入总入口；原图拿不到时存预览并标 `preview` |
+| 扩展视频（各站） | 只认字节，不认编号 | 同图片 | 每次都记 | 「只许换更清晰的」暂不适用（待接入总入口） |
+| Codex | 来源路径 → 字节 → 像素 | 会话里的修订提示词，退回最后一条用户消息 | 不写 | 待接入总入口 |
+| Grok Build CLI | 来源路径 → 字节 → 像素 | 会话工具调用参数 | 不写 | 待接入总入口 |
+| Cowart | 来源路径 → 字节 | 画布 alt text | 不写 | 待接入总入口 |
+| 手动导入（拖、选文件、粘贴） | — | 无 | 不写 | 字节相同跳过、显示像素相同的新图进回收站、感知相似的进清单让用户选（#314）（待接入总入口） |
+| MCP `asset_create` | 调用方 | 调用方传 | `generation_record` 单独写 | 待接入总入口 |
+
+写生成记录在总入口里是固定位置的调用方钩子；当前只有网页图片收录在用，Codex、
+Grok、Cowart 和手动导入不写。
+
+### 8.2 认同一张图
+
+四种「是同一张」并存，命中后的行为由总入口决定：
+
+1. **站点编号**：`provider_asset_id` / `logical_output_id`（`lib/web-capture-ingest.ts`
+   的 `logicalCaptureKey` 拼装）。字节相同：记一次出现；字节不同：只许按
+   「宽×高严格更大」换更清晰的（`isProviderMediaUpgrade`，#306），预览永远
+   不能换掉原图，被换掉的旧原图进回收站，原因 `replaced-by-better-version`。
+2. **文件字节**（`assets.content_sha256`）：跳过。
+3. **显示像素**（`assets.pixel_sha256` + `pixel_hash_version`）：跳过；存的是旧
+   哈希版本时，要重新计算存储原图的像素哈希、对得上才算，并顺手把新哈希写回。
+4. **「删了不再自动收」名单**（`automatic_ingest_suppressions`，按字节+像素）：
+   自动收录命中就静默跳过（`suppressed-after-delete`）；手动导入、MCP、复制、
+   恢复会清掉对应记录。（该名单暂不按站点编号记——待接入总入口）
+
+手动导入额外做感知相似检查（`asset_perceptual_hashes`，dHash，#314）：字节相同
+跳过；显示像素相同的新图自动进回收站（可恢复）；相似的进清单让用户选。
+
+三种「有关系」（不参与查重，字节/像素哈希与原图完全一样）：
+
+- **副本 / 新版本**：`parent_asset_id`、`asset_versions`、
+  `source.duplicated_from` / `versioned_from`，HTTP `/duplicate` `/versions` 与 MCP 可建。
+- **智能堆叠**：`asset_stacks`（origin `auto` / `manual`）；同会话满 2 张自动建堆。
+- **版本树候选**：`generation_relation_candidates`，只对同对话打分，用户确认才成为实线关系。
+
+### 8.3 元数据谁说了算
+
+**提示词等级表**（唯一一张，`lib/prompt-rank.mjs` 的 `PROMPT_STATUS_RANK`；
+扩展 `background.js` 的 `promptPayloadRank` 和 `content.js` 的 `promptQuality`
+的顺序必须与它一致，有测试锁住）。分越高越可信；分数 =
+调用方 priority × 1e6 + 等级 × 1e4 + 文字长度（最多算 5000）：
+
+| 等级 | 状态 |
+| --- | --- |
+| 0 | `not-available`、`not-available-in-session`、`image-generation-prompt-unavailable`，以及表里没有的任何状态 |
+| 1 | `user-message`、`provider-visible-prompt`、`session-user-prompt`、`task-user-prompt`、`canvas-alt-text-only` |
+| 2 | `visible-caption` |
+| 3 | `generation-tool-prompt`、`image-generation-revised-prompt` |
+| 4 | `user-edited` |
+
+升级规矩（总入口的 `upgradePrompt`）：新的提示词为空一律不换；分数严格更高才换（超过 5000 字分数封顶后，同分且长 40 字以上也换）；
+`user-message` 只许填空位或严格延长，永不覆盖已存的用户指令。
+
+**用户手改最大**（#309，`lib/user-edit-marker.mjs`）：
+
+- 手改标记 `prompt_user_edited_at` / `theme_user_edited_at` / `user_edited_at`
+  存在 `source` 里；打标记的入口：界面 PATCH、MCP `asset_update_metadata`、
+  `asset_attach_prompt`。手改过的提示词和名字，任何自动通道都不许改。
+- 手改提示词时状态写成 `user-edited`（source 和 business_fields）。
+- **删空提示词不算手改**：标记清掉、状态回到 `not-available`（只清提示词这一项
+  时不打 `user_edited_at`），之后同一张图再被收到，网站上的提示词会按等级表补回来。
+- 调用方不能改标记：patch 里的标记键一律忽略，最终值由
+  `withUserEditMarkers` 决定。
+
+**谁收的图谁升级**（总入口的 `ingestOwnerOf` / `canUpgradeMetadata`）：一张图
+的主人由 `source_type` 决定——`web-<provider>`、`codex`、`grok`、`cowart`、
+`manual`（本机导入）、其他。只有主人能升级它的提示词；别家网站同字节撞上只记
+一次出现，提示词和用户指令都不动。唯一例外：主人是 `manual`（本机导入的图没有
+来源信息）时，任何通道都可以按等级表补它的提示词。
+
+**名字（theme）现状**：新建时从提示词算（网页取前 80 字，或「&lt;站名&gt; web
+image」），只跟着真升级的提示词重算，且永不覆盖用户改过的名字。界面显示的是
+文件名，theme 只用于「按名称排序」和搜索。
+
+**来源字段**：同一个意思存在多处——`source_type` 列、`source.type`、
+`source.provider`、`business_fields.provider`、`source.generation_tool`、
+`skill`（给人看的来源文字）、`source.model`、`source_group`（智能分组用）。
+归一函数在 `lib/generation-session.mjs` 和 `lib/asset-store.mjs`。提示词状态、
+用户原话、生成状态在 `source` 和 `business_fields` 各存一份。
+
+### 8.4 整理
+
+| 概念 | 数据 | 谁做 | 上限 |
+| --- | --- | --- | --- |
+| 我的分组 | `assets.group_name` + `groups` 表 | 手动 | 一张图最多 1 个 |
+| 智能分组 | `assets.source_group`，写死的来源集合 | 自动 | 恰好 1 个；手动导入与 MCP 的图不在任何一项里 |
+| 堆叠 | `asset_stacks`（origin `auto` / `manual`）、`asset_stack_members` | 自动（同会话满 2 张）+ 手动 | 一张图最多 1 个；封面固定最早那张（现状） |
+| 待整理 | 没分组且不在任何堆叠 | 算出来 | — |
+| 收藏 | `favorite = 1` 或 `rating > 0` | 手动心形；打分只有 MCP 能写 | — |
+| 标签 | `tags` / `asset_tags` | 手动；系统标签隐藏 | 多个 |
+| 版本树 | 对话轮次（推算）、确认关系 `generation_relations`、候选关系、版本历史 `parent_asset_id` | 手动确认 / 自动猜 / MCP 与 HTTP | 多对多（现状） |
+| 归档 | `assets.archived = 1`，归档时移出堆叠 | 只有 MCP `asset_archive` 与 HTTP | 界面没有入口和视图（现状） |
+| 项目 | `project_id` | MCP / HTTP | 一张图 1 个 |
+
+侧栏计数按张数，网格按卡片数（一个堆叠算一张）。
+
+### 8.5 删除
+
+- **移至回收站**：写 `deleted_at`，文件不动；写一条「删了不再自动收」；分组、
+  堆叠成员、版本关系、生成记录都保留。
+- **回收站恢复**：清 `deleted_at` 和那条名单，回到原分组和堆叠。
+- **永久删除 / 清空回收站 / 90 天自动清**：删标签、版本行、堆叠成员（堆叠空了
+  一起删）；生成记录连带删，指向它的确认关系和候选关系也删。
+- **有子版本的父版本**：移回收站和永久删除都会被拒（`VERSION_PARENT_HAS_CHILDREN`）。
+- **即梦站内删除同步**（#307）：默认开；整理过的不动（收藏、打分、分组、用户
+  标签、手动堆叠、标记整理、归档、手改提示词或名字）；有副本或派生版本的整组
+  不动；自动堆叠不算整理过；进回收站标 `provider-deleted:jimeng`。
+- **MCP**：没有删除工具；唯一让图消失的是 `asset_archive`，进的不是回收站
+  （见 8.4 归档）。
+- **在 Finder 里删素材文件**：库不监视目录，记录还在，原图打不开没有提示（现状）。
+- **删除分组**：只清 `group_name`，图留着；「连素材一起删」的路也会留下
+  `group_name`，恢复任一张时分组会自己出现。
+
+### 8.6 素材库在哪
+
+- 默认顺序：先老库目录 `~/MOSA Library`，再新库目录 `~/GravityPort Library`。
+- 找库顺序（`lib/library-location.mjs` 的 `resolveLibraryLocation`）：环境变量 →
+  位置文件（存在就必须是真库，否则报错，不回退）→ 桌面版的位置文件 → 老默认 →
+  新默认 → 允许新建才建空库。
+- `library-location.json` 在应用数据目录；挪库成功后写，第一次成功开库也补写（#308）。
+- 开库规则（`lib/asset-store.mjs`）：有库就开并补完成标记；有完成标记没数据库、
+  有图没数据库、数据库没完成且没有老 JSON → 都报错不建空库；什么都没有才建新库（#308）。
+- MCP：不建库；每次调工具前比对 `mosa.db` 的设备号和 inode；挪库中一律拒；
+  挪库期间旧库的写入会被拒绝并在复制前后核对数据库指纹（#283）。
+- 后台常驻进程和它拉起的 runtime 与桌面版一样读位置文件、不建库，找不到库就
+  停下并记日志（#313）。
+
+## 9. 配置与隐私边界
 
 运行时支持的主要环境变量如下；路径应由使用者在本机配置，不要把真实路径或
 Token 写入公共文档、日志或仓库：
@@ -603,7 +768,7 @@ Documents 或任意项目图片目录作为默认扫描根。导入路径、画�
 校验；运行时隔离检查在写入库或监听端口前失败即停止。请把 Prompt、会话 ID、
 页面 URL、素材和 Token 视为私人数据。
 
-## 9. 相关验证
+## 10. 相关验证
 
 源码或依赖变化后，使用仓库定义的检查：
 

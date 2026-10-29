@@ -1,6 +1,6 @@
 # GravityPort 中文使用指南
 
-GravityPort 是面向 Codex、Cowart 和本地 Grok Build CLI 的本地创作素材库。它不负责生图，而是在媒体生成或画布编辑后，自动把图片/视频、Prompt、来源、参数、版本和画布上下文归档为可检索、可复用的本地素材。
+GravityPort 是一个 AI 素材管理工具：把 ChatGPT、Gemini、Flow、Google AI Studio、Codex、Grok、即梦 生成的图片和视频，连同 Prompt、参考图和来源，自动收进本地素材库。它不负责生图，而是在生成完成后把图片/视频、Prompt、来源、参数和版本归档为可检索、可复用的本地素材。
 
 ## 许可与商用
 
@@ -13,10 +13,10 @@ GravityPort 采用 [PolyForm Shield License 1.0.0](../LICENSE)，源码公开，
 ## 产品边界
 
 - **Codex** 负责 AI 生成、理解和任务执行。
-- **Cowart** 负责画布编排与编辑。
 - **Grok Build CLI** 可在本地生成图片与视频。
 - **网页生图扩展**可选，用于把 ChatGPT、Gemini、Flow、Google AI Studio、即梦（Jimeng）和 Midjourney 的网页成图/成片及其可用上下文发送到本机 GravityPort；开启自动入库后，也会代为收录 ChatGPT 桌面应用里生成的图片。
 - **GravityPort** 负责自动收集、归档、检索和版本管理。
+- 另外还支持 **Cowart 画布归档**等集成：从 Cowart 画布自动归档快照，配置见下文「自动归档 → Cowart 画布」。
 
 GravityPort 当前是绑定 `127.0.0.1` 的本地 Web 应用，也提供共享同一套 UI/Runtime 的 Electron 桌面壳。macOS arm64 是现有桌面开发目标，Windows 10/11 x64 提供安装程序，但还没有代码签名。它不是云服务，也不调用 Grok API，不应通过公网或反向代理暴露。
 
@@ -75,7 +75,7 @@ npm start
 
 ## SQLite 素材库与迁移
 
-默认素材库是 `~/GravityPort Library`；从旧版本升级的用户沿用原来的位置（规则在 `lib/library-location.mjs`）。迁移完成后，里面包含数据库文件、原图、预览图、缩略图和 JSON/Prompt 备份：
+默认素材库是 `~/GravityPort Library`；从旧版本升级的用户沿用原来的位置——旧位置通常是 `~/MOSA Library`：电脑上已有它就继续用它，两处都没有才新建 `~/GravityPort Library`（规则在 `lib/library-location.mjs`）。迁移完成后，里面包含数据库文件、原图、预览图、缩略图和 JSON/Prompt 备份：
 
 ```text
 ~/GravityPort Library/
@@ -218,7 +218,7 @@ Cowart 快照可提供画布说明与来源，但不保证具有完整生图 Pro
 
 ### 设置
 
-设置在左下角「用户中心」，分五页：「常规」（主题、显示素材名称、界面语言）、「存储」（素材库位置与存储类型，可「打开」或「修改」）、「连接」（Pinterest 连接卡片和「AI 助手（MCP）」卡：选 Claude Desktop、Claude Code 或 Codex，点「复制」得到现成配置，粘进对应客户端，重启 AI 助手）、「反馈」、「关于」（版本信息、检查与下载更新、本版本更新内容）。
+设置在左下角「用户中心」，分五页：「常规」（主题、显示素材名称、界面语言）、「存储」（素材库位置与存储类型，可「打开」或「修改」）、「连接」（Pinterest 连接卡片；「AI 助手（MCP）」卡——选 Claude Desktop、Claude Code 或 Codex，点「复制」得到现成配置，粘进对应客户端，重启 AI 助手；「浏览器扩展」卡——显示扩展是否已连接、扩展版本、待重试数量和最近一次错误，可点「刷新」，卡上还有「即梦站内删除作品时，同步移进回收站」开关）、「反馈」、「关于」（版本信息、检查与下载更新、本版本更新内容）。
 
 ### 反馈
 

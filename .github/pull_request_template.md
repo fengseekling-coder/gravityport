@@ -22,3 +22,4 @@ List the exact checks run and their results.
 - [ ] No real Prompts, user media, Tokens, credentials, session logs, local paths, or deployment material are included.
 - [ ] Dependency license metadata is unchanged unless the dependency itself changed.
 - [ ] `npm test`, `npm run lint`, `npm run check`, and `git diff --check` pass, or exceptions are explained above.
+- [ ] If this PR changes how assets enter, are deduplicated, organized, or deleted, ARCHITECTURE.md §8 is updated in the same PR.

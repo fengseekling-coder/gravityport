@@ -2974,3 +2974,83 @@ test("city-name heuristics no longer force a prompt upgrade on their own", async
   assert.equal(sameRank.upgraded, false);
   assert.equal(sameRank.asset.prompt, "A flat red square");
 });
+
+test("clearing a prompt in the details lets the next capture of the same image refill it", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-web-prompt-refill-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+  const bridge = createWebCaptureIngest({
+    store,
+    libraryDir,
+    projectId: "default",
+    token: "refill-secret",
+    allowedOrigins: ["chrome-extension://example-extension"],
+  });
+
+  const bytes = await noiseImage(311);
+  const initial = await bridge.ingest({
+    provider: "chatgpt",
+    imageBase64: bytes.toString("base64"),
+    mimeType: "image/png",
+    prompt: "A flat teal square on a hillside",
+    promptStatus: "generation-tool-prompt",
+    generationStatus: "completed",
+  }, "refill-secret");
+  assert.equal(initial.status, "imported");
+
+  // The details PATCH entry point: clearing the prompt goes through the same
+  // withUserEditMarkers path as lib/api/asset-routes.mjs.
+  await store.updateMetadata("default", initial.asset.id, withUserEditMarkers(
+    await store.getAsset("default", initial.asset.id),
+    { prompt: "   " },
+  ));
+  const cleared = await store.getAsset("default", initial.asset.id);
+  assert.equal(cleared.prompt, "");
+  assert.ok(!cleared.source.prompt_user_edited_at, "clearing the prompt removes the stale marker");
+  assert.equal(cleared.source.prompt_status, "not-available");
+
+  // The same image captured again refills the prompt from the site.
+  const recaptured = await bridge.ingest({
+    provider: "chatgpt",
+    imageBase64: bytes.toString("base64"),
+    mimeType: "image/png",
+    prompt: "A flat teal square on a hillside",
+    promptStatus: "generation-tool-prompt",
+    generationStatus: "completed",
+  }, "refill-secret");
+  assert.equal(recaptured.status, "skipped");
+  assert.equal(recaptured.upgraded, true);
+  assert.equal(recaptured.asset.prompt, "A flat teal square on a hillside");
+  assert.equal(recaptured.asset.source.prompt_status, "generation-tool-prompt");
+
+  // Control: a non-empty rewrite is a real hand edit and survives recapture.
+  const controlBytes = await noiseImage(312);
+  const control = await bridge.ingest({
+    provider: "chatgpt",
+    imageBase64: controlBytes.toString("base64"),
+    mimeType: "image/png",
+    prompt: "A flat amber square by the sea",
+    promptStatus: "generation-tool-prompt",
+    generationStatus: "completed",
+  }, "refill-secret");
+  assert.equal(control.status, "imported");
+  await store.updateMetadata("default", control.asset.id, withUserEditMarkers(
+    await store.getAsset("default", control.asset.id),
+    { prompt: "USER EDIT: my own square" },
+  ));
+  const controlRecaptured = await bridge.ingest({
+    provider: "chatgpt",
+    imageBase64: controlBytes.toString("base64"),
+    mimeType: "image/png",
+    prompt: "A flat amber square by the sea",
+    promptStatus: "generation-tool-prompt",
+    generationStatus: "completed",
+  }, "refill-secret");
+  assert.equal(controlRecaptured.status, "skipped");
+  assert.equal(controlRecaptured.upgraded, false);
+  assert.equal(controlRecaptured.asset.prompt, "USER EDIT: my own square");
+});
