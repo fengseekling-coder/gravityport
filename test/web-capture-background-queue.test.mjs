@@ -262,6 +262,7 @@ function createFetchHarness() {
   const mediaRequests = [];
   let appOnline = false;
   let mediaHandler = null;
+  let appHandler = null;
   let realmError = Error;
   const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), {
     status,
@@ -279,6 +280,10 @@ function createFetchHarness() {
     };
     if (loopback) {
       appRequests.push(record);
+      // A test route may answer first (a 401, a slow health probe, a stalled
+      // POST); returning null falls through to the default App behavior.
+      const custom = appHandler?.(parsed, init);
+      if (custom) return Promise.resolve(custom);
       if (!appOnline) return Promise.reject(new realmError(`connection refused: ${href}`));
       if (parsed.pathname === "/api/health") return Promise.resolve(jsonResponse({ product: "mosa" }));
       if (parsed.pathname === "/api/web-capture/pair") return Promise.resolve(jsonResponse({ product: "mosa", token: "paired-token" }));
@@ -296,6 +301,7 @@ function createFetchHarness() {
     mediaRequests,
     setAppOnline: (value) => { appOnline = value; },
     setMediaHandler: (handler) => { mediaHandler = handler; },
+    setAppHandler: (handler) => { appHandler = handler; },
     setErrorRealm: (errorConstructor) => { realmError = errorConstructor; },
   };
 }
@@ -406,7 +412,9 @@ test("queues keep the image bytes for an https URL and replay them without re-do
   };
 
   const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(CHATGPT_TAB_URL));
-  assert.equal(response?.ok, false, "GravityPort is offline, so the live ingest must fail");
+  assert.equal(response?.ok, true, "GravityPort is offline, but the ticket is queued, so the page is told it was handed over");
+  assert.equal(response.result.status, "queued");
+  assert.equal(response.result.reason, "mosa-unavailable");
 
   const queue = await harness.readQueue();
   assert.equal(queue.length, 1);
@@ -450,7 +458,7 @@ test("URL-only captures prefetch bytes while offline and upgrade to byte tickets
   };
 
   const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(GEMINI_TAB_URL));
-  assert.equal(response?.ok, false);
+  assert.equal(response?.result?.status, "queued");
 
   const queue = await harness.readQueue();
   assert.equal(queue.length, 1);
@@ -483,7 +491,7 @@ test("a failed prefetch leaves the plain URL ticket in place", async () => {
   };
 
   const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(GEMINI_TAB_URL));
-  assert.equal(response?.ok, false);
+  assert.equal(response?.result?.status, "queued");
 
   const queue = await harness.readQueue();
   assert.equal(queue.length, 1);
@@ -643,7 +651,10 @@ test("7-day expiry still clears tickets together with their stored bytes", async
 });
 
 test("enqueueing a typical 2MB image stays in the millisecond range (harness estimate)", async () => {
-  const harness = await createHarness();
+  // App online: an offline dispatch now waits out the 1.5 s second discovery
+  // round, which is a pairing cost, not an enqueue cost. The online dispatch
+  // still runs the enqueue (write + budget scan) before the live POST.
+  const harness = await createHarness({ appOnline: true });
   const durations = [];
   for (let round = 0; round < 5; round += 1) {
     const imageBase64 = fakeImageBase64(2 * 1024 * 1024);
@@ -668,4 +679,332 @@ test("enqueueing a typical 2MB image stays in the millisecond range (harness est
   // extension's own work (decode, blob wrap, IDB write, budget scan).
   console.log(`enqueue of a 2MiB image: median ${median.toFixed(1)}ms (harness, 5 runs: ${durations.map((value) => value.toFixed(1)).join(", ")})`);
   assert.ok(median < 500, `enqueue should stay far below a second, got ${median.toFixed(1)}ms`);
+});
+
+// ---- Review 294: hand-off to the queue, error classes, idle body timeout ----
+
+const FLOW_TAB_URL = "https://flow.google.com/project/fake-project";
+
+function jsonRoute(body, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+// A body whose reader never yields data until the request is aborted, the way
+// a stalled download behaves once fetch's signal fires.
+function stalledResponse(url, signal) {
+  return {
+    ok: true,
+    status: 200,
+    url,
+    headers: new Headers({ "content-type": "image/png" }),
+    body: {
+      getReader: () => ({
+        read: () => new Promise((_, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("stalled body aborted")));
+        }),
+        cancel: async () => {},
+      }),
+    },
+  };
+}
+
+test("App offline: repeated sends of one URL image keep one ticket, download it once, and deliver it once", async () => {
+  const harness = await createHarness();
+  harness.fetchHarness.setMediaHandler(() => pngResponse());
+  const payload = {
+    provider: "gemini",
+    mediaKind: "image",
+    imageUrl: "https://lh3.googleusercontent.com/offline-once",
+    promptStatus: "not-available",
+  };
+
+  for (let round = 0; round < 5; round += 1) {
+    const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(GEMINI_TAB_URL));
+    assert.equal(response?.ok, true, "the page is told the capture was handed to the queue");
+    assert.equal(response.result.status, "queued");
+    assert.equal(response.result.reason, "mosa-unavailable");
+  }
+  assert.equal((await harness.readQueue()).length, 1, "five sends of one capture stay one ticket");
+  assert.equal(harness.fetchHarness.mediaRequests.length, 1, "the original is downloaded once; later sends reuse the stored bytes");
+  assert.equal(harness.mediaEntries().length, 1);
+
+  harness.fetchHarness.setAppOnline(true);
+  harness.fireAlarm();
+  await waitFor(async () => (await harness.readQueue()).length === 0, { label: "queued image delivered" });
+  assert.equal(ingestCalls(harness).length, 1, "delivered exactly once after GravityPort opens");
+  assert.equal(harness.fetchHarness.mediaRequests.length, 1, "replay does not download again");
+});
+
+test("a live POST still in flight is not sent again by the minute drain", async () => {
+  const harness = await createHarness({ appOnline: true });
+  let release = null;
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname !== "/api/ingest/web-capture") return null;
+    return new Promise((resolve) => {
+      release = () => resolve(jsonRoute({ ok: true, assetId: "asset-1" }));
+    });
+  });
+  const payload = {
+    provider: "chatgpt",
+    mediaKind: "image",
+    imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_inflight&cid=conv1",
+    imageBase64: fakeImageBase64(1024),
+    mimeType: "image/png",
+    prompt: "a green cube",
+    promptStatus: "user-message",
+  };
+
+  const pending = harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(CHATGPT_TAB_URL));
+  await waitFor(async () => ingestCalls(harness).length === 1, { label: "live POST started" });
+  harness.fireAlarm();
+  await sleep(100);
+  assert.equal(ingestCalls(harness).length, 1, "the drain skips the ticket whose live POST is still running");
+
+  release();
+  const response = await pending;
+  assert.equal(response?.ok, true);
+  assert.equal(response.result.assetId, "asset-1");
+  assert.equal((await harness.readQueue()).length, 0, "the live POST removes its own ticket");
+  assert.equal(ingestCalls(harness).length, 1);
+});
+
+test("a 401 that cannot be re-paired keeps the ticket through five drains and delivers after pairing returns", async () => {
+  const harness = await createHarness({ appOnline: true });
+  let paired = false;
+  harness.fetchHarness.setAppHandler((url) => {
+    if (paired) return null;
+    if (url.pathname === "/api/ingest/web-capture") {
+      return jsonRoute({ error: "Token rejected", code: "WEB_CAPTURE_UNAUTHORIZED" }, 401);
+    }
+    if (url.pathname === "/api/web-capture/pair") return jsonRoute({ error: "not paired" }, 403);
+    return null;
+  });
+  const payload = {
+    provider: "chatgpt",
+    mediaKind: "image",
+    imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_pairing&cid=conv1",
+    imageBase64: fakeImageBase64(1024),
+    mimeType: "image/png",
+    promptStatus: "not-available",
+  };
+
+  const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(CHATGPT_TAB_URL));
+  assert.equal(response?.ok, true, "a pairing failure is handed to the queue, not refused");
+  assert.equal(response.result.status, "queued");
+  assert.equal(response.result.reason, "pairing");
+  assert.equal((await harness.readQueue()).length, 1);
+
+  for (let round = 1; round <= 5; round += 1) {
+    harness.fireAlarm();
+    await waitFor(async () => {
+      const queue = await harness.readQueue();
+      return Number(queue[0]?.attempts || 0) >= round ? queue : null;
+    }, { label: `drain ${round} recorded` });
+  }
+  const queue = await harness.readQueue();
+  assert.equal(queue.length, 1, "five failed drains do not drop a pairing ticket");
+  assert.match(queue[0].lastError, /401|UNAUTHORIZED|Token/);
+
+  paired = true;
+  harness.fireAlarm();
+  await waitFor(async () => (await harness.readQueue()).length === 0, { label: "ticket delivered after re-pairing" });
+  assert.ok(ingestCalls(harness).length >= 7, "the ticket was posted again after re-pairing");
+});
+
+test("a 400 refusal drops the ticket at once and the page is told not to retry", async () => {
+  const harness = await createHarness({ appOnline: true });
+  harness.fetchHarness.setAppHandler((url) => (url.pathname === "/api/ingest/web-capture"
+    ? jsonRoute({ error: "image is not usable", code: "WEB_CAPTURE_BAD_IMAGE" }, 400)
+    : null));
+  const payload = {
+    provider: "chatgpt",
+    mediaKind: "image",
+    imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_refused&cid=conv1",
+    imageBase64: fakeImageBase64(1024),
+    mimeType: "image/png",
+    promptStatus: "not-available",
+  };
+
+  const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(CHATGPT_TAB_URL));
+  assert.equal(response?.ok, false);
+  assert.equal(response.retryable, false, "a content refusal must not invite a page retry");
+  assert.match(response.error, /image is not usable/);
+  assert.equal((await harness.readQueue()).length, 0, "the refused ticket leaves the queue at once");
+  assert.equal(harness.mediaEntries().length, 0, "and its stored bytes go with it");
+});
+
+test("a video commit refused with 400 leaves the queue and is reported as a failure", async () => {
+  const harness = await createHarness({ appOnline: true });
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/ingest/web-capture-upload/begin") return jsonRoute({ uploadId: "upload-1" });
+    if (url.pathname === "/api/ingest/web-capture-upload/chunk") return jsonRoute({ ok: true });
+    if (url.pathname === "/api/ingest/web-capture-upload/commit") {
+      return jsonRoute({ error: "video is not usable", code: "WEB_CAPTURE_BAD_IMAGE" }, 400);
+    }
+    return null;
+  });
+  const transferId = "transfer-refused";
+  const totalBytes = 64 * 1024;
+  const sender = senderFor(FLOW_TAB_URL);
+  const begin = await harness.dispatchMessage({
+    type: "mosa.beginVideoTransfer",
+    transferId,
+    totalBytes,
+    totalChunks: 1,
+    payload: { provider: "flow", mimeType: "video/mp4", pageUrl: FLOW_TAB_URL, promptStatus: "not-available" },
+  }, sender);
+  assert.equal(begin?.ok, true);
+  const chunk = await harness.dispatchMessage({
+    type: "mosa.videoTransferChunk",
+    transferId,
+    index: 0,
+    chunkBase64: Buffer.alloc(totalBytes, 9).toString("base64"),
+  }, sender);
+  assert.equal(chunk?.ok, true);
+
+  const commit = await harness.dispatchMessage({ type: "mosa.commitVideoTransfer", transferId }, sender);
+  assert.equal(commit?.ok, false, "a refused commit is a failure for the page");
+  assert.equal(commit.retryable, false);
+  assert.match(commit.error, /video is not usable/);
+  assert.equal((await harness.readQueue()).length, 0, "the refused video ticket is removed");
+});
+
+test("an oversized image is refused at once and is never downloaded a second time", async () => {
+  const harness = await createHarness({ appOnline: true });
+  const oversized = new Uint8Array(15 * 1024 * 1024 + 1);
+  harness.fetchHarness.setMediaHandler(() => new Response(oversized, { status: 200, headers: { "content-type": "image/png" } }));
+  const payload = {
+    provider: "gemini",
+    mediaKind: "image",
+    imageUrl: "https://lh3.googleusercontent.com/oversized-figure",
+    promptStatus: "not-available",
+  };
+
+  const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(GEMINI_TAB_URL));
+  assert.equal(response?.ok, false);
+  assert.equal(response.retryable, false);
+  assert.match(response.error, /size limit/);
+  assert.equal(harness.fetchHarness.mediaRequests.length, 1, "the oversized body is read once, not once per credential mode");
+  assert.equal((await harness.readQueue()).length, 0);
+});
+
+test("a body that stops moving is aborted on the idle timer and the next ticket still goes out", async () => {
+  const harness = await createHarness({ appOnline: true });
+  harness.context.__MOSA_TEST_BODY_IDLE_MS__ = 80;
+  const stalledUrl = "https://lh3.googleusercontent.com/stalled-body";
+  const nextUrl = "https://lh3.googleusercontent.com/after-stall";
+  harness.fetchHarness.setMediaHandler((parsed, init) => (parsed.pathname.includes("stalled")
+    ? stalledResponse(stalledUrl, init.signal)
+    : pngResponse()));
+  await harness.writeQueue([
+    { id: "capture-stalled", payload: { provider: "gemini", mediaKind: "image", imageUrl: stalledUrl, promptStatus: "not-available" }, createdAt: Date.now(), attempts: 0, lastError: "" },
+    { id: "capture-after", payload: { provider: "gemini", mediaKind: "image", imageUrl: nextUrl, promptStatus: "not-available" }, createdAt: Date.now(), attempts: 0, lastError: "" },
+  ]);
+
+  harness.fireAlarm();
+  await waitFor(async () => {
+    const queue = await harness.readQueue();
+    return queue.length === 1 && queue[0].id === "capture-stalled" && Number(queue[0].attempts || 0) >= 1 ? queue : null;
+  }, { label: "stalled ticket recorded its failure" });
+  const delivered = ingestCalls(harness).map((request) => JSON.parse(request.body).sourceMediaUrl);
+  assert.deepEqual(delivered, [nextUrl], "the healthy ticket behind the stalled one is delivered");
+  assert.match((await harness.readQueue())[0].lastError, /aborted|stalled/i);
+});
+
+test("a page content script cannot ask for a re-pair, but the extension's own page can", async () => {
+  const harness = await createHarness({ appOnline: true });
+  const fromPage = await harness.dispatchMessage({ type: "mosa.repairPairing" }, senderFor(CHATGPT_TAB_URL));
+  assert.equal(fromPage?.ok, false, "the web page's content script is rejected");
+  assert.match(fromPage.error, /unsupported sender/);
+
+  const fromOptions = await harness.dispatchMessage({ type: "mosa.repairPairing" }, {
+    id: RUNTIME_ID,
+    url: `chrome-extension://${RUNTIME_ID}/options.html`,
+  });
+  assert.equal(fromOptions?.ok, true);
+  assert.equal(fromOptions.settings.mosaToken, "paired-token");
+  assert.equal(fromOptions.settings.mosaBaseUrl, BASE_URL);
+});
+
+test("discovery probes each port with a 3 s budget, and a cold start that answers late still pairs", async () => {
+  const harness = await createHarness({ appOnline: true });
+  // Let the startup settings migration finish writing the paired Token before
+  // removing it, or its late write would put the Token back.
+  await sleep(20);
+  harness.localStore.delete("mosaToken");
+  harness.localStore.delete("mosaBaseUrl");
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname !== "/api/health" || url.port !== "43517") return null;
+    return new Promise((resolve) => setTimeout(() => resolve(jsonRoute({ product: "mosa" })), 2_000));
+  });
+  const extensionPage = { id: RUNTIME_ID, url: `chrome-extension://${RUNTIME_ID}/options.html` };
+  const response = await harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage);
+  assert.equal(response?.ok, true);
+  assert.equal(response.settings.mosaToken, "paired-token", "a health answer after 2 s is still inside the 3 s budget");
+});
+
+test("when no port answers, discovery runs one more full round 1.5 s later and then gives up", async () => {
+  const harness = await createHarness({ appOnline: false });
+  // Let the startup settings migration finish writing the paired Token before
+  // removing it, or its late write would put the Token back.
+  await sleep(20);
+  harness.localStore.delete("mosaToken");
+  harness.localStore.delete("mosaBaseUrl");
+  const extensionPage = { id: RUNTIME_ID, url: `chrome-extension://${RUNTIME_ID}/options.html` };
+  const startedAt = Date.now();
+  const response = await harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage);
+  const elapsed = Date.now() - startedAt;
+  const healthProbes = harness.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/health"));
+  assert.equal(healthProbes.length, 10, "five ports, two full rounds");
+  assert.ok(elapsed >= 1_400, `the second round waits about 1.5 s, took ${elapsed} ms`);
+  assert.equal(response?.settings?.mosaToken || "", "", "no Token is invented when nothing answers");
+});
+
+test("a failed queue write while GravityPort is offline lets the page try again", async () => {
+  const harness = await createHarness({ appOnline: false });
+  // Browser media storage refuses writes: the ticket cannot be kept.
+  harness.context.indexedDB.open = () => {
+    const request = {};
+    queueMicrotask(() => request.onerror?.());
+    return request;
+  };
+  const response = await harness.dispatchMessage({
+    type: "mosa.ingest",
+    payload: {
+      provider: "chatgpt",
+      mediaKind: "image",
+      imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_nowrite&cid=conv1",
+      imageBase64: fakeImageBase64(1024),
+      mimeType: "image/png",
+      promptStatus: "not-available",
+    },
+  }, senderFor(CHATGPT_TAB_URL));
+  assert.equal(response?.ok, false, "nothing was kept, so this is a plain failure");
+  assert.equal(response.retryable, true, "the page may try again, a bounded number of times");
+});
+
+test("App offline: a later re-send of the same capture with new bytes replaces the stored bytes", async () => {
+  const harness = await createHarness();
+  const first = fakeImageBase64(1024);
+  const later = fakeImageBase64(4096);
+  const payload = (imageBase64) => ({
+    provider: "chatgpt",
+    mediaKind: "image",
+    imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_resend&cid=conv1",
+    imageBase64,
+    mimeType: "image/png",
+    promptStatus: "not-available",
+  });
+
+  for (const imageBase64 of [first, later]) {
+    const response = await harness.dispatchMessage({ type: "mosa.ingest", payload: payload(imageBase64) }, senderFor(CHATGPT_TAB_URL));
+    assert.equal(response?.result?.status, "queued");
+  }
+  assert.equal((await harness.readQueue()).length, 1, "one capture stays one ticket");
+  assert.equal(harness.mediaEntries().length, 1);
+
+  harness.fetchHarness.setAppOnline(true);
+  harness.fireAlarm();
+  await waitFor(async () => (await harness.readQueue()).length === 0, { label: "re-sent capture delivered" });
+  assert.equal(JSON.parse(ingestCalls(harness).at(-1).body).imageBase64, later, "the bytes the page sent last are delivered");
 });

@@ -117,8 +117,8 @@ test("provider policy recognizes Jimeng and Midjourney pages and videos", () => 
   assert.equal(policy.supportsVideo("chatgpt"), false);
 });
 
-test("manifest declares the two new sites, their CDNs, and 0.15.43", () => {
-  assert.equal(manifest.version, "0.15.43");
+test("manifest declares the two new sites, their CDNs, and 0.15.44", () => {
+  assert.equal(manifest.version, "0.15.44");
   for (const host of [
     "https://jimeng.jianying.com/*",
     "https://*.byteimg.com/*",
@@ -577,4 +577,484 @@ test("generation sessions group by jimeng record and midjourney job id", () => {
   assert.equal(generationSessionKey({ source: { type: "web-midjourney" } }), "");
   assert.equal(sourceSearchDisplayName("web-jimeng"), "即梦");
   assert.equal(sourceSearchDisplayName("web-midjourney"), "Midjourney");
+});
+
+// ---- Review 294: page hand-off rules and the Midjourney batch fix, run in a vm
+// with a controllable clock. Timers and Date share one fake clock, so a test can
+// move minutes forward without waiting.
+
+const providerPageStartMs = 1_700_000_000_000;
+
+async function flushPageMicrotasks() {
+  for (let index = 0; index < 20; index += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+function fakePageClock(startMs = providerPageStartMs) {
+  const timers = [];
+  let nextId = 1;
+  const clock = { now: startMs, timers };
+  const add = (fn, ms, repeat) => {
+    const delay = Math.max(0, Number(ms) || 0);
+    timers.push({ id: nextId, at: clock.now + delay, delay, repeat, fn, cancelled: false });
+    nextId += 1;
+    return nextId - 1;
+  };
+  const cancel = (id) => {
+    const timer = timers.find((candidate) => candidate.id === id);
+    if (timer) timer.cancelled = true;
+  };
+  clock.setTimeout = (fn, ms) => add(fn, ms, false);
+  clock.setInterval = (fn, ms) => add(fn, ms, true);
+  clock.clearTimeout = cancel;
+  clock.clearInterval = cancel;
+  clock.advance = async (ms) => {
+    // Settle the page's startup promises (settings, watchdog) before any timer
+    // runs, as a real page would have done before the user scrolls.
+    await flushPageMicrotasks();
+    const target = clock.now + ms;
+    for (;;) {
+      const due = timers
+        .filter((timer) => !timer.cancelled && timer.at <= target)
+        .sort((a, b) => a.at - b.at || a.id - b.id)[0];
+      if (!due) break;
+      clock.now = Math.max(clock.now, due.at);
+      if (due.repeat) due.at += Math.max(1, due.delay);
+      else due.cancelled = true;
+      due.fn();
+      await flushPageMicrotasks();
+    }
+    clock.now = target;
+    await flushPageMicrotasks();
+  };
+  return clock;
+}
+
+function fakeClockDate(clock) {
+  return class FakeDate extends Date {
+    constructor(...args) {
+      if (args.length) super(...args);
+      else super(clock.now);
+    }
+
+    static now() {
+      return clock.now;
+    }
+  };
+}
+
+function midjourneyPage({ respond }) {
+  const clock = fakePageClock();
+  const images = [];
+  const documentListeners = new Map();
+  const windowListeners = new Map();
+  class FakeImage {
+    constructor(src) {
+      this.currentSrc = src;
+      this.src = src;
+      this.complete = true;
+      this.naturalWidth = 1024;
+      this.naturalHeight = 1024;
+      this.width = 512;
+      this.height = 512;
+      this.parentElement = null;
+    }
+
+    getBoundingClientRect() {
+      return { top: 0, left: 0, right: 512, bottom: 512, width: 512, height: 512 };
+    }
+
+    getAttribute() { return ""; }
+  }
+  const sent = [];
+  const document = {
+    images,
+    querySelectorAll: () => [],
+    getElementById: () => null,
+    addEventListener: (type, fn) => { documentListeners.set(type, [...(documentListeners.get(type) || []), fn]); },
+    documentElement: {},
+    body: { appendChild() {} },
+    createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {} }),
+  };
+  const chrome = {
+    runtime: {
+      id: "test-extension",
+      sendMessage: (message) => {
+        sent.push(message);
+        return Promise.resolve(respond(message));
+      },
+      onMessage: { addListener() {} },
+    },
+    storage: { local: { get: async () => ({}) }, onChanged: { addListener() {} } },
+  };
+  const sandbox = {
+    URL,
+    Date: fakeClockDate(clock),
+    Blob,
+    Promise,
+    chrome,
+    document,
+    location: { href: "https://www.midjourney.com/imagine", origin: "https://www.midjourney.com" },
+    HTMLImageElement: FakeImage,
+    HTMLVideoElement: class FakeVideo {},
+    MutationObserver: class { observe() {} disconnect() {} },
+    getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+    innerWidth: 1280,
+    innerHeight: 900,
+    console: { info() {}, log() {}, warn() {} },
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    setInterval: clock.setInterval,
+    clearInterval: clock.clearInterval,
+  };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(providerPolicySource, sandbox, { filename: "provider-policy.js" });
+  vm.runInContext(providerMidjourneySource, sandbox, { filename: "provider-midjourney.js" });
+  return {
+    clock,
+    images,
+    sent,
+    ingests: () => sent.filter((message) => message.type === "mosa.ingest"),
+    fireDocument: (type) => { for (const fn of documentListeners.get(type) || []) fn({}); },
+    fireWindow: (type) => { for (const fn of windowListeners.get(type) || []) fn({}); },
+    sandbox,
+  };
+}
+
+function midjourneyJobId(index) {
+  return `0${String(index).padStart(7, "0")}-1111-4222-8333-${String(index).padStart(12, "0")}`;
+}
+
+function addMidjourneyJob(page, jobId, count = 4) {
+  for (let index = 0; index < count; index += 1) {
+    page.images.push(new page.sandbox.HTMLImageElement(`https://cdn.midjourney.com/${jobId}/0_${index}_640_N.webp?method=shortest`));
+  }
+  page.fireDocument("load");
+}
+
+const midjourneyAutoSettings = (message) => (message.type === "mosa.getSettings"
+  ? { ok: true, settings: { autoCapture: true } }
+  : null);
+
+test("Midjourney: six works in a row, each with its earlier works still on screen, are all captured", async () => {
+  const page = midjourneyPage({
+    respond: (message) => midjourneyAutoSettings(message)
+      || (message.type === "mosa.fetchMidjourneyOriginal" ? { ok: false, error: "blocked" } : { ok: true, result: { status: "imported" } }),
+  });
+  await page.clock.advance(9_000);
+  for (let index = 1; index <= 6; index += 1) {
+    addMidjourneyJob(page, midjourneyJobId(index));
+    await page.clock.advance(400);
+  }
+  const jobs = new Set(page.ingests().map((message) => message.payload.providerAssetId.split(":")[0]));
+  assert.equal(jobs.size, 6, "every one of the six works is sent to GravityPort");
+  assert.equal(page.ingests().length, 24, "four images per work, once each");
+});
+
+test("Midjourney: three never-seen works appearing in one tick are history and are not captured", async () => {
+  const page = midjourneyPage({
+    respond: (message) => midjourneyAutoSettings(message)
+      || (message.type === "mosa.fetchMidjourneyOriginal" ? { ok: false, error: "blocked" } : { ok: true, result: { status: "imported" } }),
+  });
+  await page.clock.advance(9_000);
+  for (let index = 1; index <= 3; index += 1) addMidjourneyJob(page, midjourneyJobId(index));
+  await page.clock.advance(400);
+  assert.equal(page.ingests().length, 0, "a batch of three new works is history");
+});
+
+test("Midjourney: a work that appears within 1.2 s of scrolling is history; a later one is captured", async () => {
+  const page = midjourneyPage({
+    respond: (message) => midjourneyAutoSettings(message)
+      || (message.type === "mosa.fetchMidjourneyOriginal" ? { ok: false, error: "blocked" } : { ok: true, result: { status: "imported" } }),
+  });
+  await page.clock.advance(9_000);
+  page.fireWindow("scroll");
+  page.fireDocument("scroll");
+  addMidjourneyJob(page, midjourneyJobId(1));
+  await page.clock.advance(400);
+  assert.equal(page.ingests().length, 0, "right after a scroll the new work is history");
+
+  await page.clock.advance(2_000);
+  addMidjourneyJob(page, midjourneyJobId(2));
+  await page.clock.advance(400);
+  assert.equal(page.ingests().length, 4, "a work that appears after the scroll window is captured");
+});
+
+test("Midjourney: a queued answer keeps the key, so the work is not sent again", async () => {
+  const page = midjourneyPage({
+    respond: (message) => midjourneyAutoSettings(message)
+      || (message.type === "mosa.fetchMidjourneyOriginal" ? { ok: false, error: "blocked" } : { ok: true, result: { status: "queued", reason: "mosa-unavailable" } }),
+  });
+  await page.clock.advance(9_000);
+  addMidjourneyJob(page, midjourneyJobId(1));
+  await page.clock.advance(400);
+  assert.equal(page.ingests().length, 4);
+  await page.clock.advance(180_000);
+  assert.equal(page.ingests().length, 4, "three minutes later the queued work is still not re-sent");
+});
+
+test("Midjourney: a retryable failure is tried again twice, 60 s apart, then the key is kept", async () => {
+  const page = midjourneyPage({
+    respond: (message) => midjourneyAutoSettings(message)
+      || (message.type === "mosa.fetchMidjourneyOriginal" ? { ok: false, error: "blocked" } : { ok: false, error: "GravityPort is closed", retryable: true }),
+  });
+  await page.clock.advance(9_000);
+  addMidjourneyJob(page, midjourneyJobId(1));
+  await page.clock.advance(400);
+  assert.equal(page.ingests().length, 4, "first send of each of the four images");
+
+  await page.clock.advance(70_000);
+  assert.equal(page.ingests().length, 8, "first automatic retry, after 60 s");
+  await page.clock.advance(70_000);
+  assert.equal(page.ingests().length, 12, "second automatic retry, 60 s after the first");
+  await page.clock.advance(600_000);
+  assert.equal(page.ingests().length, 12, "no third automatic retry");
+});
+
+test("Midjourney: a refused answer (not retryable) is never sent again automatically", async () => {
+  const page = midjourneyPage({
+    respond: (message) => midjourneyAutoSettings(message)
+      || (message.type === "mosa.fetchMidjourneyOriginal" ? { ok: false, error: "blocked" } : { ok: false, error: "bad image", retryable: false }),
+  });
+  await page.clock.advance(9_000);
+  addMidjourneyJob(page, midjourneyJobId(1));
+  await page.clock.advance(400);
+  await page.clock.advance(600_000);
+  assert.equal(page.ingests().length, 4, "a refusal keeps the key for the rest of the page's life");
+});
+
+test("Midjourney: the batch count skips works already captured in this page", () => {
+  const seam = midjourney;
+  const entry = (jobId) => ({ info: { jobId } });
+  const baseline = new Set(["old-job"]);
+  const handled = new Set(["job-1", "job-2"]);
+  const entries = [entry("job-1"), entry("job-1"), entry("job-2"), entry("job-3"), entry("old-job")];
+  const ids = seam.newJobIdsForBatch(entries, baseline, handled);
+  assert.deepEqual([...ids], ["job-3"], "only the genuinely new work counts toward a batch");
+  assert.equal(seam.isBatchBaselineInsertion(ids.size), false);
+});
+
+function jimengPage({ respond }) {
+  const clock = fakePageClock();
+  const hookListeners = [];
+  const portListeners = [];
+  const sent = [];
+  const window = {
+    addEventListener: (type, fn) => { if (type === "message") hookListeners.push(fn); },
+    postMessage: () => {},
+  };
+  const chrome = {
+    runtime: {
+      id: "test-extension",
+      sendMessage: (message) => {
+        sent.push(message);
+        return Promise.resolve(respond(message));
+      },
+      onMessage: { addListener() {} },
+    },
+    storage: { local: { get: async () => ({}) }, onChanged: { addListener() {} } },
+  };
+  const sandbox = {
+    URL,
+    Date: fakeClockDate(clock),
+    Blob,
+    Promise,
+    chrome,
+    window,
+    location: { href: "https://jimeng.jianying.com/ai-tool/generate", origin: "https://jimeng.jianying.com" },
+    document: {
+      images: [],
+      querySelectorAll: () => [],
+      getElementById: () => null,
+      addEventListener() {},
+      documentElement: {},
+      body: { appendChild() {} },
+      createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {} }),
+    },
+    MutationObserver: class { observe() {} disconnect() {} },
+    getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+    innerWidth: 1280,
+    innerHeight: 900,
+    console: { info() {}, log() {}, warn() {} },
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    setInterval: clock.setInterval,
+    clearInterval: clock.clearInterval,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(providerPolicySource, sandbox, { filename: "provider-policy.js" });
+  vm.runInContext(providerJimengSource, sandbox, { filename: "provider-jimeng.js" });
+  return {
+    clock,
+    sent,
+    ingests: (mediaKind) => sent.filter((message) => message.type === "mosa.ingest"
+      && message.payload?.mediaKind === mediaKind),
+    // Hands the page the hook's message port, then a Jimeng API response text.
+    deliverResponse: (text) => {
+      const port = {
+        listeners: [],
+        addEventListener(type, fn) { if (type === "message") this.listeners.push(fn); },
+        start() {},
+      };
+      for (const listener of hookListeners) {
+        listener({ origin: "https://jimeng.jianying.com", data: { source: "mosa-jimeng-hook", type: "hook-port" }, ports: [port] });
+      }
+      for (const listener of port.listeners) listener({ data: { type: "jimeng-api-response", text } });
+      portListeners.push(port);
+    },
+  };
+}
+
+test("Jimeng: a queued image is not sent again, even minutes later", async () => {
+  const page = jimengPage({
+    respond: (message) => (message.type === "mosa.getSettings" ? { ok: true, settings: { autoCapture: true } }
+      : { ok: true, result: { status: "queued", reason: "mosa-unavailable" } }),
+  });
+  await page.clock.advance(1_000);
+  page.deliverResponse(JSON.stringify(jimengPollFixture(page.clock.now)));
+  await page.clock.advance(400);
+  const first = page.ingests("image").length;
+  assert.ok(first >= 1, "the fresh Jimeng image is sent once");
+  await page.clock.advance(180_000);
+  assert.equal(page.ingests("image").length, first, "a queued image is not re-sent by the page");
+});
+
+test("Jimeng: a retryable failure is retried twice, 60 s apart, and no more", async () => {
+  const page = jimengPage({
+    respond: (message) => (message.type === "mosa.getSettings" ? { ok: true, settings: { autoCapture: true } }
+      : { ok: false, error: "GravityPort is closed", retryable: true }),
+  });
+  await page.clock.advance(1_000);
+  page.deliverResponse(JSON.stringify(jimengPollFixture(page.clock.now)));
+  await page.clock.advance(400);
+  const first = page.ingests("image").length;
+  assert.ok(first >= 1);
+  await page.clock.advance(70_000);
+  assert.equal(page.ingests("image").length, first * 2, "one automatic retry after 60 s");
+  await page.clock.advance(70_000);
+  assert.equal(page.ingests("image").length, first * 3, "a second automatic retry 60 s later");
+  await page.clock.advance(600_000);
+  assert.equal(page.ingests("image").length, first * 3, "then the key is kept");
+});
+
+const providerSitesSource = await readFile(new URL("provider-sites.js", extensionRoot), "utf8");
+
+function geminiPage({ respond }) {
+  const clock = fakePageClock();
+  const sent = [];
+  const images = [];
+  const modelResponse = { tagName: "MODEL-RESPONSE", parentElement: null };
+  class FakeImage {
+    constructor(src) {
+      this.currentSrc = src;
+      this.src = src;
+      this.complete = true;
+      this.naturalWidth = 1024;
+      this.naturalHeight = 1024;
+      this.width = 512;
+      this.height = 512;
+      this.tagName = "IMG";
+      this.parentElement = modelResponse;
+    }
+
+    getBoundingClientRect() {
+      return { top: 0, left: 0, right: 512, bottom: 512, width: 512, height: 512 };
+    }
+
+    getAttribute() { return ""; }
+  }
+  const document = {
+    images,
+    documentElement: { tagName: "HTML", parentElement: null },
+    querySelectorAll: () => [],
+    getElementById: () => null,
+    addEventListener() {},
+    body: { appendChild() {} },
+    createElement: () => ({ style: {}, setAttribute() {}, replaceChildren() {} }),
+  };
+  const chrome = {
+    runtime: {
+      id: "test-extension",
+      sendMessage: (message) => {
+        sent.push(message);
+        return Promise.resolve(respond(message));
+      },
+      onMessage: { addListener() {} },
+    },
+    storage: { local: { get: async () => ({}) }, onChanged: { addListener() {} } },
+  };
+  const sandbox = {
+    URL,
+    Date: fakeClockDate(clock),
+    Blob,
+    Promise,
+    chrome,
+    document,
+    location: { href: "https://gemini.google.com/app/conv1", origin: "https://gemini.google.com", hostname: "gemini.google.com" },
+    HTMLImageElement: FakeImage,
+    HTMLVideoElement: class FakeVideo {},
+    MutationObserver: class { observe() {} disconnect() {} },
+    getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+    innerWidth: 1280,
+    innerHeight: 900,
+    console: { info() {}, log() {}, warn() {} },
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    setInterval: clock.setInterval,
+    clearInterval: clock.clearInterval,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(providerPolicySource, sandbox, { filename: "provider-policy.js" });
+  vm.runInContext(providerSitesSource, sandbox, { filename: "provider-sites.js" });
+  return {
+    clock,
+    sent,
+    images,
+    ingests: () => sent.filter((message) => message.type === "mosa.ingest"),
+    addImage: (src) => images.push(new FakeImage(src)),
+  };
+}
+
+const geminiFigureUrl = "https://lh3.googleusercontent.com/gemini-figure-one";
+
+test("Google (Gemini): a queued image is not sent again, even minutes later", async () => {
+  const page = geminiPage({
+    respond: (message) => (message.type === "mosa.getSettings" ? { ok: true, settings: { autoCapture: true } }
+      : { ok: true, result: { status: "queued", reason: "mosa-unavailable" } }),
+  });
+  await page.clock.advance(1_000);
+  page.addImage(geminiFigureUrl);
+  await page.clock.advance(5_000);
+  assert.equal(page.ingests().length, 1, "the visible image is sent once");
+  await page.clock.advance(180_000);
+  assert.equal(page.ingests().length, 1, "a queued image is not re-sent by the page");
+});
+
+test("Google (Gemini): a retryable failure is retried twice, 60 s apart, and no more", async () => {
+  const page = geminiPage({
+    respond: (message) => (message.type === "mosa.getSettings" ? { ok: true, settings: { autoCapture: true } }
+      : { ok: false, error: "GravityPort is closed", retryable: true }),
+  });
+  await page.clock.advance(1_000);
+  page.addImage(geminiFigureUrl);
+  await page.clock.advance(5_000);
+  assert.equal(page.ingests().length, 1);
+  await page.clock.advance(70_000);
+  assert.equal(page.ingests().length, 2, "one automatic retry after 60 s");
+  await page.clock.advance(70_000);
+  assert.equal(page.ingests().length, 3, "a second automatic retry 60 s later");
+  await page.clock.advance(600_000);
+  assert.equal(page.ingests().length, 3, "then the key is kept");
+});
+
+test("Google (Gemini): a refused answer is never retried automatically", async () => {
+  const page = geminiPage({
+    respond: (message) => (message.type === "mosa.getSettings" ? { ok: true, settings: { autoCapture: true } }
+      : { ok: false, error: "bad image", retryable: false }),
+  });
+  await page.clock.advance(1_000);
+  page.addImage(geminiFigureUrl);
+  await page.clock.advance(5_000);
+  await page.clock.advance(600_000);
+  assert.equal(page.ingests().length, 1);
 });
