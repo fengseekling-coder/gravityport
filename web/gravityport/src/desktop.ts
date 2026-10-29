@@ -36,7 +36,7 @@ type ElectronAPI = {
   setLocale?: (locale: string) => Promise<unknown>
   getUserProfile?: () => Promise<{ installationId?: string; [key: string]: unknown }>
   checkForUpdates?: (notify?: boolean) => Promise<{ status?: string; currentVersion?: string; latestVersion?: string; publishedAt?: string; updateAvailable?: boolean; canInstallInApp?: boolean; reason?: string; [key: string]: unknown }>
-  downloadAndInstallUpdate?: () => Promise<{ status?: string; latestVersion?: string; [key: string]: unknown } | undefined>
+  downloadAndInstallUpdate?: () => Promise<{ status?: string; code?: string; reason?: string; latestVersion?: string; [key: string]: unknown } | undefined>
   cancelUpdateDownload?: () => Promise<unknown>
   getUpdateReady?: () => Promise<UpdateReadyState | null>
   onUpdateReady?: (callback: (payload: UpdateReadyState) => void) => unknown
