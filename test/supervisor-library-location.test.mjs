@@ -19,6 +19,11 @@ import {
 
 // Every test uses a temporary home. Nothing here reads the real ~/MOSA Library,
 // ~/GravityPort Library or the desktop userData folder.
+// On Linux and Windows the desktop location file follows XDG_CONFIG_HOME /
+// APPDATA rather than the home directory (CI sets XDG_CONFIG_HOME). Drop them
+// so each test's location file stays inside its own temporary home.
+delete process.env.XDG_CONFIG_HOME;
+delete process.env.APPDATA;
 function makeHome(t) {
   const home = mkdtempSync(join(tmpdir(), "gp-supervisor-home-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
