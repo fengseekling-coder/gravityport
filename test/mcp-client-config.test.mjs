@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { parse as parseToml } from "smol-toml";
+import { parse as parseTomlRaw } from "smol-toml";
 import { buildMcpClientConfig, posixShellQuote } from "../lib/mcp-client-config.mjs";
+
+// smol-toml 1.9 returns null-prototype objects; compare as plain data.
+const parseToml = (source) => JSON.parse(JSON.stringify(parseTomlRaw(source)));
 
 const MAC_EXEC = "/Applications/GravityPort.app/Contents/MacOS/GravityPort";
 const MAC_SERVER = "/Applications/GravityPort.app/Contents/Resources/app.asar/mcp/server.mjs";

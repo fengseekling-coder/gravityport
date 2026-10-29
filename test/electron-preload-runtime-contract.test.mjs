@@ -231,7 +231,8 @@ test("preload path, module format, security settings, and API surface are stable
   assert.equal(sha256(JSON.stringify(manifest.dependencies)), "0339eb218322b3a863818f979cfe4aca62624c31811a775da305ccda617d91a7", "package.json dependencies were not changed by this phase");
   // 任务 246 更新：forge 三包 7.11.2→8.0.1、typescript 5.4.5→5.9.3，显式加
   // @electron/asar 4.3.1 与 @electron/windows-sign 2.1.0（版本对齐 forge 8 实际安装）。
-  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "e3d97f62946cbd10b5f724f8a596f851bd7d14d99fc49935e9ef3b8461b6c60b", "package.json devDependencies were not changed by this phase");
+  // 10-29 Dependabot #317：smol-toml 1.8.0→1.9.0。
+  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "ec68692227abfa080940001ec6bb301275c0a018a6e280905ed659cc68e15890", "package.json devDependencies were not changed by this phase");
   assertPackageLockMatchesManifest(lockfile, manifest, "package-lock.json must preserve dependency identity");
   assert.doesNotMatch(packageJson, /electron-preload-runtime-contract/);
 });
