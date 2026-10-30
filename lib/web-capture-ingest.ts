@@ -224,10 +224,22 @@ export function createWebCaptureIngest(options: { store?: Store; libraryDir?: st
         lastError: String(value.lastError || "").slice(0, 240),
       };
     });
+    // 0.15.44+ extensions also report offline-storage diagnostics: byte usage
+    // against the queue budget, how many tickets hold only a URL, and how many
+    // tickets lost bytes (or were dropped) to the budget or safety cap. Old
+    // extensions send none of these: they stay 0. The count bounds only stop a
+    // hostile report from inflating the card; the extension itself has had no
+    // item cap since review 2-2.
+    const boundedCount = (value: unknown) => Math.max(0, Math.min(100_000, Math.trunc(Number(value || 0) || 0)));
+    const boundedBytes = (value: unknown) => Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(Number(value || 0) || 0)));
     clientQueue = {
       reportedAt: new Date().toISOString(),
-      pending: Math.max(0, Math.min(256, Math.trunc(Number(input.pending ?? items.length) || 0))),
-      failed: Math.max(0, Math.min(256, Math.trunc(Number(input.failed || 0) || 0))),
+      pending: boundedCount(input.pending ?? items.length),
+      failed: boundedCount(input.failed),
+      storageBytes: boundedBytes(input.storageBytes),
+      storageLimitBytes: boundedBytes(input.storageLimitBytes),
+      urlOnly: boundedCount(input.urlOnly),
+      evicted: boundedCount(input.evicted),
       items,
     };
     return { ok: true, retryRequestId };

@@ -311,6 +311,10 @@ const english: Record<string, string> = {
   "等待重试 {count} 张": "{count} waiting to retry",
   "已让扩展重试": "Asked the extension to retry",
   "最近一次错误": "Last error",
+  // Task 310: offline-queue storage hints on the browser extension card
+  "扩展的离线空间快满了（已用 {used} / {limit}），打开 GravityPort 后会自动补收": "The extension's offline storage is nearly full (using {used} / {limit}); captures are caught up automatically once GravityPort opens",
+  "有 {count} 张因离线空间不足只保留了网址或被移除，网址过期后可能收不回来": "{count} captures kept only their URL or were dropped because offline storage ran out; expired URLs may be unrecoverable",
+  "{count} 张只存了网址，网址过期后可能收不回来": "{count} captures stored only a URL; expired URLs may be unrecoverable",
   // Task 258: deletion sync switch on the browser extension card
   "即梦站内删除作品时，同步移进回收站": "Move Jimeng deletions to Trash",
   "在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动": "Assets you favorited, rated, grouped, or tagged in GravityPort are not moved.",

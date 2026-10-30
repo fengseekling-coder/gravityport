@@ -370,7 +370,19 @@ export type MosaWebCaptureStatus = {
   lastExtensionVersion: string
   totalImported: number
   lastError: string | null
-  queue: { reportedAt: string | null; pending: number; failed: number; items: MosaWebCaptureQueueItem[] }
+  // storageBytes/storageLimitBytes/urlOnly/evicted come from the extension's
+  // offline-queue diagnostics (0.15.44+, review 2-2); older extensions report
+  // none of them and they stay 0.
+  queue: {
+    reportedAt: string | null
+    pending: number
+    failed: number
+    storageBytes: number
+    storageLimitBytes: number
+    urlOnly: number
+    evicted: number
+    items: MosaWebCaptureQueueItem[]
+  }
   retryRequestId: number
 }
 
@@ -379,6 +391,7 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
   const items = Array.isArray(queue.items) ? queue.items : []
   const serverTime = (value: unknown): string | null =>
     typeof value === "string" && value && Number.isFinite(Date.parse(value)) ? value : null
+  const boundedCount = (value: unknown) => Math.max(0, Number(value || 0))
   return {
     enabled: input.enabled === true,
     tokenConfigured: input.tokenConfigured === true,
@@ -388,8 +401,12 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
     lastError: typeof input.lastError === "string" && input.lastError ? input.lastError : null,
     queue: {
       reportedAt: serverTime(queue.reportedAt),
-      pending: Math.max(0, Number(queue.pending || 0)),
-      failed: Math.max(0, Number(queue.failed || 0)),
+      pending: boundedCount(queue.pending),
+      failed: boundedCount(queue.failed),
+      storageBytes: boundedCount(queue.storageBytes),
+      storageLimitBytes: boundedCount(queue.storageLimitBytes),
+      urlOnly: boundedCount(queue.urlOnly),
+      evicted: boundedCount(queue.evicted),
       items: items.map((row: unknown) => {
         const item = (row && typeof row === "object" && !Array.isArray(row) ? row : {}) as JsonValue
         return {
