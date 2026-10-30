@@ -2441,7 +2441,7 @@ img.black-image {
   padding: 0;
   border: 0;
 }.app .reference-thumbnail {
-  width: var(--space-16);
+  width: auto;
   height: var(--space-16);
   padding: 0;
   overflow: hidden;
@@ -2449,8 +2449,10 @@ img.black-image {
   background: #000;
 }.app .reference-image {
   display: block;
-  width: 100%;
   height: 100%;
+  width: auto;
+  max-width: calc(var(--space-16) * 2);
+  object-fit: contain;
   background: #000;
 }.app .reference-thumbnail:hover {
   box-shadow: 0 0 0 2px var(--ui-accent);
