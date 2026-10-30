@@ -240,7 +240,7 @@ test("listGalleryRowsForAssets maps affected members to their stack node under g
     { projectId: "default", collapseStacks: true, sort: "newest", group: "Hidden" },
     [cover.id],
   );
-  assert.deepEqual(filtered.rows.map((asset) => asset.id), [cover.id],
+  assert.deepEqual(filtered.rows.map((asset) => asset.id), [member.id],
     "the stack node still belongs to the group view through its matching member");
   assert.equal(filtered.rows[0].stack.match_count, 1, "match count covers ALL matching members, not only affected ones");
 

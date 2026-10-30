@@ -116,7 +116,7 @@ test("generationSessionTitle reads the documented fallback chain, trims, and cap
 
 // --- ingest-time auto stacking ---
 
-test("same-session ingests stay loose at one image, stack at two with the earliest cover, and append at three", async (t) => {
+test("same-session ingests stay loose at one image, stack at two with the newest cover, and update cover at three", async (t) => {
   const { store, sourcePath } = await createFixtureStore(t);
   await ingest(store, sourcePath, "g1", "2026-06-01T00:00:00.000Z", chatgptSource("conv-1"));
   assert.equal(await stackOf(store, "default"), null, "the first image of a session is not stacked");
@@ -129,12 +129,12 @@ test("same-session ingests stay loose at one image, stack at two with the earlie
   await ingest(store, sourcePath, "g3", "2026-06-03T00:00:00.000Z", chatgptSource("conv-1"));
   const summary = await store.getAssetStack("default", stack.id);
   assert.equal(summary.count, 3, "the third image appends instead of forking");
-  assert.equal(summary.cover_asset_id, "g1", "the earlier ingest is the cover");
+  assert.equal(summary.cover_asset_id, "g3", "the latest ingest is the cover");
   assert.equal(summary.origin, "auto", "stackSummary exposes origin");
   assert.equal(summary.session_key, "web-chatgpt:conv-1", "stackSummary exposes session_key");
   assert.deepEqual(
     (await store.listAssetStackAssets("default", stack.id)).assets.map((asset) => asset.id),
-    ["g1", "g2", "g3"],
+    ["g3", "g2", "g1"],
   );
 });
 
@@ -279,7 +279,7 @@ test("removing an image from an auto stack excludes it, while later session imag
   await ingest(store, sourcePath, "r4", "2026-06-04T00:00:00.000Z", chatgptSource("conv-r"));
   assert.deepEqual(
     (await store.listAssetStackAssets("default", stack.id)).assets.map((asset) => asset.id),
-    ["r2", "r3", "r4"],
+    ["r4", "r3", "r2"],
     "the removed image never returns; the new image still joins",
   );
 
@@ -292,7 +292,7 @@ test("removing an image from an auto stack excludes it, while later session imag
   assert.ok(rebuilt, "two fresh session images stack again");
   assert.deepEqual(
     (await store.listAssetStackAssets("default", rebuilt.id)).assets.map((asset) => asset.id),
-    ["r5", "r6"],
+    ["r6", "r5"],
     "the rebuilt stack holds only post-dissolve images",
   );
 });
@@ -354,7 +354,7 @@ test("dissolving a manual stack keeps its session members from being re-stacked"
   assert.equal((await store.getAssetStack("default", rebuilt.id)).origin, "auto");
   assert.deepEqual(
     (await store.listAssetStackAssets("default", rebuilt.id)).assets.map((asset) => asset.id),
-    ["d4", "d5"],
+    ["d5", "d4"],
     "the dissolved stack's members stay out of the rebuilt stack",
   );
 });
@@ -392,7 +392,7 @@ test("permanently deleting an asset clears its auto-stack exclusion so a re-impo
   assert.ok(rebuilt, "the surviving stack absorbs the re-imported image");
   assert.deepEqual(
     (await store.listAssetStackAssets("default", rebuilt.id)).assets.map((asset) => asset.id),
-    ["p2", "p3", "p1"],
+    ["p1", "p3", "p2"],
     "the re-imported image joins the stack it was once pulled out of",
   );
 });
@@ -419,7 +419,7 @@ test("different sessions never mix, and both Flow hosts merge into one session",
   const flowStack = await stackOf(store, "default");
   const flowSummary = await store.getAssetStack("default", flowStack.id);
   assert.equal(flowSummary.session_key, "web-flow:P1", "the two Flow URL shapes share one session");
-  assert.deepEqual((await store.listAssetStackAssets("default", flowStack.id)).assets.map((asset) => asset.id), ["fa1", "fa2"]);
+  assert.deepEqual((await store.listAssetStackAssets("default", flowStack.id)).assets.map((asset) => asset.id), ["fa2", "fa1"]);
 
   await ingest(store, sourcePath, "fb2", "2026-06-02T06:00:00.000Z", chatgptSource("conv-x"));
   const page = await store.listAssetPage({ projectId: "default", limit: 0, collapseStacks: true });
@@ -530,7 +530,7 @@ test("the migration backfill stacks qualifying sessions once and leaves manual s
   assert.equal(summary.name, "Backfilled Chat", "the backfilled stack picks up the session title");
   assert.deepEqual(
     (await reopened.listAssetStackAssets("default", autoNode.stack.id)).assets.map((asset) => asset.id),
-    ["b1", "b2", "b3"],
+    ["b3", "b2", "b1"],
   );
 
   const raw = await reopened.listAssets({ projectId: "default", trash: true });
@@ -586,8 +586,8 @@ test("the backfill appends to an auto stack that predates it instead of forking 
   t.after(() => reopened.close());
   assert.deepEqual(
     (await reopened.listAssetStackAssets("default", stack.id)).assets.map((asset) => asset.id),
-    ["p1", "p2", "p0"],
-    "the backfill joins the existing session stack (appended at the end) instead of creating a second one",
+    ["p2", "p1", "p0"],
+    "the backfill joins the existing session stack (re-sorted newest-first) instead of creating a second one",
   );
 });
 
@@ -672,7 +672,7 @@ test("the backfill merges a session into the manual stack already holding its im
   assert.equal(autoSummary.origin, "auto");
   assert.equal(autoSummary.session_key, "web-chatgpt:conv-c", "sessions without a manual target still follow the ≥2 rule");
   assert.equal(autoSummary.name, "Fresh Chat");
-  assert.deepEqual((await reopened.listAssetStackAssets("default", autoNode.stack.id)).assets.map((asset) => asset.id), ["c1", "c2"]);
+  assert.deepEqual((await reopened.listAssetStackAssets("default", autoNode.stack.id)).assets.map((asset) => asset.id), ["c2", "c1"]);
   const soloNode = page.assets.find((asset) => asset.id === "d1");
   assert.ok(soloNode && !soloNode.stack, "a single-image session with no manual target stays loose");
 });

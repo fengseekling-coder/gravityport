@@ -90,7 +90,7 @@ test("Stack API keeps raw assets complete while gallery view collapses to one lo
     "view=gallery&mediaKind=video",
   ]) {
     const result = await (await fetch(`${runtime.url}/api/assets?project=default&limit=100&${query}`)).json();
-    assert.deepEqual(result.assets.map((asset) => asset.id), ["a"]);
+    assert.deepEqual(result.assets.map((asset) => asset.id), ["b"]);
     assert.deepEqual(result.assets[0].stack, { id: stack.id, count: 2, match_count: 1, name: "" });
     assert.equal(result.page.total, 1);
   }

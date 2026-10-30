@@ -86,10 +86,14 @@ export interface AssetPage {
 
 export interface AssetStackSummary {
   id: string;
+  name?: string;
   count: number;
   cover_asset_id: string;
   created_at?: string;
   updated_at?: string;
+  origin?: string;
+  session_key?: string;
+  order_locked?: boolean;
 }
 
 export interface GroupInfo {
