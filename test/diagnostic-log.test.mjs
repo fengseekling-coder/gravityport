@@ -1,9 +1,13 @@
 // Task 158: diagnostic log ring buffer and redaction — real module tests.
-// The console capture stubs are installed BEFORE installDiagnosticLog() so
-// nothing (including CJK text) ever reaches the real node:test console.
+// Task 315: one console call is one entry (embedded newlines become ⏎), the
+// 11 redaction leak classes from the audit are covered, and writeConsoleOnly
+// must bypass the buffer. The console capture stubs are installed BEFORE
+// installDiagnosticLog() so nothing (including CJK text) ever reaches the
+// real node:test console.
 
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { hostname } from "node:os";
 import test from "node:test";
 
 import {
@@ -12,6 +16,7 @@ import {
   isDiagnosticLogInstalled,
   redactDiagnostics,
   uninstallDiagnosticLog,
+  writeConsoleOnly,
 } from "../lib/diagnostic-log.mjs";
 
 // Replaces the console methods with silent recorders for the duration of
@@ -85,46 +90,74 @@ test("install is idempotent and uninstall restores capture behavior", () => {
   });
 });
 
-test("multi-line console calls occupy one buffered line per physical line", () => {
+test("one console call is one entry: embedded newlines become visible ⏎", () => {
   withSilentConsole(() => {
     installDiagnosticLog();
     try {
       console.warn("a\nb\r\nc");
-      assert.deepEqual(getDiagnosticLogText().split("\n").map((line) => line.replace(/^\S+ \S+ /, "")), [
-        "a",
-        "b",
-        "c",
-      ]);
+      assert.deepEqual(
+        getDiagnosticLogText().split("\n").map((line) => line.replace(/^\S+ \S+ /, "")),
+        ["a⏎b⏎c"],
+      );
     } finally {
       uninstallDiagnosticLog();
     }
   });
 });
 
-test("oldest lines drop when the 400-line cap is exceeded", () => {
+test("a multi-line call whose second line carries private text is redacted whole", () => {
+  withSilentConsole(() => {
+    installDiagnosticLog();
+    try {
+      console.error("Error: prompt failed\n张三在北京市朝阳区某某路8号");
+      const redacted = redactDiagnostics(getDiagnosticLogText(), {});
+      assert.ok(!redacted.includes("张三"), "the second physical line must not survive");
+      assert.ok(!redacted.includes("prompt failed"), "the whole entry is replaced");
+      assert.ok(redacted.includes("<此行已省略：可能含素材文字>"));
+    } finally {
+      uninstallDiagnosticLog();
+    }
+  });
+});
+
+test("writeConsoleOnly reaches the real console but never the buffer", () => {
+  withSilentConsole((calls) => {
+    installDiagnosticLog();
+    try {
+      writeConsoleOnly("error", "full renderer text /Users/alice/x.png");
+      assert.ok(!getDiagnosticLogText().includes("full renderer text"), "buffer stays clean");
+      assert.equal(calls.length, 1, "the real console received the line");
+      assert.ok(calls[0].args.join(" ").includes("full renderer text"));
+    } finally {
+      uninstallDiagnosticLog();
+    }
+  });
+});
+
+test("oldest entries drop when the 400-entry cap is exceeded", () => {
   withSilentConsole(() => {
     installDiagnosticLog();
     try {
       for (let index = 0; index < 450; index += 1) console.warn(`marker-${index}`);
       const logged = getDiagnosticLogText().split("\n");
       assert.equal(logged.length, 400);
-      assert.ok(!logged[0].includes("marker-0"), "oldest line dropped");
-      assert.ok(logged[0].includes("marker-50"), "kept lines start at 450-400");
-      assert.ok(logged.at(-1).includes("marker-449"), "newest line kept");
+      assert.ok(!logged[0].includes("marker-0"), "oldest entry dropped");
+      assert.ok(logged[0].includes("marker-50"), "kept entries start at 450-400");
+      assert.ok(logged.at(-1).includes("marker-449"), "newest entry kept");
     } finally {
       uninstallDiagnosticLog();
     }
   });
 });
 
-test("oldest lines drop when the 120 KB byte cap is exceeded", () => {
+test("oldest entries drop when the 120 KB byte cap is exceeded", () => {
   withSilentConsole(() => {
     installDiagnosticLog();
     try {
       for (let index = 0; index < 200; index += 1) console.warn(`big-${index} ${"x".repeat(980)}`);
       const text = getDiagnosticLogText();
       const logged = text.split("\n");
-      assert.ok(logged.length < 200, `byte cap must evict lines, got ${logged.length}`);
+      assert.ok(logged.length < 200, `byte cap must evict entries, got ${logged.length}`);
       assert.ok(Buffer.byteLength(text, "utf8") <= 120 * 1024, "kept text stays within the byte cap");
       assert.ok(!logged[0].includes("big-0"), "oldest dropped by bytes");
       assert.ok(logged.at(-1).includes("big-199"), "newest kept");
@@ -134,7 +167,7 @@ test("oldest lines drop when the 120 KB byte cap is exceeded", () => {
   });
 });
 
-test("buffered lines longer than 2000 chars are truncated with a marker", () => {
+test("buffered entries longer than 2000 chars are truncated with a marker", () => {
   withSilentConsole(() => {
     installDiagnosticLog();
     try {
@@ -149,35 +182,167 @@ test("buffered lines longer than 2000 chars are truncated with a marker", () => 
   });
 });
 
+// ---- Leak class 1: object args JSON-encode the backslashes ----------------
+
+test("leak 1: an object arg with a Windows path is masked after JSON encoding", () => {
+  withSilentConsole(() => {
+    installDiagnosticLog();
+    try {
+      console.warn({ path: "C:\\Users\\ZhangSan\\Pictures\\a.png" });
+      const redacted = redactDiagnostics(getDiagnosticLogText(), {});
+      assert.ok(!redacted.includes("ZhangSan"), "JSON-escaped user path must not survive");
+      assert.ok(redacted.includes("<路径>.png"), JSON.stringify(redacted));
+    } finally {
+      uninstallDiagnosticLog();
+    }
+  });
+});
+
+test("leak 2: Windows 8.3 short paths are masked without any context", () => {
+  const redacted = redactDiagnostics("C:\\Users\\ZHANGS~1\\AppData\\Local\\Temp\\x.png", {});
+  assert.ok(!redacted.includes("ZHANGS~1"), JSON.stringify(redacted));
+  assert.equal(redacted, "<路径>.png");
+});
+
+test("leak 3: percent-encoded paths are masked and keep their extension", () => {
+  const redacted = redactDiagnostics("%2FUsers%2Fzhangsan%2FPictures%2Fa.png", {});
+  assert.ok(!redacted.includes("zhangsan"), JSON.stringify(redacted));
+  assert.equal(redacted, "<路径>.png");
+});
+
+test("leak 4: absolute paths outside library and home are masked", () => {
+  const cases = [
+    "/Volumes/ZhangSan-SSD/素材/a.png",
+    "/Users/Shared/张三/a.png",
+    "D:\\张三的图\\a.png",
+    "/private/tmp/x.png",
+  ];
+  for (const text of cases) {
+    const redacted = redactDiagnostics(text, {});
+    assert.ok(!redacted.includes("张三"), `${text} -> ${redacted}`);
+    assert.ok(!redacted.includes("ZhangSan"), `${text} -> ${redacted}`);
+    assert.ok(redacted.includes("<路径>.png"), `${text} -> ${redacted}`);
+  }
+});
+
+test("leak 5: usernames with spaces are masked, quoted and unquoted", () => {
+  assert.equal(
+    redactDiagnostics("scanning /Users/Zhang San/My Pictures/a.png done", { homeDir: "/Users/Zhang San" }),
+    "scanning ~<路径>.png done",
+  );
+  const json = redactDiagnostics("{\"p\":\"C:\\\\Users\\\\Zhang San\\\\a.png\"}", {});
+  assert.ok(!json.includes("Zhang San"), JSON.stringify(json));
+  assert.ok(json.includes("<路径>.png"), JSON.stringify(json));
+});
+
+test("leak 7: file names and JSON name-like fields are masked", () => {
+  // A file under the library root whose name carries no keyword.
+  const underLibrary = redactDiagnostics(
+    "staged /Users/alice/MOSA Library/import-staging/1a2b-张三-身份证正面.png",
+    { homeDir: "/Users/alice", libraryDir: "/Users/alice/MOSA Library" },
+  );
+  assert.ok(!underLibrary.includes("张三"), JSON.stringify(underLibrary));
+  assert.ok(!underLibrary.includes("import-staging"), JSON.stringify(underLibrary));
+  assert.ok(underLibrary.includes("<素材库><路径>.png"), JSON.stringify(underLibrary));
+
+  const named = redactDiagnostics("{\"name\":\"张三和李四的婚礼草图\"}", {});
+  assert.ok(!named.includes("张三"), JSON.stringify(named));
+  assert.equal(named, "{\"name\":\"<已隐藏>\"}");
+  const snake = redactDiagnostics('{"group_name":"家人照片"}', {});
+  assert.ok(!snake.includes("家人"), JSON.stringify(snake));
+});
+
+test("leak 8: mainland phone numbers and 18-digit IDs are masked, timestamps survive", () => {
+  const redacted = redactDiagnostics("call 13800138000 id 11010119900101123X ts 1753849200000 ok", {});
+  assert.ok(!redacted.includes("13800138000"), JSON.stringify(redacted));
+  assert.ok(!redacted.includes("11010119900101123X"), JSON.stringify(redacted));
+  assert.ok(redacted.includes("1753849200000"), "millisecond timestamps must survive");
+  assert.equal(redacted, "call <号码> id <号码> ts 1753849200000 ok");
+});
+
+test("leak 9: path matching respects the segment boundary", () => {
+  const redacted = redactDiagnostics("/Users/zhangsan2/Pictures/a.png", { homeDir: "/Users/zhangsan" });
+  assert.ok(!redacted.includes("~"), JSON.stringify(redacted));
+  assert.ok(!redacted.includes("zhangsan2"), JSON.stringify(redacted));
+  assert.equal(redacted, "<路径>.png");
+});
+
+test("leak 10: file:// URLs and UNC paths are masked", () => {
+  const fileUrl = redactDiagnostics("file:///Users/zhangsan/a.png", { homeDir: "/Users/zhangsan" });
+  assert.ok(!fileUrl.includes("zhangsan"), JSON.stringify(fileUrl));
+  assert.equal(fileUrl, "<路径>.png");
+  const unc = redactDiagnostics("\\\\NAS\\share\\张三\\a.png", {});
+  assert.ok(!unc.includes("张三"), JSON.stringify(unc));
+  assert.equal(unc, "<路径>.png");
+  const uncJson = redactDiagnostics("{\"u\":\"\\\\\\\\NAS\\\\share\\\\张三\\\\a.png\"}", {});
+  assert.ok(!uncJson.includes("张三"), JSON.stringify(uncJson));
+});
+
+test("leak 11: session and conversation keys, and the host name, are masked", () => {
+  const keys = redactDiagnostics('{"sessionKey":"conv-8f3a9","conversationId":"thread_99887"}', {});
+  assert.ok(!keys.includes("conv-8f3a9"), JSON.stringify(keys));
+  assert.ok(!keys.includes("thread_99887"), JSON.stringify(keys));
+  const host = hostname();
+  if (host.trim().length >= 3) {
+    const redacted = redactDiagnostics(`host ${host} joined`, {});
+    assert.ok(!redacted.includes(host), JSON.stringify(redacted));
+    assert.ok(redacted.includes("<主机名>"), JSON.stringify(redacted));
+  }
+});
+
+test("http(s) URL paths are not treated as local paths", () => {
+  const line = "GET https://example.com/a/b?id=1 ok";
+  assert.equal(redactDiagnostics(line, {}), line);
+  const local = "wss://127.0.0.1:9/feed";
+  assert.equal(redactDiagnostics(local, {}), local);
+});
+
+test("CJK 「」『』 quoted contents are hidden", () => {
+  assert.equal(redactDiagnostics("检测到「张三的分组」和『李四堆叠』", {}), "检测到「<已隐藏>」和『<已隐藏>』");
+});
+
+test("stack traces keep their line/column suffixes", () => {
+  assert.equal(
+    redactDiagnostics("at Object.<anonymous> (/Users/alice/app.mjs:12:9)", { homeDir: "/Users/alice" }),
+    "at Object.<anonymous> (~<路径>.mjs:12:9)",
+  );
+});
+
 test("redaction masks the library directory with either separator", () => {
   const options = { homeDir: "/Users/alice", libraryDir: "/Users/alice/MOSA Library" };
+  // Task 315: the part behind a known root is masked too — file names are
+  // private — so only the placeholder and the extension survive.
   assert.equal(
     redactDiagnostics("scanning /Users/alice/MOSA Library/assets/a.png done", options),
-    "scanning <素材库>/assets/a.png done",
+    "scanning <素材库><路径>.png done",
   );
   const windows = { homeDir: "C:\\Users\\bob", libraryDir: "C:\\Users\\bob\\GravityPort Library" };
   assert.equal(
     redactDiagnostics("at C:\\Users\\bob\\GravityPort Library\\cache ok", windows),
-    "at <素材库>\\cache ok",
+    "at <素材库><路径> ok",
   );
   assert.equal(
     redactDiagnostics("at C:/Users/bob/GravityPort Library/cache ok", windows),
-    "at <素材库>/cache ok",
+    "at <素材库><路径> ok",
   );
 });
 
 test("redaction masks the home directory as ~ with either separator", () => {
-  assert.equal(redactDiagnostics("cfg /Users/alice/.mosa/x", { homeDir: "/Users/alice" }), "cfg ~/.mosa/x");
+  assert.equal(redactDiagnostics("cfg /Users/alice/.mosa/x", { homeDir: "/Users/alice" }), "cfg ~<路径>");
   const windows = { homeDir: "C:\\Users\\bob" };
-  assert.equal(redactDiagnostics("cfg C:\\Users\\bob\\AppData", windows), "cfg ~\\AppData");
-  assert.equal(redactDiagnostics("cfg C:/Users/bob/AppData", windows), "cfg ~/AppData");
-  assert.equal(redactDiagnostics("cfg C:\\users\\BOB\\AppData", windows), "cfg ~\\AppData", "Windows paths match case-insensitively");
+  assert.equal(redactDiagnostics("cfg C:\\Users\\bob\\AppData", windows), "cfg ~<路径>");
+  assert.equal(redactDiagnostics("cfg C:/Users/bob/AppData", windows), "cfg ~<路径>");
+  assert.equal(redactDiagnostics("cfg C:\\users\\BOB\\AppData", windows), "cfg ~<路径>", "Windows paths match case-insensitively");
 });
 
 test("the library directory wins when it sits inside the home directory", () => {
   assert.equal(
     redactDiagnostics("at /Users/alice/MOSA Library/assets", { homeDir: "/Users/alice", libraryDir: "/Users/alice/MOSA Library" }),
-    "at <素材库>/assets",
+    "at <素材库><路径>",
+  );
+  assert.equal(
+    redactDiagnostics("lib at /Users/alice/MOSA Library", { homeDir: "/Users/alice", libraryDir: "/Users/alice/MOSA Library" }),
+    "lib at <素材库>",
   );
 });
 

@@ -2,6 +2,16 @@ import "./lib/apply-env-aliases.mjs";
 import { startMosaRuntime } from "./lib/mosa-runtime.mjs";
 import { parseDisabledBridges } from "./lib/runtime-bridges.mjs";
 
+// Task 315: record uncaught crashes for the diagnostic buffer before Node's
+// default exit. The monitor never swallows anything — the process still dies
+// exactly as before. Unhandled promise rejections reach the same monitor
+// through Node's default throw-on-unhandled-rejection mode, so no
+// unhandledRejection listener is added here: catching them would change the
+// default exit behavior.
+process.on("uncaughtExceptionMonitor", (error) => {
+  console.error(`[MOSA] uncaught exception ${error?.name || "Error"}: ${error?.message}\n${error?.stack || "(no stack)"}`);
+});
+
 const disabledBridges = parseDisabledBridges({ env: process.env });
 // Web QA has no Electron app.getPath("userData"); the isolated userData root
 // (MOSA_USER_DATA) is itself the verifiable run parameter, so it is reported

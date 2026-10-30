@@ -6,7 +6,7 @@ import "./quiet-test-mode.mjs";
 import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net, screen, session, shell, Notification } from "electron";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
-import { userInfo } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../lib/runtime-defaults.mjs";
@@ -42,6 +42,7 @@ import { openExternalLinkOutcome } from "./open-external-link.mjs";
 import { writeClipboardFiles } from "./clipboard-files.mjs";
 import { clipboardImportable } from "./clipboard-importable.mjs";
 import { isTrustedRendererEvent } from "./renderer-trust.mjs";
+import { attachDiagnosticLogFile, installDiagnosticLog, writeConsoleOnly } from "../lib/diagnostic-log.mjs";
 import { mosaClientTokenFingerprint, resolveAllowedFolderPath } from "../lib/server-security.js";
 import { isUrlLikePath } from "../lib/path-safety.mjs";
 import {
@@ -120,6 +121,20 @@ function systemNetworkFetch(url, init) {
 // never moves userData; that package.json name/productName must never change
 // (see the contract in test/library-location.test.mjs).
 const desktopDataDir = app.getPath("userData");
+// Task 315: the shell feeds the diagnostic buffer from the earliest moment;
+// the runtime's own installDiagnosticLog() stays and is a no-op after this.
+// The crash monitors only record — measured default behavior is unchanged:
+// an uncaught exception still pops Electron's native error dialog and the
+// process stays alive, and an unhandled rejection still only prints a
+// warning while the app keeps running.
+installDiagnosticLog();
+process.on("uncaughtExceptionMonitor", (error) => {
+  console.error(`[MOSA] uncaught exception ${error?.name || "Error"}: ${error?.message}\n${error?.stack || "(no stack)"}`);
+});
+process.on("unhandledRejection", (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  console.error(`[MOSA] uncaught rejection ${error.name}: ${error.message}\n${error.stack || "(no stack)"}`);
+});
 // Local visual search was removed; its leftover userData bytes are swept on
 // every launch (task 238). Nothing outside the fixed legacy list is touched.
 async function cleanupLegacyVisualData() {
@@ -205,7 +220,14 @@ try {
   throw error;
 }
 
-// ---- Runtime isolation context (single source of truth, three layers) ----
+// Task 315: local file sink for warnings and errors, redacted with the same
+// rules before anything is written. The context is read on every write and
+// holds the live `libraryDir` binding, so a library move is followed without
+// re-attaching.
+attachDiagnosticLogFile({
+  dir: join(desktopDataDir, "logs"),
+  redactContext: () => ({ homeDir: homedir(), libraryDir }),
+});
 // The same context object is passed explicitly through validateRuntimeIsolation,
 // startMosaService and (via service-manager) startMosaRuntime. Propagation never
 // relies on process.env, so a caller-supplied QA override cannot be dropped or
@@ -1584,7 +1606,10 @@ async function createMainWindow() {
     const entry = `${level}:${sourceId}:${line}:${message}`;
     if (rendererConsoleErrors.has(entry)) return;
     rendererConsoleErrors.add(entry);
-    console.error(`[MOSA] renderer-console ${entry}`);
+    // Task 315: the buffer and the local log file only ever receive a summary
+    // without the message text; the full line goes to the real console alone.
+    writeConsoleOnly("error", `[MOSA] renderer-console ${entry}`);
+    console.error(`[MOSA] renderer-console level=${level} source=${sourceId.split(/[\\/]/).pop() || sourceId} line=${line} (内容已省略)`);
   });
 
   mainWindow.on("close", () => saveBounds(mainWindow));
