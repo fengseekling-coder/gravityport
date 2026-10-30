@@ -416,3 +416,30 @@ test("video rows without a stored logical id compose the same key on deletion", 
   );
   assert.equal(image.id, "img-same-id");
 });
+
+test("moving a group and its assets to Trash also suppresses each member's identity", async (t) => {
+  const { store, tempRoot } = await createTestStore(t, "mosa-identity-group-");
+  const first = await captureImage(store, tempRoot, {
+    imageBase64: (await noiseImage(640, 640, 41, "webp")).toString("base64"),
+    mimeType: "image/webp",
+    mediaVariant: "preview",
+    providerAssetId: MIDJOURNEY_PREVIEW_ID,
+    capturedAt: "2026-10-29T12:00:00.000Z",
+  });
+  assert.equal(first.status, "imported");
+  await store.createGroup({ projectId: "default", name: "Disposable" });
+  await store.assignAssetsToGroup("default", [first.asset.id], "Disposable");
+  const result = await store.deleteGroup("default", "Disposable", { deleteAssets: true });
+  assert.equal(result.deletedAssets, 1);
+
+  const again = await captureImage(store, tempRoot, {
+    imageBase64: (await noiseImage(2048, 2048, 43, "jpeg")).toString("base64"),
+    mimeType: "image/jpeg",
+    mediaVariant: "original",
+    providerAssetId: MIDJOURNEY_PREVIEW_ID,
+    capturedAt: "2026-10-29T12:01:00.000Z",
+  });
+  assert.equal(again.status, "skipped");
+  assert.equal(again.reason, "suppressed-after-delete");
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 0);
+});
