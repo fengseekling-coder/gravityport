@@ -17,7 +17,8 @@
         "AI 助手保存素材库中已有的图片时，直接返回已有的那张，不再重复保存。",
         "同一个网页视频收到更清晰的版本时，会替换原视频，不再多出一份。",
         "自动生成的堆叠改为以最新收录的图片作为封面；在收藏、待整理、分组等筛选视图中，堆叠卡片显示其中符合条件的图片。手动建立或调整过顺序的堆叠保持原有顺序。",
-        "加强了 GravityPort 与本机后台服务之间的身份校验：连接前先确认服务身份，访问凭据不再出现在页面地址中。"
+        "加强了 GravityPort 与本机后台服务之间的身份校验：连接前先确认服务身份，访问凭据不再出现在页面地址中。",
+        "GravityPort 未打开时，浏览器扩展可暂存更多作品：不再限制 256 张，只按 512MB 总容量计算，视频也会先保存下来。空间快满或有作品只保存了网址时，会在「设置 → 连接」中提示。即梦的删除同步在 GravityPort 关闭期间也会排队，打开后补发。（浏览器扩展 0.15.44）"
       ],
       "fixed": [
         "修复了同一张图片再次收录时可能覆盖原图或清空提示词的问题。现仅在新图更清晰时替换，被替换的旧图移入回收站。",
@@ -55,7 +56,8 @@
         "When an AI assistant saves an image that is already in the library, GravityPort returns the existing image instead of saving another copy.",
         "When a sharper version of the same web video arrives, it replaces the original instead of adding another copy.",
         "Automatic stacks now use the most recently captured image as their cover. In filtered views such as Favorites, Unsorted and groups, a stack card shows the image that matches. Stacks you created or reordered keep your order.",
-        "Strengthened identity checks between GravityPort and its local background service: the app confirms the service before connecting, and the access credential no longer appears in the page address."
+        "Strengthened identity checks between GravityPort and its local background service: the app confirms the service before connecting, and the access credential no longer appears in the page address.",
+        "While GravityPort is closed, the browser extension can now hold more captures: the 256-item limit is gone and only the 512 MB total applies, and videos are saved too. Settings → Connect shows a notice when that space is nearly full or when some captures kept only a URL. Jimeng deletion sync also queues while GravityPort is closed and catches up when it opens. (Browser extension 0.15.44)"
       ],
       "fixed": [
         "Fixed an issue where capturing the same image again could overwrite the original or clear its prompt. The image is now replaced only by a sharper version, and the previous one moves to the Trash.",
