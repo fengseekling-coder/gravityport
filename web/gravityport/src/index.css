@@ -31,13 +31,13 @@
   justify-content: center;
   gap: 6px;
 }button:focus-visible {
-  outline: 2px solid #6c9bd3;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
 }input:focus-visible {
-  outline: 2px solid #6c9bd3;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
 }select:focus-visible {
-  outline: 2px solid #6c9bd3;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
 }button:hover {
   background: #00000006;
@@ -309,8 +309,6 @@ img.black-image {
   margin-bottom: 5px;
   border: 1px solid #e4e4e4;
   background: #fff;
-  font-size: 11px;
-  padding: 0 9px;
 }.settings-nav>button.active {
   background: #eaeaea;
   border-color: #dedede;
@@ -356,42 +354,42 @@ img.black-image {
 }.theme-preview {
   width: 100%;
   position: relative;
-  border: 1px solid #aaa;
+  border: 1px solid var(--preview-border);
   display: flex;
-  background: #ededed;
-  box-shadow: 0 2px 3px #00000006;
+  background: var(--preview-light-surface);
+  box-shadow: var(--preview-shadow);
 }.chosen .theme-preview {
-  outline: 2px solid #4c4c4c;
+  outline: 2px solid var(--preview-chosen-outline);
   outline-offset: 3px;
 }.mini-sidebar {
   width: 23%;
-  background: #fff;
+  background: var(--preview-light-panel);
   border-radius: 2px;
 }.mini-content {
   display: grid;
   grid-template-columns: 1fr 1fr;
   flex: 1;
 }.mini-content i {
-  background: #bcbcbc;
+  background: var(--preview-light-tile);
   border-radius: 2px;
 }.theme-0 {
-  background: linear-gradient(90deg,#ededed 50%,#353535 50%);
+  background: linear-gradient(90deg, var(--preview-light-surface) 50%, var(--preview-dark-surface) 50%);
 }.theme-0 .mini-content i:nth-child(2n) {
-  background: #161616;
+  background: var(--preview-dark-tile-split);
 }.theme-2 {
-  background: #353535;
-  border-color: #484848;
+  background: var(--preview-dark-surface);
+  border-color: var(--preview-dark-border);
 }.theme-2 .mini-sidebar {
-  background: #242424;
+  background: var(--preview-dark-panel);
 }.theme-2 .mini-content i {
-  background: #111;
+  background: var(--preview-dark-tile);
 }.theme-preview>span {
   position: absolute;
   bottom: -5px;
   right: -5px;
-  background: #454545;
-  border: 2px solid #e1e1e1;
-  color: white;
+  background: var(--preview-badge);
+  border: 2px solid var(--preview-badge-border);
+  color: var(--preview-badge-text);
   width: 17px;
   height: 17px;
   border-radius: 50%;
@@ -552,18 +550,10 @@ img.black-image {
 
 @media (max-width:1000px) {.sidebar {
     width: 155px;
-    padding-left: 10px;
-    padding-right: 10px;
-  }.toolbar-right {
-    gap: 3px;
-  }.workspace {
-    padding: 0 8px;
   }.settings-modal {
     width: 600px;
   }.settings-nav {
     width: 150px;
-  }.settings-content {
-    padding: 17px 23px;
   }
 }
 
@@ -579,15 +569,6 @@ img.black-image {
     min-height: 420px;
   }.setting-row small {
     white-space: normal;
-  }.settings-nav>button {
-    font-size: 9px;
-    padding: 0 6px;
-  }.setting-row {
-    font-size: 9px;
-  }.settings-brand {
-    font-size: 9px;
-  }.settings-brand span {
-    font-size: 7px;
   }.asset-grid {
     grid-template-columns: repeat(3,minmax(0,1fr)) !important;
   }.delete-modal {
@@ -609,14 +590,7 @@ img.black-image {
   transition: background 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 180ms var(--ease-out);
 }button:active {
   transform: translateY(1px);
-}button:focus-visible {
-  outline-color: var(--focus-ring);
-}input:focus-visible {
-  outline-color: var(--focus-ring);
-}select:focus-visible {
-  outline-color: var(--focus-ring);
 }.sidebar {
-  padding-top: 5px;
   overflow-y: auto;
 }.nav-row {
   border-color: #e6e6e8;
@@ -664,8 +638,6 @@ img.black-image {
 }.asset-card:hover .favorite-mark {
   transform: scale(1.15);
 }.details {
-  padding-left: 15px;
-  padding-right: 15px;
   border-left: 1px solid #ffffff80;
 }.detail-heading {
   font-size: 12px;
@@ -823,10 +795,6 @@ img.black-image {
 
 @media (max-width: 1000px) {.details {
     width: 216px;
-    padding-left: 12px;
-    padding-right: 12px;
-  }.asset-title {
-    font-size: 11px;
   }.search input {
     width: 72px;
   }
@@ -1551,6 +1519,23 @@ img.black-image {
   --type-weight-title: 600;
   --type-title-size: 16px;
   --type-page-size: 20px;
+  /* Task 316: the settings-appearance theme previews must show both themes'
+     colours no matter which theme is active, so they pin their own fixed
+     palette instead of the live --ui-* values. Declared in DESIGN.md. */
+  --preview-light-surface: #ededed;
+  --preview-light-panel: #fff;
+  --preview-light-tile: #bcbcbc;
+  --preview-dark-surface: #353535;
+  --preview-dark-panel: #242424;
+  --preview-dark-tile: #111;
+  --preview-dark-tile-split: #161616;
+  --preview-dark-border: #484848;
+  --preview-border: #aaa;
+  --preview-chosen-outline: #4c4c4c;
+  --preview-badge: #454545;
+  --preview-badge-border: #e1e1e1;
+  --preview-badge-text: #fff;
+  --preview-shadow: 0 2px 3px #00000006;
 }.app.dark {
   --ui-text: #f1f1f1;
   --ui-secondary: #b0b0b0;
@@ -2569,12 +2554,10 @@ img.black-image {
   gap: var(--space-1);
 }.app .settings-brand {
   font-weight: 400;
-  font-size: 12px;
   line-height: var(--space-4);
   padding: 0 var(--space-2);
   opacity: 1;
 }.app .settings-brand span {
-  font-size: 12px;
   line-height: var(--space-4);
   margin-top: var(--space-1);
 }.app .storage-summary {
@@ -2984,13 +2967,13 @@ img.black-image {
 }.app .settings-modal .release-notes li {
   color: var(--ui-secondary);
 }.app .settings-modal .settings-brand {
-  font-size: 14px;
+  font-size: var(--type-title-size);
   line-height: var(--space-4);
   font-weight: var(--settings-weight-label);
   color: var(--ui-muted);
 }.app .settings-modal .settings-brand span {
   margin-top: 0;
-  font-size: 10px;
+  font-size: var(--type-body-size);
   line-height: var(--space-4);
   font-weight: var(--settings-weight-regular);
   color: var(--ui-muted);
@@ -3056,6 +3039,31 @@ img.black-image {
   /* controlsList="nofullscreen" only greys this button out in this Chromium;
      the app's own 全屏 lives in the zoom bar. */
   display: none;
+}.app .viewer-missing {
+  /* Task 316: the empty stage when the original file is gone — copy follows
+     the DESIGN.md empty-state shape (icon + one sentence + one action). */
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--ui-muted);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+}.app .viewer-missing p {
+  margin: 0;
+}.app .viewer-missing button {
+  height: var(--space-7);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
+  color: var(--ui-secondary);
+  font-size: var(--type-body-size);
+}.app .viewer-missing button:hover {
+  background: var(--ui-selected);
+  color: var(--ui-text);
 }.app .viewer-nav {
   position: absolute;
   top: calc(50% - 52px);
@@ -3416,6 +3424,13 @@ video.black-image,
   border-radius: 999px;
   flex: none;
   margin: 0 3px;
+}
+/* Task 316 (建8): on the light theme five of the six group colours sit under
+   3:1 against the panel. A hairline ring marks the dot's boundary (WCAG
+   non-text contrast accepts an adjacent boundary); the dark theme passes
+   without it. */
+.app:not(.dark) .group-color-dot {
+  box-shadow: 0 0 0 1px var(--ui-line);
 }
 .context-submenu {
   position: absolute;

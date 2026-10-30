@@ -316,6 +316,10 @@ const english: Record<string, string> = {
   "有 {count} 张因离线空间不足只保留了网址或被移除，网址过期后可能收不回来": "{count} captures kept only their URL or were dropped because offline storage ran out; expired URLs may be unrecoverable",
   "{count} 张只存了网址，网址过期后可能收不回来": "{count} captures stored only a URL; expired URLs may be unrecoverable",
   // Task 258: deletion sync switch on the browser extension card
+  // Task 316: the sidebar smart-group row shows the raw group name via
+  // tr(g.name); vendorLabelFor returns "即梦" for Jimeng sources, so the
+  // English table needs the bare vendor name to match the switch's "Jimeng".
+  "即梦": "Jimeng",
   "即梦站内删除作品时，同步移进回收站": "Move Jimeng deletions to Trash",
   "在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动": "Assets you favorited, rated, grouped, or tagged in GravityPort are not moved.",
   "同步设置保存失败": "Saving the sync setting failed",
@@ -352,10 +356,17 @@ const english: Record<string, string> = {
   "{failed} 项未能处理": "{failed} could not be applied",
   "导入时发现与库里的图完全相同，已移入回收站": "Moved to Trash on import: identical to an image already in the library",
   "导入后确认为重复，已移入回收站": "Moved to Trash after being confirmed as a duplicate on import",
+  // Task 316: viewer empty stage when the original file is gone
+  "原图找不到了": "Original file not found",
+  "打开素材位置": "Open asset location",
 }
 
 export function translate(text: string, language: Language): string {
   if (language !== "en") return text
   if (/^新分组 \d+$/.test(text)) return text.replace("新分组", "New group")
+  // Task 316: inspector reference thumbnails fall back to "参考图 N" when the
+  // site gave no role (inspector-info.ts builds the label); site-provided role
+  // names pass through untranslated — App.tsx only routes this pattern here.
+  if (/^参考图 \d+$/.test(text)) return text.replace("参考图", "Reference")
   return english[text] || text
 }

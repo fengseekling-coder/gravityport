@@ -540,6 +540,10 @@ export default function App() {
   // undefined: the recipe history has not answered for this asset yet;
   // null: it answered with none. Web captures keep their references there.
   const [recipeHistory, setRecipeHistory] = useState<MosaRecipeHistory | null | undefined>(undefined)
+  // Task 316: the three inspector fetches below used to swallow failures, so
+  // a broken endpoint looked identical to "no data". One flag per fetch; the
+  // affected section shows 加载失败 instead of its empty text.
+  const [inspectorFetchError, setInspectorFetchError] = useState({ versions: false, history: false, recipes: false })
   const [versionTreeOpen, setVersionTreeOpen] = useState(false)
   // The version compare keeps its selection inside the block (task 217); the
   // blocks remount per asset, so switching assets resets both to defaults.
@@ -1074,16 +1078,27 @@ export default function App() {
     }).catch(() => {})
     setVersions(null)
     setGenerationHistory(null)
+    setInspectorFetchError({ versions: false, history: false, recipes: false })
     fetchAssetVersions(project, selected, controller.signal).then(history => {
       if (!controller.signal.aborted) setVersions(history && history.versions.length > 1 ? history.versions : null)
-    }).catch(() => {})
+    }).catch(error => {
+      // AbortError is the selection changing, not a failure.
+      if (controller.signal.aborted || (error as Error)?.name === "AbortError") return
+      setInspectorFetchError(old => ({ ...old, versions: true }))
+    })
     fetchAssetGenerationHistory(project, selected, controller.signal).then(history => {
       if (!controller.signal.aborted) setGenerationHistory(history)
-    }).catch(() => {})
+    }).catch(error => {
+      if (controller.signal.aborted || (error as Error)?.name === "AbortError") return
+      setInspectorFetchError(old => ({ ...old, history: true }))
+    })
     fetchAssetRecipes(project, selected, controller.signal).then(history => {
       if (controller.signal.aborted) return
       setRecipeHistory(history)
-    }).catch(() => {})
+    }).catch(error => {
+      if (controller.signal.aborted || (error as Error)?.name === "AbortError") return
+      setInspectorFetchError(old => ({ ...old, recipes: true }))
+    })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, selected])
@@ -1156,7 +1171,9 @@ export default function App() {
   // sources get a vendor chip first, everything else just shows stored tags.
   const tagSourceType = asset ? String(asset.source?.type || (asset as MosaAsset & { source_type?: string }).source_type || "") : ""
   const tagVendor = vendorLabelFor(tagSourceType)
-  const tagItems = [...(tagVendor ? [tagVendor] : []), ...visibleTags(currentTags, tagSourceType)]
+  // Task 316: the vendor chip renders its label raw, so translate here — the
+  // sidebar rows already translate group names the same way (tr(g.name)).
+  const tagItems = [...(tagVendor ? [tr(tagVendor)] : []), ...visibleTags(currentTags, tagSourceType)]
   const tagItemsKey = tagItems.join("\n")
   const collapsedTagCount = expandedTags ? tagItems.length : Math.max(1, Math.min(tagFitCount, tagItems.length))
   const visible = assets
@@ -4156,7 +4173,7 @@ export default function App() {
           </div>
         </header>
         {preview ? (
-          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} originalSrc={asset?.mediaKind === "video" ? undefined : asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} message={toast?.text ?? ""} />
+          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} originalSrc={asset?.mediaKind === "video" ? undefined : asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} onOpenLocation={() => void revealAssetPath()} message={toast?.text ?? ""} />
         ) : pinterestActive ? (
           <PinterestView
             key={pinterestViewKey}
@@ -4521,16 +4538,19 @@ export default function App() {
           </section>}
           {(() => {
             const references = resolveReferences(asset, recipeHistory, assets)?.items.filter(item => item.thumbnailUrl) || []
-            if (!references.length) return null
+            // Task 316: a failed recipes fetch must not read as "no references".
+            if (!references.length && !inspectorFetchError.recipes) return null
             return <section className="detail-section">
               <div className="field-heading">
                 <span>{tr("参考图")}</span>
               </div>
-              <div className="reference-gallery" aria-label={tr("参考图缩略图")}>
-                {references.map(reference => <button key={reference.key} className="reference-thumbnail" title={reference.label} aria-label={tr("预览参考图")} onClick={() => window.open(reference.openUrl || reference.thumbnailUrl, "_blank", "noopener")}>
+              {inspectorFetchError.recipes
+                ? <span className="muted">{tr("加载失败")}</span>
+                : <div className="reference-gallery" aria-label={tr("参考图缩略图")}>
+                {references.map(reference => <button key={reference.key} className="reference-thumbnail" title={/^参考图 \d+$/.test(reference.label) ? tr(reference.label) : reference.label} aria-label={tr("预览参考图")} onClick={() => window.open(reference.openUrl || reference.thumbnailUrl, "_blank", "noopener")}>
                   <img className="reference-image" src={reference.thumbnailUrl} alt="" loading="lazy" />
                 </button>)}
-              </div>
+              </div>}
             </section>
           })()}
           <section className="detail-section">
@@ -4539,11 +4559,16 @@ export default function App() {
               {(() => {
                 // The badge is the conversation's captured-image count
                 // (context mode); truncated counts stay hidden. Plain mode
-                // keeps the raw event count.
+                // keeps the raw event count. Task 316: version families built
+                // over the API have no generation records but two or more
+                // versions — they still get the View entry into 版本历史 and
+                // the compare block. The badge rule is unchanged: no records,
+                // no badge.
                 const badgeCount = versionRounds.mode === "context"
                   ? versionRounds.images
                   : generationHistory?.events?.length || 0
-                if (versionRounds.mode !== "context" && !badgeCount) return null
+                const hasVersionFamily = (versions?.length || 0) > 1
+                if (versionRounds.mode !== "context" && !badgeCount && !hasVersionFamily) return null
                 return <span className="field-actions">
                   {badgeCount ? <span className="settings-badge">{badgeCount}</span> : null}
                   <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "查看")}</button>
@@ -4584,7 +4609,9 @@ export default function App() {
                     onClick: () => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) },
                   })
                 })}
-              {!generationHistory?.events?.length && <span className="muted">{tr("暂无生成关系")}</span>}
+              {inspectorFetchError.history
+                ? <span className="muted">{tr("加载失败")}</span>
+                : !generationHistory?.events?.length && <span className="muted">{tr("暂无生成关系")}</span>}
             </div>
             {versionTreeOpen && (() => {
               // Every block below renders the same thumbnail rows as the list
@@ -4771,6 +4798,7 @@ export default function App() {
                   })()}
                 </div>}
                 <h4>{tr("版本历史")}</h4>
+                {inspectorFetchError.versions && <span className="muted">{tr("加载失败")}</span>}
                 {(versions || []).map(v => InspectorRow({
                   key: `version-${v.id}`,
                   thumbnailUrl: v.thumbnail_url,
@@ -4801,13 +4829,14 @@ export default function App() {
               </div>
             })()}
           </section>
-          {versions && versions.length > 1 && <section className="detail-section">
+          {(inspectorFetchError.versions || (versions && versions.length > 1)) && <section className="detail-section">
             <div className="field-heading">
               <span>{tr("版本")}</span>
-              <span className="settings-badge">{versions.length}</span>
+              {versions && versions.length > 1 && <span className="settings-badge">{versions.length}</span>}
             </div>
+            {inspectorFetchError.versions && <span className="muted">{tr("加载失败")}</span>}
             <div className="version-list" aria-label={tr("版本")}>
-              {versions.map(v => (
+              {(versions || []).map(v => (
                 <button
                   className="related"
                   key={v.id}
