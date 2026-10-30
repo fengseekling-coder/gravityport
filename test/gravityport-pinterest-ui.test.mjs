@@ -413,6 +413,40 @@ describe("PinterestPinGrid", () => {
   });
 });
 
+// 任务 312：三处 <img>（画板封面、Pin 卡片、详情大图）都不带 referrer。
+describe("Pin images never leak a referrer", () => {
+  const boardBase = { language: zh, loading: false, error: "", onOpenBoard: noop, onRetry: noop };
+  const gridBase = { language: zh, loading: false, error: "", onOpenPin: noop, onRetry: noop };
+
+  it("board covers opt out of referrer", () => {
+    const html = renderStatic(
+      React.createElement(view.PinterestBoardGrid, {
+        ...boardBase,
+        boards: [{ id: "1", name: "板", description: "", privacy: "PUBLIC", pin_count: 1, cover_url: "https://i.pinimg.com/c.jpg" }],
+      })
+    );
+    assert.match(html, /<img[^>]*referrerpolicy="no-referrer"/i);
+  });
+
+  it("pin cards opt out of referrer", () => {
+    const html = renderStatic(
+      React.createElement(view.PinterestPinGrid, { ...gridBase, columns: [[makePin("r1")]] })
+    );
+    assert.match(html, /<img[^>]*referrerpolicy="no-referrer"/i);
+  });
+
+  it("the detail image opts out of referrer", () => {
+    const html = renderStatic(
+      React.createElement(view.PinterestPinDetail, {
+        language: zh,
+        pin: makePin("r2", 800, 1200, { image: { url: "https://i.pinimg.com/1200x/r2.jpg", width: 1200, height: 1800 } }),
+        onOpen: async () => true,
+      })
+    );
+    assert.match(html, /<img[^>]*referrerpolicy="no-referrer"/i);
+  });
+});
+
 describe("PinterestConnectionCardView", () => {
   it("shows Not connected + Connect Pinterest when disconnected", () => {
     const html = renderStatic(

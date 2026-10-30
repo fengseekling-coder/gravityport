@@ -99,16 +99,12 @@ test("Pinterest: auto-refresh near expiry", async (t) => {
   const apiPort = await startServer(fakePinterestApi);
   t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
 
-  const fetchImpl = (url, options) => {
-    const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
-                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
-    return httpFetch(targetUrl, options);
-  };
+  const fetchImpl = httpFetch;
 
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
-  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
-  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  process.env.MOSA_PINTEREST_TOKEN_URL = `http://127.0.0.1:${tokenPort}`;
+  process.env.MOSA_PINTEREST_API_BASE = `http://127.0.0.1:${apiPort}`;
   t.after(() => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
@@ -146,16 +142,12 @@ test("Pinterest: refresh rejected sets needsReconnect", async (t) => {
   const apiPort = await startServer(fakePinterestApi);
   t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
 
-  const fetchImpl = (url, options) => {
-    const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
-                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
-    return httpFetch(targetUrl, options);
-  };
+  const fetchImpl = httpFetch;
 
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
-  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
-  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  process.env.MOSA_PINTEREST_TOKEN_URL = `http://127.0.0.1:${tokenPort}`;
+  process.env.MOSA_PINTEREST_API_BASE = `http://127.0.0.1:${apiPort}`;
   t.after(() => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;

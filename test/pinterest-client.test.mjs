@@ -209,16 +209,12 @@ test("Pinterest: full connection flow", async (t) => {
   const apiPort = await startServer(fakePinterestApi);
   t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
 
-  const fetchImpl = (url, options) => {
-    const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
-                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
-    return httpFetch(targetUrl, options);
-  };
+  const fetchImpl = httpFetch;
 
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
-  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
-  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  process.env.MOSA_PINTEREST_TOKEN_URL = `http://127.0.0.1:${tokenPort}`;
+  process.env.MOSA_PINTEREST_API_BASE = `http://127.0.0.1:${apiPort}`;
   t.after(() => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
@@ -262,16 +258,12 @@ test("Pinterest: state validation", async (t) => {
   const apiPort = await startServer(fakePinterestApi);
   t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
 
-  const fetchImpl = (url, options) => {
-    const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
-                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
-    return httpFetch(targetUrl, options);
-  };
+  const fetchImpl = httpFetch;
 
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
-  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
-  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  process.env.MOSA_PINTEREST_TOKEN_URL = `http://127.0.0.1:${tokenPort}`;
+  process.env.MOSA_PINTEREST_API_BASE = `http://127.0.0.1:${apiPort}`;
   t.after(() => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
@@ -315,16 +307,12 @@ test("Pinterest: token refresh and field normalization", async (t) => {
   const apiPort = await startServer(fakePinterestApi);
   t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
 
-  const fetchImpl = (url, options) => {
-    const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
-                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
-    return httpFetch(targetUrl, options);
-  };
+  const fetchImpl = httpFetch;
 
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
-  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
-  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  process.env.MOSA_PINTEREST_TOKEN_URL = `http://127.0.0.1:${tokenPort}`;
+  process.env.MOSA_PINTEREST_API_BASE = `http://127.0.0.1:${apiPort}`;
   t.after(() => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
@@ -366,16 +354,12 @@ test("Pinterest: caching and disconnect", async (t) => {
   const apiPort = await startServer(fakePinterestApi);
   t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
 
-  const fetchImpl = (url, options) => {
-    const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
-                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
-    return httpFetch(targetUrl, options);
-  };
+  const fetchImpl = httpFetch;
 
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
-  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
-  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  process.env.MOSA_PINTEREST_TOKEN_URL = `http://127.0.0.1:${tokenPort}`;
+  process.env.MOSA_PINTEREST_API_BASE = `http://127.0.0.1:${apiPort}`;
   t.after(() => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
@@ -412,16 +396,12 @@ test("Pinterest: invalid board ID", async (t) => {
   const apiPort = await startServer(fakePinterestApi);
   t.after(() => Promise.all([stopServer(fakeTokenServer), stopServer(fakePinterestApi)]));
 
-  const fetchImpl = (url, options) => {
-    const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
-                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
-    return httpFetch(targetUrl, options);
-  };
+  const fetchImpl = httpFetch;
 
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
-  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
-  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  process.env.MOSA_PINTEREST_TOKEN_URL = `http://127.0.0.1:${tokenPort}`;
+  process.env.MOSA_PINTEREST_API_BASE = `http://127.0.0.1:${apiPort}`;
   t.after(() => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
@@ -465,16 +445,12 @@ test("Pinterest: no sensitive data in logs", async (t) => {
     console.error = originalError;
   });
 
-  const fetchImpl = (url, options) => {
-    const targetUrl = url.replace("http://token", `http://127.0.0.1:${tokenPort}`)
-                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
-    return httpFetch(targetUrl, options);
-  };
+  const fetchImpl = httpFetch;
 
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
-  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
-  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  process.env.MOSA_PINTEREST_TOKEN_URL = `http://127.0.0.1:${tokenPort}`;
+  process.env.MOSA_PINTEREST_API_BASE = `http://127.0.0.1:${apiPort}`;
   t.after(() => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;
@@ -538,16 +514,12 @@ test("Pinterest: refresh without new refresh_token keeps original value", async 
   const customTokenPort = await startServer(customTokenServer);
   t.after(() => Promise.all([stopServer(customTokenServer), stopServer(fakePinterestApi)]));
 
-  const fetchImpl = (url, options) => {
-    const targetUrl = url.replace("http://token", `http://127.0.0.1:${customTokenPort}`)
-                         .replace("http://api", `http://127.0.0.1:${apiPort}`);
-    return httpFetch(targetUrl, options);
-  };
+  const fetchImpl = httpFetch;
 
   const originalTokenUrl = process.env.MOSA_PINTEREST_TOKEN_URL;
   const originalApiBase = process.env.MOSA_PINTEREST_API_BASE;
-  process.env.MOSA_PINTEREST_TOKEN_URL = "http://token";
-  process.env.MOSA_PINTEREST_API_BASE = "http://api";
+  process.env.MOSA_PINTEREST_TOKEN_URL = `http://127.0.0.1:${customTokenPort}`;
+  process.env.MOSA_PINTEREST_API_BASE = `http://127.0.0.1:${apiPort}`;
   t.after(() => {
     process.env.MOSA_PINTEREST_TOKEN_URL = originalTokenUrl;
     process.env.MOSA_PINTEREST_API_BASE = originalApiBase;

@@ -142,7 +142,7 @@ export function PinterestBoardGrid({
           draggable={false}
         >
           {board.cover_url ? (
-            <img className="pinterest-board-cover" src={board.cover_url} alt="" draggable={false} loading="lazy" />
+            <img className="pinterest-board-cover" src={board.cover_url} alt="" draggable={false} loading="lazy" referrerPolicy="no-referrer" />
           ) : (
             <span className="pinterest-board-cover pinterest-cover-empty" aria-hidden="true" />
           )}
@@ -193,7 +193,7 @@ function PinterestPinCard({
   return (
     <button type="button" className="pinterest-pin-card" onClick={() => onOpenPin(pin)} draggable={false}>
       {src ? (
-        <img className="pinterest-pin-cover" src={src} alt={pin.title} draggable={false} loading="lazy" />
+        <img className="pinterest-pin-cover" src={src} alt={pin.title} draggable={false} loading="lazy" referrerPolicy="no-referrer" />
       ) : (
         <span className="pinterest-pin-cover pinterest-cover-empty" aria-hidden="true" />
       )}
@@ -277,7 +277,7 @@ export function PinterestPinDetail({ language, pin, onOpen }: PinterestPinDetail
     <div className="pinterest-detail" role="dialog" aria-modal="true">
       <div className="pinterest-detail-media">
         {bigUrl ? (
-          <img className="pinterest-detail-image" src={bigUrl} alt={pin.title} draggable={false} />
+          <img className="pinterest-detail-image" src={bigUrl} alt={pin.title} draggable={false} referrerPolicy="no-referrer" />
         ) : (
           <span className="pinterest-detail-image pinterest-cover-empty" aria-hidden="true" />
         )}
