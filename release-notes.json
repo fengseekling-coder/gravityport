@@ -32,7 +32,8 @@
         "修复了 Grok 收到与其他来源相同的图片时，会改掉原有提示词的问题。",
         "修复了删除 Midjourney 预览图后，收到同一作品的原图时又被收录的问题。",
         "修复了素材详情中参考图缩略图被压成正方形的问题。现按原图比例完整显示。",
-        "修复了在 macOS 上将素材拖到其他应用时，松手瞬间图片突然放大的问题。"
+        "修复了在 macOS 上将素材拖到其他应用时，松手瞬间图片突然放大的问题。",
+        "修复了在堆叠中选中多张素材后拖到其他应用（如访达、Photoshop）时只带出一张的问题。现在会带出全部选中的素材；在堆叠内调整顺序时，选中的素材也会整组移动。"
       ],
       "other": [
         "为软件内更新增加备用签名钥匙。"
@@ -69,7 +70,8 @@
         "Fixed an issue where Grok could change the prompt of an image first captured from another source.",
         "Fixed an issue where a deleted Midjourney preview could be captured again when the full-size image of the same work arrived.",
         "Fixed an issue where reference image thumbnails in the details panel were squeezed into squares. They now keep their original proportions.",
-        "Fixed an issue on macOS where an image suddenly enlarged at the moment it was dropped into another app."
+        "Fixed an issue on macOS where an image suddenly enlarged at the moment it was dropped into another app.",
+        "Fixed an issue where dragging several selected assets out of a stack into another app, such as Finder or Photoshop, carried only one. All selected assets now go along, and reordering inside a stack moves the selection as one group."
       ],
       "other": [
         "Added a backup signing key for in-app updates."
