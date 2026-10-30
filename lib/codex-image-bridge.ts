@@ -239,15 +239,18 @@ async function reconcileCodexSources(options: {
   const lookup = createIngestLookup(store, projectId, { sourcePathKeys: ["codex_image_path"] });
   // Codex-specific identity: a session image event key pins one generation call
   // across the standard file path and session-result recovery.
+  // The library listing is read once per reconcile, not once per pending
+  // session event.
   const sessionEventAssets: StoredAsset[] = [];
+  let listedAssets: Promise<StoredAsset[]> | null = null;
   const findBySessionEventKey = async (eventKey: string): Promise<StoredAsset | null> => {
     const local = sessionEventAssets.find((asset) => asset.source?.codex_session_event_key === eventKey);
     if (local) return local;
-    const listed = await Promise.all([
+    listedAssets ||= Promise.all([
       store.listAssets({ projectId }),
       store.listAssets({ projectId, archived: true }).catch(() => [] as StoredAsset[]),
     ]).then(([active, archived]) => [...active, ...archived] as StoredAsset[]);
-    return listed.find((asset) => asset.source?.codex_session_event_key === eventKey) || null;
+    return (await listedAssets).find((asset) => asset.source?.codex_session_event_key === eventKey) || null;
   };
   const rememberAsset = (asset: StoredAsset): void => {
     lookup.remember(asset);
