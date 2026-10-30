@@ -130,7 +130,7 @@ test("Jimeng ingests of one workspace stack together across generation records",
     assert.equal(summary.session_key, "web-jimeng:20297433960204");
     assert.deepEqual(
       (await store.listAssetStackAssets("default", stack.id)).assets.map((asset) => asset.id),
-      ["jm-a1", "jm-b1", "jm-a2"],
+      ["jm-a2", "jm-b1", "jm-a1"],
     );
   } finally {
     close();
@@ -177,7 +177,7 @@ test("migration 17 merges same-window Jimeng assets and removes their emptied re
   assert.equal(stacks.length, 1, "both record stacks are gone");
   assert.equal(stacks[0].origin, "auto");
   assert.equal(stacks[0].session_key, "web-jimeng:20297433960204");
-  assert.equal(stacks[0].members, "jm-m1,jm-m2,jm-m3", "all three assets join in ingest order");
+  assert.equal(stacks[0].members, "jm-m3,jm-m2,jm-m1", "all three assets join in newest-first order");
 });
 
 test("migration 17 leaves workspace=0 captures ungrouped", async (t) => {
@@ -258,7 +258,7 @@ test("migration 17 respects exclusions and manual stacks", async (t) => {
   assert.equal(stacks.length, 2);
   const auto = stacks.find((row) => row.origin === "auto");
   const manual = stacks.find((row) => row.origin === "manual");
-  assert.equal(auto.members, "jm-x1,jm-x3", "only the two eligible loose assets join the window stack");
+  assert.equal(auto.members, "jm-x3,jm-x1", "only the two eligible loose assets join the window stack");
   assert.equal(manual.id, "stack-manual");
   assert.equal(manual.members, "jm-x4,jm-x5", "manual stack members never move");
 });
@@ -369,5 +369,5 @@ test("migration 17 rolls back completely when it fails mid-way", async (t) => {
   const stacks = stackRows(raw);
   assert.equal(stacks.length, 1, "the retry after the sabotage is removed completes the regrouping");
   assert.equal(stacks[0].session_key, "web-jimeng:999000111222");
-  assert.equal(stacks[0].members, "jm-e1,jm-e2,jm-e3");
+  assert.equal(stacks[0].members, "jm-e3,jm-e2,jm-e1");
 });

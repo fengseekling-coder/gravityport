@@ -172,7 +172,7 @@ test("root search maps hidden member matches back to one stack cover node", asyn
 
   const page = await store.listAssetPage({ projectId: "default", query: "neon orchid", limit: 100, collapseStacks: true });
   assert.equal(page.page.total, 1);
-  assert.deepEqual(page.assets.map((asset) => asset.id), ["a"]);
+  assert.deepEqual(page.assets.map((asset) => asset.id), ["b"]);
   assert.deepEqual(page.assets[0].stack, { id: stack.id, count: 3, match_count: 2, name: "" });
 
   const inside = await store.listAssetStackAssets("default", stack.id, { query: "neon orchid" });
@@ -197,7 +197,7 @@ test("root search finds a collapsed Stack by its custom name without changing me
     limit: 100,
     collapseStacks: true,
   });
-  assert.deepEqual(filtered.assets.map((asset) => asset.id), ["a"], "the Stack name match still respects member facets");
+  assert.deepEqual(filtered.assets.map((asset) => asset.id), ["b"], "the Stack name match still respects member facets");
   assert.equal(filtered.assets[0].stack.match_count, 1);
 
   const inside = await store.listAssetStackAssets("default", stack.id, { query: "autumn launch" });
@@ -213,7 +213,7 @@ test("root and Stack-interior searches share the same asset-kind intent semantic
   const stack = await store.createAssetStack("default", ["a", "b", "c"], { coverAssetId: "a" });
 
   const rootLogo = await store.listAssetPage({ projectId: "default", query: "logo", collapseStacks: true, limit: 100 });
-  assert.deepEqual(rootLogo.assets.map((asset) => asset.id), ["a"]);
+  assert.deepEqual(rootLogo.assets.map((asset) => asset.id), ["b"]);
   assert.deepEqual(rootLogo.assets[0].stack, { id: stack.id, count: 3, match_count: 1, name: "" });
 
   const insideLogo = await store.listAssetStackAssets("default", stack.id, { query: "logo" });
@@ -242,7 +242,7 @@ test("gallery filters match hidden members while raw asset queries keep every me
     { source: "web-flow", query: "hidden flow" },
   ]) {
     const page = await store.listAssetPage({ projectId: "default", collapseStacks: true, limit: 100, ...filters });
-    assert.deepEqual(page.assets.map((asset) => asset.id), ["a"]);
+    assert.deepEqual(page.assets.map((asset) => asset.id), ["hidden-flow-video"]);
     assert.deepEqual(page.assets[0].stack, { id: stack.id, count: 2, match_count: 1, name: "" });
     assert.equal(page.page.total, 1);
   }

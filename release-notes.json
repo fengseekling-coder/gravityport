@@ -15,7 +15,8 @@
         "导入大量图片时，每批导入完成后画廊即显示新图片，并按实际比例排列；新导入的图片优先生成缩略图。向下浏览时导入不改变当前位置，可在提示中点击「查看」回到新图片。",
         "「待整理」现在显示所有尚未整理的素材，自动生成的堆叠不再视为已整理，并按堆叠显示为一张卡片。",
         "AI 助手保存素材库中已有的图片时，直接返回已有的那张，不再重复保存。",
-        "同一个网页视频收到更清晰的版本时，会替换原视频，不再多出一份。"
+        "同一个网页视频收到更清晰的版本时，会替换原视频，不再多出一份。",
+        "自动生成的堆叠改为以最新收录的图片作为封面；在收藏、待整理、分组等筛选视图中，堆叠卡片显示其中符合条件的图片。手动建立或调整过顺序的堆叠保持原有顺序。"
       ],
       "fixed": [
         "修复了同一张图片再次收录时可能覆盖原图或清空提示词的问题。现仅在新图更清晰时替换，被替换的旧图移入回收站。",
@@ -48,7 +49,8 @@
         "Large imports now show new images in the gallery as each batch finishes, at their real proportions, and thumbnails are made for the newest images first. Importing no longer moves you while you browse further down; select View in the notice to jump to the new images.",
         "Unsorted now shows every asset you have not sorted yet. Automatic stacks no longer count as sorted, and each appears as one card.",
         "When an AI assistant saves an image that is already in the library, GravityPort returns the existing image instead of saving another copy.",
-        "When a sharper version of the same web video arrives, it replaces the original instead of adding another copy."
+        "When a sharper version of the same web video arrives, it replaces the original instead of adding another copy.",
+        "Automatic stacks now use the most recently captured image as their cover. In filtered views such as Favorites, Unsorted and groups, a stack card shows the image that matches. Stacks you created or reordered keep your order."
       ],
       "fixed": [
         "Fixed an issue where capturing the same image again could overwrite the original or clear its prompt. The image is now replaced only by a sharper version, and the previous one moves to the Trash.",

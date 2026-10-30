@@ -696,7 +696,7 @@ image」），只跟着真升级的提示词重算，且永不覆盖用户改过
 | --- | --- | --- | --- |
 | 我的分组 | `assets.group_name` + `groups` 表 | 手动 | 一张图最多 1 个 |
 | 智能分组 | `assets.source_group`，写死的来源集合 | 自动 | 恰好 1 个；手动导入与 MCP 的图不在任何一项里 |
-| 堆叠 | `asset_stacks`（origin `auto` / `manual`）、`asset_stack_members` | 自动（同会话满 2 张）+ 手动 | 一张图最多 1 个；封面固定最早那张（现状） |
+| 堆叠 | `asset_stacks`（origin `auto` / `manual`、`order_locked`）、`asset_stack_members` | 自动（同会话满 2 张）+ 手动 | 一张图最多 1 个；封面 = 位置号最小的在用成员；自动堆叠没被拖过顺序时永远新的在前，所以封面跟最新一张；手动堆叠和拖过顺序的自动堆叠保持用户的顺序；筛选视图卡面 = 命中成员里排最前的那张 |
 | 待整理 | 没整理过的图（定义见 `lib/asset-organized.mjs`）；自动堆叠不算整理，按堆叠成一张卡 | 算出来；「标为已整理」 | — |
 | 收藏 | `favorite = 1` 或 `rating > 0` | 手动心形；打分只有 MCP 能写 | — |
 | 标签 | `tags` / `asset_tags` | 手动；系统标签隐藏 | 多个 |
