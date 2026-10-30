@@ -3,12 +3,19 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
+import {
+  createAssetViaGate,
+  createIngestLookup,
+  recordIngestOccurrence,
+  type IngestAsset,
+  type IngestStore,
+} from "./library-ingest.mjs";
 
 const IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"]);
 const DEFAULT_PROJECT_ID = "default";
 
-interface StoredAsset { source?: Record<string, unknown>; id?: string; image_path?: string; [key: string]: unknown; }
-interface Store { createAsset(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>; listAssets(filters: Record<string, unknown>): Promise<StoredAsset[]>; findAssetBySourcePath?(projectId: string, sourcePath: string): Promise<StoredAsset | null>; findAssetByContentHash?(projectId: string, contentHash: string): Promise<StoredAsset | null>; findAssetByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset | null>; cowartCanvasDir: string; [key: string]: unknown; }
+interface StoredAsset { source?: Record<string, unknown>; id?: string; image_path?: string; project_id?: string; [key: string]: unknown; }
+interface Store extends IngestStore { cowartCanvasDir: string; }
 interface AssetCandidate { canvasDir: string; pageId: string; imagePath: string; assetUrl: string; cowartAssetId: string; shapeId: string | null; shapeMeta: Record<string, unknown>; annotationSourceShapeId: string | null; replacedAiImageHolder: string | null; mosaAssetId: string | null; altText: string; ratio: string; fileSize: number; mtimeMs: number; }
 interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string }>; candidates: number; queued?: boolean; }
 interface BridgeStatus { canvasDir: string; cowartProjectDir: string | null; sourceId: string | null; enabled: boolean; watching: boolean; polling: boolean; busy: boolean; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; }
@@ -81,7 +88,11 @@ export async function reconcileCowartAssets(options: { store: Store; canvasDir: 
   const candidates = await readCowartAssetCandidates(canvasDir);
   if (processedSignatures) pruneProcessedSignatures(processedSignatures, candidates.map((candidate) => candidate.imagePath));
   const trustedPagesRoot = join(resolve(canvasDir), "pages");
-  const lookup = createBridgeAssetLookup(store, projectId);
+  // Dedupe and occurrence rules live in the shared ingest gate
+  // (lib/library-ingest.mjs, ARCHITECTURE.md §8). Cowart never upgrades
+  // metadata on a rematch — a canvas only carries alt text — so hits here only
+  // record that this page saw the image again.
+  const lookup = createIngestLookup(store, projectId, { sourcePathKeys: ["cowart_page_asset_path"] });
   const imported: unknown[] = []; const skipped: Array<{ path: string; reason: string }> = [];
 
   for (const candidate of candidates) {
@@ -96,17 +107,35 @@ export async function reconcileCowartAssets(options: { store: Store; canvasDir: 
     catch { skipped.push({ path: candidate.imagePath, reason: "not-ready" }); continue; }
     const existingAtPath = await lookup.bySourcePath(candidate.imagePath);
     const existingPathHash = String(existingAtPath?.source?.content_sha256 || "");
-    if (existingAtPath && (!existingPathHash || existingPathHash === contentHash)) { skipped.push({ path: candidate.imagePath, reason: "already-archived" }); processedSignatures?.set(candidate.imagePath, signature); continue; }
-    if (await lookup.byContentHash(contentHash)) { skipped.push({ path: candidate.imagePath, reason: "already-archived-same-content" }); processedSignatures?.set(candidate.imagePath, signature); continue; }
+    if (existingAtPath && (!existingPathHash || existingPathHash === contentHash)) {
+      await noteCowartHit(store, existingAtPath, candidate);
+      skipped.push({ path: candidate.imagePath, reason: "already-archived" }); processedSignatures?.set(candidate.imagePath, signature); continue;
+    }
+    const existingByContent = await lookup.byContentHash(contentHash);
+    if (existingByContent) {
+      await noteCowartHit(store, existingByContent, candidate);
+      skipped.push({ path: candidate.imagePath, reason: "already-archived-same-content" }); processedSignatures?.set(candidate.imagePath, signature); continue;
+    }
     const pixelHash = extname(candidate.imagePath).toLowerCase() === ".svg"
       ? ""
       : await safePixelDigest(candidate.imagePath).catch(() => "");
-    if (pixelHash && await lookup.byPixelHash(pixelHash)) { skipped.push({ path: candidate.imagePath, reason: "already-archived-same-pixels" }); processedSignatures?.set(candidate.imagePath, signature); continue; }
+    if (pixelHash) {
+      const existingByPixel = await lookup.byPixelHash(pixelHash);
+      if (existingByPixel) {
+        await noteCowartHit(store, existingByPixel, candidate);
+        skipped.push({ path: candidate.imagePath, reason: "already-archived-same-pixels" }); processedSignatures?.set(candidate.imagePath, signature); continue;
+      }
+    }
     try {
-      const asset = await store.createAsset({ projectId, imagePath: candidate.imagePath, prompt: candidate.altText, skill: "Cowart automatic bridge", ratio: candidate.ratio, theme: candidate.altText, sourceType: "cowart-generated", business_fields: { auto_archived: true, prompt_status: "Cowart canvas only provides alt text" }, source: { generation_tool: "cowart", cowart_source_id: sourceId, cowart_project_dir: cowartProjectDir, cowart_canvas_dir: candidate.canvasDir, cowart_page_id: candidate.pageId, cowart_page_asset_path: candidate.imagePath, cowart_page_asset_url: candidate.assetUrl, cowart_asset_id: candidate.cowartAssetId, cowart_shape_id: candidate.shapeId, cowart_shape_meta: candidate.shapeMeta, cowart_annotation_source_shape_id: candidate.annotationSourceShapeId || null, replaced_ai_image_holder: candidate.replacedAiImageHolder || null, prompt_status: "canvas-alt-text-only", content_sha256: contentHash, pixel_sha256: pixelHash || null, pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null } }, { trustedSourceRoots: [trustedPagesRoot], ingestMode: "automatic" });
-      lookup.remember(asset as StoredAsset); processedSignatures?.set(candidate.imagePath, signature); imported.push(asset);
+      const created = await createAssetViaGate(store, { projectId, imagePath: candidate.imagePath, prompt: candidate.altText, skill: "Cowart automatic bridge", ratio: candidate.ratio, theme: candidate.altText, sourceType: "cowart-generated", business_fields: { auto_archived: true, prompt_status: "Cowart canvas only provides alt text" }, source: { generation_tool: "cowart", cowart_source_id: sourceId, cowart_project_dir: cowartProjectDir, cowart_canvas_dir: candidate.canvasDir, cowart_page_id: candidate.pageId, cowart_page_asset_path: candidate.imagePath, cowart_page_asset_url: candidate.assetUrl, cowart_asset_id: candidate.cowartAssetId, cowart_shape_id: candidate.shapeId, cowart_shape_meta: candidate.shapeMeta, cowart_annotation_source_shape_id: candidate.annotationSourceShapeId || null, replaced_ai_image_holder: candidate.replacedAiImageHolder || null, prompt_status: "canvas-alt-text-only", content_sha256: contentHash, pixel_sha256: pixelHash || null, pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null } }, { trustedSourceRoots: [trustedPagesRoot], ingestMode: "automatic" });
+      if (!created.ok) {
+        skipped.push({ path: candidate.imagePath, reason: created.skipped.reason });
+        if (created.skipped.reason !== "import-failed") processedSignatures?.set(candidate.imagePath, signature);
+        continue;
+      }
+      lookup.remember(created.asset); processedSignatures?.set(candidate.imagePath, signature); imported.push(created.asset);
     } catch (error) {
-      const reason = isAutomaticImportSuppressed(error) ? "suppressed-after-delete" : isAutomaticIngestDuplicate(error) ? automaticDuplicateReason(error) : "import-failed";
+      const reason = isAutomaticImportSuppressed(error) ? "suppressed-after-delete" : "import-failed";
       skipped.push({ path: candidate.imagePath, reason });
       if (reason !== "import-failed") processedSignatures?.set(candidate.imagePath, signature);
     }
@@ -114,34 +143,20 @@ export async function reconcileCowartAssets(options: { store: Store; canvasDir: 
   return { imported, skipped, candidates: candidates.length };
 }
 
-function createBridgeAssetLookup(store: Store, projectId: string) {
-  let fallbackAssets: Promise<StoredAsset[]> | null = null;
-  const listed = () => fallbackAssets ||= Promise.all([store.listAssets({ projectId }), store.listAssets({ projectId, archived: true })]).then(([active, archived]) => [...active, ...archived]);
-  const remembered: StoredAsset[] = [];
-  return {
-    async bySourcePath(path: string) {
-      const direct = typeof store.findAssetBySourcePath === "function" ? await store.findAssetBySourcePath(projectId, path) : null;
-      if (direct) return direct;
-      const resolved = resolve(path);
-      const local = remembered.find((asset) => [asset.source?.path, asset.source?.cowart_page_asset_path].some((value) => typeof value === "string" && resolve(value) === resolved));
-      if (local) return local;
-      if (typeof store.findAssetBySourcePath === "function") return null;
-      return (await listed()).find((asset) => [asset.source?.path, asset.source?.cowart_page_asset_path].some((value) => typeof value === "string" && resolve(value) === resolved)) || null;
-    },
-    async byContentHash(hash: string) {
-      const local = remembered.find((asset) => asset.source?.content_sha256 === hash);
-      if (local) return local;
-      if (typeof store.findAssetByContentHash === "function") return store.findAssetByContentHash(projectId, hash);
-      return (await listed()).find((asset) => asset.source?.content_sha256 === hash) || null;
-    },
-    async byPixelHash(hash: string) {
-      const local = remembered.find((asset) => asset.source?.pixel_hash_version === PIXEL_HASH_VERSION && asset.source?.pixel_sha256 === hash);
-      if (local) return local;
-      if (typeof store.findAssetByPixelHash === "function") return store.findAssetByPixelHash(projectId, hash);
-      return (await listed()).find((asset) => asset.source?.pixel_hash_version === PIXEL_HASH_VERSION && asset.source?.pixel_sha256 === hash) || null;
-    },
-    remember(asset: StoredAsset) { remembered.push(asset); },
-  };
+// Cowart never upgrades an archived asset's metadata (a canvas only carries
+// alt text); every rematch is recorded as one occurrence, whoever archived
+// the asset first.
+async function noteCowartHit(store: Store, existing: StoredAsset, candidate: AssetCandidate): Promise<void> {
+  await recordIngestOccurrence(store, existing as IngestAsset, {
+    provider: "cowart",
+    type: "cowart-generated",
+    page_url: null,
+    conversation_id: candidate.pageId,
+    message_id: null,
+    captured_at: new Date(candidate.mtimeMs).toISOString(),
+    capture_mode: "automatic",
+    source_path: candidate.imagePath,
+  });
 }
 
 async function readCowartAssetCandidates(canvasDir: string): Promise<AssetCandidate[]> {
@@ -197,5 +212,3 @@ function ratioFromShape(shape: CanvasStoreRecord | null): string {
 function gcd(left: number, right: number): number { let a = Math.abs(left); let b = Math.abs(right); while (b) [a, b] = [b, a % b]; return a || 1; }
 function isSafeChildPath(parent: string, child: string): boolean { const p = relative(parent, child); return Boolean(p) && !p.startsWith("..") && !p.includes(`..${sep}`) && !isAbsolute(p); }
 function isAutomaticImportSuppressed(error: unknown): boolean { return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "AUTOMATIC_IMPORT_SUPPRESSED"); }
-function isAutomaticIngestDuplicate(error: unknown): boolean { return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "AUTOMATIC_INGEST_DUPLICATE"); }
-function automaticDuplicateReason(error: unknown): string { return (error as { identityKind?: unknown })?.identityKind === "pixel" ? "already-archived-same-pixels" : "already-archived-same-content"; }

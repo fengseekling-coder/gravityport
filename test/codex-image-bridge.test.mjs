@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 // @ts-ignore - better-sqlite3 is consumed as an untyped runtime dependency in this repository.
 import Database from "better-sqlite3";
+import sharp from "sharp";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { ingestWebCapture } from "../lib/web-capture-ingest.js";
 import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
 import { createCodexImageBridge, reconcileCodexGeneratedImages } from "../lib/codex-image-bridge.js";
 
@@ -716,4 +718,126 @@ test("a user-renamed Codex asset keeps its theme while its prompt still upgrades
   assert.equal(after.prompt, promptV2);
   assert.equal(after.theme, "用户起的名字", "the user rename must not be recomputed from the new prompt");
   assert.ok(after.source.theme_user_edited_at);
+});
+
+// Large deterministic fixture so the web-capture path accepts it (it rejects
+// captures under 20 KiB) and the same bytes can seed a Codex task folder.
+async function noisyPngFixture(width = 320, height = 240) {
+  const raw = Buffer.alloc(width * height * 3);
+  for (let index = 0; index < raw.length; index += 1) raw[index] = (index * 37 + Math.floor(index / width) * 23) & 255;
+  return sharp(raw, { raw: { width, height, channels: 3 } }).png({ compressionLevel: 0 }).toBuffer();
+}
+
+test("a Codex byte rematch of its own archived image upgrades it from the newer session", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-byte-own-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskA = "019f776f-f6d5-7692-b9e5-dd280fc09f21";
+  const taskB = "019f776f-f6d5-7692-b9e5-dd280fc09f22";
+  const imagePathA = join(imagesDir, taskA, "exec-original.png");
+  const imagePathB = join(imagesDir, taskB, "exec-copy.png");
+  await mkdir(join(imagesDir, taskA), { recursive: true });
+  await mkdir(join(imagesDir, taskB), { recursive: true });
+
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  await writeFile(imagePathA, pngFixture(512, 512));
+  const sessionA = join(sessionsDir, `rollout-test-${taskA}.jsonl`);
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(sessionA, `${JSON.stringify({
+    type: "response_item",
+    payload: { type: "message", role: "user", content: [{ type: "input_text", text: "First pass prompt" }] },
+  })}\n`);
+  const first = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.equal(first.imported.length, 1);
+  const archived = first.imported[0];
+  assert.equal(archived.source.prompt_status, "task-user-prompt");
+
+  // The very same bytes turn up under another task whose session carries the
+  // revised prompt: the Codex-owned asset upgrades, no second asset is built.
+  await copyFile(imagePathA, imagePathB);
+  await writeFile(join(sessionsDir, `rollout-test-${taskB}.jsonl`), [
+    { type: "turn_context", payload: { model: "gpt-5.6-terra" } },
+    { type: "event_msg", timestamp: "2026-10-29T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "call-copy", saved_path: imagePathB, revised_prompt: "Use case: stylized-concept\nAsset type: upgraded remaster\nPrimary request: sharper second pass of the same image." } },
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+
+  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.equal(second.imported.length, 0);
+  assert.equal(second.skipped.some((item) => item.reason === "already-archived-same-content"), true);
+  assert.deepEqual(second.updated, [archived.id]);
+
+  const upgraded = await store.getAsset("default", archived.id);
+  assert.match(upgraded.prompt, /sharper second pass/);
+  assert.equal(upgraded.source.prompt_status, "image-generation-revised-prompt");
+  assert.equal(upgraded.source.model, "gpt-5.6-terra");
+  // Two observations: the task-A path re-observed, plus the task-B byte
+  // rematch that carried the upgrade.
+  const codexOccurrences = upgraded.source.capture_occurrences.filter((entry) => entry.provider === "codex");
+  assert.equal(codexOccurrences.length, 2);
+  const taskBOccurrence = codexOccurrences.find((entry) => entry.conversation_id === taskB);
+  assert.equal(taskBOccurrence.message_id, "call-copy");
+  assert.equal(taskBOccurrence.source_path, imagePathB);
+
+  const third = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.equal(third.imported.length, 0);
+  assert.deepEqual(third.updated, [], "a second identical pass writes nothing");
+  const reread = await store.getAsset("default", archived.id);
+  assert.equal(reread.source.capture_occurrences.filter((entry) => entry.provider === "codex").length, 2, "repeated observations stay deduplicated per key");
+});
+
+test("a Codex byte rematch of another channel's image only records an occurrence", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-byte-other-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  t.after(() => store.close?.());
+  await store.ensureProject("default");
+
+  const imageBytes = await noisyPngFixture();
+  const web = await ingestWebCapture({
+    store,
+    tempRoot: join(libraryDir, ".web-capture-tmp"),
+    projectId: "default",
+    input: {
+      provider: "chatgpt",
+      imageBase64: imageBytes.toString("base64"),
+      mimeType: "image/png",
+      prompt: "web caption prompt A",
+      prompt_status: "visible-caption",
+      conversationId: "conv-web-1",
+    },
+  });
+  assert.equal(web.status, "imported");
+
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f23";
+  const imagePath = join(imagesDir, taskId, "exec-web-copy.png");
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(imagePath, imageBytes);
+  await writeFile(join(sessionsDir, `rollout-test-${taskId}.jsonl`), [
+    { type: "turn_context", payload: { model: "gpt-5.6-terra" } },
+    { type: "event_msg", timestamp: "2026-10-29T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "call-web-copy", saved_path: imagePath, revised_prompt: "Codex revised prompt that ranks higher and must not land." } },
+  ].map((event) => JSON.stringify(event)).join("\n") + "\n");
+
+  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.equal(result.imported.length, 0);
+  assert.equal(result.skipped.some((item) => item.reason === "already-archived-same-content"), true);
+  assert.equal(result.updated.length, 0);
+
+  const asset = await store.getAsset("default", web.asset.id);
+  assert.equal(asset.prompt, "web caption prompt A");
+  assert.equal(asset.source.prompt_status, "visible-caption");
+  assert.equal(asset.source.generation_tool, "web-ui");
+  assert.notEqual(asset.source.model, "gpt-5.6-terra");
+  const codexOccurrences = asset.source.capture_occurrences.filter((entry) => entry.provider === "codex");
+  assert.equal(codexOccurrences.length, 1);
+  assert.equal(codexOccurrences[0].conversation_id, taskId);
+
+  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  assert.equal(second.updated.length, 0);
+  const reread = await store.getAsset("default", web.asset.id);
+  assert.equal(reread.source.capture_occurrences.filter((entry) => entry.provider === "codex").length, 1, "the same observation is recorded once");
 });

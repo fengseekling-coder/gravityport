@@ -19,6 +19,17 @@ import {
   type StagedCodexSessionImage,
 } from "./codex-session-recovery.js";
 import { resolveSourceLocations } from "./source-locations.js";
+import {
+  canUpgradeMetadata,
+  createAssetViaGate,
+  createIngestLookup,
+  mergedUserMessage,
+  recordIngestOccurrence,
+  type IngestAsset,
+  type IngestLookup,
+  type IngestStore,
+} from "./library-ingest.mjs";
+import { shouldUpgradePrompt } from "./prompt-rank.mjs";
 import { isPromptUserEdited, isThemeUserEdited } from "./user-edit-marker.mjs";
 
 const IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"]);
@@ -36,7 +47,7 @@ interface StoredAsset {
   image_path?: string;
   [key: string]: unknown;
 }
-interface Store { createAsset(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<StoredAsset>; listAssets(filters: Record<string, unknown>): Promise<StoredAsset[]>; findAssetBySourcePath?(projectId: string, sourcePath: string): Promise<StoredAsset | null>; findAssetByContentHash?(projectId: string, contentHash: string): Promise<StoredAsset | null>; findAssetByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset | null>; updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<void>; codexImagesDir: string; assetsRoot: string; [key: string]: unknown; }
+interface Store extends IngestStore { codexImagesDir: string; assetsRoot: string; updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<IngestAsset>; }
 interface BridgeStatus { imagesDir: string; sessionsDir: string; threadHistoryPath: string | null; enabled: boolean; watching: boolean; watchingImages: boolean; watchingSessions: boolean; polling: boolean; busy: boolean; pendingSessionResults: number; lastSessionBytesRead: number; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastWarning: string | null; }
 interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated?: string[]; candidates: number; sessionBytesRead?: number; queued?: boolean; }
 interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconcile(): Promise<ReconcileResult>; scheduleReconcile(): void; status(): BridgeStatus; }
@@ -222,7 +233,29 @@ async function reconcileCodexSources(options: {
   await sessionIndex.prefetchThreadHistory([...threadRequests].map(([taskId, seenPaths]) => ({ taskId, seenPaths })));
   if (!shouldContinue()) return { imported: [], skipped: [], updated: [], candidates: 0, sessionBytesRead: sessionScan.bytesRead };
   pruneProcessedSignatures(processedSignatures, candidates.map((candidate) => candidate.imagePath));
-  const lookup = createBridgeAssetLookup(store, projectId);
+  // Dedupe and metadata rules live in the shared ingest gate
+  // (lib/library-ingest.mjs, ARCHITECTURE.md §8): this bridge only walks the
+  // Codex folders and hands the gate the image plus its session fields.
+  const lookup = createIngestLookup(store, projectId, { sourcePathKeys: ["codex_image_path"] });
+  // Codex-specific identity: a session image event key pins one generation call
+  // across the standard file path and session-result recovery.
+  // The library listing is read once per reconcile, not once per pending
+  // session event.
+  const sessionEventAssets: StoredAsset[] = [];
+  let listedAssets: Promise<StoredAsset[]> | null = null;
+  const findBySessionEventKey = async (eventKey: string): Promise<StoredAsset | null> => {
+    const local = sessionEventAssets.find((asset) => asset.source?.codex_session_event_key === eventKey);
+    if (local) return local;
+    listedAssets ||= Promise.all([
+      store.listAssets({ projectId }),
+      store.listAssets({ projectId, archived: true }).catch(() => [] as StoredAsset[]),
+    ]).then(([active, archived]) => [...active, ...archived] as StoredAsset[]);
+    return (await listedAssets).find((asset) => asset.source?.codex_session_event_key === eventKey) || null;
+  };
+  const rememberAsset = (asset: StoredAsset): void => {
+    lookup.remember(asset);
+    sessionEventAssets.push(asset);
+  };
   const contentHashes = options.knownHashes || new Set<string>();
   const imported: unknown[] = [];
   const skipped: Array<{ path: string; reason: string; error?: string }> = [];
@@ -239,6 +272,7 @@ async function reconcileCodexSources(options: {
       candidate,
       generation,
       lookup,
+      rememberAsset,
       contentHashes,
       processedSignatures,
       imported,
@@ -253,6 +287,8 @@ async function reconcileCodexSources(options: {
     imagesRoot: imagesDir,
     sessionIndex,
     lookup,
+    findBySessionEventKey,
+    rememberAsset,
     contentHashes,
     imported,
     skipped,
@@ -285,6 +321,7 @@ async function ingestFilesystemCandidate({
   candidate,
   generation,
   lookup,
+  rememberAsset,
   contentHashes,
   processedSignatures,
   imported,
@@ -296,7 +333,8 @@ async function ingestFilesystemCandidate({
   imagesRoot: string;
   candidate: ImageCandidate;
   generation: GenerationMetadata;
-  lookup: ReturnType<typeof createBridgeAssetLookup>;
+  lookup: IngestLookup;
+  rememberAsset: (asset: StoredAsset) => void;
   contentHashes: Set<string>;
   processedSignatures: Map<string, string>;
   imported: unknown[];
@@ -311,7 +349,7 @@ async function ingestFilesystemCandidate({
 
   const existingAtPath = await lookup.bySourcePath(candidate.imagePath);
   if (existingAtPath) {
-    if (await upgradeGenerationMetadata(store, existingAtPath, generation)) updated.push(existingAtPath.id);
+    if (await noteCodexHit(store, existingAtPath, candidate, generation)) updated.push(existingAtPath.id);
     skipped.push({ path: candidate.imagePath, reason: "already-archived" });
     processedSignatures.set(candidate.imagePath, signature);
     return;
@@ -326,6 +364,12 @@ async function ingestFilesystemCandidate({
   }
   const existingByContent = contentHashes.has(contentHash) ? true : await lookup.byContentHash(contentHash);
   if (existingByContent) {
+    // Byte-identical rematch of a known asset: the ingest gate's ownership rule
+    // decides whether this channel may upgrade its metadata; an unknown hash
+    // (seen earlier in this scan) has no asset to note or upgrade.
+    if (existingByContent !== true && await noteCodexHit(store, existingByContent, candidate, generation)) {
+      updated.push(existingByContent.id);
+    }
     skipped.push({ path: candidate.imagePath, reason: "already-archived-same-content" });
     contentHashes.add(contentHash);
     processedSignatures.set(candidate.imagePath, signature);
@@ -335,15 +379,19 @@ async function ingestFilesystemCandidate({
   const pixelHash = extname(candidate.imagePath).toLowerCase() === ".svg"
     ? ""
     : await safePixelDigest(candidate.imagePath).catch(() => "");
-  if (pixelHash && await lookup.byPixelHash(pixelHash)) {
-    skipped.push({ path: candidate.imagePath, reason: "already-archived-same-pixels" });
-    processedSignatures.set(candidate.imagePath, signature);
-    return;
+  if (pixelHash) {
+    const existingByPixel = await lookup.byPixelHash(pixelHash);
+    if (existingByPixel) {
+      if (await noteCodexHit(store, existingByPixel, candidate, generation)) updated.push(existingByPixel.id);
+      skipped.push({ path: candidate.imagePath, reason: "already-archived-same-pixels" });
+      processedSignatures.set(candidate.imagePath, signature);
+      return;
+    }
   }
 
   const imageInfo = await readImageInfo(candidate.imagePath, candidate.fileStat);
   try {
-    const asset = await createAutomaticAssetWithCollisionFallback(store, {
+    const created = await createAssetViaGate(store, {
       projectId,
       imagePath: candidate.imagePath,
       asset: candidate.fileName,
@@ -384,22 +432,46 @@ async function ingestFilesystemCandidate({
         pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
         image_metadata: imageInfo,
       },
-    }, { trustedSourceRoots: [imagesRoot], ingestMode: "automatic" });
-    lookup.remember(asset);
+    }, {
+      trustedSourceRoots: [imagesRoot],
+      ingestMode: "automatic",
+      retryAssetId: (input) => `${String(input.assetId || "codex-image").slice(0, 140)}-${randomUUID().slice(0, 8)}`,
+    });
+    if (!created.ok) {
+      skipped.push({ path: candidate.imagePath, reason: created.skipped.reason });
+      processedSignatures.set(candidate.imagePath, signature);
+      return;
+    }
+    rememberAsset(created.asset);
     contentHashes.add(contentHash);
     processedSignatures.set(candidate.imagePath, signature);
-    imported.push(asset);
+    imported.push(created.asset);
   } catch (error) {
-    if (isAutomaticImportSuppressed(error)) {
-      skipped.push({ path: candidate.imagePath, reason: "suppressed-after-delete" });
-      processedSignatures.set(candidate.imagePath, signature);
-    } else if (isAutomaticIngestDuplicate(error)) {
-      skipped.push({ path: candidate.imagePath, reason: automaticDuplicateReason(error) });
-      processedSignatures.set(candidate.imagePath, signature);
-    } else {
-      skipped.push({ path: candidate.imagePath, reason: "import-failed", error: error instanceof Error ? error.message : String(error) });
-    }
+    skipped.push({ path: candidate.imagePath, reason: "import-failed", error: error instanceof Error ? error.message : String(error) });
   }
+}
+
+/**
+ * One observation of an already-archived asset: the occurrence is always
+ * recorded (once per key, by the gate); the metadata upgrade follows the
+ * gate's ownership rule — only Codex-archived (or unprovenanced manual) assets
+ * take this channel's prompt and provenance fields, an image another channel
+ * archived only gains the occurrence.
+ */
+async function noteCodexHit(store: Store, existing: StoredAsset, candidate: ImageCandidate, generation: GenerationMetadata): Promise<boolean> {
+  const withOccurrence = await recordIngestOccurrence(store, existing as IngestAsset, {
+    provider: "codex",
+    type: "codex-generated",
+    page_url: null,
+    conversation_id: candidate.taskId || null,
+    message_id: generation.callId || null,
+    captured_at: candidate.generatedAt,
+    capture_mode: "automatic",
+    source_path: candidate.imagePath,
+  });
+  const current = (withOccurrence as StoredAsset | null) || existing;
+  if (!canUpgradeMetadata(current, "codex")) return false;
+  return upgradeGenerationMetadata(store, current, generation);
 }
 
 async function ingestSessionResultCandidates({
@@ -408,6 +480,8 @@ async function ingestSessionResultCandidates({
   imagesRoot,
   sessionIndex,
   lookup,
+  findBySessionEventKey,
+  rememberAsset,
   contentHashes,
   imported,
   skipped,
@@ -417,7 +491,9 @@ async function ingestSessionResultCandidates({
   projectId: string;
   imagesRoot: string;
   sessionIndex: CodexSessionIndex;
-  lookup: ReturnType<typeof createBridgeAssetLookup>;
+  lookup: IngestLookup;
+  findBySessionEventKey: (eventKey: string) => Promise<StoredAsset | null>;
+  rememberAsset: (asset: StoredAsset) => void;
   contentHashes: Set<string>;
   imported: unknown[];
   skipped: Array<{ path: string; reason: string; error?: string }>;
@@ -445,7 +521,7 @@ async function ingestSessionResultCandidates({
       }
     }
 
-    const existingEvent = await lookup.bySessionEventKey(event.eventKey);
+    const existingEvent = await findBySessionEventKey(event.eventKey);
     if (existingEvent) {
       sessionIndex.acknowledgeResult(event.eventKey);
       skipped.push({ path: sourceLabel, reason: "already-archived-session-result" });
@@ -453,7 +529,7 @@ async function ingestSessionResultCandidates({
     }
 
     if (!event.resultAvailable) continue;
-    await ingestOneSessionResult({ store, projectId, sessionIndex, event, lookup, contentHashes, imported, skipped });
+    await ingestOneSessionResult({ store, projectId, sessionIndex, event, lookup, rememberAsset, contentHashes, imported, skipped });
   }
 }
 
@@ -463,6 +539,7 @@ async function ingestOneSessionResult({
   sessionIndex,
   event,
   lookup,
+  rememberAsset,
   contentHashes,
   imported,
   skipped,
@@ -471,12 +548,15 @@ async function ingestOneSessionResult({
   projectId: string;
   sessionIndex: CodexSessionIndex;
   event: CodexSessionImageEvent;
-  lookup: ReturnType<typeof createBridgeAssetLookup>;
+  lookup: IngestLookup;
+  rememberAsset: (asset: StoredAsset) => void;
   contentHashes: Set<string>;
   imported: unknown[];
   skipped: Array<{ path: string; reason: string; error?: string }>;
 }): Promise<void> {
   const sourceLabel = event.savedPath || event.sessionPath;
+  const task = sessionIndex.metadataForTask(event.taskId);
+  const generation = generationForSessionResult(event, task);
   let staged: StagedCodexSessionImage | null = null;
   try {
     const encoded = await sessionIndex.loadResult(event);
@@ -489,6 +569,7 @@ async function ingestOneSessionResult({
     const contentHash = await sha256File(staged.path);
     const existingByContent = contentHashes.has(contentHash) ? true : await lookup.byContentHash(contentHash);
     if (existingByContent) {
+      if (existingByContent !== true) await noteCodexSessionHit(store, existingByContent, event, generation);
       contentHashes.add(contentHash);
       sessionIndex.acknowledgeResult(event.eventKey);
       skipped.push({ path: sourceLabel, reason: "already-archived-same-content" });
@@ -496,19 +577,21 @@ async function ingestOneSessionResult({
     }
 
     const pixelHash = await safePixelDigest(staged.path).catch(() => "");
-    if (pixelHash && await lookup.byPixelHash(pixelHash)) {
-      sessionIndex.acknowledgeResult(event.eventKey);
-      skipped.push({ path: sourceLabel, reason: "already-archived-same-pixels" });
-      return;
+    if (pixelHash) {
+      const existingByPixel = await lookup.byPixelHash(pixelHash);
+      if (existingByPixel) {
+        await noteCodexSessionHit(store, existingByPixel, event, generation);
+        sessionIndex.acknowledgeResult(event.eventKey);
+        skipped.push({ path: sourceLabel, reason: "already-archived-same-pixels" });
+        return;
+      }
     }
 
-    const task = sessionIndex.metadataForTask(event.taskId);
-    const generation = generationForSessionResult(event, task);
     const fileStat = await stat(staged.path);
     const imageInfo = await readImageInfo(staged.path, fileStat);
     const eventDigest = createHash("sha256").update(event.eventKey).digest("hex").slice(0, 16);
     const fileName = `codex-session-${eventDigest}${staged.extension}`;
-    const asset = await createAutomaticAssetWithCollisionFallback(store, {
+    const created = await createAssetViaGate(store, {
       projectId,
       imagePath: staged.path,
       asset: fileName,
@@ -550,19 +633,22 @@ async function ingestOneSessionResult({
         pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null,
         image_metadata: imageInfo,
       },
-    }, { trustedSourceRoots: [staged.root], ingestMode: "automatic" });
-    lookup.remember(asset);
+    }, {
+      trustedSourceRoots: [staged.root],
+      ingestMode: "automatic",
+      retryAssetId: (input) => `${String(input.assetId || "codex-image").slice(0, 140)}-${randomUUID().slice(0, 8)}`,
+    });
+    if (!created.ok) {
+      sessionIndex.acknowledgeResult(event.eventKey);
+      skipped.push({ path: sourceLabel, reason: created.skipped.reason });
+      return;
+    }
+    rememberAsset(created.asset);
     contentHashes.add(contentHash);
     sessionIndex.acknowledgeResult(event.eventKey);
-    imported.push(asset);
+    imported.push(created.asset);
   } catch (error) {
-    if (isAutomaticImportSuppressed(error)) {
-      sessionIndex.acknowledgeResult(event.eventKey);
-      skipped.push({ path: sourceLabel, reason: "suppressed-after-delete" });
-    } else if (isAutomaticIngestDuplicate(error)) {
-      sessionIndex.acknowledgeResult(event.eventKey);
-      skipped.push({ path: sourceLabel, reason: automaticDuplicateReason(error) });
-    } else if (isPermanentSessionRecoveryError(error)) {
+    if (isPermanentSessionRecoveryError(error)) {
       sessionIndex.acknowledgeResult(event.eventKey);
       skipped.push({ path: sourceLabel, reason: "session-result-invalid", error: error instanceof Error ? error.message : String(error) });
     } else {
@@ -571,6 +657,25 @@ async function ingestOneSessionResult({
   } finally {
     await removeCodexSessionStagedImage(staged).catch(() => {});
   }
+}
+
+// Session-result observations follow the same gate rules as file candidates:
+// occurrence always, metadata upgrade only when the gate's ownership rule
+// allows this channel to touch the archived asset.
+async function noteCodexSessionHit(store: Store, existing: StoredAsset, event: CodexSessionImageEvent, generation: GenerationMetadata): Promise<boolean> {
+  const withOccurrence = await recordIngestOccurrence(store, existing as IngestAsset, {
+    provider: "codex",
+    type: "codex-generated",
+    page_url: null,
+    conversation_id: event.taskId || null,
+    message_id: event.callId || null,
+    captured_at: generation.generatedAt || null,
+    capture_mode: "automatic",
+    source_path: event.savedPath || event.sessionPath || null,
+  });
+  const current = (withOccurrence as StoredAsset | null) || existing;
+  if (!canUpgradeMetadata(current, "codex")) return false;
+  return upgradeGenerationMetadata(store, current, generation);
 }
 
 function generationForSessionResult(event: CodexSessionImageEvent, task: CodexTaskMetadata): GenerationMetadata {
@@ -589,55 +694,19 @@ function isPermanentSessionRecoveryError(error: unknown): boolean {
   return code.startsWith("CODEX_SESSION_IMAGE_") || code === "CODEX_SESSION_EVENT_TOO_LARGE";
 }
 
-function createBridgeAssetLookup(store: Store, projectId: string) {
-  let fallbackAssets: Promise<StoredAsset[]> | null = null;
-  const listed = () => fallbackAssets ||= Promise.all([store.listAssets({ projectId }), store.listAssets({ projectId, archived: true })]).then(([active, archived]) => [...active, ...archived]);
-  const remembered: StoredAsset[] = [];
-  return {
-    async bySourcePath(path: string) {
-      const direct = typeof store.findAssetBySourcePath === "function" ? await store.findAssetBySourcePath(projectId, path) : null;
-      if (direct) return direct;
-      const resolved = resolve(path);
-      const local = remembered.find((asset) => [asset.source?.path, asset.source?.codex_image_path].some((value) => typeof value === "string" && resolve(value) === resolved));
-      if (local) return local;
-      if (typeof store.findAssetBySourcePath === "function") return null;
-      return (await listed()).find((asset) => [asset.source?.path, asset.source?.codex_image_path].some((value) => typeof value === "string" && resolve(value) === resolved)) || null;
-    },
-    async byContentHash(hash: string) {
-      const local = remembered.find((asset) => asset.source?.content_sha256 === hash);
-      if (local) return local;
-      if (typeof store.findAssetByContentHash === "function") return store.findAssetByContentHash(projectId, hash);
-      return (await listed()).find((asset) => asset.source?.content_sha256 === hash) || null;
-    },
-    async byPixelHash(hash: string) {
-      const local = remembered.find((asset) => asset.source?.pixel_hash_version === PIXEL_HASH_VERSION && asset.source?.pixel_sha256 === hash);
-      if (local) return local;
-      if (typeof store.findAssetByPixelHash === "function") return store.findAssetByPixelHash(projectId, hash);
-      return (await listed()).find((asset) => asset.source?.pixel_hash_version === PIXEL_HASH_VERSION && asset.source?.pixel_sha256 === hash) || null;
-    },
-    async bySessionEventKey(eventKey: string) {
-      const local = remembered.find((asset) => asset.source?.codex_session_event_key === eventKey);
-      if (local) return local;
-      return (await listed()).find((asset) => asset.source?.codex_session_event_key === eventKey) || null;
-    },
-    remember(asset: StoredAsset) { remembered.push(asset); },
-  };
-}
-
 function assetUserMessage(asset: StoredAsset): string {
   const value = asset.source?.user_message ?? asset.business_fields?.user_message;
   return typeof value === "string" ? value.trim() : "";
 }
 
 async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, generation: GenerationMetadata): Promise<boolean> {
-  const existingUserMessage = assetUserMessage(asset);
-  const nextUserMessage = generation.userMessage || null;
-  const userMessageChanged = !existingUserMessage && Boolean(nextUserMessage);
+  const nextUserMessage = mergedUserMessage(assetUserMessage(asset), generation.userMessage || "");
   if (generation.promptStatus !== "image-generation-revised-prompt") {
-    if (!userMessageChanged) return false;
+    if (nextUserMessage === assetUserMessage(asset)) return false;
     // User-message-only backfill: an older generation may carry the user's
     // words without a revisable prompt, and that must not touch the prompt
-    // or its provenance status.
+    // or its provenance status. The first archived instruction wins; only a
+    // strict extension of it may update the slot (lib/library-ingest.mjs).
     await store.updateMetadata(asset.project_id, asset.id, {
       business_fields: { ...(asset.business_fields || {}), user_message: nextUserMessage },
       source: { ...(asset.source || {}), user_message: nextUserMessage },
@@ -645,23 +714,38 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     return true;
   }
 
+  const assetSource = assetSourceOf(asset);
+  const currentPrompt = String(asset.prompt ?? "").trim();
+  const currentStatus = String(
+    assetSource.prompt_status
+      || asset.business_fields?.prompt_status
+      || (currentPrompt ? "user-message" : "not-available"),
+  );
+  // The shared prompt rank table (lib/prompt-rank.mjs) decides whether the
+  // session's revised prompt replaces the archived one; same-rank candidates
+  // only win when strictly longer.
+  const promptUpgradable = shouldUpgradePrompt(
+    { prompt: currentPrompt, status: currentStatus, priority: 0 },
+    { prompt: String(generation.prompt || "").trim(), status: generation.promptStatus, priority: 0 },
+  );
   const nextTheme = promptTheme(generation.prompt);
   // A prompt or theme a human typed through a marked entry point wins over
   // the session file forever; the theme is only ever recomputed alongside a
   // prompt that is actually being upgraded. The provenance status describes
   // the kept prompt, so an automatic channel never rewrites it over a user
   // edit either.
-  const promptChanged = !isPromptUserEdited(asset) && asset.prompt !== generation.prompt;
+  const promptChanged = !isPromptUserEdited(asset) && promptUpgradable && asset.prompt !== generation.prompt;
   const statusUpgradable = !isPromptUserEdited(asset);
   const themeChanged = !isThemeUserEdited(asset) && promptChanged && Boolean(nextTheme) && asset.theme !== nextTheme;
+  const userMessageChanged = nextUserMessage !== assetUserMessage(asset);
   const nextSource: Record<string, unknown> = {
-    ...(asset.source || {}),
-    codex_session_path: generation.sessionPath || asset.source?.codex_session_path || null,
-    codex_image_generation_call_id: generation.callId || asset.source?.codex_image_generation_call_id || null,
-    codex_image_generated_at: generation.generatedAt || asset.source?.codex_image_generated_at || null,
-    model: generation.model || asset.source?.model || null,
-    prompt_status: statusUpgradable ? generation.promptStatus : asset.source?.prompt_status ?? generation.promptStatus,
-    codex_generation_origin: generation.origin || asset.source?.codex_generation_origin || null,
+    ...assetSource,
+    codex_session_path: generation.sessionPath || assetSource.codex_session_path || null,
+    codex_image_generation_call_id: generation.callId || assetSource.codex_image_generation_call_id || null,
+    codex_image_generated_at: generation.generatedAt || assetSource.codex_image_generated_at || null,
+    model: generation.model || assetSource.model || null,
+    prompt_status: statusUpgradable ? generation.promptStatus : assetSource.prompt_status ?? generation.promptStatus,
+    codex_generation_origin: generation.origin || assetSource.codex_generation_origin || null,
   };
   if (userMessageChanged) nextSource.user_message = nextUserMessage;
   const sourceChanged = [
@@ -672,7 +756,7 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     "prompt_status",
     "user_message",
     "codex_generation_origin",
-  ].some((key) => asset.source?.[key] !== nextSource[key]);
+  ].some((key) => assetSource[key] !== nextSource[key]);
   const businessStatusChanged = statusUpgradable && asset.business_fields?.prompt_status !== generation.promptStatus;
   if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged && !userMessageChanged) return false;
 
@@ -692,6 +776,10 @@ async function upgradeGenerationMetadata(store: Store, asset: StoredAsset, gener
     source: nextSource,
   });
   return true;
+}
+
+function assetSourceOf(asset: StoredAsset): Record<string, unknown> {
+  return asset.source && typeof asset.source === "object" && !Array.isArray(asset.source) ? asset.source : {};
 }
 
 function candidateSignature(candidate: ImageCandidate, generation: GenerationMetadata): string {
@@ -728,15 +816,3 @@ function createWatcher(root: string, onChange: () => void, onUnavailable: () => 
 }
 export async function sha256File(filePath: string): Promise<string> { return createHash("sha256").update(await readFile(filePath)).digest("hex"); }
 function isSafeChildPath(parent: string, child: string): boolean { const p = relative(parent, child); return Boolean(p) && !p.startsWith("..") && !p.includes(`..${sep}`) && !isAbsolute(p); }
-function isAutomaticImportSuppressed(error: unknown): boolean { return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "AUTOMATIC_IMPORT_SUPPRESSED"); }
-function isAutomaticIngestDuplicate(error: unknown): boolean { return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "AUTOMATIC_INGEST_DUPLICATE"); }
-function automaticDuplicateReason(error: unknown): string { return (error as { identityKind?: unknown })?.identityKind === "pixel" ? "already-archived-same-pixels" : "already-archived-same-content"; }
-async function createAutomaticAssetWithCollisionFallback(store: Store, input: Record<string, unknown>, options: Record<string, unknown>): Promise<StoredAsset> {
-  try {
-    return await store.createAsset(input, options);
-  } catch (error) {
-    if (!error || typeof error !== "object" || (error as { code?: unknown }).code !== "ASSET_ALREADY_EXISTS") throw error;
-    const baseId = String(input.assetId || "codex-image").slice(0, 140);
-    return store.createAsset({ ...input, assetId: `${baseId}-${randomUUID().slice(0, 8)}` }, options);
-  }
-}

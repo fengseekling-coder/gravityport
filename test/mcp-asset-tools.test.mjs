@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "../lib/image-pixel-hash.js";
+import { createAssetStore } from "../lib/asset-store.mjs";
 import { createMcpWorkspace, startMcpServer, writePngFixture } from "./helpers/mcp-server-harness.mjs";
 
 async function setupServerWithFixture(t, fixtureName = "fixture.png") {
@@ -87,9 +88,13 @@ test("asset_attach_prompt writes and replaces the full recipe of an asset", asyn
 });
 
 test("asset_archive hides the asset from asset_list while keeping it and its file retrievable", async (t) => {
-  const { imagePath, server } = await setupServerWithFixture(t);
+  const { workspace, imagePath, server } = await setupServerWithFixture(t);
+  // Distinct bytes: asset_create skips identical bytes already in the library
+  // (outside Trash) and answers with the stored asset, so a second archive
+  // target needs its own fixture.
+  const secondPath = await writePngFixture(join(workspace.imagesDir, "tossme.png"), { color: "#513a2a" });
   await server.callToolStrict("asset_create", { assetId: "keepme", imagePath });
-  const tossed = await server.callToolStrict("asset_create", { assetId: "tossme", imagePath });
+  const tossed = await server.callToolStrict("asset_create", { assetId: "tossme", imagePath: secondPath });
 
   const archived = await server.callToolStrict("asset_archive", { assetId: "tossme" });
   assert.equal(archived.structuredContent.asset.archived, true);
@@ -142,15 +147,28 @@ test("asset_get and asset_provenance_export carry the stored content and pixel h
   const pixelHash = await safePixelDigest(imagePath);
   assert.match(pixelHash, /^[0-9a-f]{64}$/);
 
-  // The web-capture bridge is the production writer of pixel hashes; seed the
-  // same identity the same way so the export test covers a fully-hashed asset.
+  // asset_create never trusts hashes the caller claims in `source` (the store
+  // recomputes them), so pixel hashes reach the library through the capture
+  // channels' own metadata writes. Seed one the way the web-capture bridge
+  // would — through the store's updateMetadata on the same library.
   const created = await server.callToolStrict("asset_create", {
     assetId: "hashed",
     imagePath,
     prompt: "hash export fixture",
-    source: { pixel_sha256: pixelHash, pixel_hash_version: PIXEL_HASH_VERSION },
   });
   assert.match(created.structuredContent.asset.content_sha256, /^[0-9a-f]{64}$/);
+  const seedStore = createAssetStore({
+    projectRoot: workspace.root,
+    managerDir: workspace.root,
+    libraryDir: workspace.libraryDir,
+    explicitLibraryDir: workspace.libraryDir,
+    assetsRoot: join(workspace.libraryDir, "assets"),
+    generatedImagesDir: join(workspace.libraryDir, "imports"),
+  });
+  await seedStore.updateMetadata("default", "hashed", {
+    source: { pixel_sha256: pixelHash, pixel_hash_version: PIXEL_HASH_VERSION },
+  });
+  seedStore.close();
 
   const fetched = await server.callToolStrict("asset_get", { assetId: "hashed" });
   const asset = fetched.structuredContent.asset;
@@ -201,4 +219,60 @@ test("asset_update_metadata merges business_fields keys, so a partial write keep
   });
   assert.equal(Object.hasOwn(deleted.structuredContent.asset.business_fields, "some_key"), false, "a null value deletes its key");
   assert.equal(deleted.structuredContent.asset.business_fields.width, 1024, "the deletion leaves the dimensions alone");
+});
+
+test("asset_create returns the stored asset for identical bytes and rebuilds after trash", async (t) => {
+  const { workspace, imagePath, server } = await setupServerWithFixture(t);
+  const first = await server.callToolStrict("asset_create", { assetId: "dedupe-one", imagePath, prompt: "first copy" });
+  assert.equal(first.structuredContent.deduplicated, undefined);
+
+  const second = await server.callToolStrict("asset_create", { assetId: "dedupe-two", imagePath, prompt: "second copy" });
+  assert.equal(second.structuredContent.asset.id, "dedupe-one", "the stored asset is returned instead of a copy");
+  assert.equal(second.structuredContent.deduplicated, true);
+  assert.equal(
+    second.content[0].text,
+    "Asset already in library: dedupe-one (identical bytes); returned the existing asset.",
+  );
+  const listed = await server.callToolStrict("asset_list", { projectId: "default" });
+  assert.equal(listed.structuredContent.assets.length, 1, "no second copy enters the library");
+
+  // Trash the stored copy through the App's own trash path; the same bytes
+  // may then be imported again (Trash does not count as "already in library").
+  const trashStore = createAssetStore({
+    projectRoot: workspace.root,
+    managerDir: workspace.root,
+    libraryDir: workspace.libraryDir,
+    explicitLibraryDir: workspace.libraryDir,
+    assetsRoot: join(workspace.libraryDir, "assets"),
+    generatedImagesDir: join(workspace.libraryDir, "imports"),
+  });
+  await trashStore.deleteAsset("default", "dedupe-one");
+  trashStore.close();
+
+  const third = await server.callToolStrict("asset_create", { assetId: "dedupe-three", imagePath, prompt: "after trash" });
+  assert.equal(third.structuredContent.asset.id, "dedupe-three");
+  assert.equal(third.structuredContent.deduplicated, undefined);
+});
+
+test("asset_create ignores hashes the caller claims in source", async (t) => {
+  const { workspace, imagePath, server } = await setupServerWithFixture(t);
+  const created = await server.callToolStrict("asset_create", {
+    assetId: "untrusted-hash",
+    imagePath,
+    prompt: "claimed hashes",
+    source: { pixel_sha256: "f".repeat(64), pixel_hash_version: 2, content_sha256: "a".repeat(64) },
+  });
+  const asset = created.structuredContent.asset;
+  assert.notEqual(asset.source.pixel_sha256, "f".repeat(64), "the claimed pixel hash is not stored");
+  assert.notEqual(asset.source.content_sha256, "a".repeat(64), "the claimed content hash is not stored");
+  assert.match(asset.source.content_sha256, /^[0-9a-f]{64}$/, "the store recomputed the content hash from the bytes");
+
+  const db = new Database(join(workspace.libraryDir, "mosa.db"), { readonly: true });
+  try {
+    const row = db.prepare("SELECT content_sha256, pixel_sha256 FROM assets WHERE project_id = ? AND id = ?").get("default", "untrusted-hash");
+    assert.match(row.content_sha256, /^[0-9a-f]{64}$/);
+    assert.equal(row.pixel_sha256 || "", "", "no fabricated pixel hash reaches the identity columns");
+  } finally {
+    db.close();
+  }
 });

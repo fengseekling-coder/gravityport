@@ -6,6 +6,17 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { pipeline } from "node:stream/promises";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
 import { resolveSourceLocations } from "./source-locations.js";
+import {
+  canUpgradeMetadata,
+  createAssetViaGate,
+  createIngestLookup,
+  mergedUserMessage,
+  recordIngestOccurrence,
+  type IngestAsset,
+  type IngestLookup,
+  type IngestStore,
+} from "./library-ingest.mjs";
+import { shouldUpgradePrompt } from "./prompt-rank.mjs";
 import { isPromptUserEdited, isThemeUserEdited } from "./user-edit-marker.mjs";
 
 const IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"]);
@@ -15,10 +26,9 @@ const MEDIA_TOOLS = new Set(["image_gen", "image_edit", "image_to_video", "refer
 const MEDIA_FOLDERS = new Set(["images", "videos"]);
 const DEFAULT_PROJECT_ID = "default";
 const SESSION_ID_RE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const PROMPT_RANK: Record<string, number> = { "not-available": 0, "session-user-prompt": 1, "generation-tool-prompt": 2 };
 
 interface StoredAsset { source?: Record<string, unknown>; id?: string; image_path?: string; project_id?: string; prompt?: string; theme?: string; business_fields?: Record<string, unknown>; created_at?: string; [key: string]: unknown; }
-interface Store { createAsset(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<Record<string, unknown>>; listAssets(filters: Record<string, unknown>): Promise<StoredAsset[]>; findAssetBySourcePath?(projectId: string, sourcePath: string): Promise<StoredAsset | null>; findAssetByContentHash?(projectId: string, contentHash: string): Promise<StoredAsset | null>; findAssetByPixelHash?(projectId: string, pixelHash: string): Promise<StoredAsset | null>; updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<void>; [key: string]: unknown; }
+interface Store extends IngestStore { updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<IngestAsset>; }
 interface MediaCandidate { mediaPath: string; discoveredPath: string; relativePath: string; sessionId: string; sessionPath: string | null; mediaFolder: string; mediaKind: string; fileName: string; fileStem: string; fileStat: Stats; generatedAt: string; }
 interface GenerationMetadata { sessionId: string; prompt: string; promptStatus: string; userMessage: string | null; sessionPath: string | null; sessionUpdatedAt: string | null; callId: string | null; generatedAt: string | null; model: string | null; toolName: string | null; aspectRatio: string | null; matched: boolean; }
 interface SessionMetadata { sessionId: string; sessionPath: string | null; mediaPrompts: Map<string, GenerationMetadata>; }
@@ -68,7 +78,10 @@ export async function reconcileGrokMedia(options: { store: Store; sessionsDir: s
   try { rootReal = await realpath(root); } catch (error: unknown) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { imported: [], skipped: [], updated: [], candidates: 0, warnings: [] }; throw error; }
   const { candidates, skipped: discoverySkipped } = await readGrokMediaCandidates(root, rootReal);
   if (processedSignatures) pruneProcessedSignatures(processedSignatures, candidates.map((candidate) => candidate.mediaPath));
-  const lookup = createBridgeAssetLookup(store, projectId);
+  // Dedupe and metadata rules live in the shared ingest gate
+  // (lib/library-ingest.mjs, ARCHITECTURE.md §8): this bridge only walks the
+  // Grok session folders and hands the gate the media plus its session fields.
+  const lookup = createIngestLookup(store, projectId, { sourcePathKeys: ["grok_media_path"] });
   const contentHashes = knownHashesOpt || new Set<string>();
   const sessionIds = new Set(candidates.map((c) => c.sessionId).filter(Boolean));
   if (sessionMetadataCache) {
@@ -95,8 +108,8 @@ export async function reconcileGrokMedia(options: { store: Store; sessionsDir: s
     }
     const existingAtPath = await lookup.bySourcePath(candidate.mediaPath);
     if (existingAtPath) {
-      if (await upgradeGenerationMetadata(store, existingAtPath as unknown as Record<string, unknown>, generation, candidate)) {
-        updated.push(existingAtPath.id as string);
+      if (await noteGrokHit(store, existingAtPath, generation, candidate)) {
+        updated.push(existingAtPath.id);
       }
       skipped.push({ path: candidate.mediaPath, reason: "already-archived" });
       processedSignatures?.set(candidate.mediaPath, signature);
@@ -105,8 +118,11 @@ export async function reconcileGrokMedia(options: { store: Store; sessionsDir: s
     let contentHash: string; try { contentHash = await sha256FileImpl(candidate.mediaPath); } catch (error) { skipped.push({ path: candidate.mediaPath, reason: "not-ready", error: error instanceof Error ? error.message : String(error) }); continue; }
     const existingAsset = await lookup.byContentHash(contentHash);
     if (existingAsset || contentHashes.has(contentHash)) {
-      if (existingAsset && await upgradeGenerationMetadata(store, existingAsset as unknown as Record<string, unknown>, generation, candidate)) {
-        updated.push(existingAsset.id as string);
+      // Byte-identical rematch: the gate's ownership rule decides whether this
+      // channel may upgrade the archived copy; an unknown hash (seen earlier in
+      // this scan) has no asset to note or upgrade.
+      if (existingAsset && await noteGrokHit(store, existingAsset, generation, candidate)) {
+        updated.push(existingAsset.id);
       }
       skipped.push({ path: candidate.mediaPath, reason: "already-archived-same-content" });
       contentHashes.add(contentHash);
@@ -116,15 +132,57 @@ export async function reconcileGrokMedia(options: { store: Store; sessionsDir: s
     const pixelHash = candidate.mediaKind === "image" && extname(candidate.mediaPath).toLowerCase() !== ".svg"
       ? await safePixelDigest(candidate.mediaPath).catch(() => "")
       : "";
-    if (pixelHash && await lookup.byPixelHash(pixelHash)) {
-      skipped.push({ path: candidate.mediaPath, reason: "already-archived-same-pixels" });
-      processedSignatures?.set(candidate.mediaPath, signature);
-      continue;
+    if (pixelHash) {
+      const existingByPixel = await lookup.byPixelHash(pixelHash);
+      if (existingByPixel) {
+        if (await noteGrokHit(store, existingByPixel, generation, candidate)) {
+          updated.push(existingByPixel.id);
+        }
+        skipped.push({ path: candidate.mediaPath, reason: "already-archived-same-pixels" });
+        processedSignatures?.set(candidate.mediaPath, signature);
+        continue;
+      }
     }
     const mediaInfo = await readMediaInfo(candidate.mediaPath, candidate.fileStat, candidate.mediaKind);
-    try { const asset = await createAutomaticAssetWithCollisionFallback(store, { projectId, imagePath: candidate.mediaPath, asset: candidate.fileName, assetId: buildGrokAssetId(candidate), prompt: generation.prompt, skill: "Grok automatic archive", ratio: mediaInfo.ratio || generation.aspectRatio || "", theme: promptTheme(generation.prompt), tags: ["grok", "auto-archived", candidate.mediaKind], created_at: candidate.generatedAt, sourceType: "grok-generated", business_fields: { auto_archived: true, media_kind: candidate.mediaKind, prompt_status: generation.promptStatus, user_message: generation.userMessage || null, file_bytes: candidate.fileStat.size, width: mediaInfo.width, height: mediaInfo.height, mime_type: mediaInfo.mimeType }, source: { generation_tool: generation.toolName || `grok-${candidate.mediaKind}`, media_kind: candidate.mediaKind, grok_media_path: candidate.mediaPath, grok_session_id: candidate.sessionId || null, grok_session_path: generation.sessionPath || candidate.sessionPath || null, grok_session_folder: candidate.mediaFolder, grok_output_file: candidate.fileName, grok_generated_at: candidate.generatedAt, grok_tool_call_id: generation.callId, model: generation.model, prompt_status: generation.promptStatus, user_message: generation.userMessage || null, content_sha256: contentHash, pixel_sha256: pixelHash || null, pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null, media_metadata: mediaInfo } }, { trustedSourceRoots: [rootReal], ingestMode: "automatic" }); lookup.remember(asset as StoredAsset); contentHashes.add(contentHash); processedSignatures?.set(candidate.mediaPath, signature); imported.push(asset); } catch (error) { if (isAutomaticImportSuppressed(error)) { skipped.push({ path: candidate.mediaPath, reason: "suppressed-after-delete" }); processedSignatures?.set(candidate.mediaPath, signature); } else if (isAutomaticIngestDuplicate(error)) { skipped.push({ path: candidate.mediaPath, reason: automaticDuplicateReason(error) }); processedSignatures?.set(candidate.mediaPath, signature); } else skipped.push({ path: candidate.mediaPath, reason: "import-failed", error: error instanceof Error ? error.message : String(error) }); }
+    try {
+      const created = await createAssetViaGate(store, { projectId, imagePath: candidate.mediaPath, asset: candidate.fileName, assetId: buildGrokAssetId(candidate), prompt: generation.prompt, skill: "Grok automatic archive", ratio: mediaInfo.ratio || generation.aspectRatio || "", theme: promptTheme(generation.prompt), tags: ["grok", "auto-archived", candidate.mediaKind], created_at: candidate.generatedAt, sourceType: "grok-generated", business_fields: { auto_archived: true, media_kind: candidate.mediaKind, prompt_status: generation.promptStatus, user_message: generation.userMessage || null, file_bytes: candidate.fileStat.size, width: mediaInfo.width, height: mediaInfo.height, mime_type: mediaInfo.mimeType }, source: { generation_tool: generation.toolName || `grok-${candidate.mediaKind}`, media_kind: candidate.mediaKind, grok_media_path: candidate.mediaPath, grok_session_id: candidate.sessionId || null, grok_session_path: generation.sessionPath || candidate.sessionPath || null, grok_session_folder: candidate.mediaFolder, grok_output_file: candidate.fileName, grok_generated_at: candidate.generatedAt, grok_tool_call_id: generation.callId, model: generation.model, prompt_status: generation.promptStatus, user_message: generation.userMessage || null, content_sha256: contentHash, pixel_sha256: pixelHash || null, pixel_hash_version: pixelHash ? PIXEL_HASH_VERSION : null, media_metadata: mediaInfo } }, { trustedSourceRoots: [rootReal], ingestMode: "automatic", retryAssetId: (input) => `${String(input.assetId || "grok-media").slice(0, 140)}-${randomUUID().slice(0, 8)}` });
+      if (!created.ok) {
+        skipped.push({ path: candidate.mediaPath, reason: created.skipped.reason });
+        processedSignatures?.set(candidate.mediaPath, signature);
+        continue;
+      }
+      lookup.remember(created.asset);
+      contentHashes.add(contentHash);
+      processedSignatures?.set(candidate.mediaPath, signature);
+      imported.push(created.asset);
+    } catch (error) {
+      skipped.push({ path: candidate.mediaPath, reason: "import-failed", error: error instanceof Error ? error.message : String(error) });
+    }
   }
   return { imported, skipped, updated, candidates: candidates.length, warnings };
+}
+
+/**
+ * One observation of an already-archived asset: the occurrence is always
+ * recorded (once per key, by the gate); the metadata upgrade follows the
+ * gate's ownership rule — only Grok-archived (or unprovenanced manual) assets
+ * take this channel's prompt and provenance fields, media another channel
+ * archived only gains the occurrence.
+ */
+async function noteGrokHit(store: Store, existing: IngestAsset, generation: GenerationMetadata, candidate: MediaCandidate | null): Promise<boolean> {
+  const withOccurrence = await recordIngestOccurrence(store, existing, {
+    provider: "grok",
+    type: "grok-generated",
+    page_url: null,
+    conversation_id: candidate?.sessionId || null,
+    message_id: generation.callId || null,
+    captured_at: candidate?.generatedAt || null,
+    capture_mode: "automatic",
+    source_path: candidate?.mediaPath || null,
+  });
+  const current = withOccurrence || existing;
+  if (!canUpgradeMetadata(current, "grok")) return false;
+  return upgradeGenerationMetadata(store, current, generation, candidate);
 }
 
 export function buildGrokAssetId(candidate: { sessionId?: string; mediaKind: string; relativePath?: string; mediaFolder?: string; fileName?: string; mediaPath?: string; fileStem?: string }): string {
@@ -167,36 +225,6 @@ function sessionMediaLocation(sessionsRoot: string, mediaPath: string): { sessio
   const sessionPath = join(resolve(sessionsRoot), ...parts.slice(0, -2));
   const mediaKind = mediaFolder === "videos" || VIDEO_EXTENSIONS.has(extname(mediaPath).toLowerCase()) ? "video" : "image";
   return { sessionId, sessionPath, mediaFolder, mediaKind };
-}
-
-function createBridgeAssetLookup(store: Store, projectId: string) {
-  let fallbackAssets: Promise<StoredAsset[]> | null = null;
-  const listed = () => fallbackAssets ||= Promise.all([store.listAssets({ projectId }), store.listAssets({ projectId, archived: true })]).then(([active, archived]) => [...active, ...archived]);
-  const remembered: StoredAsset[] = [];
-  return {
-    async bySourcePath(path: string) {
-      const direct = typeof store.findAssetBySourcePath === "function" ? await store.findAssetBySourcePath(projectId, path) : null;
-      if (direct) return direct;
-      const resolved = resolve(path);
-      const local = remembered.find((asset) => [asset.source?.path, asset.source?.grok_media_path].some((value) => typeof value === "string" && resolve(value) === resolved));
-      if (local) return local;
-      if (typeof store.findAssetBySourcePath === "function") return null;
-      return (await listed()).find((asset) => [asset.source?.path, asset.source?.grok_media_path].some((value) => typeof value === "string" && resolve(value) === resolved)) || null;
-    },
-    async byContentHash(hash: string) {
-      const local = remembered.find((asset) => asset.source?.content_sha256 === hash);
-      if (local) return local;
-      if (typeof store.findAssetByContentHash === "function") return store.findAssetByContentHash(projectId, hash);
-      return (await listed()).find((asset) => asset.source?.content_sha256 === hash) || null;
-    },
-    async byPixelHash(hash: string) {
-      const local = remembered.find((asset) => asset.source?.pixel_hash_version === PIXEL_HASH_VERSION && asset.source?.pixel_sha256 === hash);
-      if (local) return local;
-      if (typeof store.findAssetByPixelHash === "function") return store.findAssetByPixelHash(projectId, hash);
-      return (await listed()).find((asset) => asset.source?.pixel_hash_version === PIXEL_HASH_VERSION && asset.source?.pixel_sha256 === hash) || null;
-    },
-    remember(asset: StoredAsset) { remembered.push(asset); },
-  };
 }
 
 function metadataForCandidate(sessionMeta: SessionMetadata | undefined, candidate: MediaCandidate): GenerationMetadata {
@@ -317,10 +345,20 @@ function isUnsafeSessionFileReason(reason: string | undefined): boolean {
 }
 
 async function upgradeGenerationMetadata(store: Store, asset: Record<string, unknown>, generation: GenerationMetadata, candidate: MediaCandidate | null = null): Promise<boolean> {
-  const currentRank = PROMPT_RANK[(asset.source as Record<string, unknown> | undefined)?.prompt_status as string] ?? 0;
-  const nextRank = PROMPT_RANK[generation.promptStatus] ?? 0;
-  const canUpgradePrompt = nextRank > currentRank
-    || (nextRank === currentRank && nextRank > 0 && generation.prompt && generation.prompt !== (asset.prompt as string));
+  const assetSource = (asset.source as Record<string, unknown> | undefined) || {};
+  const currentPrompt = String(asset.prompt ?? "").trim();
+  const currentStatus = String(
+    assetSource.prompt_status
+      || (asset.business_fields as Record<string, unknown> | undefined)?.prompt_status
+      || (currentPrompt ? "user-message" : "not-available"),
+  );
+  // The shared prompt rank table (lib/prompt-rank.mjs) decides whether the
+  // session's prompt replaces the archived one; same-rank candidates only win
+  // when strictly longer.
+  const canUpgradePrompt = shouldUpgradePrompt(
+    { prompt: currentPrompt, status: currentStatus, priority: 0 },
+    { prompt: String(generation.prompt || "").trim(), status: generation.promptStatus, priority: 0 },
+  );
   const nextTheme = promptTheme(generation.prompt);
   // A prompt or theme a human typed through a marked entry point wins over
   // the session file; the theme is only recomputed alongside a prompt that is
@@ -330,12 +368,13 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
   // never rewrites it over a user edit either.
   const statusUpgradable = canUpgradePrompt && !isPromptUserEdited(asset);
   const themeChanged = !isThemeUserEdited(asset) && promptChanged && Boolean(nextTheme) && asset.theme !== nextTheme;
-  const assetSource = (asset.source as Record<string, unknown> | undefined) || {};
   const existingUserMessage = [assetSource.user_message, (asset.business_fields as Record<string, unknown> | undefined)?.user_message]
     .map((value) => (typeof value === "string" ? value.trim() : ""))
     .find((value) => value) || "";
-  const nextUserMessage = generation.userMessage || null;
-  const userMessageChanged = !existingUserMessage && Boolean(nextUserMessage);
+  // The first archived instruction wins; only a strict extension of it may
+  // update the slot (lib/library-ingest.mjs).
+  const nextUserMessage = mergedUserMessage(existingUserMessage, generation.userMessage || "");
+  const userMessageChanged = nextUserMessage !== existingUserMessage;
   const nextSource: Record<string, unknown> = {
     ...assetSource,
     grok_session_path: generation.sessionPath || assetSource.grok_session_path || null,
@@ -357,7 +396,7 @@ async function upgradeGenerationMetadata(store: Store, asset: Record<string, unk
     || JSON.stringify(assetSource.grok_alternate_paths || []) !== JSON.stringify(nextSource.grok_alternate_paths || []);
   const businessStatusChanged = statusUpgradable && generation.promptStatus && (asset.business_fields as Record<string, unknown> | undefined)?.prompt_status !== generation.promptStatus;
   if (!promptChanged && !themeChanged && !sourceChanged && !businessStatusChanged && !userMessageChanged) return false;
-  await (store as unknown as { updateMetadata: (projectId: string, assetId: string, metadata: Record<string, unknown>) => Promise<void> }).updateMetadata(
+  await store.updateMetadata(
     asset.project_id as string,
     asset.id as string,
     {
@@ -403,17 +442,5 @@ function mimeTypeForExtension(ext: string): string { return ({ ".apng": "image/a
 async function walkFiles(root: string): Promise<string[]> { let entries; try { entries = await readdir(root, { withFileTypes: true }); } catch (error: unknown) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return []; throw error; } const files: string[] = []; for (const entry of entries) { if (entry.name.startsWith(".") || entry.name.endsWith(".lock")) continue; const entryPath = join(root, entry.name); if (entry.isSymbolicLink()) { if (!entry.isDirectory()) files.push(entryPath); continue; } if (entry.isDirectory()) files.push(...await walkFiles(entryPath)); else if (entry.isFile()) files.push(entryPath); } return files; }
 export async function sha256File(filePath: string): Promise<string> { const hash = createHash("sha256"); await pipeline(createReadStream(filePath), hash); return hash.digest("hex"); }
 function isSafeChildPath(parent: string, child: string): boolean { const p = relative(resolve(parent), resolve(child)); return Boolean(p) && !p.startsWith("..") && !p.includes(`..${sep}`) && !isAbsolute(p); }
-function isAutomaticImportSuppressed(error: unknown): boolean { return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "AUTOMATIC_IMPORT_SUPPRESSED"); }
-function isAutomaticIngestDuplicate(error: unknown): boolean { return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "AUTOMATIC_INGEST_DUPLICATE"); }
-function automaticDuplicateReason(error: unknown): string { return (error as { identityKind?: unknown })?.identityKind === "pixel" ? "already-archived-same-pixels" : "already-archived-same-content"; }
-async function createAutomaticAssetWithCollisionFallback(store: Store, input: Record<string, unknown>, options: Record<string, unknown>): Promise<Record<string, unknown>> {
-  try {
-    return await store.createAsset(input, options);
-  } catch (error) {
-    if (!error || typeof error !== "object" || (error as { code?: unknown }).code !== "ASSET_ALREADY_EXISTS") throw error;
-    const baseId = String(input.assetId || "grok-media").slice(0, 140);
-    return store.createAsset({ ...input, assetId: `${baseId}-${randomUUID().slice(0, 8)}` }, options);
-  }
-}
 async function isCanonicalChildPath(parentReal: string, childPath: string): Promise<boolean> { try { return isSafeChildPath(parentReal, await realpath(childPath)); } catch { return false; } }
 export const __test = { isSafeChildPath, isCanonicalChildPath, sessionMediaLocation, buildGrokAssetId, sha256File, MEDIA_EXTENSIONS, VIDEO_EXTENSIONS, dirname, assertSafeSessionFile, upgradeGenerationMetadata };
