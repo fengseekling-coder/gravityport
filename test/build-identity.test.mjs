@@ -295,11 +295,12 @@ test("desktop main.mjs derives the app root from its own module location, not ap
   // 不再通过 app.getAppPath() 拼出 appDir，也不依赖 process.cwd()。
   assert.ok(!source.includes("app.getAppPath()"), "must not use app.getAppPath()");
   assert.ok(!source.includes("process.cwd()"), "must not use process.cwd()");
-  // Renderer still loads the verified loopback service. The management
-  // capability travels only in the URL fragment, which HTTP never receives.
-  assert.ok(source.includes("const clientUrl = new URL(activeService.url)"), "must derive the renderer URL from the verified active service URL");
-  assert.ok(source.includes("mosa-client-token="), "must deliver the management capability through the fragment");
-  assert.ok(source.includes("windowRef.loadURL(clientUrl.toString())"), "must load the capability-bearing loopback URL");
+  // Renderer still loads the verified loopback service. 任务 311：客户端凭据
+  // 不再放进 URL fragment——渲染层在首次请求前经 get-client-token IPC 领取，
+  // 主进程只对已核实服务 origin 上的主框架回答；loadURL 只用干净的服务地址。
+  assert.ok(source.includes("await windowRef.loadURL(activeService.url)"), "must load the verified loopback service URL without a credential fragment");
+  assert.ok(!source.includes("clientUrl.hash"), "the client credential must not travel in the URL fragment");
+  assert.ok(source.includes('ipcMain.handle("get-client-token"'), "the renderer obtains the capability through the main-frame-only bridge");
   assert.ok(source.includes("windowRef.loadFile(startupShellPath)"), "startup may load only the packaged local shell before the verified loopback renderer");
   assert.ok(source.includes("preload: preloadPath"), "must keep the preload path");
   assert.ok(source.includes("sandbox: true"), "must keep the sandboxed renderer");

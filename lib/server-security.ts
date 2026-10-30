@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { realpathSync } from "node:fs";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const CLIENT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 export const MOSA_BROWSER_CLIENT_COOKIE_PREFIX = "mosa-browser-client-";
@@ -54,6 +54,46 @@ export function mosaBrowserClientCookieHeader(value: unknown, port: unknown): st
   const name = mosaBrowserClientCookieName(port);
   const token = mosaBrowserClientToken(value, port);
   return name && token ? `${name}=${token}; Path=/; HttpOnly; SameSite=Strict` : "";
+}
+
+// Service-identity challenge (task 311): the desktop shell must not trust the
+// public /api/health fields alone before attaching and handing out the client
+// capability. The running service proves possession of the shared client token
+// by signing a fresh nonce; the bound port is part of the signed message so a
+// proof captured on one port never verifies for a service on another.
+const SERVICE_IDENTITY_PROOF_PREFIX = "gravityport-service-identity\0";
+const SERVICE_IDENTITY_NONCE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
+
+export function isMosaServiceIdentityNonce(value: unknown): value is string {
+  return typeof value === "string" && SERVICE_IDENTITY_NONCE_PATTERN.test(value);
+}
+
+export function mosaServiceIdentityProof(
+  token: unknown,
+  { port, nonce }: { port: unknown; nonce: unknown },
+): string {
+  const key = normalizeMosaClientToken(token);
+  const normalizedPort = normalizeBrowserClientPort(port);
+  if (!key || !normalizedPort || !isMosaServiceIdentityNonce(nonce)) return "";
+  return createHmac("sha256", key)
+    .update(SERVICE_IDENTITY_PROOF_PREFIX)
+    .update(normalizedPort)
+    .update("\0")
+    .update(nonce)
+    .digest("base64url");
+}
+
+export function isAuthorizedMosaServiceIdentityProof(
+  providedProof: unknown,
+  token: unknown,
+  { port, nonce }: { port: unknown; nonce: unknown },
+): boolean {
+  const expected = mosaServiceIdentityProof(token, { port, nonce });
+  if (!expected) return false;
+  const provided = typeof providedProof === "string" ? providedProof : "";
+  const expectedBytes = Buffer.from(expected);
+  const providedBytes = Buffer.from(provided);
+  return providedBytes.length === expectedBytes.length && timingSafeEqual(providedBytes, expectedBytes);
 }
 
 function cookieValue(cookieHeader: unknown, name: string): string {

@@ -101,6 +101,7 @@ export type AssetPage = {
 type JsonValue = Record<string, unknown>
 
 let token = ""
+let desktopTokenPromise: Promise<string> | null = null
 function takeBootstrapToken(): string {
   if (token) return token
   try {
@@ -116,6 +117,37 @@ function takeBootstrapToken(): string {
     }
   } catch { token = "" }
   return token
+}
+
+// 任务 311：桌面版的客户端凭据不再写进网址片段。渲染层先向主进程领取一次
+// （主进程只对「已核实服务 origin 上的主框架」回答），再发任何请求；浏览器 /
+// 源码模式没有 electronAPI，保留原来从 hash 读取的逻辑。
+function desktopClientToken(): Promise<string> | null {
+  if (typeof window === "undefined") return null
+  // Cast the whole window: tests compile this file standalone without
+  // desktop.ts's global Window augmentation.
+  const bridge = (window as unknown as { electronAPI?: { getClientToken?: () => Promise<unknown> } }).electronAPI
+  const getClientToken = bridge?.getClientToken
+  if (typeof getClientToken !== "function") return null
+  desktopTokenPromise ??= Promise.resolve(getClientToken())
+    .then((value) => {
+      const received = typeof value === "string" ? value.trim() : ""
+      if (received) {
+        token = received
+        try { sessionStorage.setItem("mosa.client-token", received) } catch {}
+      }
+      return token
+    })
+    .catch(() => token)
+  return desktopTokenPromise
+}
+
+/** Resolves the renderer's client capability before anything is sent: awaits
+ * the desktop bridge when present, otherwise reads the browser hash bootstrap.
+ * Every request helper goes through here, so no request leaves without the
+ * capability (or its documented absence) having settled. */
+export function ensureClientToken(): Promise<string> {
+  return desktopClientToken() ?? Promise.resolve(takeBootstrapToken())
 }
 
 let sessionRefreshPromise: Promise<boolean> | null = null
@@ -142,7 +174,7 @@ export async function requestJson<T>(path: string, {
   for (let attempt = 0; attempt < 2; attempt++) {
     const headers: Record<string, string> = {}
     if (body) headers["content-type"] = "application/json"
-    const clientToken = takeBootstrapToken()
+    const clientToken = await ensureClientToken()
     if (isMutation && clientToken) headers["x-mosa-client-token"] = clientToken
     const result = await fetch(path, {
       method,
@@ -459,7 +491,7 @@ export async function updateAssetMetadata(project: string, id: string, patch: { 
 export async function uploadVideoPoster(project: string, id: string, poster: Blob): Promise<void> {
   const result = await fetch(`/api/assets/${e(project)}/${e(id)}/poster`, {
     method: "POST",
-    headers: { "content-type": poster.type || "image/webp", ...mosaMutationHeaders("POST") },
+    headers: { "content-type": poster.type || "image/webp", ...(await mosaMutationHeaders("POST")) },
     body: poster,
     credentials: "same-origin",
   })
@@ -717,17 +749,17 @@ export function resolveImportDuplicates(project: string, actions: ImportResolveA
 }
 
 /** Mutation headers for callers that must stream a raw body (import staging). */
-export function mosaMutationHeaders(method = "POST"): Record<string, string> {
+export async function mosaMutationHeaders(method = "POST"): Promise<Record<string, string>> {
   const verb = String(method || "GET").toUpperCase()
   if (verb === "GET" || verb === "HEAD" || verb === "OPTIONS") return {}
-  const clientToken = takeBootstrapToken()
+  const clientToken = await ensureClientToken()
   return clientToken ? { "x-mosa-client-token": clientToken } : {}
 }
 
 export async function stageImportFile(file: File): Promise<string> {
   const result = await fetch("/api/import/stage", {
     method: "POST",
-    headers: { "x-mosa-file-name": encodeURIComponent(file.name), ...mosaMutationHeaders("POST") },
+    headers: { "x-mosa-file-name": encodeURIComponent(file.name), ...(await mosaMutationHeaders("POST")) },
     body: file,
     credentials: "same-origin",
   })
@@ -870,5 +902,7 @@ export async function openLibraryFolder(path: string, revealFile = false) {
   })
 }
 
-// Take the transient token immediately, not only on a later mutation.
-if (typeof window !== "undefined") takeBootstrapToken()
+// Start the capability load immediately, not only on a later request: the
+// browser path parses the URL fragment, the desktop path asks the main process
+// (task 311) so the very first request already carries the token.
+if (typeof window !== "undefined") void ensureClientToken()

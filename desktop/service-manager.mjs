@@ -1,7 +1,9 @@
 import { readFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
+import { isAuthorizedMosaServiceIdentityProof } from "../lib/server-security.js";
 import {
   DEFAULT_MOSA_DESKTOP_PORT,
   DEFAULT_MOSA_DISCOVERY_PORTS,
@@ -56,6 +58,19 @@ export class MosaServiceLibraryMismatchError extends MosaServiceConflictError {
     this.port = port;
     this.expectedLibraryDir = resolve(expectedLibraryDir);
     this.actualLibraryDir = resolve(actualLibraryDir);
+  }
+}
+
+// Task 311: the health endpoint's fields are public and copyable, so a same-
+// library listener that answers every identity probe but cannot prove
+// possession of the client token must never be attached to and never receives
+// the credential. The message stays free of tokens and fingerprints.
+export class MosaServiceUnverifiedError extends MosaServiceConflictError {
+  constructor(port) {
+    super(`Port ${port} reports GravityPort identity but did not prove it is the local GravityPort service. Quit the other program using this port and reopen GravityPort.`);
+    this.name = "MosaServiceUnverifiedError";
+    this.code = "MOSA_SERVICE_UNVERIFIED";
+    this.port = port;
   }
 }
 
@@ -129,20 +144,38 @@ export async function startMosaService(options = {}) {
     if (initial.state === "attached") {
       const identityConflict = serviceIdentityConflict(initial, options.expectedIdentity);
       if (!identityConflict) {
-        if (options.preferOwnedRuntime === true && candidatePort === port) {
-          const retireService = options.retireVerifiedService || retireVerifiedMosaService;
-          const retired = await retireService(initial, {
-            host,
-            expectedIdentity: options.expectedIdentity,
-            fetchImpl: options.fetchImpl,
-            probeTimeoutMs: options.probeTimeoutMs,
-          });
-          if (retired) {
+        // Task 311: a matching health identity alone no longer attaches — the
+        // listener must first prove possession of the client token, otherwise
+        // a lookalike that copied the public health fields would receive the
+        // credential and the desktop IPC surface.
+        if (await verifiedForAttach(candidatePort, options)) {
+          if (options.preferOwnedRuntime === true && candidatePort === port) {
+            const retireService = options.retireVerifiedService || retireVerifiedMosaService;
+            const retired = await retireService(initial, {
+              host,
+              expectedIdentity: options.expectedIdentity,
+              fetchImpl: options.fetchImpl,
+              probeTimeoutMs: options.probeTimeoutMs,
+            });
+            if (retired) {
+              availablePorts.push(candidatePort);
+              continue;
+            }
+          }
+          return attachedService(initial, options.clientToken);
+        }
+        // Unverified: fail closed on this port. A listener the runtime lock
+        // still vouches for may be retired through the same controlled path as
+        // a matching-identity owner; anything else is a conflict.
+        if (candidatePort === port
+          && (options.preferOwnedRuntime === true || options.allowSameVersionServiceReplacement === true)) {
+          if (await retireUnverifiedService(initial, options)) {
             availablePorts.push(candidatePort);
             continue;
           }
         }
-        return attachedService(initial, options.clientToken);
+        lastConflict = new MosaServiceUnverifiedError(candidatePort);
+        continue;
       }
       lastConflict = identityConflict;
       identityMismatch = identityConflict;
@@ -207,7 +240,14 @@ export async function startMosaService(options = {}) {
           });
           if (retry.state === "attached") {
             const retryConflict = serviceIdentityConflict(retry, options.expectedIdentity);
-            if (!retryConflict) return attachedService(retry, options.clientToken);
+            if (!retryConflict) {
+              // Whoever won the retired port must prove the service identity
+              // before this launch attaches to it (task 311).
+              if (await verifiedForAttach(identityMismatch.service.port, options)) {
+                return attachedService(retry, options.clientToken);
+              }
+              throw new MosaServiceUnverifiedError(retry.port);
+            }
             throw retryConflict;
           }
           if (retry.state === "conflict") throw retry.error;
@@ -241,7 +281,14 @@ export async function startMosaService(options = {}) {
       const retry = await probeMosaService(probeOptions);
       if (retry.state === "attached") {
         const identityConflict = serviceIdentityConflict(retry, options.expectedIdentity);
-        if (!identityConflict) return attachedService(retry, options.clientToken);
+        if (!identityConflict) {
+          // A winner of the port race attaches only after the challenge (311).
+          if (await verifiedForAttach(candidatePort, options)) {
+            return attachedService(retry, options.clientToken);
+          }
+          lastConflict = new MosaServiceUnverifiedError(candidatePort);
+          continue;
+        }
         lastConflict = identityConflict;
         continue;
       }
@@ -319,6 +366,82 @@ export async function probeMosaService(options = {}) {
     return conflict(reason, error, { retryable: true });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Task 311: prove the listener on `port` holds the shared client token by
+ * POSTing a fresh nonce to POST /api/service-identity and checking the signed
+ * proof. The proof binds the port the desktop is attaching to, so a response
+ * replayed from a service on another port never verifies. Every failure shape
+ * — 404 (pre-challenge runtime), non-JSON body, timeout, wrong proof, missing
+ * client token — resolves to `false`: the caller must then treat the listener
+ * as unverified. Read-only: no credential travels in the request, only the
+ * throwaway nonce.
+ */
+export async function verifyMosaServiceIdentity(options = {}) {
+  const host = options.host || DEFAULT_HOST;
+  const port = normalizeMosaPort(options.port ?? DEFAULT_MOSA_DESKTOP_PORT, { label: "GravityPort desktop port" });
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const timeoutMs = Number.isFinite(options.timeoutMs)
+    ? Math.max(100, Number(options.timeoutMs))
+    : DEFAULT_PROBE_TIMEOUT_MS;
+  const nonce = randomBytes(32).toString("base64url");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`http://${host}:${port}/api/service-identity`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ nonce }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return false;
+    const payload = await response.json();
+    return isAuthorizedMosaServiceIdentityProof(payload?.proof, options.clientToken, { port, nonce });
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Runs the challenge for a probed service right before attaching to it. Any
+ * failure (including an absent client token) resolves to `false`.
+ */
+async function verifiedForAttach(port, options = {}) {
+  const verifyIdentity = options.verifyServiceIdentity || verifyMosaServiceIdentity;
+  try {
+    return await verifyIdentity({
+      host: options.host || DEFAULT_HOST,
+      port,
+      clientToken: options.clientToken,
+      fetchImpl: options.fetchImpl,
+      timeoutMs: options.probeTimeoutMs,
+    }) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Retires an attached-but-unverified listener through the same controlled,
+ * runtime-lock-verified path as the matching-identity flows. Only used where
+ * this launch may already replace a same-library owner (packaged handoff or
+ * source same-version replacement). Returns false when the owner survives.
+ */
+async function retireUnverifiedService(service, options = {}) {
+  const retireService = options.retireVerifiedService || retireVerifiedMosaService;
+  try {
+    return await retireService(service, {
+      host: options.host || DEFAULT_HOST,
+      expectedIdentity: options.expectedIdentity,
+      fetchImpl: options.fetchImpl,
+      probeTimeoutMs: options.probeTimeoutMs,
+    }) === true;
+  } catch {
+    return false;
   }
 }
 
