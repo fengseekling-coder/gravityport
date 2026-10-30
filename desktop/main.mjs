@@ -296,6 +296,21 @@ const MAX_NATIVE_DRAG_FILES = 512;
 // can supply their own preview directly; this tiny PNG is only the fallback for
 // video/unsupported image formats and never leaves the process.
 const NATIVE_DRAG_FALLBACK_ICON = nativeImage.createFromDataURL("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAACTSURBVHgBpZKBCYAgEEV/TeAIjuIIbdQIuUGt0CS1gW1iZ2jIVaTnhw+Cvs8/OYDJA4Y8kR3ZR2/kmazxJbpUEfQ/Dm/UG7wVwHkjlQdMFfDdJMFaACebnjJGyDWgcnZu1/lrCrl6NCoEHJBrDwEr5NrT6ko/UV8xdLAC2N49mlc5CylpYh8wCwqrvbBGLoKGvz8Bfq0QPWEUo/EAAAAASUVORK5CYII=");
+// macOS draws the drag image, and the drop animation, at the icon's own size,
+// so a full-resolution original makes the image balloon right before it lands.
+// Hand the OS a small preview instead; the dragged files are untouched.
+const NATIVE_DRAG_ICON_MAX_EDGE = 128;
+function nativeDragIcon(image) {
+  const { width, height } = image.getSize();
+  const longest = Math.max(width, height);
+  if (!longest || longest <= NATIVE_DRAG_ICON_MAX_EDGE) return image;
+  const scale = NATIVE_DRAG_ICON_MAX_EDGE / longest;
+  return image.resize({
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+    quality: "good",
+  });
+}
 const BOUNDS_PATH = join(desktopDataDir, "window-bounds.json");
 const DEFAULT_BOUNDS = { width: 1320, height: 860 };
 
@@ -762,7 +777,7 @@ function registerIPC() {
     const { files } = allowedLibraryFiles(requestedPaths);
     if (!files.length) return { ok: false };
     let icon = nativeImage.createFromPath(files[0]);
-    if (icon.isEmpty()) icon = NATIVE_DRAG_FALLBACK_ICON;
+    icon = icon.isEmpty() ? NATIVE_DRAG_FALLBACK_ICON : nativeDragIcon(icon);
     event.sender.startDrag({ file: files[0], files, icon });
     return { ok: true, count: files.length };
   });

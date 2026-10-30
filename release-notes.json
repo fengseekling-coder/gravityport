@@ -30,7 +30,8 @@
         "修复了在「设置 → 关于」中下载更新出错后，按钮一直停在「正在下载」的问题。系统已弹出说明时，不再另外提示更新失败。",
         "修复了 Grok 收到与其他来源相同的图片时，会改掉原有提示词的问题。",
         "修复了删除 Midjourney 预览图后，收到同一作品的原图时又被收录的问题。",
-        "修复了素材详情中参考图缩略图被压成正方形的问题。现按原图比例完整显示。"
+        "修复了素材详情中参考图缩略图被压成正方形的问题。现按原图比例完整显示。",
+        "修复了在 macOS 上将素材拖到其他应用时，松手瞬间图片突然放大的问题。"
       ],
       "other": [
         "为软件内更新增加备用签名钥匙。"
@@ -65,7 +66,8 @@
         "Fixed an issue where the update button in Settings → About stayed on Downloading after a download error. When a system dialog already explains the problem, no separate update-failed message appears.",
         "Fixed an issue where Grok could change the prompt of an image first captured from another source.",
         "Fixed an issue where a deleted Midjourney preview could be captured again when the full-size image of the same work arrived.",
-        "Fixed an issue where reference image thumbnails in the details panel were squeezed into squares. They now keep their original proportions."
+        "Fixed an issue where reference image thumbnails in the details panel were squeezed into squares. They now keep their original proportions.",
+        "Fixed an issue on macOS where an image suddenly enlarged at the moment it was dropped into another app."
       ],
       "other": [
         "Added a backup signing key for in-app updates."
