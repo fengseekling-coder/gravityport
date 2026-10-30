@@ -2057,10 +2057,13 @@ export default function App() {
     // is a marquee, owned by onGridPointerDown.
     if (!cardIsSelected(pressedId)) return
     const insideStack = Boolean(stackId)
-    // Inside a stack every card is a reorder candidate. In the root gallery
-    // the whole selection drags; each stack card in it stands for its whole
-    // stack (never just its cover).
-    const dragIds = insideStack ? [pressedId] : dragIdsForCard(new Set(selectionIds), pressedId)
+    // The whole selection drags in the root gallery and inside a stack alike
+    // (task 308): in the root each stack card stands for its whole stack
+    // (never just its cover), inside a stack the selected members drag out and
+    // reorder as one block. A single (or implicit) selection still drags that
+    // one card alone — dragIdsForCard returns [pressedId] for it, and a press
+    // on an unselected card never reaches here (task 155).
+    const dragIds = dragIdsForCard(new Set(selectionIds), pressedId)
     const stackOf = stackOfCard()
     const stackIds = insideStack ? [] : [...new Set(dragIds.map(stackOf).filter(Boolean))]
     const nativeController = createNativeDragController({
