@@ -34,6 +34,9 @@ export type MenuContext = {
    * data or files); the blank-area 粘贴 then offers paste-import. A pending
    * cut keeps the menu on the cut-moving paste instead. */
   clipboardImportable: boolean
+  /** Task 304: the 待整理 view (also inside a stack opened from it). Only there
+   * do the card menus offer 标为已整理. */
+  unorganizedView: boolean
 }
 
 /** Drop empty sections and join the rest with one separator each, so the
@@ -151,6 +154,7 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
     { kind: "item", id: "toggle-favorite", label: ctx.favorite ? "取消收藏" : "收藏", icon: "heart" },
     { kind: "item", id: "add-to-group", label: "添加分组", icon: "plus", submenu: groupSubmenu("add-to-group", ctx.groups) },
     { kind: "item", id: "remove-from-group", label: "移除分组", icon: "folder", disabled: !ctx.anyGrouped },
+    ...(ctx.unorganizedView ? [{ kind: "item" as const, id: "mark-sorted", label: "标为已整理", icon: "check" }] : []),
   ]
 
   // A selection containing stack nodes exports nothing (old grammar): the
@@ -201,6 +205,7 @@ function buildStackMenu(ctx: MenuContext): MenuEntry[] {
     [
       { kind: "item" as const, id: "stack-add-to-group", label: "添加分组", icon: "plus", submenu: groupSubmenu("stack-add-to-group", ctx.groups) },
       { kind: "item" as const, id: "stack-remove-from-group", label: "移除分组", icon: "folder" },
+      ...(ctx.unorganizedView ? [{ kind: "item" as const, id: "stack-mark-sorted", label: "标为已整理", icon: "check" }] : []),
     ],
     [
       { kind: "item" as const, id: "rename-stack", label: "重命名堆叠" },
