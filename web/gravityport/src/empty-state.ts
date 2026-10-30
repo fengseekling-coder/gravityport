@@ -72,7 +72,7 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
     return {
       kind: "unorganized-empty",
       title: "都整理好了",
-      description: "还没有分组的素材会出现在这里",
+      description: "新收进来的素材会先放在这里。收藏、放进分组、加标签或标为已整理后，就会离开这里",
       clearAction: false,
     };
   }

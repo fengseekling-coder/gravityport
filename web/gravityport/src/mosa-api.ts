@@ -469,7 +469,7 @@ export async function uploadVideoPoster(project: string, id: string, poster: Blo
   }
 }
 
-type BatchResult = { id: string; ok?: boolean; error?: string }
+type BatchResult = { id: string; ok?: boolean; error?: string; was_organized?: boolean }
 
 /** What the server actually confirmed for a batch action. Callers must speak
  * in these counts — a partial failure is never allowed to look like success. */
@@ -496,7 +496,13 @@ function failureMessage(error: unknown): string {
   return String(error)
 }
 
-async function runBatchAction(project: string, action: "favorite" | "trash" | "group", assetIds: string[], extra: JsonValue = {}): Promise<BatchOutcome> {
+async function runBatchAction(
+  project: string,
+  action: "favorite" | "trash" | "group" | "curate",
+  assetIds: string[],
+  extra: JsonValue = {},
+  onConfirmed?: (item: BatchResult) => void,
+): Promise<BatchOutcome> {
   const ids = [...new Set(assetIds)]
   if (!ids.length) return emptyOutcome(0)
   const failedIds = new Set<string>()
@@ -515,6 +521,7 @@ async function runBatchAction(project: string, action: "favorite" | "trash" | "g
       for (const item of results) {
         if (typeof item?.id !== "string") continue
         confirmed.add(item.id)
+        onConfirmed?.(item)
         if (item.ok === false) {
           failedIds.add(item.id)
           if (!firstError) firstError = item.error || "Some assets could not be updated"
@@ -552,6 +559,17 @@ export async function setAssetsGroup(project: string, ids: string[], group: stri
 
 export async function setAssetsFavorite(project: string, ids: string[], favorite: boolean): Promise<BatchOutcome> {
   return runBatchAction(project, "favorite", ids, { favorite })
+}
+
+/** 标为已整理 / undo (task 304). `newlyOrganizedIds` are the confirmed rows that
+ * were unorganized before this call; an undo puts back exactly those. */
+export async function setAssetsCurated(project: string, ids: string[], curated: boolean) {
+  const wasUnorganized: string[] = []
+  const outcome = await runBatchAction(project, "curate", ids, { curated }, item => {
+    if (item.was_organized === false) wasUnorganized.push(item.id)
+  })
+  const newlyOrganizedIds = curated ? wasUnorganized.filter(id => !outcome.failedIds.includes(id)) : []
+  return { outcome, newlyOrganizedIds }
 }
 
 export async function restoreAsset(project: string, id: string) {

@@ -58,7 +58,7 @@ import {
 import { buildReleaseNoteBlocks } from "./release-notes-view"
 import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth,
-  fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite,
+  fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite, setAssetsCurated,
   toggleAssetFavorite, updateAssetMetadata, uploadVideoPoster, moveAssetsToTrash, setAssetsGroup,
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
   moveAssetsToStack, openLibraryFolder,
@@ -3209,6 +3209,7 @@ export default function App() {
       // Asset and stack-card menus never offer paste-to-import: the blank-area
       // menus own it (task 239).
       clipboardImportable: false,
+      unorganizedView: scope === "unorganized",
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), ctx.selectionCount)
     setMenu({ x, y, entries, target: "asset", selectionCount: ctx.selectionCount, stackId: "", stackName: "", stackCount: 0 })
@@ -3232,6 +3233,7 @@ export default function App() {
       trashCount: navigation?.trash ?? 0,
       canCopyFiles: typeof desktopAPI()?.writeClipboardFiles === "function",
       clipboardImportable: false,
+      unorganizedView: scope === "unorganized",
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), 0)
     setMenu({ x, y, entries, target: "stack", selectionCount: 0, stackId: stack.id, stackName: stack.name || cardName, stackCount: stack.count })
@@ -3263,6 +3265,7 @@ export default function App() {
       trashCount: navigation?.trash ?? 0,
       canCopyFiles: typeof api?.writeClipboardFiles === "function",
       clipboardImportable: false,
+      unorganizedView: false,
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), 0)
     // An empty builder result (stack surfaces inside the trash) opens nothing.
@@ -3362,6 +3365,35 @@ export default function App() {
       .catch(error => notify(errorMessage(error)))
   }
 
+  // 标为已整理 (task 304): plain cards plus every member of each stack card,
+  // whatever their state. The toast undo puts back only the assets this call
+  // moved from unorganized to organized. The grid loses the cards through the
+  // library change event, so only the navigation counts refresh here.
+  const markSorted = async (targetProject: string, plainIds: string[], stackIds: string[]) => {
+    try {
+      const members = await Promise.all(stackIds.map(id => listStackMemberIds(targetProject, id)))
+      const ids = [...new Set([...plainIds, ...members.flat()])]
+      if (!ids.length) return
+      const { outcome, newlyOrganizedIds } = await setAssetsCurated(targetProject, ids, true)
+      if (!outcome.succeeded) { notify(outcome.firstError || tr("标为已整理失败")); return }
+      applySelection([], "")
+      const text = outcome.failed
+        ? tr("已标为整理好 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+        : tr("已标为整理好")
+      if (newlyOrganizedIds.length) {
+        notifyWithAction(text, { label: tr("撤销"), run: () => { void undoMarkSorted(targetProject, newlyOrganizedIds) } })
+      } else notify(text)
+      refreshNavigation()
+    } catch (error) { notify(errorMessage(error)) }
+  }
+  const undoMarkSorted = async (targetProject: string, ids: string[]) => {
+    try {
+      const { outcome } = await setAssetsCurated(targetProject, ids, false)
+      refreshNavigation()
+      notify(outcome.succeeded ? tr("已撤销") : outcome.firstError || tr("撤销失败"))
+    } catch (error) { notify(errorMessage(error)) }
+  }
+
   const runMenuAction = (id: string) => {
     const target = menu
     setMenu(null)
@@ -3421,6 +3453,10 @@ export default function App() {
     }
     else if (id.startsWith("add-to-group:")) assignSelectionToGroup(id.slice("add-to-group:".length))
     else if (id === "remove-from-group") assignSelectionToGroup("")
+    else if (id === "mark-sorted") {
+      const { plainIds, stackIds } = splitSelectionStacks(ids)
+      void markSorted(asset?.project_id || project, plainIds, stackIds)
+    }
     else if (id === "export") exportAsset()
     else if (id === "restore-selection") void restoreSelection()
     else if (id === "permanent-delete") setPermanentDeleteIds(ids)
@@ -3461,6 +3497,7 @@ export default function App() {
         })
         .catch(error => notify(errorMessage(error)))
     }
+    else if (id === "stack-mark-sorted") void markSorted(project, [], [target.stackId])
     else if (id === "stack-remove-from-group") {
       assignStackToGroup(project, target.stackId, "")
         .then(() => {

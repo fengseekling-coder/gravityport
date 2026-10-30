@@ -697,7 +697,7 @@ image」），只跟着真升级的提示词重算，且永不覆盖用户改过
 | 我的分组 | `assets.group_name` + `groups` 表 | 手动 | 一张图最多 1 个 |
 | 智能分组 | `assets.source_group`，写死的来源集合 | 自动 | 恰好 1 个；手动导入与 MCP 的图不在任何一项里 |
 | 堆叠 | `asset_stacks`（origin `auto` / `manual`）、`asset_stack_members` | 自动（同会话满 2 张）+ 手动 | 一张图最多 1 个；封面固定最早那张（现状） |
-| 待整理 | 没分组且不在任何堆叠 | 算出来 | — |
+| 待整理 | 没整理过的图（定义见 `lib/asset-organized.mjs`）；自动堆叠不算整理，按堆叠成一张卡 | 算出来；「标为已整理」 | — |
 | 收藏 | `favorite = 1` 或 `rating > 0` | 手动心形；打分只有 MCP 能写 | — |
 | 标签 | `tags` / `asset_tags` | 手动；系统标签隐藏 | 多个 |
 | 版本树 | 对话轮次（推算）、确认关系 `generation_relations`、候选关系、版本历史 `parent_asset_id` | 手动确认 / 自动猜 / MCP 与 HTTP | 多对多（现状） |
@@ -705,6 +705,20 @@ image」），只跟着真升级的提示词重算，且永不覆盖用户改过
 | 项目 | `project_id` | MCP / HTTP | 一张图 1 个 |
 
 侧栏计数按张数，网格按卡片数（一个堆叠算一张）。
+
+**「整理过」清单**（`lib/asset-organized.mjs` 的 `assetOrganizedSql`，待整理、
+即梦删除同步、「标为已整理」共用一份；归档不算）。满足其一即整理过：
+
+- 收藏（`favorite = 1`）或打分（`rating > 0`）；
+- 放进我的分组；
+- 有用户标签。系统标签不算：收录程序写的 `web-capture`、`auto-archived`、
+  `manual-capture`；这张图自己来源的名字（`web-jimeng` → `jimeng`，
+  `codex-generated` → `codex`）；和这张图媒体类型相同的 `image` 或 `video`。
+  比较不分大小写。别家的来源名（如即梦图上的 `chatgpt`）和图上的 `video` 仍算用户标签；
+- 手动堆叠的成员（`asset_stacks.origin = 'manual'`）；
+- `metadata_json.curated` 为真（「标为已整理」写的，也认历史的 1 / "true"）；
+- 有整理备注（`metadata_json.curation_note` 去空格后非空）；
+- 手改过提示词或名字（`source_json` 的 `user_edited_at` / `prompt_user_edited_at`）。
 
 ### 8.5 删除
 
@@ -714,9 +728,8 @@ image」），只跟着真升级的提示词重算，且永不覆盖用户改过
 - **永久删除 / 清空回收站 / 90 天自动清**：删标签、版本行、堆叠成员（堆叠空了
   一起删）；生成记录连带删，指向它的确认关系和候选关系也删。
 - **有子版本的父版本**：移回收站和永久删除都会被拒（`VERSION_PARENT_HAS_CHILDREN`）。
-- **即梦站内删除同步**（#307）：默认开；整理过的不动（收藏、打分、分组、用户
-  标签、手动堆叠、标记整理、归档、手改提示词或名字）；有副本或派生版本的整组
-  不动；自动堆叠不算整理过；进回收站标 `provider-deleted:jimeng`。
+- **即梦站内删除同步**（#307）：默认开；整理过的不动（同 8.4 清单）；有副本或
+  派生版本的整组不动；进回收站标 `provider-deleted:jimeng`。
 - **MCP**：没有删除工具；唯一让图消失的是 `asset_archive`，进的不是回收站
   （见 8.4 归档）。
 - **在 Finder 里删素材文件**：库不监视目录，记录还在，原图打不开没有提示（现状）。

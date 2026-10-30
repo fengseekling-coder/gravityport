@@ -189,7 +189,6 @@ test("every organized kind the 2026-10-28 ruling adds is kept", async () => {
       manualStack: "7700970082708589801",
       curated: "7700970082708589802",
       curationNote: "7700970082708589803",
-      archived: "7700970082708589804",
       userEditedAt: "7700970082708589805",
       promptUserEditedAt: "7700970082708589806",
     };
@@ -202,7 +201,6 @@ test("every organized kind the 2026-10-28 ruling adds is kept", async () => {
     assert.equal(manualStackSummary.origin, "manual");
     await store.updateCuration("default", ingested.curated.id, { curated: true });
     await store.updateCuration("default", ingested.curationNote.id, { note: "构图很好" });
-    await store.archiveAsset("default", ingested.archived.id);
     await store.updateMetadata("default", ingested.userEditedAt.id, { source: { user_edited_at: "2026-10-28T08:00:00.000Z" } });
     await store.updateMetadata("default", ingested.promptUserEditedAt.id, { source: { prompt_user_edited_at: "2026-10-28T08:00:00.000Z" } });
 
@@ -210,7 +208,7 @@ test("every organized kind the 2026-10-28 ruling adds is kept", async () => {
       provider: "jimeng",
       items: Object.values(cases).map((itemId) => ({ recordId: "49017522166284", itemId })),
     });
-    assert.deepEqual(result, { trashed: 0, kept: 6, notFound: 0 });
+    assert.deepEqual(result, { trashed: 0, kept: 5, notFound: 0 });
     for (const asset of Object.values(ingested)) {
       assert.equal(await assetInTrash(store, "default", asset.id), false);
     }
@@ -220,6 +218,9 @@ test("every organized kind the 2026-10-28 ruling adds is kept", async () => {
     const noteOnly = await ingestJimengCapture(store, "default", { itemId: "7700970082708589811" });
     await store.updateMetadata("default", noteOnly.id, { note: "随手记" });
     const manualCapture = await ingestJimengCapture(store, "default", { itemId: "7700970082708589812", captureMode: "manual" });
+    // 归档不再算整理过（task 304）：归档的图和没整理的一样移进回收站。
+    const archived = await ingestJimengCapture(store, "default", { itemId: "7700970082708589813" });
+    await store.archiveAsset("default", archived.id);
     // 自动堆叠成员：同一会话的第二张入库即堆（任务 249），origin 不是 manual。
     const autoStack = await ingestJimengCapture(store, "default", { itemId: "7700970082708589808", recordId: "49017522166284" });
     const autoStackSibling = await ingestJimengCapture(store, "default", { itemId: "7700970082708589809", recordId: "49017522166284" });
@@ -240,10 +241,11 @@ test("every organized kind the 2026-10-28 ruling adds is kept", async () => {
         { recordId: "49017522166284", itemId: "7700970082708589810" },
         { recordId: "49017522166284", itemId: "7700970082708589811" },
         { recordId: "49017522166284", itemId: "7700970082708589812" },
+        { recordId: "49017522166284", itemId: "7700970082708589813" },
       ],
     });
-    assert.deepEqual(negative, { trashed: 4, kept: 0, notFound: 0 });
-    for (const asset of [autoStack, categorized, noteOnly, manualCapture]) {
+    assert.deepEqual(negative, { trashed: 5, kept: 0, notFound: 0 });
+    for (const asset of [autoStack, categorized, noteOnly, manualCapture, archived]) {
       assert.equal(await assetInTrash(store, "default", asset.id), true);
       // 自动堆叠成员进回收站也带原因。
       const row = await store.getAsset("default", asset.id);
