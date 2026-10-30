@@ -91,12 +91,26 @@ test("the authorize URL and the exchange body carry the 127.0.0.1 callback", asy
 
 // 2. 环境变量白名单：只有回环地址被采用。
 test("outbound endpoint env overrides are honored only for loopback addresses", () => {
-  const defaults = {
-    token: getPinterestTokenUrl(),
-    api: getPinterestApiBase(),
-    authorize: getPinterestAuthorizeUrl(),
-    feedback: getFeedbackCollectUrl(),
-  };
+  // Read the built-in defaults with every override cleared, so an ambient
+  // value (e2e runs export MOSA_FEEDBACK_URL) cannot leak into the baseline.
+  const restoreDefaults = setEnv({
+    MOSA_PINTEREST_TOKEN_URL: "",
+    MOSA_PINTEREST_API_BASE: "",
+    MOSA_PINTEREST_AUTHORIZE_URL: "",
+    MOSA_FEEDBACK_URL: "",
+  });
+  let defaults;
+  try {
+    defaults = {
+      token: getPinterestTokenUrl(),
+      api: getPinterestApiBase(),
+      authorize: getPinterestAuthorizeUrl(),
+      feedback: getFeedbackCollectUrl(),
+    };
+  } finally {
+    restoreDefaults();
+  }
+  assert.ok(defaults.feedback.startsWith("https://"), "the built-in feedback collector is the default");
   assert.ok(defaults.token.startsWith("https://") && !defaults.token.includes("127.0.0.1"));
 
   const cases = [
