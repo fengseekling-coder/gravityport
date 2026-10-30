@@ -57,7 +57,7 @@
         "When a sharper version of the same web video arrives, it replaces the original instead of adding another copy.",
         "Automatic stacks now use the most recently captured image as their cover. In filtered views such as Favorites, Unsorted and groups, a stack card shows the image that matches. Stacks you created or reordered keep your order.",
         "Strengthened identity checks between GravityPort and its local background service: the app confirms the service before connecting, and the access credential no longer appears in the page address.",
-        "While GravityPort is closed, the browser extension can now hold more captures: the 256-item limit is gone and only the 512 MB total applies, and videos are saved too. Settings → Connect shows a notice when that space is nearly full or when some captures kept only a URL. Jimeng deletion sync also queues while GravityPort is closed and catches up when it opens. (Browser extension 0.15.44)"
+        "While GravityPort is closed, the browser extension now keeps captures up to 512 MB with no 256-item limit, videos included. Settings → Connect warns when space runs low or a capture kept only its URL. Jimeng deletions also queue until GravityPort opens. (Browser extension 0.15.44)"
       ],
       "fixed": [
         "Fixed an issue where capturing the same image again could overwrite the original or clear its prompt. The image is now replaced only by a sharper version, and the previous one moves to the Trash.",
