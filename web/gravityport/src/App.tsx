@@ -3366,8 +3366,8 @@ export default function App() {
   }
 
   // 标为已整理 (task 304): plain cards plus every member of each stack card,
-  // whatever their state. The toast undo puts back only the assets this call
-  // moved from unorganized to organized. The grid loses the cards through the
+  // whatever their state. The toast undo turns off only the curated flags this
+  // call turned on. The grid loses the cards through the
   // library change event, so only the navigation counts refresh here.
   const markSorted = async (targetProject: string, plainIds: string[], stackIds: string[]) => {
     try {

@@ -469,7 +469,7 @@ export async function uploadVideoPoster(project: string, id: string, poster: Blo
   }
 }
 
-type BatchResult = { id: string; ok?: boolean; error?: string; was_organized?: boolean }
+type BatchResult = { id: string; ok?: boolean; error?: string; previous_curated?: boolean }
 
 /** What the server actually confirmed for a batch action. Callers must speak
  * in these counts — a partial failure is never allowed to look like success. */
@@ -561,14 +561,16 @@ export async function setAssetsFavorite(project: string, ids: string[], favorite
   return runBatchAction(project, "favorite", ids, { favorite })
 }
 
-/** 标为已整理 / undo (task 304). `newlyOrganizedIds` are the confirmed rows that
- * were unorganized before this call; an undo puts back exactly those. */
+/** 标为已整理 / undo (task 304). `newlyOrganizedIds` are the confirmed rows
+ * whose curated flag this call turned on; an undo turns off exactly those, so
+ * a stack member that was already organized another way (favorite, group…)
+ * does not keep a leftover flag after undo. */
 export async function setAssetsCurated(project: string, ids: string[], curated: boolean) {
-  const wasUnorganized: string[] = []
+  const flagTurnedOn: string[] = []
   const outcome = await runBatchAction(project, "curate", ids, { curated }, item => {
-    if (item.was_organized === false) wasUnorganized.push(item.id)
+    if (item.previous_curated === false) flagTurnedOn.push(item.id)
   })
-  const newlyOrganizedIds = curated ? wasUnorganized.filter(id => !outcome.failedIds.includes(id)) : []
+  const newlyOrganizedIds = curated ? flagTurnedOn.filter(id => !outcome.failedIds.includes(id)) : []
   return { outcome, newlyOrganizedIds }
 }
 
