@@ -33,10 +33,15 @@ $FFMPEG -y -f lavfi -i testsrc=size=72x128:rate=10:duration=2 \
 $FFMPEG -y -f lavfi -i testsrc2=size=72x128:rate=30:duration=2 \
   -c:v libx264 -crf 0 -pix_fmt yuv420p -movflags +faststart capture-72x128.mp4
 
+# Same picture style, twice the linear size: the "clearer version" side of the
+# same-id video upgrade tests (144x256, 2 s, ~195 KB)
+$FFMPEG -y -f lavfi -i testsrc2=size=144x256:rate=30:duration=2 \
+  -c:v libx264 -crf 0 -pix_fmt yuv420p -movflags +faststart capture-144x256.mp4
+
 # Not a parseable video: file cut off before its tail moov
 head -c 600 moov-late-72x128.mp4 > truncated.mp4
 
 cp faststart-72x128.mp4 moov-late-72x128.mp4 rotated-90-72x128.mp4 \
-  sample-72x128.mov capture-72x128.mp4 truncated.mp4 \
+  sample-72x128.mov capture-72x128.mp4 capture-144x256.mp4 truncated.mp4 \
   <repo>/test/fixtures/video-metadata/
 ```

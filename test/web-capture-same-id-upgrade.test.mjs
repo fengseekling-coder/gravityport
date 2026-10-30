@@ -495,8 +495,10 @@ test("copies and versions never answer the identity lookup; the ingested origina
   assert.equal(trash.length, 1);
   assert.match(trash[0].id, new RegExp(`^${main.asset.id}-replaced-`));
 
-  // With the ingested original gone, the same id resolves to nothing: the
-  // capture imports as a fresh asset instead of overwriting the copy.
+  // With the ingested original gone, the same id no longer imports: deleting
+  // it recorded the site identity, so an automatic re-arrival is suppressed
+  // instead of resurrecting the image (site-identity suppression, task 300).
+  // Copies and versions keep their own bytes either way.
   await store.deleteAsset("default", main.asset.id);
   const fresh = await captureImage(store, tempRoot, {
     imageBase64: (await noiseImage(1536, 1536, 29, "jpeg")).toString("base64"),
@@ -504,8 +506,136 @@ test("copies and versions never answer the identity lookup; the ingested origina
     providerAssetId,
     capturedAt: "2026-10-28T10:02:00.000Z",
   });
-  assert.equal(fresh.status, "imported");
-  assert.notEqual(fresh.asset.id, copy.id);
-  assert.notEqual(fresh.asset.id, version.id);
+  assert.equal(fresh.status, "skipped");
+  assert.equal(fresh.reason, "suppressed-after-delete");
   assert.equal(sha256(await readFile((await store.getAsset("default", copy.id)).image_path)), sha256(originalBytes));
+  const versionAfterDelete = await store.getAsset("default", version.id);
+  assert.equal(sha256(await readFile(versionAfterDelete.image_path)), sha256(originalBytes));
+});
+
+test("a clearer same-id video replaces in place; a smaller re-encode does not", async (t) => {
+  const { store, tempRoot } = await createTestStore(t, "mosa-upgrade-video-clearer-");
+  // Midjourney video identity: <hyphenated UUID jobId>:<index>.
+  const providerAssetId = "3f0c2a9e-8b1d-4c57-9e2a-1b6d7f40c8aa:3";
+  const smallBytes = await readFile(join(import.meta.dirname, "fixtures", "video-metadata", "capture-72x128.mp4"));
+  const first = await ingestWebCapture({
+    store,
+    tempRoot,
+    projectId: "default",
+    input: {
+      provider: "midjourney",
+      mediaKind: "video",
+      mediaBase64: smallBytes.toString("base64"),
+      mimeType: "video/mp4",
+      providerAssetId,
+      generationStatus: "completed",
+      capturedAt: "2026-10-28T10:00:00.000Z",
+    },
+  });
+  assert.equal(first.status, "imported");
+  // Videos carry the same logical capture key as images now.
+  assert.equal(first.asset.source?.logical_output_id, `default\u001fmidjourney\u001fasset:${providerAssetId}`);
+  assert.equal(first.asset.business_fields?.width, 72);
+  assert.equal(first.asset.business_fields?.height, 128);
+
+  const largeBytes = await readFile(join(import.meta.dirname, "fixtures", "video-metadata", "capture-144x256.mp4"));
+  const sharper = await ingestWebCapture({
+    store,
+    tempRoot,
+    projectId: "default",
+    input: {
+      provider: "midjourney",
+      mediaKind: "video",
+      mediaBase64: largeBytes.toString("base64"),
+      mimeType: "video/mp4",
+      providerAssetId,
+      generationStatus: "completed",
+      capturedAt: "2026-10-28T10:01:00.000Z",
+    },
+  });
+  assert.equal(sharper.status, "imported");
+  assert.equal(sharper.reason, "logical-output-media-upgraded");
+  assert.equal(sharper.asset.id, first.asset.id);
+  assert.equal(sharper.replacedAssetId, first.asset.id);
+  const main = await store.getAsset("default", first.asset.id);
+  assert.equal(sha256(await readFile(main.image_path)), sha256(largeBytes));
+  assert.equal(main.business_fields?.width, 144);
+  assert.equal(main.business_fields?.height, 256);
+  const trash = await store.listAssets({ projectId: "default", trash: true });
+  assert.equal(trash.length, 1);
+  assert.equal(trash[0].trash_reason?.code, "replaced-by-better-version");
+  assert.equal(sha256(await readFile(trash[0].image_path)), sha256(smallBytes));
+
+  // A same-id re-encode that is not clearer is recorded as an observation,
+  // never swapped in.
+  const reencoded = Buffer.concat([smallBytes, Buffer.from("re-encode-suffix")]);
+  const smaller = await ingestWebCapture({
+    store,
+    tempRoot,
+    projectId: "default",
+    input: {
+      provider: "midjourney",
+      mediaKind: "video",
+      mediaBase64: reencoded.toString("base64"),
+      mimeType: "video/mp4",
+      providerAssetId,
+      generationStatus: "completed",
+      capturedAt: "2026-10-28T10:02:00.000Z",
+    },
+  });
+  assert.equal(smaller.status, "skipped");
+  assert.ok(String(smaller.reason || "").startsWith("already-archived"), `unexpected reason: ${smaller.reason}`);
+  assert.equal((await store.listAssets({ projectId: "default", trash: true })).length, 1);
+  assert.equal(sha256(await readFile((await store.getAsset("default", first.asset.id)).image_path)), sha256(largeBytes));
+});
+
+test("a same-id video whose dimensions cannot be read never replaces", async (t) => {
+  const { store, tempRoot } = await createTestStore(t, "mosa-upgrade-video-unreadable-");
+  const providerAssetId = "3f0c2a9e-8b1d-4c57-9e2a-1b6d7f40c8aa:5";
+  const readableBytes = await readFile(join(import.meta.dirname, "fixtures", "video-metadata", "capture-72x128.mp4"));
+  // The page reports 4000x4000; the file says 72x128 and the file wins.
+  const first = await ingestWebCapture({
+    store,
+    tempRoot,
+    projectId: "default",
+    input: {
+      provider: "midjourney",
+      mediaKind: "video",
+      mediaBase64: readableBytes.toString("base64"),
+      mimeType: "video/mp4",
+      providerAssetId,
+      generationStatus: "completed",
+      width: 4000,
+      height: 4000,
+      capturedAt: "2026-10-28T10:00:00.000Z",
+    },
+  });
+  assert.equal(first.status, "imported");
+  assert.equal(first.asset.business_fields?.width, 72);
+  assert.equal(first.asset.business_fields?.height, 128);
+
+  // A truncated (unparseable) same-id arrival reports the page's inflated
+  // dimensions too: since the file cannot prove more pixels, it never replaces.
+  const truncatedBytes = await readFile(join(import.meta.dirname, "fixtures", "video-metadata", "truncated.mp4"));
+  const padded = Buffer.concat([truncatedBytes, Buffer.alloc(96 * 1024)]);
+  const second = await ingestWebCapture({
+    store,
+    tempRoot,
+    projectId: "default",
+    input: {
+      provider: "midjourney",
+      mediaKind: "video",
+      mediaBase64: padded.toString("base64"),
+      mimeType: "video/mp4",
+      providerAssetId,
+      generationStatus: "completed",
+      width: 4000,
+      height: 4000,
+      capturedAt: "2026-10-28T10:01:00.000Z",
+    },
+  });
+  assert.equal(second.status, "skipped");
+  assert.ok(String(second.reason || "").startsWith("already-archived"), `unexpected reason: ${second.reason}`);
+  assert.equal((await store.listAssets({ projectId: "default", trash: true })).length, 0);
+  assert.equal(sha256(await readFile((await store.getAsset("default", first.asset.id)).image_path)), sha256(readableBytes));
 });

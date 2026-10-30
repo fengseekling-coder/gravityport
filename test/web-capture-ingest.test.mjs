@@ -421,6 +421,93 @@ test("re-observing an archived image with a message id still records the generat
   assert.deepEqual(events.map((event) => event.message_id).sort(), ["turn-a", "turn-b"]);
 });
 
+test("re-observing an archived video records a generation only when the capture is identified", async (t) => {
+  const makeStore = async (prefix) => {
+    const root = await mkdtemp(join(tmpdir(), prefix));
+    deferTestPathRemoval(root, { recursive: true, force: true });
+    const libraryDir = join(root, "library");
+    await mkdir(libraryDir, { recursive: true });
+    const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+    t.after(() => store.close?.());
+    await store.ensureProject("default");
+    return { store, tempRoot: join(libraryDir, ".web-capture-tmp") };
+  };
+  const videoBase64 = sampleMp4Bytes().toString("base64");
+
+  // An identified re-observation (message id / provider asset id) still
+  // records its generation, exactly like images.
+  const marked = await makeStore("mosa-web-video-reident-marked-");
+  const markedFirst = await ingestWebCapture({
+    store: marked.store,
+    tempRoot: marked.tempRoot,
+    projectId: "default",
+    input: {
+      provider: "flow",
+      mediaKind: "video",
+      mediaBase64: videoBase64,
+      mimeType: "video/mp4",
+      conversationId: "video-marked-conversation",
+      messageId: "turn-a",
+      generationContextId: "flow:video-marked-conversation:call-a",
+      providerAssetId: "flow-video-a",
+      capturedAt: "2026-10-29T10:00:00.000Z",
+    },
+  });
+  assert.equal(markedFirst.status, "imported");
+  const markedAgain = await ingestWebCapture({
+    store: marked.store,
+    tempRoot: marked.tempRoot,
+    projectId: "default",
+    input: {
+      provider: "flow",
+      mediaKind: "video",
+      mediaBase64: videoBase64,
+      mimeType: "video/mp4",
+      conversationId: "video-marked-conversation",
+      messageId: "turn-b",
+      generationContextId: "flow:video-marked-conversation:call-b",
+      providerAssetId: "flow-video-a",
+      capturedAt: "2026-10-29T10:01:00.000Z",
+    },
+  });
+  assert.equal(markedAgain.status, "skipped");
+  const markedEvents = await marked.store.listGenerationEvents("default", { assetId: markedFirst.asset.id });
+  assert.equal(markedEvents.length, 2, "an identified video re-observation records its generation");
+
+  // An unidentified re-observation used to append a phantom regeneration on
+  // every capture (videos recorded one unconditionally); it must not.
+  const unmarked = await makeStore("mosa-web-video-reident-unmarked-");
+  const unmarkedFirst = await ingestWebCapture({
+    store: unmarked.store,
+    tempRoot: unmarked.tempRoot,
+    projectId: "default",
+    input: {
+      provider: "flow",
+      mediaKind: "video",
+      mediaBase64: videoBase64,
+      mimeType: "video/mp4",
+      capturedAt: "2026-10-29T11:00:00.000Z",
+    },
+  });
+  assert.equal(unmarkedFirst.status, "imported");
+  const unmarkedAgain = await ingestWebCapture({
+    store: unmarked.store,
+    tempRoot: unmarked.tempRoot,
+    projectId: "default",
+    input: {
+      provider: "flow",
+      mediaKind: "video",
+      mediaBase64: videoBase64,
+      mimeType: "video/mp4",
+      user_message: "some nearby turn's text",
+      capturedAt: "2026-10-29T11:01:00.000Z",
+    },
+  });
+  assert.equal(unmarkedAgain.status, "skipped");
+  const unmarkedEvents = await unmarked.store.listGenerationEvents("default", { assetId: unmarkedFirst.asset.id });
+  assert.equal(unmarkedEvents.length, 1, "the unidentified video re-observation must not append a generation record");
+});
+
 test("completed ChatGPT bytes replace an earlier provisional asset with the same provider asset id", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-web-provisional-replace-"));
   deferTestPathRemoval(root, { recursive: true, force: true });
