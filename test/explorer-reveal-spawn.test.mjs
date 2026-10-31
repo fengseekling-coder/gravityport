@@ -84,7 +84,8 @@ test("open-folder route uses shell-free verbatim Explorer reveal after allowlist
   assert.equal(calls[0].options.windowsVerbatimArguments, true);
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.stdio, "ignore");
-  assert.equal(calls[0].options.windowsHide, true);
+  // windowsHide would start Explorer with SW_HIDE and leave the window invisible.
+  assert.equal("windowsHide" in calls[0].options, false);
   assert.match(calls[0].args[0], /&/);
   assert.match(calls[0].args[0], /\(final\)/);
 });
@@ -142,6 +143,7 @@ test("open-folder route keeps Windows directory-open behavior without verbatim a
   assert.equal(calls[0].command, "explorer.exe");
   assert.deepEqual(calls[0].args, [canonicalPath]);
   assert.equal("windowsVerbatimArguments" in calls[0].options, false);
+  assert.equal("windowsHide" in calls[0].options, false);
   assert.equal(calls[0].options.shell, false);
 });
 

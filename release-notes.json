@@ -41,7 +41,8 @@
         "修复了在堆叠中选中多张素材后拖到其他应用（如访达、Photoshop）时只带出一张的问题。现在会带出全部选中的素材；在堆叠内调整顺序时，选中的素材也会整组移动。",
         "修复了英文界面中「即梦」分组名、来源标签和参考图悬停提示仍显示中文的问题。",
         "修复了原图文件丢失时查看器一片空白的问题。现会提示「原图找不到了」，并可打开素材位置。",
-        "修复了版本树、版本和参考图加载失败时，与「暂无」显示相同的问题。现会显示「加载失败」。"
+        "修复了版本树、版本和参考图加载失败时，与「暂无」显示相同的问题。现会显示「加载失败」。",
+        "修复了在 Windows 上点「设置 → 存储」的「打开」或详情面板的「素材路径」后，资源管理器窗口没有出现的问题。"
       ],
       "other": [
         "为软件内更新增加备用签名钥匙。",
@@ -88,7 +89,8 @@
         "Fixed an issue where dragging several selected assets out of a stack into another app, such as Finder or Photoshop, carried only one. All selected assets now go along, and reordering inside a stack moves the selection as one group.",
         "Fixed the Jimeng group name, source tag and reference image tooltips still showing Chinese in the English interface.",
         "Fixed the viewer staying blank when an original file is missing. It now says the original file was not found and offers to open the asset location.",
-        "Fixed the Version Tree, versions and reference images looking empty when they failed to load. They now show Failed to load."
+        "Fixed the Version Tree, versions and reference images looking empty when they failed to load. They now show Failed to load.",
+        "Fixed File Explorer not appearing on Windows after clicking Open in Settings → Storage or the asset path in the details panel."
       ],
       "other": [
         "Added a backup signing key for in-app updates.",
