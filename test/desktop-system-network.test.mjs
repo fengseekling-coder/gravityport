@@ -35,3 +35,25 @@ for (const name of NETWORK_CALLS) {
     }
   });
 }
+
+test("serviceOutboundFetch uses isolated partition fetch with credentials: 'omit'", () => {
+  assert.match(
+    mainSource,
+    /function serviceOutboundFetch\(url, init\) \{\s*return session\.fromPartition\("gravityport-service-outbound"\)\.fetch\(url, \{\s*\.\.\.init,\s*credentials:\s*"omit"\s*\}\);\s*\}/,
+  );
+});
+
+test("setOutboundFetch is called before the first startMosaService invocation", () => {
+  const setCallIndex = mainSource.indexOf("setOutboundFetch(");
+  assert.ok(setCallIndex !== -1, "desktop/main.mjs calls setOutboundFetch");
+  assert.match(
+    mainSource.slice(setCallIndex, setCallIndex + 100),
+    /setOutboundFetch\(serviceOutboundFetch\)/,
+  );
+  const startServiceIndex = mainSource.indexOf("startMosaService(");
+  assert.ok(startServiceIndex !== -1, "desktop/main.mjs calls startMosaService");
+  assert.ok(
+    setCallIndex < startServiceIndex,
+    `setOutboundFetch (offset ${setCallIndex}) must appear before first startMosaService (offset ${startServiceIndex})`,
+  );
+});

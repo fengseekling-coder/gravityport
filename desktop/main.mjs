@@ -83,6 +83,7 @@ import { cleanupLegacyVisualData as cleanupLegacyVisualDataDir } from "./legacy-
 import { createMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { isTelemetryDisabled } from "../lib/env-aliases.mjs";
+import { setOutboundFetch } from "../lib/outbound-fetch.mjs";
 
 const preloadPath = fileURLToPath(new URL("./preload.cjs", import.meta.url));
 const startupShellPath = fileURLToPath(new URL("./startup.html", import.meta.url));
@@ -110,6 +111,9 @@ function releaseManifestVerificationTrusts() {
 // system certificate store apply; Node's built-in fetch ignores both.
 function systemNetworkFetch(url, init) {
   return net.fetch(url, init);
+}
+function serviceOutboundFetch(url, init) {
+  return session.fromPartition("gravityport-service-outbound").fetch(url, { ...init, credentials: "omit" });
 }
 // `desktopDataDir` is the *actual* userData after Chromium applied the QA
 // --user-data-dir override (if any). It is deliberately NOT the production
@@ -1690,6 +1694,7 @@ async function ensureDesktopService() {
     // to the previous version, which could not open it.
     const updateReadyFile = macosUpdateReadyFile || windowsUpdateReadyFile;
     if (updateReadyFile) markPendingSchemaUpgrade({ readyFile: updateReadyFile, libraryDir });
+    setOutboundFetch(serviceOutboundFetch);
     const nextService = await startMosaService({
       port: desktopPort,
       libraryDir,

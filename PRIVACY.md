@@ -162,13 +162,13 @@ GravityPort Desktop can optionally connect to your Pinterest account so you can 
 
 Once connected, the app reads the following through the official Pinterest API with read-only scopes: your Pinterest username; the name, description, Pin count, and cover of your boards, including secret boards; and the title, description, link, and image addresses of the Pins on those boards. This content is shown live on your computer only. It is not saved into the GravityPort library and is not uploaded to GravityPort-operated servers. To avoid repeated requests, the app keeps responses in an in-memory cache for at most 5 minutes and clears it when you disconnect or quit the app. Pin images load directly from Pinterest.
 
-Access tokens are stored only on your computer, as an atomically written, permission-restricted (mode 0600) file in Electron's local `userData` directory. During authorization, the GravityPort-operated service only forwards the authorization code or refresh token, together with the app secret, to Pinterest to obtain tokens, and returns the result directly to your computer; the app itself never holds the app secret. This relay runs on Cloudflare Workers, stores no authorization codes or tokens, and does not write them to logs.
+Access tokens are stored only on your computer, as an atomically written, permission-restricted (mode 0600) file in Electron's local `userData` directory. During authorization, the GravityPort-operated service only forwards the authorization code or refresh token, together with the app secret, to Pinterest to obtain tokens, and returns the result directly to your computer; the app itself never holds the app secret. This relay runs on Cloudflare Workers, stores no authorization codes or tokens, and does not write them to logs. Authorization, token refresh, and API requests when connecting to Pinterest are sent through the operating system's network and proxy settings (before 0.3.8, they did not go through system proxies); redirects are not followed.
 
 You can disconnect Pinterest at any time in GravityPort settings, which deletes the token file stored on your computer. You can also revoke GravityPort's access under the authorized apps in your Pinterest account settings.
 
 ## Feedback
 
-The app never collects feedback in the background: feedback is submitted only when you press **Send** on the feedback page in GravityPort settings. The app forwards one request to the first-party feedback collection service at `https://gravityport.azhuilab.com/api/feedback` (`https://mosa.azhuilab.com/api/feedback` in 0.3.2 and earlier).
+The app never collects feedback in the background: feedback is submitted only when you press **Send** on the feedback page in GravityPort settings. The app forwards one request to the first-party feedback collection service at `https://gravityport.azhuilab.com/api/feedback` (`https://mosa.azhuilab.com/api/feedback` in 0.3.2 and earlier). Like the usage report, feedback requests are sent through the operating system's network and proxy settings (before 0.3.8, they did not go through system proxies).
 
 When you press **Send**, the app submits:
 
