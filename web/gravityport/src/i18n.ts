@@ -7,7 +7,7 @@ const english: Record<string, string> = {
   "列数": "Grid columns", "列": "columns",
   "添加标签": "Add tag", "标签名称": "Tag name", "保存标签": "Save tag", "移除标签": "Remove tag",
   "请输入标签名称": "Enter a tag name.", "标签已存在": "This tag already exists.",
-  "未连接": "Not connected", "连接": "Connect", "暂未开放": "Coming soon",
+  "未连接": "Not connected", "连接": "Connect", "即将上线": "Coming soon",
   "新版本 {version} 更新内容": "What’s new in {version}", "当前版本 {version} 更新内容": "What’s new in {version}",
   "下个版本（开发中）": "Next version (in development)", "还没有记录": "Nothing recorded yet",
   "这个版本没有更新说明": "No release notes for this version",

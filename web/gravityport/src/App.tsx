@@ -141,7 +141,7 @@ function errorMessage(error: unknown): string {
 const CARD_DRAG_THRESHOLD_PX = 8
 const NATIVE_DRAG_MAX_FILES = 512
 // Pinterest browsing (tasks 135/138/147). The sidebar row and Settings → 连接
-// are shown, the row marked 暂未开放 until a connection lands; false hides
+// are shown, the row marked 即将上线 until Standard access; false hides
 // both while the view, the connection card, and the local token API stay.
 const PINTEREST_ENTRY = true
 
@@ -425,9 +425,6 @@ export default function App() {
   const [selected, setSelected] = useState("")
   const [settings, setSettings] = useState(false)
   const [settingTab, setSettingTab] = useState("常规与外观")
-  // Sidebar Pinterest count = boards loaded by PinterestView (null until the
-  // view has reported, or after a disconnect).
-  const [pinterestBoards, setPinterestBoards] = useState<{ count: number; complete: boolean } | null>(null)
   // A connect/disconnect from Settings remounts PinterestView so it rereads
   // the status instead of showing boards of an account that is gone.
   const [pinterestViewKey, setPinterestViewKey] = useState(0)
@@ -436,7 +433,6 @@ export default function App() {
     const connected = status.connected && !status.needsReconnect
     if (pinterestConnectedRef.current !== null && pinterestConnectedRef.current !== connected) setPinterestViewKey(k => k + 1)
     pinterestConnectedRef.current = connected
-    if (!connected) setPinterestBoards(null)
   }
   const [preferences] = useState(loadPreferences)
   const [appearance, setAppearance] = useState<string>(preferences.appearance)
@@ -3831,8 +3827,8 @@ export default function App() {
                     : label === "Pinterest"
                       // Pinterest stays in Trial access (1,000 calls a day shared
                       // by every user) until Standard access is approved, so the
-                      // count slot says so until boards have been loaded.
-                      ? pinterestBoards ? `${pinterestBoards.count}${pinterestBoards.complete ? "" : "+"}` : <span className="nav-soon">{tr("暂未开放")}</span>
+                      // count slot says 即将上线 even after boards have loaded.
+                      ? <span className="nav-soon">{tr("即将上线")}</span>
                       : label === "待整理"
                         ? navigation?.unorganized ?? 0
                         : label === "收藏"
@@ -4179,7 +4175,6 @@ export default function App() {
             key={pinterestViewKey}
             language={language}
             onOpenSettings={() => { setSettingTab("连接"); setSettings(true) }}
-            onBoardCountChange={(count, complete) => setPinterestBoards({ count, complete })}
           />
         ) : (
           <>

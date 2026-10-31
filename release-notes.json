@@ -43,7 +43,8 @@
         "修复了版本树、版本和参考图加载失败时，与「暂无」显示相同的问题。现会显示「加载失败」。"
       ],
       "other": [
-        "为软件内更新增加备用签名钥匙。"
+        "为软件内更新增加备用签名钥匙。",
+        "侧栏的 Pinterest 入口改为标注「即将上线」，正式开放前不显示画板数量。"
       ]
     },
     "en": {
@@ -88,7 +89,8 @@
         "Fixed the Version Tree, versions and reference images looking empty when they failed to load. They now show Failed to load."
       ],
       "other": [
-        "Added a backup signing key for in-app updates."
+        "Added a backup signing key for in-app updates.",
+        "The Pinterest entry in the sidebar now reads Coming soon and shows no board count until Pinterest opens to everyone."
       ]
     }
   },
