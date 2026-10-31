@@ -865,7 +865,9 @@ test("applySessionTitle with no target stack, no session key, or no title does n
 function sessionTitleJsonRequest(body, headers = {}) {
   const req = new EventEmitter();
   req.method = "POST";
-  req.headers = headers;
+  // Task 314: the capture routes reserve the declared Content-Length before
+  // reading, so the fake request declares its real body size.
+  req.headers = { "content-length": String(Buffer.byteLength(JSON.stringify(body))), ...headers };
   queueMicrotask(() => {
     req.emit("data", Buffer.from(JSON.stringify(body)));
     req.emit("end");

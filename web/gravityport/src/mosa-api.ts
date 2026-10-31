@@ -150,15 +150,32 @@ export function ensureClientToken(): Promise<string> {
   return desktopClientToken() ?? Promise.resolve(takeBootstrapToken())
 }
 
-let sessionRefreshPromise: Promise<boolean> | null = null
-function refreshBrowserSession(): Promise<boolean> {
-  if (!sessionRefreshPromise) {
-    sessionRefreshPromise = fetch("/", { credentials: "same-origin", cache: "no-store" })
-      .then((response) => response.ok)
-      .catch(() => false)
-      .finally(() => { sessionRefreshPromise = null })
+// 任务 314：HTML 响应不再顺带发能力 cookie。渲染层先确保拿到凭据
+// （桌面版走 311 的 IPC，浏览器/源码模式读网址 hash），再 POST
+// /api/client-session 用凭据换 HttpOnly cookie；<img>/<video>/EventSource
+// 之后自动带 cookie，fetch 请求则同时带请求头。结果缓存在同一个 promise
+// 里，并发的调用方只换一次；结束后释放，失败的下一次调用可以重试。
+let clientSessionPromise: Promise<boolean> | null = null
+export function ensureClientSession(): Promise<boolean> {
+  if (!clientSessionPromise) {
+    clientSessionPromise = (async () => {
+      const clientToken = await ensureClientToken()
+      if (!clientToken) return false
+      try {
+        const response = await fetch("/api/client-session", {
+          method: "POST",
+          headers: { "x-mosa-client-token": clientToken },
+          credentials: "same-origin",
+          cache: "no-store",
+        })
+        return response.ok
+      } catch {
+        return false
+      }
+    })()
+    void clientSessionPromise.catch(() => {}).then(() => { clientSessionPromise = null })
   }
-  return sessionRefreshPromise
+  return clientSessionPromise
 }
 
 export async function requestJson<T>(path: string, {
@@ -170,12 +187,11 @@ export async function requestJson<T>(path: string, {
   body?: JsonValue
   signal?: AbortSignal
 } = {}): Promise<T> {
-  const isMutation = method !== "GET"
   for (let attempt = 0; attempt < 2; attempt++) {
     const headers: Record<string, string> = {}
     if (body) headers["content-type"] = "application/json"
     const clientToken = await ensureClientToken()
-    if (isMutation && clientToken) headers["x-mosa-client-token"] = clientToken
+    if (clientToken) headers["x-mosa-client-token"] = clientToken
     const result = await fetch(path, {
       method,
       headers,
@@ -196,8 +212,9 @@ export async function requestJson<T>(path: string, {
       throw new Error(`Invalid JSON response: HTTP ${result.status}`)
     }
     if (result.ok) return data as T
-    if (attempt === 0 && isMutation && data.code === "MOSA_CLIENT_UNAUTHORIZED"
-      && await refreshBrowserSession()) continue
+    // 任务 314：GET 也可能 401（读接口同样要凭据），统一走「重新换 cookie
+    // 再重试一次」，不分修改类与否。
+    if (attempt === 0 && data.code === "MOSA_CLIENT_UNAUTHORIZED" && await ensureClientSession()) continue
     const error = new Error(String(data.error || result.statusText || `HTTP ${result.status}`))
     if (typeof data.code === "string") (error as Error & { code?: string }).code = data.code
     throw error
@@ -922,4 +939,4 @@ export async function openLibraryFolder(path: string, revealFile = false) {
 // Start the capability load immediately, not only on a later request: the
 // browser path parses the URL fragment, the desktop path asks the main process
 // (task 311) so the very first request already carries the token.
-if (typeof window !== "undefined") void ensureClientToken()
+if (typeof window !== "undefined") void ensureClientSession()

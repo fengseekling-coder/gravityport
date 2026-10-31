@@ -1626,7 +1626,9 @@ async function createMainWindow() {
   if (windowRef.isDestroyed()) return;
   showDesktopWindow(windowRef);
 
-  startBridgeNotificationPoll(activeService.port);
+  // Task 314: every runtime API now requires the client capability, so the
+  // notification poll presents the attached service's token.
+  startBridgeNotificationPoll(activeService.port, activeService.clientToken);
 }
 
 async function ensureDesktopService() {
@@ -1786,7 +1788,7 @@ let runtimeRecoveryInProgress = false;
 const BRIDGE_POLL_INTERVAL_MS = 15_000;
 const BRIDGE_POLL_TIMEOUT_MS = 5_000;
 
-function startBridgeNotificationPoll(runtimePort) {
+function startBridgeNotificationPoll(runtimePort, clientToken = "") {
   if (bridgePollTimer || bridgePollAbortController) return;
   const scheduleNext = () => {
     if (shuttingDown || runtimeRecoveryInProgress || bridgePollTimer || bridgePollAbortController) return;
@@ -1806,7 +1808,10 @@ function startBridgeNotificationPoll(runtimePort) {
     const timeout = setTimeout(() => controller.abort(), BRIDGE_POLL_TIMEOUT_MS);
     timeout.unref?.();
     try {
-      const response = await fetch(`http://127.0.0.1:${runtimePort}/api/bridges`, { signal: controller.signal });
+      const response = await fetch(`http://127.0.0.1:${runtimePort}/api/bridges`, {
+        signal: controller.signal,
+        headers: { "x-mosa-client-token": clientToken },
+      });
       if (!response.ok) throw new Error(`Bridge health returned HTTP ${response.status}`);
       const data = await response.json();
       bridgePollFailures = 0;

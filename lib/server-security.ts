@@ -122,16 +122,32 @@ export function isAuthorizedMosaClientRequest(
 }
 
 /**
- * Read-only loopback APIs remain probeable for health/discovery and SSE.
- * Every state-changing management request needs a high-entropy runtime
- * capability. Web Capture routes have their own bearer-token boundary and are
+ * API paths reachable without the client capability (task 314). Everything
+ * else under /api/ — including every GET — requires it: assets, prompts,
+ * originals, and diagnostics must not be readable by other local system users
+ * or sandboxed processes. The three entries are:
+ *   /api/health          — non-sensitive fields only (no library path), used
+ *                          by the extension, the desktop probe, and the
+ *                          supervisor before any credential exists;
+ *   /api/service-identity — the task 311 challenge, asked precisely before
+ *                          the caller may hold the credential;
+ *   /api/client-session   — exchanges the header credential for the browser
+ *                          cookie, so it cannot itself require one.
+ * Web Capture routes have their own bearer-token boundary and are
  * intentionally excluded by the runtime before this predicate is applied.
  */
+export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([
+  "/api/health",
+  "/api/service-identity",
+  "/api/client-session",
+]);
+
 export function requiresMosaClientToken(method: unknown, pathname: unknown): boolean {
   const verb = String(method || "GET").toUpperCase();
+  if (verb === "OPTIONS") return false;
   const path = String(pathname || "");
   if (!path.startsWith("/api/")) return false;
-  return verb !== "GET" && verb !== "HEAD" && verb !== "OPTIONS";
+  return !PUBLIC_API_PATHS.has(path);
 }
 
 export function isAllowedLocalOrigin(origin: unknown, port: number | string): boolean {

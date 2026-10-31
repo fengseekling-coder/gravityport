@@ -612,7 +612,12 @@ test("a settings file that exists but does not parse means off, warned once", as
 function fakeReq(body, token) {
   return {
     method: "POST",
-    headers: token ? { authorization: `Bearer ${token}` } : {},
+    // Task 314: the capture routes reserve the declared Content-Length before
+    // reading, so the fake request declares its real body size.
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      "content-length": String(Buffer.byteLength(body)),
+    },
     on(type, handler) {
       if (type === "data") handler(Buffer.from(body));
       if (type === "end") queueMicrotask(() => handler());

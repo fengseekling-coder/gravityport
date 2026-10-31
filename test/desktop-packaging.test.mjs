@@ -551,7 +551,7 @@ test("packaged smoke waits for the real renderer and tears Electron down before 
   // the desktop path asks the main process; the browser path parses the URL
   // fragment) and every request helper awaits the same memoized token.
   const tokenFactory = apiClientSource.indexOf("function takeBootstrapToken()");
-  const moduleConsume = apiClientSource.indexOf("if (typeof window !== \"undefined\") void ensureClientToken()");
+  const moduleConsume = apiClientSource.indexOf("if (typeof window !== \"undefined\") void ensureClientSession()");
   assert.ok(tokenFactory >= 0 && moduleConsume > tokenFactory,
     "the API adapter must start the capability load at module import");
   assert.match(apiClientSource, /await ensureClientToken\(\)/, "request helpers must await the memoized capability");

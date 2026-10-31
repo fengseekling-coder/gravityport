@@ -2332,7 +2332,11 @@ async function waitForServer(port, server, attempts = 40) {
     if (server.exitCode !== null) throw new Error(`Server exited early with code ${server.exitCode}`);
     try {
       const response = await fetch(`http://127.0.0.1:${port}/api/bridges`, {
-        headers: { origin: `http://127.0.0.1:${port}` },
+        headers: {
+          origin: `http://127.0.0.1:${port}`,
+          // Task 314: /api/bridges requires the child's own capability now.
+          "x-mosa-client-token": server.mosaClientToken ?? process.env.MOSA_CLIENT_TOKEN ?? "",
+        },
       });
       if (response.ok) return;
     } catch {

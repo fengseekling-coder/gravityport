@@ -13,6 +13,7 @@ import { launchDesktopGui } from "./desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "./desktop-runtime-paths.mjs";
 import { createCriticalUiFlowSource, createTrashUiFlowSource, E2E_DROP_GROUP_NAME } from "./e2e-ui-flow.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
+import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const electronBinary = ensureElectronExecutablePath({ rootDir });
@@ -234,7 +235,7 @@ function createFlowContext(flowName) {
         return stopProcess(child);
       };
       try {
-        assertHealth(await waitForHealth(`http://127.0.0.1:${port}/api/health`, child), activeLibraryDir);
+        await assertHealth(await waitForHealth(`http://127.0.0.1:${port}/api/health`, child), activeLibraryDir);
       } catch (error) {
         await stop();
         throw new Error(`${error.message}\n${stderr().trim()}`, { cause: error });
@@ -346,7 +347,7 @@ async function runWebRound(mode, searchTerm, recipeChange) {
   const stderr = collect(child.stderr);
   try {
     const health = await waitForHealth(`http://127.0.0.1:${port}/api/health`, child);
-    assertHealth(health);
+    await assertHealth(health);
     await seedDropGroup(port);
     const output = await runCommand(electronBinary, [...ELECTRON_QA_FLAGS, webDriver], {
       cwd: rootDir,
@@ -389,7 +390,7 @@ async function runWebTrashRound(mode) {
   const stderr = collect(child.stderr);
   try {
     const health = await waitForHealth(`http://127.0.0.1:${port}/api/health`, child);
-    assertHealth(health, trashLibraryDir);
+    await assertHealth(health, trashLibraryDir);
     if (mode === "exercise") trashFlowConfig = await seedTrashAssets(port);
     if (!trashFlowConfig) throw new Error("Trash flow config is missing; run the exercise round first.");
     const output = await runCommand(electronBinary, [...ELECTRON_QA_FLAGS, webDriver], {
@@ -458,7 +459,10 @@ async function seedTrashAssets(port) {
 async function verifyTrashDataAfterExercise(port, config) {
   const origin = `http://127.0.0.1:${port}`;
   const listIds = async (trash) => {
-    const page = await (await fetch(`${origin}/api/assets?project=default&limit=250${trash ? "&trash=1" : ""}`)).json();
+    // Task 314: reads require the capability too.
+    const page = await (await fetch(`${origin}/api/assets?project=default&limit=250${trash ? "&trash=1" : ""}`, {
+      headers: { "x-mosa-client-token": QA_CLIENT_TOKEN },
+    })).json();
     return new Set((Array.isArray(page?.assets) ? page.assets : []).map((asset) => asset.id));
   };
   const normalIds = await listIds(false);
@@ -493,7 +497,10 @@ async function seedDropGroup(port) {
   if (response.ok) return;
   // verify 轮里分组已在 exercise 轮建好；只有确认它确实存在时才容忍重复创建。
   // GET /api/groups 返回 { groups: { groups: [{ name, count, ... }], ... } }。
-  const payload = await (await fetch(`${origin}/api/groups?project=default`)).json();
+  // Task 314: reads require the capability too.
+  const payload = await (await fetch(`${origin}/api/groups?project=default`, {
+    headers: { "x-mosa-client-token": QA_CLIENT_TOKEN },
+  })).json();
   const groupList = Array.isArray(payload?.groups) ? payload.groups : payload?.groups?.groups;
   const names = (Array.isArray(groupList) ? groupList : [])
     .map((group) => (Array.isArray(group) ? group[0] : group?.name));
@@ -517,13 +524,16 @@ async function runWebStackRound() {
   const stderr = collect(child.stderr);
   try {
     const health = await waitForHealth(`http://127.0.0.1:${port}/api/health`, child);
-    assertHealth(health, stackLibraryDir);
+    await assertHealth(health, stackLibraryDir);
     await seedStackAssets(port);
     const output = await runCommand(electronBinary, [...ELECTRON_QA_FLAGS, webDriver], {
       cwd: rootDir,
       env: {
         ...process.env,
-        MOSA_E2E_WEB_TARGET_URL: `http://127.0.0.1:${port}/`,
+        // Task 314: reads need the capability, and the stack flow probes the
+        // API from the page — boot it with the same token-bearing URL as the
+        // other web rounds.
+        MOSA_E2E_WEB_TARGET_URL: `http://127.0.0.1:${port}/#mosa-client-token=${encodeURIComponent(QA_CLIENT_TOKEN)}`,
         MOSA_E2E_WEB_USER_DATA: stackUserData,
         MOSA_E2E_WEB_FLOW: "stack",
       },
@@ -594,7 +604,7 @@ async function runElectronRound(mode, searchTerm, recipeChange) {
   try {
     pid = launched.pid || await waitForPid(pidFile);
     const health = await waitForHealthFile(healthFile);
-    assertHealth(health, desktopLibraryDir);
+    await assertHealth(health, desktopLibraryDir);
     await seedDropGroup(servicePort);
     const cdp = await connectCdp(cdpPort, `http://127.0.0.1:${servicePort}`);
     try {
@@ -638,9 +648,15 @@ function qaEnvironment({ portVariable, port, userData, library = libraryDir }) {
   };
 }
 
-function assertHealth(health, expectedLibraryDir = libraryDir) {
+// Task 314: /api/health no longer carries the library path. Library isolation
+// is proven with the digest computed from the expected library's own id file —
+// the same comparison the desktop probe performs.
+async function assertHealth(health, expectedLibraryDir = libraryDir) {
   if (health?.product !== "mosa") throw new Error("E2E runtime is not MOSA.");
-  if (resolve(health.libraryDir) !== resolve(expectedLibraryDir)) throw new Error("E2E library isolation failed.");
+  const expectedId = await readLibraryId(expectedLibraryDir);
+  if (!expectedId || health.libraryDigest !== libraryDigest(expectedId, expectedLibraryDir)) {
+    throw new Error("E2E library isolation failed.");
+  }
   if (health.storage !== "sqlite") throw new Error(`E2E expected SQLite storage, got ${health.storage}`);
 }
 

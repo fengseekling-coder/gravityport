@@ -7,12 +7,14 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { mosaServiceIdentityProof } from "../lib/server-security.js";
+import { ensureLibraryId, libraryDigest } from "../lib/library-identity.mjs";
 import {
   MosaServiceBuildMismatchError,
   MosaServiceConflictError,
   MosaServiceLibraryMismatchError,
   MosaServiceUnverifiedError,
   compareMosaVersions,
+  probeMosaService,
   retireOlderMosaService,
   retireVerifiedMosaService,
   shouldAllowSameVersionServiceReplacement,
@@ -936,4 +938,52 @@ test("discovers an already-running matching MOSA on a fallback port before acqui
   assert.equal(service.port, fallbackPort);
   await service.stop();
   assert.equal(server.listening, true);
+});
+
+// Task 314: /api/health no longer carries the library path — the probe
+// compares digests computed from each side's own library directory.
+test("probeMosaService compares library digests and keeps the legacy path fallback", async (t) => {
+  const root = await temporaryRoot(t, "mosa-service-digest-");
+  const { mkdir } = await import("node:fs/promises");
+  const expectedLibraryDir = join(root, "library");
+  await mkdir(expectedLibraryDir, { recursive: true });
+  const expectedId = await ensureLibraryId(expectedLibraryDir);
+  const expectedDigest = libraryDigest(expectedId, expectedLibraryDir);
+
+  const otherLibraryDir = join(root, "other-library");
+  await mkdir(otherLibraryDir, { recursive: true });
+  const otherDigest = libraryDigest(await ensureLibraryId(otherLibraryDir), otherLibraryDir);
+
+  const probeWith = async (health, overrides = {}) => probeMosaService({
+    port: 43517,
+    libraryDir: expectedLibraryDir,
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => health }),
+    ...overrides,
+  });
+
+  const matching = await probeWith({ product: "mosa", libraryDigest: expectedDigest, storage: "sqlite" });
+  assert.equal(matching.state, "attached", "a matching digest attaches without any path in health");
+
+  const copied = await probeWith({ product: "mosa", libraryDigest: otherDigest });
+  assert.equal(copied.state, "conflict");
+  assert.ok(copied.error instanceof MosaServiceLibraryMismatchError, "a copied library (same id, other path) must conflict");
+  assert.equal(copied.error.actualLibraryDir, "", "digest mismatches cannot know the running path");
+
+  const noLocalId = await probeWith({ product: "mosa", libraryDigest: expectedDigest }, {
+    libraryDir: join(root, "library-without-id"),
+  });
+  assert.equal(noLocalId.state, "conflict", "a digest without a local id file to check against is a mismatch");
+  assert.ok(noLocalId.error instanceof MosaServiceLibraryMismatchError);
+
+  const neither = await probeWith({ product: "mosa" });
+  assert.equal(neither.state, "conflict", "neither digest nor legacy path is not GravityPort");
+  assert.ok(!(neither.error instanceof MosaServiceLibraryMismatchError));
+
+  const legacy = await probeWith({ product: "mosa", libraryDir: expectedLibraryDir, storage: "sqlite" });
+  assert.equal(legacy.state, "attached", "legacy runtimes that still publish libraryDir keep working");
+
+  const legacyForeign = await probeWith({ product: "mosa", libraryDir: otherLibraryDir });
+  assert.equal(legacyForeign.state, "conflict");
+  assert.ok(legacyForeign.error instanceof MosaServiceLibraryMismatchError);
+  assert.equal(legacyForeign.error.actualLibraryDir, resolve(otherLibraryDir), "path-based mismatches keep the actual path");
 });

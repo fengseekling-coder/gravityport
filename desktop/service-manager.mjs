@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
@@ -12,6 +12,7 @@ import {
 } from "../lib/runtime-defaults.mjs";
 import { validateRuntimeIsolation, safeCanonical } from "../lib/runtime-isolation-guard.mjs";
 import { pathsEqual } from "../lib/path-safety.mjs";
+import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
 import { defaultLibraryDir, legacyDefaultLibraryDir, resolveLibraryLocation } from "../lib/library-location.mjs";
 import { verifyMosaRuntimeLockProcessIdentity } from "../lib/runtime-lock.js";
 
@@ -20,6 +21,15 @@ const DEFAULT_PROBE_TIMEOUT_MS = 1500;
 const DEFAULT_UPGRADE_STOP_TIMEOUT_MS = 5000;
 const DEFAULT_UPGRADE_STOP_POLL_MS = 100;
 const RUNTIME_LOCK_FILE_NAME = ".mosa-runtime.lock";
+
+// Digest comparison is constant-time: the digest is not secret, but there is
+// no reason to leak timing about how far apart two digests are.
+function digestEqual(left, right) {
+  const leftBytes = Buffer.from(String(left || ""));
+  const rightBytes = Buffer.from(String(right || ""));
+  return leftBytes.length === rightBytes.length
+    && (leftBytes.length === 0 || timingSafeEqual(leftBytes, rightBytes));
+}
 
 export class MosaServiceConflictError extends Error {
   constructor(message, options = {}) {
@@ -57,7 +67,10 @@ export class MosaServiceLibraryMismatchError extends MosaServiceConflictError {
     this.code = "MOSA_SERVICE_LIBRARY_MISMATCH";
     this.port = port;
     this.expectedLibraryDir = resolve(expectedLibraryDir);
-    this.actualLibraryDir = resolve(actualLibraryDir);
+    // Task 314: digest-based mismatches cannot know the running library's
+    // path (health no longer publishes it), so an empty actualLibraryDir is
+    // valid and resolves to "" rather than the process cwd.
+    this.actualLibraryDir = actualLibraryDir ? resolve(actualLibraryDir) : "";
   }
 }
 
@@ -329,21 +342,46 @@ export async function probeMosaService(options = {}) {
     } else {
       return conflict(`Port ${port} is occupied by a service that is not a healthy GravityPort runtime.`, null, { retryable: true });
     }
-    if (health?.product !== "mosa" || typeof health.libraryDir !== "string") {
+    if (health?.product !== "mosa") {
       return conflict(`Port ${port} is occupied by a service that is not GravityPort.`);
     }
-    // Compare canonicalized paths so a symlinked alias of the running
-    // library still matches (same semantics as the isolation guard).
-    if (!pathsEqual(safeCanonical(health.libraryDir), safeCanonical(libraryDir))) {
-      return {
-        state: "conflict",
-        error: new MosaServiceLibraryMismatchError({
-          port,
-          expectedLibraryDir: libraryDir,
-          actualLibraryDir: health.libraryDir,
-        }),
-        retryable: false,
-      };
+    // Task 314: health no longer carries the library path. The running
+    // service publishes libraryDigest — an HMAC keyed by the library's own
+    // secret id file over its canonical path — so the probe recomputes the
+    // expected digest from ITS library directory. A matching digest proves
+    // the same library without exposing any path; only "same library" —
+    // attaching still requires the task 311 challenge. Legacy runtimes that
+    // still publish libraryDir keep the path comparison below.
+    if (typeof health.libraryDigest === "string" && health.libraryDigest) {
+      const expectedLibraryId = await readLibraryId(libraryDir);
+      const expectedDigest = expectedLibraryId ? libraryDigest(expectedLibraryId, libraryDir) : "";
+      if (!expectedDigest || !digestEqual(health.libraryDigest, expectedDigest)) {
+        return {
+          state: "conflict",
+          error: new MosaServiceLibraryMismatchError({
+            port,
+            expectedLibraryDir: libraryDir,
+            actualLibraryDir: "",
+          }),
+          retryable: false,
+        };
+      }
+    } else if (typeof health.libraryDir === "string") {
+      // Compare canonicalized paths so a symlinked alias of the running
+      // library still matches (same semantics as the isolation guard).
+      if (!pathsEqual(safeCanonical(health.libraryDir), safeCanonical(libraryDir))) {
+        return {
+          state: "conflict",
+          error: new MosaServiceLibraryMismatchError({
+            port,
+            expectedLibraryDir: libraryDir,
+            actualLibraryDir: health.libraryDir,
+          }),
+          retryable: false,
+        };
+      }
+    } else {
+      return conflict(`Port ${port} is occupied by a service that is not GravityPort.`);
     }
     return {
       state: "attached",

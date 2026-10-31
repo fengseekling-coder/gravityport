@@ -2274,6 +2274,20 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
     }
   }
 
+  // Task 314: the JSON ingest entry no longer carries big media (videos most
+  // of all — offline-queue replays resend their stored bytes as base64). The
+  // server answers 413 WEB_CAPTURE_USE_BINARY_UPLOAD before reading anything;
+  // switch this one send to the binary envelope with the bytes we already
+  // hold, exactly like live captures with local bytes.
+  if (response.status === 413 && mediaBase64 && !mediaBinaryParts) {
+    const rejection = await response.json().catch(() => ({}));
+    if (rejection?.code === "WEB_CAPTURE_USE_BINARY_UPLOAD") {
+      mediaBinaryParts = [base64ToBytes(mediaBase64)];
+      mediaBase64 = null;
+      response = await requestIngest();
+    }
+  }
+
   // Discard a failed body only when a repaired pairing replaces the response.
   // Otherwise it is read below, so the user sees MOSA's own error and status.
   if (response.status === 401 || response.status === 403) {

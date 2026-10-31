@@ -42,10 +42,22 @@ test("management mutations require a high-entropy runtime capability", () => {
   assert.equal(isAuthorizedMosaClientRequest("stale", `${browserCookieName}=${browserToken}`, token, 43517), true);
   assert.equal(isAuthorizedMosaClientRequest("", `${browserCookieName}=${browserToken}`, token, 43518), false);
   assert.equal(mosaClientTokenFingerprint(token).length, 22);
+  // Task 314: every /api method needs the capability now, GETs included —
+  // assets, prompts, originals and diagnostics must not be readable by other
+  // local users or sandboxed processes.
   assert.equal(requiresMosaClientToken("POST", "/api/assets/create"), true);
   assert.equal(requiresMosaClientToken("DELETE", "/api/trash"), true);
-  assert.equal(requiresMosaClientToken("GET", "/api/assets"), false);
+  assert.equal(requiresMosaClientToken("GET", "/api/assets"), true);
+  assert.equal(requiresMosaClientToken("HEAD", "/api/assets/default/asset-1"), true);
+  assert.equal(requiresMosaClientToken("GET", "/not-api"), false);
   assert.equal(requiresMosaClientToken("POST", "/not-api"), false);
+  // The public allowlist lives in one place and covers exactly the three
+  // credential-free routes (health, the 311 challenge, the cookie exchange).
+  assert.equal(requiresMosaClientToken("GET", "/api/health"), false);
+  assert.equal(requiresMosaClientToken("HEAD", "/api/health"), false);
+  assert.equal(requiresMosaClientToken("POST", "/api/service-identity"), false);
+  assert.equal(requiresMosaClientToken("POST", "/api/client-session"), false);
+  assert.equal(requiresMosaClientToken("POST", "/api/health"), false, "whitelisted paths are path-scoped, so unknown methods fall through to 404");
   assert.throws(() => normalizeMosaClientToken("too-short"), /32-byte-or-stronger/);
 });
 

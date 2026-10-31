@@ -54,7 +54,7 @@ try {
     throw new Error("Packaged renderer/preload did not recover after restart.");
   }
   assertPackagedWindowChrome(restartRenderer);
-  await verifyPersistedAsset(activeLaunch.origin, importedAssetId);
+  await verifyPersistedAsset(activeLaunch.origin, importedAssetId, renderer.clientToken);
   const mcpConfig = await readPackagedMcpConfig(activeLaunch.origin, activeLaunch.cdpPort);
   await stopChild(activeLaunch.child);
   activeLaunch = null;
@@ -265,11 +265,17 @@ async function verifyPackagedImport(origin, clientToken) {
   if (!assetId) throw new Error("Packaged asset creation returned no asset id.");
   const end = Date.now() + 30000;
   while (Date.now() < end) {
-    const assetResponse = await fetch(`${origin}/api/assets/default/${encodeURIComponent(assetId)}`);
+    // Task 314: reads require the client capability too, so node-side fetches
+    // present the same header the renderer holds.
+    const assetResponse = await fetch(`${origin}/api/assets/default/${encodeURIComponent(assetId)}`, {
+      headers: { "x-mosa-client-token": clientToken },
+    });
     if (assetResponse.ok) {
       const asset = (await assetResponse.json()).asset;
       if (asset?.thumbnail_url) {
-        const thumbnail = await fetch(`${origin}${asset.thumbnail_url}`);
+        const thumbnail = await fetch(`${origin}${asset.thumbnail_url}`, {
+          headers: { "x-mosa-client-token": clientToken },
+        });
         if (thumbnail.ok && String(thumbnail.headers.get("content-type") || "").startsWith("image/")) return assetId;
       }
     }
@@ -278,14 +284,18 @@ async function verifyPackagedImport(origin, clientToken) {
   throw new Error("Packaged derivative generation did not produce a readable thumbnail.");
 }
 
-async function verifyPersistedAsset(origin, assetId) {
+async function verifyPersistedAsset(origin, assetId, clientToken) {
   const end = Date.now() + 30000;
   while (Date.now() < end) {
-    const response = await fetch(`${origin}/api/assets/default/${encodeURIComponent(assetId)}`);
+    const response = await fetch(`${origin}/api/assets/default/${encodeURIComponent(assetId)}`, {
+      headers: { "x-mosa-client-token": clientToken },
+    });
     if (response.ok) {
       const asset = (await response.json()).asset;
       if (asset?.id === assetId && asset?.prompt === "packaged smoke import" && asset.thumbnail_url) {
-        const thumbnail = await fetch(`${origin}${asset.thumbnail_url}`);
+        const thumbnail = await fetch(`${origin}${asset.thumbnail_url}`, {
+          headers: { "x-mosa-client-token": clientToken },
+        });
         if (thumbnail.ok && String(thumbnail.headers.get("content-type") || "").startsWith("image/")) return true;
       }
     }
