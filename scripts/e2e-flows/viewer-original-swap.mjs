@@ -232,7 +232,10 @@ function viewerScenes(config) {
       // original takes over after the 200ms fit wait.
       setDpr(2);
       const bigAgain = await openViewer(big.id);
-      await sleep(300);
+      // Same window, same fit: wait for the zoom readout to settle on the
+      // scene-1 fit value instead of a fixed delay (slow Windows runners read
+      // a transient 1% at 300ms once image loads carry the credential).
+      await settles(() => zoomText() === fitZoom, 3000);
       const fit2xZoom = zoomText();
       const fit2xNeed = bigEdge * (parseInt(fit2xZoom, 10) / 100) * window.devicePixelRatio;
       const fit2xSwapped = await settles(() => pathOfSrc(bigAgain.getAttribute("src")) === big.original && bigAgain.complete && bigAgain.naturalWidth > 0, 3000);
