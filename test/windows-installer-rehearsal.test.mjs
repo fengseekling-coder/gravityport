@@ -95,6 +95,26 @@ function recentOutput(...streams) {
 
 // Ends every program started from dir (the app, its helper processes, an MCP
 // server) and waits until none is left.
+// Diagnostics for a refused upgrade: every process that has a module loaded
+// from `dir` or mentions it on its command line, wherever its executable is.
+// Only called after a failure, so its cost never slows a passing run.
+async function describeProcessesHolding(dir) {
+  const prefix = psLiteral(`${dir}\\`);
+  try {
+    return await powershell(
+      "$byModule = Get-Process | Where-Object { try { @($_.Modules | Where-Object { $_.FileName -and "
+      + `$_.FileName.StartsWith(${prefix}, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0 } catch { $false } } `
+      + "| ForEach-Object { 'module: ' + $_.ProcessName + ' pid=' + $_.Id + ' path=' + $_.Path }; "
+      + "$byCommand = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
+      + `$_.CommandLine.IndexOf(${psLiteral(dir)}, [StringComparison]::OrdinalIgnoreCase) -ge 0 } `
+      + "| ForEach-Object { 'command line: ' + $_.Name + ' pid=' + $_.ProcessId + ' exe=' + $_.ExecutablePath }; "
+      + "(@($byModule) + @($byCommand)) -join [Environment]::NewLine",
+    ) || "(no process found; likely antivirus or the search indexer)";
+  } catch (error) {
+    return `(could not list processes: ${error?.message || error})`;
+  }
+}
+
 async function stopEverythingRunningFrom(dir) {
   const fromDir = "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and "
     + `$_.ExecutablePath.StartsWith(${psLiteral(`${dir}\\`)}, [StringComparison]::OrdinalIgnoreCase) }`;
@@ -253,7 +273,10 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
     // Installing again replaces the whole app folder, like a version change.
     const leftover = join(appDir, "from-an-older-version.txt");
     await writeFile(leftover, "older");
-    assert.equal(await run(installer, ["/S"]), 0, "upgrade exit code");
+    const upgradeExit = await run(installer, ["/S"]);
+    if (upgradeExit !== 0) {
+      assert.fail(`upgrade exit code ${upgradeExit} (2 = the app folder could not be renamed). Holding ${appDir}:\n${await describeProcessesHolding(appDir)}`);
+    }
     assert.equal(existsSync(leftover), false, "files from the previous copy are gone");
     assert.equal(existsSync(join(installRoot, "app.old")), false, "the previous copy is removed");
     assert.deepEqual(await treeDigest(appDir), packaged, "the upgraded copy matches the package");
