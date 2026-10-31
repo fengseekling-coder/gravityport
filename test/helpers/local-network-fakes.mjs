@@ -170,8 +170,15 @@ export async function startRedirectTarget() {
   };
 }
 
+// The fakes only ever forward to this machine. Anything else is refused and
+// recorded, so a test can never reach a real host through them.
+function isLoopbackTarget(host) {
+  return host === "127.0.0.1";
+}
+
 export async function startHttpProxy() {
   const requests = [];
+  const blocked = [];
   const server = http.createServer((req, res) => {
     requests.push({
       method: req.method,
@@ -189,6 +196,13 @@ export async function startHttpProxy() {
     const connectHost = (targetUrl.hostname === "feedback.test" || targetUrl.hostname.endsWith(".test") || targetUrl.hostname === "localhost")
       ? "127.0.0.1"
       : targetUrl.hostname;
+
+    if (!isLoopbackTarget(connectHost) || targetUrl.protocol !== "http:") {
+      blocked.push({ method: req.method, url: req.url });
+      res.writeHead(502, { "Content-Type": "text/plain" });
+      res.end("Fake proxy only forwards to 127.0.0.1");
+      return;
+    }
 
     const proxyReq = http.request({
       protocol: targetUrl.protocol,
@@ -222,6 +236,11 @@ export async function startHttpProxy() {
     const host = (rawHost === "feedback.test" || rawHost.endsWith(".test") || rawHost === "localhost")
       ? "127.0.0.1"
       : rawHost;
+    if (!isLoopbackTarget(host)) {
+      blocked.push({ method: "CONNECT", url: req.url });
+      clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+      return;
+    }
     const serverSocket = net.connect(port, host, () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (head && head.length > 0) serverSocket.write(head);
@@ -239,6 +258,7 @@ export async function startHttpProxy() {
     port,
     url: `http://127.0.0.1:${port}`,
     requests,
+    blocked,
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
@@ -284,6 +304,7 @@ export async function startAuthProxy() {
 
 export async function startSocks5Proxy() {
   const requests = [];
+  const blocked = [];
   const server = net.createServer((socket) => {
     let state = "HANDSHAKE";
 
@@ -334,6 +355,12 @@ export async function startSocks5Proxy() {
             host,
             port,
           });
+          if (!isLoopbackTarget(host)) {
+            blocked.push({ cmd: "CONNECT", host, port });
+            // 0x02: connection not allowed by ruleset.
+            socket.end(Buffer.from([0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
+            return;
+          }
 
           const target = net.connect(port, host, () => {
             const resp = Buffer.from([0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, (port >> 8) & 0xff, port & 0xff]);
@@ -363,6 +390,7 @@ export async function startSocks5Proxy() {
   return {
     port,
     requests,
+    blocked,
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }

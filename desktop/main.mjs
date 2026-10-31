@@ -112,8 +112,10 @@ function releaseManifestVerificationTrusts() {
 function systemNetworkFetch(url, init) {
   return net.fetch(url, init);
 }
+// Feedback and Pinterest requests from the in-process service: same Chromium
+// network as updates (system proxy), but never send or store cookies.
 function serviceOutboundFetch(url, init) {
-  return session.fromPartition("gravityport-service-outbound").fetch(url, { ...init, credentials: "omit" });
+  return net.fetch(url, { ...init, credentials: "omit" });
 }
 // `desktopDataDir` is the *actual* userData after Chromium applied the QA
 // --user-data-dir override (if any). It is deliberately NOT the production

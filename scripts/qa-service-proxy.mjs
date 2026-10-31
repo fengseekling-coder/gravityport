@@ -4,7 +4,7 @@
 import "../lib/apply-env-aliases.mjs";
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -59,20 +59,90 @@ function sleep(ms) {
   return new Promise((resolveWait) => setTimeout(resolveWait, ms));
 }
 
+// Every Electron main pid this script started. Cleanup only ever signals these
+// pids and the descendants found under them, never anything matched by name.
+const launchedPids = new Set();
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function listDescendants(rootPid) {
+  if (process.platform === "win32") return [];
+  let table = "";
+  try {
+    table = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" });
+  } catch {
+    return [];
+  }
+  const children = new Map();
+  for (const line of table.split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    if (!children.has(ppid)) children.set(ppid, []);
+    children.get(ppid).push(pid);
+  }
+  const found = [];
+  const queue = [rootPid];
+  while (queue.length) {
+    for (const child of children.get(queue.shift()) || []) {
+      if (child > 1 && !found.includes(child)) {
+        found.push(child);
+        queue.push(child);
+      }
+    }
+  }
+  return found;
+}
+
 async function stopPid(pid) {
   if (!Number.isInteger(pid) || pid <= 1) return;
-  if (!(await signalProcessTree(pid))) return;
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0);
-    } catch {
-      return;
-    }
-    await sleep(100);
+  const descendants = listDescendants(pid);
+  if (await signalProcessTree(pid)) {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && isAlive(pid)) await sleep(100);
+    if (isAlive(pid)) await signalProcessTree(pid, { force: true }).catch(() => {});
   }
-  await signalProcessTree(pid, { force: true }).catch(() => {});
+  for (const child of descendants) {
+    if (isAlive(child)) {
+      try {
+        process.kill(child, "SIGKILL");
+      } catch {}
+    }
+  }
+  launchedPids.delete(pid);
 }
+
+// Last-resort cleanup when the script itself crashes or is interrupted: the
+// instances must not outlive it (task 324 left two orphaned instances).
+function killLaunchedSync() {
+  for (const pid of launchedPids) {
+    if (!Number.isInteger(pid) || pid <= 1) continue;
+    for (const child of listDescendants(pid)) {
+      try {
+        process.kill(child, "SIGKILL");
+      } catch {}
+    }
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+  launchedPids.clear();
+}
+process.on("exit", killLaunchedSync);
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.once(signal, () => {
+    killLaunchedSync();
+    process.exit(1);
+  });
+}
+
+class LaunchFailure extends Error {}
 
 async function connectCdp(port, expectedUrlPrefix, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
@@ -224,33 +294,46 @@ async function launchIsolatedInstance({
   child.once("close", () => logStream.end());
 
   const pid = child.pid;
+  if (Number.isInteger(pid) && pid > 1) launchedPids.add(pid);
 
-  // Poll health URL
-  const healthUrl = `http://127.0.0.1:${servicePort}/api/health`;
-  const deadline = Date.now() + 30000;
-  let healthy = false;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      await sleep(100);
-      const log = await readFile(logFile, "utf8").catch(() => "");
-      throw new Error(`Electron exited early with code ${child.exitCode}\n--- Electron log ---\n${log}\n--------------------`);
-    }
-    try {
-      const res = await fetch(healthUrl);
-      if (res.ok) {
-        healthy = true;
-        break;
+  let cdp = null;
+  try {
+    // Poll health URL
+    const healthUrl = `http://127.0.0.1:${servicePort}/api/health`;
+    const deadline = Date.now() + 30000;
+    let healthy = false;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null) {
+        await sleep(100);
+        const log = await readFile(logFile, "utf8").catch(() => "");
+        throw new Error(`Electron exited early with code ${child.exitCode}\n--- Electron log ---\n${log}\n--------------------`);
       }
-    } catch {}
-    await sleep(150);
-  }
-  if (!healthy) {
-    const log = await readFile(logFile, "utf8").catch(() => "");
-    throw new Error(`Health timeout on ${healthUrl}\nLog: ${log}`);
-  }
+      try {
+        const res = await fetch(healthUrl);
+        if (res.ok) {
+          healthy = true;
+          break;
+        }
+      } catch {}
+      await sleep(150);
+    }
+    if (!healthy) {
+      const log = await readFile(logFile, "utf8").catch(() => "");
+      throw new Error(`Health timeout on ${healthUrl}\nLog: ${log}`);
+    }
 
-  const cdp = await connectCdp(cdpPort, `http://127.0.0.1:${servicePort}`);
-  await waitForRendererReady(cdp);
+    cdp = await connectCdp(cdpPort, `http://127.0.0.1:${servicePort}`);
+    await waitForRendererReady(cdp);
+  } catch (error) {
+    // A failed start stops the whole run (no retries): close what we started
+    // first, then let the caller abort.
+    try {
+      cdp?.close();
+    } catch {}
+    await stopPid(pid);
+    await rm(rootDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {});
+    throw new LaunchFailure(`Electron test instance failed to start: ${error.message}`);
+  }
 
   async function close() {
     try {
@@ -311,13 +394,14 @@ async function triggerPinterestInPage(cdp) {
   })()`);
 }
 
+const results = {
+  timestamp: new Date().toISOString(),
+  allPassed: false,
+  scenarios: {},
+};
+
 async function runAllScenarios() {
   console.log("=== Starting Task 324 QA Service Proxy Verification ===");
-  const results = {
-    timestamp: new Date().toISOString(),
-    allPassed: false,
-    scenarios: {},
-  };
 
   // --- Scenario A: No Proxy ---
   console.log("\n[Scenario A] No Proxy (Direct Connection)");
@@ -359,6 +443,7 @@ async function runAllScenarios() {
       };
       console.log(`  ✔ Scenario A PASSED: Collector=${collector.requests.length}, Pin=${pinServer.requests.length}, Proxy=${proxy.requests.length}`);
     } catch (err) {
+      if (err instanceof LaunchFailure) throw err;
       console.error(`  ✖ Scenario A FAILED: ${err.message}`);
       detail = { error: err.message };
     } finally {
@@ -402,13 +487,17 @@ async function runAllScenarios() {
       assert.equal(fb.status, 200, "Feedback succeeded");
       assert.equal(pin.status, 200, "Pinterest succeeded");
 
-      const fbProxyReq = proxy.requests.find((r) => r.method === "POST" && r.url.includes("/api/feedback"));
-      const tokenProxyReq = proxy.requests.find((r) => r.method === "POST" && r.url.includes("/oauth/token"));
-      const apiProxyReq = proxy.requests.find((r) => r.method === "GET" && r.url.includes("/boards"));
+      // With <-loopback> the page's own calls to the local service also pass
+      // the proxy, so only count requests addressed to the fake upstreams.
+      const fbProxyReq = proxy.requests.find((r) => r.method === "POST" && r.url === collector.url);
+      const tokenProxyReq = proxy.requests.find((r) => r.method === "POST" && r.url === pinServer.tokenUrl);
+      const apiProxyReq = proxy.requests.find((r) => r.method === "GET" && r.url.startsWith(`${pinServer.apiBase}/boards`));
 
-      assert.ok(fbProxyReq, "Proxy recorded feedback POST");
-      assert.ok(tokenProxyReq, "Proxy recorded token refresh POST");
-      assert.ok(apiProxyReq, "Proxy recorded API GET");
+      assert.ok(fbProxyReq, "Proxy recorded the service's feedback POST to the collector");
+      assert.ok(tokenProxyReq, "Proxy recorded the service's token refresh POST");
+      assert.ok(apiProxyReq, "Proxy recorded the service's boards API GET");
+      assert.equal(collector.requests.length, 1, "Collector received the forwarded feedback");
+      assert.equal(proxy.blocked.length, 0, "No request tried to leave the machine");
 
       passed = true;
       detail = {
@@ -416,9 +505,13 @@ async function runAllScenarios() {
         fbProxyUrl: fbProxyReq.url,
         tokenProxyUrl: tokenProxyReq.url,
         apiProxyUrl: apiProxyReq.url,
+        proxyRequests: proxy.requests.map((r) => `${r.method} ${r.url}`),
+        collectorRequests: collector.requests.map((r) => `${r.method} ${r.url}`),
+        pinRequests: pinServer.requests.map((r) => `${r.method} ${r.url}`),
       };
       console.log(`  ✔ Scenario B PASSED: Proxy recorded ${proxy.requests.length} requests (feedback, token refresh, and api)`);
     } catch (err) {
+      if (err instanceof LaunchFailure) throw err;
       console.error(`  ✖ Scenario B FAILED: ${err.message}`);
       detail = { error: err.message };
     } finally {
@@ -474,6 +567,7 @@ async function runAllScenarios() {
       };
       console.log(`  ✔ Scenario C PASSED: Second candidate received request, feedback succeeded`);
     } catch (err) {
+      if (err instanceof LaunchFailure) throw err;
       console.error(`  ✖ Scenario C FAILED: ${err.message}`);
       detail = { error: err.message };
     } finally {
@@ -520,6 +614,7 @@ async function runAllScenarios() {
       };
       console.log(`  ✔ Scenario D PASSED: Direct connection succeeded, proxy received 0 requests`);
     } catch (err) {
+      if (err instanceof LaunchFailure) throw err;
       console.error(`  ✖ Scenario D FAILED: ${err.message}`);
       detail = { error: err.message };
     } finally {
@@ -561,6 +656,7 @@ async function runAllScenarios() {
         (r) => r.cmd === "CONNECT" && r.port === collector.port,
       );
       assert.ok(connectReq, "SOCKS5 recorded CONNECT to collector port");
+      assert.equal(socks.blocked.length, 0, "No connection tried to leave the machine");
 
       passed = true;
       detail = {
@@ -570,6 +666,7 @@ async function runAllScenarios() {
       };
       console.log(`  ✔ Scenario E PASSED: SOCKS5 recorded CONNECT to collector port, feedback succeeded`);
     } catch (err) {
+      if (err instanceof LaunchFailure) throw err;
       console.error(`  ✖ Scenario E FAILED: ${err.message}`);
       detail = { error: err.message };
     } finally {
@@ -632,6 +729,7 @@ async function runAllScenarios() {
       };
       console.log(`  ✔ Scenario F PASSED: Non-200 in ${elapsed}ms, process alive, no popup windows`);
     } catch (err) {
+      if (err instanceof LaunchFailure) throw err;
       console.error(`  ✖ Scenario F FAILED: ${err.message}`);
       detail = { error: err.message };
     } finally {
@@ -676,6 +774,7 @@ async function runAllScenarios() {
       };
       console.log(`  ✔ Scenario G PASSED: Feedback returned 502, target received 0 requests`);
     } catch (err) {
+      if (err instanceof LaunchFailure) throw err;
       console.error(`  ✖ Scenario G FAILED: ${err.message}`);
       detail = { error: err.message };
     } finally {
@@ -732,6 +831,7 @@ async function runAllScenarios() {
       };
       console.log(`  ✔ Scenario H PASSED: Second request sent no cookie, 0 cookies in session`);
     } catch (err) {
+      if (err instanceof LaunchFailure) throw err;
       console.error(`  ✖ Scenario H FAILED: ${err.message}`);
       detail = { error: err.message };
     } finally {
@@ -741,8 +841,13 @@ async function runAllScenarios() {
     results.scenarios.H = { name: "Cookie Omission", passed, detail };
   }
 
+  // Every instance must be gone before the run counts as passed.
+  const leftovers = [...launchedPids].filter(isAlive);
+  results.leftoverInstances = leftovers;
+  console.log(`\nLeftover Electron instances: ${leftovers.length}`);
+
   // Check all scenarios
-  const allPassed = Object.values(results.scenarios).every((s) => s.passed);
+  const allPassed = leftovers.length === 0 && Object.values(results.scenarios).every((s) => s.passed);
   results.allPassed = allPassed;
 
   await mkdir(dirname(LOG_JSON_PATH), { recursive: true });
@@ -758,4 +863,15 @@ async function runAllScenarios() {
   }
 }
 
-await runAllScenarios();
+try {
+  await runAllScenarios();
+} catch (error) {
+  // Launch failures and unexpected errors stop the run without retrying.
+  killLaunchedSync();
+  results.allPassed = false;
+  results.aborted = error.message;
+  console.error(`\n✖ Aborted: ${error.message}`);
+  await mkdir(dirname(LOG_JSON_PATH), { recursive: true }).catch(() => {});
+  await writeFile(LOG_JSON_PATH, JSON.stringify(results, null, 2), "utf8").catch(() => {});
+  process.exit(1);
+}

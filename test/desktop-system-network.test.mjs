@@ -36,10 +36,10 @@ for (const name of NETWORK_CALLS) {
   });
 }
 
-test("serviceOutboundFetch uses isolated partition fetch with credentials: 'omit'", () => {
+test("serviceOutboundFetch uses net.fetch with credentials: 'omit'", () => {
   assert.match(
     mainSource,
-    /function serviceOutboundFetch\(url, init\) \{\s*return session\.fromPartition\("gravityport-service-outbound"\)\.fetch\(url, \{\s*\.\.\.init,\s*credentials:\s*"omit"\s*\}\);\s*\}/,
+    /function serviceOutboundFetch\(url, init\) \{\s*return net\.fetch\(url, \{\s*\.\.\.init,\s*credentials:\s*"omit"\s*\}\);\s*\}/,
   );
 });
 
