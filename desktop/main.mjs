@@ -1297,7 +1297,9 @@ function runAnonymousUsageReport() {
     return Promise.resolve({ status: "skipped", currentVersion });
   }
 
-  usageReportPromise = reportAnonymousUsage({ anonymousUsage: anonymousUsage.telemetry })
+  // Same network path as the update check: Node's fetch ignores the system
+  // proxy, so machines that only reach us through one were never counted.
+  usageReportPromise = reportAnonymousUsage({ anonymousUsage: anonymousUsage.telemetry, fetchImpl: systemNetworkFetch })
     .then((result) => {
       if (result.reported && !anonymousUsage.commit()) {
         console.warn("[MOSA] anonymous usage reached the server but the local report timestamp could not be persisted");
