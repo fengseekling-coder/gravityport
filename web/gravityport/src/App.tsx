@@ -45,7 +45,8 @@ import {
 } from "./gallery-scroll-memory"
 import { deriveEmptyState } from "./empty-state"
 import { describeGroupStats } from "./group-stats"
-import { createResyncOnReconnect, createSseRefreshGate, type SseRefreshGate } from "./live-sync-resync"
+import { createLibrarySync, type LibrarySyncCommit, type LibrarySyncController, type LibrarySyncHooks, type LibrarySyncView } from "./library-sync"
+import { focusAfterRemoval } from "./gallery-reconcile"
 import {
   checkVersionConsistency,
   createReadyGate,
@@ -62,6 +63,7 @@ import {
   toggleAssetFavorite, updateAssetMetadata, uploadVideoPoster, moveAssetsToTrash, setAssetsGroup,
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
   moveAssetsToStack, openLibraryFolder,
+  fetchLibraryRevision, fetchLibraryChanges, fetchGalleryRows, readMutationState,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
   type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
   fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
@@ -646,22 +648,32 @@ export default function App() {
     ...(source ? { source } : {}), ...(group ? { group } : {}), ...(stackId ? { stackId } : {}),
     ...(cursor ? { cursor } : {}),
   })
-  const pendingViewerReloadRef = useRef(false)
-  // Task 292 bridge, until review high-8's incremental refresh replaces this
-  // whole path: SSE-triggered gallery refreshes must never abort the load
-  // currently in flight. During an import they hold off entirely (new cards
-  // land through the per-batch inserts instead); otherwise at most ONE
-  // follow-up refresh is queued and fires when the in-flight load commits or
-  // fails. User-initiated refreshes bypass this gate on purpose.
+  // ── Review 2-6: incremental library sync ──
+  // One controller owns the gallery's reconciliation baseline. Pushes,
+  // reconnects, the app's own mutations and freshly committed pages all just
+  // schedule a sync; the merge result lands through applySyncCommit below.
+  // The old viewer-pending reload and the 292 SSE gate are gone: the viewer
+  // stays open while syncs run, and its card is pinned/stepped per commit.
   const importingRef = useRef(false)
   const galleryLoadingRef = useRef(false)
-  const sseRefreshGateRef = useRef<SseRefreshGate | null>(null)
-  if (!sseRefreshGateRef.current) {
-    sseRefreshGateRef.current = createSseRefreshGate({
-      isBlocked: () => importingRef.current || galleryLoadingRef.current,
-      refresh: () => setRefreshKey(value => value + 1),
+  const librarySyncRef = useRef<LibrarySyncController | null>(null)
+  if (!librarySyncRef.current) {
+    librarySyncRef.current = createLibrarySync({
+      hooks: () => syncHooksRef.current as LibrarySyncHooks,
+      fetchRevision: project => fetchLibraryRevision(project),
+      fetchChanges: (project, since) => fetchLibraryChanges(project, since),
+      fetchRows: (query, assetIds, boundaryCursor, stackIds) => fetchGalleryRows(query, assetIds, boundaryCursor, stackIds),
+      readMutationState: () => readMutationState(),
+      readView: () => syncViewProviderRef.current(),
+      isPaused: () => galleryLoadingRef.current || importingRef.current,
     })
   }
+  // The view snapshot the controller reads at request and commit time; the
+  // provider is re-bound every render so it always sees the current state.
+  const syncViewProviderRef = useRef<() => LibrarySyncView>(() => {
+    throw new Error("library sync view provider not ready")
+  })
+  const syncHooksRef = useRef<LibrarySyncHooks | null>(null)
   // Import batches that arrived while the user was scrolled away from the top
   // of an insert-eligible view; the toast's 查看 button (or the next batch
   // landing while the user is back at the top) flushes them at the front.
@@ -680,13 +692,9 @@ export default function App() {
   const loadGenerationRef = useRef(0)
   useEffect(() => {
     const controller = new AbortController()
-    // The viewer is a modal surface: background churn (derivative completions
-    // arriving over SSE) must not collapse its loaded window or move the
-    // selection under the user. One refresh is queued for when it closes.
-    if (preview) { pendingViewerReloadRef.current = true; controller.abort(); return }
-    // A same-view refresh (SSE churn while previews render) must re-fetch the
+    // A same-view refresh (a sync fallback, the 刷新 menu) must re-fetch the
     // WHOLE loaded window: collapsing back to the first page would throw away
-    // the user's scrolled pages every time a preview lands.
+    // the user's scrolled pages. Incremental syncs never come through here.
     const viewKey = JSON.stringify([project, active, debouncedQuery, sortOrder, assetType, stackId])
     const windowRefresh = viewKeyRef.current === viewKey && assetsRef.current.length > GALLERY_PAGE_SIZE
     // Task 152 scroll restore: a real view switch owes the next committed load
@@ -698,9 +706,9 @@ export default function App() {
     // still shows the outgoing view.
     const isViewSwitch = viewKeyRef.current !== viewKey
     if (isViewSwitch) {
-      // Task 292 bridge: a queued SSE refresh is bound to the view it waited
-      // behind; the fresh view reloads on its own.
-      sseRefreshGateRef.current?.takePending()
+      // The sync baseline belongs to the view it merged into; the fresh view
+      // establishes its own.
+      librarySyncRef.current?.reset()
       const leavingKey = committedViewKeyRef.current
       const live = liveScrollRef.current
       if (leavingKey) {
@@ -749,6 +757,9 @@ export default function App() {
     setLoadError("")
     const run = async () => {
       try {
+        // Review 2-6 D.1: a view with no baseline yet pins one from the
+        // server's revision counter before the first page is requested.
+        const baselineAtStart = await librarySyncRef.current?.ensureBaseline(project) ?? null
         let page = await fetchAssetPage(buildQuery(), { signal: controller.signal })
         let collected = page.assets
         // Follow-up pages until `target` items are collected — shared by the
@@ -840,6 +851,9 @@ export default function App() {
           firstPageOkRef.current = true
           readyGateRef.current?.markFirstPageOk()
         }
+        // The committed window now reflects the library as of this revision:
+        // fold it into the baseline and reconcile whatever came after.
+        librarySyncRef.current?.notePageRevision(page.revision, baselineAtStart)
       } catch (error) {
         if (controller.signal.aborted) return
         // A failed load for a freshly switched-to project is a failed switch:
@@ -848,11 +862,20 @@ export default function App() {
           revertProjectSwitch()
           return
         }
+        // Review 中10: back/forward (or a delayed exit) landed on a stack the
+        // library no longer has. Leave it instead of showing an error view —
+        // the history entry is replaced, so going back again never returns.
+        if ((error as { code?: string }).code === "STACK_NOT_FOUND") {
+          exitStackReplace()
+          return
+        }
         setLoadError(errorMessage(error))
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false)
           galleryLoadingRef.current = false
+          // Syncs were paused behind this load; whatever queued up runs now.
+          librarySyncRef.current?.schedule()
         }
       }
     }
@@ -868,11 +891,6 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, active, debouncedQuery, sortOrder, assetType, stackId, refreshKey])
-  useEffect(() => {
-    if (preview || !pendingViewerReloadRef.current) return
-    pendingViewerReloadRef.current = false
-    refreshNavigation()
-  }, [preview])
   // Opening the preview unmounts the grid: re-arm the restore so closing it —
   // even after the viewer paged and re-focused — returns to the pre-preview
   // position and only reveals the focused card (task 152).
@@ -880,17 +898,19 @@ export default function App() {
     if (!preview) return
     pendingScrollRestoreRef.current = { viewKey: committedViewKeyRef.current, reveal: true }
   }, [preview])
-  const refreshNavigation = () => setRefreshKey(value => value + 1)
-  // Task 292 bridge: an SSE refresh that arrived while the gallery was busy
-  // loading fires here, after that load committed or failed — the queued
-  // refresh must never abort the load it waited behind (import batches keep
-  // the gallery alive in the meantime, and at most one refresh queues up).
+  // Closing the viewer releases its pin: the kept card reconciles against the
+  // view once and disappears if it no longer matches (review 2-6 B.5).
   useEffect(() => {
-    if (loading) return
-    if (!sseRefreshGateRef.current?.takePending()) return
-    refreshNavigation()
+    if (preview) return
+    librarySyncRef.current?.releaseViewer()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading])
+  }, [preview])
+  const refreshNavigation = () => setRefreshKey(value => value + 1)
+  // A mutation finished: reconcile its effect instead of reloading the window
+  // (review 2-6 E.2). Everything the old refreshNavigation() did after a
+  // successful mutation now goes through here; the 刷新 menu, the error
+  // retry button and the sync's own fallback keep the full reload.
+  const scheduleSync = () => { librarySyncRef.current?.schedule() }
   const lastMetaProjectRef = useRef("")
   useEffect(() => {
     const controller = new AbortController()
@@ -906,7 +926,13 @@ export default function App() {
       if (!controller.signal.aborted) setProjects(list)
     }).catch(() => {})
     fetchNavigation(project, controller.signal).then(data => {
-      if (!controller.signal.aborted) setNavigation(data)
+      if (controller.signal.aborted) return
+      setNavigation(data)
+      // Review 中10: the current view may name a group that no longer exists
+      // (back/forward onto it, or the delete happened elsewhere). Fresh
+      // sidebar stats are the source of truth; a rename recorded by the last
+      // sync batch follows the new name, anything else falls back to 所有素材.
+      groupLivenessRef.current?.(data)
     }).catch(() => {})
     fetchLibraryLocation(project, controller.signal).then(data => {
       if (!controller.signal.aborted && data.path) setLibrary(data)
@@ -917,24 +943,39 @@ export default function App() {
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, refreshKey])
-  // SSE stream setup (combined with sseConnectedRef tracking).
+  // SSE stream setup (combined with sseOpenRef tracking).
   useEffect(() => {
-    // Reconnects refresh once too: a library-changed event sent while the
-    // stream was down is never replayed.
-    // Task 292 bridge: pushed refreshes never abort the load in flight —
-    // during an import they hold off entirely (per-batch inserts carry the
-    // new cards), otherwise one refresh queues behind the current load.
-    const resync = createResyncOnReconnect({ onResync: () => sseRefreshGateRef.current?.request() })
+    // Review 2-6: pushes feed the incremental sync directly. A push carries
+    // the journaled delta (reused when it covers the baseline gap); a
+    // reconnect schedules a sync so the replayed history fills the outage.
+    const sync = librarySyncRef.current
     const stream = new EventSource(`/api/library-events?project=${encodeURIComponent(project)}`)
+    const parsePayload = (event: Event): Record<string, unknown> => {
+      try { return JSON.parse((event as MessageEvent).data) as Record<string, unknown> } catch { return {} }
+    }
     stream.addEventListener("open", () => {
-      resync.handleOpen()
-      if (sseOpenRef.current) return
+      if (sseOpenRef.current) {
+        sync?.schedule()
+        return
+      }
       sseOpenRef.current = true
       readyGateRef.current?.markSseOpen()
     })
-    stream.addEventListener("library-changed", () => resync.handleChange())
+    stream.addEventListener("ready", event => {
+      const payload = parsePayload(event)
+      sync?.notePush({ revision: typeof payload.revision === "string" ? payload.revision : null })
+    })
+    stream.addEventListener("library-changed", event => {
+      const payload = parsePayload(event)
+      sync?.notePush({
+        revision: typeof payload.revision === "string" ? payload.revision : null,
+        fromRevision: typeof payload.fromRevision === "string" ? payload.fromRevision : null,
+        complete: payload.complete === true,
+        changes: Array.isArray(payload.changes) ? payload.changes as Parameters<LibrarySyncController["notePush"]>[0]["changes"] : [],
+      })
+      sync?.schedule()
+    })
     return () => {
-      resync.dispose()
       stream.close()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1155,6 +1196,8 @@ export default function App() {
     })
   }
   assetsRef.current = assets
+  const nextCursorRef = useRef<string | null>(null)
+  nextCursorRef.current = nextCursor
   const asset = assets.find((a) => a.id === selected) || assets[0]
   // 版本树（任务 144）：有对话时行来自对话轮次计算——默认当前素材前后共三行，
   // 「查看」展开全部；无对话时列表回退到 events（rounds.rows 为空）。
@@ -1213,7 +1256,8 @@ export default function App() {
     return () => observer.disconnect()
   }, [expandedTags, tagItemsKey, tagFitCount])
   // The same refresh the blank-area 刷新 menu entries run: a visible notice
-  // plus a navigation-key reload of the current view.
+  // plus a navigation-key reload of the current view (an explicit user
+  // request — full reload on purpose, review 2-6 E.2).
   const refreshCurrentView = () => {
     notify(tr("正在刷新..."))
     refreshNavigation()
@@ -1252,6 +1296,7 @@ export default function App() {
     const requestViewKey = viewKeyRef.current
     const requestGeneration = loadGenerationRef.current
     const requestCursor = nextCursor
+    const baselineAtStart = librarySyncRef.current?.getBaseline() ?? null
     const controller = new AbortController()
     paginationAbortRef.current = controller
     loadingMoreRef.current = true
@@ -1266,6 +1311,8 @@ export default function App() {
       const merged = [...assetsRef.current, ...page.assets.filter(item => !seen.has(item.id))]
       setAssets(merged)
       setNextCursor(page.nextCursor)
+      // The window now covers the library up to this page's revision too.
+      librarySyncRef.current?.notePageRevision(page.revision, baselineAtStart)
       return merged
     } catch (error) {
       if (!controller.signal.aborted) notify(errorMessage(error))
@@ -1276,17 +1323,30 @@ export default function App() {
       setLoadingMore(false)
     }
   }
-  const loadMore = () => { void fetchNextPage() }
+  // ── gallery windowing ──
+  // Above the threshold only masonry items near the viewport stay mounted.
+  const windowingActive = assets.length > GALLERY_MOUNT_ALL_THRESHOLD
+  const isWindowSettled = !windowingActive || (galleryWindow !== null && galleryWindow.model.placements.length === assets.length)
+
+  const loadMore = () => {
+    if (!isWindowSettled) return
+    void fetchNextPage()
+  }
   useEffect(() => {
     const node = sentinelRef.current
-    if (!node || !nextCursor) return
+    const grid = gridRef.current
+    if (!node || !grid || !nextCursor || !isWindowSettled) return
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) void loadMore()
-    }, { rootMargin: "600px 0px" })
+    }, { root: grid, rootMargin: "600px 0px" })
     observer.observe(node)
+    // 重排完成后，若当前视口已处于底部哨兵区域，主动检查并触发一次翻页（防止相交事件漏检导致卡死）
+    if (grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 600) {
+      void loadMore()
+    }
     return () => observer.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextCursor, loadingMore, loading, preview])
+  }, [nextCursor, loadingMore, loading, preview, isWindowSettled])
   // The grid is its own scroll container; a scroll-position check makes
   // pagination deterministic even where IntersectionObserver timing is not.
   // The same handler re-derives the mounted gallery window. preview rides the
@@ -1302,13 +1362,10 @@ export default function App() {
       if (grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 400) void loadMore()
     }
     grid.addEventListener("scroll", onScroll, { passive: true })
-    onScroll()
+    if (isWindowSettled) onScroll()
     return () => grid.removeEventListener("scroll", onScroll)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextCursor, loadingMore, loading, preview])
-  // ── gallery windowing ──
-  // Above the threshold only masonry items near the viewport stay mounted.
-  const windowingActive = assets.length > GALLERY_MOUNT_ALL_THRESHOLD
+  }, [nextCursor, loadingMore, loading, preview, isWindowSettled])
   const rowModelRef = useRef<{ key: string; model: MasonryModel } | null>(null)
   const updateGalleryWindowRef = useRef<() => void>(() => {})
   const galleryRowModel = (): MasonryModel | null => {
@@ -1595,22 +1652,26 @@ export default function App() {
     // while the new project's first page is still in flight.
     setAssets([]); setNextCursor(null)
     setLoadError("")
-    pendingViewerReloadRef.current = false
     setPreview(false)
     setProject(next)
   }
-  const exitStack = () => {
-    if (!stackId) return false
-    goTo({ stackId: "", stackName: "" })
-    return true
-  }
   // ── navigation history ──
   // goTo records the TARGET snapshot (deduped) and applies it, so the current
-  // state at each stack position is what back/forward restores.
-  const goTo = (partial: Partial<NavSnapshot>) => {
+  // state at each stack position is what back/forward restores. With
+  // { replace: true } the target overwrites the CURRENT entry instead of
+  // pushing: a view that died under the user (stack dissolved, group deleted
+  // or renamed elsewhere) rewrites itself into its exit target, so going back
+  // never returns to the dead view (review 中10).
+  const goTo = (partial: Partial<NavSnapshot>, options?: { replace?: boolean }) => {
     setNavHistory(old => {
-      const stack = old.stack.slice(0, old.index + 1)
       const next: NavSnapshot = { active, stackId, stackName, query: debouncedQuery, sortOrder, assetType, ...partial }
+      if (options?.replace) {
+        const stack = [...old.stack]
+        if (stack[old.index] && JSON.stringify(stack[old.index]) === JSON.stringify(next)) return old
+        stack[old.index] = next
+        return { stack, index: old.index }
+      }
+      const stack = old.stack.slice(0, old.index + 1)
       if (stack[old.index] && JSON.stringify(stack[old.index]) === JSON.stringify(next)) return old
       stack.push(next)
       return { stack, index: stack.length - 1 }
@@ -1621,6 +1682,13 @@ export default function App() {
     if (partial.sortOrder !== undefined) setSortOrder(partial.sortOrder)
     if (partial.assetType !== undefined) setAssetType(partial.assetType)
     setPreview(false)
+  }
+  // The stack view is gone (dissolved, emptied, or was never there again):
+  // back to the pre-stack view — same active/search/sort, stackId cleared —
+  // replacing the current history entry.
+  const exitStackReplace = () => {
+    if (!stackId) return
+    goTo({ stackId: "", stackName: "" }, { replace: true })
   }
   const navigateHistory = (direction: -1 | 1) => {
     const next = navHistory.index + direction
@@ -1634,7 +1702,21 @@ export default function App() {
       notify("已是最新浏览位置")
       return
     }
-    const snap = navHistory.stack[next]
+    let snap = navHistory.stack[next]
+    // 320 补充 6（原单 E.5 第三条）：后退/前进落到一个已经不存在的分组上，
+    // 用当前已有的侧栏统计判断一次并替换成「所有素材」（替换当前条目，后退
+    // 不会绕回幽灵分组）；统计还没拉到（null）时不判断。堆叠由 STACK_NOT_FOUND
+    // 在加载失败时退出，这里不用重复。
+    if (snap.active.startsWith("group:") && navigation) {
+      const name = snap.active.slice("group:".length)
+      const alive = navigation.groups.some(entry => entry.name.toLowerCase() === name.toLowerCase())
+      if (!alive) {
+        const stack = [...navHistory.stack]
+        stack[next] = { ...snap, active: "所有素材", stackId: "", stackName: "" }
+        setNavHistory(old => ({ stack, index: next }))
+        snap = stack[next]
+      }
+    }
     applySelection([], selectionRef.current.selected)
     setNavHistory(old => ({ ...old, index: next }))
     setStackId(snap.stackId); setStackName(snap.stackName)
@@ -1689,6 +1771,118 @@ export default function App() {
     if (id === selectionRef.current.selected) return
     const next = focusSelection(selectionRef.current.selectedIds, selectionRef.current.selected, id)
     applySelection(next.selectedIds, next.selected)
+  }
+  // ── Review 2-6: applying an incremental sync commit ──
+  const refreshNavigationStatsRef = useRef<() => void>(() => {})
+  const groupLivenessRef = useRef<((nav: MosaNavigation) => void) | null>(null)
+  // Called with fresh sidebar stats: the viewed group may have been deleted
+  // elsewhere while it was on screen (back/forward onto it). No journal batch
+  // carries the evidence, so the stats are the source of truth; falls back to
+  // 所有素材 with the history entry replaced.
+  const groupLivenessCheck = (nav: MosaNavigation) => {
+    if (!active.startsWith("group:")) return
+    const name = active.slice("group:".length)
+    if (nav.groups.some(entry => entry.name.toLowerCase() === name.toLowerCase())) return
+    goTo({ active: "所有素材" }, { replace: true })
+  }
+  // The one merge result landing spot. Runs only while the view, the loaded
+  // window and the app's own mutations are exactly what the sync saw.
+  const applySyncCommit = (commit: LibrarySyncCommit) => {
+    const previousIds = assetsRef.current.map(item => item.id)
+    const previousIdSet = new Set(previousIds)
+    const followed = (id: string) => commit.replacedStackCards[id] ?? id
+    setAssets(commit.cards)
+    if (commit.pageTotal != null) setPageTotal(commit.pageTotal)
+    // Selection prunes like a full reload (loaded-and-gone drops, off-page
+    // stays), with stack-cover swaps followed to the new card.
+    const validIds = new Set(commit.cards.map(item => item.id))
+    const kept = selectionRef.current
+    const selectAllBusy = selectAllInFlightRef.current || pendingSelectAllRef.current !== null
+    if (!selectAllBusy) {
+      const mappedSelected = kept.selected ? followed(kept.selected) : ""
+      const pruned = pruneSelection(
+        kept.selectedIds.map(followed),
+        mappedSelected,
+        id => validIds.has(id) || !previousIdSet.has(id),
+      )
+      if (pruned.changed || (!pruned.selectedIds.length && !pruned.selected)) {
+        const focus = pruned.selected
+          || focusAfterRemoval(previousIds, commit.cards.map(item => item.id), mappedSelected)
+          || pruned.selectedIds[0]
+          || commit.cards[0]?.id
+          || ""
+        // A kept focus that was already the app's pick stays implicit.
+        const implicit = !pruned.selectedIds.length
+          && (!pruned.selected || pruned.selected === implicitFocusRef.current)
+        applySelection(pruned.selectedIds, focus, implicit)
+      }
+    }
+    // Viewer: step off a card that really left the library, keep showing (and
+    // pin) one that merely left this view.
+    if (commit.viewer.action === "close") setPreview(false)
+    else if (commit.viewer.action === "move") focusAsset(commit.viewer.id)
+    // The inspected card was among the touched ids (favorites, metadata,
+    // derivatives): re-fetch its detail instead of waiting for a re-selection.
+    if (commit.inspectorRefreshNeeded) {
+      const targetId = followed(selectionRef.current.selected)
+      if (targetId && validIds.has(targetId)) {
+        void fetchAsset(project, targetId).then(full => {
+          setAssets(old => old.map(item => item.id === full.id ? mergeAssetDetail(item, full) : item))
+        }).catch(() => {})
+      }
+    }
+    // Sidebar counts and the project list move with any non-derivative
+    // change; the library location and health do not.
+    if (commit.classify.needsNavigation) refreshNavigationStatsRef.current()
+    // View exits (review 中10): the stack we are inside dissolved or emptied;
+    // the group we are inside was deleted or renamed — follow or leave, each
+    // replacing the current history entry.
+    if (stackId) {
+      const stackDead = commit.stack === null
+        || (commit.stack != null && commit.stack.count === 0)
+        || commit.classify.dissolvedStacks.includes(stackId)
+      if (stackDead) exitStackReplace()
+    } else if (active.startsWith("group:")) {
+      const name = active.slice("group:".length)
+      if (commit.classify.deletedGroups.includes(name)) {
+        goTo({ active: "所有素材" }, { replace: true })
+      } else if (commit.classify.groupRenames.has(name)) {
+        let target: string = name
+        while (commit.classify.groupRenames.has(target)) {
+          target = commit.classify.groupRenames.get(target) as string
+        }
+        if (target !== name) goTo({ active: `group:${target}` }, { replace: true })
+      }
+    }
+  }
+  // Per-render wiring: the controller always talks to the freshest closures.
+  syncViewProviderRef.current = (): LibrarySyncView => ({
+    viewKey: viewKeyRef.current,
+    generation: loadGenerationRef.current,
+    nextCursor: nextCursorRef.current,
+    project,
+    cards: assetsRef.current,
+    loadedCardIds: assetsRef.current.map(item => item.id),
+    query: {
+      project, scope, query: debouncedQuery, sort: sortOrder, mediaKind,
+      ...(source ? { source } : {}), ...(group ? { group } : {}), ...(stackId ? { stackId } : {}),
+    },
+    viewedId: selected,
+    viewerOpen: preview,
+  })
+  syncHooksRef.current = {
+    onCommit: applySyncCommit,
+    onFallback: () => refreshNavigation(),
+  }
+  refreshNavigationStatsRef.current = () => {
+    fetchProjects().then(list => setProjects(list)).catch(() => {})
+    fetchNavigation(project).then(data => setNavigation(data)).catch(() => {})
+  }
+  groupLivenessRef.current = groupLivenessCheck
+  // e2e and review tooling read the sync's counters through CDP.
+  ;(window as unknown as { __mosaLibrarySync?: unknown }).__mosaLibrarySync = {
+    stats: () => librarySyncRef.current?.stats() ?? {},
+    baseline: () => librarySyncRef.current?.getBaseline() ?? null,
   }
   const selectCard = (id: string, event: React.MouseEvent) => {
     const index = assets.findIndex(a => a.id === id)
@@ -2317,7 +2511,7 @@ export default function App() {
           : fillNamed("已把 {count} 个素材移出分组", { count: outcome.succeeded }))
       }
       applySelection([], "")
-      refreshNavigation()
+      scheduleSync()
     } catch (error) { notify(errorMessage(error)) }
     finally { cardDragMutationRef.current = false }
   }
@@ -2361,7 +2555,7 @@ export default function App() {
         const loosened = await moveAssetsToStack(originProject, sourceIds, null)
         if (loosened.failed) {
           notify(loosened.firstError || tr("合并堆叠失败"))
-          refreshNavigation()
+          scheduleSync()
           return
         }
         const ids = [drop.cardId, ...movedIds]
@@ -2373,8 +2567,8 @@ export default function App() {
         })
       }
       applySelection([], "")
-      refreshNavigation()
-    } catch (error) { notify(errorMessage(error)); refreshNavigation() }
+      scheduleSync()
+    } catch (error) { notify(errorMessage(error)); scheduleSync() }
     finally { cardDragMutationRef.current = false }
   }
   const runRootStackDrop = async (drop: CardDropTarget, gesture: CardDragFinish) => {
@@ -2410,7 +2604,7 @@ export default function App() {
         })
       }
       applySelection([], "")
-      refreshNavigation()
+      scheduleSync()
     } catch (error) { notify(errorMessage(error)) }
     finally { cardDragMutationRef.current = false }
   }
@@ -2422,14 +2616,14 @@ export default function App() {
     cardDragMutationRef.current = true
     try {
       await reorderStack(project, stackId, nextIds)
-      refreshNavigation()
+      scheduleSync()
     } catch (error) {
       // A concurrent membership change can make the drag snapshot stale
       // between pointerdown and PATCH; reload the stack and ask for a new drag
       // instead of leaking the server's validation prose.
       if ((error as { code?: string })?.code === "STACK_ORDER_MISMATCH") {
         notify(tr("堆叠内容已发生变化，已刷新，请重新拖动排序"))
-        refreshNavigation()
+        scheduleSync()
       } else notify(errorMessage(error))
     } finally { cardDragMutationRef.current = false }
   }
@@ -2709,12 +2903,8 @@ export default function App() {
       } else {
         baseText = tr("导入完成")
       }
-      // The navigation key reloads the current view too (inside a stack, the
-      // stack's members), without a 正在刷新 toast replacing the result above.
-      // Task 292 bridge: this refresh IS the one the import suppressed SSE
-      // events queued up — consume the marker so no second refresh follows.
-      sseRefreshGateRef.current?.takePending()
-      refreshNavigation()
+      // Review 2-6: the sync reconciles the import's changes (the per-batch
+      // inserts already carried the cards); no navigation-key reload here.
       if (result.createdIds.length) {
         notify(`${baseText}${tr("· 正在检查相似的图…")}`)
         void queueImportReview(project, result.createdIds, groupName || "", stackId, stackName, result.alreadyInLibrary)
@@ -2723,14 +2913,14 @@ export default function App() {
       }
       return result.createdIds
     } catch (error) {
-      // Task 292 bridge: a thrown import still owes the gallery one refresh
-      // for the SSE events the import gate held back.
-      if (sseRefreshGateRef.current?.takePending()) refreshNavigation()
       notify(errorMessage(error))
       return []
     } finally {
       importingRef.current = false
       setImporting(false)
+      // Syncs paused behind the import run once now, from the pre-import
+      // baseline — the replay covers every push the pause held back.
+      librarySyncRef.current?.schedule()
     }
   }
 
@@ -2761,7 +2951,7 @@ export default function App() {
         await resolveImportDuplicates(reviewProject, state.identical.map(({ newAssetId, existingAssetId }) => ({
           kind: "trash-new" as const, newAssetId, existingAssetId, reason: "duplicate-import:identical" as const,
         })))
-        refreshNavigation()
+        scheduleSync()
       }
       const elsewhereKept = alreadyInLibrary.filter(({ existingAsset }) => (
         targetGroupName
@@ -2840,7 +3030,7 @@ export default function App() {
         if (failed > 0) notify(fillNamed("{failed} 项未能处理", { failed }))
       }
       dismissImportReview()
-      refreshNavigation()
+      scheduleSync()
     } catch (error) {
       notify(errorMessage(error))
     } finally {
@@ -2861,12 +3051,12 @@ export default function App() {
     // every path below either reaches importFiles (whose finally clears it)
     // or clears it here.
     importingRef.current = true
-    // A scan that ends without reaching importFiles releases the gate and
-    // re-asks for any refresh it held (still behind an in-flight load).
+    // A scan that ends without reaching importFiles releases the pause and
+    // lets the queued sync run (review 2-6: the 292 SSE gate is gone).
     const releaseDropScanGate = () => {
       if (importing) return
       importingRef.current = false
-      if (sseRefreshGateRef.current?.takePending()) sseRefreshGateRef.current.request()
+      librarySyncRef.current?.schedule()
     }
     const topLevel = Array.from(dataTransfer?.files || [])
     const scan = collectDroppedFiles(dataTransfer, {
@@ -2993,7 +3183,7 @@ export default function App() {
     try {
       const updated = await toggleAssetFavorite(asset.project_id, asset.id)
       setAssets(old => old.map(a => a.id === updated.id ? mergeAssetDetail(a, updated) : a))
-      refreshNavigation()
+      scheduleSync()
     } catch (error) { notify(errorMessage(error)) }
   }
   const remove = async () => {
@@ -3031,7 +3221,7 @@ export default function App() {
         label: tr("撤销"),
         run: () => { void undoTrashMove(originProject, movedIds) },
       })
-      refreshNavigation()
+      scheduleSync()
     } catch (error) { notify(errorMessage(error)) }
   }
   // Undo for a move-to-trash: restore exactly the ids the server confirmed
@@ -3067,7 +3257,7 @@ export default function App() {
         single: "素材已恢复至素材库", multi: "已恢复 {count} 个素材", partial: "已恢复 X 项，Y 项失败",
       })
       applySelection([], "")
-      refreshNavigation()
+      scheduleSync()
     } catch (error) { notify(errorMessage(error)) }
   }
   // Permanent delete from trash: the viewer closes first when it is showing a
@@ -3086,7 +3276,7 @@ export default function App() {
       notifyBatchOutcome(deleted.size, outcome.failed, {
         single: "素材已永久删除", multi: "已永久删除 {count} 个素材", partial: "已永久删除 X 项，Y 项失败",
       })
-      refreshNavigation()
+      scheduleSync()
     } catch (error) { notify(errorMessage(error)) }
   }
   const confirmEmptyTrash = async () => {
@@ -3098,7 +3288,7 @@ export default function App() {
       else notify("回收站已清空")
       applySelection([], "")
       setAssets([])
-      refreshNavigation()
+      scheduleSync()
     } catch (error) { notify(errorMessage(error)) }
   }
   const assignGroup = (name: string) => {
@@ -3108,7 +3298,7 @@ export default function App() {
         if (!outcome.succeeded) { notify(outcome.firstError || tr(name ? "添加分组失败" : "移除分组失败")); return }
         setAssets(old => old.map(a => a.id === asset.id ? { ...a, group: name } : a))
         notify(name ? "已添加到分组" : "已从分组移除")
-        refreshNavigation()
+        scheduleSync()
       })
       .catch(error => notify(errorMessage(error)))
   }
@@ -3313,10 +3503,10 @@ export default function App() {
       const target = index + (id === "group-move-up" ? -1 : 1)
       if (index < 0 || target < 0 || target >= names.length) return
       ;[names[index], names[target]] = [names[target], names[index]]
-      reorderGroups(project, names).then(refreshNavigation).catch(error => notify(errorMessage(error)))
+      reorderGroups(project, names).then(scheduleSync).catch(error => notify(errorMessage(error)))
     }
     else if (id.startsWith("group-color:")) {
-      recolorGroup(project, name, id.slice("group-color:".length)).then(refreshNavigation).catch(error => notify(errorMessage(error)))
+      recolorGroup(project, name, id.slice("group-color:".length)).then(scheduleSync).catch(error => notify(errorMessage(error)))
     }
     else if (id === "group-stats") {
       fetchGroupStats(project, name).then(result => setGroupStats({ name, values: result.stats })).catch(error => notify(errorMessage(error)))
@@ -3358,7 +3548,7 @@ export default function App() {
         notify(outcome.failed
           ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
           : targetStackId ? tr("已粘贴到堆叠") : tr("已移出堆叠"))
-        refreshNavigation()
+        scheduleSync()
       })
       .catch(error => notify(errorMessage(error)))
   }
@@ -3376,7 +3566,7 @@ export default function App() {
               ? tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
               : tr("已从分组移除 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
           : name ? tr("已添加到分组") : tr("已从分组移除"))
-        refreshNavigation()
+        scheduleSync()
       })
       .catch(error => notify(errorMessage(error)))
   }
@@ -3399,13 +3589,13 @@ export default function App() {
       if (newlyOrganizedIds.length) {
         notifyWithAction(text, { label: tr("撤销"), run: () => { void undoMarkSorted(targetProject, newlyOrganizedIds) } })
       } else notify(text)
-      refreshNavigation()
+      scheduleSync()
     } catch (error) { notify(errorMessage(error)) }
   }
   const undoMarkSorted = async (targetProject: string, ids: string[]) => {
     try {
       const { outcome } = await setAssetsCurated(targetProject, ids, false)
-      refreshNavigation()
+      scheduleSync()
       notify(outcome.succeeded ? tr("已撤销") : outcome.firstError || tr("撤销失败"))
     } catch (error) { notify(errorMessage(error)) }
   }
@@ -3445,7 +3635,7 @@ export default function App() {
             if (outcome.failed) {
               notify(tr("已收藏 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
             }
-            refreshNavigation()
+            scheduleSync()
           })
           .catch(error => notify(errorMessage(error)))
       } else void toggleFavorite()
@@ -3486,7 +3676,7 @@ export default function App() {
         .then(() => {
           notify(fill(tr("已从堆叠移出 {count} 项素材"), { count: ids.length }))
           applySelection([], "")
-          refreshNavigation()
+          scheduleSync()
         })
         .catch(error => notify(errorMessage(error)))
     }
@@ -3495,7 +3685,7 @@ export default function App() {
         .then(() => {
           notify(fill(tr("已堆叠 {count} 项素材"), { count: ids.length }))
           applySelection([], "")
-          refreshNavigation()
+          scheduleSync()
         })
         .catch(error => notify(errorMessage(error)))
     }
@@ -3509,7 +3699,7 @@ export default function App() {
       assignStackToGroup(project, target.stackId, groupName)
         .then(() => {
           notify(fill(tr("堆叠已移动到「{group}」"), { group: groupName }))
-          refreshNavigation()
+          scheduleSync()
         })
         .catch(error => notify(errorMessage(error)))
     }
@@ -3518,7 +3708,7 @@ export default function App() {
       assignStackToGroup(project, target.stackId, "")
         .then(() => {
           notify(tr("堆叠已移出分组"))
-          refreshNavigation()
+          scheduleSync()
         })
         .catch(error => notify(errorMessage(error)))
     }
@@ -3664,6 +3854,8 @@ export default function App() {
         return
       }
       notify(tr("已保存"))
+      // The library location itself moved: this is a different library, so a
+      // full window reload (not an incremental sync) is the correct reaction.
       refreshNavigation()
     } catch (error) {
       notify(String((error as Error)?.message || error))
@@ -3693,7 +3885,7 @@ export default function App() {
           setStackId("")
           setActive(`group:${name}`)
           setPreview(false)
-          refreshNavigation()
+          scheduleSync()
         })
         .catch((error: Error & { code?: string }) => {
           if (error?.code === "GROUP_ALREADY_EXISTS" && index < existing + 20) attempt(index + 1)
@@ -3932,21 +4124,21 @@ export default function App() {
             if (!name || name === groupRename.original) { setGroupRename(null); return }
             renameGroup(project, groupRename.original, name).then(() => {
               if (active === `group:${groupRename.original}`) goTo({ active: `group:${name}` })
-              refreshNavigation(); setGroupRename(null)
+              scheduleSync(); setGroupRename(null)
             }).catch(error => notify(errorMessage(error)))
           }}><h3>{tr("重命名分组")}</h3><input autoFocus value={groupRename.draft} maxLength={80} onChange={event => setGroupRename(old => old ? { ...old, draft: event.target.value } : old)} /><div className="group-dialog-actions"><button type="button" className="neutral-button" onClick={() => setGroupRename(null)}>{tr("取消")}</button><button type="submit" className="primary-button">{tr("保存")}</button></div></form>}
           {groupDeleteConfirm && <><h3>{tr("删除分组")}</h3><p>{tr("仅删除分组，保留其中全部素材。")}</p><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupDeleteConfirm(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
             const name = groupDeleteConfirm
             deleteGroupKeepingAssets(project, name).then(() => {
               if (active === `group:${name}`) goTo({ active: "所有素材" })
-              refreshNavigation(); setGroupDeleteConfirm(null)
+              scheduleSync(); setGroupDeleteConfirm(null)
             }).catch(error => notify(errorMessage(error)))
           }}>{tr("删除分组")}</button></div></>}
           {groupMerge && <><h3>{tr("合并分组")}</h3><p>{groupMerge.source} →</p><select value={groupMerge.target} onChange={event => setGroupMerge(old => old ? { ...old, target: event.target.value } : old)}>{navigation?.groups.filter(item => item.name !== groupMerge.source).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupMerge(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
             const { source, target } = groupMerge
             mergeGroups(project, source, target).then(() => {
               if (active === `group:${source}`) goTo({ active: `group:${target}` })
-              refreshNavigation(); setGroupMerge(null)
+              scheduleSync(); setGroupMerge(null)
             }).catch(error => notify(errorMessage(error)))
           }}>{tr("确认合并")}</button></div></>}
           {groupStats && (() => {
@@ -3982,7 +4174,7 @@ export default function App() {
                   setAssets(old => old.map(a => a.stack && a.stack.id === stackRename.stackId ? { ...a, stack: { ...a.stack, name } } : a))
                   if (stackId === stackRename.stackId) setStackName(name)
                   setStackRename(null)
-                  refreshNavigation()
+                  scheduleSync()
                 })
                 .catch(error => notify(errorMessage(error)))
             }}>
@@ -4016,7 +4208,7 @@ export default function App() {
                     notify(fill(tr("已解散堆叠 · {count} 个素材已恢复为独立素材"), { count: result.assetIds.length }))
                     setAssets(old => old.map(a => a.stack && a.stack.id === target.stackId ? { ...a, stack: null } : a))
                     if (stackId === target.stackId) goTo({ stackId: "", stackName: "" })
-                    refreshNavigation()
+                    scheduleSync()
                   })
                   .catch(error => notify(errorMessage(error)))
               }}>{tr("解散堆叠")}</button>
@@ -4048,7 +4240,7 @@ export default function App() {
                     const failedIds = new Set(outcome.failedIds)
                     setAssets(old => old.filter(a => !(a.stack && a.stack.id === target.stackId && !failedIds.has(a.id))))
                     if (stackId === target.stackId) goTo({ stackId: "", stackName: "" })
-                    refreshNavigation()
+                    scheduleSync()
                   })
                   .catch(error => notify(errorMessage(error)))
               }}>{tr("移至回收站")}</button>
@@ -4080,7 +4272,7 @@ export default function App() {
                     : tr("已添加到分组"))
                   if (target.target === "asset") setSelectedIds([])
                   setGroupCreateWithSelection(null)
-                  refreshNavigation()
+                  scheduleSync()
                 })
                 .catch(error => setGroupCreateError(errorMessage(error)))
             }}>

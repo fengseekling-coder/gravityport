@@ -6,6 +6,7 @@ export type EmptyStateKind =
   | "favorites-empty"
   | "unorganized-empty"
   | "group-empty"
+  | "stack-empty"
   | "library-empty";
 
 export interface EmptyStateContext {
@@ -47,7 +48,19 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
     };
   }
 
-  // 3. Trash
+  // 3. Inside a stack with no refinements: the stack itself is empty. The
+  // incremental sync normally auto-exits a dead stack (review 中10); this is
+  // the fallback for the moment before that lands.
+  if (insideStack) {
+    return {
+      kind: "stack-empty",
+      title: "这个堆叠已经空了",
+      description: "里面的素材都移到了回收站，或者被移出了堆叠",
+      clearAction: false,
+    };
+  }
+
+  // 4. Trash
   if (active === "回收站") {
     return {
       kind: "trash-empty",
@@ -57,7 +70,7 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
     };
   }
 
-  // 4. Favorites
+  // 5. Favorites
   if (active === "收藏") {
     return {
       kind: "favorites-empty",
@@ -67,7 +80,7 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
     };
   }
 
-  // 5. Unorganized
+  // 6. Unorganized
   if (active === "待整理") {
     return {
       kind: "unorganized-empty",
@@ -77,7 +90,7 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
     };
   }
 
-  // 6. Inside a group
+  // 7. Inside a group
   if (active.startsWith("group:")) {
     return {
       kind: "group-empty",
@@ -87,7 +100,7 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
     };
   }
 
-  // 7. Library is empty (all assets view, not inside a stack, total is 0)
+  // 8. Library is empty (all assets view, not inside a stack, total is 0)
   if (active === "所有素材" && !insideStack && isZeroLibraryTotal(libraryTotal)) {
     return {
       kind: "library-empty",
@@ -97,7 +110,7 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
     };
   }
 
-  // 8. Fallback: no-results
+  // 9. Fallback: no-results
   return {
     kind: "no-results",
     title: "没有找到匹配的素材",

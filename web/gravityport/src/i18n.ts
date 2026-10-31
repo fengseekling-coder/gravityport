@@ -166,6 +166,8 @@ const english: Record<string, string> = {
   "按来源": "By source",
   "未记录": "Not recorded",
   "试试别的搜索词，或清除筛选条件": "Try a different search, or clear the filters",
+  "这个堆叠已经空了": "This stack is empty",
+  "里面的素材都移到了回收站，或者被移出了堆叠": "Its items were moved to the Trash or out of the stack",
   "回收站是空的": "Trash is empty",
   "移到回收站的素材会在这里保留 90 天": "Assets you move to Trash stay here for 90 days",
   "还没有收藏": "No favorites yet",

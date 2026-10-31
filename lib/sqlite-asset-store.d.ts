@@ -191,7 +191,7 @@ export interface SqliteAssetStore {
   libraryRevision(projectId?: string): Promise<string>;
   libraryChangeState(projectId?: string): Promise<{ revision: number; oldestRevision: number | null }>;
   listLibraryChangesSince(projectId: string, sinceRevision: number, options?: { limit?: number }): Promise<{ sinceRevision: number | null; currentRevision: number; oldestRevision: number | null; complete: boolean; changes: Array<Record<string, unknown>> }>;
-  listGalleryRowsForAssets(filters: Record<string, unknown>, assetIds: string[]): Promise<{ rows: StoredAsset[]; rowByAssetId: Record<string, string>; afterCursorRowIds?: string[] }>;
+  listGalleryRowsForAssets(filters: Record<string, unknown>, assetIds: string[]): Promise<{ rows: StoredAsset[]; rowByAssetId: Record<string, string>; afterCursorRowIds?: string[]; total: number | null; stack: AssetStackSummary | null }>;
   findAutomaticIngestSuppression(projectId: string, hashes: Record<string, unknown>): Promise<Record<string, unknown> | null>;
   listAutomaticIngestSuppressions(projectId: string): Promise<Array<Record<string, unknown>>>;
   clearAutomaticIngestSuppression(projectId: string, hashes: Record<string, unknown>): Promise<number>;
