@@ -239,7 +239,9 @@ test("collector statuses map onto the local codes", async (t) => {
       [429, 429, "FEEDBACK_RATE_LIMITED"],
       [503, 503, "FEEDBACK_UNAVAILABLE"],
       [500, 502, "FEEDBACK_UPSTREAM"],
-      [302, 502, "FEEDBACK_UPSTREAM"],
+      // 任务 312：转发器带 redirect: "error"，undici 对任何 3xx（包括没有
+      // Location 头的，cause「unexpected redirect」）都按网络错误拒绝 → 离线。
+      [302, 502, "FEEDBACK_OFFLINE"],
     ];
     for (const [upstream, expectedStatus, expectedCode] of mappings) {
       respondWith = { status: upstream, body: { code: "UPSTREAM_SAYS" } };
