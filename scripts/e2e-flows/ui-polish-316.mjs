@@ -106,7 +106,7 @@ export async function run(ctx) {
       .filter((value, index, all) => value && all.indexOf(value) === index);
     const missingUrlsDead = async () => {
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        const statuses = await Promise.all(viewerUrls.map((url) => fetch(`${server.origin}${url}`).then((response) => response.status).catch(() => 0)));
+        const statuses = await Promise.all(viewerUrls.map((url) => fetch(`${server.origin}${url}`, { headers: { "x-mosa-client-token": ctx.token } }).then((response) => response.status).catch(() => 0)));
         if (statuses.every((status) => status === 404)) return true;
         await deleteMissingFiles();
         await new Promise((resolve) => setTimeout(resolve, 400));
