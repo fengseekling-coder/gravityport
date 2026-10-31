@@ -18,7 +18,10 @@
         "同一个网页视频收到更清晰的版本时，会替换原视频，不再多出一份。",
         "自动生成的堆叠改为以最新收录的图片作为封面；在收藏、待整理、分组等筛选视图中，堆叠卡片显示其中符合条件的图片。手动建立或调整过顺序的堆叠保持原有顺序。",
         "加强了 GravityPort 与本机后台服务之间的身份校验：连接前先确认服务身份，访问凭据不再出现在页面地址中。",
-        "GravityPort 未打开时，浏览器扩展可暂存更多作品：不再限制 256 张，只按 512MB 总容量计算，视频也会先保存下来。空间快满或有作品只保存了网址时，会在「设置 → 连接」中提示。即梦的删除同步在 GravityPort 关闭期间也会排队，打开后补发。（浏览器扩展 0.15.44）"
+        "GravityPort 未打开时，浏览器扩展可暂存更多作品：不再限制 256 张，只按 512MB 总容量计算，视频也会先保存下来。空间快满或有作品只保存了网址时，会在「设置 → 连接」中提示。即梦的删除同步在 GravityPort 关闭期间也会排队，打开后补发。（浏览器扩展 0.15.44）",
+        "加强了本机后台服务的访问保护：查看素材、原图、视频和提示词也需要 GravityPort 的访问凭据；服务状态信息不再包含素材库所在位置；网页收录的单次请求大小和同时接收的总量设了上限，过大的视频会自动改用其他方式上传。",
+        "诊断日志会遮蔽更多个人信息，包括各种写法的文件路径和文件名、分组和会话名称、手机号、身份证号和本机名称；界面报错只记录一条摘要，不含内容。桌面版另在本机保存一份仅含警告和错误的日志，最多约 6MB，循环覆盖，不会上传。",
+        "没有生成记录的版本家族（例如由 AI 助手创建的版本）也可以在「版本树」中点击「查看」，打开版本历史和版本对比。"
       ],
       "fixed": [
         "修复了同一张图片再次收录时可能覆盖原图或清空提示词的问题。现仅在新图更清晰时替换，被替换的旧图移入回收站。",
@@ -34,7 +37,10 @@
         "修复了删除 Midjourney 预览图后，收到同一作品的原图时又被收录的问题。",
         "修复了素材详情中参考图缩略图被压成正方形的问题。现按原图比例完整显示。",
         "修复了在 macOS 上将素材拖到其他应用时，松手瞬间图片突然放大的问题。",
-        "修复了在堆叠中选中多张素材后拖到其他应用（如访达、Photoshop）时只带出一张的问题。现在会带出全部选中的素材；在堆叠内调整顺序时，选中的素材也会整组移动。"
+        "修复了在堆叠中选中多张素材后拖到其他应用（如访达、Photoshop）时只带出一张的问题。现在会带出全部选中的素材；在堆叠内调整顺序时，选中的素材也会整组移动。",
+        "修复了英文界面中「即梦」分组名、来源标签和参考图悬停提示仍显示中文的问题。",
+        "修复了原图文件丢失时查看器一片空白的问题。现会提示「原图找不到了」，并可打开素材位置。",
+        "修复了版本树、版本和参考图加载失败时，与「暂无」显示相同的问题。现会显示「加载失败」。"
       ],
       "other": [
         "为软件内更新增加备用签名钥匙。"
@@ -57,7 +63,10 @@
         "When a sharper version of the same web video arrives, it replaces the original instead of adding another copy.",
         "Automatic stacks now use the most recently captured image as their cover. In filtered views such as Favorites, Unsorted and groups, a stack card shows the image that matches. Stacks you created or reordered keep your order.",
         "Strengthened identity checks between GravityPort and its local background service: the app confirms the service before connecting, and the access credential no longer appears in the page address.",
-        "While GravityPort is closed, the browser extension now keeps captures up to 512 MB with no 256-item limit, videos included. Settings → Connect warns when space runs low or a capture kept only its URL. Jimeng deletions also queue until GravityPort opens. (Browser extension 0.15.44)"
+        "While GravityPort is closed, the browser extension now keeps captures up to 512 MB with no 256-item limit, videos included. Settings → Connect warns when space runs low or a capture kept only its URL. Jimeng deletions also queue until GravityPort opens. (Browser extension 0.15.44)",
+        "Strengthened protection of the local background service: viewing assets, originals and prompts now also requires GravityPort's credential, service status no longer reveals the library location, and web captures are size-limited, with large videos switching upload method automatically.",
+        "Diagnostic logs now mask more personal details: file paths and names in any form, group and conversation names, phone and ID numbers, and the computer name. Interface errors are kept as a summary only. The desktop app also keeps a local warnings-and-errors log, up to about 6 MB, never uploaded.",
+        "Version families without generation records, such as versions created by an AI assistant, can now also open Version History and the version compare from View in the Version Tree."
       ],
       "fixed": [
         "Fixed an issue where capturing the same image again could overwrite the original or clear its prompt. The image is now replaced only by a sharper version, and the previous one moves to the Trash.",
@@ -73,7 +82,10 @@
         "Fixed an issue where a deleted Midjourney preview could be captured again when the full-size image of the same work arrived.",
         "Fixed an issue where reference image thumbnails in the details panel were squeezed into squares. They now keep their original proportions.",
         "Fixed an issue on macOS where an image suddenly enlarged at the moment it was dropped into another app.",
-        "Fixed an issue where dragging several selected assets out of a stack into another app, such as Finder or Photoshop, carried only one. All selected assets now go along, and reordering inside a stack moves the selection as one group."
+        "Fixed an issue where dragging several selected assets out of a stack into another app, such as Finder or Photoshop, carried only one. All selected assets now go along, and reordering inside a stack moves the selection as one group.",
+        "Fixed the Jimeng group name, source tag and reference image tooltips still showing Chinese in the English interface.",
+        "Fixed the viewer staying blank when an original file is missing. It now says the original file was not found and offers to open the asset location.",
+        "Fixed the Version Tree, versions and reference images looking empty when they failed to load. They now show Failed to load."
       ],
       "other": [
         "Added a backup signing key for in-app updates."
