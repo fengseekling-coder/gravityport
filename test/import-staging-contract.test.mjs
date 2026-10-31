@@ -256,7 +256,6 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "getMcpClientConfig", // 任务 208：只读，本机 App 路径拼成的 MCP 配置文本
     "getRenameNoticeState",
     "getUpdateReady", // 任务 231：只读，主进程已下好并校验的更新包状态
-    "getUserProfile",
     "libraryFileFlags", // drop-back guard: which dropped files already live in the library (booleans only)
     "onMenuSearch",
     "onUpdateDownloadProgress",

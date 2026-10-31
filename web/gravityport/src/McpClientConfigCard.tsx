@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { desktopAPI, type McpClientConfig } from "./desktop.js"
+import { handleExternalLinkClick } from "./external-link.js"
 import { translate, type Language } from "./i18n.js"
 import "./mcp-config.css"
 
@@ -78,7 +79,7 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
         </>
       ) : (
         <p className="mcp-config-note">
-          <a href={MCP_GUIDE_URL} target="_blank" rel="noreferrer">{t("从源码运行时的配置方法见使用指南。")}</a>
+          <a href={MCP_GUIDE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, MCP_GUIDE_URL)}>{t("从源码运行时的配置方法见使用指南。")}</a>
         </p>
       )}
     </section>

@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   clipboardImportable: () => ipcRenderer.invoke("clipboard-importable"),
   pasteFromClipboard: () => ipcRenderer.invoke("paste-from-clipboard"),
   setLocale: (locale) => ipcRenderer.invoke("set-locale", locale),
-  getUserProfile: () => ipcRenderer.invoke("user-profile"),
+  // 审查 3-6 甲（任务 318）:安装 ID 不再暴露给界面（user-profile 通道已删）。
   // 任务 311：客户端凭据不再放进网址片段。渲染层在首次请求前经这里领取一次；
   // 主进程只对「已核实服务 origin 上的主框架」回答。
   getClientToken: () => ipcRenderer.invoke("get-client-token"),

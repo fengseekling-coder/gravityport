@@ -18,6 +18,7 @@ import {
 } from "./mosa-api.js"
 import { translate, type Language } from "./i18n.js"
 import { bundledExtensionVersion } from "./bundled-extension-version.js"
+import { handleExternalLinkClick } from "./external-link.js"
 import "./web-capture-status.css"
 
 // The extension posts a queue status about once a minute (a chrome.alarms
@@ -144,7 +145,7 @@ export function WebCaptureStatusCardView({
       {!loading && !active ? (
         <p className="web-capture-note">
           {t("去官网安装浏览器扩展，并在扩展设置里打开「发现新图时自动入库」。")}{" "}
-          <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer">{t("前往官网下载")}</a>
+          <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a>
         </p>
       ) : null}
       {!loading && active ? (
@@ -154,7 +155,7 @@ export function WebCaptureStatusCardView({
       ) : null}
       {outdated ? (
         <p className="web-capture-note">
-          <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer">{t("有新版扩展")}</a>
+          <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("有新版扩展")}</a>
         </p>
       ) : null}
       {!loading && pending > 0 ? (

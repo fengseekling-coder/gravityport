@@ -14,6 +14,10 @@ import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 // synthetic assets. MOSA_RESIZE_QA_EXECUTABLE also exercises an installed/
 // packaged application.
 //
+// 任务 318：打包版已翻保险丝关掉 --inspect（EnableNodeCliInspectArguments）。
+// MOSA_RESIZE_QA_EXECUTABLE 指向任务 318 之后的打包版时，主进程 inspector
+// 连不上，connect() 会明确报错退出；这份 QA 只能对开发版 Electron 跑。
+//
 // Geometry contract under resize (unchanged from the previous gallery):
 // equal implicit tracks, equal card widths, no overlapping cards in a
 // column, aspect ratios preserved, decoded images in the viewport, no
@@ -130,7 +134,18 @@ async function connect() {
     await wait(100);
   }
   assert.ok(target, `No renderer: ${output}`);
-  const mainTargets = await fetch(`http://127.0.0.1:${inspectPort}/json/list`).then((response) => response.json());
+  let mainTargets;
+  try {
+    mainTargets = await fetch(`http://127.0.0.1:${inspectPort}/json/list`).then((response) => response.json());
+  } catch {
+    // Packaged builds flip EnableNodeCliInspectArguments off (task 318): the
+    // main-process inspector never opens, so fail with the reason instead of
+    // hanging on an unreachable port.
+    throw new Error(
+      `Main-process inspector not reachable on port ${inspectPort}. `
+      + `Packaged builds ship with --inspect disabled (task 318); run this QA against the development Electron.`,
+    );
+  }
   mainClient = await createClient(mainTargets[0].webSocketDebuggerUrl);
   return createClient(target.webSocketDebuggerUrl);
 }

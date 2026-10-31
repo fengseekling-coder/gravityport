@@ -145,7 +145,6 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "getMcpClientConfig",
     "getRenameNoticeState",
     "getUpdateReady",
-    "getUserProfile",
     "libraryFileFlags",
     "onMenuSearch",
     "onUpdateDownloadProgress",
@@ -174,8 +173,9 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // 任务 238：删掉视觉检索 5 条通道后，invoke 计数 26 → 21。任务 239：右键粘贴导入
   // 两个只读/动作通道（clipboard-importable、paste-from-clipboard），21 → 23。
   // 任务 311：get-client-token（凭据不进网址片段，主进程只对已核实服务 origin 上的
-  // 主框架回答），23 → 24。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 24, "preload keeps the approved invoke channels");
+  // 主框架回答），23 → 24。任务 318：user-profile 通道删除（安装 ID 不再暴露给
+  // 界面），24 → 23。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.match(preload, /getUpdateReady: \(\) => ipcRenderer\.invoke\("get-update-ready"\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");
@@ -187,5 +187,5 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // 任务 246 更新：forge 三包 7.11.2→8.0.1、typescript 5.4.5→5.9.3，显式加
   // @electron/asar 4.3.1 与 @electron/windows-sign 2.1.0（版本对齐 forge 8 实际安装）。
   // 10-29 Dependabot #317：smol-toml 1.8.0→1.9.0。
-  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "ec68692227abfa080940001ec6bb301275c0a018a6e280905ed659cc68e15890", "package.json devDependencies must remain unchanged");
+  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "ff7b7f4ec3b91c94644be08f8fd8f1fb398fe432bcd825e342c1e728acf6988c", "package.json devDependencies must remain unchanged");
 });

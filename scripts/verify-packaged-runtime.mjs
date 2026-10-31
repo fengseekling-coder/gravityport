@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 import { extractFile, getRawHeader } from "@electron/asar";
+import { getCurrentFuseWire, FuseState, FuseV1Options } from "@electron/fuses";
 import { access, readFile, stat } from "node:fs/promises";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { resolveDesktopPackagingTarget } from "../desktop/forge.config.mjs";
+import { DESKTOP_FUSES, resolveDesktopPackagingTarget } from "../desktop/forge.config.mjs";
 import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
 import { LICENSES_DIR_NAME, verifyPackagedLicenses } from "./third-party-licenses.mjs";
 
@@ -48,6 +49,38 @@ function packageResourcesDir({ outDir, target, product = resolveReleaseProduct()
     return join(packageDir, "resources");
   }
   throw new Error(`Unsupported packaged runtime target: ${target.id}.`);
+}
+
+// The Electron executable that carries the fuse wire: the macOS app bundle's
+// main binary, or the Windows exe next to resources/. Derived from the same
+// product/target naming as packageResourcesDir — never hardcoded.
+export function packagedExecutablePath({ outDir, target, product = resolveReleaseProduct() }) {
+  const names = releaseProductNames(product);
+  const packageDir = join(outDir, `${names.product}-${target.platform}-${target.arch}`);
+  if (target.platform === "darwin") {
+    return join(packageDir, names.macAppBundleName, "Contents", "MacOS", names.macExecutableName);
+  }
+  if (target.platform === "win32") {
+    return join(packageDir, names.windowsExecutableName);
+  }
+  throw new Error(`Unsupported packaged runtime target: ${target.id}.`);
+}
+
+// Compares the fuse wire read out of a packaged executable against
+// DESKTOP_FUSES and returns one human-readable entry per mismatch.
+export function fuseMismatches(currentFuseWire, expectedFuses = DESKTOP_FUSES) {
+  const mismatches = [];
+  for (const [fuseOption, expectedEnabled] of Object.entries(expectedFuses)) {
+    const expectedState = expectedEnabled ? FuseState.ENABLE : FuseState.DISABLE;
+    if (currentFuseWire[fuseOption] !== expectedState) {
+      const fuseName = FuseV1Options[fuseOption] || `fuse ${Number(fuseOption)}`;
+      mismatches.push(
+        `${fuseName} expected ${expectedEnabled ? "enabled" : "disabled"},`
+        + ` read fuse state ${currentFuseWire[fuseOption]}`,
+      );
+    }
+  }
+  return mismatches;
 }
 
 function collectAsarFiles(directory, prefix = "", files = []) {
@@ -96,6 +129,7 @@ export async function verifyPackagedRuntime({
   platform,
   arch,
   product = resolveReleaseProduct(),
+  readPackagedFuses = (executablePath) => getCurrentFuseWire(executablePath),
 } = {}) {
   const target = resolveDesktopPackagingTarget({ platform, arch, env: {}, argv: [] });
   const asarPath = packagedAsarPath({ projectRoot, outDir, platform: target.platform, arch: target.arch, product });
@@ -182,8 +216,23 @@ export async function verifyPackagedRuntime({
 
   await verifyPackagedLicenses(join(dirname(asarPath), LICENSES_DIR_NAME));
 
+  // 审查 3-6 甲（任务 318）：the packaged executable must carry exactly the
+  // DESKTOP_FUSES wire (RunAsNode on for MCP, NodeOptions/Inspect off,
+  // asar integrity + only-load-from-asar on). A mismatch means the fuses
+  // plugin did not run or someone re-packaged outside forge.
+  const executablePath = packagedExecutablePath({ outDir: resolve(projectRoot, outDir), target, product });
+  await access(executablePath).catch(() => {
+    throw new Error(`Packaged executable not found: ${executablePath}`);
+  });
+  const fuseWire = await readPackagedFuses(executablePath);
+  const fuseProblems = fuseMismatches(fuseWire);
+  if (fuseProblems.length) {
+    throw new Error(`Packaged fuses do not match DESKTOP_FUSES: ${fuseProblems.join("; ")}`);
+  }
+
   return {
     asarPath,
+    executablePath,
     target: target.id,
     nativeBinaries: nativeEntries.map(({ path }) => path),
     productVersion: packagedIdentity.productVersion,

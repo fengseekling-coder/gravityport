@@ -7,7 +7,7 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net,
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
-import { dirname, join, resolve, isAbsolute } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../lib/runtime-defaults.mjs";
 import { validateRuntimeIsolation } from "../lib/runtime-isolation-guard.mjs";
@@ -38,13 +38,14 @@ import {
 import { backgroundUpdateGatesPass, createUpdateScheduler, updateReadyNotificationCopy } from "./update-scheduler.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
-import { openExternalLinkOutcome } from "./open-external-link.mjs";
+import { openExternalLinkByPolicy } from "./open-external-link.mjs";
+import { clipboardImageTarget } from "./clipboard-image-path.mjs";
+import { disableSpellcheckDownloads } from "./spellcheck-policy.mjs";
 import { writeClipboardFiles } from "./clipboard-files.mjs";
 import { clipboardImportable } from "./clipboard-importable.mjs";
 import { isTrustedRendererEvent } from "./renderer-trust.mjs";
 import { attachDiagnosticLogFile, installDiagnosticLog, writeConsoleOnly } from "../lib/diagnostic-log.mjs";
 import { mosaClientTokenFingerprint, resolveAllowedFolderPath } from "../lib/server-security.js";
-import { isUrlLikePath } from "../lib/path-safety.mjs";
 import {
   clearStaleRelocationMarker,
   copyLibraryForRelocationGuarded,
@@ -307,11 +308,13 @@ let renameNotice = evaluateRenameNoticeState({
   log: (line) => console.info(`[MOSA] ${line}`),
 });
 
-// The user-center identity is minted on every launch, before any window
-// exists and outside every packaged/QA/telemetry gate: it is local-only
-// userData bookkeeping and never implies a report. After the first launch
-// this is a read that returns the same stored UUID.
-const desktopUserId = ensureInstallationId({ userDataDir: desktopDataDir });
+// The installation ID file (anonymous-usage.json) is minted on the first
+// launch and refreshed on every launch after that, before any window exists
+// and outside every packaged/QA/telemetry gate. It stays local-only userData
+// bookkeeping: anonymous usage reports and the old-user rename-notice decision
+// above depend on the file existing (or not). 审查 3-6 甲（任务 318）：the ID is
+// no longer handed to the renderer — there is no user-profile channel anymore.
+ensureInstallationId({ userDataDir: desktopDataDir });
 
 const MAX_CLIPBOARD_TEXT_LENGTH = 1_000_000;
 const MAX_NATIVE_DRAG_FILES = 512;
@@ -763,19 +766,16 @@ function registerIPC() {
 
   // Copy the stored full-resolution asset, never a gallery thumbnail or preview.
   // The renderer may only request files inside the active MOSA library; decoding
-  // and clipboard access stay in the trusted main process.
+  // and clipboard access stay in the trusted main process. 审查 3-6 甲（任务 318）：
+  // the path gate lives in clipboard-image-path.mjs and decides library
+  // containment on the literal path first, so out-of-library requests can no
+  // longer distinguish「存在」from「不存在」.
   ipcMain.handle("write-clipboard-image", async (event, path) => {
     if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
-    if (typeof path !== "string" || !path.trim()) return { ok: false, reason: "invalid" };
-    const target = path.trim();
-    if (!isAbsolute(target) || (isUrlLikePath(target) && /^[a-z][a-z0-9+.-]*:/i.test(target))) {
-      return { ok: false, reason: "invalid" };
-    }
-    if (!existsSync(target)) return { ok: false, reason: "missing" };
+    const target = clipboardImageTarget(path, libraryDir);
+    if (!target.ok) return { ok: false, reason: target.reason };
     try {
-      const allowedTarget = resolveAllowedFolderPath(target, [libraryDir]);
-      if (!allowedTarget) return { ok: false, reason: "not-allowed" };
-      const image = nativeImage.createFromPath(allowedTarget);
+      const image = nativeImage.createFromPath(target.path);
       if (image.isEmpty()) return { ok: false, reason: "unsupported" };
       clipboard.writeImage(image);
       return { ok: true };
@@ -886,10 +886,9 @@ function registerIPC() {
     };
   });
 
-  ipcMain.handle("user-profile", async (event) => {
-    if (!trustedRendererEvent(event)) return { userId: "" };
-    return { userId: desktopUserId };
-  });
+  // 审查 3-6 甲（任务 318）:the user-profile channel is gone — the installation
+  // ID stays in the main process (anonymous-usage bookkeeping) and is never
+  // handed to the renderer.
 
   // Task 311: the client credential no longer travels in the URL fragment. The
   // renderer asks once before its first request; the main process answers only
@@ -1175,17 +1174,18 @@ function registerIPC() {
   });
 
   // 任务 147:打开 Pinterest Pin / 外链的普通网址(窗口 setWindowOpenHandler 全拒,
-  // 渲染层没有别的出站通道);只认主窗口,URL 校验在 open-external-link.mjs。
+  // 渲染层没有别的出站通道);只认主窗口。审查 3-6 甲（任务 318）:目的地按用途
+  // 限域名(externalLinkDecision),白名单外的 http/https 先弹系统确认框,用户
+  // 取消不算失败({ ok: true, opened: false }),网址校验在 open-external-link.mjs。
   ipcMain.handle("open-external-link", async (event, url) => {
     if (!trustedRendererEvent(event)) return { ok: false };
-    if (!openExternalLinkOutcome(url).ok) return { ok: false };
-    try {
-      await shell.openExternal(url);
-      return { ok: true };
-    } catch (error) {
-      console.warn(`[MOSA] unable to open external link: ${error?.message || error}`);
-      return { ok: false };
-    }
+    return openExternalLinkByPolicy({
+      url,
+      dialogText: updateDialogText,
+      confirmDialog: (options) => showSystemDialog(options),
+      openExternal: (href) => shell.openExternal(href),
+      warn: (line) => console.warn(line),
+    });
   });
 
   ipcMain.handle("change-library-location", async (event) => {
@@ -1551,6 +1551,7 @@ function openMainWindow() {
 
 async function createMainWindow() {
   denyBrowserPermissions();
+  disableSpellcheckDownloads(session.defaultSession, process.platform);
   const bounds = loadBounds();
   mainWindow = new BrowserWindow({
     ...bounds,
@@ -1603,8 +1604,14 @@ async function createMainWindow() {
     }, 250 * rendererRecoveryAttempts);
   });
   mainWindow.webContents.on("did-finish-load", () => { rendererRecoveryAttempts = 0; });
-  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    if (level < 2 || rendererConsoleErrors.size >= MAX_RENDERER_CONSOLE_ERRORS) return;
+  // New-style console-message (Electron ≥32): the listener receives a details
+  // object with string level/message/lineNumber/sourceId. The string level is
+  // mapped back to the legacy numeric levels the buffer and log lines carry.
+  const RENDERER_CONSOLE_LEVELS = { debug: 0, info: 1, warning: 2, error: 3 };
+  mainWindow.webContents.on("console-message", (details) => {
+    const level = RENDERER_CONSOLE_LEVELS[details.level];
+    if (level === undefined || level < 2 || rendererConsoleErrors.size >= MAX_RENDERER_CONSOLE_ERRORS) return;
+    const { message, lineNumber: line, sourceId } = details;
     const entry = `${level}:${sourceId}:${line}:${message}`;
     if (rendererConsoleErrors.has(entry)) return;
     rendererConsoleErrors.add(entry);

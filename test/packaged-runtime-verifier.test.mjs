@@ -1,16 +1,31 @@
 import assert from "node:assert/strict";
 import { createPackage, createPackageWithOptions } from "@electron/asar";
+import { FuseState, FuseV1Options } from "@electron/fuses";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { DESKTOP_FUSES } from "../desktop/forge.config.mjs";
 import {
+  fuseMismatches,
   missingMcpServerModules,
   packagedAsarPath,
+  packagedExecutablePath,
   verifyPackagedRuntime,
 } from "../scripts/verify-packaged-runtime.mjs";
 import { LICENSE_FILES } from "../scripts/third-party-licenses.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
+
+// A fuse wire that matches DESKTOP_FUSES exactly, in the shape
+// @electron/fuses getCurrentFuseWire returns (FuseV1Options index → FuseState).
+function matchingFuseWire() {
+  return Object.fromEntries(
+    Object.entries(DESKTOP_FUSES).map(([fuseOption, enabled]) => [
+      fuseOption,
+      enabled ? FuseState.ENABLE : FuseState.DISABLE,
+    ]),
+  );
+}
 
 const IDENTITY = Object.freeze({
   productVersion: "0.2.1-test",
@@ -74,13 +89,23 @@ async function createFixture(t, { platform, arch, packedNatives = false, omitMcp
       unpackDir: platform === "darwin" ? "node_modules/@img/sharp-libvips-darwin-arm64" : "node_modules/@img/sharp-win32-x64",
     });
   }
+  // The fuse-wire check runs against the packaged executable; fixtures only
+  // need the file to exist because the reading function is always injected.
+  const executablePath = packagedExecutablePath({ outDir: join(projectRoot, "out"), target: { platform, arch } });
+  await mkdir(dirname(executablePath), { recursive: true });
+  await writeFile(executablePath, "fixture executable (the fuse reader is injected)");
   const licensesDir = await writePackagedLicenses(asarPath);
   return { projectRoot, asarPath, licensesDir };
 }
 
 test("packaged runtime verifier accepts a macOS package only when native binaries are unpacked", async (t) => {
   const { projectRoot, asarPath } = await createFixture(t, { platform: "darwin", arch: "arm64" });
-  const result = await verifyPackagedRuntime({ projectRoot, platform: "darwin", arch: "arm64" });
+  const result = await verifyPackagedRuntime({
+    projectRoot,
+    platform: "darwin",
+    arch: "arm64",
+    readPackagedFuses: async () => matchingFuseWire(),
+  });
   assert.equal(result.asarPath, asarPath);
   assert.equal(result.target, "darwin-arm64");
   assert.equal(result.productVersion, IDENTITY.productVersion);
@@ -101,10 +126,67 @@ test("packaged runtime verifier rejects the manual repack failure mode with pack
 
 test("packaged runtime verifier applies the same native gate to Windows packages", async (t) => {
   const { projectRoot, asarPath } = await createFixture(t, { platform: "win32", arch: "x64" });
-  const result = await verifyPackagedRuntime({ projectRoot, platform: "win32", arch: "x64" });
+  const result = await verifyPackagedRuntime({
+    projectRoot,
+    platform: "win32",
+    arch: "x64",
+    readPackagedFuses: async () => matchingFuseWire(),
+  });
   assert.equal(result.asarPath, asarPath);
   assert.equal(result.target, "win32-x64");
   assert.equal(result.nativeBinaries.length, 3);
+});
+
+test("packaged executable paths follow the product layout on both targets", () => {
+  assert.equal(
+    packagedExecutablePath({ outDir: "/out", target: { platform: "darwin", arch: "arm64" }, product: "GravityPort" }),
+    join("/out", "GravityPort-darwin-arm64", "GravityPort.app", "Contents", "MacOS", "GravityPort"),
+  );
+  assert.equal(
+    packagedExecutablePath({ outDir: "/out", target: { platform: "win32", arch: "x64" }, product: "GravityPort" }),
+    join("/out", "GravityPort-win32-x64", "GravityPort.exe"),
+  );
+});
+
+test("packaged runtime verifier rejects a fuse wire that drifts from DESKTOP_FUSES", async (t) => {
+  const mismatches = fuseMismatches({
+    ...matchingFuseWire(),
+    [FuseV1Options.EnableNodeCliInspectArguments]: FuseState.ENABLE,
+    [FuseV1Options.RunAsNode]: FuseState.DISABLE,
+  });
+  assert.equal(mismatches.length, 2);
+  assert.match(mismatches[0] + mismatches[1], /EnableNodeCliInspectArguments expected disabled/);
+  assert.match(mismatches[0] + mismatches[1], /RunAsNode expected enabled/);
+
+  const { projectRoot } = await createFixture(t, { platform: "darwin", arch: "arm64" });
+  await assert.rejects(
+    verifyPackagedRuntime({
+      projectRoot,
+      platform: "darwin",
+      arch: "arm64",
+      readPackagedFuses: async () => ({
+        ...matchingFuseWire(),
+        [FuseV1Options.EnableNodeCliInspectArguments]: FuseState.ENABLE,
+      }),
+    }),
+    /Packaged fuses do not match DESKTOP_FUSES:.*EnableNodeCliInspectArguments expected disabled/,
+  );
+});
+
+test("packaged runtime verifier refuses to judge fuses when the executable is missing", async (t) => {
+  const { projectRoot, asarPath } = await createFixture(t, { platform: "darwin", arch: "arm64" });
+  const executablePath = packagedExecutablePath({ outDir: join(projectRoot, "out"), target: { platform: "darwin", arch: "arm64" } });
+  await rm(executablePath);
+  await assert.rejects(
+    verifyPackagedRuntime({
+      projectRoot,
+      platform: "darwin",
+      arch: "arm64",
+      readPackagedFuses: async () => matchingFuseWire(),
+    }),
+    new RegExp(`Packaged executable not found: ${executablePath.replace(/\./g, "\\.")}`),
+  );
+  assert.ok(asarPath);
 });
 
 test("packaged runtime verifier rejects the removed visual runtime bundled into the packaged app", async (t) => {
