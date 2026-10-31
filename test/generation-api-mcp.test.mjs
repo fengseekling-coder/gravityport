@@ -346,8 +346,16 @@ async function waitForServerPort(server) {
     const timer = setTimeout(() => finish(new Error("Timed out waiting for MOSA server startup.")), 5000);
     const onOutput = (chunk) => {
       output += chunk;
+      // Task 314: the child prints its capability on the boot line; stash it
+      // so the readiness probes can present the credential it actually owns.
       const match = /GravityPort: http:\/\/127\.0\.0\.1:(\d+)/.exec(output);
-      if (match) finish(null, Number(match[1]));
+      const tokenMatch = /#mosa-client-token=([A-Za-z0-9_%-]+)/.exec(output);
+      if (match) {
+        // Suppressed when stdout is redirected (server.mjs): the probes then
+        // fall back to the MOSA_CLIENT_TOKEN the test itself exported.
+        if (tokenMatch) server.mosaClientToken = decodeURIComponent(tokenMatch[1]);
+        finish(null, Number(match[1]));
+      }
     };
     const onErrorOutput = (chunk) => { errorOutput += chunk; };
     const onExit = () => finish(new Error(`MOSA server exited during startup.${errorOutput ? `\n${errorOutput}` : ""}`));
@@ -370,7 +378,10 @@ async function waitForServer(port, server) {
   while (Date.now() < deadline) {
     if (server.exitCode !== null) throw new Error("MOSA server exited during startup.");
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/bridges`);
+      const response = await fetch(`http://127.0.0.1:${port}/api/bridges`, {
+        // Task 314: /api/bridges requires the child's own capability now.
+        headers: { "x-mosa-client-token": server.mosaClientToken ?? process.env.MOSA_CLIENT_TOKEN ?? "" },
+      });
       if (response.ok) return;
     } catch {
       // Listener may not be ready yet.

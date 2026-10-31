@@ -20,6 +20,7 @@ import {
 } from "../lib/library-location.mjs";
 import { acquireMosaRuntimeLock } from "../lib/runtime-lock.js";
 import { hasRelocationMarker } from "../lib/library-relocation.mjs";
+import { redactDiagnostics } from "../lib/diagnostic-log.mjs";
 import { MCP_SERVER_VERSION } from "../lib/version-identities.mjs";
 
 const managerDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -74,6 +75,17 @@ try {
   }
   throw error;
 }
+// Task 315: one redacted stderr line per uncaught crash, then Node's default
+// exit. stdout must stay protocol-only. No unhandledRejection listener: Node's
+// default mode raises unhandled rejections as uncaught exceptions, and
+// catching them would change the exit behavior.
+process.on("uncaughtExceptionMonitor", (error) => {
+  const name = error instanceof Error ? error.name : "Error";
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error && error.stack ? `\n${error.stack}` : "";
+  const described = redactDiagnostics(`[MOSA] uncaught exception ${name}: ${message}${stack}`, { homeDir: homedir(), libraryDir });
+  process.stderr.write(`${described}\n`);
+});
 // The default library location still participates in SQLite detection, but the JSON
 // store only reroots its assets into it when a library was named explicitly. Launched
 // from the desktop app (or following its location file), MCP uses the same library

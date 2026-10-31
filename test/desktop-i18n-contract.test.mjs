@@ -106,7 +106,9 @@ test("set-locale validates sender and locale, rebuilds once, and is idempotent",
   const main = await read("desktop/main.mjs");
   const handler = sliceBetween(main, 'ipcMain.handle("set-locale"', "\n  });");
 
-  assert.match(handler, /event\.sender\s*!==\s*mainWindow\.webContents/);
+  // 任务 311：sender 校验走统一的 trustedRendererEvent 守卫（还核对主框架与
+  // 已核实服务 origin）。
+  assert.match(handler, /if \(!trustedRendererEvent\(event\)\) return false;/);
   assert.match(handler, /locale\s*!==\s*"zh"\s*&&\s*locale\s*!==\s*"en"/);
   assert.match(handler, /if\s*\(\s*(?:locale\s*===\s*currentLocale|currentLocale\s*===\s*locale)\s*\)\s*return\s+true;/);
   assert.match(handler, /currentLocale\s*=\s*locale/);
@@ -139,6 +141,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "checkForUpdates",
     "clipboardImportable",
     "downloadAndInstallUpdate",
+    "getClientToken",
     "getMcpClientConfig",
     "getRenameNoticeState",
     "getUpdateReady",
@@ -170,7 +173,9 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // 任务 231：第 26 条 get-update-ready（只读，主进程已下好并校验的更新包状态）。
   // 任务 238：删掉视觉检索 5 条通道后，invoke 计数 26 → 21。任务 239：右键粘贴导入
   // 两个只读/动作通道（clipboard-importable、paste-from-clipboard），21 → 23。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "preload keeps the approved invoke channels");
+  // 任务 311：get-client-token（凭据不进网址片段，主进程只对已核实服务 origin 上的
+  // 主框架回答），23 → 24。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 24, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.match(preload, /getUpdateReady: \(\) => ipcRenderer\.invoke\("get-update-ready"\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");

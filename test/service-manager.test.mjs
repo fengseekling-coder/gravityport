@@ -6,11 +6,15 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
+import { mosaServiceIdentityProof } from "../lib/server-security.js";
+import { ensureLibraryId, libraryDigest } from "../lib/library-identity.mjs";
 import {
   MosaServiceBuildMismatchError,
   MosaServiceConflictError,
   MosaServiceLibraryMismatchError,
+  MosaServiceUnverifiedError,
   compareMosaVersions,
+  probeMosaService,
   retireOlderMosaService,
   retireVerifiedMosaService,
   shouldAllowSameVersionServiceReplacement,
@@ -20,6 +24,24 @@ import {
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+
+// 任务 311：附着一律先过服务身份挑战。给假服务补上挑战端点——证明用真实的
+// server-security 函数按给定 token 和端口计算，桌面端的校验走同一套函数。
+async function answerServiceIdentity(req, res, { token, port }) {
+  if (req.method !== "POST" || req.url !== "/api/service-identity") return false;
+  let raw = "";
+  for await (const chunk of req) raw += chunk;
+  let nonce = "";
+  try { nonce = String(JSON.parse(raw)?.nonce || ""); } catch {}
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify({
+    proof: mosaServiceIdentityProof(token, { port, nonce }),
+    serviceProtocolVersion: "1",
+  }));
+  return true;
+}
+
+const CLIENT_TOKEN = "mosa_service_identity_test_client_token_0123456789abcdefghij";
 
 async function temporaryRoot(t, prefix) {
   const root = await mkdtemp(join(tmpdir(), prefix));
@@ -72,7 +94,8 @@ async function availablePort() {
 test("attaches only to a matching MOSA health identity and leaves it running", async (t) => {
   const root = await temporaryRoot(t, "mosa-service-attach-");
   const libraryDir = join(root, "library");
-  const server = createServer((_req, res) => {
+  const server = createServer(async (req, res) => {
+    if (await answerServiceIdentity(req, res, { token: CLIENT_TOKEN, port: server.address().port })) return;
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ product: "mosa", libraryDir, storage: "sqlite" }));
   });
@@ -80,9 +103,10 @@ test("attaches only to a matching MOSA health identity and leaves it running", a
   t.after(() => close(server));
   const port = server.address().port;
 
-  const service = await startMosaService({ port, libraryDir });
+  const service = await startMosaService({ port, libraryDir, clientToken: CLIENT_TOKEN });
   assert.equal(service.mode, "attached");
   assert.equal(service.storage, "sqlite");
+  assert.equal(service.clientToken, CLIENT_TOKEN, "the credential is handed only to the verified service");
   await service.stop();
   assert.equal(server.listening, true);
 });
@@ -96,7 +120,8 @@ test("explicit desktop handoff can retire an exact matching source runtime and o
     uiFingerprint: "same-ui",
     runtimeFingerprint: "same-runtime",
   };
-  const server = createServer((_req, res) => {
+  const server = createServer(async (req, res) => {
+    if (await answerServiceIdentity(req, res, { token: CLIENT_TOKEN, port: server.address().port })) return;
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({
       product: "mosa",
@@ -115,6 +140,7 @@ test("explicit desktop handoff can retire an exact matching source runtime and o
     port,
     libraryDir,
     expectedIdentity,
+    clientToken: CLIENT_TOKEN,
     preferOwnedRuntime: true,
     retireVerifiedService: async (details, options) => {
       retireCalls += 1;
@@ -715,7 +741,7 @@ test("controlled retirement accepts a KeepAlive replacement only after it matche
   assert.deepEqual(signals, [{ pid: 4242, signal: "SIGTERM" }]);
 });
 
-test("attaches to a matching pre-health-endpoint MOSA runtime", async (t) => {
+test("treats a pre-challenge (legacy) runtime as unverified instead of attaching", async (t) => {
   const root = await temporaryRoot(t, "mosa-service-legacy-attach-");
   const libraryDir = join(root, "library");
   const server = createServer((req, res) => {
@@ -743,10 +769,12 @@ test("attaches to a matching pre-health-endpoint MOSA runtime", async (t) => {
   await listen(server);
   t.after(() => close(server));
 
-  const service = await startMosaService({ port: server.address().port, libraryDir });
-  assert.equal(service.mode, "attached");
-  assert.equal(service.storage, "sqlite");
-  await service.stop();
+  // 任务 311：老 runtime 没有挑战端点，只能用于「要不要退役替换」的判断，
+  // 不再直接附着、更不交凭据。没有替换授权时按冲突处理。
+  await assert.rejects(
+    startMosaService({ port: server.address().port, libraryDir, clientToken: CLIENT_TOKEN }),
+    MosaServiceUnverifiedError,
+  );
   assert.equal(server.listening, true);
 });
 
@@ -803,8 +831,10 @@ test("attaches after a port race instead of replacing the new owner", async (t) 
   const service = await startMosaService({
     port,
     libraryDir,
+    clientToken: CLIENT_TOKEN,
     startRuntime: async () => {
-      raceOwner = createServer((_req, res) => {
+      raceOwner = createServer(async (req, res) => {
+        if (await answerServiceIdentity(req, res, { token: CLIENT_TOKEN, port: raceOwner.address().port })) return;
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify({ product: "mosa", libraryDir, storage: "json" }));
       });
@@ -888,7 +918,8 @@ test("discovers an already-running matching MOSA on a fallback port before acqui
   const libraryDir = join(root, "library");
   const preferredPort = await availablePort();
   const fallbackPort = await availablePort();
-  const server = createServer((_req, res) => {
+  const server = createServer(async (req, res) => {
+    if (await answerServiceIdentity(req, res, { token: CLIENT_TOKEN, port: server.address().port })) return;
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ product: "mosa", libraryDir, storage: "sqlite" }));
   });
@@ -898,6 +929,7 @@ test("discovers an already-running matching MOSA on a fallback port before acqui
   const service = await startMosaService({
     port: preferredPort,
     libraryDir,
+    clientToken: CLIENT_TOKEN,
     allowPortFallback: true,
     discoveryPorts: [preferredPort, fallbackPort],
   });
@@ -906,4 +938,52 @@ test("discovers an already-running matching MOSA on a fallback port before acqui
   assert.equal(service.port, fallbackPort);
   await service.stop();
   assert.equal(server.listening, true);
+});
+
+// Task 314: /api/health no longer carries the library path — the probe
+// compares digests computed from each side's own library directory.
+test("probeMosaService compares library digests and keeps the legacy path fallback", async (t) => {
+  const root = await temporaryRoot(t, "mosa-service-digest-");
+  const { mkdir } = await import("node:fs/promises");
+  const expectedLibraryDir = join(root, "library");
+  await mkdir(expectedLibraryDir, { recursive: true });
+  const expectedId = await ensureLibraryId(expectedLibraryDir);
+  const expectedDigest = libraryDigest(expectedId, expectedLibraryDir);
+
+  const otherLibraryDir = join(root, "other-library");
+  await mkdir(otherLibraryDir, { recursive: true });
+  const otherDigest = libraryDigest(await ensureLibraryId(otherLibraryDir), otherLibraryDir);
+
+  const probeWith = async (health, overrides = {}) => probeMosaService({
+    port: 43517,
+    libraryDir: expectedLibraryDir,
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => health }),
+    ...overrides,
+  });
+
+  const matching = await probeWith({ product: "mosa", libraryDigest: expectedDigest, storage: "sqlite" });
+  assert.equal(matching.state, "attached", "a matching digest attaches without any path in health");
+
+  const copied = await probeWith({ product: "mosa", libraryDigest: otherDigest });
+  assert.equal(copied.state, "conflict");
+  assert.ok(copied.error instanceof MosaServiceLibraryMismatchError, "a copied library (same id, other path) must conflict");
+  assert.equal(copied.error.actualLibraryDir, "", "digest mismatches cannot know the running path");
+
+  const noLocalId = await probeWith({ product: "mosa", libraryDigest: expectedDigest }, {
+    libraryDir: join(root, "library-without-id"),
+  });
+  assert.equal(noLocalId.state, "conflict", "a digest without a local id file to check against is a mismatch");
+  assert.ok(noLocalId.error instanceof MosaServiceLibraryMismatchError);
+
+  const neither = await probeWith({ product: "mosa" });
+  assert.equal(neither.state, "conflict", "neither digest nor legacy path is not GravityPort");
+  assert.ok(!(neither.error instanceof MosaServiceLibraryMismatchError));
+
+  const legacy = await probeWith({ product: "mosa", libraryDir: expectedLibraryDir, storage: "sqlite" });
+  assert.equal(legacy.state, "attached", "legacy runtimes that still publish libraryDir keep working");
+
+  const legacyForeign = await probeWith({ product: "mosa", libraryDir: otherLibraryDir });
+  assert.equal(legacyForeign.state, "conflict");
+  assert.ok(legacyForeign.error instanceof MosaServiceLibraryMismatchError);
+  assert.equal(legacyForeign.error.actualLibraryDir, resolve(otherLibraryDir), "path-based mismatches keep the actual path");
 });

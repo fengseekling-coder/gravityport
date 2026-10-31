@@ -162,8 +162,11 @@ test("a valid submit forwards the contract payload and returns ok", async (t) =>
     // The forwarded copy is re-redacted locally, never trusted from the panel.
     assert.ok(sent.body.diagnostics.includes("token=<已隐藏>"), "token re-redacted");
     assert.ok(!sent.body.diagnostics.includes("secret123"), "raw token gone");
-    assert.ok(sent.body.diagnostics.includes("~/inside"), "home dir re-redacted");
+    // Task 315: the part behind the home root is masked too — only ~ and the
+    // <路径> placeholder survive.
+    assert.ok(sent.body.diagnostics.includes("~<路径>"), "home dir re-redacted");
     assert.ok(!sent.body.diagnostics.includes(`${homedir()}/inside`), "raw home path gone");
+    assert.ok(!sent.body.diagnostics.includes("inside"), "the tail after the home root is masked");
   } finally {
     restore();
     await collector.close();

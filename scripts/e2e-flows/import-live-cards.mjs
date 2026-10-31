@@ -274,8 +274,11 @@ function emptyLibrarySource() {
 function stockedLibrarySource() {
   return `(async () => {
     ${sharedHelpers(RATIOS, IMPORT_TOTAL, "live")}
+    // Task 314: the app renders only after its capability exchange settles,
+    // so the grid may not exist when this source starts. Re-query inside the
+    // wait instead of capturing the element once.
+    await waitFor(() => document.querySelector('.asset-grid') && mountedCards().length >= 100, 'first page ready', 30000);
     const grid = document.querySelector('.asset-grid');
-    await waitFor(() => grid && mountedCards().length >= 100, 'first page ready', 30000);
     // Scroll to the very bottom: pagination appends until the stock runs out.
     for (let guard = 0; guard < 10 && mountedCards().length < ${STOCK_TOTAL}; guard += 1) {
       const before = mountedCards().length;

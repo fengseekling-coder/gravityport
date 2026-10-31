@@ -101,6 +101,7 @@ export type AssetPage = {
 type JsonValue = Record<string, unknown>
 
 let token = ""
+let desktopTokenPromise: Promise<string> | null = null
 function takeBootstrapToken(): string {
   if (token) return token
   try {
@@ -118,15 +119,63 @@ function takeBootstrapToken(): string {
   return token
 }
 
-let sessionRefreshPromise: Promise<boolean> | null = null
-function refreshBrowserSession(): Promise<boolean> {
-  if (!sessionRefreshPromise) {
-    sessionRefreshPromise = fetch("/", { credentials: "same-origin", cache: "no-store" })
-      .then((response) => response.ok)
-      .catch(() => false)
-      .finally(() => { sessionRefreshPromise = null })
+// 任务 311：桌面版的客户端凭据不再写进网址片段。渲染层先向主进程领取一次
+// （主进程只对「已核实服务 origin 上的主框架」回答），再发任何请求；浏览器 /
+// 源码模式没有 electronAPI，保留原来从 hash 读取的逻辑。
+function desktopClientToken(): Promise<string> | null {
+  if (typeof window === "undefined") return null
+  // Cast the whole window: tests compile this file standalone without
+  // desktop.ts's global Window augmentation.
+  const bridge = (window as unknown as { electronAPI?: { getClientToken?: () => Promise<unknown> } }).electronAPI
+  const getClientToken = bridge?.getClientToken
+  if (typeof getClientToken !== "function") return null
+  desktopTokenPromise ??= Promise.resolve(getClientToken())
+    .then((value) => {
+      const received = typeof value === "string" ? value.trim() : ""
+      if (received) {
+        token = received
+        try { sessionStorage.setItem("mosa.client-token", received) } catch {}
+      }
+      return token
+    })
+    .catch(() => token)
+  return desktopTokenPromise
+}
+
+/** Resolves the renderer's client capability before anything is sent: awaits
+ * the desktop bridge when present, otherwise reads the browser hash bootstrap.
+ * Every request helper goes through here, so no request leaves without the
+ * capability (or its documented absence) having settled. */
+export function ensureClientToken(): Promise<string> {
+  return desktopClientToken() ?? Promise.resolve(takeBootstrapToken())
+}
+
+// 任务 314：HTML 响应不再顺带发能力 cookie。渲染层先确保拿到凭据
+// （桌面版走 311 的 IPC，浏览器/源码模式读网址 hash），再 POST
+// /api/client-session 用凭据换 HttpOnly cookie；<img>/<video>/EventSource
+// 之后自动带 cookie，fetch 请求则同时带请求头。结果缓存在同一个 promise
+// 里，并发的调用方只换一次；结束后释放，失败的下一次调用可以重试。
+let clientSessionPromise: Promise<boolean> | null = null
+export function ensureClientSession(): Promise<boolean> {
+  if (!clientSessionPromise) {
+    clientSessionPromise = (async () => {
+      const clientToken = await ensureClientToken()
+      if (!clientToken) return false
+      try {
+        const response = await fetch("/api/client-session", {
+          method: "POST",
+          headers: { "x-mosa-client-token": clientToken },
+          credentials: "same-origin",
+          cache: "no-store",
+        })
+        return response.ok
+      } catch {
+        return false
+      }
+    })()
+    void clientSessionPromise.catch(() => {}).then(() => { clientSessionPromise = null })
   }
-  return sessionRefreshPromise
+  return clientSessionPromise
 }
 
 export async function requestJson<T>(path: string, {
@@ -138,12 +187,11 @@ export async function requestJson<T>(path: string, {
   body?: JsonValue
   signal?: AbortSignal
 } = {}): Promise<T> {
-  const isMutation = method !== "GET"
   for (let attempt = 0; attempt < 2; attempt++) {
     const headers: Record<string, string> = {}
     if (body) headers["content-type"] = "application/json"
-    const clientToken = takeBootstrapToken()
-    if (isMutation && clientToken) headers["x-mosa-client-token"] = clientToken
+    const clientToken = await ensureClientToken()
+    if (clientToken) headers["x-mosa-client-token"] = clientToken
     const result = await fetch(path, {
       method,
       headers,
@@ -164,8 +212,9 @@ export async function requestJson<T>(path: string, {
       throw new Error(`Invalid JSON response: HTTP ${result.status}`)
     }
     if (result.ok) return data as T
-    if (attempt === 0 && isMutation && data.code === "MOSA_CLIENT_UNAUTHORIZED"
-      && await refreshBrowserSession()) continue
+    // 任务 314：GET 也可能 401（读接口同样要凭据），统一走「重新换 cookie
+    // 再重试一次」，不分修改类与否。
+    if (attempt === 0 && data.code === "MOSA_CLIENT_UNAUTHORIZED" && await ensureClientSession()) continue
     const error = new Error(String(data.error || result.statusText || `HTTP ${result.status}`))
     if (typeof data.code === "string") (error as Error & { code?: string }).code = data.code
     throw error
@@ -338,7 +387,19 @@ export type MosaWebCaptureStatus = {
   lastExtensionVersion: string
   totalImported: number
   lastError: string | null
-  queue: { reportedAt: string | null; pending: number; failed: number; items: MosaWebCaptureQueueItem[] }
+  // storageBytes/storageLimitBytes/urlOnly/evicted come from the extension's
+  // offline-queue diagnostics (0.15.44+, review 2-2); older extensions report
+  // none of them and they stay 0.
+  queue: {
+    reportedAt: string | null
+    pending: number
+    failed: number
+    storageBytes: number
+    storageLimitBytes: number
+    urlOnly: number
+    evicted: number
+    items: MosaWebCaptureQueueItem[]
+  }
   retryRequestId: number
 }
 
@@ -347,6 +408,7 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
   const items = Array.isArray(queue.items) ? queue.items : []
   const serverTime = (value: unknown): string | null =>
     typeof value === "string" && value && Number.isFinite(Date.parse(value)) ? value : null
+  const boundedCount = (value: unknown) => Math.max(0, Number(value || 0))
   return {
     enabled: input.enabled === true,
     tokenConfigured: input.tokenConfigured === true,
@@ -356,8 +418,12 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
     lastError: typeof input.lastError === "string" && input.lastError ? input.lastError : null,
     queue: {
       reportedAt: serverTime(queue.reportedAt),
-      pending: Math.max(0, Number(queue.pending || 0)),
-      failed: Math.max(0, Number(queue.failed || 0)),
+      pending: boundedCount(queue.pending),
+      failed: boundedCount(queue.failed),
+      storageBytes: boundedCount(queue.storageBytes),
+      storageLimitBytes: boundedCount(queue.storageLimitBytes),
+      urlOnly: boundedCount(queue.urlOnly),
+      evicted: boundedCount(queue.evicted),
       items: items.map((row: unknown) => {
         const item = (row && typeof row === "object" && !Array.isArray(row) ? row : {}) as JsonValue
         return {
@@ -459,7 +525,7 @@ export async function updateAssetMetadata(project: string, id: string, patch: { 
 export async function uploadVideoPoster(project: string, id: string, poster: Blob): Promise<void> {
   const result = await fetch(`/api/assets/${e(project)}/${e(id)}/poster`, {
     method: "POST",
-    headers: { "content-type": poster.type || "image/webp", ...mosaMutationHeaders("POST") },
+    headers: { "content-type": poster.type || "image/webp", ...(await mosaMutationHeaders("POST")) },
     body: poster,
     credentials: "same-origin",
   })
@@ -717,17 +783,17 @@ export function resolveImportDuplicates(project: string, actions: ImportResolveA
 }
 
 /** Mutation headers for callers that must stream a raw body (import staging). */
-export function mosaMutationHeaders(method = "POST"): Record<string, string> {
+export async function mosaMutationHeaders(method = "POST"): Promise<Record<string, string>> {
   const verb = String(method || "GET").toUpperCase()
   if (verb === "GET" || verb === "HEAD" || verb === "OPTIONS") return {}
-  const clientToken = takeBootstrapToken()
+  const clientToken = await ensureClientToken()
   return clientToken ? { "x-mosa-client-token": clientToken } : {}
 }
 
 export async function stageImportFile(file: File): Promise<string> {
   const result = await fetch("/api/import/stage", {
     method: "POST",
-    headers: { "x-mosa-file-name": encodeURIComponent(file.name), ...mosaMutationHeaders("POST") },
+    headers: { "x-mosa-file-name": encodeURIComponent(file.name), ...(await mosaMutationHeaders("POST")) },
     body: file,
     credentials: "same-origin",
   })
@@ -870,5 +936,7 @@ export async function openLibraryFolder(path: string, revealFile = false) {
   })
 }
 
-// Take the transient token immediately, not only on a later mutation.
-if (typeof window !== "undefined") takeBootstrapToken()
+// Start the capability load immediately, not only on a later request: the
+// browser path parses the URL fragment, the desktop path asks the main process
+// (task 311) so the very first request already carries the token.
+if (typeof window !== "undefined") void ensureClientSession()

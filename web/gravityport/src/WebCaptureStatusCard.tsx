@@ -112,6 +112,16 @@ export function WebCaptureStatusCardView({
   const outdated = active && versionGap !== null && versionGap < 0
   const pending = status?.queue.pending ?? 0
   const lastError = status?.lastError ? status.lastError.slice(0, LAST_ERROR_MAX_CHARS) : ""
+  // Offline-storage diagnostics from the extension's queue snapshot
+  // (0.15.44+, review 2-2). Older extensions report zeros, so every hint
+  // below stays hidden for them.
+  const queue = status?.queue
+  const storageBytes = queue?.storageBytes ?? 0
+  const storageLimitBytes = queue?.storageLimitBytes ?? 0
+  const urlOnly = queue?.urlOnly ?? 0
+  const evicted = queue?.evicted ?? 0
+  const formatMb = (bytes: number) => `${Math.round(bytes / (1024 * 1024))}MB`
+  const storageNearlyFull = storageLimitBytes > 0 && storageBytes >= storageLimitBytes * 0.9
 
   return (
     <section className="web-capture-status-card" aria-label={t("浏览器扩展")}>
@@ -160,6 +170,25 @@ export function WebCaptureStatusCardView({
             {t("重试")}
           </button>
           {retried ? <span className="web-capture-retried">{t("已让扩展重试")}</span> : null}
+        </p>
+      ) : null}
+      {!loading && active && storageNearlyFull ? (
+        <p className="web-capture-note">
+          {t("扩展的离线空间快满了（已用 {used} / {limit}），打开 GravityPort 后会自动补收")
+            .replace("{used}", formatMb(storageBytes))
+            .replace("{limit}", formatMb(storageLimitBytes))}
+        </p>
+      ) : null}
+      {!loading && active && evicted > 0 ? (
+        <p className="web-capture-error">
+          {t("有 {count} 张因离线空间不足只保留了网址或被移除，网址过期后可能收不回来")
+            .replace("{count}", String(evicted))}
+        </p>
+      ) : null}
+      {!loading && active && urlOnly > 0 ? (
+        <p className="web-capture-error">
+          {t("{count} 张只存了网址，网址过期后可能收不回来")
+            .replace("{count}", String(urlOnly))}
         </p>
       ) : null}
       {lastError ? (

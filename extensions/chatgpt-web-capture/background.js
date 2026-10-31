@@ -11,10 +11,20 @@ const MOSA_DISCOVERY_RETRY_MS = 1_500;
 const STORAGE_KEYS = ["mosaBaseUrl", "mosaToken", "autoCapture"];
 const CAPTURE_QUEUE_KEY = "mosaCaptureQueueV1";
 const CAPTURE_QUEUE_ALARM = "mosa-capture-queue";
-const CAPTURE_QUEUE_MAX_ITEMS = 256;
+// No item cap: the queue is bounded by the byte budget (and 7-day age) only.
+// This safety cap merely stops a runaway queue from growing chrome.storage
+// without end; normal use never reaches it, and crossing it still counts as
+// an eviction (never a silent drop).
+const CAPTURE_QUEUE_SAFETY_MAX_ITEMS = 5000;
 const CAPTURE_QUEUE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const CAPTURE_QUEUE_MAX_ATTEMPTS = 3;
 const CAPTURE_QUEUE_MAX_BYTES = 512 * 1024 * 1024;
+// Cumulative count of tickets that lost their bytes (or were removed) because
+// the byte budget or the safety cap forced it. Lives in chrome.storage.local
+// and resets once the queue is empty again (review 2-2).
+const CAPTURE_QUEUE_EVICTIONS_KEY = "mosaCaptureQueueEvictionsV1";
+const DELETION_QUEUE_KEY = "mosaDeletionQueueV1";
+const DELETION_BATCH_MAX_ITEMS = 200;
 const CAPTURE_MEDIA_DB = "mosa-web-capture-media-v1";
 const CAPTURE_MEDIA_STORE = "media";
 const LEGACY_DEV_TOKEN = "mosa-web-capture-dev";
@@ -43,8 +53,18 @@ let lastSeenRetryRequestId = 0;
 // Queue tickets whose live POST is still running. The minute drain skips them,
 // so one capture is never posted twice at the same time (review 294 A.5).
 const liveDeliveryIds = new Set();
+// Capture ids whose enqueue is still writing bytes/spool chunks before the
+// ticket lands in the queue, plus spool transfer ids in the same window. The
+// orphan sweep must not delete media those enqueues just wrote (review 2-2 C).
+const pendingEnqueueIds = new Set();
+const pendingSpoolTransferIds = new Set();
 const chunkedVideoTransfers = new Map();
 const VIDEO_TRANSFER_TTL_MS = 10 * 60 * 1000;
+// Tests shrink the queue byte budget through this global; production uses 512MB.
+function captureQueueMaxBytes() {
+  const override = Number(globalThis.__MOSA_TEST_QUEUE_MAX_BYTES__);
+  return override > 0 ? override : CAPTURE_QUEUE_MAX_BYTES;
+}
 
 function openCaptureMediaDb() {
   return new Promise((resolve, reject) => {
@@ -265,22 +285,27 @@ async function readCaptureQueue() {
   const now = Date.now();
   return (Array.isArray(stored[CAPTURE_QUEUE_KEY]) ? stored[CAPTURE_QUEUE_KEY] : [])
     .filter((item) => item && item.payload && now - Number(item.createdAt || 0) <= CAPTURE_QUEUE_MAX_AGE_MS)
-    .slice(-CAPTURE_QUEUE_MAX_ITEMS);
+    .slice(-CAPTURE_QUEUE_SAFETY_MAX_ITEMS);
 }
 
 async function pruneStoredCaptureQueue() {
   let removed = [];
+  let capEvicted = 0;
   await mutateCaptureQueue(async () => {
     const stored = await chrome.storage.local.get({ [CAPTURE_QUEUE_KEY]: [] });
     const raw = Array.isArray(stored[CAPTURE_QUEUE_KEY]) ? stored[CAPTURE_QUEUE_KEY] : [];
     const now = Date.now();
-    const next = raw
-      .filter((item) => item && item.payload && now - Number(item.createdAt || 0) <= CAPTURE_QUEUE_MAX_AGE_MS)
-      .slice(-CAPTURE_QUEUE_MAX_ITEMS);
+    const fresh = raw
+      .filter((item) => item && item.payload && now - Number(item.createdAt || 0) <= CAPTURE_QUEUE_MAX_AGE_MS);
+    const next = fresh.slice(-CAPTURE_QUEUE_SAFETY_MAX_ITEMS);
+    // Only the items the safety cap cut off count as evictions. 7-day expiry
+    // is the queue's normal end of life, not a loss the user must hear about.
+    capEvicted = fresh.length - next.length;
     const retainedIds = new Set(next.map((item) => item.id));
     removed = raw.filter((item) => item?.id && !retainedIds.has(item.id));
     if (next.length !== raw.length) await writeCaptureQueue(next);
   });
+  if (capEvicted > 0) await addCaptureQueueEvictions(capEvicted).catch(() => {});
   for (const item of removed) {
     if (item?.payload?.queuedMediaId) await captureMediaDelete(`capture:${item.payload.queuedMediaId}`).catch(() => {});
     if (item?.videoSpool?.transferId) await deleteVideoSpool(item.videoSpool.transferId, item.videoSpool.totalChunks);
@@ -288,7 +313,68 @@ async function pruneStoredCaptureQueue() {
 }
 
 async function writeCaptureQueue(queue) {
-  await chrome.storage.local.set({ [CAPTURE_QUEUE_KEY]: queue.slice(-CAPTURE_QUEUE_MAX_ITEMS) });
+  await chrome.storage.local.set({ [CAPTURE_QUEUE_KEY]: queue.slice(-CAPTURE_QUEUE_SAFETY_MAX_ITEMS) });
+}
+
+async function readCaptureQueueEvictions() {
+  const stored = await chrome.storage.local.get({ [CAPTURE_QUEUE_EVICTIONS_KEY]: 0 });
+  return Math.max(0, Math.trunc(Number(stored[CAPTURE_QUEUE_EVICTIONS_KEY]) || 0));
+}
+
+async function addCaptureQueueEvictions(count) {
+  if (!(Number(count) > 0)) return;
+  const previous = await readCaptureQueueEvictions();
+  await chrome.storage.local.set({ [CAPTURE_QUEUE_EVICTIONS_KEY]: previous + Math.trunc(Number(count)) });
+}
+
+// "video:<transferId>:<index>" → transferId, or null for anything else.
+// Transfer ids themselves never contain a colon that could end in digits.
+function videoTransferIdFromChunkKey(key) {
+  const value = String(key || "");
+  if (!value.startsWith("video:")) return null;
+  const rest = value.slice("video:".length);
+  const lastColon = rest.lastIndexOf(":");
+  if (lastColon <= 0) return null;
+  const index = Number(rest.slice(lastColon + 1));
+  if (!Number.isInteger(index) || index < 0) return null;
+  return rest.slice(0, lastColon);
+}
+
+// IndexedDB records no ticket references back: a queue that overflowed, an
+// aborted chunked transfer or an interrupted spool leaves byte records behind
+// that nothing would ever delete. After every prune, sweep records that no
+// queue ticket, no in-flight page transfer and no in-flight enqueue refers to.
+// A failed sweep must not break the drain.
+async function removeOrphanCaptureMedia() {
+  try {
+    const sizes = await captureMediaSizes();
+    if (!sizes.size) return;
+    const queue = await readCaptureQueue();
+    const referenced = new Set();
+    for (const item of queue) {
+      if (item?.payload?.queuedMediaId) referenced.add(`capture:${item.payload.queuedMediaId}`);
+      const spool = item?.videoSpool;
+      if (spool?.transferId) {
+        for (let index = 0; index < (Number(spool.totalChunks) || 0); index += 1) {
+          referenced.add(videoChunkKey(spool.transferId, index));
+        }
+      }
+    }
+    for (const key of sizes.keys()) {
+      if (referenced.has(key)) continue;
+      const id = key.startsWith("capture:") ? key.slice("capture:".length) : "";
+      if (id && pendingEnqueueIds.has(id)) continue;
+      const transferId = videoTransferIdFromChunkKey(key);
+      if (transferId) {
+        if (chunkedVideoTransfers.has(transferId) || pendingSpoolTransferIds.has(transferId)) continue;
+      } else if (!id) {
+        continue;
+      }
+      await captureMediaDelete(key).catch(() => {});
+    }
+  } catch {
+    // Orphans are reclaimed on the next drain; losing one sweep is fine.
+  }
 }
 
 function captureMediaSizes() {
@@ -345,20 +431,22 @@ function downgradeQueuedTicketToUrl(item) {
   return null;
 }
 
-// Byte tickets must not add up without bound (256 items × 15 MiB worst case).
-// Past the budget the oldest tickets lose their stored bytes first: back to a
-// URL ticket when one exists, removed entirely otherwise.
+// Byte tickets must not add up without bound. Past the byte budget the oldest
+// tickets lose their stored bytes first: back to a URL ticket when one exists,
+// removed entirely otherwise. Every such eviction is counted for the Settings
+// card — nothing here may disappear silently.
 async function enforceCaptureQueueBudget() {
   let evicted = [];
   await mutateCaptureQueue(async () => {
     const queue = await readCaptureQueue();
     if (!queue.length) return;
+    const maxBytes = captureQueueMaxBytes();
     const sizes = await captureMediaSizes().catch(() => new Map());
     let totalBytes = 0;
     for (const item of queue) totalBytes += queuedTicketByteSize(item, sizes);
-    if (totalBytes <= CAPTURE_QUEUE_MAX_BYTES) return;
+    if (totalBytes <= maxBytes) return;
     const next = [...queue];
-    for (let index = 0; index < next.length && totalBytes > CAPTURE_QUEUE_MAX_BYTES; index += 1) {
+    for (let index = 0; index < next.length && totalBytes > maxBytes; index += 1) {
       const item = next[index];
       const size = queuedTicketByteSize(item, sizes);
       if (size <= 0) continue;
@@ -369,6 +457,7 @@ async function enforceCaptureQueueBudget() {
     }
     await writeCaptureQueue(next.filter(Boolean));
   });
+  await addCaptureQueueEvictions(evicted.length).catch(() => {});
   for (const { item } of evicted) {
     if (item?.payload?.queuedMediaId) await captureMediaDelete(`capture:${item.payload.queuedMediaId}`).catch(() => {});
     if (item?.videoSpool?.transferId) await deleteVideoSpool(item.videoSpool.transferId, item.videoSpool.totalChunks).catch(() => {});
@@ -377,12 +466,23 @@ async function enforceCaptureQueueBudget() {
 
 async function captureQueueStatusSnapshot() {
   const queue = await readCaptureQueue();
+  const sizes = await captureMediaSizes().catch(() => new Map());
+  // The eviction count is meaningful while there is something in the queue;
+  // once the queue has emptied again, the counter resets and reports 0.
+  const storedEvictions = await readCaptureQueueEvictions().catch(() => 0);
+  if (!queue.length && storedEvictions > 0) {
+    await chrome.storage.local.set({ [CAPTURE_QUEUE_EVICTIONS_KEY]: 0 }).catch(() => {});
+  }
   return {
     // Lets Settings → 连接 show this extension's version right after the app
     // starts, before the next capture arrives.
     extensionVersion: chrome.runtime.getManifest().version,
     pending: queue.length,
     failed: queue.filter((item) => Number(item?.attempts || 0) > 0).length,
+    storageBytes: queue.reduce((total, item) => total + queuedTicketByteSize(item, sizes), 0),
+    storageLimitBytes: captureQueueMaxBytes(),
+    urlOnly: queue.filter((item) => !item?.payload?.queuedMediaId && !item?.videoSpool?.transferId).length,
+    evicted: queue.length ? storedEvictions : 0,
     items: queue.slice(0, 20).map((item) => ({
       id: String(item?.id || ""),
       provider: String(item?.payload?.provider || ""),
@@ -550,6 +650,103 @@ function reportConversationTurnsThrottled(payload = {}) {
   });
 }
 
+// Jimeng deletion notices when GravityPort is offline. Like capture tickets,
+// they queue in chrome.storage.local (never in the 512MB media budget), are
+// deduplicated per item id and expire after 7 days. The App endpoint accepts
+// at most 200 items per POST (lib/provider-deletion-sync.mjs), so the queue
+// flushes in 200-item batches until it is empty or the App goes unreachable.
+let deletionQueueMutationPromise = Promise.resolve();
+
+function mutateDeletionQueue(operation) {
+  const run = deletionQueueMutationPromise.catch(() => undefined).then(operation);
+  deletionQueueMutationPromise = run.catch(() => undefined);
+  return run;
+}
+
+async function readProviderDeletionQueue() {
+  const stored = await chrome.storage.local.get({ [DELETION_QUEUE_KEY]: [] });
+  const now = Date.now();
+  return (Array.isArray(stored[DELETION_QUEUE_KEY]) ? stored[DELETION_QUEUE_KEY] : [])
+    .filter((entry) => entry && entry.provider && entry.itemId && now - Number(entry.createdAt || 0) <= CAPTURE_QUEUE_MAX_AGE_MS);
+}
+
+function deletionQueueEntryKey(entry) {
+  return `${String(entry?.provider || "")}\u001f${String(entry?.itemId || "")}`;
+}
+
+async function queueProviderDeletions(provider, items) {
+  await mutateDeletionQueue(async () => {
+    const queue = await readProviderDeletionQueue();
+    const seen = new Set(queue.map(deletionQueueEntryKey));
+    for (const item of items) {
+      const key = `${provider}\u001f${item.itemId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      queue.push({ provider, recordId: item.recordId, itemId: item.itemId, createdAt: Date.now() });
+    }
+    await chrome.storage.local.set({ [DELETION_QUEUE_KEY]: queue });
+  });
+}
+
+// Delivers every queued deletion notice in ≤200-item batches. Delivered
+// batches and permanently refused batches (other 4xx) leave the queue; the
+// App being gone, a timeout, 5xx and 401/403 (pairing broken) keep the rest
+// queued for the next drain, exactly like capture tickets.
+async function flushProviderDeletionQueue() {
+  const queue = await readProviderDeletionQueue();
+  if (!queue.length) return { delivered: 0, pending: 0 };
+  const settings = await getSettings();
+  const token = String(settings.mosaToken || "").trim();
+  if (!token) return { delivered: 0, pending: queue.length };
+  let baseUrl;
+  try {
+    baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
+  } catch {
+    return { delivered: 0, pending: queue.length };
+  }
+  const settled = new Set();
+  let delivered = 0;
+  for (let start = 0; start < queue.length; start += DELETION_BATCH_MAX_ITEMS) {
+    const batch = queue.slice(start, start + DELETION_BATCH_MAX_ITEMS);
+    try {
+      const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-provider-deletions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          provider: batch[0].provider,
+          items: batch.map(({ recordId, itemId }) => ({ recordId, itemId })),
+        }),
+        cache: "no-cache",
+      }, 3_000);
+      await response.arrayBuffer().catch(() => {});
+      if (response.ok) {
+        for (const entry of batch) settled.add(deletionQueueEntryKey(entry));
+        delivered += batch.length;
+        continue;
+      }
+      const error = ingestResponseError(`GravityPort deletion report failed (${response.status})`, response.status);
+      if (classifyCaptureError(error) === "permanent") {
+        for (const entry of batch) settled.add(deletionQueueEntryKey(entry));
+        continue;
+      }
+      break;
+    } catch {
+      // App gone or request timed out: the rest of the queue stays.
+      break;
+    }
+  }
+  if (settled.size) {
+    await mutateDeletionQueue(async () => {
+      const current = await readProviderDeletionQueue();
+      const next = current.filter((entry) => !settled.has(deletionQueueEntryKey(entry)));
+      if (next.length !== current.length) {
+        await chrome.storage.local.set({ [DELETION_QUEUE_KEY]: next });
+      }
+    });
+  }
+  return { delivered, pending: queue.length - settled.size };
+}
+
 async function reportProviderDeletionsToMosa(payload = {}) {
   const provider = String(payload?.provider || "").trim().toLowerCase();
   const rawItems = Array.isArray(payload?.items) ? payload.items : [];
@@ -558,21 +755,14 @@ async function reportProviderDeletionsToMosa(payload = {}) {
       recordId: String(entry?.recordId || "").trim().slice(0, 128),
       itemId: String(entry?.itemId || "").trim(),
     }))
-    .filter((entry) => /^\d{1,32}$/.test(entry.itemId))
-    .slice(0, 200);
+    .filter((entry) => /^\d{1,32}$/.test(entry.itemId));
   if (provider !== "jimeng" || !items.length) return { reported: false, reason: "empty" };
-  const settings = await getSettings();
-  const token = String(settings.mosaToken || "").trim();
-  if (!token) return { reported: false, reason: "no-token" };
-  const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
-  const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-provider-deletions`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ provider, items }),
-    cache: "no-cache",
-  }, 3_000);
-  await response.arrayBuffer().catch(() => {});
-  return { reported: response.ok, status: response.status };
+  // Queue first, then try to deliver: a notice recorded while GravityPort is
+  // closed must survive exactly like a queued capture (review 2-2 E).
+  await queueProviderDeletions(provider, items);
+  const outcome = await flushProviderDeletionQueue().catch(() => ({ delivered: 0 }));
+  if (outcome.delivered > 0) return { reported: true, status: 200 };
+  return { reported: false, reason: "queued" };
 }
 
 async function mosaReachable() {
@@ -611,46 +801,128 @@ async function queuedBytesAlreadyStored(id) {
   return Boolean(record?.blob);
 }
 
+// Same for remote videos: a ticket that already carries a video spool must not
+// have its (still fresh) URL downloaded a second time on every page re-send.
+async function queuedSpoolAlreadyStored(id) {
+  const queue = await readCaptureQueue();
+  const ticket = queue.find((item) => item.id === id);
+  return Boolean(ticket?.videoSpool?.transferId);
+}
+
+// GravityPort is offline and the ticket only carries a remote video URL, so
+// replay would depend on that signed URL surviving until the next drain. The
+// URL is as fresh as it will ever be right now, so download the video through
+// the shared streaming rules into the IndexedDB spool and upgrade the ticket
+// to a videoSpool ticket (review 2-2 B). Any failure keeps the plain URL
+// ticket and is never surfaced to the page.
+async function spoolQueuedRemoteVideo(payload, replayPayload, id) {
+  const transferId = `remote:${id}`;
+  pendingSpoolTransferIds.add(transferId);
+  try {
+    let writtenChunks = 0;
+    const streamed = await streamRemoteVideoChunks(payload.mediaUrl, {
+      onStart: async () => {},
+      sink: async (index, chunk) => {
+        await captureMediaPut({
+          key: videoChunkKey(transferId, index),
+          blob: new Blob([chunk], { type: "application/octet-stream" }),
+          updatedAt: Date.now(),
+        });
+        writtenChunks = index + 1;
+      },
+      onError: async () => {
+        // A failed attempt leaves chunks behind; drop them so only the next
+        // attempt's chunks (from index 0 again) survive.
+        await deleteVideoSpool(transferId, writtenChunks).catch(() => {});
+        writtenChunks = 0;
+      },
+    });
+    const videoSpool = { transferId, totalBytes: streamed.totalBytes, totalChunks: streamed.totalChunks };
+    // Replay provenance: the original URL and the redirect target, sanitized
+    // like the live streaming path, so the offline delivery records the same
+    // source evidence an online capture would.
+    const upgradedPayload = {
+      ...replayPayload,
+      ...(streamed.mimeType ? { mimeType: streamed.mimeType } : {}),
+      sourceMediaUrl: payload.mediaUrl || "",
+      finalMediaUrl: streamed.finalUrl || "",
+    };
+    return { replayPayload: upgradedPayload, videoSpool };
+  } catch {
+    await deleteVideoSpool(transferId, MAX_VIDEO_CHUNKS).catch(() => {});
+    return null;
+  } finally {
+    pendingSpoolTransferIds.delete(transferId);
+  }
+}
+
 async function enqueueCapture(payload) {
   const id = stableCaptureKey(payload);
   let replayPayload = queueReplayPayload(payload, id);
   if (!replayPayload) return null;
-  if (replayPayload.queuedMediaId) {
-    // Bytes the page sends now always replace the stored copy: a forced
-    // re-send (provisional then final image) carries the better bytes, and
-    // writing them costs no download.
-    const base64 = payload.mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
-    const bytes = base64ToBytes(base64);
-    await captureMediaPut({
-      key: `capture:${id}`,
-      blob: new Blob([bytes], { type: payload.mimeType || (payload.mediaKind === "video" ? "video/mp4" : "image/png") }),
-      updatedAt: Date.now(),
-    });
-  } else if (payload.mediaKind !== "video" && !(await queuedBytesAlreadyStored(id)) && !(await mosaReachable())) {
-    // URL-only ticket while GravityPort is offline: this provider URL is as
-    // fresh as it will ever be, so fetch the media once now and upgrade the
-    // ticket to bytes. Videos stay URL tickets — replay streams them, and a
-    // byte copy would eat the whole queue budget in a few captures.
-    replayPayload = await prefetchQueuedMediaBytes(payload, replayPayload, id);
-  }
-  await mutateCaptureQueue(async () => {
-    const queue = await readCaptureQueue();
-    const index = queue.findIndex((item) => item.id === id);
-    if (index < 0) {
-      // Byte tickets keep the media itself in IndexedDB so an expired
-      // provider URL cannot lose the capture while GravityPort is closed;
-      // URL-only tickets remain for media that has no local bytes yet.
-      queue.push({ id, payload: replayPayload, createdAt: Date.now(), attempts: 0, lastError: "" });
-    } else {
-      queue[index] = {
-        ...queue[index],
-        payload: mergeReplayPayload(queue[index].payload, replayPayload),
-        lastUpdatedAt: Date.now(),
-      };
+  let videoSpool = null;
+  // From the first byte write until the ticket lands in the queue, its media
+  // would look orphaned to a concurrent sweep — guard the whole window.
+  pendingEnqueueIds.add(id);
+  try {
+    if (replayPayload.queuedMediaId) {
+      // Bytes the page sends now always replace the stored copy: a forced
+      // re-send (provisional then final image) carries the better bytes, and
+      // writing them costs no download.
+      const base64 = payload.mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
+      const bytes = base64ToBytes(base64);
+      await captureMediaPut({
+        key: `capture:${id}`,
+        blob: new Blob([bytes], { type: payload.mimeType || (payload.mediaKind === "video" ? "video/mp4" : "image/png") }),
+        updatedAt: Date.now(),
+      });
+    } else if (!(await queuedBytesAlreadyStored(id)) && !(await mosaReachable())) {
+      // URL-only ticket while GravityPort is offline: this provider URL is as
+      // fresh as it will ever be, so fetch the media once now. Images upgrade
+      // to byte tickets; remote videos download into the IndexedDB spool so
+      // replay no longer depends on the signed URL still working (review 2-2 B).
+      if (payload.mediaKind === "video") {
+        if (!(await queuedSpoolAlreadyStored(id))) {
+          const spooled = await spoolQueuedRemoteVideo(payload, replayPayload, id);
+          if (spooled) {
+            replayPayload = spooled.replayPayload;
+            videoSpool = spooled.videoSpool;
+          }
+        }
+      } else {
+        replayPayload = await prefetchQueuedMediaBytes(payload, replayPayload, id);
+      }
     }
-    await writeCaptureQueue(queue);
-  });
-  await enforceCaptureQueueBudget().catch(() => {});
+    await mutateCaptureQueue(async () => {
+      const queue = await readCaptureQueue();
+      const index = queue.findIndex((item) => item.id === id);
+      if (index < 0) {
+        // Byte tickets keep the media itself in IndexedDB so an expired
+        // provider URL cannot lose the capture while GravityPort is closed;
+        // URL-only tickets remain for media that has no local bytes yet.
+        queue.push({
+          id,
+          payload: replayPayload,
+          createdAt: Date.now(),
+          attempts: 0,
+          lastError: "",
+          ...(videoSpool ? { videoSpool } : {}),
+        });
+      } else {
+        queue[index] = {
+          ...queue[index],
+          payload: mergeReplayPayload(queue[index].payload, replayPayload),
+          lastUpdatedAt: Date.now(),
+        };
+      }
+      await writeCaptureQueue(queue);
+    });
+    // Inside the guard: until this returns, the drain must not mistake the
+    // fresh ticket for deliverable work (the live POST has not started yet).
+    await enforceCaptureQueueBudget().catch(() => {});
+  } finally {
+    pendingEnqueueIds.delete(id);
+  }
   return id;
 }
 
@@ -828,7 +1100,12 @@ async function ingestQueuedVideoSpool(item) {
   const spool = item.videoSpool;
   const payload = { ...(item.payload || {}), mediaKind: "video" };
   const connection = await uploadConnection();
-  const upload = await beginVideoUpload(payload, spool.totalBytes, spool.totalChunks, connection);
+  // Offline-spool tickets carry their own source evidence (original URL +
+  // redirect target); page-local spools have neither and stay as they were.
+  const upload = await beginVideoUpload(payload, spool.totalBytes, spool.totalChunks, connection, {
+    mediaUrl: payload.sourceMediaUrl || payload.mediaUrl || "",
+    finalMediaUrl: payload.finalMediaUrl || "",
+  });
   try {
     for (let index = 0; index < spool.totalChunks; index += 1) {
       const record = await captureMediaGet(videoChunkKey(spool.transferId, index));
@@ -851,11 +1128,15 @@ function drainCaptureQueue() {
   if (queueDrainPromise) return queueDrainPromise;
   queueDrainPromise = (async () => {
     await pruneStoredCaptureQueue();
+    await removeOrphanCaptureMedia();
     const queue = await readCaptureQueue();
     if (!queue.length) return;
     for (const item of queue) {
       // A live POST for this ticket is still running; it settles the ticket.
-      if (liveDeliveryIds.has(item.id)) continue;
+      // An enqueue still writing its bytes/budget would look deliverable but
+      // has not handed the ticket to its live POST yet — the next beat or the
+      // live POST itself settles it. Delivering here could post it twice.
+      if (liveDeliveryIds.has(item.id) || pendingEnqueueIds.has(item.id)) continue;
       try {
         await ingestQueuedCapture(item);
         await removeQueuedCapture(item.id);
@@ -994,20 +1275,25 @@ chrome.windows?.onRemoved?.addListener((windowId) => {
   });
 });
 
-chrome.runtime.onStartup?.addListener(() => { void drainCaptureQueue(); });
+chrome.runtime.onStartup?.addListener(() => { void drainCaptureQueue(); void flushProviderDeletionQueue(); });
 chrome.runtime.onInstalled?.addListener(() => {
   chrome.alarms?.create?.(CAPTURE_QUEUE_ALARM, { periodInMinutes: 1 });
   void drainCaptureQueue();
+  void flushProviderDeletionQueue();
 });
 chrome.alarms?.onAlarm?.addListener((alarm) => {
   if (alarm?.name === CAPTURE_QUEUE_ALARM) {
     void expireDesktopSyncJob();
     void reportCaptureQueueStatus().finally(() => drainCaptureQueue());
+    // Deletion notices ride the same minute beat; they queue on their own and
+    // never touch the capture queue's byte budget.
+    void flushProviderDeletionQueue();
   }
 });
 chrome.alarms?.create?.(CAPTURE_QUEUE_ALARM, { periodInMinutes: 1 });
 void drainCaptureQueue();
 void reportCaptureQueueStatus();
+void flushProviderDeletionQueue();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== "string") return false;
@@ -1769,7 +2055,14 @@ async function beginVideoUpload(payload, totalBytes, totalChunks, connection = n
   return { baseUrl, token, uploadId: data.uploadId };
 }
 
-async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
+// Shared remote-video download: allow-list on the bootstrap URL and again on
+// the redirect target, three credential modes, an idle timeout on the body and
+// a hard byte cap. Each ≤3MiB chunk goes to sink(index, bytes) in order;
+// onStart reports the validated mimeType/finalUrl before the first chunk, and
+// onError runs between attempts so callers can discard partial output.
+// Used by the live GravityPort streaming upload and by the offline spool —
+// the download rules must not exist twice.
+async function streamRemoteVideoChunks(mediaUrl, { onStart, sink, onError } = {}) {
   assertAllowedRemoteMediaUrl(mediaUrl);
   const attempts = [
     { credentials: "include", cache: "no-cache" },
@@ -1778,8 +2071,8 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
   ];
   let lastError = null;
   for (const init of attempts) {
-    let upload = null;
     let body = null;
+    let streamed = null;
     try {
       body = await fetchWithTimeout(mediaUrl, init, 45_000, {
         coverBody: true,
@@ -1800,18 +2093,14 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
       if (!response.body?.getReader) throw new Error("Remote video response is not streamable.");
       const mimeType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim()
         || guessMime(finalUrl, "video") || "video/mp4";
-      upload = await beginVideoUpload(
-        { ...payload, mimeType },
-        0,
-        0,
-        connection,
-        { mediaUrl, finalMediaUrl: finalUrl },
-      );
-      const transfer = { ...upload, receivedBytes: 0, nextIndex: 0 };
+      streamed = { mimeType, finalUrl };
+      await onStart?.(streamed);
       const reader = response.body.getReader();
+      const transfer = { receivedBytes: 0, nextIndex: 0 };
       while (true) {
         const { value, done } = await reader.read();
-        // The idle timer covers the body only: stop it before the commit.
+        // The idle timer covers the body only: stop it before the caller's
+        // next write lands.
         touch();
         if (done) break;
         if (!value?.byteLength) continue;
@@ -1820,7 +2109,7 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
           if (transfer.receivedBytes + chunk.byteLength > MAX_VIDEO_BYTES) {
             throw captureSizeLimitError("Video");
           }
-          await appendVideoUploadChunk(transfer, transfer.nextIndex, chunk);
+          await sink?.(transfer.nextIndex, chunk);
           touch();
           transfer.receivedBytes += chunk.byteLength;
           transfer.nextIndex += 1;
@@ -1828,16 +2117,49 @@ async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
       }
       body.done();
       if (transfer.receivedBytes < 64 * 1024) throw new Error("Downloaded video empty/too small");
-      return await commitVideoUpload(transfer);
+      return { totalBytes: transfer.receivedBytes, totalChunks: transfer.nextIndex, ...streamed };
     } catch (error) {
-      if (upload) await abortVideoUpload(upload).catch(() => {});
       if (error?.sizeLimit) throw error;
       lastError = error instanceof Error ? error : new Error(String(error));
+      // Discard whatever this attempt produced before the next credential
+      // mode starts from chunk 0 again.
+      await onError?.(lastError).catch(() => {});
     } finally {
       body?.done();
     }
   }
   throw lastError || new Error("Failed to download video");
+}
+
+async function streamRemoteVideoToMosa(payload, mediaUrl, connection) {
+  let upload = null;
+  try {
+    const streamed = await streamRemoteVideoChunks(mediaUrl, {
+      onStart: async ({ mimeType, finalUrl }) => {
+        upload = await beginVideoUpload(
+          { ...payload, mimeType },
+          0,
+          0,
+          connection,
+          { mediaUrl, finalMediaUrl: finalUrl },
+        );
+      },
+      sink: async (index, chunk) => {
+        if (!upload) throw new Error("Video upload session did not start.");
+        await appendVideoUploadChunk(upload, index, chunk);
+      },
+      onError: async () => {
+        if (upload) {
+          await abortVideoUpload(upload).catch(() => {});
+          upload = null;
+        }
+      },
+    });
+    return await commitVideoUpload(upload);
+  } catch (error) {
+    if (upload) await abortVideoUpload(upload).catch(() => {});
+    throw error;
+  }
 }
 
 async function appendVideoUploadChunk(transfer, index, chunkBytes) {
@@ -1949,6 +2271,20 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
     } catch (retryError) {
       const msg = retryError instanceof Error ? retryError.message : String(retryError);
       throw mosaUnavailableError(`无法连接 GravityPort (${baseUrl})：${msg}。请确认 GravityPort App 正在运行。`);
+    }
+  }
+
+  // Task 314: the JSON ingest entry no longer carries big media (videos most
+  // of all — offline-queue replays resend their stored bytes as base64). The
+  // server answers 413 WEB_CAPTURE_USE_BINARY_UPLOAD before reading anything;
+  // switch this one send to the binary envelope with the bytes we already
+  // hold, exactly like live captures with local bytes.
+  if (response.status === 413 && mediaBase64 && !mediaBinaryParts) {
+    const rejection = await response.json().catch(() => ({}));
+    if (rejection?.code === "WEB_CAPTURE_USE_BINARY_UPLOAD") {
+      mediaBinaryParts = [base64ToBytes(mediaBase64)];
+      mediaBase64 = null;
+      response = await requestIngest();
     }
   }
 

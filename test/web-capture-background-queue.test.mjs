@@ -1008,3 +1008,270 @@ test("App offline: a later re-send of the same capture with new bytes replaces t
   await waitFor(async () => (await harness.readQueue()).length === 0, { label: "re-sent capture delivered" });
   assert.equal(JSON.parse(ingestCalls(harness).at(-1).body).imageBase64, later, "the bytes the page sent last are delivered");
 });
+
+// ---- Review 2-2 (task 310): no item cap, offline video spool, orphan sweep,
+// ---- storage diagnostics and the offline deletion queue ----
+
+const JIMENG_TAB_URL = "https://jimeng.jianying.com/ai-tool/generate";
+
+test("300 offline captures all queue without an item cap and all deliver once GravityPort opens", async () => {
+  const harness = await createHarness({ appOnline: true });
+  // Online but refusing: the enqueue path stays fast (no offline pairing
+  // rounds) while every live POST fails into the queue.
+  harness.fetchHarness.setAppHandler((url) => (url.pathname === "/api/ingest/web-capture"
+    ? jsonRoute({ error: "temporarily unavailable" }, 503)
+    : null));
+  for (let round = 0; round < 300; round += 1) {
+    const response = await harness.dispatchMessage({
+      type: "mosa.ingest",
+      payload: {
+        provider: "chatgpt",
+        mediaKind: "image",
+        imageUrl: `https://chatgpt.com/backend-api/estuary/content?id=file_bulk${round}&cid=conv1`,
+        imageBase64: fakeImageBase64(512),
+        mimeType: "image/png",
+        promptStatus: "not-available",
+      },
+    }, senderFor(CHATGPT_TAB_URL));
+    assert.equal(response?.ok, true, `capture ${round} is handed to the queue`);
+    assert.equal(response.result.status, "queued");
+  }
+  const queue = await harness.readQueue();
+  assert.equal(queue.length, 300, "no 256-item cap: all 300 stay queued");
+  assert.equal(harness.mediaEntries().length, 300);
+
+  const deliveredIds = [];
+  harness.fetchHarness.setAppHandler((url, init) => {
+    if (url.pathname !== "/api/ingest/web-capture") return null;
+    // Recorded while online only: the drain's one delivery per ticket.
+    deliveredIds.push(String(JSON.parse(String(init.body || "{}")).sourceMediaUrl || ""));
+    return null;
+  });
+  harness.fireAlarm();
+  await waitFor(async () => (await harness.readQueue()).length === 0, { timeoutMs: 30_000, label: "all 300 tickets delivered" });
+  assert.equal(deliveredIds.length, 300, "each ticket posted exactly once by the drain");
+  assert.equal(new Set(deliveredIds).size, 300, "no ticket was delivered twice");
+  assert.equal(harness.mediaEntries().length, 0, "no byte records left behind");
+  const snapshot = await harness.context.captureQueueStatusSnapshot();
+  assert.equal(snapshot.pending, 0);
+  assert.equal(snapshot.evicted, 0, "an emptied queue reports zero evictions");
+});
+
+test("budget eviction counts evictions and the snapshot reports storage diagnostics", async () => {
+  const harness = await createHarness();
+  harness.context.__MOSA_TEST_QUEUE_MAX_BYTES__ = 600 * 1024 * 1024;
+  try {
+    const oldUrlTicket = {
+      id: "capture-evict-url",
+      payload: { provider: "gemini", mediaKind: "image", imageUrl: "https://lh3.googleusercontent.com/evict-1", queuedMediaId: "evict-url" },
+      createdAt: Date.now() - 5_000,
+      attempts: 0,
+      lastError: "",
+    };
+    const oldBlobTicket = {
+      id: "capture-evict-blob",
+      payload: { provider: "chatgpt", mediaKind: "image", imageUrl: "blob:https://chatgpt.com/evict-2", queuedMediaId: "evict-blob" },
+      createdAt: Date.now() - 4_000,
+      attempts: 0,
+      lastError: "",
+    };
+    await harness.writeQueue([oldUrlTicket, oldBlobTicket]);
+    harness.seedMediaRecord({ key: "capture:evict-url", blob: { size: 300 * 1024 * 1024 }, updatedAt: 1 });
+    harness.seedMediaRecord({ key: "capture:evict-blob", blob: { size: 300 * 1024 * 1024 }, updatedAt: 1 });
+
+    await harness.dispatchMessage({
+      type: "mosa.ingest",
+      payload: {
+        provider: "chatgpt",
+        mediaKind: "image",
+        imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_evict&cid=conv1",
+        imageBase64: fakeImageBase64(200 * 1024),
+        mimeType: "image/png",
+      },
+    }, senderFor(CHATGPT_TAB_URL));
+
+    const queue = await harness.readQueue();
+    assert.equal(queue.length, 3, "a downgraded ticket stays as a URL ticket");
+    const downgraded = queue.find((item) => item.id === "capture-evict-url");
+    assert.ok(downgraded, "the oldest ticket is evicted first");
+    assert.equal(downgraded.payload.queuedMediaId, undefined, "its bytes are dropped");
+    assert.equal(harness.mediaEntries().some(([key]) => key === "capture:evict-url"), false, "evicted bytes are deleted");
+    assert.equal(harness.mediaEntries().some(([key]) => key === "capture:evict-blob"), true, "the next ticket keeps its bytes");
+
+    const snapshot = await harness.context.captureQueueStatusSnapshot();
+    assert.equal(snapshot.storageLimitBytes, 600 * 1024 * 1024, "the snapshot reports the byte budget");
+    assert.ok(snapshot.storageBytes >= 300 * 1024 * 1024, "remaining bytes are counted");
+    assert.ok(snapshot.storageBytes < 600 * 1024 * 1024, "the queue is back under budget");
+    assert.equal(snapshot.evicted, 1, "one eviction was counted");
+    assert.equal(snapshot.urlOnly, 1, "the downgraded ticket counts as URL-only");
+    assert.equal(snapshot.pending, 3);
+  } finally {
+    delete harness.context.__MOSA_TEST_QUEUE_MAX_BYTES__;
+  }
+});
+
+test("the safety cap trims the queue to 5000, counts the cut, and keeps the newest", async () => {
+  const harness = await createHarness();
+  const oversized = Array.from({ length: 5005 }, (_, index) => ({
+    id: `capture-cap-${index}`,
+    payload: { provider: "gemini", mediaKind: "image", imageUrl: `https://lh3.googleusercontent.com/cap-${index}` },
+    createdAt: Date.now() - (5005 - index) * 1000,
+    attempts: 0,
+    lastError: "",
+  }));
+  // Write past writeCaptureQueue's own cap on purpose: only raw storage can
+  // hold more tickets than the safety cap allows.
+  await harness.chrome.storage.local.set({ [QUEUE_KEY]: oversized });
+  harness.fireAlarm();
+  await waitFor(async () => (await harness.readQueue()).length === 5000, { label: "queue trimmed to the safety cap" });
+  const queue = await harness.readQueue();
+  assert.equal(queue[0].id, "capture-cap-5", "the five oldest tickets were cut");
+  const snapshot = await harness.context.captureQueueStatusSnapshot();
+  assert.equal(snapshot.evicted, 5, "safety-cap evictions are counted, never silent");
+  assert.equal(snapshot.urlOnly, 5000);
+});
+
+function videoResponse(byteLength) {
+  return new Response(Buffer.alloc(byteLength, 11), { status: 200, headers: { "content-type": "video/mp4" } });
+}
+
+test("an offline remote video spools into IndexedDB and delivers after its URL expires, with sanitized provenance", async () => {
+  const harness = await createHarness();
+  const videoUrl = "https://storage.googleapis.com/bucket/gen-video.mp4?sig=stale&id=file_v1";
+  harness.fetchHarness.setMediaHandler(() => videoResponse(80 * 1024));
+
+  const response = await harness.dispatchMessage({
+    type: "mosa.ingest",
+    payload: { provider: "flow", mediaKind: "video", mediaUrl: videoUrl, pageUrl: FLOW_TAB_URL, promptStatus: "not-available" },
+  }, senderFor(FLOW_TAB_URL));
+  assert.equal(response?.ok, true, "the spool failed nowhere, so the page is told it was queued");
+  assert.equal(response.result.status, "queued");
+
+  const queue = await harness.readQueue();
+  assert.equal(queue.length, 1);
+  assert.ok(queue[0].videoSpool?.transferId, "the URL ticket was upgraded to a video spool");
+  assert.equal(queue[0].videoSpool.totalChunks, 1);
+  assert.equal(queue[0].videoSpool.totalBytes, 80 * 1024);
+  assert.equal(queue[0].payload.sourceMediaUrl, videoUrl, "the original URL rides the ticket for provenance");
+  assert.equal(queue[0].payload.finalMediaUrl, videoUrl);
+  assert.equal(harness.mediaEntries().some(([key]) => key === `video:${queue[0].videoSpool.transferId}:0`), true, "the chunk is in IndexedDB");
+
+  // The URL now returns 403, yet the stored chunks must deliver.
+  harness.fetchHarness.setMediaHandler(() => statusResponse(403));
+  harness.fetchHarness.setAppOnline(true);
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/ingest/web-capture-upload/begin") return jsonRoute({ uploadId: "upload-offline-video" });
+    if (url.pathname === "/api/ingest/web-capture-upload/chunk") return jsonRoute({ ok: true });
+    if (url.pathname === "/api/ingest/web-capture-upload/commit") return jsonRoute({ ok: true, assetId: "video-asset-1" });
+    return null;
+  });
+  const mediaRequestsBeforeReplay = harness.fetchHarness.mediaRequests.length;
+  harness.fireAlarm();
+  await waitFor(async () => (await harness.readQueue()).length === 0, { label: "spooled video delivered" });
+  assert.equal(harness.fetchHarness.mediaRequests.length, mediaRequestsBeforeReplay, "replay never re-downloads the dead URL");
+
+  const beginRequest = harness.fetchHarness.appRequests.find((request) => request.url === `${BASE_URL}/api/ingest/web-capture-upload/begin`);
+  assert.ok(beginRequest, "the upload session began");
+  const metadata = JSON.parse(beginRequest.body).metadata;
+  assert.equal(metadata.sourceMediaUrl, "https://storage.googleapis.com/bucket/gen-video.mp4?id=file_v1",
+    "the begin request carries the URL without its signature");
+  assert.equal(metadata.finalMediaUrl, "https://storage.googleapis.com/bucket/gen-video.mp4?id=file_v1");
+  assert.equal(harness.mediaEntries().length, 0, "the spool chunks are deleted after delivery");
+});
+
+test("a remote video whose download fails keeps a plain URL ticket and the page is told it was queued", async () => {
+  const harness = await createHarness();
+  harness.fetchHarness.setMediaHandler(() => statusResponse(403));
+
+  const response = await harness.dispatchMessage({
+    type: "mosa.ingest",
+    payload: { provider: "flow", mediaKind: "video", mediaUrl: "https://storage.googleapis.com/bucket/broken.mp4", pageUrl: FLOW_TAB_URL, promptStatus: "not-available" },
+  }, senderFor(FLOW_TAB_URL));
+  assert.equal(response?.ok, true);
+  assert.equal(response.result.status, "queued", "a failed spool degrades to the URL ticket, not an error");
+
+  const queue = await harness.readQueue();
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].videoSpool, undefined, "no spool was attached");
+  assert.equal(harness.mediaEntries().length, 0, "no chunk records were left behind");
+});
+
+test("the drain sweeps orphan byte records but never touches a live page transfer", async () => {
+  const harness = await createHarness();
+  harness.seedMediaRecord({ key: "capture:orphan-image", blob: { size: 4096 }, updatedAt: 1 });
+  harness.seedMediaRecord({ key: "video:orphan-transfer:0", blob: { size: 65_536 }, updatedAt: 1 });
+
+  const sender = senderFor(FLOW_TAB_URL);
+  const begin = await harness.dispatchMessage({
+    type: "mosa.beginVideoTransfer",
+    transferId: "transfer-live",
+    totalBytes: 65_536,
+    totalChunks: 1,
+    payload: { provider: "flow", mimeType: "video/mp4", pageUrl: FLOW_TAB_URL, promptStatus: "not-available" },
+  }, sender);
+  assert.equal(begin?.ok, true);
+  const chunk = await harness.dispatchMessage({
+    type: "mosa.videoTransferChunk",
+    transferId: "transfer-live",
+    index: 0,
+    chunkBase64: Buffer.alloc(65_536, 7).toString("base64"),
+  }, sender);
+  assert.equal(chunk?.ok, true);
+
+  harness.fireAlarm();
+  await waitFor(async () => !harness.mediaEntries().some(([key]) => key === "capture:orphan-image" || key === "video:orphan-transfer:0"),
+    { label: "orphan records swept on the drain" });
+  assert.equal(harness.mediaEntries().some(([key]) => key === "video:transfer-live:0"), true,
+    "the in-flight transfer's chunk survives the sweep");
+});
+
+test("offline deletion notices queue, dedupe, and flush in 200-item batches", async () => {
+  const harness = await createHarness();
+  const items = Array.from({ length: 250 }, (_, index) => ({ recordId: `rec-${index}`, itemId: String(index + 1) }));
+  const jimengSender = senderFor(JIMENG_TAB_URL);
+  const readDeletionQueue = async () => (await harness.chrome.storage.local.get({ mosaDeletionQueueV1: [] })).mosaDeletionQueueV1;
+  const first = await harness.dispatchMessage({ type: "mosa.reportProviderDeletions", payload: { provider: "jimeng", items } }, jimengSender);
+  assert.equal(first?.ok, true);
+  assert.equal(first.reported, false, "offline: the notices are queued, not delivered");
+  assert.equal(first.reason, "queued");
+  assert.equal((await readDeletionQueue()).length, 250, "all 250 notices queue; nothing is cut at 200");
+
+  await harness.dispatchMessage({ type: "mosa.reportProviderDeletions", payload: { provider: "jimeng", items } }, jimengSender);
+  assert.equal((await readDeletionQueue()).length, 250, "a repeat report does not duplicate queued item ids");
+
+  harness.fetchHarness.setAppOnline(true);
+  // Online delivery goes through this recorder so only attempts that reached
+  // a live App are counted (with no handler the offline fetches just fail).
+  let refuseSize = 0;
+  let refuseStatus = 500;
+  const deliveredBatches = [];
+  const attemptedBatches = [];
+  harness.fetchHarness.setAppHandler((url, init) => {
+    if (url.pathname !== "/api/ingest/web-capture-provider-deletions") return null;
+    const size = JSON.parse(String(init.body || "{}")).items?.length || 0;
+    attemptedBatches.push(size);
+    if (size === refuseSize) return jsonRoute({ error: "deletion batch refused" }, refuseStatus);
+    deliveredBatches.push(size);
+    return jsonRoute({ ok: true });
+  });
+  harness.fireAlarm();
+  await waitFor(async () => (await readDeletionQueue()).length === 0, { label: "deletion queue flushed online" });
+  assert.deepEqual(deliveredBatches, [200, 50], "250 notices flush as two 200-item batches");
+  assert.equal(JSON.parse(harness.fetchHarness.appRequests.find((request) => request.url.endsWith("/api/ingest/web-capture-provider-deletions")).body).provider, "jimeng");
+
+  // A 500-refused first batch stays queued across drains (retried next beat);
+  // once the same size batch is refused with a permanent 400 it is dropped
+  // and the remaining batch still delivers.
+  refuseSize = 200;
+  await harness.dispatchMessage({ type: "mosa.reportProviderDeletions", payload: { provider: "jimeng", items } }, jimengSender);
+  assert.equal((await readDeletionQueue()).length, 250, "5xx keeps the whole report queued");
+  const attemptedBeforeRetry = attemptedBatches.length;
+  harness.fireAlarm();
+  await waitFor(() => attemptedBatches.length > attemptedBeforeRetry, { label: "next drain retried the 500 batch" });
+  assert.equal((await readDeletionQueue()).length, 250, "a 500 batch is still queued after the retry");
+
+  refuseStatus = 400;
+  harness.fireAlarm();
+  await waitFor(async () => (await readDeletionQueue()).length === 0, { label: "400 batch dropped, 50-batch delivered" });
+  assert.deepEqual(deliveredBatches.slice(-1), [50], "only the 50-item tail batch delivered after the 400");
+});

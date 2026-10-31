@@ -379,3 +379,135 @@ test("the deletion sync switch renders loaded, unknown and failing states (task 
   assert.match(english, /Move Jimeng deletions to Trash/);
   assert.match(english, /Assets you favorited, rated, grouped, or tagged in GravityPort are not moved\./);
 });
+
+// ---- Task 310: offline-queue storage diagnostics ----
+
+test("updateClientStatus keeps the storage diagnostics and cleans hostile values", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-web-ext-storage-"));
+  const libraryDir = join(root, "library");
+  await mkdir(libraryDir, { recursive: true });
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir });
+  try {
+    await store.ensureProject("default");
+    const capture = createWebCaptureIngest({
+      store,
+      libraryDir,
+      projectId: "default",
+      token: "test-token",
+      allowedOrigins: ["chrome-extension://test"],
+    });
+
+    capture.updateClientStatus({
+      extensionVersion: "0.15.44",
+      pending: 300,
+      failed: 2,
+      storageBytes: 480 * 1024 * 1024,
+      storageLimitBytes: 512 * 1024 * 1024,
+      urlOnly: 3,
+      evicted: 7,
+      items: [],
+    }, "test-token");
+    let queue = capture.status().queue;
+    // The extension has no item cap anymore, so 300 pending must survive.
+    assert.equal(queue.pending, 300, "pending above the old 256 clamp is preserved");
+    assert.equal(queue.failed, 2);
+    assert.equal(queue.storageBytes, 480 * 1024 * 1024);
+    assert.equal(queue.storageLimitBytes, 512 * 1024 * 1024);
+    assert.equal(queue.urlOnly, 3);
+    assert.equal(queue.evicted, 7);
+
+    capture.updateClientStatus({
+      pending: -5,
+      failed: "12",
+      storageBytes: -1,
+      storageLimitBytes: "not-a-number",
+      urlOnly: Number.MAX_SAFE_INTEGER + 1,
+      evicted: 3.9,
+      items: [],
+    }, "test-token");
+    queue = capture.status().queue;
+    assert.equal(queue.pending, 0, "negative pending clamps to 0");
+    assert.equal(queue.failed, 12, "numeric strings are accepted");
+    assert.equal(queue.storageBytes, 0, "negative bytes clamp to 0");
+    assert.equal(queue.storageLimitBytes, 0, "non-numeric bytes clamp to 0");
+    assert.equal(queue.urlOnly, 100_000, "out-of-range counts truncate to the bound");
+    assert.equal(queue.evicted, 3, "fractional counts truncate");
+
+    // An old extension reports none of the new fields: everything stays 0.
+    capture.updateClientStatus({ pending: 1, items: [] }, "test-token");
+    queue = capture.status().queue;
+    assert.equal(queue.storageBytes, 0);
+    assert.equal(queue.storageLimitBytes, 0);
+    assert.equal(queue.urlOnly, 0);
+    assert.equal(queue.evicted, 0);
+  } finally {
+    store.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const QUEUE_WITH_HINTS = {
+  reportedAt: "2026-10-30T11:59:00.000Z",
+  pending: 12,
+  failed: 0,
+  storageBytes: 480 * 1024 * 1024,
+  storageLimitBytes: 512 * 1024 * 1024,
+  urlOnly: 3,
+  evicted: 2,
+  items: [],
+};
+
+test("the three storage hints appear only when their condition holds", () => {
+  const full = (overrides = {}) => renderCard({
+    active: true,
+    status: bridgeStatus({ queue: { ...QUEUE_WITH_HINTS, ...overrides } }),
+  });
+
+  // Nearly full (>= 90%), evicted and url-only each show their own line.
+  const withHints = full();
+  assert.match(withHints, /扩展的离线空间快满了（已用 480MB \/ 512MB），打开 GravityPort 后会自动补收/);
+  assert.match(withHints, /有 2 张因离线空间不足只保留了网址或被移除，网址过期后可能收不回来/);
+  assert.match(withHints, /3 张只存了网址，网址过期后可能收不回来/);
+
+  // Under 90% the fullness line hides; zero counters hide their lines.
+  const calm = full({ storageBytes: 100 * 1024 * 1024, evicted: 0, urlOnly: 0 });
+  assert.doesNotMatch(calm, /离线空间快满/);
+  assert.doesNotMatch(calm, /因离线空间不足/);
+  assert.doesNotMatch(calm, /只存了网址/);
+
+  // Exactly at 90% counts as nearly full.
+  const exact = full({ storageBytes: Math.round(512 * 1024 * 1024 * 0.9) });
+  assert.match(exact, /离线空间快满了（已用 461MB \/ 512MB）/);
+
+  // Rounding: 0.4MB up and 0.4MB down both show as whole MB.
+  const rounding = full({ storageBytes: 512 * 1024 * 1024 - 419 * 1024 });
+  assert.match(rounding, /已用 512MB \/ 512MB/);
+
+  // An extension that never reported the fields (zeros) shows nothing.
+  const legacy = renderCard({ active: true, status: bridgeStatus() });
+  assert.doesNotMatch(legacy, /离线空间快满/);
+  assert.doesNotMatch(legacy, /因离线空间不足/);
+  assert.doesNotMatch(legacy, /只存了网址/);
+
+  // The hints never show while the extension is not connected.
+  const inactive = renderCard({
+    active: false,
+    status: bridgeStatus({ queue: QUEUE_WITH_HINTS }),
+  });
+  assert.doesNotMatch(inactive, /离线空间快满/);
+  assert.doesNotMatch(inactive, /因离线空间不足/);
+  assert.doesNotMatch(inactive, /只存了网址/);
+});
+
+test("the storage hints render in English without leaking Chinese", () => {
+  const html = renderCard({
+    language: "en",
+    active: true,
+    status: bridgeStatus({ queue: QUEUE_WITH_HINTS }),
+  });
+  // React escapes the apostrophe in static markup (\&#x27;).
+  assert.match(html, /The extension&#x27;s offline storage is nearly full \(using 480MB \/ 512MB\)/);
+  assert.match(html, /2 captures kept only their URL or were dropped because offline storage ran out/);
+  assert.match(html, /3 captures stored only a URL/);
+  assert.doesNotMatch(html, /[一-鿿]/, `Chinese leaked into EN render: ${html.slice(0, 400)}`);
+});

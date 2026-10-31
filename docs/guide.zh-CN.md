@@ -330,12 +330,13 @@ GET  /api/generations/:generationId/lineage
 
 ## 健康检查与维护
 
-服务运行后，可查看当前存储、桥接状态和自动发现的画布：
+服务运行后，可查看当前存储、桥接状态和自动发现的画布。除 `/api/health`、`/api/web-capture` 等少数公开端点外，所有接口（包括 GET 读取和 `/library/` 下的媒体文件）都要带客户端凭据；浏览器界面经 POST /api/client-session 换取 cookie，命令行则直接带头：
 
 ```bash
-curl -sS http://127.0.0.1:43517/api/library-path
-curl -sS http://127.0.0.1:43517/api/bridges
-curl -sS http://127.0.0.1:43517/api/cowart-canvases
+curl -sS -H "x-mosa-client-token: <客户端凭据>" http://127.0.0.1:43517/api/library-path
+curl -sS -H "x-mosa-client-token: <客户端凭据>" http://127.0.0.1:43517/api/bridges
+curl -sS http://127.0.0.1:43517/api/health
+curl -sS -H "x-mosa-client-token: <客户端凭据>" http://127.0.0.1:43517/api/cowart-canvases
 curl -sS http://127.0.0.1:43517/api/web-capture
 ```
 

@@ -6,7 +6,7 @@ import "./quiet-test-mode.mjs";
 import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net, screen, session, shell, Notification } from "electron";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
-import { userInfo } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../lib/runtime-defaults.mjs";
@@ -41,6 +41,8 @@ import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-not
 import { openExternalLinkOutcome } from "./open-external-link.mjs";
 import { writeClipboardFiles } from "./clipboard-files.mjs";
 import { clipboardImportable } from "./clipboard-importable.mjs";
+import { isTrustedRendererEvent } from "./renderer-trust.mjs";
+import { attachDiagnosticLogFile, installDiagnosticLog, writeConsoleOnly } from "../lib/diagnostic-log.mjs";
 import { mosaClientTokenFingerprint, resolveAllowedFolderPath } from "../lib/server-security.js";
 import { isUrlLikePath } from "../lib/path-safety.mjs";
 import {
@@ -119,6 +121,20 @@ function systemNetworkFetch(url, init) {
 // never moves userData; that package.json name/productName must never change
 // (see the contract in test/library-location.test.mjs).
 const desktopDataDir = app.getPath("userData");
+// Task 315: the shell feeds the diagnostic buffer from the earliest moment;
+// the runtime's own installDiagnosticLog() stays and is a no-op after this.
+// The crash monitors only record — measured default behavior is unchanged:
+// an uncaught exception still pops Electron's native error dialog and the
+// process stays alive, and an unhandled rejection still only prints a
+// warning while the app keeps running.
+installDiagnosticLog();
+process.on("uncaughtExceptionMonitor", (error) => {
+  console.error(`[MOSA] uncaught exception ${error?.name || "Error"}: ${error?.message}\n${error?.stack || "(no stack)"}`);
+});
+process.on("unhandledRejection", (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  console.error(`[MOSA] uncaught rejection ${error.name}: ${error.message}\n${error.stack || "(no stack)"}`);
+});
 // Local visual search was removed; its leftover userData bytes are swept on
 // every launch (task 238). Nothing outside the fixed legacy list is touched.
 async function cleanupLegacyVisualData() {
@@ -204,7 +220,14 @@ try {
   throw error;
 }
 
-// ---- Runtime isolation context (single source of truth, three layers) ----
+// Task 315: local file sink for warnings and errors, redacted with the same
+// rules before anything is written. The context is read on every write and
+// holds the live `libraryDir` binding, so a library move is followed without
+// re-attaching.
+attachDiagnosticLogFile({
+  dir: join(desktopDataDir, "logs"),
+  redactContext: () => ({ homeDir: homedir(), libraryDir }),
+});
 // The same context object is passed explicitly through validateRuntimeIsolation,
 // startMosaService and (via service-manager) startMosaRuntime. Propagation never
 // relies on process.env, so a caller-supplied QA override cannot be dropped or
@@ -296,6 +319,21 @@ const MAX_NATIVE_DRAG_FILES = 512;
 // can supply their own preview directly; this tiny PNG is only the fallback for
 // video/unsupported image formats and never leaves the process.
 const NATIVE_DRAG_FALLBACK_ICON = nativeImage.createFromDataURL("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAACTSURBVHgBpZKBCYAgEEV/TeAIjuIIbdQIuUGt0CS1gW1iZ2jIVaTnhw+Cvs8/OYDJA4Y8kR3ZR2/kmazxJbpUEfQ/Dm/UG7wVwHkjlQdMFfDdJMFaACebnjJGyDWgcnZu1/lrCrl6NCoEHJBrDwEr5NrT6ko/UV8xdLAC2N49mlc5CylpYh8wCwqrvbBGLoKGvz8Bfq0QPWEUo/EAAAAASUVORK5CYII=");
+// macOS draws the drag image, and the drop animation, at the icon's own size,
+// so a full-resolution original makes the image balloon right before it lands.
+// Hand the OS a small preview instead; the dragged files are untouched.
+const NATIVE_DRAG_ICON_MAX_EDGE = 128;
+function nativeDragIcon(image) {
+  const { width, height } = image.getSize();
+  const longest = Math.max(width, height);
+  if (!longest || longest <= NATIVE_DRAG_ICON_MAX_EDGE) return image;
+  const scale = NATIVE_DRAG_ICON_MAX_EDGE / longest;
+  return image.resize({
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+    quality: "good",
+  });
+}
 const BOUNDS_PATH = join(desktopDataDir, "window-bounds.json");
 const DEFAULT_BOUNDS = { width: 1320, height: 860 };
 
@@ -649,12 +687,32 @@ function cleanupStaleUpdateTransactions() {
   })();
 }
 
+// Task 311: origin of the service this launch owns or attached to after the
+// challenge. Deriving it from `service` means it clears together with the
+// service reference on runtime recovery or library relocation.
+function verifiedServiceOrigin() {
+  if (!service) return "";
+  try {
+    return new URL(service.url || "").origin;
+  } catch {
+    return "";
+  }
+}
+
+// Single gate for every ipcMain.handle: sender must be the main window's main
+// frame while that frame sits on the verified service origin. The startup
+// shell phase (desktop/startup.html) holds no allowance — the task-311 audit
+// found it calls no IPC at all.
+function trustedRendererEvent(event) {
+  return isTrustedRendererEvent(event, { windowRef: mainWindow, serviceOrigin: verifiedServiceOrigin() });
+}
+
 function registerIPC() {
   if (ipcRegistered) return;
   ipcRegistered = true;
 
   ipcMain.handle("paste-image", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return null;
+    if (!trustedRendererEvent(event)) return null;
     const image = clipboard.readImage();
     if (image.isEmpty()) return null;
     try {
@@ -675,7 +733,7 @@ function registerIPC() {
   // paste listener, which is why the second handler just performs one
   // webContents.paste() on the main window.
   ipcMain.handle("clipboard-importable", (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+    if (!trustedRendererEvent(event)) return false;
     try {
       return clipboardImportable({ platform: process.platform, clipboard });
     } catch {
@@ -684,7 +742,7 @@ function registerIPC() {
   });
 
   ipcMain.handle("paste-from-clipboard", (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+    if (!trustedRendererEvent(event)) return false;
     event.sender.paste();
     return true;
   });
@@ -695,9 +753,7 @@ function registerIPC() {
   // desktop path (notably on macOS). Keep the bridge narrow: current main
   // window only, text only, and a bounded payload.
   ipcMain.handle("write-clipboard-text", async (event, text) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      return { ok: false, reason: "unavailable" };
-    }
+    if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
     if (typeof text !== "string" || text.length > MAX_CLIPBOARD_TEXT_LENGTH) {
       return { ok: false, reason: "invalid" };
     }
@@ -709,9 +765,7 @@ function registerIPC() {
   // The renderer may only request files inside the active MOSA library; decoding
   // and clipboard access stay in the trusted main process.
   ipcMain.handle("write-clipboard-image", async (event, path) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      return { ok: false, reason: "unavailable" };
-    }
+    if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
     if (typeof path !== "string" || !path.trim()) return { ok: false, reason: "invalid" };
     const target = path.trim();
     if (!isAbsolute(target) || (isUrlLikePath(target) && /^[a-z][a-z0-9+.-]*:/i.test(target))) {
@@ -758,19 +812,17 @@ function registerIPC() {
   };
 
   ipcMain.handle("start-native-file-drag", async (event, requestedPaths) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+    if (!trustedRendererEvent(event)) return { ok: false };
     const { files } = allowedLibraryFiles(requestedPaths);
     if (!files.length) return { ok: false };
     let icon = nativeImage.createFromPath(files[0]);
-    if (icon.isEmpty()) icon = NATIVE_DRAG_FALLBACK_ICON;
+    icon = icon.isEmpty() ? NATIVE_DRAG_FALLBACK_ICON : nativeDragIcon(icon);
     event.sender.startDrag({ file: files[0], files, icon });
     return { ok: true, count: files.length };
   });
 
   ipcMain.handle("write-clipboard-files", async (event, requestedPaths) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      return { ok: false, reason: "unavailable" };
-    }
+    if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
     const { files, skipped } = allowedLibraryFiles(requestedPaths);
     if (!files.length) return { ok: false, reason: "missing", skipped };
     try {
@@ -786,7 +838,7 @@ function registerIPC() {
   // existing file inside the library (same canonicalization as the drag-out
   // bridge above), so the renderer can skip re-importing those files.
   ipcMain.handle("library-file-flags", async (event, requestedPaths) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return [];
+    if (!trustedRendererEvent(event)) return [];
     const input = Array.isArray(requestedPaths) ? requestedPaths.slice(0, 10_000) : [];
     return input.map((requestedPath) => {
       if (typeof requestedPath !== "string" || !requestedPath.trim()) return false;
@@ -800,7 +852,7 @@ function registerIPC() {
   });
 
   ipcMain.handle("set-locale", async (event, locale) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+    if (!trustedRendererEvent(event)) return false;
     if (locale !== "zh" && locale !== "en") return false;
     if (locale === currentLocale) return true;
     currentLocale = locale;
@@ -812,9 +864,7 @@ function registerIPC() {
   // server with this executable in Node mode. It names the library-location
   // file rather than the library, so moving the library keeps it valid.
   ipcMain.handle("mcp-client-config", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      return { available: false };
-    }
+    if (!trustedRendererEvent(event)) return { available: false };
     let installWarning = null;
     if (process.platform === "darwin" && app.isPackaged) {
       const location = evaluateMacosInstallLocation(process.execPath);
@@ -837,24 +887,33 @@ function registerIPC() {
   });
 
   ipcMain.handle("user-profile", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      return { userId: "" };
-    }
+    if (!trustedRendererEvent(event)) return { userId: "" };
     return { userId: desktopUserId };
+  });
+
+  // Task 311: the client credential no longer travels in the URL fragment. The
+  // renderer asks once before its first request; the main process answers only
+  // when the invoke comes from the main window's main frame while that frame
+  // sits on the origin of the service this launch verified (an owned runtime,
+  // or one that passed the challenge) — trustedRendererEvent enforces all four
+  // conditions together with the service reference.
+  ipcMain.handle("get-client-token", (event) => {
+    if (!trustedRendererEvent(event)) return "";
+    return service?.clientToken || "";
   });
 
   // 任务 116：老用户「已更名」提示。状态在启动最早期已判定（见 renameNotice），
   // 这里只读快照；确认写 acknowledged 并同步内存快照，写失败只记日志（下次
   // 启动还会弹，符合「没确认就算未读」）。
   ipcMain.handle("rename-notice-state", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    if (!trustedRendererEvent(event)) {
       return { shouldShow: false, state: renameNotice.state, persisted: renameNotice.persisted };
     }
     return { ...renameNotice };
   });
 
   ipcMain.handle("acknowledge-rename-notice", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+    if (!trustedRendererEvent(event)) return false;
     acknowledgeRenameNotice({
       userDataDir: desktopDataDir,
       log: (line) => console.warn(`[MOSA] ${line}`),
@@ -864,7 +923,7 @@ function registerIPC() {
   });
 
   ipcMain.handle("renderer-ready", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+    if (!trustedRendererEvent(event)) return false;
     if (!service) return false;
     const updateReadyFiles = [macosUpdateReadyFile, windowsUpdateReadyFile].filter(Boolean);
     for (const readyFile of updateReadyFiles) {
@@ -890,9 +949,7 @@ function registerIPC() {
   });
 
   ipcMain.handle("check-for-updates", async (event, notify = false) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      return { status: "unavailable", currentVersion: app.getVersion() };
-    }
+    if (!trustedRendererEvent(event)) return { status: "unavailable", currentVersion: app.getVersion() };
     return runUpdateCheck({ notify: notify === true });
   });
 
@@ -900,14 +957,12 @@ function registerIPC() {
   // staged" state — queried once on mount (the window may open after the
   // announcement) and pushed live through the update-ready event.
   ipcMain.handle("get-update-ready", (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return null;
+    if (!trustedRendererEvent(event)) return null;
     return updateScheduler.readyPayload();
   });
 
   ipcMain.handle("download-and-install-update", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      return { status: "unavailable", currentVersion: app.getVersion() };
-    }
+    if (!trustedRendererEvent(event)) return { status: "unavailable", currentVersion: app.getVersion() };
     if (!app.isPackaged || isolationContext.qaRun) {
       return { status: "unsupported", currentVersion: app.getVersion() };
     }
@@ -1085,7 +1140,7 @@ function registerIPC() {
   });
 
   ipcMain.handle("cancel-update-download", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+    if (!trustedRendererEvent(event)) return { ok: false };
     const controller = process.platform === "darwin" ? macosUpdateDownloadController : windowsUpdateDownloadController;
     if (!controller || controller.signal.aborted) return { ok: false };
     controller.abort(new Error("GravityPort update download cancelled by the user."));
@@ -1093,7 +1148,7 @@ function registerIPC() {
   });
 
   ipcMain.handle("open-download-page", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+    if (!trustedRendererEvent(event)) return { ok: false };
     try {
       await shell.openExternal(MOSA_DOWNLOAD_PAGE_URL);
       return { ok: true };
@@ -1104,7 +1159,7 @@ function registerIPC() {
   });
 
   ipcMain.handle("open-pinterest-authorize", async (event, url) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+    if (!trustedRendererEvent(event)) return { ok: false };
 
     try {
       const parsed = new URL(url);
@@ -1122,7 +1177,7 @@ function registerIPC() {
   // 任务 147:打开 Pinterest Pin / 外链的普通网址(窗口 setWindowOpenHandler 全拒,
   // 渲染层没有别的出站通道);只认主窗口,URL 校验在 open-external-link.mjs。
   ipcMain.handle("open-external-link", async (event, url) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+    if (!trustedRendererEvent(event)) return { ok: false };
     if (!openExternalLinkOutcome(url).ok) return { ok: false };
     try {
       await shell.openExternal(url);
@@ -1134,9 +1189,7 @@ function registerIPC() {
   });
 
   ipcMain.handle("change-library-location", async (event) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
-      return { ok: false, reason: "unavailable" };
-    }
+    if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
     // An explicit environment override is an administrator/developer contract;
     // do not let a renderer preference silently fight it on the next launch.
     if (process.env.MOSA_LIBRARY_DIR) return { ok: false, reason: "managed" };
@@ -1217,7 +1270,7 @@ function registerIPC() {
   // 任务 96（A6）：渲染层写窗口系统全屏（大图页「全屏」双向同步）。只接受主窗口
   // 自己的调用；flag 不是 true 就退全屏（与 preload 的 `flag === true` 归一口径一致）。
   ipcMain.handle("set-window-full-screen", (event, flag) => {
-    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return { ok: false };
+    if (!trustedRendererEvent(event)) return { ok: false };
     mainWindow.setFullScreen(flag === true);
     return { ok: true, isFullScreen: mainWindow.isFullScreen() };
   });
@@ -1244,7 +1297,9 @@ function runAnonymousUsageReport() {
     return Promise.resolve({ status: "skipped", currentVersion });
   }
 
-  usageReportPromise = reportAnonymousUsage({ anonymousUsage: anonymousUsage.telemetry })
+  // Same network path as the update check: Node's fetch ignores the system
+  // proxy, so machines that only reach us through one were never counted.
+  usageReportPromise = reportAnonymousUsage({ anonymousUsage: anonymousUsage.telemetry, fetchImpl: systemNetworkFetch })
     .then((result) => {
       if (result.reported && !anonymousUsage.commit()) {
         console.warn("[MOSA] anonymous usage reached the server but the local report timestamp could not be persisted");
@@ -1553,7 +1608,10 @@ async function createMainWindow() {
     const entry = `${level}:${sourceId}:${line}:${message}`;
     if (rendererConsoleErrors.has(entry)) return;
     rendererConsoleErrors.add(entry);
-    console.error(`[MOSA] renderer-console ${entry}`);
+    // Task 315: the buffer and the local log file only ever receive a summary
+    // without the message text; the full line goes to the real console alone.
+    writeConsoleOnly("error", `[MOSA] renderer-console ${entry}`);
+    console.error(`[MOSA] renderer-console level=${level} source=${sourceId.split(/[\\/]/).pop() || sourceId} line=${line} (内容已省略)`);
   });
 
   mainWindow.on("close", () => saveBounds(mainWindow));
@@ -1588,13 +1646,16 @@ async function createMainWindow() {
   };
   windowRef.webContents.on("will-navigate", blockForeignNavigation);
   windowRef.webContents.on("will-redirect", blockForeignNavigation);
-  const clientUrl = new URL(activeService.url);
-  if (activeService.clientToken) clientUrl.hash = `mosa-client-token=${encodeURIComponent(activeService.clientToken)}`;
-  await windowRef.loadURL(clientUrl.toString());
+  // Task 311: the URL fragment no longer carries the client credential. The
+  // renderer pulls it through electronAPI.getClientToken() before its first
+  // request; the main process only answers on the verified service origin.
+  await windowRef.loadURL(activeService.url);
   if (windowRef.isDestroyed()) return;
   showDesktopWindow(windowRef);
 
-  startBridgeNotificationPoll(activeService.port);
+  // Task 314: every runtime API now requires the client capability, so the
+  // notification poll presents the attached service's token.
+  startBridgeNotificationPoll(activeService.port, activeService.clientToken);
 }
 
 async function ensureDesktopService() {
@@ -1754,7 +1815,7 @@ let runtimeRecoveryInProgress = false;
 const BRIDGE_POLL_INTERVAL_MS = 15_000;
 const BRIDGE_POLL_TIMEOUT_MS = 5_000;
 
-function startBridgeNotificationPoll(runtimePort) {
+function startBridgeNotificationPoll(runtimePort, clientToken = "") {
   if (bridgePollTimer || bridgePollAbortController) return;
   const scheduleNext = () => {
     if (shuttingDown || runtimeRecoveryInProgress || bridgePollTimer || bridgePollAbortController) return;
@@ -1774,7 +1835,10 @@ function startBridgeNotificationPoll(runtimePort) {
     const timeout = setTimeout(() => controller.abort(), BRIDGE_POLL_TIMEOUT_MS);
     timeout.unref?.();
     try {
-      const response = await fetch(`http://127.0.0.1:${runtimePort}/api/bridges`, { signal: controller.signal });
+      const response = await fetch(`http://127.0.0.1:${runtimePort}/api/bridges`, {
+        signal: controller.signal,
+        headers: { "x-mosa-client-token": clientToken },
+      });
       if (!response.ok) throw new Error(`Bridge health returned HTTP ${response.status}`);
       const data = await response.json();
       bridgePollFailures = 0;

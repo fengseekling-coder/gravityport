@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { realpathSync } from "node:fs";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const CLIENT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 export const MOSA_BROWSER_CLIENT_COOKIE_PREFIX = "mosa-browser-client-";
@@ -56,6 +56,46 @@ export function mosaBrowserClientCookieHeader(value: unknown, port: unknown): st
   return name && token ? `${name}=${token}; Path=/; HttpOnly; SameSite=Strict` : "";
 }
 
+// Service-identity challenge (task 311): the desktop shell must not trust the
+// public /api/health fields alone before attaching and handing out the client
+// capability. The running service proves possession of the shared client token
+// by signing a fresh nonce; the bound port is part of the signed message so a
+// proof captured on one port never verifies for a service on another.
+const SERVICE_IDENTITY_PROOF_PREFIX = "gravityport-service-identity\0";
+const SERVICE_IDENTITY_NONCE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
+
+export function isMosaServiceIdentityNonce(value: unknown): value is string {
+  return typeof value === "string" && SERVICE_IDENTITY_NONCE_PATTERN.test(value);
+}
+
+export function mosaServiceIdentityProof(
+  token: unknown,
+  { port, nonce }: { port: unknown; nonce: unknown },
+): string {
+  const key = normalizeMosaClientToken(token);
+  const normalizedPort = normalizeBrowserClientPort(port);
+  if (!key || !normalizedPort || !isMosaServiceIdentityNonce(nonce)) return "";
+  return createHmac("sha256", key)
+    .update(SERVICE_IDENTITY_PROOF_PREFIX)
+    .update(normalizedPort)
+    .update("\0")
+    .update(nonce)
+    .digest("base64url");
+}
+
+export function isAuthorizedMosaServiceIdentityProof(
+  providedProof: unknown,
+  token: unknown,
+  { port, nonce }: { port: unknown; nonce: unknown },
+): boolean {
+  const expected = mosaServiceIdentityProof(token, { port, nonce });
+  if (!expected) return false;
+  const provided = typeof providedProof === "string" ? providedProof : "";
+  const expectedBytes = Buffer.from(expected);
+  const providedBytes = Buffer.from(provided);
+  return providedBytes.length === expectedBytes.length && timingSafeEqual(providedBytes, expectedBytes);
+}
+
 function cookieValue(cookieHeader: unknown, name: string): string {
   if (!name) return "";
   const header = String(cookieHeader || "");
@@ -82,16 +122,32 @@ export function isAuthorizedMosaClientRequest(
 }
 
 /**
- * Read-only loopback APIs remain probeable for health/discovery and SSE.
- * Every state-changing management request needs a high-entropy runtime
- * capability. Web Capture routes have their own bearer-token boundary and are
+ * API paths reachable without the client capability (task 314). Everything
+ * else under /api/ — including every GET — requires it: assets, prompts,
+ * originals, and diagnostics must not be readable by other local system users
+ * or sandboxed processes. The three entries are:
+ *   /api/health          — non-sensitive fields only (no library path), used
+ *                          by the extension, the desktop probe, and the
+ *                          supervisor before any credential exists;
+ *   /api/service-identity — the task 311 challenge, asked precisely before
+ *                          the caller may hold the credential;
+ *   /api/client-session   — exchanges the header credential for the browser
+ *                          cookie, so it cannot itself require one.
+ * Web Capture routes have their own bearer-token boundary and are
  * intentionally excluded by the runtime before this predicate is applied.
  */
+export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([
+  "/api/health",
+  "/api/service-identity",
+  "/api/client-session",
+]);
+
 export function requiresMosaClientToken(method: unknown, pathname: unknown): boolean {
   const verb = String(method || "GET").toUpperCase();
+  if (verb === "OPTIONS") return false;
   const path = String(pathname || "");
   if (!path.startsWith("/api/")) return false;
-  return verb !== "GET" && verb !== "HEAD" && verb !== "OPTIONS";
+  return !PUBLIC_API_PATHS.has(path);
 }
 
 export function isAllowedLocalOrigin(origin: unknown, port: number | string): boolean {

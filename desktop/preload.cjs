@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   pasteFromClipboard: () => ipcRenderer.invoke("paste-from-clipboard"),
   setLocale: (locale) => ipcRenderer.invoke("set-locale", locale),
   getUserProfile: () => ipcRenderer.invoke("user-profile"),
+  // 任务 311：客户端凭据不再放进网址片段。渲染层在首次请求前经这里领取一次；
+  // 主进程只对「已核实服务 origin 上的主框架」回答。
+  getClientToken: () => ipcRenderer.invoke("get-client-token"),
   // 任务 116：老用户「已更名」提示——取启动早期判定结果、确认已读。
   getRenameNoticeState: () => ipcRenderer.invoke("rename-notice-state"),
   acknowledgeRenameNotice: () => ipcRenderer.invoke("acknowledge-rename-notice"),

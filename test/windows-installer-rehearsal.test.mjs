@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -95,6 +95,58 @@ function recentOutput(...streams) {
 
 // Ends every program started from dir (the app, its helper processes, an MCP
 // server) and waits until none is left.
+// Diagnostics for a refused upgrade: every process that has a module loaded
+// from `dir` or mentions it on its command line, wherever its executable is.
+// Only called after a failure, so its cost never slows a passing run.
+async function describeProcessesHolding(dir) {
+  const prefix = psLiteral(`${dir}\\`);
+  try {
+    return await powershell(
+      "$byModule = Get-Process | Where-Object { try { @($_.Modules | Where-Object { $_.FileName -and "
+      + `$_.FileName.StartsWith(${prefix}, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0 } catch { $false } } `
+      + "| ForEach-Object { 'module: ' + $_.ProcessName + ' pid=' + $_.Id + ' path=' + $_.Path }; "
+      + "$byCommand = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
+      + `$_.CommandLine.IndexOf(${psLiteral(dir)}, [StringComparison]::OrdinalIgnoreCase) -ge 0 } `
+      + "| ForEach-Object { 'command line: ' + $_.Name + ' pid=' + $_.ProcessId + ' exe=' + $_.ExecutablePath }; "
+      + "(@($byModule) + @($byCommand)) -join [Environment]::NewLine",
+    ) || "(no process found; likely antivirus or the search indexer)";
+  } catch (error) {
+    return `(could not list processes: ${error?.message || error})`;
+  }
+}
+
+// The installer gives a held app folder about two seconds before a silent run
+// gives up. On CI runners, antivirus can keep scanning the freshly installed
+// files for longer than that after our own processes are gone. Waits until the
+// folder can actually be renamed (moved aside and straight back), so the
+// upgrade step tests the installer rather than the scanner, and fails with the
+// holders listed if something keeps it for the whole timeout.
+async function waitUntilFolderCanMove(dir, timeoutMs = 30_000) {
+  const probe = `${dir}.rehearsal-probe`;
+  const started = Date.now();
+  for (;;) {
+    try {
+      await rename(dir, probe);
+    } catch {
+      if (Date.now() - started >= timeoutMs) {
+        assert.fail(`${dir} stayed held for ${timeoutMs} ms after every program from it stopped:\n${await describeProcessesHolding(dir)}`);
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+      continue;
+    }
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await rename(probe, dir);
+        break;
+      } catch (error) {
+        if (attempt >= 20) throw new Error(`could not move ${probe} back to ${dir}: ${error?.message || error}`);
+        await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+      }
+    }
+    return Date.now() - started;
+  }
+}
+
 async function stopEverythingRunningFrom(dir) {
   const fromDir = "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and "
     + `$_.ExecutablePath.StartsWith(${psLiteral(`${dir}\\`)}, [StringComparison]::OrdinalIgnoreCase) }`;
@@ -253,7 +305,12 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
     // Installing again replaces the whole app folder, like a version change.
     const leftover = join(appDir, "from-an-older-version.txt");
     await writeFile(leftover, "older");
-    assert.equal(await run(installer, ["/S"]), 0, "upgrade exit code");
+    const heldMs = await waitUntilFolderCanMove(appDir);
+    console.log(`app folder free to move after ${heldMs} ms`);
+    const upgradeExit = await run(installer, ["/S"]);
+    if (upgradeExit !== 0) {
+      assert.fail(`upgrade exit code ${upgradeExit} (2 = the app folder could not be renamed). Holding ${appDir}:\n${await describeProcessesHolding(appDir)}`);
+    }
     assert.equal(existsSync(leftover), false, "files from the previous copy are gone");
     assert.equal(existsSync(join(installRoot, "app.old")), false, "the previous copy is removed");
     assert.deepEqual(await treeDigest(appDir), packaged, "the upgraded copy matches the package");

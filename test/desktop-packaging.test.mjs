@@ -490,9 +490,11 @@ test("keeps the desktop window single-instance and sandboxed", async () => {
   assert.doesNotMatch(source, /homedir\(\).*MOSA Library/);
   assert.match(source, /failOnPrimaryLibraryMismatch: true/);
   assert.match(source, /cowartProjectDir: desktopDataDir/);
-  assert.match(source, /const clientUrl = new URL\(activeService\.url\)/);
-  assert.match(source, /clientUrl\.hash = `mosa-client-token=/);
-  assert.match(source, /windowRef\.loadURL\(clientUrl\.toString\(\)\)/);
+  // 任务 311：客户端凭据不再写进网址片段——渲染层经 get-client-token IPC 在
+  // 首次请求前领取；loadURL 只用已核实服务的干净地址。
+  assert.doesNotMatch(source, /clientUrl\.hash = `mosa-client-token=/);
+  assert.match(source, /await windowRef\.loadURL\(activeService\.url\)/);
+  assert.match(source, /ipcMain\.handle\("get-client-token"/);
   assert.match(source, /const startupShellPath = fileURLToPath\(new URL\("\.\/startup\.html"/);
   assert.match(source, /await windowRef\.loadFile\(startupShellPath\)/);
   assert.match(source, /serviceManagerModulePromise \|\|= import\("\.\/service-manager\.mjs"\)/);
@@ -545,13 +547,14 @@ test("packaged smoke waits for the real renderer and tears Electron down before 
   assert.match(source, /window\.electronAPI/, "renderer readiness must verify preload exposure");
   assert.match(source, /sessionStorage.*mosa\.client-token/, "packaged smoke must reuse the real renderer client capability");
   assert.match(source, /"x-mosa-client-token": clientToken/, "packaged smoke mutations must authenticate with that capability");
-  // The React adapter memoizes the bootstrap capability and consumes it at
-  // module load; every request helper reads the same memoized token.
+  // The React adapter starts the capability load at module import (task 311:
+  // the desktop path asks the main process; the browser path parses the URL
+  // fragment) and every request helper awaits the same memoized token.
   const tokenFactory = apiClientSource.indexOf("function takeBootstrapToken()");
-  const moduleConsume = apiClientSource.indexOf("if (typeof window !== \"undefined\") takeBootstrapToken()");
+  const moduleConsume = apiClientSource.indexOf("if (typeof window !== \"undefined\") void ensureClientSession()");
   assert.ok(tokenFactory >= 0 && moduleConsume > tokenFactory,
-    "the API adapter must consume the bootstrap capability at module load");
-  assert.match(apiClientSource, /takeBootstrapToken\(\)/, "request helpers must read the memoized capability");
+    "the API adapter must start the capability load at module import");
+  assert.match(apiClientSource, /await ensureClientToken\(\)/, "request helpers must await the memoized capability");
   assert.match(source, /await stopChild\(.*\.child\)/, "cleanup must wait for Electron teardown");
   assert.match(source, /signalProcessTree\(childProcess\.pid, \{ force: true \}\)/, "teardown must have a bounded process-tree hard-stop fallback");
 });
@@ -606,7 +609,9 @@ test("retired show-in-folder IPC stays removed without expanding renderer author
   // 任务 231：第 26 条 get-update-ready（只读，主进程已下好并校验的更新包状态）。
   // 任务 238：删掉视觉检索 5 条通道后，invoke 计数 26 → 21。任务 239：右键粘贴导入
   // 两个通道（clipboard-importable 只回布尔、paste-from-clipboard 限定主窗口），21 → 23。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "no invoke channel beyond the currently approved narrow requests");
+  // 任务 311：get-client-token（客户端凭据不进网址片段，主进程只对已核实服务
+  // origin 上的主框架回答），23 → 24。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 24, "no invoke channel beyond the currently approved narrow requests");
   assert.doesNotMatch(preload, /shell\s*[:.]/, "shell is never exposed to the renderer");
   assert.doesNotMatch(preload, /exec\(|spawn\(|execFile\(/, "no arbitrary command execution");
 

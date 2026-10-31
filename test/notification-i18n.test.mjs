@@ -38,8 +38,10 @@ test("set-locale IPC validates sender and locale values", async () => {
   const source = await readFile(resolve(repositoryRoot, "desktop/main.mjs"), "utf8");
   assert.match(source, /ipcMain\.handle\("set-locale"/);
   assert.match(source, /async \(event,\s*locale\)/);
-  // Sender must be the main window's webContents.
-  assert.match(source, /event\.sender\s*!==\s*mainWindow\.webContents/);
+  // Sender must be the main window's webContents (task 311: via the shared
+  // trustedRendererEvent gate, which also checks the main frame and the
+  // verified service origin).
+  assert.match(source, /if \(!trustedRendererEvent\(event\)\) return false;/);
   // Only zh/en accepted; anything else is rejected.
   assert.match(source, /locale\s*!==\s*"zh"\s*&&\s*locale\s*!==\s*"en"/);
   assert.match(source, /currentLocale\s*=\s*locale/);

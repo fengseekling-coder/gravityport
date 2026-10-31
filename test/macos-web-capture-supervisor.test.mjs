@@ -400,3 +400,49 @@ test("handoff cooldown keeps refreshing while the verified desktop marker remain
   assert.equal(spawnCount, 0);
   assert.ok(probeCount >= 2);
 });
+
+// Task 314: health digests replace the published library path; the supervisor
+// recomputes the expected digest from the library directory it watches.
+test("probeMosaOwner compares library digests and keeps the legacy path fallback", async (t) => {
+  const { mkdir, mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join, resolve } = await import("node:path");
+  const { ensureLibraryId, libraryDigest } = await import("../lib/library-identity.mjs");
+  const { deferTestPathRemoval } = await import("./test-cleanup.mjs");
+  const root = await mkdtemp(join(tmpdir(), "mosa-supervisor-digest-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const expectedLibraryDir = join(root, "library");
+  await mkdir(expectedLibraryDir, { recursive: true });
+  const expectedDigest = libraryDigest(await ensureLibraryId(expectedLibraryDir), expectedLibraryDir);
+
+  const otherLibraryDir = join(root, "other-library");
+  await mkdir(otherLibraryDir, { recursive: true });
+  const otherDigest = libraryDigest(await ensureLibraryId(otherLibraryDir), otherLibraryDir);
+
+  const probeWith = (health, overrides = {}) => probeMosaOwner({
+    libraryDir: expectedLibraryDir,
+    fetchImpl: async () => ({ ok: true, json: async () => health }),
+    handoffProbe: async () => ({ state: "unavailable" }),
+    ...overrides,
+  });
+
+  const matching = await probeWith({ product: "mosa", libraryDigest: expectedDigest });
+  assert.equal(matching.state, "attached", "a matching digest attaches without any path in health");
+
+  const copied = await probeWith({ product: "mosa", libraryDigest: otherDigest });
+  assert.deepEqual(copied, { state: "conflict", reason: "different-library" }, "a copied library (same id, other path) must conflict");
+
+  const noLocalId = await probeWith({ product: "mosa", libraryDigest: expectedDigest }, {
+    libraryDir: join(root, "library-without-id"),
+  });
+  assert.deepEqual(noLocalId, { state: "conflict", reason: "different-library" }, "a digest without a local id file is a mismatch");
+
+  const neither = await probeWith({ product: "mosa" });
+  assert.deepEqual(neither, { state: "conflict", reason: "non-mosa-listener" }, "neither digest nor legacy path is not GravityPort");
+
+  const legacy = await probeWith({ product: "mosa", libraryDir: expectedLibraryDir });
+  assert.equal(legacy.state, "attached", "legacy runtimes that still publish libraryDir keep working");
+
+  const legacyForeign = await probeWith({ product: "mosa", libraryDir: otherLibraryDir });
+  assert.deepEqual(legacyForeign, { state: "conflict", reason: "different-library" });
+});
