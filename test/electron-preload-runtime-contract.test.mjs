@@ -191,11 +191,8 @@ test("preload path, module format, security settings, and API surface are stable
   // test/library-relocation.test.mjs. The handler must still validate before
   // the confirm dialog and keep the copy -> save -> delete ordering.
   assert.match(relocationHandler, /validateRelocationTarget\(\{ currentLibraryDir: libraryDir, nextLibraryDir \}\)/, "the destination must be validated before copying");
-  const confirmDialogCall = relocationHandler.includes("await screenGuard.messageBox")
-    ? "await screenGuard.messageBox"
-    : "await dialog.showMessageBox";
   assert.ok(relocationHandler.indexOf("if (!validation.ok) return") > -1
-    && relocationHandler.indexOf("if (!validation.ok) return") < relocationHandler.indexOf(confirmDialogCall),
+    && relocationHandler.indexOf("if (!validation.ok) return") < relocationHandler.indexOf("await screenGuard.messageBox"),
     "a rejected target aborts before any copy is attempted");
   assert.match(relocationHandler, /await stopOwnedRuntime\(\)/, "SQLite and the runtime lock are closed before migration");
   assert.ok(relocationHandler.indexOf("await copyLibraryForRelocationGuarded({") > relocationHandler.indexOf("await stopOwnedRuntime()"),
@@ -213,7 +210,7 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /isTrustedRendererEvent\(event, \{ windowRef: mainWindow, serviceOrigin: verifiedServiceOrigin\(\) \}\)/);
   assert.match(main, /ipcMain\.handle\("get-client-token"/);
   assert.doesNotMatch(main, /event\.sender !== mainWindow\.webContents/);
-  assert.match(main, /(?:screenGuard|shell)\.openExternal\(MOSA_DOWNLOAD_PAGE_URL\)/);
+  assert.match(main, /screenGuard\.openExternal\(MOSA_DOWNLOAD_PAGE_URL\)/);
   assert.match(main, /if \(isolationContext\.qaRun\) return Promise\.resolve\(\{ status: "disabled", currentVersion \}\)/,
     "QA/E2E update checks must stay offline and deterministic");
 

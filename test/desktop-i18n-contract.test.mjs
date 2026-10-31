@@ -125,7 +125,7 @@ test("startup failures route the localized title while preserving the raw error 
   // Broken-library errors get their own localized title/body from the i18n
   // table; every other failure keeps the raw error message.
   assert.match(reportStartupFailure, /getLibraryStartupFailureText\s*\(\s*error,\s*currentLocale\s*\)/);
-  assert.match(reportStartupFailure, /(?:screenGuard\.errorBox|dialog\.showErrorBox)\s*\(/);
+  assert.match(reportStartupFailure, /screenGuard\.errorBox\s*\(/);
   assert.match(reportStartupFailure, /libraryFailure\s*\?\s*libraryFailure\.body\s*:\s*message/);
 });
 
