@@ -12,6 +12,7 @@ import { packagedExecutablePath } from "./desktop-runtime-paths.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { copyLibraryForRelocation } from "../lib/library-relocation.mjs";
+import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const forgeOutDir = resolve(rootDir, process.env.MOSA_FORGE_OUT_DIR || "out");
@@ -37,7 +38,7 @@ try {
   if (!renderer.clientToken) throw new Error("Packaged renderer did not retain the MOSA client capability.");
   await verifyPackagedReadOnlyPointerInput(activeLaunch.origin, activeLaunch.cdpPort);
   console.log("PACKAGED_READ_ONLY_CDP_POINTER_PASS");
-  assertPackagedHealth(firstHealth, { libraryDir, expectedIdentity });
+  await assertPackagedHealth(firstHealth, { libraryDir, expectedIdentity });
   const importedAssetId = await verifyPackagedImport(activeLaunch.origin, renderer.clientToken);
   await verifyPackagedCdpPointerInput(activeLaunch.origin, activeLaunch.cdpPort, importedAssetId);
   console.log("PACKAGED_CDP_POINTER_INPUT_PASS");
@@ -48,7 +49,7 @@ try {
 
   activeLaunch = await launchPackaged({ libraryDir, userData });
   const restartHealth = await waitForHealth(`${activeLaunch.origin}/api/health`, activeLaunch.child);
-  assertPackagedHealth(restartHealth, { libraryDir, expectedIdentity });
+  await assertPackagedHealth(restartHealth, { libraryDir, expectedIdentity });
   const restartRenderer = await waitForRenderer(activeLaunch.origin, activeLaunch.cdpPort, activeLaunch.child);
   if (!restartRenderer.appShell || !restartRenderer.preload) {
     throw new Error("Packaged renderer/preload did not recover after restart.");
@@ -106,9 +107,12 @@ async function launchPackaged({ libraryDir: isolatedLibraryDir, userData: isolat
   };
 }
 
-function assertPackagedHealth(health, { libraryDir: isolatedLibraryDir, expectedIdentity: identity }) {
+async function assertPackagedHealth(health, { libraryDir: isolatedLibraryDir, expectedIdentity: identity }) {
   if (health.product !== "mosa") throw new Error("Unexpected packaged product.");
-  if (resolve(health.libraryDir) !== resolve(isolatedLibraryDir)) throw new Error("Library isolation failed.");
+  // Task 314: health publishes a library digest instead of the path.
+  if ("libraryDir" in health) throw new Error("Health must not publish the library path.");
+  const expectedDigest = libraryDigest(await readLibraryId(isolatedLibraryDir), isolatedLibraryDir);
+  if (!expectedDigest || health.libraryDigest !== expectedDigest) throw new Error("Library isolation failed.");
   if (health.storage !== "sqlite") throw new Error(`Expected sqlite, got ${health.storage}`);
   if (health.gitSha !== identity.gitSha || health.uiFingerprint !== identity.uiFingerprint) {
     throw new Error("Packaged build identity does not match the current source build.");
