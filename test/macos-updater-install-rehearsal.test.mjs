@@ -644,7 +644,16 @@ previewScope("rehearsal failure: REPLACE_FAILED when the previous app cannot be 
     const { logPath } = await launchHelper({ root, stubs, installAppPath: lockedApp, zipPath, appName: "MOSA.app" });
     await assertFailureRestored({ root, appsDir, logPath, code: "REPLACE_FAILED" });
   } finally {
-    if (existsSync(lockedApp)) execFileSync("/usr/bin/chflags", ["nouchg", lockedApp]);
+    if (existsSync(lockedApp)) {
+      for (let i = 0; i < 20; i += 1) {
+        try {
+          execFileSync("/usr/bin/chflags", ["nouchg", lockedApp]);
+          break;
+        } catch {
+          await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+        }
+      }
+    }
     await removeTestPath(root, { recursive: true, force: true });
   }
 });

@@ -4,6 +4,7 @@ import "../lib/apply-env-aliases.mjs";
 // Launch Services as a regular app. See desktop/quiet-test-mode.mjs.
 import "./quiet-test-mode.mjs";
 import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net, screen, session, shell, Notification } from "electron";
+import { isQuietQaRun, createScreenGuard } from "./quiet-qa-screen.mjs";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
@@ -128,6 +129,17 @@ function serviceOutboundFetch(url, init) {
 // never moves userData; that package.json name/productName must never change
 // (see the contract in test/library-location.test.mjs).
 const desktopDataDir = app.getPath("userData");
+
+// Task 325: Early gate for quiet QA mode across all screen-suppressed operations.
+const quietQaRun = isQuietQaRun({ env: process.env, isPackaged: app.isPackaged });
+const quietTestApp = quietQaRun && process.platform === "darwin";
+const screenGuard = createScreenGuard({
+  quiet: quietQaRun,
+  quietWindow: quietTestApp,
+  electron: { dialog, shell, Notification },
+  log: (line) => process.stderr.write(line + "\n"),
+});
+
 // Task 315: the shell feeds the diagnostic buffer from the earliest moment;
 // the runtime's own installDiagnosticLog() stays and is a no-op after this.
 // The crash monitors only record — measured default behavior is unchanged:
@@ -138,6 +150,13 @@ installDiagnosticLog();
 process.on("uncaughtExceptionMonitor", (error) => {
   console.error(`[MOSA] uncaught exception ${error?.name || "Error"}: ${error?.message}\n${error?.stack || "(no stack)"}`);
 });
+if (quietQaRun) {
+  process.on("uncaughtException", (error) => {
+    const message = error?.message || String(error);
+    screenGuard.errorBox("Uncaught Exception", message);
+    app.exit(1);
+  });
+}
 process.on("unhandledRejection", (reason) => {
   const error = reason instanceof Error ? reason : new Error(String(reason));
   console.error(`[MOSA] uncaught rejection ${error.name}: ${error.message}\n${error.stack || "(no stack)"}`);
@@ -205,7 +224,7 @@ function showLibraryLocationErrorAndExit(error) {
     : (english
       ? `The file that records your library location can't be read: ${error.locationFile}. The app stopped so it doesn't create an empty library.`
       : `记录素材库位置的文件读不出来：${error.locationFile}。为了不新建一个空库，App 已停止启动。`);
-  dialog.showErrorBox(title, body);
+  screenGuard.errorBox(title, body);
   // Nothing has started yet, so exit synchronously: app.exit() does not halt
   // module evaluation, and a rethrow would surface a second "JavaScript error
   // in the main process" dialog on top of the one the user just dismissed.
@@ -223,6 +242,11 @@ try {
 } catch (error) {
   if (error?.code === MOSA_LIBRARY_NOT_FOUND || error?.code === MOSA_LIBRARY_LOCATION_FILE_UNREADABLE) {
     showLibraryLocationErrorAndExit(error);
+  }
+  if (quietQaRun) {
+    const message = error?.message || String(error);
+    screenGuard.errorBox("JavaScript error in main process", message);
+    process.exit(1);
   }
   throw error;
 }
@@ -251,15 +275,8 @@ const isolationContext = {
 const launchedFromMacosUpdate = Boolean(
   resolveMacosUpdateReadyFile(process.argv, join(desktopDataDir, "updates", "macos")),
 );
-// Task 229: e2e/QA desktop runs on macOS must not appear in the Dock or steal
-// the user's keyboard focus while the suite runs for many minutes. The Dock
-// policy itself is applied by the quiet-test-mode.mjs import near the top of
-// this file; this flag only switches the window lifecycle below. Unpackaged
-// QA runs only — the packaged input smoke (real CGEvent input) and a user's
-// own copy of the app both need the normal activating behavior.
-const quietTestApp = process.platform === "darwin"
-  && Boolean(isolationContext.qaRun)
-  && !app.isPackaged;
+// Task 229 / Task 325: quietTestApp is computed near the top of main.mjs using
+// isQuietQaRun({ env: process.env, isPackaged: app.isPackaged }) && process.platform === "darwin".
 const desktopStartupHandoffEnabled = process.platform === "darwin"
   && app.isPackaged
   && !isolationContext.qaRun
@@ -438,17 +455,18 @@ const updateScheduler = createUpdateScheduler({
     }
   },
   showReadyNotification: ({ version }) => {
-    if (!Notification.isSupported()) return;
     const copy = updateReadyNotificationCopy(version, currentLocale);
-    const notification = new Notification({ title: copy.title, body: copy.body, silent: true });
-    notification.on("click", () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.show();
-        mainWindow.focus();
-      }
+    screenGuard.notify({
+      title: copy.title,
+      body: copy.body,
+      silent: true,
+      onClick: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          screenGuard.focusWindow(mainWindow);
+          screenGuard.showWindow(mainWindow);
+        }
+      },
     });
-    notification.show();
   },
   stagingRoot: process.platform === "darwin" ? MACOS_UPDATE_STAGING_ROOT : WINDOWS_UPDATE_STAGING_ROOT,
   notifiedVersionsPath: join(desktopDataDir, "updates", "notified-versions.json"),
@@ -474,8 +492,7 @@ if (!app.requestSingleInstanceLock()) {
       void openMainWindow().catch(reportStartupFailure);
       return;
     }
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+    screenGuard.focusWindow(mainWindow);
   });
 
   app.whenReady().then(async () => {
@@ -823,7 +840,7 @@ function registerIPC() {
     if (!files.length) return { ok: false };
     let icon = nativeImage.createFromPath(files[0]);
     icon = icon.isEmpty() ? NATIVE_DRAG_FALLBACK_ICON : nativeDragIcon(icon);
-    event.sender.startDrag({ file: files[0], files, icon });
+    screenGuard.startDrag(event.sender, { file: files[0], files, icon });
     return { ok: true, count: files.length };
   });
 
@@ -1155,7 +1172,7 @@ function registerIPC() {
   ipcMain.handle("open-download-page", async (event) => {
     if (!trustedRendererEvent(event)) return { ok: false };
     try {
-      await shell.openExternal(MOSA_DOWNLOAD_PAGE_URL);
+      await screenGuard.openExternal(MOSA_DOWNLOAD_PAGE_URL);
       return { ok: true };
     } catch (error) {
       console.warn(`[MOSA] unable to open download page: ${error?.message || error}`);
@@ -1171,7 +1188,7 @@ function registerIPC() {
       if (parsed.protocol !== "https:" || parsed.hostname !== "www.pinterest.com" || parsed.pathname !== "/oauth/") {
         return { ok: false };
       }
-      await shell.openExternal(url);
+      await screenGuard.openExternal(url);
       return { ok: true };
     } catch (error) {
       console.warn(`[MOSA] unable to open Pinterest authorize page: ${error?.message || error}`);
@@ -1189,7 +1206,7 @@ function registerIPC() {
       url,
       dialogText: updateDialogText,
       confirmDialog: (options) => showSystemDialog(options),
-      openExternal: (href) => shell.openExternal(href),
+      openExternal: (href) => screenGuard.openExternal(href),
       warn: (line) => console.warn(line),
     });
   });
@@ -1201,7 +1218,7 @@ function registerIPC() {
     if (process.env.MOSA_LIBRARY_DIR) return { ok: false, reason: "managed" };
     if (service?.mode !== "owned") return { ok: false, reason: "attached" };
 
-    const selection = await dialog.showOpenDialog(mainWindow, {
+    const selection = await screenGuard.openDialog(mainWindow, {
       title: currentLocale === "en" ? "Choose a new GravityPort library location" : "选择新的 GravityPort 素材库位置",
       buttonLabel: currentLocale === "en" ? "Choose" : "选择",
       properties: ["openDirectory", "createDirectory"],
@@ -1212,7 +1229,7 @@ function registerIPC() {
     const validation = await validateRelocationTarget({ currentLibraryDir: libraryDir, nextLibraryDir });
     if (!validation.ok) return { ok: false, reason: validation.reason };
 
-    const confirmation = await dialog.showMessageBox(mainWindow, {
+    const confirmation = await screenGuard.messageBox(mainWindow, {
       type: "question",
       title: currentLocale === "en" ? "Move GravityPort Library" : "移动 GravityPort 素材库",
       message: currentLocale === "en"
@@ -1351,7 +1368,7 @@ function updateDialogText(key, values = {}) {
 
 function showSystemDialog(options) {
   const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-  return owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options);
+  return screenGuard.messageBox(owner, options);
 }
 
 async function showUpdateFailureDialog({ version, count, code }) {
@@ -1366,7 +1383,7 @@ async function showUpdateFailureDialog({ version, count, code }) {
       cancelId: 1,
       noLink: true,
     });
-    if (response === 0) await shell.openExternal(MOSA_DOWNLOAD_PAGE_URL);
+    if (response === 0) await screenGuard.openExternal(MOSA_DOWNLOAD_PAGE_URL);
     return;
   }
   await showSystemDialog({
@@ -1434,7 +1451,7 @@ async function windowsInstallPreflight(installDir, currentVersion) {
       cancelId: 1,
       noLink: true,
     });
-    if (response === 0) await shell.openExternal(MOSA_DOWNLOAD_PAGE_URL);
+    if (response === 0) await screenGuard.openExternal(MOSA_DOWNLOAD_PAGE_URL);
     return { status: "error", code: "PREFLIGHT_INSTALL_DIR_NOT_WRITABLE", currentVersion };
   }
   for (;;) {
@@ -1464,17 +1481,19 @@ function runUpdateCheck({ notify = false } = {}) {
     releaseManifestTrust: releaseManifestVerificationTrusts(),
   })
     .then((result) => {
-      if (notify && result.updateAvailable && Notification.isSupported()) {
+      if (notify && result.updateAvailable) {
         const copy = getUpdateNotificationText(result.latestVersion, currentLocale);
-        const notification = new Notification({ title: copy.title, body: copy.body, silent: true });
-        notification.on("click", () => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            if (mainWindow.isMinimized()) mainWindow.restore();
-            mainWindow.show();
-            mainWindow.focus();
-          }
+        screenGuard.notify({
+          title: copy.title,
+          body: copy.body,
+          silent: true,
+          onClick: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              screenGuard.focusWindow(mainWindow);
+              screenGuard.showWindow(mainWindow);
+            }
+          },
         });
-        notification.show();
       }
       if (process.platform === "darwin" && result.updateAvailable && result.macArtifact) {
         const installLocation = evaluateMacosInstallLocation(process.execPath);
@@ -1509,22 +1528,17 @@ function runUpdateCheck({ notify = false } = {}) {
   return updateCheckPromise;
 }
 
-// Quiet QA runs (task 229): showInactive keeps the window on screen without
-// activating the app, so CDP-driven input keeps landing while the user keeps
-// typing in whatever app they were in.
+// Quiet QA runs (task 229 / task 325): showWindow and focusWindow go through
+// screenGuard to ensure windows are suppressed during automated test runs.
 function showDesktopWindow(windowRef) {
-  if (quietTestApp) {
-    windowRef.showInactive();
-    return;
-  }
-  windowRef.show();
+  screenGuard.showWindow(windowRef);
 }
 
 function openMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     windowOpenRequested = false;
     showDesktopWindow(mainWindow);
-    if (!quietTestApp) mainWindow.focus();
+    screenGuard.focusWindow(mainWindow);
     return Promise.resolve();
   }
   windowOpenRequested = true;
@@ -1568,6 +1582,7 @@ async function createMainWindow() {
     show: false,
     backgroundColor: "#f5f5f4",
     ...desktopPlatform.windowOptions(),
+    ...(quietTestApp ? { paintWhenInitiallyHidden: true } : {}),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -1576,6 +1591,7 @@ async function createMainWindow() {
       // The interface has no text the user spell-checks; without this Electron
       // may fetch dictionaries from Chromium's CDN, an unstated network call.
       spellcheck: false,
+      ...(quietTestApp ? { backgroundThrottling: false } : {}),
     },
   });
   const windowRef = mainWindow;
@@ -1590,7 +1606,12 @@ async function createMainWindow() {
     if (details?.reason === "clean-exit") return;
     rendererRecoveryAttempts += 1;
     if (rendererRecoveryAttempts > 2) {
-      void dialog.showMessageBox(mainWindow, {
+      if (quietQaRun) {
+        screenGuard.errorBox("GravityPort", "GravityPort's interface stopped unexpectedly and could not recover automatically.");
+        app.exit(1);
+        return;
+      }
+      void screenGuard.messageBox(mainWindow, {
         type: "error",
         title: "GravityPort",
         message: "GravityPort's interface stopped unexpectedly and could not recover automatically.",
@@ -1863,9 +1884,7 @@ function startBridgeNotificationPoll(runtimePort, clientToken = "") {
       if (lastImportedCount > 0 && totalImported > lastImportedCount) {
         const delta = totalImported - lastImportedCount;
         const body = getNotificationTextForAssetsImported(delta, currentLocale);
-        if (Notification.isSupported()) {
-          new Notification({ title: "GravityPort", body, silent: true }).show();
-        }
+        screenGuard.notify({ title: "GravityPort", body, silent: true });
       }
       lastImportedCount = totalImported;
     } catch (error) {
@@ -1941,7 +1960,7 @@ function reportStartupFailure(error) {
   // in the current language; everything else keeps the generic startup title
   // with the raw error message.
   const libraryFailure = getLibraryStartupFailureText(error, currentLocale);
-  dialog.showErrorBox(
+  screenGuard.errorBox(
     libraryFailure ? libraryFailure.title : getDesktopText("startupErrorTitle", currentLocale),
     libraryFailure ? libraryFailure.body : message,
   );
