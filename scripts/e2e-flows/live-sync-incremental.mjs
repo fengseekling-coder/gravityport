@@ -74,12 +74,33 @@ function incrementalSource(favoriteTarget, trashTarget) {
 
     await waitFor(() => loadedCount() === ${PAGE_SIZE}, 'first page rendered');
     // Load the whole window like a user scrolling down.
+    // Keep nudging to the bottom until the window is complete: a slow runner
+    // can still be fetching when a fixed number of scrolls runs out, and with
+    // nobody scrolling the next page never triggers.
     const scroller = grid();
-    for (let guard = 0; guard < 40 && loadedCount() < ${SEED_TOTAL}; guard += 1) {
+    await waitFor(() => {
+      if (loadedCount() === ${SEED_TOTAL}) return true;
       scroller.scrollTop = scroller.scrollHeight;
-      await sleep(220);
-    }
-    await waitFor(() => loadedCount() === ${SEED_TOTAL}, 'all 260 cards loaded');
+      return false;
+    }, 'all 260 cards loaded', 90000);
+    // The seeded cards queue thumbnail work that journals its own library
+    // changes. Count delta requests only once the library has gone quiet, so
+    // background derivative changes are not billed to the step under test.
+    const waitQuiet = async (label) => {
+      const deadline = Date.now() + 90000;
+      let last = null;
+      let stableSince = Date.now();
+      while (Date.now() < deadline) {
+        const { revision } = await api('/api/library-revision?project=default');
+        if (revision !== last) { last = revision; stableSince = Date.now(); }
+        else if (Date.now() - stableSince >= 1500) {
+          await sleep(300);
+          return;
+        }
+        await sleep(250);
+      }
+      throw new Error('Timed out waiting for the library to go quiet before ' + label);
+    };
     const syncStats = () => window.__mosaLibrarySync?.stats() || {};
     const FALLBACK_REASONS = ['incomplete', 'unknown-kind', 'library-backfilled', 'library-changed-detail', 'too-many-ids', 'rows-failed', 'data-version-only', 'errors', 'lastError'];
     const noFallback = (label) => {
@@ -97,6 +118,7 @@ function incrementalSource(favoriteTarget, trashTarget) {
 
     // 1. External favorite of the 150th card: the heart appears, and the
     // change rode one library-changes + one gallery-rows request at most.
+    await waitQuiet('favorite');
     const beforeFavorite = { reloads: cursorlessAssetRequests(), changes: deltaCalls('/api/library-changes'), rows: deltaCalls('/api/gallery-rows') };
     await api('/api/assets/default/' + ${JSON.stringify(favoriteTarget)} + '/favorite', 'POST');
     try {
@@ -120,6 +142,7 @@ function incrementalSource(favoriteTarget, trashTarget) {
     if (favoriteDelta.changes > 1 || favoriteDelta.rows > 1) throw new Error('favorite needed too many delta requests: ' + JSON.stringify(favoriteDelta));
 
     // 2. External trash of the 120th card: the card leaves, the sidebar count follows.
+    await waitQuiet('trash');
     const beforeTrash = { reloads: cursorlessAssetRequests(), changes: deltaCalls('/api/library-changes'), rows: deltaCalls('/api/gallery-rows') };
     await api('/api/assets/batch', 'POST', { action: 'trash', projectId: 'default', assetIds: [${JSON.stringify(trashTarget)}] });
     await waitFor(() => !cardIds().includes(${JSON.stringify(trashTarget)}), 'external trash removes the card');
@@ -132,6 +155,7 @@ function incrementalSource(favoriteTarget, trashTarget) {
     if (trashDelta.reloads !== 0) throw new Error('trash triggered a full reload: ' + JSON.stringify(trashDelta));
 
     // 3. External create: the new card lands first (newest-first), total +1.
+    await waitQuiet('create');
     const beforeCreate = { reloads: cursorlessAssetRequests() };
     const canvas = document.createElement('canvas');
     canvas.width = 32; canvas.height = 24;

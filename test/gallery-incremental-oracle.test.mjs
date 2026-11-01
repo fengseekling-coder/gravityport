@@ -273,7 +273,9 @@ async function runOracle(seed) {
   const runtime = await startRuntimeSafe({ root, generated });
     oracleBase = runtime.url;
   const cleanup = async () => {
-    try { runtime.stop(); } catch { /* stopped */ }
+    // stop() is async: the next seed may only start once this runtime has
+    // fully released, or startMosaRuntime refuses a second active runtime.
+    try { await runtime.stop(); } catch { /* stopped */ }
     await rm(root, { recursive: true, force: true }).catch(() => {});
   };
   try {
