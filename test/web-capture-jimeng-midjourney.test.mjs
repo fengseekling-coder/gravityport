@@ -79,6 +79,8 @@ function addSampleMedia(item, identity) {
 
 function jimengImageSample() {
   const record = structuredClone(realJimengSample["imageSample_图片生成"]);
+  record.image.mode = "workbench";
+  record.image.metrics_extra = JSON.stringify({ promptSource: "custom", prompt: "不该被读到" });
   record.image.history_record_id = "8100000000000000001";
   record.image.created_time = Math.floor(jimengSampleTime / 1000);
   addSampleMedia(record.image.item_list[0], "8100000000000000011");
@@ -114,6 +116,75 @@ test("Jimeng sample: ordinary generation preserves submitted words and model", (
   assert.equal(records[0].userMessage, prompt);
   assert.equal(records[0].promptKind, "submitted");
   assert.equal(records[0].model, "Seedream 5.0 Surge");
+  assert.notEqual(records[0].userMessage, "不该被读到");
+});
+
+// Field layout and original prompt text from the 331 get_history_by_ids_final
+// real-time sample; placeholders are replaced by test-only media identifiers.
+function jimengAgentPollSample(nowMs) {
+  const prompt = "Minimalist flat vector illustration, a chubby cute white kitten sitting upright on a bright blue windowsill, soft rounded shapes, clean color blocks with no outlines, limited palette of white, sky blue, cobalt blue, warm cream and light wood tones, a small green potted plant on the sill, soft morning light coming through the window, calm cozy gentle mood, pink nose and tiny pink inner ears, tail curled neatly around front paws, simple geometric composition, lots of negative space, no text, no people, no realistic textures";
+  const userMessage = "帮我画一张图：一只白色小猫坐在蓝色窗台上，扁平插画风格，只要一张";
+  return {
+    data: {
+      "submit-live": {
+        mode: "creation_agent_v33",
+        status: 50,
+        submit_id: "submit-live",
+        history_record_id: "history-live",
+        created_time: Math.floor(nowMs / 1000),
+        model_info: { model_name: "Seedream 5.0 Pro" },
+        metrics_extra: JSON.stringify({
+          userMessageId: "msg-user-live", prompt: userMessage, isAddImage: 0,
+          conversationId: "conv-live", hasRejectedAudit: 0, referenceCnt: 0,
+          position: "page_bottom_box", enterFrom: "click",
+        }),
+        item_list: [{
+          common_attr: { id: "8100000000000000021", prompt, description: prompt },
+          aigc_image_params: {
+            aigc_mode: "creation_agent_v33",
+            reference_prompt: prompt,
+            text2image_params: { prompt, model_config: { model_name: "Seedream 5.0 Pro" } },
+          },
+          image: { large_images: [{
+            image_url: "https://p3-dreamina-sign.byteimg.com/tos-cn-i-fake/kitten~tplv-fake-aigc_resize:0:0.png?x-signature=fake",
+            width: 1440, height: 2560,
+          }] },
+        }],
+      },
+    },
+  };
+}
+
+test("Jimeng real-time agent poll reads the model prompt and metrics user instruction separately", () => {
+  const nowMs = jimengSampleTime;
+  const records = jimeng.extractJimengResponse(JSON.stringify(jimengAgentPollSample(nowMs))).records;
+  assert.equal(records.length, 1);
+  const [record] = records;
+  assert.equal(record.promptKind, "agent");
+  assert.match(record.prompt, /^Minimalist flat vector illustration, a chubby cute white kitten/);
+  assert.equal(record.userMessage, "帮我画一张图：一只白色小猫坐在蓝色窗台上，扁平插画风格，只要一张");
+  assert.equal(record.model, "Seedream 5.0 Pro");
+  const payload = jimeng.basePayload(record, "image", record.image.url);
+  assert.equal(payload.promptStatus, "generation-tool-prompt");
+  assert.equal(payload.promptSource, "jimeng-agent-prompt");
+  assert.equal(payload.userMessage, record.userMessage);
+});
+
+test("Jimeng real-time agent poll recognizes item-level aigc_mode without record mode", () => {
+  const response = jimengAgentPollSample(jimengSampleTime);
+  delete response.data["submit-live"].mode;
+  const [record] = jimeng.extractJimengResponse(JSON.stringify(response)).records;
+  assert.equal(record.promptKind, "agent");
+  assert.equal(record.userMessage, "帮我画一张图：一只白色小猫坐在蓝色窗台上，扁平插画风格，只要一张");
+});
+
+test("Jimeng malformed agent metrics never substitutes model prompt for user instruction", () => {
+  const response = jimengAgentPollSample(jimengSampleTime);
+  response.data["submit-live"].metrics_extra = "{not json";
+  const [record] = jimeng.extractJimengResponse(JSON.stringify(response)).records;
+  assert.equal(record.promptKind, "agent");
+  assert.equal(record.userMessage, "");
+  assert.match(record.prompt, /^Minimalist flat vector illustration/);
 });
 
 test("Jimeng sample: agent submit prompt stays separate from its invoking user turn", () => {

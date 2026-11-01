@@ -269,6 +269,18 @@
     return result;
   }
 
+  function agentInstructionFromMetricsExtra(metricsExtra) {
+    if (typeof metricsExtra !== "string" || metricsExtra.length > 65_536) return "";
+    try {
+      const prompt = JSON.parse(metricsExtra)?.prompt;
+      if (typeof prompt !== "string") return "";
+      const trimmed = prompt.trim();
+      return trimmed.length >= 1 && trimmed.length <= 8000 ? trimmed : "";
+    } catch {
+      return "";
+    }
+  }
+
   /**
    * Walk one /mweb/v1/ JSON response and extract finished generation items.
    * Record containers are recognized structurally (objects carrying an
@@ -317,8 +329,14 @@
           if (!extracted) continue;
           extracted.capturedAtMs = context.capturedAtMs ?? normalizeTimestampMs(item.common_attr?.create_time);
           extracted.prompt = extracted.prompt || context.prompt;
-          extracted.promptKind = agentContext ? "agent" : "submitted";
-          extracted.userMessage = agentContext ? agentContext.userMessage : extracted.prompt;
+          const isAgent = Boolean(agentContext)
+            || (typeof node.mode === "string" && /^creation_agent/i.test(node.mode))
+            || (typeof item.aigc_image_params?.aigc_mode === "string"
+              && /^creation_agent/i.test(item.aigc_image_params.aigc_mode));
+          extracted.promptKind = isAgent ? "agent" : "submitted";
+          extracted.userMessage = isAgent
+            ? (agentInstructionFromMetricsExtra(node.metrics_extra) || agentContext?.userMessage || "")
+            : extracted.prompt;
           extracted.model = extracted.model || context.model;
           extracted.historyId = context.recordId;
           extracted.generationStatus = node.status === 30 ? "failed" : node.status === 10 || node.status === 50 ? "completed" : "in_progress";
