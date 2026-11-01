@@ -2,6 +2,7 @@
  * Shared MAIN-world page-hook harness. Extracted from
  * test/chatgpt-web-capture-hook.test.mjs so other suites can drive the same
  * interception points without duplicating the sandbox.
+ * Also drives XHR loads (xhrLoad) and optional DOM observers (domObserver: true).
  */
 
 import assert from "node:assert/strict";
@@ -84,6 +85,7 @@ export function createHookHarness(payload, conversationId = "conversation-test",
   const hookPortOffers = [];
   const windowMessageListeners = [];
   const consoleDebugs = [];
+  const observers = [];
   let contentPort = null;
   const documentElement = { dataset: {} };
   // The blob-asset hooks need the page's Blob, Response and URL.createObjectURL.
@@ -186,10 +188,41 @@ export function createHookHarness(payload, conversationId = "conversation-test",
       }
     },
   };
-  function MockXHR() {}
+  function MockXHR() {
+    this.__loadListeners = [];
+    this.responseType = "";
+    this.responseText = "";
+    this.response = null;
+    this.__headers = {};
+  }
   MockXHR.prototype.open = () => {};
   MockXHR.prototype.send = () => {};
   MockXHR.prototype.setRequestHeader = () => {};
+  MockXHR.prototype.addEventListener = function (type, listener) {
+    if (type === "load") this.__loadListeners.push(listener);
+  };
+  MockXHR.prototype.getResponseHeader = function (name) {
+    return this.__headers[String(name).toLowerCase()] ?? null;
+  };
+  class MockImg {
+    constructor(src) {
+      this.src = src;
+      this.currentSrc = src;
+      this.naturalWidth = 1024;
+      this.naturalHeight = 1024;
+    }
+  }
+  class MockMutationObserver {
+    constructor(cb) {
+      this.cb = cb;
+      this.observed = [];
+      observers.push(this);
+    }
+
+    observe(target, opts) {
+      this.observed.push({ target, opts });
+    }
+  }
 
   const sandbox = {
     Date,
@@ -204,6 +237,7 @@ export function createHookHarness(payload, conversationId = "conversation-test",
     Response: HookResponse,
     XMLHttpRequest: MockXHR,
     MessageChannel: MockMessageChannel,
+    ...(options.domObserver ? { MutationObserver: MockMutationObserver, HTMLImageElement: MockImg } : {}),
     // Base64 and UTF-8 decoding are page APIs the hook needs for socket frames.
     atob: globalThis.atob,
     TextDecoder: globalThis.TextDecoder,
@@ -234,6 +268,8 @@ export function createHookHarness(payload, conversationId = "conversation-test",
     windowMessages,
     hookPortOffers,
     consoleDebugs,
+    observers,
+    imageClass: MockImg,
     documentElement,
     blobClass: HookBlob,
     responseClass: HookResponse,
@@ -250,6 +286,17 @@ export function createHookHarness(payload, conversationId = "conversation-test",
     },
     async harvest(init, url = "https://chatgpt.com/backend-api/conversation/test") {
       await window.fetch(url, init);
+      await setImmediate();
+    },
+    async xhrLoad(url, { responseType = "", responseText = "", response = null, contentType = "" } = {}) {
+      const xhr = new sandbox.XMLHttpRequest();
+      xhr.open("GET", url);
+      xhr.responseType = responseType;
+      xhr.responseText = responseText;
+      xhr.response = response;
+      if (contentType) xhr.__headers["content-type"] = contentType;
+      xhr.send();
+      for (const listener of xhr.__loadListeners) listener.call(xhr);
       await setImmediate();
     },
     async socketFrame(data) {

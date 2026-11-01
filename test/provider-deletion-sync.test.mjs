@@ -872,6 +872,28 @@ test("non-zero ret, non-200 status, empty bodies and other endpoints never forwa
   }
 });
 
+test("jimeng page hook forwards /mweb/v1/ XHR responses read-only and ignores other paths", () => {
+  const { sandbox, portMessages } = createHookSandbox();
+  const send = (url, response) => {
+    const xhr = new sandbox.XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.send("{}");
+    xhr.respond(response);
+  };
+  send("https://jimeng.jianying.com/mweb/v1/get_history_by_ids", {
+    status: 200, jsonResponse: { ret: "0", data: { x: 1 } },
+  });
+  send("https://jimeng.jianying.com/mweb/v1/get_history_by_ids?aid=1", {
+    status: 200, text: '{"ret":"0","data":{"y":2}}',
+  });
+  send("https://jimeng.jianying.com/mweb/v2/other", { status: 200, text: '{"ret":"0"}' });
+  send("https://evil.example/mweb/v1/get_history_by_ids", { status: 200, text: '{"ret":"0"}' });
+  assert.deepEqual(plain(portMessages.filter((message) => message.type === "jimeng-api-response")), [
+    { type: "jimeng-api-response", url: "https://jimeng.jianying.com/mweb/v1/get_history_by_ids", text: '{"ret":"0","data":{"x":1}}' },
+    { type: "jimeng-api-response", url: "https://jimeng.jianying.com/mweb/v1/get_history_by_ids?aid=1", text: '{"ret":"0","data":{"y":2}}' },
+  ]);
+});
+
 test("background: reportProviderDeletions posts to the app with the token, caps at 200 and rejects non-jimeng senders", async () => {
   const RUNTIME_ID = "test-extension-id";
   const BASE_URL = "http://127.0.0.1:43517";
