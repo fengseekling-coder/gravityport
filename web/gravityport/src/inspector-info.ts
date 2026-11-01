@@ -39,7 +39,7 @@ type SourceDescription = {
 }
 
 type PromptNotice = {
-  key: "webPromptUnavailable" | "geminiVisibleUserPromptUnverified" | "flowProviderVisiblePromptUnverified" | "googleAiStudioVisibleUserPromptUnverified" | "jimengVisiblePromptUnverified" | "midjourneyVisiblePromptUnverified"
+  key: "webPromptUnavailable" | "geminiVisibleUserPromptUnverified" | "flowProviderVisiblePromptUnverified" | "googleAiStudioVisibleUserPromptUnverified" | "jimengVisiblePromptUnverified" | "jimengSubmittedPrompt" | "jimengAgentPrompt" | "midjourneyVisiblePromptUnverified"
   text: string
 } | null
 
