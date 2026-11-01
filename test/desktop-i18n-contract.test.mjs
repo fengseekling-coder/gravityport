@@ -141,6 +141,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "checkForUpdates",
     "clipboardImportable",
     "downloadAndInstallUpdate",
+    "getBackgroundCaptureState",
     "getClientToken",
     "getMcpClientConfig",
     "getRenameNoticeState",
@@ -156,6 +157,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "pasteFromClipboard",
     "pasteImage",
     "reportRendererReady",
+    "setBackgroundCapture",
     "setLocale",
     "setWindowFullScreen",
     "startNativeDrag",
@@ -175,7 +177,8 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // 任务 311：get-client-token（凭据不进网址片段，主进程只对已核实服务 origin 上的
   // 主框架回答），23 → 24。任务 318：user-profile 通道删除（安装 ID 不再暴露给
   // 界面），24 → 23。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "preload keeps the approved invoke channels");
+  // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.match(preload, /getUpdateReady: \(\) => ipcRenderer\.invoke\("get-update-ready"\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");

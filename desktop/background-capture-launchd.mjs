@@ -51,8 +51,16 @@ export async function syncBackgroundAgent({ enabled, desiredXml, plistPath, uid,
   }
   let action = exists ? "updated" : "installed";
   try {
-    if (exists && String(io.readFileSync(plistPath, "utf8")) === desiredXml) return { action: "unchanged", ok: true };
-    if (exists) await bootout();
+    if (exists && String(io.readFileSync(plistPath, "utf8")) === desiredXml) {
+      const kickstart = await launchctl(["kickstart", `${target}/${BACKGROUND_AGENT_LABEL}`]);
+      if (kickstart?.code === 0) return { action: "unchanged", ok: true };
+      const reloaded = await launchctl(["bootstrap", target, plistPath]);
+      if (reloaded?.code !== 0) {
+        return { action: "reloaded", ok: false, error: String(reloaded?.stderr || "launchctl bootstrap failed").split("\n")[0] };
+      }
+      return { action: "reloaded", ok: true };
+    }
+    await bootout();
     io.mkdirSync(dirname(plistPath), { recursive: true });
     io.writeFileSync(plistPath, desiredXml, { encoding: "utf8", mode: 0o644 });
     const status = await launchctl(["bootstrap", target, plistPath]);

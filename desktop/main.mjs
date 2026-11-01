@@ -1837,8 +1837,14 @@ async function ensureDesktopService() {
     if (backgroundCaptureSupported()) {
       try {
         const enabled = readBackgroundCaptureSetting(desktopDataDir).enabled;
-        const result = await syncPackagedBackgroundAgent(enabled);
-        if (!result.ok) console.warn(`[MOSA] background capture agent: ${result.action} failed: ${result.error || "unknown"}`);
+        void syncPackagedBackgroundAgent(enabled).then(
+          (result) => {
+            if (!result.ok) console.warn(`[MOSA] background capture agent: ${result.action} failed: ${result.error || "unknown"}`);
+          },
+          (error) => {
+            console.warn(`[MOSA] background capture agent: sync failed: ${error?.message || error}`);
+          },
+        );
       } catch (error) {
         console.warn(`[MOSA] background capture agent: sync failed: ${error?.message || error}`);
       }

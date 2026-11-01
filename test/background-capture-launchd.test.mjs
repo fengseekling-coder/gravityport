@@ -59,30 +59,65 @@ function fakeIo(initial) {
   };
 }
 
-async function syncCase({ initial, enabled, fail = false }) {
+async function syncCase({ initial, enabled, fail = false, launchctlImpl }) {
   const fs = fakeIo(initial);
   const calls = [];
   const result = await syncBackgroundAgent({
     enabled, desiredXml: "<plist>new</plist>", plistPath: "/launch/agent.plist", uid: 501, fs,
     launchctl: async args => {
       calls.push(args);
-      return fail ? { code: 5, stderr: "Bootstrap failed: 5: Input/output error\nmore" } : { code: 0, stderr: "" };
+      return launchctlImpl
+        ? launchctlImpl(args)
+        : fail && args[0] === "bootstrap"
+          ? { code: 5, stderr: "Bootstrap failed: 5: Input/output error\nmore" }
+          : { code: 0, stderr: "" };
     },
   });
   return { fs, calls, result };
 }
 
-test("installs a new launch agent exactly once", async () => {
-  const { fs, calls, result } = await syncCase({ enabled: true });
+test("installs a new launch agent after removing stale registered label", async () => {
+  const { fs, calls, result } = await syncCase({ enabled: true, launchctlImpl: async args => args[0] === "bootout" ? { code: 113 } : { code: 0 } });
   assert.deepEqual(result, { action: "installed", ok: true });
-  assert.deepEqual(calls, [["bootstrap", "gui/501", "/launch/agent.plist"]]);
+  assert.deepEqual(calls, [
+    ["bootout", `gui/501/${BACKGROUND_AGENT_LABEL}`],
+    ["bootstrap", "gui/501", "/launch/agent.plist"],
+  ]);
   assert.equal(fs.files.get("/launch/agent.plist"), "<plist>new</plist>");
 });
 
-test("unchanged plist does not rewrite or invoke launchctl", async () => {
+test("unchanged plist kickstarts its registered service without rewriting", async () => {
   const { fs, calls, result } = await syncCase({ initial: "<plist>new</plist>", enabled: true });
   assert.deepEqual(result, { action: "unchanged", ok: true });
-  assert.equal(calls.length, 0);
+  assert.deepEqual(calls, [["kickstart", `gui/501/${BACKGROUND_AGENT_LABEL}`]]);
+  assert.equal(fs.calls.filter(call => call[0] === "write").length, 0);
+});
+
+test("unchanged plist bootstraps when kickstart reports a missing service", async () => {
+  const { fs, calls, result } = await syncCase({
+    initial: "<plist>new</plist>", enabled: true,
+    launchctlImpl: async args => args[0] === "kickstart" ? { code: 113, stderr: "Could not find service" } : { code: 0 },
+  });
+  assert.deepEqual(result, { action: "reloaded", ok: true });
+  assert.deepEqual(calls, [
+    ["kickstart", `gui/501/${BACKGROUND_AGENT_LABEL}`],
+    ["bootstrap", "gui/501", "/launch/agent.plist"],
+  ]);
+  assert.equal(fs.calls.filter(call => call[0] === "write").length, 0);
+});
+
+test("unchanged plist reports bootstrap failure after kickstart misses", async () => {
+  const { fs, calls, result } = await syncCase({
+    initial: "<plist>new</plist>", enabled: true,
+    launchctlImpl: async args => args[0] === "kickstart"
+      ? { code: 113, stderr: "Could not find service" }
+      : { code: 5, stderr: "Bootstrap failed: 5: Input/output error\nx" },
+  });
+  assert.deepEqual(result, { action: "reloaded", ok: false, error: "Bootstrap failed: 5: Input/output error" });
+  assert.deepEqual(calls, [
+    ["kickstart", `gui/501/${BACKGROUND_AGENT_LABEL}`],
+    ["bootstrap", "gui/501", "/launch/agent.plist"],
+  ]);
   assert.equal(fs.calls.filter(call => call[0] === "write").length, 0);
 });
 

@@ -5212,13 +5212,11 @@ export default function App() {
                   <McpClientConfigCard language={language} />
                   <WebCaptureStatusCard language={language} />
                   {backgroundCapture.supported && (
-                    <section className="settings-section">
-                      <div className="setting-row">
-                        <div>
-                          <strong>{tr("关闭 GravityPort 后继续收录")}</strong>
-                          <p>{tr("GravityPort 关闭时，由后台服务继续接收浏览器扩展发来的作品。")}</p>
-                        </div>
+                    <div className="web-capture-toggle">
+                      <div className="web-capture-toggle-row">
+                        <span>{tr("关闭 GravityPort 后继续收录")}</span>
                         <button
+                          type="button"
                           className={`settings-switch ${backgroundCapture.enabled ? "enabled" : ""}`}
                           role="switch"
                           aria-checked={backgroundCapture.enabled}
@@ -5242,7 +5240,8 @@ export default function App() {
                           }}
                         ><span /></button>
                       </div>
-                    </section>
+                      <p className="web-capture-toggle-note">{tr("GravityPort 关闭时，由后台服务继续接收浏览器扩展发来的作品。")}</p>
+                    </div>
                   )}
                 </>
               ) : settingTab === "反馈" ? (
