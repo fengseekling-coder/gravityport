@@ -159,6 +159,66 @@ export function isAllowedLocalOrigin(origin: unknown, port: number | string): bo
   return allowedOrigins.has(String(origin));
 }
 
+/**
+ * Fetch Metadata gate (task 319). SameSite=Strict keeps the credential cookie
+ * out of cross-site requests from the open internet, but a browser considers
+ * every page on the same machine "same-site" — including a page on another
+ * loopback port opened by another system user or a sandboxed app — so the
+ * cookie alone does not fence off the local neighborhood. Browsers label each
+ * request with Sec-Fetch-Site; rules, in order:
+ *
+ *   1. No Sec-Fetch-Site → allow. Node clients (desktop poller, the web
+ *      capture supervisor, test scripts) and older browsers never send it.
+ *   2. same-origin or none → allow. The app's own window is same-origin;
+ *      address-bar / reload navigations are `none`.
+ *   3. Everything else — same-site, cross-site, and ANY UNRECOGNIZED VALUE,
+ *      which is treated as cross-site — is refused, except:
+ *      a. the Origin is one of this port's own loopback origins
+ *         (127.0.0.1/localhost on the bound port), the explicitly permitted
+ *         local-page callers from the existing Origin rule;
+ *      b. a top-level GET/HEAD document navigation to a path outside /api/
+ *         and /library/: a link from anywhere may bring the user to the app
+ *         shell, and those static pages are public and send no credential;
+ *      c. a top-level GET document navigation to exactly
+ *         /api/pinterest/callback: the OAuth flow redirects back from
+ *         pinterest.com as a cross-site navigation (forgery is the state
+ *         parameter's job, not this gate's).
+ *      d. everything else → refuse.
+ */
+export function isAllowedFetchMetadata({
+  method,
+  pathname,
+  site,
+  mode,
+  dest,
+  origin,
+  port,
+}: {
+  method: unknown;
+  pathname: unknown;
+  site: unknown;
+  mode: unknown;
+  dest: unknown;
+  origin: unknown;
+  port: number | string;
+}): boolean {
+  const siteHeader = String(site || "").trim().toLowerCase();
+  if (!siteHeader) return true;
+  if (siteHeader === "same-origin" || siteHeader === "none") return true;
+  if (origin && isAllowedLocalOrigin(origin, port)) return true;
+  const verb = String(method || "GET").toUpperCase();
+  const modeHeader = String(mode || "").trim().toLowerCase();
+  const destHeader = String(dest || "").trim().toLowerCase();
+  const isTopLevelDocument = (verb === "GET" || verb === "HEAD")
+    && modeHeader === "navigate"
+    && (destHeader === "document" || !destHeader);
+  if (!isTopLevelDocument) return false;
+  const path = String(pathname || "");
+  const isPrivateTree = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
+  if (!isPrivateTree("/api") && !isPrivateTree("/library")) return true;
+  return verb === "GET" && path === "/api/pinterest/callback";
+}
+
 export function parseAllowedIngestOrigins(value: unknown): string[] {
   const values = Array.isArray(value) ? value : String(value || "").split(",");
   return [...new Set(values
