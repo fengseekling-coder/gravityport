@@ -428,6 +428,18 @@ export default function App() {
   const [selected, setSelected] = useState("")
   const [settings, setSettings] = useState(false)
   const [settingTab, setSettingTab] = useState("常规与外观")
+  const [backgroundCapture, setBackgroundCapture] = useState<{ supported: boolean; enabled: boolean }>({ supported: false, enabled: true })
+  const [backgroundCaptureBusy, setBackgroundCaptureBusy] = useState(false)
+  useEffect(() => {
+    if (!settings || settingTab !== "连接") return
+    let active = true
+    desktopAPI()?.getBackgroundCaptureState?.().then(state => {
+      if (active) setBackgroundCapture({ supported: state.supported === true, enabled: state.enabled === true })
+    }).catch(() => {
+      if (active) setBackgroundCapture({ supported: false, enabled: true })
+    })
+    return () => { active = false }
+  }, [settings, settingTab])
   // A connect/disconnect from Settings remounts PinterestView so it rereads
   // the status instead of showing boards of an account that is gone.
   const [pinterestViewKey, setPinterestViewKey] = useState(0)
@@ -5199,6 +5211,39 @@ export default function App() {
                   <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
                   <McpClientConfigCard language={language} />
                   <WebCaptureStatusCard language={language} />
+                  {backgroundCapture.supported && (
+                    <section className="settings-section">
+                      <div className="setting-row">
+                        <div>
+                          <strong>{tr("关闭 GravityPort 后继续收录")}</strong>
+                          <p>{tr("GravityPort 关闭时，由后台服务继续接收浏览器扩展发来的作品。")}</p>
+                        </div>
+                        <button
+                          className={`settings-switch ${backgroundCapture.enabled ? "enabled" : ""}`}
+                          role="switch"
+                          aria-checked={backgroundCapture.enabled}
+                          aria-label={tr("关闭 GravityPort 后继续收录")}
+                          disabled={backgroundCaptureBusy}
+                          onClick={async () => {
+                            if (backgroundCaptureBusy) return
+                            const previous = backgroundCapture.enabled
+                            setBackgroundCaptureBusy(true)
+                            setBackgroundCapture(s => ({ ...s, enabled: !previous }))
+                            try {
+                              const result = await desktopAPI()?.setBackgroundCapture?.(!previous)
+                              if (!result?.ok) throw new Error("setting failed")
+                              setBackgroundCapture(s => ({ ...s, enabled: result.enabled }))
+                            } catch {
+                              setBackgroundCapture(s => ({ ...s, enabled: previous }))
+                              notify("没能更改后台收录设置")
+                            } finally {
+                              setBackgroundCaptureBusy(false)
+                            }
+                          }}
+                        ><span /></button>
+                      </div>
+                    </section>
+                  )}
                 </>
               ) : settingTab === "反馈" ? (
                 <FeedbackPanel language={language} />

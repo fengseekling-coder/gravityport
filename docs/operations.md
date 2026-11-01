@@ -39,6 +39,12 @@ Per-source location overrides (`CODEX_HOME`, `CODEX_GENERATED_IMAGES_DIR`, `CODE
 
 ### Desktop shell
 
+### 后台收录服务（macOS）
+
+macOS 安装版默认开启后台收录；可在“设置 → 连接 → 关闭 GravityPort 后继续收录”关闭。App 退出后，后台进程继续在 `127.0.0.1` 接收浏览器扩展提交的素材；App 启动时使用现有的交接标记接管运行时。Windows 和开发/QA 实例不会注册此服务。
+
+launchd 标签为 `com.azhuilab.gravityport.background`，用户级 plist 位于 `~/Library/LaunchAgents/com.azhuilab.gravityport.background.plist`，日志位于 `~/Library/Logs/GravityPort/background.out.log` 和 `background.err.log`。后台进程读取 App 自己保存的令牌文件，不在 plist 中保存令牌。如果 App 删除，启动脚本检测到可执行文件不存在后以退出码 0 结束，launchd 不再重试；plist 文件会保留，可手动删除。检测到 App 版本变化或安装包不再可读时，服务以 75 退出，由 launchd 重新启动新版进程。
+
 Run the desktop shell from a checkout or build one of the currently approved desktop targets:
 
 ```bash

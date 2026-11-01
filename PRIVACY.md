@@ -19,6 +19,8 @@ Depending on the features you enable, GravityPort may read:
 
 GravityPort does not intentionally scan Downloads, Desktop, unrelated project folders, arbitrary browser pages, or source roots outside the documented allowlists.
 
+The macOS desktop package enables a background service by default that listens only on `127.0.0.1` and continues accepting captures sent by the browser extension while the GravityPort app is closed; it can be disabled in Settings → Connect.
+
 ## Data GravityPort Stores
 
 The selected local GravityPort library can contain:

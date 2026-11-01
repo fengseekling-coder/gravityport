@@ -10,6 +10,7 @@ import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
 import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../lib/runtime-defaults.mjs";
 import { validateRuntimeIsolation } from "../lib/runtime-isolation-guard.mjs";
 import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
@@ -85,6 +86,14 @@ import { createMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { isTelemetryDisabled } from "../lib/env-aliases.mjs";
 import { setOutboundFetch } from "../lib/outbound-fetch.mjs";
+import {
+  BACKGROUND_AGENT_LABEL,
+  shouldManageBackgroundAgent,
+  buildBackgroundAgentPlist,
+  syncBackgroundAgent,
+  readBackgroundCaptureSetting,
+  writeBackgroundCaptureSetting,
+} from "./background-capture-launchd.mjs";
 
 const preloadPath = fileURLToPath(new URL("./preload.cjs", import.meta.url));
 const startupShellPath = fileURLToPath(new URL("./startup.html", import.meta.url));
@@ -733,9 +742,71 @@ function trustedRendererEvent(event) {
   return isTrustedRendererEvent(event, { windowRef: mainWindow, serviceOrigin: verifiedServiceOrigin() });
 }
 
+function backgroundCaptureSupported() {
+  return shouldManageBackgroundAgent({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    env: process.env,
+  });
+}
+
+function launchctlBackground(args) {
+  return new Promise((resolveResult) => {
+    execFile("/bin/launchctl", args, { timeout: 5000 }, (error, _stdout, stderr) => {
+      resolveResult({ code: error ? (error.code || 1) : 0, stderr: stderr || error?.message || "" });
+    });
+  });
+}
+
+async function syncPackagedBackgroundAgent(enabled) {
+  const logDir = join(homedir(), "Library", "Logs", "GravityPort");
+  mkdirSync(logDir, { recursive: true });
+  return syncBackgroundAgent({
+    enabled,
+    desiredXml: buildBackgroundAgentPlist({
+      execPath: process.execPath,
+      agentEntry: join(appRoot, "desktop", "background-capture-agent.mjs"),
+      userDataDir: desktopDataDir,
+      logDir,
+    }),
+    plistPath: join(homedir(), "Library", "LaunchAgents", BACKGROUND_AGENT_LABEL + ".plist"),
+    uid: process.getuid(),
+    launchctl: launchctlBackground,
+  });
+}
+
 function registerIPC() {
   if (ipcRegistered) return;
   ipcRegistered = true;
+
+  ipcMain.handle("background-capture-state", async (event) => {
+    if (!trustedRendererEvent(event)) return { supported: false, enabled: false };
+    return {
+      supported: backgroundCaptureSupported(),
+      enabled: readBackgroundCaptureSetting(desktopDataDir).enabled,
+    };
+  });
+
+  ipcMain.handle("set-background-capture", async (event, enabled) => {
+    if (!trustedRendererEvent(event)) return { ok: false };
+    if (typeof enabled !== "boolean") return { ok: false };
+    const previous = readBackgroundCaptureSetting(desktopDataDir).enabled;
+    if (!backgroundCaptureSupported()) return { ok: false, enabled: previous };
+    try {
+      writeBackgroundCaptureSetting(desktopDataDir, enabled);
+      const result = await syncPackagedBackgroundAgent(enabled);
+      if (!result.ok) {
+        writeBackgroundCaptureSetting(desktopDataDir, previous);
+        await syncPackagedBackgroundAgent(previous);
+        return { ok: false, enabled: previous };
+      }
+      return { ok: true, enabled };
+    } catch (error) {
+      console.warn(`[MOSA] background capture agent: settings failed: ${error?.message || error}`);
+      try { writeBackgroundCaptureSetting(desktopDataDir, previous); } catch {}
+      return { ok: false, enabled: previous };
+    }
+  });
 
   ipcMain.handle("paste-image", async (event) => {
     if (!trustedRendererEvent(event)) return null;
@@ -1763,6 +1834,15 @@ async function ensureDesktopService() {
     }
     service = nextService;
     await releaseDesktopStartupHandoff();
+    if (backgroundCaptureSupported()) {
+      try {
+        const enabled = readBackgroundCaptureSetting(desktopDataDir).enabled;
+        const result = await syncPackagedBackgroundAgent(enabled);
+        if (!result.ok) console.warn(`[MOSA] background capture agent: ${result.action} failed: ${result.error || "unknown"}`);
+      } catch (error) {
+        console.warn(`[MOSA] background capture agent: sync failed: ${error?.message || error}`);
+      }
+    }
     // The library is open and usable — record its location for the next
     // launch (no-op when the user has already moved the library and the
     // location file exists). A failure here never blocks a running library.
