@@ -1,3 +1,5 @@
+import { describeError } from "./error-messages.js"
+
 /**
  * GravityPort -> MOSA service boundary.
  *
@@ -784,8 +786,7 @@ const BATCH_CHUNK_SIZE = 1000
 const STACK_MOVE_CHUNK_SIZE = 2000
 
 function failureMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
+  return describeError(error)
 }
 
 async function runBatchAction(

@@ -1,3 +1,5 @@
+import type { StackDropUndoPlan } from "./stack-drop-undo";
+
 export function dragIdsForCard(selectedIds: Set<string>, assetId: string): string[] {
   if (selectedIds.size > 1 && selectedIds.has(assetId)) return [...selectedIds];
   return assetId ? [assetId] : [];
@@ -154,7 +156,8 @@ export type StackDropRecord = {
 export type StackUndoPlan =
   | { kind: "dissolve-stack"; project: string; stackId: string }
   | { kind: "remove-from-stack"; project: string; stackId: string; assetIds: string[] }
-  | StackUnmergePlan;
+  | StackUnmergePlan
+  | { kind: "stack-drop"; plan: StackDropUndoPlan };
 
 /** A dragged stack as it was before a merge: rebuilt from this on undo. */
 export type MergeSource = { name: string; memberIds: string[] };

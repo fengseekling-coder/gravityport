@@ -238,6 +238,21 @@ const english: Record<string, string> = {
   "已把 {count} 项移到「{group}」": "Moved {count} items to “{group}”",
   "已把 {count} 项移出分组": "Removed {count} items from their group",
   "已向堆叠加入 {count} 项素材": "Added {count} assets",
+  // Task 322: stack drop prompts
+  "已把 {count} 个素材移到堆叠「{name}」": "Moved {count} assets to stack “{name}”",
+  "已把 {count} 个素材移到堆叠": "Moved {count} assets to the stack",
+  "素材已在这个堆叠里": "These assets are already in this stack",
+  // Task 322: stack error messages
+  "素材已在其他堆叠里，列表已刷新，请重新拖动": "This asset is already in another stack. The list has been refreshed; drag again.",
+  "这个堆叠已经不在了，列表已刷新": "This stack no longer exists. The list has been refreshed.",
+  "已归档的素材不能放进堆叠": "Archived assets can’t be stacked",
+  "堆叠至少需要两项素材": "A stack needs at least two assets",
+  "封面必须是堆叠里的素材": "The cover must be one of the stack’s assets",
+  "堆叠名称不能为空": "Stack name can’t be empty",
+  "堆叠内容已发生变化，列表已刷新，请重试": "The stack changed. The list has been refreshed; try again.",
+  "一次最多移动 2000 项素材": "You can move up to 2,000 assets at a time",
+  "当前素材库不支持堆叠": "This library doesn’t support stacks",
+  "素材已经不在了，列表已刷新": "This asset no longer exists. The list has been refreshed.",
   // Task 196: dragging stacks onto a card merges them
   "已合并到堆叠「{name}」，共 {count} 项": "Merged {count} items into “{name}”",
   "已合并到堆叠，共 {count} 项": "Merged {count} items into the stack",

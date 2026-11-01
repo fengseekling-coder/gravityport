@@ -11,7 +11,9 @@ import { FeedbackPanel } from "./FeedbackPanel"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } from "./context-menus"
-import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberIds, listStackMemberPaths } from "./library-actions"
+import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberIds, listStackMemberPaths, dropAssetsOnCard } from "./library-actions"
+import { planStackDropUndo, runStackDropUndo } from "./stack-drop-undo"
+import { describeError } from "./error-messages"
 import {
   dragIdsForCard, dragGhostCount, pointOutsideWindow, nativeDragPaths,
   createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop, planStackMerge,
@@ -135,8 +137,7 @@ function inspectorHeaderLine(info: ReturnType<typeof describeSource>, tr: (text:
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
+  return describeError(error)
 }
 
 // Task 146 card dragging.
@@ -2466,7 +2467,16 @@ export default function App() {
     try {
       if (undo.kind === "dissolve-stack") await dissolveStack(undo.project, undo.stackId)
       else if (undo.kind === "remove-from-stack") await removeAssetsFromStack(undo.project, undo.stackId, undo.assetIds)
-      else {
+      else if (undo.kind === "stack-drop") {
+        await runStackDropUndo(undo.plan, {
+          moveAssetsToStack,
+          createStack,
+          renameStack,
+          reorderStack,
+          listStackMemberIds,
+          dissolveStack,
+        })
+      } else {
         // Unmerge: loosen everything the merge moved, then rebuild each
         // dragged stack with its old order, cover (first member) and name.
         if (undo.createdStackId) await dissolveStack(undo.project, undo.createdStackId)
@@ -2482,7 +2492,10 @@ export default function App() {
       }
       notify(tr("已撤销"))
       refreshCurrentView()
-    } catch (error) { notify(errorMessage(error)) }
+    } catch (error) {
+      notify(errorMessage(error))
+      refreshCurrentView()
+    }
   }
   const runSideDrop = async (side: CardSideTarget, gesture: CardDragFinish) => {
     const groupName = side.kind === "group" ? side.name : ""
@@ -2584,29 +2597,44 @@ export default function App() {
     const originProject = targetAsset.project_id || project
     cardDragMutationRef.current = true
     try {
-      const targetStackId = targetAsset.stack?.id || ""
-      if (targetStackId) {
-        const toAdd = gesture.dragIds.filter(id => id !== drop.cardId)
-        if (!toAdd.length) return
-        await addAssetsToStack(originProject, targetStackId, toAdd)
-        const undo = undoPlanForStackDrop({ kind: "added-to-stack", project: originProject, stackId: targetStackId, addedIds: toAdd, coverId: drop.cardId })
-        notifyWithAction(fillNamed("已向堆叠加入 {count} 项素材", { count: toAdd.length }), {
-          label: tr("撤销"),
-          run: () => { void runStackUndo(undo) },
-        })
+      const result = await dropAssetsOnCard(originProject, gesture.dragIds, drop.cardId)
+      if (result.mode === "noop" || !result.movedAssetIds.length) {
+        notify(tr("素材已在这个堆叠里"))
       } else {
-        const ids = [...gesture.dragIds, drop.cardId]
-        const stack = await createStack(originProject, ids, drop.cardId)
-        const undo = undoPlanForStackDrop({ kind: "created-stack", project: originProject, stackId: stack.id })
-        notifyWithAction(fillNamed("已堆叠 {count} 项素材", { count: ids.length }), {
-          label: tr("撤销"),
-          run: () => { void runStackUndo(undo) },
-        })
+        const movedCount = result.movedAssetIds.length
+        let message = ""
+        if (result.mode === "joined") {
+          const hasFromOtherStack = result.sources.some(s => s.movedAssetIds.length > 0)
+          if (hasFromOtherStack) {
+            message = result.stack?.name
+              ? fillNamed("已把 {count} 个素材移到堆叠「{name}」", { count: movedCount, name: result.stack.name })
+              : fillNamed("已把 {count} 个素材移到堆叠", { count: movedCount })
+          } else {
+            message = fillNamed("已向堆叠加入 {count} 项素材", { count: movedCount })
+          }
+        } else {
+          const totalCount = result.stack?.count ?? (movedCount + 1)
+          message = fillNamed("已堆叠 {count} 项素材", { count: totalCount })
+        }
+        const plan = planStackDropUndo(originProject, result)
+        if (plan) {
+          const undo: StackUndoPlan = { kind: "stack-drop", plan }
+          notifyWithAction(message, {
+            label: tr("撤销"),
+            run: () => { void runStackUndo(undo) },
+          })
+        } else {
+          notify(message)
+        }
       }
       applySelection([], "")
       scheduleSync()
-    } catch (error) { notify(errorMessage(error)) }
-    finally { cardDragMutationRef.current = false }
+    } catch (error) {
+      notify(errorMessage(error))
+      scheduleSync()
+    } finally {
+      cardDragMutationRef.current = false
+    }
   }
   const runReorderDrop = async (drop: CardDropTarget, gesture: { dragIds: string[] }) => {
     if (!drop.cardId || gesture.dragIds.includes(drop.cardId) || !stackReorderAllowed()) return

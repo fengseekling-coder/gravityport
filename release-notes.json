@@ -44,7 +44,8 @@
         "修复了原图文件丢失时查看器一片空白的问题。现会提示「原图找不到了」，并可打开素材位置。",
         "修复了版本树、版本和参考图加载失败时，与「暂无」显示相同的问题。现会显示「加载失败」。",
         "修复了在 Windows 上点「设置 → 存储」的「打开」或详情面板的「素材路径」后，资源管理器窗口没有出现的问题。",
-        "修复了电脑通过系统代理上网时，无法发送反馈的问题。现与检查更新一样使用系统的网络和代理设置。"
+        "修复了电脑通过系统代理上网时，无法发送反馈的问题。现与检查更新一样使用系统的网络和代理设置。",
+        "修复了在搜索结果等画廊视图中，把已在堆叠里的图片拖到另一个堆叠或图片上时出现英文报错的问题。现会把图片移过去，并可撤销回原来的堆叠和位置。"
       ],
       "other": [
         "为软件内更新增加备用签名钥匙。",
@@ -95,7 +96,8 @@
         "Fixed the viewer staying blank when an original file is missing. It now says the original file was not found and offers to open the asset location.",
         "Fixed the Version Tree, versions and reference images looking empty when they failed to load. They now show Failed to load.",
         "Fixed File Explorer not appearing on Windows after clicking Open in Settings → Storage or the asset path in the details panel.",
-        "Fixed an issue where feedback could not be sent from computers that go online through a system proxy. It now uses the system network and proxy settings, like update checks."
+        "Fixed an issue where feedback could not be sent from computers that go online through a system proxy. It now uses the system network and proxy settings, like update checks.",
+        "Fixed an English error message that appeared when dragging an image that was already in a stack onto another stack or image, such as in search results. The image now moves there, and Undo returns it to its original stack and position."
       ],
       "other": [
         "Added a backup signing key for in-app updates.",
