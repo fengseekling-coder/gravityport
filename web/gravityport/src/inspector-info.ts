@@ -186,6 +186,7 @@ export function promptNotice(asset: MosaAsset): PromptNotice {
   const source = asset.source || {}
   const sourceType = String(source.type || (asset as MosaAsset & { source_type?: string }).source_type || "")
   const promptStatus = String((source as Record<string, unknown>).prompt_status || "")
+  const promptSource = String((source as Record<string, unknown>).prompt_source || "")
   const provider = String((source as Record<string, unknown>).provider || "")
 
   // Check if web source with no prompt available
@@ -196,6 +197,15 @@ export function promptNotice(asset: MosaAsset): PromptNotice {
     return {
       key: "webPromptUnavailable",
       text: "网页来源未暴露原始生图提示词",
+    }
+  }
+
+  if (asset.prompt && (provider === "jimeng" || sourceType === "web-jimeng")) {
+    if (promptSource === "jimeng-agent-prompt" && promptStatus === "generation-tool-prompt") {
+      return { key: "jimengAgentPrompt", text: "即梦智能体交给模型的提示词" }
+    }
+    if (promptSource === "jimeng-submitted-prompt" && promptStatus === "provider-visible-prompt") {
+      return { key: "jimengSubmittedPrompt", text: "即梦按原话提交，没有返回改写版" }
     }
   }
 

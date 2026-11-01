@@ -18,6 +18,180 @@ const providerPolicySource = await readFile(new URL("provider-policy.js", extens
 const providerJimengSource = await readFile(new URL("provider-jimeng.js", extensionRoot), "utf8");
 const providerMidjourneySource = await readFile(new URL("provider-midjourney.js", extensionRoot), "utf8");
 const jimengHookSource = await readFile(new URL("jimeng-page-hook.js", extensionRoot), "utf8");
+// The two minimal fixtures below copy the 330 read-only response sample's
+// field layout and text; only ids and media URLs are synthetic.
+const realJimengSample = {
+  "imageSample_图片生成": {
+    type: 1,
+    image: {
+      item_list: [{
+        common_attr: {
+          prompt: "抽象构成主义艺术海报，大面积红黑撞色，几何圆形与斜切矩形交错，粗颗粒丝网印刷质感，留白克制，包豪斯风格，高级感",
+          description: "抽象构成主义艺术海报，大面积红黑撞色，几何圆形与斜切矩形交错，粗颗粒丝网印刷质感，留白克制，包豪斯风格，高级感",
+        },
+        aigc_image_params: {
+          reference_prompt: "抽象构成主义艺术海报，大面积红黑撞色，几何圆形与斜切矩形交错，粗颗粒丝网印刷质感，留白克制，包豪斯风格，高级感",
+          text2image_params: {
+            prompt: "抽象构成主义艺术海报，大面积红黑撞色，几何圆形与斜切矩形交错，粗颗粒丝网印刷质感，留白克制，包豪斯风格，高级感",
+            model_config: { model_name: "Seedream 5.0 Surge" },
+          },
+        },
+      }],
+    },
+  },
+  "agentSample_智能体": {
+    type: 10,
+    agent_conversation_session: {
+      conversation_session: {
+        scene: "creation_agent_v33",
+        "mapping_按消息": [
+          { id: "msg-3", "author.role": "user", parent_message_id: "", text: "A bold graphic poster on a solid vivid red background, futuristic high-end 3D render / 3D illustration style, minimal clean layout, like a promotional poster. Overall scene: a vertical poster for Teachers’ Day with a single large centerpiece: a futuristic meta…（截断）" },
+          { id: "msg-2", "author.role": "assistant", parent_message_id: "msg-3", mentions_submit_id: "submit-1", text: "我把提示词重新优化了优先级，先锁死全红底主视觉和金属音符长城重工结构，再把每段文字的要求写得更干净明确，避开多余干扰，用你面板指定的5.0Pro 1.5k参数重新提交这版完整带排版的海报。" },
+          { id: "msg-1", "author.role": "tool", parent_message_id: "msg-2", mentions_submit_id: "submit-1", text: "[工具返回 JSON，略]" },
+          { id: "msg-4", "author.role": "assistant", parent_message_id: "msg-1", text: "已提交生成，这版是全要素完整版，把重工金属音符长城主视觉和你写好的全部精准文字排版都整合进去了，很快就能出这张亮红底高级教师节宣传海报。" },
+          { id: "msg-5", "author.role": "assistant", parent_message_id: "msg-4", text: "" },
+        ],
+      },
+      submit_id_data_map: {
+        "submit-1": {
+          submit_id: "submit-1",
+          generate_type: 1,
+          model_info: { model_name: "Seedream 5.0 Pro" },
+          item_list: [{
+            common_attr: { prompt: "Vertical 9:16 premium Teachers Day advertising poster, 100% solid vivid bright flat red background, no scenery no people, ultra clean minimal layout, high detail 3D CGI rende…（截断）" },
+          }],
+        },
+      },
+    },
+  },
+};
+
+const jimengSampleTime = Date.parse("2026-11-01T10:00:00Z");
+function addSampleMedia(item, identity) {
+  item.common_attr.id = identity;
+  item.common_attr.create_time = Math.floor(jimengSampleTime / 1000);
+  item.image = { large_images: [{
+    image_url: "https://p3-dreamina-sign.byteimg.com/tos-cn-i-fake/abc~tplv-fake-aigc_resize:0:0.png?x-signature=fake",
+    width: 1440,
+    height: 2560,
+  }] };
+}
+
+function jimengImageSample() {
+  const record = structuredClone(realJimengSample["imageSample_图片生成"]);
+  record.image.history_record_id = "8100000000000000001";
+  record.image.created_time = Math.floor(jimengSampleTime / 1000);
+  addSampleMedia(record.image.item_list[0], "8100000000000000011");
+  return { data: { asset_list: [record] } };
+}
+
+function jimengAgentSample() {
+  const record = structuredClone(realJimengSample["agentSample_智能体"]);
+  const session = record.agent_conversation_session;
+  const mapping = {};
+  for (const message of session.conversation_session["mapping_按消息"]) {
+    mapping[message.id] = {
+      author: { role: message["author.role"] },
+      metadata: { parent_message_id: message.parent_message_id },
+      content: { content_parts: [{ text: message.mentions_submit_id
+        ? `${message.text} ${message.mentions_submit_id}` : message.text }] },
+    };
+  }
+  delete session.conversation_session["mapping_按消息"];
+  session.conversation_session.mapping = mapping;
+  const submit = session.submit_id_data_map["submit-1"];
+  submit.history_record_id = "8200000000000000001";
+  submit.created_time = Math.floor(jimengSampleTime / 1000);
+  addSampleMedia(submit.item_list[0], "8200000000000000011");
+  return { data: { asset_list: [record] } };
+}
+
+test("Jimeng sample: ordinary generation preserves submitted words and model", () => {
+  const { records } = jimeng.extractJimengResponse(JSON.stringify(jimengImageSample()));
+  assert.equal(records.length, 1);
+  const prompt = realJimengSample["imageSample_图片生成"].image.item_list[0].common_attr.prompt;
+  assert.equal(records[0].prompt, prompt);
+  assert.equal(records[0].userMessage, prompt);
+  assert.equal(records[0].promptKind, "submitted");
+  assert.equal(records[0].model, "Seedream 5.0 Surge");
+});
+
+test("Jimeng sample: agent submit prompt stays separate from its invoking user turn", () => {
+  const { records } = jimeng.extractJimengResponse(JSON.stringify(jimengAgentSample()));
+  assert.equal(records.length, 1);
+  assert.match(records[0].prompt, /^Vertical 9:16 premium Teachers Day advertising poster/);
+  assert.match(records[0].userMessage, /^A bold graphic poster on a solid vivid red background/);
+  assert.equal(records[0].promptKind, "agent");
+  assert.equal(records[0].model, "Seedream 5.0 Pro");
+});
+
+test("Jimeng agent: broken parent link stops instead of using assistant text", () => {
+  const response = jimengAgentSample();
+  response.data.asset_list[0].agent_conversation_session.conversation_session.mapping["msg-2"].metadata.parent_message_id = "";
+  const [record] = jimeng.extractJimengResponse(JSON.stringify(response)).records;
+  assert.equal(record.userMessage, "");
+  assert.equal(record.promptKind, "agent");
+  assert.match(record.prompt, /^Vertical 9:16/);
+});
+
+test("Jimeng agent: a parent cycle terminates without an instruction", () => {
+  const response = jimengAgentSample();
+  const mapping = response.data.asset_list[0].agent_conversation_session.conversation_session.mapping;
+  mapping["msg-2"].metadata.parent_message_id = "msg-1";
+  mapping["msg-1"].metadata.parent_message_id = "msg-2";
+  const [record] = jimeng.extractJimengResponse(JSON.stringify(response)).records;
+  assert.equal(record.userMessage, "");
+});
+
+test("Jimeng agent: mention-only content parts are skipped between text parts", () => {
+  const response = jimengAgentSample();
+  response.data.asset_list[0].agent_conversation_session.conversation_session.mapping["msg-3"].content.content_parts = [
+    { text: "参考" }, { mention: { material: {} } }, { text: "视频的运镜" },
+  ];
+  const [record] = jimeng.extractJimengResponse(JSON.stringify(response)).records;
+  assert.equal(record.userMessage, "参考视频的运镜");
+});
+
+test("Jimeng sample: a JSON prompt is retained verbatim", () => {
+  const response = jimengImageSample();
+  const json = '{ "layout": "poster", "background": "vivid red", "aesthetic_style": "Bauhaus geometry" }';
+  response.data.asset_list[0].image.item_list[0].common_attr.prompt = json;
+  const [record] = jimeng.extractJimengResponse(JSON.stringify(response)).records;
+  assert.equal(record.prompt, json);
+  assert.equal(record.userMessage, json);
+});
+
+test("Jimeng sample: description alone is not a prompt", () => {
+  const response = jimengImageSample();
+  const item = response.data.asset_list[0].image.item_list[0];
+  item.common_attr.prompt = "";
+  delete item.aigc_image_params;
+  const [record] = jimeng.extractJimengResponse(JSON.stringify(response)).records;
+  assert.equal(record.prompt, "");
+  assert.equal(record.userMessage, "");
+});
+
+test("Jimeng payloads label submitted, agent, and unavailable prompts consistently", () => {
+  const submitted = jimeng.extractJimengResponse(JSON.stringify(jimengImageSample())).records[0];
+  const agent = jimeng.extractJimengResponse(JSON.stringify(jimengAgentSample())).records[0];
+  const empty = { ...submitted, prompt: "", userMessage: "" };
+  for (const makePayload of [
+    (record) => jimeng.basePayload(record, "image", record.image.url),
+    (record) => jimeng.manualPayload("image", record.image.url, record),
+  ]) {
+    const a = makePayload(submitted);
+    assert.equal(a.promptStatus, "provider-visible-prompt");
+    assert.equal(a.promptSource, "jimeng-submitted-prompt");
+    assert.equal(a.userMessage, submitted.prompt);
+    const b = makePayload(agent);
+    assert.equal(b.promptStatus, "generation-tool-prompt");
+    assert.equal(b.promptSource, "jimeng-agent-prompt");
+    assert.equal(b.userMessage, agent.userMessage);
+    const c = makePayload(empty);
+    assert.equal(c.promptStatus, "not-available");
+    assert.equal(c.promptSource, "");
+  }
+});
 
 // Everything below runs on synthetic fixtures: no real account, token, or
 // signature values are embedded; URL query strings carry fake placeholders.
@@ -25,6 +199,7 @@ const jimengHookSource = await readFile(new URL("jimeng-page-hook.js", extension
 function createProviderSandbox(source, filename) {
   const sandbox = {
     URL,
+    location: { href: "https://jimeng.jianying.com/ai-tool/generate" },
     atob: (value) => Buffer.from(String(value), "base64").toString("binary"),
     btoa: (value) => Buffer.from(String(value), "binary").toString("base64"),
   };
@@ -117,8 +292,8 @@ test("provider policy recognizes Jimeng and Midjourney pages and videos", () => 
   assert.equal(policy.supportsVideo("chatgpt"), false);
 });
 
-test("manifest declares the two new sites, their CDNs, and 0.15.44", () => {
-  assert.equal(manifest.version, "0.15.44");
+test("manifest declares the two new sites, their CDNs, and 0.15.45", () => {
+  assert.equal(manifest.version, "0.15.45");
   for (const host of [
     "https://jimeng.jianying.com/*",
     "https://*.byteimg.com/*",
@@ -913,6 +1088,39 @@ test("Jimeng: a queued image is not sent again, even minutes later", async () =>
   assert.ok(first >= 1, "the fresh Jimeng image is sent once");
   await page.clock.advance(180_000);
   assert.equal(page.ingests("image").length, first, "a queued image is not re-sent by the page");
+});
+
+test("Jimeng: late agent instruction upgrades a previously auto-captured identity once", async () => {
+  const page = jimengPage({
+    respond: (message) => message.type === "mosa.getSettings"
+      ? { ok: true, settings: { autoCapture: true } } : { ok: true },
+  });
+  await page.clock.advance(1_000);
+  const early = jimengAgentSample();
+  const earlySession = early.data.asset_list[0].agent_conversation_session;
+  earlySession.conversation_session.mapping = {};
+  earlySession.submit_id_data_map["submit-1"].created_time = Math.floor(page.clock.now / 1000);
+  page.deliverResponse(JSON.stringify(early));
+  await page.clock.advance(400);
+  assert.equal(page.ingests("image").length, 1);
+  assert.equal(page.ingests("image")[0].payload.userMessage, undefined);
+
+  const late = jimengAgentSample();
+  late.data.asset_list[0].agent_conversation_session.submit_id_data_map["submit-1"].created_time =
+    Math.floor(page.clock.now / 1000);
+  page.deliverResponse(JSON.stringify(late));
+  await page.clock.advance(400);
+  let upgrades = page.sent.filter((message) => message.type === "mosa.upgradeMetadata");
+  assert.equal(upgrades.length, 1);
+  assert.equal(upgrades[0].payload.prompt, "");
+  assert.match(upgrades[0].payload.userMessage, /^A bold graphic poster/);
+  assert.equal(upgrades[0].payload.providerAssetId, "8200000000000000011");
+  assert.equal(upgrades[0].payload.generationContextId, "8200000000000000001");
+  page.deliverResponse(JSON.stringify(late));
+  await page.clock.advance(400);
+  upgrades = page.sent.filter((message) => message.type === "mosa.upgradeMetadata");
+  assert.equal(upgrades.length, 1);
+  assert.equal(page.ingests("image").length, 1);
 });
 
 test("Jimeng: a retryable failure is retried twice, 60 s apart, and no more", async () => {

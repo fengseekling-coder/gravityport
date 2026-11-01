@@ -287,6 +287,8 @@ const english: Record<string, string> = {
   "Flow 页面可见提示词（未验证为实际生图提示词）": "Flow provider-visible prompt (not verified as the generation prompt)",
   "Google AI Studio 页面可见用户提示词（未验证为实际生图提示词）": "Google AI Studio visible user prompt (not verified as the generation prompt)",
   "即梦页面可见提示词（未验证为实际生图提示词）": "Jimeng visible prompt (not verified as the generation prompt)",
+  "即梦按原话提交，没有返回改写版": "Jimeng submitted your words as-is (no rewritten prompt returned)",
+  "即梦智能体交给模型的提示词": "Prompt Jimeng's agent sent to the model",
   "Midjourney 页面可见提示词（未验证为实际生图提示词）": "Midjourney visible prompt (not verified as the generation prompt)",
   // Task 158: settings feedback page. Error-copy keys mirror the route codes
   // in feedback-api.ts (FEEDBACK_OFFLINE / _RATE_LIMITED / _TOO_LARGE /
