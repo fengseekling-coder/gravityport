@@ -612,7 +612,12 @@ test("a settings file that exists but does not parse means off, warned once", as
 function fakeReq(body, token) {
   return {
     method: "POST",
-    headers: token ? { authorization: `Bearer ${token}` } : {},
+    // Task 314: the capture routes reserve the declared Content-Length before
+    // reading, so the fake request declares its real body size.
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      "content-length": String(Buffer.byteLength(body)),
+    },
     on(type, handler) {
       if (type === "data") handler(Buffer.from(body));
       if (type === "end") queueMicrotask(() => handler());
@@ -865,6 +870,28 @@ test("non-zero ret, non-200 status, empty bodies and other endpoints never forwa
   for (const fragment of ["513084", "7.6.4", "3.0.0", "FEATQ1", "aid=", "aigc_features"]) {
     assert.equal(reportText.includes(fragment), false, `deletion report must not contain ${fragment}`);
   }
+});
+
+test("jimeng page hook forwards /mweb/v1/ XHR responses read-only and ignores other paths", () => {
+  const { sandbox, portMessages } = createHookSandbox();
+  const send = (url, response) => {
+    const xhr = new sandbox.XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.send("{}");
+    xhr.respond(response);
+  };
+  send("https://jimeng.jianying.com/mweb/v1/get_history_by_ids", {
+    status: 200, jsonResponse: { ret: "0", data: { x: 1 } },
+  });
+  send("https://jimeng.jianying.com/mweb/v1/get_history_by_ids?aid=1", {
+    status: 200, text: '{"ret":"0","data":{"y":2}}',
+  });
+  send("https://jimeng.jianying.com/mweb/v2/other", { status: 200, text: '{"ret":"0"}' });
+  send("https://evil.example/mweb/v1/get_history_by_ids", { status: 200, text: '{"ret":"0"}' });
+  assert.deepEqual(plain(portMessages.filter((message) => message.type === "jimeng-api-response")), [
+    { type: "jimeng-api-response", url: "https://jimeng.jianying.com/mweb/v1/get_history_by_ids", text: '{"ret":"0","data":{"x":1}}' },
+    { type: "jimeng-api-response", url: "https://jimeng.jianying.com/mweb/v1/get_history_by_ids?aid=1", text: '{"ret":"0","data":{"y":2}}' },
+  ]);
 });
 
 test("background: reportProviderDeletions posts to the app with the token, caps at 200 and rejects non-jimeng senders", async () => {

@@ -311,7 +311,7 @@ test("main.mjs wires the evaluation before the first userData write and isolates
   const main = await readFile(resolve(root, "desktop/main.mjs"), "utf8");
 
   const evaluateAt = main.indexOf("evaluateRenameNoticeState({");
-  const installAt = main.indexOf("const desktopUserId = ensureInstallationId({ userDataDir: desktopDataDir })");
+  const installAt = main.indexOf("ensureInstallationId({ userDataDir: desktopDataDir })");
   assert.ok(evaluateAt > -1, "main.mjs must call evaluateRenameNoticeState");
   assert.ok(installAt > -1, "main.mjs must still mint the installation id");
   assert.ok(evaluateAt < installAt, "the rename decision must run before the first userData write");

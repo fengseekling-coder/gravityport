@@ -80,7 +80,7 @@ test("moving two assets between stacks appends them in input order and compacts 
   assert.equal(result.target.count, 4);
   assert.equal(result.target.cover_asset_id, "e", "the target keeps its own cover");
   assert.deepEqual(result.movedAssetIds, ["c", "d"]);
-  assert.deepEqual(result.sources, [{ stackId: stackA.id, dissolved: false, remainingAssetId: null }]);
+  assert.deepEqual(result.sources, [{ stackId: stackA.id, name: "", memberIdsBefore: ["a", "b", "c", "d"], movedAssetIds: ["c", "d"], dissolved: false, remainingAssetId: null }]);
 
   assert.deepEqual(await memberIds(store, "default", stackB.id), ["e", "f", "c", "d"], "moved assets append at the target tail in input order");
   assert.deepEqual(await memberPositions(store, "default", stackB.id), [0, 1, 2, 3]);
@@ -100,7 +100,7 @@ test("a source left with one member auto-dissolves and tombstones the moved and 
 
   const result = await store.moveAssetsToStack("default", ["s1"], stackB.id);
 
-  assert.deepEqual(result.sources, [{ stackId: sessionStack.id, dissolved: true, remainingAssetId: "s2" }]);
+  assert.deepEqual(result.sources, [{ stackId: sessionStack.id, name: "", memberIdsBefore: ["s2", "s1"], movedAssetIds: ["s1"], dissolved: true, remainingAssetId: "s2" }]);
   await assert.rejects(
     store.getAssetStack("default", sessionStack.id),
     (error) => error.code === "STACK_NOT_FOUND",
@@ -124,8 +124,8 @@ test("one move gathers members of several stacks and a loose asset into the targ
 
   assert.deepEqual(result.movedAssetIds, ["c", "f", "g"]);
   assert.deepEqual(result.sources, [
-    { stackId: stackA.id, dissolved: false, remainingAssetId: null },
-    { stackId: stackC.id, dissolved: true, remainingAssetId: "e" },
+    { stackId: stackA.id, name: "", memberIdsBefore: ["a", "b", "c"], movedAssetIds: ["c"], dissolved: false, remainingAssetId: null },
+    { stackId: stackC.id, name: "", memberIdsBefore: ["e", "f"], movedAssetIds: ["f"], dissolved: true, remainingAssetId: "e" },
   ], "sources follow the input's first appearance, whatever stack the assets came from");
   assert.deepEqual(await memberIds(store, "default", stackB.id), ["d", "h", "c", "f", "g"]);
   assert.deepEqual(await memberIds(store, "default", stackA.id), ["a", "b"]);
@@ -140,7 +140,7 @@ test("moving to a null target un-stacks members and skips assets that are alread
 
   assert.equal(result.target, null);
   assert.deepEqual(result.movedAssetIds, ["b"], "the already-loose asset is skipped, not re-reported");
-  assert.deepEqual(result.sources, [{ stackId: stackA.id, dissolved: false, remainingAssetId: null }]);
+  assert.deepEqual(result.sources, [{ stackId: stackA.id, name: "", memberIdsBefore: ["a", "b", "c"], movedAssetIds: ["b"], dissolved: false, remainingAssetId: null }]);
   assert.deepEqual(await memberIds(store, "default", stackA.id), ["a", "c"]);
   const gallery = await store.listAssetPage({ projectId: "default", limit: 0, sort: "oldest", collapseStacks: true });
   assert.equal(gallery.assets.find((asset) => asset.id === "b").stack, undefined, "the un-stacked asset renders flat");
@@ -316,7 +316,7 @@ test("the move API relocates members between stacks and reports the outcome", as
   const body = await response.json();
   assert.equal(body.target.id, stackB.id);
   assert.deepEqual(body.movedAssetIds, ["a"]);
-  assert.deepEqual(body.sources, [{ stackId: stackA.id, dissolved: true, remainingAssetId: "b" }],
+  assert.deepEqual(body.sources, [{ stackId: stackA.id, name: "", memberIdsBefore: ["a", "b"], movedAssetIds: ["a"], dissolved: true, remainingAssetId: "b" }],
     "stack A is left with a single member and dissolves, exactly as a removal would");
   assert.deepEqual(await stackAssets(stackB.id), ["c", "d", "a"]);
 

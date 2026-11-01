@@ -135,10 +135,12 @@ describe("runtime isolation with all bridges disabled", () => {
     const assets = listBody.assets || [];
     assert.equal(assets.length, 3, "Library should contain exactly 3 assets");
 
-    // Verify health endpoint reports the correct libraryDir
+    // Task 314: health no longer reports the library path — the digest is
+    // the published identity, and no absolute path may leak.
     const healthRes = await fetch(`${runtime.url}/api/health`);
     const healthBody = await healthRes.json();
-    assert.equal(healthBody.libraryDir, libraryDir, "health should report the temp libraryDir");
+    assert.ok(!("libraryDir" in healthBody), "health must not publish libraryDir");
+    assert.ok(typeof healthBody.libraryDigest === "string" && healthBody.libraryDigest.length > 0, "health should report the library digest");
   });
 });
 
@@ -226,8 +228,9 @@ describe("environment-only server startup isolation", () => {
     const assets = await (await fetch(`${url}/api/assets?project=default`)).json();
     const page = await fetch(`${url}/`);
     assert.equal(page.status, 200);
-    assert.equal(health.libraryDir, resolve(libraryDir));
-    assert.equal(library.libraryDir, health.libraryDir);
+    assert.ok(!("libraryDir" in health), "health must not publish libraryDir (task 314)");
+    assert.ok(typeof health.libraryDigest === "string" && health.libraryDigest.length > 0);
+    assert.equal(library.libraryDir, resolve(libraryDir));
     assert.equal(library.path, join(resolve(libraryDir), "assets", "default"));
     assert.equal(assets.assets.length, 3, "isolated server API should contain exactly three fixtures");
     assert.match(await page.text(), /assets\/index-[^"]+\.js/, "isolated server should serve the built UI shell");
@@ -260,6 +263,10 @@ describe("environment-only server startup isolation", () => {
         MOSA_PORT: "0",
         MOSA_PROJECT_DIR: repositoryRoot,
         // NO MOSA_LIBRARY_DIR set → fresh default SQLite library
+        // Task 314: the fresh machine simulates a new LIBRARY, not a new
+        // credential policy — pin the shared test capability so the API reads
+        // (which now require it) stay reachable.
+        MOSA_CLIENT_TOKEN: process.env.MOSA_CLIENT_TOKEN,
         MOSA_DISABLE_BRIDGES: DISABLEABLE_BRIDGES.join(","),
         CODEX_SESSIONS_DIR: join(tempHome, ".codex", "sessions"),
         GROK_SESSIONS_DIR: join(tempHome, ".grok", "sessions"),
@@ -277,15 +284,13 @@ describe("environment-only server startup isolation", () => {
     const library = await (await fetch(`${url}/api/library-path`)).json();
     const page = await fetch(`${url}/`);
 
-    // Both diagnostics must report the same fresh SQLite library.
-    assert.equal(
-      health.libraryDir,
-      library.libraryDir,
-      "health.libraryDir must equal library-path.libraryDir",
-    );
+    // Task 314: health publishes the digest only; library-path (an
+    // authenticated read) still pins the fresh default location.
+    assert.ok(!("libraryDir" in health), "health must not publish libraryDir");
+    assert.ok(typeof health.libraryDigest === "string" && health.libraryDigest.length > 0);
     const expectedEffectiveLibraryDir = join(tempHome, "GravityPort Library");
     assert.equal(
-      health.libraryDir,
+      library.libraryDir,
       expectedEffectiveLibraryDir,
       "a machine without any library must start fresh in the new default under the isolated home",
     );
@@ -353,11 +358,12 @@ describe("environment-only server startup isolation", () => {
     // SQLite: the effective library directory is the SQLite libraryDir itself,
     // and both diagnostic endpoints must agree on it.
     assert.equal(health.storage, "sqlite", "seeded library should select the sqlite backend");
-    assert.equal(health.libraryDir, resolve(libraryDir), "health must report the SQLite libraryDir");
+    assert.ok(!("libraryDir" in health), "health must not publish libraryDir (task 314)");
+    assert.ok(typeof health.libraryDigest === "string" && health.libraryDigest.length > 0, "health must report the SQLite library digest");
     assert.equal(
       library.libraryDir,
-      health.libraryDir,
-      "health.libraryDir must equal library-path.libraryDir in the SQLite backend",
+      resolve(libraryDir),
+      "library-path must report the SQLite libraryDir",
     );
     assert.equal(
       library.path,

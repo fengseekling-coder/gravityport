@@ -115,7 +115,41 @@ export interface SqliteAssetStore {
   applySessionTitle(projectId: string, sessionKey: string, title: string): Promise<{ stackId: string; renamed: boolean }>;
   reorderAssetStack(projectId: string, stackId: string, assetIds: string[]): Promise<AssetStackSummary>;
   removeAssetsFromStack(projectId: string, stackId: string, assetIds: string[]): Promise<{ dissolved: boolean; remainingAssetId: string | null; stack: AssetStackSummary | null }>;
-  moveAssetsToStack(projectId: string, assetIds: string[], targetStackId: string | null): Promise<{ target: AssetStackSummary | null; sources: Array<{ stackId: string; dissolved: boolean; remainingAssetId: string | null }>; movedAssetIds: string[] }>;
+  moveAssetsToStack(
+    projectId: string,
+    assetIds: string[],
+    targetStackId: string | null
+  ): Promise<{
+    target: AssetStackSummary | null;
+    sources: Array<{
+      stackId: string;
+      name: string;
+      memberIdsBefore: string[];
+      movedAssetIds: string[];
+      dissolved: boolean;
+      remainingAssetId: string | null;
+    }>;
+    movedAssetIds: string[];
+    previouslyLooseAssetIds: string[];
+  }>;
+  dropAssetsOnAsset(
+    projectId: string,
+    assetIds: string[],
+    targetAssetId: string
+  ): Promise<{
+    mode: "joined" | "created" | "noop";
+    stack: AssetStackSummary | null;
+    sources: Array<{
+      stackId: string;
+      name: string;
+      memberIdsBefore: string[];
+      movedAssetIds: string[];
+      dissolved: boolean;
+      remainingAssetId: string | null;
+    }>;
+    movedAssetIds: string[];
+    previouslyLooseAssetIds: string[];
+  }>;
   dissolveAssetStack(projectId: string, stackId: string): Promise<{ id: string; assetIds: string[]; dissolved: true }>;
   getAsset(projectId: string, assetId: string): Promise<StoredAsset | null>;
   ensureAssetPalette(projectId: string, assetId: string): Promise<StoredAsset | null>;
@@ -191,7 +225,7 @@ export interface SqliteAssetStore {
   libraryRevision(projectId?: string): Promise<string>;
   libraryChangeState(projectId?: string): Promise<{ revision: number; oldestRevision: number | null }>;
   listLibraryChangesSince(projectId: string, sinceRevision: number, options?: { limit?: number }): Promise<{ sinceRevision: number | null; currentRevision: number; oldestRevision: number | null; complete: boolean; changes: Array<Record<string, unknown>> }>;
-  listGalleryRowsForAssets(filters: Record<string, unknown>, assetIds: string[]): Promise<{ rows: StoredAsset[]; rowByAssetId: Record<string, string>; afterCursorRowIds?: string[] }>;
+  listGalleryRowsForAssets(filters: Record<string, unknown>, assetIds: string[]): Promise<{ rows: StoredAsset[]; rowByAssetId: Record<string, string>; afterCursorRowIds?: string[]; total: number | null; stack: AssetStackSummary | null }>;
   findAutomaticIngestSuppression(projectId: string, hashes: Record<string, unknown>): Promise<Record<string, unknown> | null>;
   listAutomaticIngestSuppressions(projectId: string): Promise<Array<Record<string, unknown>>>;
   clearAutomaticIngestSuppression(projectId: string, hashes: Record<string, unknown>): Promise<number>;

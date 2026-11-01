@@ -598,3 +598,175 @@ test("library-changes and gallery-rows routes serve the incremental contract ove
   });
   assert.equal(oversized.status, 413, "reconciliation chunks are bounded per request");
 });
+
+// Task 320: gallery-rows now carries the view total and the stack summary so
+// an incremental merge can update the page counters like a full reload would.
+test("gallery-rows serves the view total, the stack summary and stack page sort keys", async (t) => {
+  const { store, imagePath } = await createStore(t, "rows-total");
+
+  const ids = [];
+  for (let i = 0; i < 5; i += 1) {
+    const asset = await createSampleAsset(store, imagePath, `total-${i}`);
+    ids.push(asset.id);
+  }
+  const stack = await store.createAssetStack("default", [ids[0], ids[1], ids[2]], { coverAssetId: ids[0] });
+  // 单成员堆叠会立刻被服务端解散，所以独立堆叠各用两张。
+  const other = await store.createAssetStack("default", [ids[3], ids[4]], { coverAssetId: ids[3] });
+
+  // 折叠视图：rows.total 与同条件 GET /api/assets 首页 page.total 同一函数算出。
+  const collapsedRows = await store.listGalleryRowsForAssets(
+    { projectId: "default", sort: "newest", view: "gallery", collapseStacks: true }, [ids[0], ids[3]],
+  );
+  const collapsedPage = await store.listAssetPage({ projectId: "default", sort: "newest", collapseStacks: true, limit: 1, includeTotal: true });
+  assert.equal(collapsedRows.total, collapsedPage.page.total);
+  assert.equal(collapsedRows.total, 2); // 两个堆叠节点（ids[0] 已入回收站，不产生散卡）
+  assert.equal(collapsedRows.stack, null, "non-stack requests carry no stack summary");
+  assert.ok(collapsedRows.rows.every((row) => row.node_sort), "collapsed rows carry sort keys");
+
+  // 平铺（回收站）视图：total 与 trash 页一致，无 stack。
+  await store.deleteAsset("default", ids[0]);
+  const trashRows = await store.listGalleryRowsForAssets(
+    { projectId: "default", sort: "newest", trash: true }, [ids[0]],
+  );
+  const trashPage = await store.listAssetPage({ projectId: "default", sort: "newest", trash: true, limit: 1, includeTotal: true });
+  assert.equal(trashRows.total, trashPage.page.total);
+  assert.equal(trashRows.total, 1);
+
+  // 堆叠视图：stack 摘要与 GET /api/asset-stacks/:id/assets 一致（在用成员数），
+  // rows.total 与堆叠首页 page.total 一致。
+  const stackRows = await store.listGalleryRowsForAssets(
+    { projectId: "default", sort: "manual", stackId: stack.id }, [ids[0], ids[1]],
+  );
+  const stackPage = await store.listAssetStackAssets("default", stack.id, { sort: "manual", limit: 1, includeTotal: true });
+  assert.equal(stackRows.total, stackPage.page.total);
+  assert.equal(stackRows.total, 2, "the trashed member no longer counts as active");
+  assert.equal(stackRows.stack.id, stack.id);
+  assert.equal(stackRows.stack.count, stackPage.stack.count);
+  assert.equal(stackRows.stack.cover_asset_id, stackPage.stack.cover_asset_id);
+
+  // 堆叠页每张都带与 gallery-rows 同口径的排序键。
+  const page = await store.listAssetStackAssets("default", stack.id, { sort: "manual", limit: 0 });
+  assert.ok(page.assets.every((asset) => asset.node_sort
+    && asset.node_sort.searchScore === null
+    && typeof asset.node_sort.createdAt === "string"
+    && typeof asset.node_sort.sortName === "string"));
+  assert.ok(page.assets.every((asset) => Number.isFinite(asset.stack_position)));
+
+  // 堆叠解散：stack 为 null、rows 为空、total 为 0。
+  await store.dissolveAssetStack("default", other.id);
+  const goneRows = await store.listGalleryRowsForAssets(
+    { projectId: "default", sort: "manual", stackId: other.id }, [ids[3]],
+  );
+  assert.equal(goneRows.stack, null);
+  assert.deepEqual(goneRows.rows, []);
+  assert.equal(goneRows.total, 0);
+});
+
+// Task 320 返工 1 (B)：只带堆叠编号、素材编号为空的 gallery-rows 请求，
+// 必须把结果圈定在请求的堆叠节点上，平铺视图返回空，不得返回整视图。
+test("gallery-rows with empty assetIds and non-empty requestedStackIds bounds to stacks (320 返工 1 B)", async (t) => {
+  const { store, imagePath } = await createStore(t, "empty-ids-stack-rows");
+
+  const pa = [];
+  for (let i = 0; i < 12; i += 1) {
+    const isFavorite = i >= 5;
+    const asset = await store.createAsset({
+      assetId: `pa-${i}`,
+      imagePath,
+      prompt: `Test pa-${i}`,
+      favorite: isFavorite,
+      rating: isFavorite ? 1 : 0,
+    });
+    pa.push(asset);
+  }
+  const stack = await store.createAssetStack("default", [pa[0].id, pa[1].id, pa[2].id], { coverAssetId: pa[0].id });
+
+  // 1. 折叠、所有素材、newest：应该是 1（该堆叠的节点 pa-0）
+  const r1 = await store.listGalleryRowsForAssets(
+    { projectId: "default", collapseStacks: true, sort: "newest", requestedStackIds: [stack.id] },
+    [],
+  );
+  assert.equal(r1.rows.length, 1, "collapsed all assets returns only the requested stack node");
+  assert.equal(r1.rows[0].id, pa[0].id);
+
+  // 2. 平铺、搜索 T：应该是 0（平铺视图没有堆叠卡）
+  const r2 = await store.listGalleryRowsForAssets(
+    { projectId: "default", collapseStacks: false, sort: "newest", query: "T", requestedStackIds: [stack.id] },
+    [],
+  );
+  assert.equal(r2.rows.length, 0, "flat search returns 0 rows when assetIds is empty");
+
+  // 3. 平铺、只看收藏：应该是 0
+  const r3 = await store.listGalleryRowsForAssets(
+    { projectId: "default", collapseStacks: false, sort: "newest", favorite: true, requestedStackIds: [stack.id] },
+    [],
+  );
+  assert.equal(r3.rows.length, 0, "flat favorite returns 0 rows when assetIds is empty");
+
+  // 4. 折叠、mediaKind: img：应该是 1
+  const r4 = await store.listGalleryRowsForAssets(
+    { projectId: "default", collapseStacks: true, sort: "newest", mediaKind: "img", requestedStackIds: [stack.id] },
+    [],
+  );
+  assert.equal(r4.rows.length, 1, "collapsed mediaKind returns only the requested stack node");
+  assert.equal(r4.rows[0].id, pa[0].id);
+});
+
+test("POST /api/gallery-rows with empty assetIds and affectedStackIds bounds to stack over HTTP (320 返工 1 B)", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-gallery-rows-empty-ids-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const generated = join(root, "generated-images");
+  await mkdir(generated, { recursive: true });
+  await writeFile(join(generated, "pixel.png"), ONE_PIXEL_PNG);
+  const runtime = await startMosaRuntime({
+    port: 0,
+    projectRoot: root,
+    libraryDir: join(root, "library"),
+    generatedImagesDir: generated,
+    codexImagesDir: join(root, "codex-images"),
+    codexSessionsDir: join(root, "sessions"),
+    grokSessionsDir: join(root, "grok-sessions"),
+    cowartCanvasDir: join(root, "cowart-data"),
+    cowartRegistryPath: join(root, "state", "cowart-projects.json"),
+  });
+  t.after(() => runtime.stop());
+
+  for (let i = 0; i < 5; i += 1) {
+    const res = await fetch(`${runtime.url}/api/assets/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ assetId: `http-pa-${i}`, imagePath: join(generated, "pixel.png"), prompt: `pa ${i}` }),
+    });
+    assert.equal(res.status, 200);
+  }
+
+  const stackRes = await fetch(`${runtime.url}/api/asset-stacks`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ projectId: "default", assetIds: ["http-pa-0", "http-pa-1"], coverAssetId: "http-pa-0" }),
+  });
+  assert.equal(stackRes.status, 201);
+  const { stack } = await stackRes.json();
+
+  const rowsRes = await fetch(`${runtime.url}/api/gallery-rows`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      project: "default",
+      request: {
+        query: "",
+        scope: "all",
+        mediaKind: "all",
+        facets: {},
+        sort: "newest",
+        view: "gallery",
+        affectedStackIds: [stack.id],
+      },
+      assetIds: [],
+    }),
+  });
+  assert.equal(rowsRes.status, 200);
+  const body = await rowsRes.json();
+  assert.equal(body.rows.length, 1, "HTTP rows only contains the requested stack node");
+  assert.equal(body.rows[0].id, "http-pa-0");
+});

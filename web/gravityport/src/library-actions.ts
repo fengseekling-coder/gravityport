@@ -179,6 +179,33 @@ export async function addAssetsToStack(
   };
 }
 
+export interface StackDropResult {
+  mode: "joined" | "created" | "noop";
+  stack: StackInfo | null;
+  sources: Array<{
+    stackId: string;
+    name: string;
+    memberIdsBefore: string[];
+    movedAssetIds: string[];
+    dissolved: boolean;
+    remainingAssetId: string | null;
+  }>;
+  movedAssetIds: string[];
+  previouslyLooseAssetIds: string[];
+}
+
+/** Drop assets onto an asset card, joining its stack or creating a new stack (task 322). */
+export async function dropAssetsOnCard(
+  project: string,
+  ids: string[],
+  targetAssetId: string,
+): Promise<StackDropResult> {
+  return requestJson<StackDropResult>("/api/asset-stacks/drop", {
+    method: "POST",
+    body: { projectId: project, assetIds: ids, targetAssetId },
+  });
+}
+
 /** Remove assets from a stack. */
 export async function removeAssetsFromStack(
   project: string,

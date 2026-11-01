@@ -162,8 +162,11 @@ test("a valid submit forwards the contract payload and returns ok", async (t) =>
     // The forwarded copy is re-redacted locally, never trusted from the panel.
     assert.ok(sent.body.diagnostics.includes("token=<已隐藏>"), "token re-redacted");
     assert.ok(!sent.body.diagnostics.includes("secret123"), "raw token gone");
-    assert.ok(sent.body.diagnostics.includes("~/inside"), "home dir re-redacted");
+    // Task 315: the part behind the home root is masked too — only ~ and the
+    // <路径> placeholder survive.
+    assert.ok(sent.body.diagnostics.includes("~<路径>"), "home dir re-redacted");
     assert.ok(!sent.body.diagnostics.includes(`${homedir()}/inside`), "raw home path gone");
+    assert.ok(!sent.body.diagnostics.includes("inside"), "the tail after the home root is masked");
   } finally {
     restore();
     await collector.close();
@@ -236,7 +239,9 @@ test("collector statuses map onto the local codes", async (t) => {
       [429, 429, "FEEDBACK_RATE_LIMITED"],
       [503, 503, "FEEDBACK_UNAVAILABLE"],
       [500, 502, "FEEDBACK_UPSTREAM"],
-      [302, 502, "FEEDBACK_UPSTREAM"],
+      // 任务 312：转发器带 redirect: "error"，undici 对任何 3xx（包括没有
+      // Location 头的，cause「unexpected redirect」）都按网络错误拒绝 → 离线。
+      [302, 502, "FEEDBACK_OFFLINE"],
     ];
     for (const [upstream, expectedStatus, expectedCode] of mappings) {
       respondWith = { status: upstream, body: { code: "UPSTREAM_SAYS" } };

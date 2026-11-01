@@ -67,12 +67,21 @@ function flowSource(config) {
     const pressEscape = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     // Delays every gallery listing GET: the load effect's loading window
     // becomes long enough to press ⌘A inside it deterministically.
+    window.__fetchLog = [];
     const delayGallery = (ms) => {
       if (!window.__origFetch) window.__origFetch = window.fetch.bind(window);
       const previousFetch = window.fetch.bind(window);
       window.fetch = async (input, init) => {
         const url = typeof input === 'string' ? input : String(input.url || '');
-        if (url.includes('/api/assets?') && url.includes('view=gallery')) await sleep(ms);
+        if (url.includes('/api/assets?') && url.includes('view=gallery')) {
+          window.__fetchLog.push('start:' + url.slice(0, 80));
+          await sleep(ms);
+          const response = await previousFetch(input, init);
+          const clone = response.clone();
+          const body = await clone.json().catch(() => ({}));
+          window.__fetchLog.push('done:' + url.slice(0, 60) + ' assets=' + (body.assets || []).length + ' total=' + (body.page ? body.page.total : '?') + ' rev=' + String(body.revision));
+          return response;
+        }
         return previousFetch(input, init);
       };
       return () => { window.fetch = previousFetch; };
@@ -89,7 +98,18 @@ function flowSource(config) {
     pressSelectAll();
     await switchProject('vacation');
     restoreA();
-    await waitFor(() => cards().length === 2, 'the vacation gallery loads');
+    await waitFor(() => cards().length === 2, 'the vacation gallery loads').catch((error) => {
+      throw new Error('the vacation gallery loads | ' + JSON.stringify({
+        cards: cards().length,
+        selected: document.querySelector('.asset-card.asset-selected')?.getAttribute('data-asset-id') || null,
+        nav: document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') || null,
+        project: document.querySelector('.sidebar-project .toolbar-select')?.textContent || null,
+        loadError: document.querySelector('.empty-state[role=alert]')?.textContent || null,
+        empty: document.querySelector('.empty-state')?.textContent || null,
+        sync: window.__mosaLibrarySync ? window.__mosaLibrarySync.stats() : null,
+        fetchLog: window.__fetchLog || [],
+      }) + ' | ' + error.message);
+    });
     await sleep(600);
     const switchConsumedPending = cards().length === 2 && ringCount() === 1;
 
@@ -106,8 +126,13 @@ function flowSource(config) {
       .find((entry) => entry.textContent.trim() === '收藏');
     if (!favoriteItem) throw new Error('missing favorite menu item');
     favoriteItem.click();
-    await waitFor(busy, 'the same-view refresh is in flight');
+    // 任务 320: the favorite no longer triggers a full-window refresh (no
+    // loading empty-state to wait for). The async window is now the favorite's
+    // incremental sync commit: press ⌘A while it is still in flight, then wait
+    // for the commit — the select-all must land on the settled view.
+    const syncsBeforeFavorite = (window.__mosaLibrarySync ? window.__mosaLibrarySync.stats().syncs : 0) || 0;
     pressSelectAll();
+    await waitFor(() => ((window.__mosaLibrarySync ? window.__mosaLibrarySync.stats().syncs : 0) || 0) > syncsBeforeFavorite, 'the favorite sync commit landed', 15000);
     restoreB();
     await waitFor(() => ringCount() === 4, 'the queued select-all lands on the settled view');
     const sameViewRefreshFires = ringCount() === 4;

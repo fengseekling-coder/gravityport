@@ -1,5 +1,7 @@
 import { MakerZIP } from "@electron-forge/maker-zip";
 import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
+import { FusesPlugin } from "@electron-forge/plugin-fuses";
+import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { desktopDistributionFromEnvironment, requiresPlatformSigning } from "../lib/release-distribution.mjs";
@@ -92,6 +94,37 @@ export function resolveDesktopPackagingTarget({
     throw new Error(`Unsupported MOSA desktop packaging target: ${requestedPlatform}-${requestedArch}. Supported targets: darwin-arm64, win32-x64.`);
   }
   return target;
+}
+
+// 审查 3-6 甲（任务 318）：Electron 关闭保险丝。键是 @electron/fuses 的
+// FuseV1Options 编号，值 true=启用、false=禁用；没列出的保险丝写 INHERIT，
+// 保持 Electron 出厂默认（启动页 startup.html 走 file://，不许动）。
+// - RunAsNode 必须保持启用：设置里复制出的 MCP 配置靠
+//   ELECTRON_RUN_AS_NODE=1 用本程序的可执行文件跑打包版 mcp/server.mjs。
+// - NodeOptions / NodeCliInspect 关掉：别的本机程序不能再借 NODE_OPTIONS 或
+//   --inspect 以 GravityPort 的身份执行代码、继承它的文件夹授权。
+//   开发版依赖目录里的 Electron 可执行文件不改，e2e 的 --inspect 不受影响；
+//   只有打包版连不上 inspector（见 scripts/qa-gallery-resize.mjs 文件头）。
+// - EmbeddedAsarIntegrityValidation + OnlyLoadAppFromAsar：改 app.asar 不再
+//   被当作应用代码加载（@electron/packager 默认把 asar 摘要写进签名信息）。
+// scripts/verify-packaged-runtime.mjs 会在打包后逐项核对实际值。
+export const DESKTOP_FUSES = Object.freeze({
+  [FuseV1Options.RunAsNode]: true,
+  [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+  [FuseV1Options.EnableNodeCliInspectArguments]: false,
+  [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
+  [FuseV1Options.OnlyLoadAppFromAsar]: true,
+});
+
+function desktopFusesPluginConfig() {
+  return {
+    version: FuseVersion.V1,
+    // darwin arm64 上翻保险丝会使 ad-hoc 签名失效；翻完后重新 ad-hoc 签名
+    // （发布构建随后由 forge 用正式证书重签）。非 .app 路径（Windows）上
+    // @electron/fuses 自己跳过这一步。
+    resetAdHocDarwinSignature: true,
+    ...DESKTOP_FUSES,
+  };
 }
 
 const AD_HOC_SIGN_CONFIG = {
@@ -282,6 +315,10 @@ export function createForgeConfig({ target = activeTarget, env = process.env } =
   },
   plugins: [
     new AutoUnpackNativesPlugin(),
+    // Flips DESKTOP_FUSES on the packaged Electron binary during
+    // packageAfterCopy, before forge signs the bundle. The dev dependency
+    // install is never touched: the hook only sees the packaged output tree.
+    new FusesPlugin(desktopFusesPluginConfig()),
   ],
   makers: [
     // The Windows ZIP is the in-app update package; first installs download

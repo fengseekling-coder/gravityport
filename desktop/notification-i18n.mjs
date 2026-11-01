@@ -83,6 +83,11 @@ const desktopTranslations = {
     updatePreflightWritableBody: "GravityPort 所在的文件夹不能写入。请到官网下载新版安装。",
     updatePreflightWritableDownload: "去官网下载",
     updatePreflightWritableCancel: "取消",
+    // 审查 3-6 甲（任务 318）：打开白名单以外的外链前的系统确认框。
+    externalLinkConfirmTitle: "要在浏览器中打开 {host} 吗？",
+    externalLinkConfirmBody: "这个网址不属于 GravityPort，会用默认浏览器打开：{url}",
+    externalLinkConfirmOpen: "在浏览器中打开",
+    externalLinkConfirmCancel: "取消",
   },
   en: {
     menuFile: "File",
@@ -145,6 +150,11 @@ const desktopTranslations = {
     updatePreflightWritableBody: "The folder GravityPort is in cannot be written to. Download the new version from the website and install it.",
     updatePreflightWritableDownload: "Download from Website",
     updatePreflightWritableCancel: "Cancel",
+    // 审查 3-6 甲（任务 318）：confirm dialog before opening a non-allowlisted link.
+    externalLinkConfirmTitle: "Open {host} in your browser?",
+    externalLinkConfirmBody: "This link isn't part of GravityPort. It will open in your default browser: {url}",
+    externalLinkConfirmOpen: "Open in Browser",
+    externalLinkConfirmCancel: "Cancel",
   },
 };
 

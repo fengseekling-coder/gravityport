@@ -1,3 +1,5 @@
+import { describeError } from "./error-messages.js"
+
 /**
  * GravityPort -> MOSA service boundary.
  *
@@ -42,6 +44,12 @@ export type MosaAsset = {
   trash_reason: { code: string; at: string } | null
   child_asset_ids: string[]
   stack: { id: string; count: number; name: string; match_count?: number } | null
+  /** Sort keys the server stamps on gallery rows so the client can place an
+   * incrementally fetched card exactly where the list endpoint would
+   * (review 2-6). Absent on detail-only payloads. */
+  node_sort?: { createdAt: string; sortName: string; searchScore: number | null }
+  /** Member position inside a stack page (stackId views only). */
+  stack_position?: number
   source: Record<string, unknown>
   references: MosaReference[]
 }
@@ -101,6 +109,7 @@ export type AssetPage = {
 type JsonValue = Record<string, unknown>
 
 let token = ""
+let desktopTokenPromise: Promise<string> | null = null
 function takeBootstrapToken(): string {
   if (token) return token
   try {
@@ -118,18 +127,88 @@ function takeBootstrapToken(): string {
   return token
 }
 
-let sessionRefreshPromise: Promise<boolean> | null = null
-function refreshBrowserSession(): Promise<boolean> {
-  if (!sessionRefreshPromise) {
-    sessionRefreshPromise = fetch("/", { credentials: "same-origin", cache: "no-store" })
-      .then((response) => response.ok)
-      .catch(() => false)
-      .finally(() => { sessionRefreshPromise = null })
+// 任务 311：桌面版的客户端凭据不再写进网址片段。渲染层先向主进程领取一次
+// （主进程只对「已核实服务 origin 上的主框架」回答），再发任何请求；浏览器 /
+// 源码模式没有 electronAPI，保留原来从 hash 读取的逻辑。
+function desktopClientToken(): Promise<string> | null {
+  if (typeof window === "undefined") return null
+  // Cast the whole window: tests compile this file standalone without
+  // desktop.ts's global Window augmentation.
+  const bridge = (window as unknown as { electronAPI?: { getClientToken?: () => Promise<unknown> } }).electronAPI
+  const getClientToken = bridge?.getClientToken
+  if (typeof getClientToken !== "function") return null
+  desktopTokenPromise ??= Promise.resolve(getClientToken())
+    .then((value) => {
+      const received = typeof value === "string" ? value.trim() : ""
+      if (received) {
+        token = received
+        try { sessionStorage.setItem("mosa.client-token", received) } catch {}
+      }
+      return token
+    })
+    .catch(() => token)
+  return desktopTokenPromise
+}
+
+/** Resolves the renderer's client capability before anything is sent: awaits
+ * the desktop bridge when present, otherwise reads the browser hash bootstrap.
+ * Every request helper goes through here, so no request leaves without the
+ * capability (or its documented absence) having settled. */
+export function ensureClientToken(): Promise<string> {
+  return desktopClientToken() ?? Promise.resolve(takeBootstrapToken())
+}
+
+// 任务 314：HTML 响应不再顺带发能力 cookie。渲染层先确保拿到凭据
+// （桌面版走 311 的 IPC，浏览器/源码模式读网址 hash），再 POST
+// /api/client-session 用凭据换 HttpOnly cookie；<img>/<video>/EventSource
+// 之后自动带 cookie，fetch 请求则同时带请求头。结果缓存在同一个 promise
+// 里，并发的调用方只换一次；结束后释放，失败的下一次调用可以重试。
+let clientSessionPromise: Promise<boolean> | null = null
+export function ensureClientSession(): Promise<boolean> {
+  if (!clientSessionPromise) {
+    clientSessionPromise = (async () => {
+      const clientToken = await ensureClientToken()
+      if (!clientToken) return false
+      try {
+        const response = await fetch("/api/client-session", {
+          method: "POST",
+          headers: { "x-mosa-client-token": clientToken },
+          credentials: "same-origin",
+          cache: "no-store",
+        })
+        return response.ok
+      } catch {
+        return false
+      }
+    })()
+    void clientSessionPromise.catch(() => {}).then(() => { clientSessionPromise = null })
   }
-  return sessionRefreshPromise
+  return clientSessionPromise
 }
 
 export async function requestJson<T>(path: string, {
+  method = "GET",
+  body,
+  signal,
+  countMutation,
+}: {
+  method?: "GET" | "POST" | "PATCH" | "DELETE"
+  body?: JsonValue
+  signal?: AbortSignal
+  /** Read-only POSTs (gallery-rows reconciliation, similar-check) must not
+   * count as user mutations — the sync's own rows request would otherwise
+   * invalidate every one of its merges. Default: every non-GET counts. */
+  countMutation?: boolean
+} = {}): Promise<T> {
+  const endMutation = method === "GET" || countMutation === false ? null : beginMutation()
+  try {
+    return await requestJsonAttempt(path, { method, body, signal })
+  } finally {
+    endMutation?.()
+  }
+}
+
+async function requestJsonAttempt<T>(path: string, {
   method = "GET",
   body,
   signal,
@@ -138,12 +217,11 @@ export async function requestJson<T>(path: string, {
   body?: JsonValue
   signal?: AbortSignal
 } = {}): Promise<T> {
-  const isMutation = method !== "GET"
   for (let attempt = 0; attempt < 2; attempt++) {
     const headers: Record<string, string> = {}
     if (body) headers["content-type"] = "application/json"
-    const clientToken = takeBootstrapToken()
-    if (isMutation && clientToken) headers["x-mosa-client-token"] = clientToken
+    const clientToken = await ensureClientToken()
+    if (clientToken) headers["x-mosa-client-token"] = clientToken
     const result = await fetch(path, {
       method,
       headers,
@@ -164,8 +242,9 @@ export async function requestJson<T>(path: string, {
       throw new Error(`Invalid JSON response: HTTP ${result.status}`)
     }
     if (result.ok) return data as T
-    if (attempt === 0 && isMutation && data.code === "MOSA_CLIENT_UNAUTHORIZED"
-      && await refreshBrowserSession()) continue
+    // 任务 314：GET 也可能 401（读接口同样要凭据），统一走「重新换 cookie
+    // 再重试一次」，不分修改类与否。
+    if (attempt === 0 && data.code === "MOSA_CLIENT_UNAUTHORIZED" && await ensureClientSession()) continue
     const error = new Error(String(data.error || result.statusText || `HTTP ${result.status}`))
     if (typeof data.code === "string") (error as Error & { code?: string }).code = data.code
     throw error
@@ -174,6 +253,30 @@ export async function requestJson<T>(path: string, {
 }
 
 const e = encodeURIComponent
+
+// ─── Mutation bookkeeping (review 2-6 C.3) ──────────────────────────────────
+// Every mutating request bumps the epoch when it is sent and again when it
+// settles (either way), and keeps a live count of mutations still in flight.
+// The library-sync controller reads both: an epoch move under an in-flight
+// reconcile invalidates its result, and a nonzero pending count postpones the
+// merge until the user's own writes have landed (never flash back a change
+// the user just made).
+let mutationEpoch = 0
+let pendingMutations = 0
+
+function beginMutation(): () => void {
+  mutationEpoch += 1
+  pendingMutations += 1
+  return () => {
+    mutationEpoch += 1
+    pendingMutations -= 1
+  }
+}
+
+/** Read-only snapshot for the sync controller. */
+export function readMutationState(): { epoch: number; pending: number } {
+  return { epoch: mutationEpoch, pending: pendingMutations }
+}
 
 function positive(value: unknown, fallback: number): number {
   const parsed = Number(value)
@@ -198,6 +301,17 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
   const stackRaw = (input.stack && typeof input.stack === "object" ? input.stack : null) as JsonValue | null
   const sizeRaw = Number(input.size_bytes ?? fields.file_bytes ?? fields.size_bytes)
   const durationRaw = Number(fields.duration_seconds)
+  // Gallery rows (and stack pages) carry the server's sort keys; detail
+  // payloads do not. Preserve them verbatim so the reconcile comparator sees
+  // exactly what the server ordered by.
+  const nodeSortRaw = (input.node_sort && typeof input.node_sort === "object" ? input.node_sort : null) as JsonValue | null
+  const nodeSort = nodeSortRaw ? {
+    createdAt: String(nodeSortRaw.createdAt || ""),
+    sortName: String(nodeSortRaw.sortName || ""),
+    searchScore: nodeSortRaw.searchScore == null || !Number.isFinite(Number(nodeSortRaw.searchScore)) ? null : Number(nodeSortRaw.searchScore),
+  } : undefined
+  const stackPositionRaw = Number(input.stack_position)
+  const stackPosition = input.stack_position != null && Number.isFinite(stackPositionRaw) ? stackPositionRaw : undefined
   return {
     id: String(input.id || ""),
     project_id: String(input.project_id || project),
@@ -240,9 +354,35 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
       name: String(stackRaw.name || ""),
       ...(stackRaw.match_count != null ? { match_count: Number(stackRaw.match_count) || 0 } : {}),
     } : null,
+    ...(nodeSort ? { node_sort: nodeSort } : {}),
+    ...(stackPosition != null ? { stack_position: stackPosition } : {}),
     source,
     references: Array.isArray(refs) ? refs as MosaReference[] : [],
   }
+}
+
+/**
+ * The one function for "a fresh gallery row replaces the card in the list"
+ * (review 2-6 C.2 — the list-slimming task builds on this). The new row wins;
+ * the fields only the detail endpoints fill (child_asset_ids after
+ * normalization; pre-normalization the detail row also carries
+ * recipe_snapshots/active_recipe_snapshot_id, which normalizeAsset drops) are
+ * kept from the previous card when the row has nothing, so an incremental
+ * merge never empties what the inspector loaded.
+ *
+ * Deliberate deviation from mergeAssetDetail on the stack annotation: gallery
+ * rows come from endpoints whose annotation is view-authoritative — a row
+ * without one means the asset is genuinely not a stack node in this view (a
+ * moved-out cover, a flattened search hit). Keeping the old badge would leave
+ * a ghost stack card that the next stack-touching merge then wrongly removes
+ * (caught by the incremental oracle). Detail merges keep using
+ * mergeAssetDetail, whose inputs really do lack annotations.
+ */
+export function mergeGalleryRow(previous: MosaAsset | undefined, row: MosaAsset): MosaAsset {
+  if (previous && !(row.child_asset_ids?.length) && previous.child_asset_ids?.length) {
+    return { ...row, child_asset_ids: previous.child_asset_ids }
+  }
+  return row
 }
 
 /** Derivative widths depend on source aspect ratio: 400/960/1600 are LONGEST
@@ -338,7 +478,19 @@ export type MosaWebCaptureStatus = {
   lastExtensionVersion: string
   totalImported: number
   lastError: string | null
-  queue: { reportedAt: string | null; pending: number; failed: number; items: MosaWebCaptureQueueItem[] }
+  // storageBytes/storageLimitBytes/urlOnly/evicted come from the extension's
+  // offline-queue diagnostics (0.15.44+, review 2-2); older extensions report
+  // none of them and they stay 0.
+  queue: {
+    reportedAt: string | null
+    pending: number
+    failed: number
+    storageBytes: number
+    storageLimitBytes: number
+    urlOnly: number
+    evicted: number
+    items: MosaWebCaptureQueueItem[]
+  }
   retryRequestId: number
 }
 
@@ -347,6 +499,7 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
   const items = Array.isArray(queue.items) ? queue.items : []
   const serverTime = (value: unknown): string | null =>
     typeof value === "string" && value && Number.isFinite(Date.parse(value)) ? value : null
+  const boundedCount = (value: unknown) => Math.max(0, Number(value || 0))
   return {
     enabled: input.enabled === true,
     tokenConfigured: input.tokenConfigured === true,
@@ -356,8 +509,12 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
     lastError: typeof input.lastError === "string" && input.lastError ? input.lastError : null,
     queue: {
       reportedAt: serverTime(queue.reportedAt),
-      pending: Math.max(0, Number(queue.pending || 0)),
-      failed: Math.max(0, Number(queue.failed || 0)),
+      pending: boundedCount(queue.pending),
+      failed: boundedCount(queue.failed),
+      storageBytes: boundedCount(queue.storageBytes),
+      storageLimitBytes: boundedCount(queue.storageLimitBytes),
+      urlOnly: boundedCount(queue.urlOnly),
+      evicted: boundedCount(queue.evicted),
       items: items.map((row: unknown) => {
         const item = (row && typeof row === "object" && !Array.isArray(row) ? row : {}) as JsonValue
         return {
@@ -441,6 +598,138 @@ export async function fetchAsset(project: string, id: string, signal?: AbortSign
   return normalizeAsset(data.asset || {}, project)
 }
 
+// ─── Incremental sync endpoints (review 2-6) ────────────────────────────────
+
+/** One journaled library change; shape mirrors lib/sqlite-asset-store.mjs
+ * listLibraryChangesSince rows and the SSE library-changed payload. */
+export type MosaLibraryChange = {
+  revision: number
+  kind: string
+  entityType: string
+  entityId: string
+  flags: string[]
+  assetIds: string[]
+  detail: Record<string, unknown>
+}
+
+export type MosaLibraryChangesEnvelope = {
+  sinceRevision: number | null
+  currentRevision: number
+  oldestRevision: number | null
+  complete: boolean
+  changes: MosaLibraryChange[]
+}
+
+export async function fetchLibraryRevision(project: string): Promise<string> {
+  const data = await requestJson<{ revision?: unknown }>(`/api/library-revision?project=${e(project)}`)
+  return String(data.revision ?? "")
+}
+
+export async function fetchLibraryChanges(project: string, since: number, signal?: AbortSignal): Promise<MosaLibraryChangesEnvelope> {
+  const data = await requestJson<JsonValue>(`/api/library-changes?project=${e(project)}&since=${e(String(since))}`, { signal })
+  const changes = Array.isArray(data.changes) ? data.changes : []
+  return {
+    sinceRevision: data.sinceRevision == null ? null : Number(data.sinceRevision),
+    currentRevision: Number(data.currentRevision || 0),
+    oldestRevision: data.oldestRevision == null ? null : Number(data.oldestRevision),
+    complete: data.complete !== false,
+    changes: changes.map((row): MosaLibraryChange => {
+      const record = (row && typeof row === "object" && !Array.isArray(row) ? row : {}) as JsonValue
+      const detail = record.detail
+      return {
+        revision: Number(record.revision || 0),
+        kind: String(record.kind || ""),
+        entityType: String(record.entityType || ""),
+        entityId: String(record.entityId || ""),
+        flags: asStringArray(record.flags),
+        assetIds: asStringArray(record.assetIds),
+        detail: detail && typeof detail === "object" && !Array.isArray(detail) ? detail as Record<string, unknown> : {},
+      }
+    }),
+  }
+}
+
+/** The current gallery request, in the shape POST /api/gallery-rows reads. */
+export type MosaGalleryRowsQuery = {
+  project: string
+  scope: "all" | "favorite" | "unorganized" | "trash"
+  query: string
+  sort: string
+  mediaKind: "all" | "img" | "video"
+  source?: string
+  group?: string
+  stackId?: string
+}
+
+export type MosaGalleryRows = {
+  rows: MosaAsset[]
+  rowByAssetId: Record<string, string>
+  afterCursorRowIds: string[]
+  total: number | null
+  stack: { id: string; name: string; count: number; cover_asset_id: string | null } | null
+}
+
+// The server answers 413 above 1000 ids per request; chunk and merge.
+const GALLERY_ROWS_CHUNK_SIZE = 1000
+
+export async function fetchGalleryRows(
+  query: MosaGalleryRowsQuery,
+  assetIds: readonly string[],
+  boundaryCursor: string | null,
+  stackIds: readonly string[] = [],
+): Promise<MosaGalleryRows> {
+  const ids = [...new Set(assetIds)]
+  const stacks = [...new Set(stackIds)]
+  const request: JsonValue = {
+    view: "gallery",
+    scope: query.scope,
+    query: query.query,
+    sort: query.sort,
+    facets: { group: query.group || "" },
+    ...(query.mediaKind !== "all" ? { mediaKind: query.mediaKind } : {}),
+    ...(query.source ? { source: query.source } : {}),
+    ...(query.stackId ? { stackId: query.stackId } : {}),
+    ...(boundaryCursor ? { boundaryCursor } : {}),
+    ...(stacks.length ? { affectedStackIds: stacks } : {}),
+  }
+  const merged: MosaGalleryRows = { rows: [], rowByAssetId: {}, afterCursorRowIds: [], total: null, stack: null }
+  // 纯堆叠编号的批次（封面替换：新封面 id 不在任何 journal assetIds 里）
+  // 也要发请求，否则节点行拿不到。
+  const chunks = ids.length
+    ? Array.from({ length: Math.ceil(ids.length / GALLERY_ROWS_CHUNK_SIZE) }, (_, index) => ids.slice(index * GALLERY_ROWS_CHUNK_SIZE, (index + 1) * GALLERY_ROWS_CHUNK_SIZE))
+    : stacks.length ? [[]] : []
+  for (const chunk of chunks) {
+    const data = await requestJson<JsonValue>("/api/gallery-rows", {
+      method: "POST",
+      countMutation: false,
+      body: { projectId: query.project, assetIds: chunk, request } as JsonValue,
+    })
+    for (const item of Array.isArray(data.rows) ? data.rows : []) {
+      merged.rows.push(normalizeAsset(item as JsonValue, query.project))
+    }
+    const byId = (data.rowByAssetId && typeof data.rowByAssetId === "object" && !Array.isArray(data.rowByAssetId)
+      ? data.rowByAssetId : {}) as JsonValue
+    for (const [id, nodeId] of Object.entries(byId)) merged.rowByAssetId[id] = String(nodeId || id)
+    for (const id of Array.isArray(data.afterCursorRowIds) ? data.afterCursorRowIds : []) {
+      merged.afterCursorRowIds.push(String(id))
+    }
+    if (chunk === chunks[0]) {
+      merged.total = data.total == null || !Number.isFinite(Number(data.total)) ? null : Number(data.total)
+      const stack = data.stack
+      if (stack && typeof stack === "object" && !Array.isArray(stack)) {
+        const record = stack as JsonValue
+        merged.stack = {
+          id: String(record.id || ""),
+          name: String(record.name || ""),
+          count: Number(record.count || 0),
+          cover_asset_id: record.cover_asset_id == null ? null : String(record.cover_asset_id),
+        }
+      }
+    }
+  }
+  return merged
+}
+
 export async function toggleAssetFavorite(project: string, id: string) {
   const result = await requestJson<{ asset?: JsonValue }>(`/api/assets/${e(project)}/${e(id)}/favorite`, { method: "POST" })
   return normalizeAsset(result.asset || {}, project)
@@ -457,15 +746,20 @@ export async function updateAssetMetadata(project: string, id: string, patch: { 
  * to the thumbnail tier and stores it as thumbnails/<id>.webp. Raw-body call
  * for the Blob (requestJson only speaks JSON). */
 export async function uploadVideoPoster(project: string, id: string, poster: Blob): Promise<void> {
-  const result = await fetch(`/api/assets/${e(project)}/${e(id)}/poster`, {
-    method: "POST",
-    headers: { "content-type": poster.type || "image/webp", ...mosaMutationHeaders("POST") },
-    body: poster,
-    credentials: "same-origin",
-  })
-  if (!result.ok) {
-    const data = await result.json().catch(() => ({})) as JsonValue
-    throw new Error(String(data.error || `HTTP ${result.status}`))
+  const endMutation = beginMutation()
+  try {
+    const result = await fetch(`/api/assets/${e(project)}/${e(id)}/poster`, {
+      method: "POST",
+      headers: { "content-type": poster.type || "image/webp", ...(await mosaMutationHeaders("POST")) },
+      body: poster,
+      credentials: "same-origin",
+    })
+    if (!result.ok) {
+      const data = await result.json().catch(() => ({})) as JsonValue
+      throw new Error(String(data.error || `HTTP ${result.status}`))
+    }
+  } finally {
+    endMutation()
   }
 }
 
@@ -492,8 +786,7 @@ const BATCH_CHUNK_SIZE = 1000
 const STACK_MOVE_CHUNK_SIZE = 2000
 
 function failureMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
+  return describeError(error)
 }
 
 async function runBatchAction(
@@ -700,6 +993,7 @@ export type ImportSimilarState = {
 export function fetchImportSimilarCheck(project: string, assetIds: string[], signal?: AbortSignal): Promise<ImportSimilarState> {
   return requestJson<ImportSimilarState>("/api/import/similar-check", {
     method: "POST",
+    countMutation: false,
     body: { projectId: project, assetIds },
     signal,
   })
@@ -717,23 +1011,28 @@ export function resolveImportDuplicates(project: string, actions: ImportResolveA
 }
 
 /** Mutation headers for callers that must stream a raw body (import staging). */
-export function mosaMutationHeaders(method = "POST"): Record<string, string> {
+export async function mosaMutationHeaders(method = "POST"): Promise<Record<string, string>> {
   const verb = String(method || "GET").toUpperCase()
   if (verb === "GET" || verb === "HEAD" || verb === "OPTIONS") return {}
-  const clientToken = takeBootstrapToken()
+  const clientToken = await ensureClientToken()
   return clientToken ? { "x-mosa-client-token": clientToken } : {}
 }
 
 export async function stageImportFile(file: File): Promise<string> {
-  const result = await fetch("/api/import/stage", {
-    method: "POST",
-    headers: { "x-mosa-file-name": encodeURIComponent(file.name), ...mosaMutationHeaders("POST") },
-    body: file,
-    credentials: "same-origin",
-  })
-  const data = await result.json().catch(() => ({})) as JsonValue
-  if (!result.ok) throw new Error(String(data.error || `HTTP ${result.status}`))
-  return String(data.path || "")
+  const endMutation = beginMutation()
+  try {
+    const result = await fetch("/api/import/stage", {
+      method: "POST",
+      headers: { "x-mosa-file-name": encodeURIComponent(file.name), ...(await mosaMutationHeaders("POST")) },
+      body: file,
+      credentials: "same-origin",
+    })
+    const data = await result.json().catch(() => ({})) as JsonValue
+    if (!result.ok) throw new Error(String(data.error || `HTTP ${result.status}`))
+    return String(data.path || "")
+  } finally {
+    endMutation()
+  }
 }
 
 export type MosaVersionRow = MosaAsset & {
@@ -870,5 +1169,7 @@ export async function openLibraryFolder(path: string, revealFile = false) {
   })
 }
 
-// Take the transient token immediately, not only on a later mutation.
-if (typeof window !== "undefined") takeBootstrapToken()
+// Start the capability load immediately, not only on a later request: the
+// browser path parses the URL fragment, the desktop path asks the main process
+// (task 311) so the very first request already carries the token.
+if (typeof window !== "undefined") void ensureClientSession()

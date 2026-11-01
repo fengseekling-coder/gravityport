@@ -788,6 +788,7 @@ Documents 或任意项目图片目录作为默认扫描根。导入路径、画�
 打开文件夹操作均经过边界
 校验；运行时隔离检查在写入库或监听端口前失败即停止。请把 Prompt、会话 ID、
 页面 URL、素材和 Token 视为私人数据。
+服务端外网请求只走 lib/outbound-fetch.mjs；桌面版由主进程注入 Chromium 网络（系统代理），不跟随跳转、不带 Cookie。
 
 ## 10. 相关验证
 
@@ -803,4 +804,4 @@ git diff --check
 
 上述命令验证构建、Node 测试、ESLint，以及 `npm run check` 中的源文件边界、死代码、
 i18n 键和 Web UI 类型检查，最后检查补丁空白；真实桌面包、
-浏览器扩展重载和已登录网页上的 Web Capture 仍需按相应指南单独验证。
+浏览器扩展重载和已登录网页上的 Web Capture 仍需按相应指南单独验证。桌面网络栈与系统代理行为通过 node scripts/qa-service-proxy.mjs 验证。

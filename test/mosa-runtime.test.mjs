@@ -101,7 +101,12 @@ test("starts, identifies itself, stops idempotently, and restarts", async (t) =>
   assert.equal(response.status, 200);
   const health = await response.json();
   assert.equal(health.product, "mosa");
-  assert.equal(health.libraryDir, options.libraryDir);
+  // Task 314: the public health payload carries the library digest, never
+  // the library path.
+  assert.equal(typeof health.libraryDigest, "string");
+  assert.ok(health.libraryDigest.length > 0, "the library digest must be present");
+  assert.ok(!("libraryDir" in health), "health must not leak the library path");
+  assert.ok(!JSON.stringify(health).includes(resolve(options.libraryDir)), "no absolute library path may appear in health");
   assert.equal(health.storage, "sqlite");
   assert.equal(typeof health.productVersion, "string");
   assert.equal(typeof health.gitSha, "string");
@@ -117,7 +122,8 @@ test("starts, identifies itself, stops idempotently, and restarts", async (t) =>
   assert.equal(bundle.headers.get("content-type"), "text/javascript; charset=utf-8");
   const missingScript = await fetch(`${first.url}/app.mjs`);
   assert.equal(missingScript.status, 404);
-  const bridges = await (await fetch(`${first.url}/api/bridges`)).json();
+  const authHeaders = { "x-mosa-client-token": first.clientToken };
+  const bridges = await (await fetch(`${first.url}/api/bridges`, { headers: authHeaders })).json();
   assert.equal(bridges.cowart.sources[0].projectDir, options.cowartProjectDir);
   assert.equal(typeof bridges.codex.watchingImages, "boolean");
   assert.equal(typeof bridges.codex.watchingSessions, "boolean");
@@ -156,8 +162,9 @@ test("CODEX_HOME drives every default Codex-owned runtime source consistently", 
   const runtime = await startMosaRuntime(options);
   t.after(() => runtime.stop());
 
-  const bridges = await (await fetch(`${runtime.url}/api/bridges`)).json();
-  const library = await (await fetch(`${runtime.url}/api/library-path`)).json();
+  const authHeaders = { "x-mosa-client-token": runtime.clientToken };
+  const bridges = await (await fetch(`${runtime.url}/api/bridges`, { headers: authHeaders })).json();
+  const library = await (await fetch(`${runtime.url}/api/library-path`, { headers: authHeaders })).json();
   assert.equal(bridges.codex.imagesDir, join(codexHome, "generated_images"));
   assert.equal(bridges.codex.sessionsDir, join(codexHome, "sessions"));
   assert.equal(library.codexGeneratedImagesDir, join(codexHome, "generated_images"));
@@ -181,14 +188,41 @@ test("management mutations reject callers without the runtime capability", async
   });
 });
 
-test("first-party browser HTML bootstraps an HttpOnly mutation capability", async (t) => {
+test("first-party browser HTML no longer mints the capability; client-session does", async (t) => {
   const root = await makeTemporaryRoot(t, "mosa-runtime-browser-auth-");
   const runtime = await startMosaRuntime(runtimeOptions(root));
   t.after(() => runtime.stop());
 
+  // Task 314: an HTML GET (root or SPA fallback) hands out NO cookie — a
+  // stolen HTML response must not carry a writable capability.
   const page = await fetch(`${runtime.url}/`);
   assert.equal(page.status, 200);
-  const setCookie = page.headers.get("set-cookie") || "";
+  assert.equal(page.headers.get("set-cookie"), null, "GET / must not set the capability cookie");
+  const fallback = await fetch(`${runtime.url}/some/spa/route`);
+  assert.equal(fallback.status, 200);
+  assert.equal(fallback.headers.get("set-cookie"), null, "SPA fallback must not set the capability cookie");
+
+  // The renderer proves the credential and exchanges it for the cookie.
+  // (Explicit empty headers pin "no credential": the clean-test-env wrapper
+  // preserves them instead of injecting the shared test token.)
+  const unauthorized = await fetch(`${runtime.url}/api/client-session`, {
+    method: "POST",
+    headers: { "x-mosa-client-token": "" },
+  });
+  assert.equal(unauthorized.status, 401);
+  const cookieOnly = await fetch(`${runtime.url}/api/client-session`, {
+    method: "POST",
+    // The explicit empty header pins "no credential"; the clean-test-env
+    // wrapper preserves it instead of injecting the shared test token.
+    headers: { cookie: `mosa-browser-client-${runtime.port}=whatever`, "x-mosa-client-token": "" },
+  });
+  assert.equal(cookieOnly.status, 401, "the cookie itself must not count as a credential here");
+  const session = await fetch(`${runtime.url}/api/client-session`, {
+    method: "POST",
+    headers: { "x-mosa-client-token": runtime.clientToken },
+  });
+  assert.equal(session.status, 204);
+  const setCookie = session.headers.get("set-cookie") || "";
   assert.match(setCookie, new RegExp(`^mosa-browser-client-${runtime.port}=[A-Za-z0-9_-]{43}; Path=/; HttpOnly; SameSite=Strict$`));
   const browserCookie = setCookie.split(";", 1)[0];
 
@@ -202,6 +236,15 @@ test("first-party browser HTML bootstraps an HttpOnly mutation capability", asyn
     body: JSON.stringify({ action: "group", projectId: "default", assetIds: ["missing"], group: "" }),
   });
   assert.notEqual(mutation.status, 401);
+  // Reads are behind the capability too (task 314); the cookie authorizes
+  // them, and an explicitly empty header proves the bare request is refused
+  // (the clean-test-env wrapper would otherwise inject the shared token).
+  const read = await fetch(`${runtime.url}/api/assets?project=default`, { headers: { cookie: browserCookie } });
+  assert.equal(read.status, 200);
+  const readWithout = await fetch(`${runtime.url}/api/assets?project=default`, {
+    headers: { "x-mosa-client-token": "" },
+  });
+  assert.equal(readWithout.status, 401);
 });
 
 test("runtime shutdown closes active library event streams before waiting for HTTP drain", async (t) => {
@@ -209,7 +252,9 @@ test("runtime shutdown closes active library event streams before waiting for HT
   const runtime = await startMosaRuntime(runtimeOptions(root));
   t.after(() => runtime.stop());
 
-  const response = await fetch(`${runtime.url}/api/library-events?project=default`);
+  const response = await fetch(`${runtime.url}/api/library-events?project=default`, {
+    headers: { "x-mosa-client-token": runtime.clientToken },
+  });
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") || "", /text\/event-stream/);
   const reader = response.body.getReader();
@@ -256,7 +301,7 @@ test("an explicit runtime libraryDir keeps detected legacy JSON assets in place"
   t.after(() => runtime.stop());
 
   assert.equal(runtime.storage, "json");
-  const library = await (await fetch(`${runtime.url}/api/library-path`)).json();
+  const library = await (await fetch(`${runtime.url}/api/library-path`, { headers: { "x-mosa-client-token": runtime.clientToken } })).json();
   assert.equal(library.storage, "json");
   assert.equal(library.libraryDir, options.libraryDir);
   assert.equal(library.path, join(options.libraryDir, "assets", "default"));
@@ -304,7 +349,7 @@ test("runtime listens before delayed optional integrations start", async (t) => 
   const readyMs = performance.now() - startedAt;
   assert.ok(readyMs < 1000, `core runtime readiness took ${readyMs.toFixed(1)}ms while optional integrations were delayed`);
   assert.equal((await fetch(`${runtime.url}/api/health`)).status, 200);
-  const bridges = await (await fetch(`${runtime.url}/api/bridges`)).json();
+  const bridges = await (await fetch(`${runtime.url}/api/bridges`, { headers: { "x-mosa-client-token": runtime.clientToken } })).json();
   assert.equal(bridges.codex.enabled, false);
   assert.equal(bridges.grok.enabled, false);
   assert.equal(bridges.cowart.enabled, false);
@@ -320,7 +365,7 @@ test("a host bridge gate holds optional integrations until the desktop releases 
     bridgeStartupGate,
   }));
   t.after(() => runtime.stop());
-  const bridges = async () => (await fetch(`${runtime.url}/api/bridges`)).json();
+  const bridges = async () => (await fetch(`${runtime.url}/api/bridges`, { headers: { "x-mosa-client-token": runtime.clientToken } })).json();
   await new Promise((resolveWait) => setTimeout(resolveWait, 400));
   assert.equal((await bridges()).codex.enabled, false, "bridges wait for the host gate");
   releaseGate();

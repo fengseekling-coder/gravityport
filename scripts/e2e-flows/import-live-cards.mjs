@@ -191,6 +191,9 @@ function sharedHelpers(ratios, total, prefix) {
         let pathname = url;
         try { pathname = new URL(url, location.origin).pathname; } catch {}
         if (method === 'GET' && pathname === '/api/assets') stats.galleryGets += 1;
+        // 任务 320: the end-of-import settle is an incremental sync commit
+        // (library-changes + gallery-rows), no longer a full-window GET.
+        if (method === 'POST' && pathname === '/api/gallery-rows') stats.galleryRows += 1;
         if (method === 'POST' && pathname === '/api/assets/import-batch') {
           stats.importBatches += 1;
           if (stats.importBatches === 2) stats.cardsWhenBatch2Issued = mountedCards().length;
@@ -198,7 +201,10 @@ function sharedHelpers(ratios, total, prefix) {
           // it belongs to the import's own end-of-import refresh, which the
           // zero-pull assertion must not count (the gate holds during the
           // import proper; the closing refresh is by design).
-          if (stats.importBatches === totalBatches) stats.getsWhenLastBatchIssued = stats.galleryGets;
+          if (stats.importBatches === totalBatches) {
+            stats.getsWhenLastBatchIssued = stats.galleryGets;
+            stats.syncsWhenLastBatchIssued = (window.__mosaLibrarySync ? window.__mosaLibrarySync.stats().syncs : 0) || 0;
+          }
         }
         return originalFetch(input, init);
       };
@@ -218,14 +224,23 @@ function sharedHelpers(ratios, total, prefix) {
     }
     async function waitDerivativeUrls(stats) {
       const deadline = Date.now() + 240000;
+      let lastDiag = '';
       while (Date.now() < deadline) {
         const cards = mountedCards().filter((card) => (card.getAttribute('data-asset-id') || '').startsWith(PREFIX));
         const images = cards.map((card) => card.querySelector('img')).filter(Boolean);
         if (cards.length && images.length && images.every((img) => !String(img.currentSrc || img.src || '').includes('/images/'))) {
           return true;
         }
-        await sleep(500);
+        lastDiag = JSON.stringify({
+          mounted: mountedCards().length,
+          importedMounted: cards.length,
+          withImg: images.length,
+          originals: images.filter((img) => String(img.currentSrc || img.src || '').includes('/images/')).length,
+          sync: window.__mosaLibrarySync ? window.__mosaLibrarySync.stats().baseline : null,
+        });
+        await sleep(2000);
       }
+      window.__derivDiag = lastDiag;
       return false;
     }
   `;
@@ -248,6 +263,7 @@ function emptyLibrarySource() {
     sampleFirstSight(firstSeen);
     await waitImportBatches(stats, 5);
     const derivativesDone = await waitDerivativeUrls(stats);
+    if (!derivativesDone) throw new Error('mounted imported cards never switched to derivative URLs | ' + (window.__derivDiag || 'no diag'));
     // Second sample for the same ids once derivatives landed.
     const afterDerivatives = {};
     for (const card of mountedCards()) {
@@ -274,8 +290,11 @@ function emptyLibrarySource() {
 function stockedLibrarySource() {
   return `(async () => {
     ${sharedHelpers(RATIOS, IMPORT_TOTAL, "live")}
+    // Task 314: the app renders only after its capability exchange settles,
+    // so the grid may not exist when this source starts. Re-query inside the
+    // wait instead of capturing the element once.
+    await waitFor(() => document.querySelector('.asset-grid') && mountedCards().length >= 100, 'first page ready', 30000);
     const grid = document.querySelector('.asset-grid');
-    await waitFor(() => grid && mountedCards().length >= 100, 'first page ready', 30000);
     // Scroll to the very bottom: pagination appends until the stock runs out.
     for (let guard = 0; guard < 10 && mountedCards().length < ${STOCK_TOTAL}; guard += 1) {
       const before = mountedCards().length;
@@ -322,11 +341,33 @@ function stockedLibrarySource() {
     // closing refresh stays out of the count.
     await waitImportBatches(stats, 5);
     const galleryGetsDuringImport = stats.getsWhenLastBatchIssued;
+    // 任务 320: the end-of-import settle used to BE a full-window GET
+    // (galleryGets increasing). The incremental sync now commits it without
+    // any /api/assets call. The settle's observable result here: the loaded
+    // window covers stock + imports (data-loaded-assets counts the whole
+    // list, unlike mounted cards which windowing caps above 320), and a sync
+    // commit landed after the last batch.
+    const loadedTotal = () => Number(document.querySelector('.asset-grid')?.getAttribute('data-loaded-assets') || 0);
+    const syncsWhenLastBatchIssued = stats.syncsWhenLastBatchIssued || 0;
     const galleryGetsAfterImport = await waitFor(() => {
-      if (stats.galleryGets > galleryGetsDuringImport) return stats.galleryGets - galleryGetsDuringImport;
+      const syncs = (window.__mosaLibrarySync ? window.__mosaLibrarySync.stats().syncs : 0) || 0;
+      if (loadedTotal() >= ${STOCK_TOTAL} + ${IMPORT_TOTAL} && syncs > syncsWhenLastBatchIssued) {
+        // Truthy regardless of the request counters: the settle itself is the
+        // assertion now, the GET delta is informational only.
+        return (stats.galleryGets - galleryGetsDuringImport) + 1;
+      }
       return 0;
-    }, 'a committed gallery refresh after the import', 60000);
+    }, 'the gallery settled with every imported card after the import', 60000).catch((error) => {
+      throw new Error('the gallery settled with every imported card after the import | stats=' + JSON.stringify({
+        fetch: { gets: stats.galleryGets, rows: stats.galleryRows || 0, batches: stats.importBatches },
+        sync: window.__mosaLibrarySync ? window.__mosaLibrarySync.stats() : null,
+        syncsAtLastBatch: syncsWhenLastBatchIssued,
+        loaded: loadedTotal(),
+        mounted: mountedCards().length,
+      }) + ' | ' + error.message);
+    });
     const derivativesDone = await waitDerivativeUrls(stats);
+    if (!derivativesDone) throw new Error('mounted imported cards never switched to derivative URLs | ' + (window.__derivDiag || 'no diag'));
     return {
       scrollTopStart,
       scrollSamples,

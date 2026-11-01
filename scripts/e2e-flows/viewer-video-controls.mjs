@@ -11,8 +11,9 @@
 //   starve the native scrubber), and a real double-click must not enter any
 //   fullscreen. Synthetic events cannot exercise pointer capture, and hidden
 //   web-driver windows never paint, so the trusted-input checks AND the three
-//   screenshots run against the real desktop shell (task-229 QA windows are
-//   showInactive, i.e. rendered) via CDP, the desktop-input way.
+//   screenshots run against the real desktop shell (task 325 QA windows are
+//   paintWhenInitiallyHidden with background throttling disabled, i.e. rendered
+//   in the background without showing on screen) via CDP, the desktop-input way.
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";

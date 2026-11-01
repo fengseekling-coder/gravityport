@@ -12,6 +12,7 @@ import { packagedExecutablePath } from "./desktop-runtime-paths.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { copyLibraryForRelocation } from "../lib/library-relocation.mjs";
+import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const forgeOutDir = resolve(rootDir, process.env.MOSA_FORGE_OUT_DIR || "out");
@@ -37,7 +38,7 @@ try {
   if (!renderer.clientToken) throw new Error("Packaged renderer did not retain the MOSA client capability.");
   await verifyPackagedReadOnlyPointerInput(activeLaunch.origin, activeLaunch.cdpPort);
   console.log("PACKAGED_READ_ONLY_CDP_POINTER_PASS");
-  assertPackagedHealth(firstHealth, { libraryDir, expectedIdentity });
+  await assertPackagedHealth(firstHealth, { libraryDir, expectedIdentity });
   const importedAssetId = await verifyPackagedImport(activeLaunch.origin, renderer.clientToken);
   await verifyPackagedCdpPointerInput(activeLaunch.origin, activeLaunch.cdpPort, importedAssetId);
   console.log("PACKAGED_CDP_POINTER_INPUT_PASS");
@@ -48,13 +49,13 @@ try {
 
   activeLaunch = await launchPackaged({ libraryDir, userData });
   const restartHealth = await waitForHealth(`${activeLaunch.origin}/api/health`, activeLaunch.child);
-  assertPackagedHealth(restartHealth, { libraryDir, expectedIdentity });
+  await assertPackagedHealth(restartHealth, { libraryDir, expectedIdentity });
   const restartRenderer = await waitForRenderer(activeLaunch.origin, activeLaunch.cdpPort, activeLaunch.child);
   if (!restartRenderer.appShell || !restartRenderer.preload) {
     throw new Error("Packaged renderer/preload did not recover after restart.");
   }
   assertPackagedWindowChrome(restartRenderer);
-  await verifyPersistedAsset(activeLaunch.origin, importedAssetId);
+  await verifyPersistedAsset(activeLaunch.origin, importedAssetId, renderer.clientToken);
   const mcpConfig = await readPackagedMcpConfig(activeLaunch.origin, activeLaunch.cdpPort);
   await stopChild(activeLaunch.child);
   activeLaunch = null;
@@ -106,9 +107,12 @@ async function launchPackaged({ libraryDir: isolatedLibraryDir, userData: isolat
   };
 }
 
-function assertPackagedHealth(health, { libraryDir: isolatedLibraryDir, expectedIdentity: identity }) {
+async function assertPackagedHealth(health, { libraryDir: isolatedLibraryDir, expectedIdentity: identity }) {
   if (health.product !== "mosa") throw new Error("Unexpected packaged product.");
-  if (resolve(health.libraryDir) !== resolve(isolatedLibraryDir)) throw new Error("Library isolation failed.");
+  // Task 314: health publishes a library digest instead of the path.
+  if ("libraryDir" in health) throw new Error("Health must not publish the library path.");
+  const expectedDigest = libraryDigest(await readLibraryId(isolatedLibraryDir), isolatedLibraryDir);
+  if (!expectedDigest || health.libraryDigest !== expectedDigest) throw new Error("Library isolation failed.");
   if (health.storage !== "sqlite") throw new Error(`Expected sqlite, got ${health.storage}`);
   if (health.gitSha !== identity.gitSha || health.uiFingerprint !== identity.uiFingerprint) {
     throw new Error("Packaged build identity does not match the current source build.");
@@ -265,11 +269,17 @@ async function verifyPackagedImport(origin, clientToken) {
   if (!assetId) throw new Error("Packaged asset creation returned no asset id.");
   const end = Date.now() + 30000;
   while (Date.now() < end) {
-    const assetResponse = await fetch(`${origin}/api/assets/default/${encodeURIComponent(assetId)}`);
+    // Task 314: reads require the client capability too, so node-side fetches
+    // present the same header the renderer holds.
+    const assetResponse = await fetch(`${origin}/api/assets/default/${encodeURIComponent(assetId)}`, {
+      headers: { "x-mosa-client-token": clientToken },
+    });
     if (assetResponse.ok) {
       const asset = (await assetResponse.json()).asset;
       if (asset?.thumbnail_url) {
-        const thumbnail = await fetch(`${origin}${asset.thumbnail_url}`);
+        const thumbnail = await fetch(`${origin}${asset.thumbnail_url}`, {
+          headers: { "x-mosa-client-token": clientToken },
+        });
         if (thumbnail.ok && String(thumbnail.headers.get("content-type") || "").startsWith("image/")) return assetId;
       }
     }
@@ -278,14 +288,18 @@ async function verifyPackagedImport(origin, clientToken) {
   throw new Error("Packaged derivative generation did not produce a readable thumbnail.");
 }
 
-async function verifyPersistedAsset(origin, assetId) {
+async function verifyPersistedAsset(origin, assetId, clientToken) {
   const end = Date.now() + 30000;
   while (Date.now() < end) {
-    const response = await fetch(`${origin}/api/assets/default/${encodeURIComponent(assetId)}`);
+    const response = await fetch(`${origin}/api/assets/default/${encodeURIComponent(assetId)}`, {
+      headers: { "x-mosa-client-token": clientToken },
+    });
     if (response.ok) {
       const asset = (await response.json()).asset;
       if (asset?.id === assetId && asset?.prompt === "packaged smoke import" && asset.thumbnail_url) {
-        const thumbnail = await fetch(`${origin}${asset.thumbnail_url}`);
+        const thumbnail = await fetch(`${origin}${asset.thumbnail_url}`, {
+          headers: { "x-mosa-client-token": clientToken },
+        });
         if (thumbnail.ok && String(thumbnail.headers.get("content-type") || "").startsWith("image/")) return true;
       }
     }

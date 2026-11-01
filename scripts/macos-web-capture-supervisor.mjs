@@ -2,6 +2,7 @@
 import "../lib/apply-env-aliases.mjs";
 
 import { spawn } from "node:child_process";
+import { timingSafeEqual } from "node:crypto";
 import { watch } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import { DEFAULT_MOSA_DESKTOP_PORT, normalizeMosaPort } from "../lib/runtime-def
 import { probeMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
 import { safeCanonical } from "../lib/runtime-isolation-guard.mjs";
 import { pathsEqual } from "../lib/path-safety.mjs";
+import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
 import {
   MosaLibraryLocationFileError,
   MosaLibraryNotFoundError,
@@ -28,6 +30,14 @@ const DEFAULT_TAKEOVER_POLL_MS = 250;
 const DEFAULT_PROBE_TIMEOUT_MS = 1200;
 const DEFAULT_SOURCE_CHANGE_SETTLE_MS = 750;
 const DEFAULT_HANDOFF_POLL_MS = 250;
+
+// Constant-time digest comparison (see desktop/service-manager.mjs).
+function digestsEqual(left, right) {
+  const leftBytes = Buffer.from(String(left || ""));
+  const rightBytes = Buffer.from(String(right || ""));
+  return leftBytes.length === rightBytes.length
+    && (leftBytes.length === 0 || timingSafeEqual(leftBytes, rightBytes));
+}
 
 /**
  * The library this supervisor watches and starts the runtime for. Same lookup
@@ -117,13 +127,28 @@ export async function probeMosaOwner({
       return lease.state === "starting" ? lease : { state: "conflict", reason: `HTTP ${response?.status || 0}` };
     }
     const health = await response.json();
-    if (health?.product !== "mosa" || typeof health.libraryDir !== "string") {
+    if (health?.product !== "mosa") {
       return { state: "conflict", reason: "non-mosa-listener" };
     }
-    // Canonical comparison so a symlinked alias of the running library still
-    // matches (same semantics as the isolation guard).
-    if (!pathsEqual(safeCanonical(health.libraryDir), expectedLibraryDir)) {
-      return { state: "conflict", reason: "different-library" };
+    // Task 314: health publishes libraryDigest instead of the library path.
+    // The supervisor knows its library directory and reads the same on-disk
+    // id file, so it recomputes the expected digest. A matching digest means
+    // the same library; legacy runtimes that still publish libraryDir keep
+    // the path comparison below.
+    if (typeof health.libraryDigest === "string" && health.libraryDigest) {
+      const expectedLibraryId = await readLibraryId(libraryDir);
+      const expectedDigest = expectedLibraryId ? libraryDigest(expectedLibraryId, libraryDir) : "";
+      if (!expectedDigest || !digestsEqual(health.libraryDigest, expectedDigest)) {
+        return { state: "conflict", reason: "different-library" };
+      }
+    } else if (typeof health.libraryDir === "string") {
+      // Canonical comparison so a symlinked alias of the running library still
+      // matches (same semantics as the isolation guard).
+      if (!pathsEqual(safeCanonical(health.libraryDir), expectedLibraryDir)) {
+        return { state: "conflict", reason: "different-library" };
+      }
+    } else {
+      return { state: "conflict", reason: "non-mosa-listener" };
     }
     return { state: "attached", health };
   } catch (error) {

@@ -23,10 +23,10 @@ const EXPECTED_API_KEYS = [
   "checkForUpdates",
   "clipboardImportable",
   "downloadAndInstallUpdate",
+  "getClientToken",
   "getMcpClientConfig",
   "getRenameNoticeState",
   "getUpdateReady",
-  "getUserProfile",
   "libraryFileFlags",
   "onMenuSearch",
   "onUpdateDownloadProgress",
@@ -73,6 +73,13 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /mainWindow\.webContents\.reload\(\)/);
   assert.match(main, /app\.relaunch\(\)/);
   assert.match(main, /webContents\.on\("console-message"/);
+  // 任务 318：console-message 用新写法（details 对象），字符串级别映射回
+  // 旧的数字级别；只放行 warning/error，debug/info 在进缓冲前就被丢掉。
+  assert.doesNotMatch(main, /on\("console-message", \(_event, level/);
+  assert.match(main, /on\("console-message", \(details\) =>/);
+  assert.match(main, /RENDERER_CONSOLE_LEVELS = \{ debug: 0, info: 1, warning: 2, error: 3 \}/);
+  assert.match(main, /const level = RENDERER_CONSOLE_LEVELS\[details\.level\];/);
+  assert.match(main, /if \(level === undefined \|\| level < 2 \|\| rendererConsoleErrors\.size >= MAX_RENDERER_CONSOLE_ERRORS\) return;/);
   assert.match(main, /MAX_RENDERER_CONSOLE_ERRORS = 32/);
   assert.doesNotMatch(main, /process\.cwd\(\)|join\(__dirname/);
   // webUtils only resolves a dropped File to its path (drop-back guard).
@@ -106,6 +113,9 @@ test("preload path, module format, security settings, and API surface are stable
   // 任务 239：第 27/28 条 clipboard-importable（只回答剪贴板里有没有可导入内容，
   // 不传路径和字节）+ paste-from-clipboard（主进程对主窗口执行一次 webContents.paste，
   // 导入仍走渲染层统一的 paste 监听）。
+  // 任务 311：第 29 条 get-client-token（客户端凭据不进网址片段；主进程只对
+  // 已核实服务 origin 上的主框架回答）。任务 318：user-profile 通道删除
+  // （安装 ID 不再暴露给界面），invoke 计数 24 → 23。
   assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "only the twenty-three approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
@@ -121,11 +131,15 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /ipcMain\.handle\("clipboard-importable"/);
   assert.match(main, /ipcMain\.handle\("paste-from-clipboard"/);
   const clipboardImportableHandler = main.slice(main.indexOf('ipcMain.handle("clipboard-importable"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("clipboard-importable"')));
-  assert.match(clipboardImportableHandler, /event\.sender !== mainWindow\.webContents/);
+  assert.match(clipboardImportableHandler, /trustedRendererEvent\(event\)/);
   const pasteFromClipboardHandler = main.slice(main.indexOf('ipcMain.handle("paste-from-clipboard"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("paste-from-clipboard"')));
-  assert.match(pasteFromClipboardHandler, /event\.sender !== mainWindow\.webContents/);
+  assert.match(pasteFromClipboardHandler, /trustedRendererEvent\(event\)/);
   assert.match(pasteFromClipboardHandler, /event\.sender\.paste\(\)/);
-  assert.match(preload, /getUserProfile: \(\) => ipcRenderer\.invoke\("user-profile"\)/);
+  // 任务 318：安装 ID 不再暴露给界面——preload 与 main 里都没有这条通道。
+  assert.doesNotMatch(preload, /getUserProfile/);
+  assert.doesNotMatch(main, /ipcMain\.handle\("user-profile"/);
+  // 任务 311：客户端凭据的领取通道。
+  assert.match(preload, /getClientToken: \(\) => ipcRenderer\.invoke\("get-client-token"\)/);
   // 任务 116：老用户「已更名」提示的取状态/确认通道。
   assert.match(preload, /getRenameNoticeState: \(\) => ipcRenderer\.invoke\("rename-notice-state"\)/);
   assert.match(preload, /acknowledgeRenameNotice: \(\) => ipcRenderer\.invoke\("acknowledge-rename-notice"\)/);
@@ -162,13 +176,13 @@ test("preload path, module format, security settings, and API surface are stable
   // enter/leave-full-screen 广播回渲染层。
   assert.match(main, /ipcMain\.handle\("set-window-full-screen"/);
   const windowFullScreenHandler = main.slice(main.indexOf('ipcMain.handle("set-window-full-screen"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("set-window-full-screen"')));
-  assert.match(windowFullScreenHandler, /event\.sender !== mainWindow\.webContents/);
+  assert.match(windowFullScreenHandler, /trustedRendererEvent\(event\)/);
   assert.match(windowFullScreenHandler, /mainWindow\.setFullScreen\(flag === true\)/);
   assert.match(main, /mainWindow\.on\("enter-full-screen"/);
   assert.match(main, /mainWindow\.on\("leave-full-screen"/);
   assert.equal((main.match(/window-full-screen-change/g) || []).length, 2, "enter/leave-full-screen both broadcast the same channel");
   const relocationHandler = main.slice(main.indexOf('ipcMain.handle("change-library-location"'), main.indexOf('\n\n  // Phase 4C', main.indexOf('ipcMain.handle("change-library-location"')));
-  assert.match(relocationHandler, /event\.sender !== mainWindow\.webContents/, "library relocation validates the sender");
+  assert.match(relocationHandler, /trustedRendererEvent\(event\)/, "library relocation validates the sender");
   assert.match(relocationHandler, /process\.env\.MOSA_LIBRARY_DIR/, "an explicit environment-managed library cannot be overridden in-app");
   assert.match(relocationHandler, /service\?\.mode !== "owned"/, "attached external runtimes cannot be moved by the desktop shell");
   // Destination inspection (same-dir/nesting/empty-target) and the copy
@@ -178,7 +192,7 @@ test("preload path, module format, security settings, and API surface are stable
   // the confirm dialog and keep the copy -> save -> delete ordering.
   assert.match(relocationHandler, /validateRelocationTarget\(\{ currentLibraryDir: libraryDir, nextLibraryDir \}\)/, "the destination must be validated before copying");
   assert.ok(relocationHandler.indexOf("if (!validation.ok) return") > -1
-    && relocationHandler.indexOf("if (!validation.ok) return") < relocationHandler.indexOf("await dialog.showMessageBox"),
+    && relocationHandler.indexOf("if (!validation.ok) return") < relocationHandler.indexOf("await screenGuard.messageBox"),
     "a rejected target aborts before any copy is attempted");
   assert.match(relocationHandler, /await stopOwnedRuntime\(\)/, "SQLite and the runtime lock are closed before migration");
   assert.ok(relocationHandler.indexOf("await copyLibraryForRelocationGuarded({") > relocationHandler.indexOf("await stopOwnedRuntime()"),
@@ -189,40 +203,44 @@ test("preload path, module format, security settings, and API surface are stable
     "the original library is removed only after a successful copy and preference switch");
   assert.match(main, /ipcMain\.handle\("write-clipboard-text"/);
   const pasteImageHandler = main.slice(main.indexOf('ipcMain.handle("paste-image"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("paste-image"')));
-  assert.match(pasteImageHandler, /event\.sender !== mainWindow\.webContents/);
-  assert.match(main, /event\.sender !== mainWindow\.webContents/);
-  assert.match(main, /shell\.openExternal\(MOSA_DOWNLOAD_PAGE_URL\)/);
+  assert.match(pasteImageHandler, /trustedRendererEvent\(event\)/);
+  // 任务 311：全部 IPC handler 统一走 isTrustedRendererEvent 守卫（主窗口主框架
+  // + 已核实服务 origin）；裸的 sender 比较不允许再出现。
+  assert.match(main, /function trustedRendererEvent\(event\)/);
+  assert.match(main, /isTrustedRendererEvent\(event, \{ windowRef: mainWindow, serviceOrigin: verifiedServiceOrigin\(\) \}\)/);
+  assert.match(main, /ipcMain\.handle\("get-client-token"/);
+  assert.doesNotMatch(main, /event\.sender !== mainWindow\.webContents/);
+  assert.match(main, /screenGuard\.openExternal\(MOSA_DOWNLOAD_PAGE_URL\)/);
   assert.match(main, /if \(isolationContext\.qaRun\) return Promise\.resolve\(\{ status: "disabled", currentVersion \}\)/,
     "QA/E2E update checks must stay offline and deterministic");
 
-  // The user-center identity is minted unconditionally at startup: the exact
-  // top-level line proves it sits outside every isPackaged/QA/telemetry gate,
-  // and its position before app.whenReady() proves it runs before any window.
-  assert.match(main, /^const desktopUserId = ensureInstallationId\(\{ userDataDir: desktopDataDir \}\);$/m);
+  // 任务 318：安装 ID 仍在启动早期无条件铸造（文件是统计与「已更名」判定的
+  // 依据），只是不再交给界面——不能出现 `const desktopUserId =` 这种取值写法。
+  assert.match(main, /^ensureInstallationId\(\{ userDataDir: desktopDataDir \}\);$/m);
   assert.ok(
-    main.indexOf("const desktopUserId = ensureInstallationId({ userDataDir: desktopDataDir })") < main.indexOf("app.whenReady()"),
+    main.indexOf("ensureInstallationId({ userDataDir: desktopDataDir })") < main.indexOf("app.whenReady()"),
     "the installation id must be minted before the window lifecycle, outside every packaged/QA/telemetry gate",
   );
-  assert.match(main, /ipcMain\.handle\("user-profile"/);
-  const userProfileHandler = main.slice(main.indexOf('ipcMain.handle("user-profile"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("user-profile"')));
-  assert.match(userProfileHandler, /event\.sender !== mainWindow\.webContents/);
-  assert.match(userProfileHandler, /return \{ userId: desktopUserId \}/);
+  assert.doesNotMatch(main, /const desktopUserId = ensureInstallationId/);
 
   assert.doesNotMatch(preload, /showItemInFolder|show-item-in-folder/);
   assert.doesNotMatch(main, /ipcMain\.handle\("show-item-in-folder"/);
 
   const clipboardHandler = main.slice(main.indexOf('ipcMain.handle("write-clipboard-text"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("write-clipboard-text"')));
-  assert.match(clipboardHandler, /event\.sender !== mainWindow\.webContents/);
+  assert.match(clipboardHandler, /trustedRendererEvent\(event\)/);
   assert.match(clipboardHandler, /typeof text !== "string"/);
   assert.match(clipboardHandler, /text\.length > MAX_CLIPBOARD_TEXT_LENGTH/);
   assert.match(clipboardHandler, /clipboard\.writeText\(text\)/);
 
   const clipboardImageHandler = main.slice(main.indexOf('ipcMain.handle("write-clipboard-image"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("write-clipboard-image"')));
-  assert.match(clipboardImageHandler, /event\.sender !== mainWindow\.webContents/);
-  assert.match(clipboardImageHandler, /!isAbsolute\(target\)/);
-  assert.match(clipboardImageHandler, /resolveAllowedFolderPath\(target, \[libraryDir\]\)/);
-  assert.match(clipboardImageHandler, /nativeImage\.createFromPath\(allowedTarget\)/);
+  assert.match(clipboardImageHandler, /trustedRendererEvent\(event\)/);
+  // 任务 318：路径闸门在 clipboard-image-path.mjs——先按字面判库内再碰文件
+  // 系统，库外请求不再能借 missing/not-allowed 之分探测文件存在性。
+  assert.match(main, /import \{ clipboardImageTarget \} from "\.\/clipboard-image-path\.mjs";/);
+  assert.match(clipboardImageHandler, /clipboardImageTarget\(path, libraryDir\)/);
+  assert.match(clipboardImageHandler, /nativeImage\.createFromPath\(target\.path\)/);
   assert.match(clipboardImageHandler, /clipboard\.writeImage\(image\)/);
+  assert.doesNotMatch(clipboardImageHandler, /existsSync/, "existence must be probed only inside the library gate");
 
   assert.match(main, /minWidth: 960,/);
   assert.match(main, /minHeight: 640,/);
@@ -232,7 +250,9 @@ test("preload path, module format, security settings, and API surface are stable
   // 任务 246 更新：forge 三包 7.11.2→8.0.1、typescript 5.4.5→5.9.3，显式加
   // @electron/asar 4.3.1 与 @electron/windows-sign 2.1.0（版本对齐 forge 8 实际安装）。
   // 10-29 Dependabot #317：smol-toml 1.8.0→1.9.0。
-  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "ec68692227abfa080940001ec6bb301275c0a018a6e280905ed659cc68e15890", "package.json devDependencies were not changed by this phase");
+  // 任务 318 更新：加 @electron-forge/plugin-fuses 8.0.1 与 @electron/fuses 2.1.3
+  // （打包保险丝：RunAsNode 保持、NodeOptions/Inspect 关、asar 完整性开）。
+  assert.equal(sha256(JSON.stringify(manifest.devDependencies)), "ff7b7f4ec3b91c94644be08f8fd8f1fb398fe432bcd825e342c1e728acf6988c", "package.json devDependencies were not changed by this phase");
   assertPackageLockMatchesManifest(lockfile, manifest, "package-lock.json must preserve dependency identity");
   assert.doesNotMatch(packageJson, /electron-preload-runtime-contract/);
 });

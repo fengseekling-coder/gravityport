@@ -143,6 +143,18 @@ app.whenReady().then(async () => {
     else if (flow === "stack") source = createStackUiFlowSource();
     else if (flow === "trash") source = createTrashUiFlowSource(JSON.parse(trashConfigSource));
     else source = createCriticalUiFlowSource({ mode, searchTerm, recipeChange, dropGroupName, pasteEnabled });
+    // Task 314: the app renders only after its capability exchange settles, so
+    // did-finish-load no longer implies a mounted UI. Flow sources capture
+    // elements up front — wait (bounded) for the workspace shell before handing
+    // over, otherwise the first query gets null.
+    const shellReady = await win.webContents.executeJavaScript(`(async () => {
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline && !document.querySelector('.workspace')) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return Boolean(document.querySelector('.workspace'));
+    })()`, true);
+    if (!shellReady) console.error("[e2e-web-driver] workspace shell never mounted; running the flow anyway");
     let result = await win.webContents.executeJavaScript(source, true);
     if (timeoutReports.length && result && typeof result === "object" && !Array.isArray(result)) {
       result = { ...result, e2eTimeoutReports: timeoutReports };

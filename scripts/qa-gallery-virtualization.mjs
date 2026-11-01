@@ -485,11 +485,17 @@ async function main() {
     // size; only a real node collapse (stack create) shrinks it. Anything far
     // below the expectation means the view collapsed back to the first page.
     const EXPECTED_LOADED_DELTA = {
-      "external-ingest-add": 0,
+      // 任务 320：外部 ingest 的新卡经增量合并插在头部，不再像整窗刷新那样
+      // 挤掉尾部一张——窗口长度 +1 且不塌缩。
+      "external-ingest-add": 1,
       "favorite": 0,
-      "trash-delete": 0,
-      "restore": 0,
-      "stack-create": 0,
+      // 任务 320：trash/restore 都经增量合并直接增删卡片（整窗刷新时代
+      // 窗口长度恒定，是靠挤掉尾部实现的）。
+      "trash-delete": -1,
+      "restore": 1,
+      // 任务 320：两张散卡合并成一个堆叠节点，已加载窗口 -1（增量合并直接
+      // 替换，不再整窗重拉）。
+      "stack-create": -1,
       "stack-cover-change": 0,
       // Deleting one member dissolves the stack, and the survivor re-enters
       // the window as a plain node: the window size is preserved.

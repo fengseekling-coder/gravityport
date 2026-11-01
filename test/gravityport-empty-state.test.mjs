@@ -123,7 +123,9 @@ describe("deriveEmptyState — rule 7: library empty", () => {
   it("所有素材 + insideStack → NOT library-empty (must be false)", () => {
     const result = es.deriveEmptyState(makeCtx({ active: "所有素材", libraryTotal: 0, insideStack: true }));
     assert.notEqual(result?.kind, "library-empty");
-    assert.equal(result?.kind, "no-results"); // falls through to fallback
+    // 任务 320 F：堆叠内无搜索词/类型筛选的空态改为 stack-empty（原为兜底
+    // no-results；自动退出堆叠是第一道，这是兜底文案）。
+    assert.equal(result?.kind, "stack-empty");
   });
 
   it("所有素材 + libraryTotal undefined → NOT library-empty", () => {
@@ -154,9 +156,9 @@ describe("deriveEmptyState — rule 8: fallback", () => {
     assert.equal(result?.kind, "no-results");
   });
 
-  it("insideStack with no other signal → no-results", () => {
+  it("insideStack with no other signal → stack-empty (task 320 F)", () => {
     const result = es.deriveEmptyState(makeCtx({ active: "所有素材", insideStack: true }));
-    assert.equal(result?.kind, "no-results");
+    assert.equal(result?.kind, "stack-empty");
   });
 });
 

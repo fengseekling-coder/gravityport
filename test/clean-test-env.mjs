@@ -38,9 +38,13 @@ for (const name of POLLUTING_MOSA_VARIABLES) {
 
 // Integration tests act as MOSA's trusted first-party UI. Give every runtime
 // the same deterministic test-only capability and mirror api-client.mjs by
-// attaching it to loopback API mutations. Tests that need to verify rejection
-// can explicitly supply an empty x-mosa-client-token header, which this wrapper
-// intentionally preserves instead of overwriting.
+// attaching it to loopback API calls. Task 314: reads (/api/ GETs and the
+// /library/ media routes) need the capability too, so every method is covered
+// — exactly like the real UI, which presents the header on fetches and the
+// cookie on <img>/<video>. Tests that need to verify rejection can explicitly
+// supply an empty or wrong x-mosa-client-token header, which this wrapper
+// intentionally preserves instead of overwriting; raw-socket requests bypass
+// the wrapper entirely.
 const TEST_CLIENT_TOKEN = "mosa_test_client_token_0123456789ABCDEFGHijklmno";
 process.env.MOSA_CLIENT_TOKEN = TEST_CLIENT_TOKEN;
 
@@ -52,7 +56,8 @@ if (typeof nativeFetch === "function") {
     catch { return nativeFetch(input, init); }
     const method = String(init.method || input?.method || "GET").toUpperCase();
     const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
-    if (!loopback || !url.pathname.startsWith("/api/") || ["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const covered = url.pathname.startsWith("/api/") || url.pathname.startsWith("/library/");
+    if (!loopback || !covered || method === "OPTIONS") {
       return nativeFetch(input, init);
     }
     const headers = new Headers(init.headers || input?.headers || undefined);

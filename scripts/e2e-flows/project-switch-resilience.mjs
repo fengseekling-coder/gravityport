@@ -108,7 +108,15 @@ function projectSwitchResilienceSource(config) {
     await sleep(400);
     const staleDuringDelay = cards().find((card) => card.getAttribute('data-asset-id') === config.defaultId);
     const delayNeverShowedStale = !staleDuringDelay;
-    await waitFor(() => Boolean(cardFor(config.alphaId)) && switcherLabel() === 'alpha', 'alpha card after the delay');
+    await waitFor(() => Boolean(cardFor(config.alphaId)) && switcherLabel() === 'alpha', 'alpha card after the delay').catch((error) => {
+      throw new Error('alpha card after the delay | ' + JSON.stringify({
+        cards: cards().length,
+        switcher: switcherLabel(),
+        loadError: document.querySelector('.empty-state[role=alert]')?.textContent || null,
+        empty: document.querySelector('.empty-state')?.textContent || null,
+        sync: window.__mosaLibrarySync ? window.__mosaLibrarySync.stats() : null,
+      }) + ' | ' + error.message);
+    });
     await waitFor(() => (document.querySelector('#asset-prompt')?.textContent || '').includes('resilience alpha prompt'),
       'alpha inspector after the delay');
     unpatchFetch();

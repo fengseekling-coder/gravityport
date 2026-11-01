@@ -9,12 +9,13 @@ const CONTROLS_IDLE_MS = 2000
 const FIT_PAD_TOP = 16
 const CONTROLS_GAP = 8
 
-export default function ImageViewer({ width, height, src, originalSrc, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, message }: {
+export default function ImageViewer({ width, height, src, originalSrc, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, onOpenLocation, message }: {
   width: number; height: number; src?: string; originalSrc?: string; isVideo?: boolean; language: Language; disabled: boolean
   fullscreen: boolean
   onNavigate: (direction: number) => void
   onToggleFullscreen: () => void
   onContextMenu: (x: number, y: number) => void
+  onOpenLocation: () => void
   message: string
 }) {
   const stage = useRef<HTMLDivElement>(null)
@@ -41,6 +42,10 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
   // edge measured for `src`, so neither can leak onto a different source.
   const [loadedOriginal, setLoadedOriginal] = useState<string | null>(null)
   const [previewMeasure, setPreviewMeasure] = useState<{ src: string; edge: number } | null>(null)
+  // Task 316: a missing original used to leave a bare stage. The media's own
+  // error event flips this on; switching sources (new selection) clears it.
+  const [mediaError, setMediaError] = useState(false)
+  useEffect(() => { setMediaError(false) }, [src])
   const displaySrc = originalSrc && loadedOriginal === originalSrc ? originalSrc : src
   const previewEdge = previewMeasure && previewMeasure.src === src ? previewMeasure.edge : 0
   const probedForSrc = !propsSizeKnown && probed && probed.src === displaySrc ? probed : null
@@ -224,11 +229,17 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
       onPointerUp={() => { drag.current = null; setDragging(false) }}
       onPointerCancel={() => { drag.current = null; setDragging(false) }}
       onLostPointerCapture={() => { drag.current = null; setDragging(false) }}>
-      {src && isVideo
-        ? <video className="viewer-image" src={src} controls autoPlay loop controlsList="nofullscreen nodownload noremoteplayback" disablePictureInPicture onLoadedMetadata={event => probeSize(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />
-        : src
-          ? <img className="viewer-image" src={displaySrc} alt="" draggable={false} onLoad={event => onImageLoad(event.currentTarget)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform, objectFit: "contain" }} />
-          : <div className="viewer-image" style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />}
+      {src && mediaError
+        ? <div className="viewer-missing" role="status">
+          <Icon name="image" size={32} />
+          <p>{tr("原图找不到了")}</p>
+          <button onClick={onOpenLocation}>{tr("打开素材位置")}</button>
+        </div>
+        : src && isVideo
+          ? <video className="viewer-image" src={src} controls autoPlay loop controlsList="nofullscreen nodownload noremoteplayback" disablePictureInPicture onLoadedMetadata={event => probeSize(event.currentTarget)} onError={() => setMediaError(true)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />
+          : src
+            ? <img className="viewer-image" src={displaySrc} alt="" draggable={false} onLoad={event => onImageLoad(event.currentTarget)} onError={() => setMediaError(true)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform, objectFit: "contain" }} />
+            : <div className="viewer-image" style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />}
     </div>
     <button className="viewer-nav viewer-previous" aria-label={tr("上一个素材")} onClick={() => onNavigate(-1)}><Icon name="left" size={24} /></button>
     <button className="viewer-nav viewer-next" aria-label={tr("下一个素材")} onClick={() => onNavigate(1)}><Icon name="right" size={24} /></button>

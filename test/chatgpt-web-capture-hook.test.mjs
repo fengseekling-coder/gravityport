@@ -21,6 +21,26 @@ import {
   MockMessagePort,
 } from "./helpers/page-hook-harness.mjs";
 
+const generatedPayload = (file) => ({
+  conversation_id: "conversation-test",
+  mapping: { generated: { message: {
+    id: "message-x",
+    author: { role: "tool", name: "image_gen" },
+    content: { parts: [{ asset_pointer: `sediment://${file}` }] },
+  } } },
+});
+const hasImage = (harness, file) => harness.events.some((event) => event.payload?.imageKey?.includes(file));
+const BLOB_CORE_URL = "https://sdmntprwestus.blob.core.windows.net/files/00000000-abcd/raw?se=2026&sig=x";
+const blobCorePayload = (imageUrl, author = { role: "tool", name: "image_gen" }) => ({
+  conversation_id: "conversation-test",
+  mapping: { g: { message: {
+    id: "m-b",
+    author,
+    content: { parts: [{ asset_pointer: "sediment://file-blobcore", image_url: imageUrl }] },
+    metadata: { image_url: imageUrl },
+  } } },
+});
+
 function createGenerationRegistryHarness({ imageLookupKeys } = {}) {
   const sandbox = {};
   vm.runInNewContext(generationRegistrySource, sandbox, { filename: "generation-registry.js" });
@@ -318,30 +338,44 @@ test("manual fallback controls cover ChatGPT images and Google videos", () => {
 });
 
 test("ChatGPT hook stays dormant until capture is explicitly enabled", async () => {
-  const harness = createHookHarness({
-    conversation_id: "conversation-test",
-    mapping: {
-      generated: {
-        message: {
-          id: "message-dormant",
-          author: { role: "tool", name: "image_gen" },
-          content: { parts: [{ asset_pointer: "sediment://file-dormant" }] },
-        },
-      },
-    },
-  }, "conversation-test", { captureEnabled: false });
+  const payload = generatedPayload("file-dormant");
+  const harness = createHookHarness(payload, "conversation-test", { captureEnabled: false });
 
   await harness.harvest();
-  assert.equal(harness.events.some((event) => event.payload?.imageKey?.includes("file-dormant")), false);
-  assert.match(hookSource, /if \(!isCaptureEnabled\(\)\) return response/);
-  assert.match(hookSource, /if \(!isCaptureEnabled\(\)\) return;/);
+  assert.equal(hasImage(harness, "file-dormant"), false);
+  await harness.socketFrame(JSON.stringify(payload));
+  await harness.refreshCurrentConversation();
+  await harness.xhrLoad("https://chatgpt.com/backend-api/conversation/test", {
+    responseText: JSON.stringify(payload),
+  });
+  assert.equal(hasImage(harness, "file-dormant"), false);
+  assert.equal(harness.requestedUrls.includes("https://chatgpt.com/backend-api/conversations/conversation-test"), false);
+
+  await harness.sendToPageHook({
+    source: "mosa-chatgpt-capture", type: "set-capture-enabled", payload: { enabled: true },
+  });
+  await harness.socketFrame(JSON.stringify(payload));
+  assert.equal(hasImage(harness, "file-dormant"), true, "enabling capture must restore websocket harvesting");
 });
 
 test("ChatGPT generation asset hosts stay consistent across hook, content script, and manifest", () => {
   assert.ok(manifest.host_permissions.includes("https://*.blob.core.windows.net/*"));
-  assert.match(hookSource, /blob\.core/);
   assert.match(contentSource, /"blob\.core\.windows\.net"/);
   assert.match(contentSource, /if \(!isLikelyGeneratedUrl\(imageUrl\)\) return;/);
+});
+
+test("the page hook keeps generated image URLs on blob.core hosts and drops unknown hosts", async () => {
+  const emittedUrls = (harness) => harness.events
+    .filter((event) => event.type === "generation-meta" && event.payload?.imageUrl)
+    .map((event) => event.payload.imageUrl);
+
+  const allowed = createHookHarness(blobCorePayload(BLOB_CORE_URL));
+  await allowed.harvest();
+  assert.deepEqual(emittedUrls(allowed), [BLOB_CORE_URL]);
+
+  const blocked = createHookHarness(blobCorePayload("https://example.org/files/x.png"));
+  await blocked.harvest();
+  assert.deepEqual(emittedUrls(blocked), []);
 });
 
 test("ChatGPT startup and SPA conversation changes proactively recover missed generation metadata", () => {
@@ -385,16 +419,56 @@ test("new-chat conversation identity is adopted without clearing live-only gener
 });
 
 test("ChatGPT DOM hook reacts to both src and srcset changes", () => {
-  assert.match(hookSource, /m\.attributeName === "src" \|\| m\.attributeName === "srcset"/);
-  assert.match(hookSource, /attributeFilter: \["src", "srcset"\]/);
+  const harness = createHookHarness(generatedPayload("file-m"), "conversation-test", { domObserver: true });
+  assert.equal(harness.observers.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.observers[0].observed[0].opts)), {
+    childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset"],
+  });
+  const Img = harness.imageClass;
+  const url = "https://files.oaiusercontent.com/file-abc123?sig=1";
+  for (const [src, attributeName] of [[url, "srcset"], [`${url}2`, "src"], [`${url}3`, "alt"]]) {
+    harness.observers[0].cb([{ type: "attributes", target: new Img(src), attributeName, addedNodes: [] }]);
+  }
+  assert.deepEqual(harness.events
+    .filter((event) => event.type === "dom-image")
+    .map((event) => event.payload.imageUrl), [url, `${url}2`]);
+
+  const disabled = createHookHarness(generatedPayload("file-m"), "conversation-test", {
+    domObserver: true, captureEnabled: false,
+  });
+  disabled.observers[0].cb([{ type: "attributes", target: new disabled.imageClass(url), attributeName: "src", addedNodes: [] }]);
+  assert.equal(disabled.events.filter((event) => event.type === "dom-image").length, 0);
 });
 
 test("oversized ChatGPT metadata fails visibly while DOM fallback remains available", () => {
-  assert.match(hookSource, /via === "conversation-refresh" \? 32_000_000 : 12_000_000/);
-  assert.match(hookSource, /post\("harvest-skipped", \{ reason: "payload-too-large", size: text\.length, via \}\)/);
   assert.match(contentSource, /data\.type === "harvest-skipped"/);
   assert.match(contentSource, /会话元数据过大，已启用图片兜底/);
   assert.match(contentSource, /function enqueueDomFallback\(candidate\)/);
+});
+
+test("the page hook skips oversized responses visibly, with a larger ceiling for conversation refresh", async () => {
+  const big = { ...generatedPayload("file-big"), pad: "x".repeat(12_100_000) };
+  const fetchHarness = createHookHarness(big);
+  await fetchHarness.harvest();
+  const fetchSkips = fetchHarness.events.filter((event) => event.type === "harvest-skipped");
+  assert.equal(fetchSkips.length, 1);
+  assert.equal(fetchSkips[0].payload.reason, "payload-too-large");
+  assert.equal(fetchSkips[0].payload.via, "fetch");
+  assert.ok(fetchSkips[0].payload.size > 12_000_000);
+  assert.equal(hasImage(fetchHarness, "file-big"), false);
+
+  const refreshHarness = createHookHarness(big);
+  await refreshHarness.refreshCurrentConversation();
+  assert.equal(refreshHarness.events.filter((event) => event.type === "harvest-skipped").length, 0);
+  assert.equal(hasImage(refreshHarness, "file-big"), true);
+
+  const huge = { ...generatedPayload("file-huge"), pad: "x".repeat(32_100_000) };
+  const hugeHarness = createHookHarness(huge);
+  await hugeHarness.refreshCurrentConversation();
+  const hugeSkips = hugeHarness.events.filter((event) => event.type === "harvest-skipped");
+  assert.equal(hugeSkips.length, 1);
+  assert.equal(hugeSkips[0].payload.via, "conversation-refresh");
+  assert.equal(hasImage(hugeHarness, "file-huge"), false);
 });
 
 test("ChatGPT automatic capture work is limited to two concurrent tasks", async () => {
@@ -431,10 +505,20 @@ test("ChatGPT automatic capture work is limited to two concurrent tasks", async 
   assert.equal(maxActive, 2);
 });
 
-test("ChatGPT recovery never captures or replays page authentication headers", () => {
-  assert.doesNotMatch(hookSource, /forwardedHeaders|rememberRequestHeaders|oai-device-id|oai-client-version|oai-language/i);
-  assert.match(hookSource, /function isInterestingResponseUrl\(value\)/);
-  assert.doesNotMatch(hookSource, /chatgpt\\\.com\|openai\\\.com\|backend-api\|conversation\|images\?/);
+test("the page hook only inspects same-origin conversation responses", async () => {
+  for (const [url, expected] of [
+    ["https://evil.example/backend-api/conversation/test", false],
+    ["https://chatgpt.com/backend-api/me", false],
+    ["https://chatgpt.com/public-api/conversation_limit", false],
+    ["https://chatgpt.com/backend-api/conversations?offset=0&limit=28", false],
+    ["https://chatgpt.com/backend-api/conversations/other-conversation", false],
+    ["https://chatgpt.com/backend-api/conversations/conversation-test", true],
+    ["https://chatgpt.com/backend-api/f/conversation", true],
+  ]) {
+    const harness = createHookHarness(generatedPayload("file-u"));
+    await harness.harvest(undefined, url);
+    assert.equal(hasImage(harness, "file-u"), expected, `unexpected response gate for ${url}`);
+  }
 });
 
 test("archives an image-generation tool result even when ChatGPT omits its prompt", async () => {
@@ -1066,8 +1150,6 @@ test("websocket ingress recognizes conversation message structure without relyin
     payload: { update_content: { messages: [{ content: { parts: ["hello"] } }] } },
   })), true);
   assert.equal(context.hasShape(JSON.stringify({ type: "token-delta", payload: { text: "hello" } })), false);
-  assert.match(hookSource, /WS_INTEREST\.test\(text\) \|\| hasConversationMessageShape\(text\)/);
-  assert.match(hookSource, /WS_INTEREST\.test\(decoded\) \|\| hasConversationMessageShape\(decoded\)/);
 });
 
 test("does not treat an unrelated tool image as generated artwork", async () => {
@@ -1145,18 +1227,6 @@ test("background reports only bounded retry-queue diagnostics to the local task 
 });
 
 test("ChatGPT page bridge only trusts the first privately transferred port", () => {
-  // page-hook: commands arrive only through the transferred port; the only
-  // window message it still accepts is a port request, from the same window,
-  // and only until the first port has been confirmed. No channel name is
-  // published in the DOM anymore.
-  assert.doesNotMatch(hookSource, /mosaPageHookChannel/);
-  assert.match(hookSource, /commandPortPost = commandPort\.postMessage\.bind\(commandPort\)/);
-  assert.match(hookSource, /commandPort\.addEventListener\("message", onPortMessage\)/);
-  assert.match(hookSource, /window\.addEventListener\("message", \(event\) => \{/);
-  assert.match(hookSource, /if \(event\.source !== window\) return;/);
-  assert.match(hookSource, /if \(data\.type !== "hook-port-request"\) return;/);
-  assert.match(hookSource, /if \(portConfirmed\) return;/);
-  assert.match(hookSource, /post\("capture-state", \{ enabled: captureEnabled \}\)/);
   // content.js: only event.source === window hook-port transfers with a port
   // are accepted, only the first port is adopted, and the ack goes back
   // through that port.
@@ -1295,6 +1365,16 @@ test("after confirmation the page hook ignores further port requests", async () 
   assert.equal(harness.events.some((event) => event.type === "capture-state" && event.payload?.enabled === true), true);
 });
 
+test("a page rewrite of the hook port's postMessage cannot reroute hook traffic", async () => {
+  const harness = createHookHarness(generatedPayload("file-port"));
+  const hookSide = harness.windowMessages[0].transfer[0]._peer;
+  let hijacked = 0;
+  hookSide.postMessage = () => { hijacked += 1; };
+  await harness.harvest();
+  assert.equal(hijacked, 0);
+  assert.equal(hasImage(harness, "file-port"), true);
+});
+
 test("provider content scripts only receive the autoCapture setting", () => {
   const handlerStart = backgroundSource.indexOf('if (message.type === "mosa.getSettings")');
   const handlerEnd = backgroundSource.indexOf('if (message.type === "mosa.probeFlowMedia")', handlerStart);
@@ -1405,8 +1485,19 @@ test("archives one row per uploaded reference photo", () => {
   assert.match(stageReferences, /reason: "auto-reference"/);
   // An optional reference failure must never surface as a user-facing error.
   assert.match(contentSource, /const optionalReferenceFailure = reason === "auto-reference"/);
-  assert.match(hookSource, /isGeneration: extra\.isGeneration === true/);
-  assert.match(hookSource, /if \(url && payload\.isGeneration\) post\("auto-image", payload\)/);
+});
+
+test("only tool-generated images are offered for automatic capture", async () => {
+  const generated = createHookHarness(blobCorePayload(BLOB_CORE_URL));
+  await generated.harvest();
+  const auto = generated.events.filter((event) => event.type === "auto-image");
+  assert.equal(auto.length, 1);
+  assert.equal(auto[0].payload.imageUrl, BLOB_CORE_URL);
+  assert.equal(auto[0].payload.isGeneration, true);
+
+  const uploaded = createHookHarness(blobCorePayload(BLOB_CORE_URL, { role: "user" }));
+  await uploaded.harvest();
+  assert.equal(uploaded.events.filter((event) => event.type === "auto-image").length, 0);
 });
 
 test("automatic capture does not starve new images behind already-saved DOM candidates", () => {
@@ -1547,18 +1638,21 @@ test("url and asset events of one generation share a single reference scope", as
   assert.ok([...contexts][0], "the shared scope must be non-empty");
 });
 
-test("the XHR interceptor skips binary image responses like the fetch interceptor", () => {
-  assert.ok(hookSource.includes('this.getResponseHeader?.("content-type")'));
-  assert.ok(hookSource.includes('const responseType = String(this.responseType || "").toLowerCase();'));
-  assert.ok(hookSource.includes('responseType === "json" && this.response'));
-  // harvest() is now wrapped in a try-block that also records an HTTP
-  // diagnostic frame before the harvest call. Either literal is acceptable
-  // as long as the harvest call is still reached when text is non-empty.
-  assert.ok(
-    hookSource.includes('if (text) harvest(text, "xhr");')
-      || /if \(text\)\s*\{[\s\S]*harvest\(text,\s*"xhr"\)/.test(hookSource),
-    "XHR interceptor must still call harvest(text, 'xhr') on non-empty text"
-  );
+test("the XHR interceptor skips binary image responses like the fetch interceptor", async () => {
+  const url = "https://chatgpt.com/backend-api/conversation/test";
+  const payload = generatedPayload("file-x");
+  for (const [requestUrl, options, expected] of [
+    [url, { responseText: JSON.stringify(payload) }, true],
+    [url, { responseType: "json", response: payload }, true],
+    [url, { responseText: JSON.stringify(payload), contentType: "image/png" }, false],
+    [url, { responseType: "blob", response: payload }, false],
+    [url, { responseText: "" }, false],
+    ["https://evil.example/backend-api/conversation/test", { responseText: JSON.stringify(payload) }, false],
+  ]) {
+    const harness = createHookHarness(generatedPayload("file-x"));
+    await harness.xhrLoad(requestUrl, options);
+    assert.equal(hasImage(harness, "file-x"), expected, `XHR response gate for ${requestUrl} (${options.responseType || "text"})`);
+  }
 });
 
 test("does not flatten multiple image tool calls into one prompt binding", async () => {
@@ -2825,7 +2919,6 @@ test("does not capture page authentication headers", async () => {
   const posted = JSON.stringify(harness.events);
   assert.equal(posted.includes("page-session-token"), false, "a page token must never be posted out of the page");
   assert.doesNotMatch(contentSource, /authorization/i);
-  assert.doesNotMatch(hookSource, /forwardedHeaders|rememberRequestHeaders|oai-device-id|oai-client-version|oai-language/i);
   const refreshIndex = harness.requestedUrls.indexOf("https://chatgpt.com/backend-api/conversations/conversation-test");
   assert.ok(refreshIndex >= 0);
   assert.equal(Object.hasOwn(harness.requestedInits[refreshIndex] || {}, "headers"), false);
@@ -4797,16 +4890,42 @@ test("a flat conversation read that still has older pages is never reported over
 });
 
 test("the XHR conversation path reports turn bindings under the same open-conversation gate", () => {
-  assert.ok(
-    hookSource.includes('if (text) harvest(text, "xhr");')
-      || /if \(text\)\s*\{[\s\S]*harvest\(text,\s*"xhr"\)/.test(hookSource),
-    "XHR interceptor must still call harvest(text, 'xhr') on non-empty text"
-  );
-  assert.match(hookSource, /if \(isCurrentConversationItemUrl\(url\)\) reportConversationTurnBindingsFromText\(text\);/);
-  assert.match(hookSource, /if \(isCurrentConversationItemUrl\(url\)\) reportConversationTurnBindings\(payload\);/);
   assert.match(contentSource, /data\.type === "conversation-turn-bindings"/);
   assert.match(contentSource, /type: "mosa\.reportConversationTurns",/);
   assert.match(backgroundSource, /if \(message\.type === "mosa\.reportConversationTurns"\) return context\.provider === "chatgpt";/);
+});
+
+test("XHR and JSON fetch conversation reads report turn bindings only for the open conversation", async () => {
+  const turnConversation = (id) => turnBindingsConversation([
+    turnBindingsFixtureNode("root", null, null, ["u1"]),
+    turnBindingsUserNode({ id: "u1", parent: "root", children: ["g1"] }),
+    turnBindingsGenerationNode({ id: "g1", parent: "u1", children: ["a1"], files: ["file_turn1"] }),
+    turnBindingsAssistantNode({ id: "a1", parent: "g1" }),
+  ], "a1", id);
+  const turnReports = (harness) => harness.events
+    .filter((event) => event.type === "conversation-turn-bindings")
+    .map((event) => JSON.parse(JSON.stringify(event.payload)));
+  const expectedReport = {
+    conversationId: "conversation-test", turnCount: 1,
+    bindings: [{ provider_asset_id: "file_turn1", message_id: "u1", turn_index: 1 }],
+  };
+  for (const [id, expected] of [["conversation-test", [expectedReport]], ["conversation-other", []]]) {
+    const payload = turnConversation(id);
+    const url = `https://chatgpt.com/backend-api/conversation/${id}`;
+    const xhr = createHookHarness({}, "conversation-test");
+    await xhr.xhrLoad(url, { responseText: JSON.stringify(payload) });
+    assert.deepEqual(turnReports(xhr), expected, `XHR reports for ${id}`);
+
+    const fetchHarness = createHookHarness({}, "conversation-test", {
+      respond: (requested) => (requested === url ? {
+        ok: true,
+        headers: { get: (name) => (name.toLowerCase() === "content-type" ? "application/json" : null) },
+        clone: () => ({ json: async () => payload, text: async () => JSON.stringify(payload) }),
+      } : null),
+    });
+    await fetchHarness.harvest(undefined, url);
+    assert.deepEqual(turnReports(fetchHarness), expected, `fetch reports for ${id}`);
+  }
 });
 
 function turnBindingReportHarness(fetchBehavior) {

@@ -336,10 +336,6 @@ test("jimeng page hook observes /mweb/v1/ responses read-only through a one-shot
   assert.equal(hookMessages[0].message.source, "mosa-jimeng-hook");
   assert.equal(hookMessages[0].origin, "https://jimeng.jianying.com");
   assert.equal(Array.isArray(hookMessages[0].transfer) && hookMessages[0].transfer.length, 1);
-
-  assert.match(jimengHookSource, /XMLHttpRequest\.prototype\.open/);
-  assert.match(jimengHookSource, /responseType === "json"/);
-  assert.doesNotMatch(jimengHookSource, /setRequestHeader/, "the hook never rewrites requests");
 });
 
 test("midjourney URL parser derives the full-size original and job identity", () => {

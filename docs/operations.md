@@ -181,12 +181,13 @@ When a throwaway repack, ASAR inspection, or QA run needs a directory under `out
 
 ## Health Checks
 
-After starting a service, check the active storage and every bridge in one place:
+After starting a service, check the active storage and every bridge in one place. Except for a few public endpoints (`/api/health`, `/api/web-capture`), every API — including GET reads and `/library/` media files — requires the client capability: the browser UI exchanges it for a cookie via POST /api/client-session, while a command line sends the header directly:
 
 ```bash
-curl -sS http://127.0.0.1:PORT/api/library-path
-curl -sS http://127.0.0.1:PORT/api/bridges
-curl -sS http://127.0.0.1:PORT/api/cowart-canvases
+curl -sS -H "x-mosa-client-token: <client token>" http://127.0.0.1:PORT/api/library-path
+curl -sS -H "x-mosa-client-token: <client token>" http://127.0.0.1:PORT/api/bridges
+curl -sS -H "x-mosa-client-token: <client token>" http://127.0.0.1:PORT/api/cowart-canvases
+curl -sS http://127.0.0.1:PORT/api/health
 curl -sS http://127.0.0.1:PORT/api/web-capture
 ```
 
