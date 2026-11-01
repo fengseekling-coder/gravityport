@@ -2,6 +2,25 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.8 — 2026-11-01 / Preview
+
+### Desktop
+
+- Manual imports skip files identical to an image already in the library and list near-duplicates (resized, recompressed or converted copies) to keep, delete, or use to replace a less sharp original. Importing into a group or stack offers to leave images that are already elsewhere in place or move them in.
+- Unsorted shows every asset not sorted yet (automatic stacks no longer count as sorted, and appear as one card), and assets, stacks or a selection can be marked as sorted there; sorted assets are left alone by Jimeng website deletions.
+- The gallery updates only the cards that changed instead of reloading, shows each import batch as soon as it lands at the images' real proportions, and keeps your scroll position. The viewer switches to the original file when zoomed in or on high-resolution screens.
+- Capturing the same image again replaces it only with a sharper version (the previous file goes to the Trash) and keeps prompts and names edited in GravityPort or through an AI assistant. A sharper copy of the same web video replaces the original. Automatic stacks use the newest capture as their cover, and filtered views show the matching image of a stack.
+- A library whose database file is lost or that has been moved is no longer replaced by a new empty library; GravityPort stops and shows where the library is.
+- In-app updates, usage reports and feedback use the system network and proxy settings. Updates check free disk space before installing (and, on Windows, whether an AI assistant is using GravityPort through MCP), need about half as much temporary space on macOS, explain failed installs, and point to the website after two failed installs of the same version. A backup signing key was added for update manifests.
+- The local background service confirms its identity before the app connects, requires the app's credential for reading assets, originals, videos and prompts, refuses requests from other web pages, no longer reports the library location, and limits web capture request sizes.
+- Diagnostic logs mask more personal details, and the desktop app keeps a local warnings-and-errors log (about 6 MB, rotated, never uploaded).
+- Dragging several selected assets out of a stack carries all of them, dropping an image that is already in a stack onto another card moves it there with exact undo, and on macOS the image no longer enlarges at the moment of the drop.
+- Smaller fixes: reference thumbnails keep their proportions, a missing original shows a message instead of a blank viewer, failed loads in the Version Tree say so, File Explorer opens in front on Windows, English interface strings for Jimeng, version families without generation records can open Version History, and the Pinterest entry reads Coming soon.
+
+### Web Capture
+
+- Extension 0.15.44: while GravityPort is closed, captures (videos included) are queued up to 512 MB instead of being resent, and Jimeng deletions queue until the app opens; Settings → Connect warns when space runs low. Midjourney no longer skips a work when several are generated in a row, and pairing works when the app starts slowly.
+
 ## 0.3.7 — 2026-10-26 / Preview
 
 ### Desktop

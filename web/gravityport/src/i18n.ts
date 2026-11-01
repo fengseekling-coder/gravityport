@@ -52,7 +52,7 @@ const english: Record<string, string> = {
   "参考图缩略图": "Reference thumbnails", "预览参考图": "Preview reference image",
   "更多": "More",
   "素材路径": "Asset path", "设置": "Settings", "存储": "Storage", "关于": "About",
-  "让灵感，自由停靠。": "A home for your inspiration.",
+  "让每一次 AI 创作，有迹可循": "Every AI creation leaves a trail",
   "关闭设置": "Close settings", "外观": "Appearance",
   "隐藏": "Hide", "显示": "Show", "界面语言": "Language",
   "版本更新": "Software updates",

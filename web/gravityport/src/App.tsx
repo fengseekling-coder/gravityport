@@ -5115,7 +5115,7 @@ export default function App() {
               ))}
               <div className="settings-brand">
                 GravityPort
-                <span>{tr("让灵感，自由停靠。")}</span>
+                <span>{tr("让每一次 AI 创作，有迹可循")}</span>
               </div>
             </aside>
             <div className="settings-content">
