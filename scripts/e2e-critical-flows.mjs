@@ -14,6 +14,7 @@ import { ensureElectronExecutablePath } from "./desktop-runtime-paths.mjs";
 import { createCriticalUiFlowSource, createTrashUiFlowSource, E2E_DROP_GROUP_NAME } from "./e2e-ui-flow.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
 import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
+import { writeUsagePreference } from "../desktop/usage-preference.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const electronBinary = ensureElectronExecutablePath({ rootDir });
@@ -30,6 +31,12 @@ const resultFile = process.env.MOSA_E2E_RESULT_FILE || "";
 const selected = (name) => !onlyFlows.size || onlyFlows.has(name);
 const ELECTRON_QA_FLAGS = process.platform === "win32" ? ["--disable-gpu"] : [];
 const QA_CLIENT_TOKEN = "mosa_e2e_client_token_0123456789abcdefghijklmnop";
+// Fresh userData has no usage-notice acknowledgement, so the first-run notice
+// would open as a modal over the window and swallow the first trusted click.
+// Mark it acknowledged here (usage reporting itself is never started in QA runs).
+function acknowledgeUsageNotice(userDataDir) {
+  writeUsagePreference(userDataDir, { enabled: true, noticeAcknowledgedAt: Date.now() });
+}
 
 if (!existsSync(electronBinary)) throw new Error(`Electron binary was not installed correctly: ${electronBinary}`);
 
@@ -72,6 +79,7 @@ await Promise.all([
   mkdir(stackUserData, { recursive: true }),
   mkdir(trashUserData, { recursive: true }),
 ]);
+acknowledgeUsageNotice(desktopUserData);
 const trashFixtureColors = { a: [181, 68, 74], b: [74, 127, 181], c: [58, 138, 87], d: [138, 90, 47], e: [96, 74, 155] };
 await Promise.all([
   sharp({ create: { width: 32, height: 24, channels: 4, background: { r: 33, g: 77, b: 121, alpha: 1 } } }).png().toFile(webFixturePath),
@@ -172,6 +180,7 @@ function createFlowContext(flowName) {
     userDataDir: join(flowRoot, "user-data"),
     fixturesDir: join(fixturesRoot, `flow-${flowName}`),
   };
+  acknowledgeUsageNotice(dirs.userDataDir);
   let sourceCounter = 0;
   const ctx = {
     ...dirs,
