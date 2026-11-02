@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import sharp from "sharp";
-import { createAssetStore } from "../lib/asset-store.mjs";
+import { createAssetStore, createJsonAssetStore } from "../lib/asset-store.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "../lib/image-pixel-hash.js";
@@ -1440,6 +1440,43 @@ test("getAsset still throws on corrupt metadata when onWarning is configured", a
 
   await assert.rejects(store.getAsset("default", "broken"), SyntaxError);
   await assert.rejects(store.getAssetVersionHistory("default", "broken"), SyntaxError);
+});
+
+test("SQLite store: excludeProjectRoot drops the working directory from the trusted roots", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-exclude-root-sqlite-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const libraryDir = join(root, "library");
+  await mkdir(projectRoot, { recursive: true });
+  const sourcePath = join(projectRoot, "fixture.png");
+  await writeFile(sourcePath, "fixture", "utf8");
+  const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+  t.after(() => store.close());
+
+  await assert.rejects(
+    store.createAsset({ assetId: "excluded", imagePath: sourcePath }, { excludeProjectRoot: true }),
+    (error) => error.code === "IMAGE_PATH_NOT_READABLE",
+  );
+  // Without the switch the same import keeps working (HTTP routes, bridges).
+  const created = await store.createAsset({ assetId: "included", imagePath: sourcePath });
+  assert.equal(created.id, "included");
+});
+
+test("JSON store: excludeProjectRoot drops the working directory from the trusted roots", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-exclude-root-json-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  await mkdir(projectRoot, { recursive: true });
+  const sourcePath = join(projectRoot, "fixture.png");
+  await writeFile(sourcePath, "fixture", "utf8");
+  const store = createJsonAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa") });
+
+  await assert.rejects(
+    store.createAsset({ assetId: "excluded", imagePath: sourcePath }, { excludeProjectRoot: true }),
+    (error) => error.code === "IMAGE_PATH_NOT_READABLE",
+  );
+  const created = await store.createAsset({ assetId: "included", imagePath: sourcePath });
+  assert.equal(created.id, "included");
 });
 
 async function waitForPath(path) {

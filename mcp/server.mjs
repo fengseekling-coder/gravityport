@@ -2,11 +2,12 @@ import "../lib/apply-env-aliases.mjs";
 import readline from "node:readline";
 import { homedir } from "node:os";
 import { statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
+import { isPathInsideOrEqual } from "../lib/path-safety.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
 import { createAssetViaGate, untrustedCreateSource } from "../lib/library-ingest.mjs";
 import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
@@ -14,6 +15,7 @@ import { buildAssetProvenanceBundle } from "../lib/provenance-bundle.mjs";
 import {
   desktopDefaultLocationFilePath,
   LIBRARY_DATABASE_FILE,
+  MEDIA_EXTENSIONS,
   MOSA_LIBRARY_LOCATION_FILE_UNREADABLE,
   MOSA_LIBRARY_NOT_FOUND,
   resolveLibraryLocation,
@@ -162,6 +164,7 @@ async function closeDirectStore() {
 }
 
 const TOOL_ASSET_CREATE = "asset_create";
+const TOOL_ASSET_IMPORT_FOLDER = "asset_import_folder";
 const TOOL_ASSET_LIST = "asset_list";
 const TOOL_ASSET_SEARCH = "asset_search";
 const TOOL_ASSET_GET = "asset_get";
@@ -177,6 +180,53 @@ const TOOL_GENERATION_RECORD = "generation_record";
 const TOOL_GENERATION_LIST = "generation_list";
 const TOOL_GENERATION_RELATION_RECORD = "generation_relation_record";
 const TOOL_GENERATION_LINEAGE = "generation_lineage";
+
+// Task 334: MCP tool annotations. Read tools never write; the only destructive
+// tool is asset_archive (soft-delete); nothing reaches out to other systems,
+// so every tool declares openWorldHint: false. destructiveHint is spelled out
+// everywhere because the MCP default for a missing hint is true.
+const TOOL_ANNOTATIONS = {
+  [TOOL_ASSET_CREATE]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_ASSET_IMPORT_FOLDER]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_ASSET_LIST]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_ASSET_SEARCH]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_ASSET_GET]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_ASSET_PROVENANCE_EXPORT]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_ASSET_UPDATE_METADATA]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_ASSET_ATTACH_PROMPT]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_ASSET_ARCHIVE]: { readOnlyHint: false, destructiveHint: true },
+  [TOOL_ASSET_DUPLICATE]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_ASSET_VERSION_CREATE]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_ASSET_VERSION_HISTORY]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_ASSET_RECIPE_HISTORY]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_GENERATION_RECORD]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_GENERATION_LIST]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_GENERATION_RELATION_RECORD]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_GENERATION_LINEAGE]: { readOnlyHint: true, destructiveHint: false },
+};
+
+// Task 334: importing from folders outside the trusted roots (Codex's
+// generated_images, the library's own folders) needs the user's confirmation,
+// and MCP elicits it from the AI assistant itself — GravityPort shows no
+// dialog for this. Clients advertise support by declaring an `elicitation`
+// object in initialize; servers advertise it the same way below.
+let clientSupportsElicitation = false;
+const pendingElicitations = new Map();
+let elicitationCounter = 0;
+const ELICITATION_ID_PREFIX = "gp-elicit-";
+// 50 s of user thinking, 10 s of margin before Codex's default 60 s per-tool
+// timeout (tool_timeout_sec, config reference; verified 2026-11-02). The env
+// override is a test knob, not a user setting.
+function elicitTimeoutMs() {
+  const parsed = Number.parseInt(process.env.MOSA_MCP_ELICIT_TIMEOUT_MS || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 50_000;
+}
+// Folder import limits; the max-files override is a test knob too.
+function importFolderMaxFiles() {
+  const parsed = Number.parseInt(process.env.MOSA_MCP_IMPORT_FOLDER_MAX_FILES || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1000;
+}
+const IMPORT_FOLDER_MAX_DEPTH = 5;
 
 const EXTERNAL_VERIFICATION_SCHEMA = {
   enum: ["user_confirmed", "observed", "inferred"],
@@ -240,7 +290,7 @@ function toolDefinitions() {
   return [
     {
       name: TOOL_ASSET_CREATE,
-      description: "Copy a generated image into the GravityPort library and save prompt recipe metadata. Codex's <CODEX_HOME>/generated_images task folders are supported and recorded as the source; CODEX_HOME defaults to the user's .codex directory. Imports are restricted to trusted roots: Codex's generated_images folder (<CODEX_HOME>/generated_images, or the directory named by CODEX_GENERATED_IMAGES_DIR) and the GravityPort library's own folders (assets/ and imports/ inside the library directory). An imagePath anywhere else, such as a project or Downloads folder, is rejected with IMAGE_PATH_NOT_READABLE; copy the file under an allowed root first. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
+      description: "Copy a generated image into the GravityPort library and save prompt recipe metadata. Codex's <CODEX_HOME>/generated_images task folders are supported and recorded as the source; CODEX_HOME defaults to the user's .codex directory. Imports are restricted to trusted roots: Codex's generated_images folder (<CODEX_HOME>/generated_images, or the directory named by CODEX_GENERATED_IMAGES_DIR) and the GravityPort library's own folders (assets/ and imports/ inside the library directory). The assistant's own working directory is not a trusted root. An imagePath anywhere else, such as a project, home, or Downloads folder, is rejected with IMAGE_PATH_NOT_READABLE; to import from such a folder use the asset_import_folder tool (the user is asked to confirm there), or ask the user to drag the image into GravityPort. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
       inputSchema: {
         type: "object",
         properties: {
@@ -266,6 +316,27 @@ function toolDefinitions() {
         },
         required: ["imagePath"],
         additionalProperties: true
+      }
+    },
+    {
+      name: TOOL_ASSET_IMPORT_FOLDER,
+      description: "Import every image and video found in a local folder into the GravityPort library, applying the same projectId/prompt/sourceType/source to each file. Folders already inside the trusted roots (Codex's generated_images folder, the GravityPort library's own folders) import directly. Any other folder needs the user's confirmation, which GravityPort asks for inside this assistant (MCP elicitation): nothing imports when the client cannot ask, the user declines, or the request times out. Symbolic links are skipped; with recursive: true subfolders are read up to 5 levels deep; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          folderPath: { type: "string", description: "Absolute path of the folder to import." },
+          recursive: { type: "boolean", description: "Also read subfolders (default false; at most 5 levels deep)." },
+          projectId: { type: "string" },
+          prompt: { type: "string" },
+          sourceType: { type: "string" },
+          source: {
+            type: "object",
+            description: "Optional generation provenance applied to every imported file, such as generation_tool, model, or codex_session_id.",
+            additionalProperties: true
+          }
+        },
+        required: ["folderPath"],
+        additionalProperties: false
       }
     },
     {
@@ -512,6 +583,209 @@ function toolDefinitions() {
   ];
 }
 
+function withToolAnnotations(tool) {
+  return { ...tool, annotations: { openWorldHint: false, ...TOOL_ANNOTATIONS[tool.name] } };
+}
+
+function mcpImportError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = 400;
+  return error;
+}
+
+// The roots asset_import_folder may read without asking. This is the same
+// list the stores guard single-image imports with (assertWithinReadableProject),
+// minus the working directory (task 334); deriving it from the store keeps one
+// copy of the truth.
+function trustedImportRoots() {
+  return [
+    store.codexImagesDir,
+    store.assetsRoot,
+    store.generatedImagesDir,
+    store.cowartPageAssetsDir,
+    store.legacyAssetsRoot,
+  ].filter((root) => typeof root === "string" && root);
+}
+
+async function folderIsWithinTrustedRoots(folderRealPath) {
+  const roots = (await Promise.all(trustedImportRoots().map(async (root) => {
+    try { return await realpath(root); } catch (error) {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    }
+  }))).filter(Boolean);
+  return roots.some((root) => isPathInsideOrEqual(root, folderRealPath));
+}
+
+/**
+ * Walk one folder for importable media. The folder's own contents are layer 1;
+ * with recursive: true subfolders are read up to IMPORT_FOLDER_MAX_DEPTH layers
+ * deep. Plain files with a MEDIA_EXTENSIONS suffix are the import candidates;
+ * every other entry seen (symbolic links, files of other types) counts as
+ * skipped. Throws IMPORT_FOLDER_TOO_LARGE as soon as one more file would break
+ * the cap, so nothing imports and no confirmation is asked for.
+ */
+async function scanImportFolder(folderRealPath, recursive) {
+  const files = [];
+  let skipped = 0;
+  const maxFiles = importFolderMaxFiles();
+  async function walk(dir, depth) {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) {
+        skipped += 1;
+        continue;
+      }
+      if (entry.isFile()) {
+        if (MEDIA_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+          files.push(join(dir, entry.name));
+          if (files.length > maxFiles) {
+            throw mcpImportError(
+              "IMPORT_FOLDER_TOO_LARGE",
+              `The folder holds more than ${maxFiles} importable files. Import it in batches (for example one subfolder at a time); nothing was imported.`,
+            );
+          }
+        } else {
+          skipped += 1;
+        }
+        continue;
+      }
+      if (entry.isDirectory() && recursive && depth < IMPORT_FOLDER_MAX_DEPTH) {
+        await walk(join(dir, entry.name), depth + 1);
+      }
+    }
+  }
+  await walk(folderRealPath, 1);
+  return { files, skipped };
+}
+
+function buildImportConfirmationMessage(folderPath, count, skippedCount, recursive) {
+  let message = `要从 ${folderPath} 导入 ${count} 张图片和视频到 GravityPort 素材库吗？`;
+  if (recursive) message += "（含子文件夹）";
+  if (skippedCount > 0) message += ` 另有 ${skippedCount} 个文件会跳过。`;
+  return message;
+}
+
+/**
+ * Ask the user for permission through the AI assistant (MCP elicitation, form
+ * mode). Resolves true only for a reply with action "accept" and allow: true;
+ * decline, cancel, errors, malformed replies and the timeout all resolve false.
+ * The request id carries the gp-elicit- prefix so the reply channel can tell
+ * server-initiated requests apart from the client's own (numeric) ids.
+ */
+function requestImportConfirmation(message) {
+  const elicitationId = `${ELICITATION_ID_PREFIX}${++elicitationCounter}`;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingElicitations.delete(elicitationId);
+      resolve(false);
+    }, elicitTimeoutMs());
+    pendingElicitations.set(elicitationId, {
+      resolve: (reply) => {
+        clearTimeout(timer);
+        resolve(reply?.result?.action === "accept" && reply?.result?.content?.allow === true);
+      },
+    });
+    send({
+      jsonrpc: "2.0",
+      id: elicitationId,
+      method: "elicitation/create",
+      params: {
+        message,
+        requestedSchema: {
+          type: "object",
+          properties: { allow: { type: "boolean", title: "允许导入" } },
+          required: ["allow"],
+        },
+      },
+    });
+  });
+}
+
+/**
+ * The asset_import_folder handler. Scan first (fail fast on a missing folder
+ * or an oversized batch, answer empty folders without asking), confirm with
+ * the user through the assistant unless the whole folder sits inside the
+ * trusted roots, then import the scanned files one by one — a failed file is
+ * recorded and never stops the rest, matching how manual imports behave.
+ * The confirmation only ever covers this one call and this one folder.
+ */
+async function importFolderWithConfirmation(args) {
+  const folderPath = args.folderPath;
+  if (typeof folderPath !== "string" || !isAbsolute(folderPath)) {
+    throw mcpImportError("IMPORT_FOLDER_NOT_ABSOLUTE", `folderPath must be an absolute path: ${folderPath}`);
+  }
+  let folderRealPath;
+  try {
+    folderRealPath = await realpath(folderPath);
+  } catch {
+    throw mcpImportError("IMPORT_FOLDER_NOT_FOUND", `Folder does not exist: ${folderPath}`);
+  }
+  const folderStat = await stat(folderRealPath).catch(() => null);
+  if (!folderStat?.isDirectory()) {
+    throw mcpImportError("IMPORT_FOLDER_NOT_DIRECTORY", `Not a folder: ${folderPath}`);
+  }
+  const recursive = args.recursive === true;
+  const { files, skipped } = await scanImportFolder(folderRealPath, recursive);
+  const counts = { imported: 0, deduplicated: 0, skipped, failed: 0 };
+  if (files.length === 0) {
+    return {
+      content: [{ type: "text", text: `Nothing to import from ${folderPath}.` }],
+      structuredContent: { ...counts, assetIds: [], failures: [] },
+    };
+  }
+  if (!await folderIsWithinTrustedRoots(folderRealPath)) {
+    // Show the resolved path: the folder actually read, not a `..` or
+    // symlinked spelling of it.
+    const confirmed = clientSupportsElicitation
+      && await requestImportConfirmation(buildImportConfirmationMessage(folderRealPath, files.length, skipped, recursive));
+    if (!confirmed) {
+      throw mcpImportError(
+        "IMPORT_NOT_CONFIRMED",
+        `The user has not confirmed importing from ${folderPath} (the assistant cannot ask for confirmation, the user declined, or the request timed out); nothing was imported. Ask the user to drag the images into GravityPort instead.`,
+      );
+    }
+  }
+  const { source } = args;
+  const assetIds = [];
+  const failures = [];
+  for (const file of files) {
+    const input = {
+      projectId: args.projectId || "default",
+      prompt: args.prompt,
+      sourceType: args.sourceType,
+      imagePath: file,
+      ...(source && typeof source === "object" && !Array.isArray(source) ? { source: untrustedCreateSource(source) } : {}),
+    };
+    try {
+      // skipIdenticalBytes matches asset_create. trustedSourceRoots covers
+      // exactly the confirmed folder for this one call; it is never remembered.
+      const created = await createAssetViaGate(store, input, {
+        skipIdenticalBytes: true,
+        trustedSourceRoots: [folderRealPath],
+        excludeProjectRoot: true,
+      });
+      if (created.ok) {
+        counts.imported += 1;
+        assetIds.push(created.asset.id);
+      } else if (created.skipped.reason === "already-in-library") {
+        counts.deduplicated += 1;
+      } else {
+        throw created.error;
+      }
+    } catch (error) {
+      counts.failed += 1;
+      failures.push({ file: basename(file), code: String(error?.code || "UNKNOWN") });
+    }
+  }
+  const text = `Imported ${counts.imported} file(s) from ${folderPath}: ${counts.deduplicated} deduplicated, ${counts.skipped} skipped, ${counts.failed} failed.`;
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: { ...counts, assetIds, failures },
+  };
+}
+
 async function handleToolCall(id, params) {
   const args = params?.arguments || {};
   const definition = toolDefinitions().find((tool) => tool.name === params?.name);
@@ -530,11 +804,22 @@ async function handleToolCall(id, params) {
     // ARCHITECTURE.md §8): identical bytes already in the library (outside
     // Trash) answer with the stored asset instead of a copy, and hashes the
     // caller claims in `source` are never trusted — the store recomputes them.
+    // excludeProjectRoot keeps the assistant's working directory out of the
+    // trusted roots (task 334): single-image imports never elicit, so a path
+    // outside the trusted roots is rejected with guidance instead.
     const { source, ...rest } = args;
     const input = source && typeof source === "object" && !Array.isArray(source)
       ? { ...rest, source: untrustedCreateSource(source) }
       : args;
-    const created = await createAssetViaGate(store, input, { skipIdenticalBytes: true });
+    let created;
+    try {
+      created = await createAssetViaGate(store, input, { skipIdenticalBytes: true, excludeProjectRoot: true });
+    } catch (error) {
+      if (error?.code === "IMAGE_PATH_NOT_READABLE") {
+        error.message = `${error.message} To import from that folder, use the asset_import_folder tool (the user will be asked to confirm), or ask the user to drag the image into GravityPort.`;
+      }
+      throw error;
+    }
     if (!created.ok) {
       if (created.skipped.reason !== "already-in-library") throw created.error;
       const located = created.skipped.existingAsset?.id
@@ -549,6 +834,10 @@ async function handleToolCall(id, params) {
     }
     const asset = created.asset;
     sendResult(id, { content: [{ type: "text", text: `Saved asset ${asset.id} at ${asset.image_path}` }], structuredContent: { asset } });
+    return;
+  }
+  if (params?.name === TOOL_ASSET_IMPORT_FOLDER) {
+    sendResult(id, await importFolderWithConfirmation(args));
     return;
   }
   if (params?.name === TOOL_ASSET_LIST) {
@@ -613,7 +902,7 @@ async function handleToolCall(id, params) {
   }
   if (params?.name === TOOL_ASSET_VERSION_CREATE) {
     const { projectId = "default", assetId, assetIdNew, ...input } = args;
-    const asset = await store.createAssetVersion(projectId, assetId, { ...input, assetId: assetIdNew });
+    const asset = await store.createAssetVersion(projectId, assetId, { ...input, assetId: assetIdNew }, { excludeProjectRoot: true });
     sendResult(id, { content: [{ type: "text", text: `Created version ${asset.id} from ${assetId}` }], structuredContent: { asset } });
     return;
   }
@@ -791,9 +1080,18 @@ async function handleRequest(message) {
   // get a response; none of them needs handling here.
   if (!Object.hasOwn(message, "id")) return;
   if (method === "initialize") {
+    // The client advertises elicitation support with an `elicitation` object
+    // ({} or one carrying form/url both count). Task 284 sampled this from
+    // Codex 0.146.0 and Claude Code 2.1.309; Claude Code probes
+    // server/discover first and falls back to initialize after -32601, which
+    // the fallthrough below keeps answering the same way.
+    clientSupportsElicitation = Boolean(
+      params?.capabilities?.elicitation
+      && typeof params.capabilities.elicitation === "object",
+    );
     sendResult(id, {
       protocolVersion: params?.protocolVersion || "2025-11-25",
-      capabilities: { tools: {} },
+      capabilities: { tools: {}, elicitation: {} },
       serverInfo: { name: "GravityPort MCP", version: MCP_SERVER_VERSION },
       instructions: "Save generated images with the effective prompt, distinct user prompt when available, negative constraints, reference hashes, and generation provenance. GravityPort records immutable recipe snapshots automatically. Use generation_record for each distinct generation occurrence, even when its output asset was deduplicated; use generation_relation_record only for evidence-backed parent relationships, and generation_lineage to read the resulting graph. provider_verified is reserved for trusted GravityPort provider integrations and cannot be asserted by ordinary MCP callers. Use asset_version_create only for explicit asset-version workflows."
     });
@@ -804,7 +1102,7 @@ async function handleRequest(message) {
     return;
   }
   if (method === "tools/list") {
-    sendResult(id, { tools: toolDefinitions() });
+    sendResult(id, { tools: toolDefinitions().map(withToolAnnotations) });
     return;
   }
   if (method === "tools/call") {
@@ -859,6 +1157,20 @@ async function handleRequest(message) {
     }
     return;
   }
+  // Replies to server-initiated requests (elicitation) arrive as messages with
+  // an id but no method — the shape that used to fall through to "Method not
+  // found". Hand the reply to the waiting tool call, or drop it silently when
+  // nobody waits anymore (a late reply after the timeout).
+  if (method === undefined) {
+    if (typeof id === "string" && id.startsWith(ELICITATION_ID_PREFIX)) {
+      const pending = pendingElicitations.get(id);
+      if (pending) {
+        pendingElicitations.delete(id);
+        pending.resolve(message);
+      }
+      return;
+    }
+  }
   sendError(id, -32601, `Method not found: ${method}`);
 }
 
@@ -884,6 +1196,13 @@ async function handleLine(line) {
   }
 }
 rl.on("close", () => {
+  // stdin is gone: no elicitation reply can ever arrive. Settle the waiting
+  // tool calls now (they answer IMPORT_NOT_CONFIRMED) instead of letting them
+  // hold the process open until the timeout.
+  for (const [elicitationId, pending] of pendingElicitations) {
+    pendingElicitations.delete(elicitationId);
+    pending.resolve(null);
+  }
   void Promise.allSettled([...inFlightRequests]).then(() => closeDirectStore());
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {

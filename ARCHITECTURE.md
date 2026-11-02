@@ -121,9 +121,18 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 （无复制配置时兜底读取）的顺序解析；任何位置都找不到库时报错退出，MCP 永远不新建素材库。
 开库后每次工具调用前都会核对 `mosa.db` 的设备号与 inode，库被移动或删除时拒绝读写并返回
 `LIBRARY_DATABASE_CHANGED`。本地视觉检索已移除：`asset_search` 只做文本与时间检索，老客户端
-缓存旧 schema 传来的 `visual: true` 会被接受并忽略。当前工具覆盖：
+缓存旧 schema 传来的 `visual: true` 会被接受并忽略。
 
-- `asset_create`、`asset_list`、`asset_get`
+导入只认受信根：Codex 生成目录和素材库目录（库内 `assets/`、`imports/`；legacy 库另有历史
+目录）。AI 助手启动时所在的目录不是受信根（任务 334，桌面版、源码接法同一规则）：
+`asset_create` 对受信根之外的单张图一律拒绝（HTTP 导入和各桥接不受影响）；要导入其他
+文件夹，助手改用 `asset_import_folder`，服务端通过 MCP elicitation 在助手那边请用户确认
+（客户端在 `initialize` 里声明了 `elicitation` 能力才发确认请求；decline、cancel、超时、
+不支持一律 `IMPORT_NOT_CONFIRMED`，什么都不导）。确认只对本次调用和这个文件夹生效，
+不记住。17 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
+（仅 `asset_archive` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
+
+- `asset_create`、`asset_import_folder`、`asset_list`、`asset_get`
 - `asset_search`（文本与时间范围组合）、`asset_provenance_export`（导出脱敏 provenance bundle 与未签名的 C2PA assertion payload）
 - `asset_update_metadata`、`asset_attach_prompt`
 - `asset_archive`、`asset_duplicate`
@@ -608,7 +617,7 @@ flowchart TD
 | Grok Build CLI | 来源路径 → 字节 → 像素 | 会话工具调用参数 | 不写 | 已接入总入口；字节/像素命中自己的图会升级提示词和出处字段（另一路径的同字节文件记 `grok_alternate_paths`），命中别家收的图只记一次出现，不改提示词、用户指令、`generation_tool`、`model`、`prompt_status` |
 | Cowart | 来源路径 → 字节 → 像素 | 画布 alt text | 不写 | 已接入总入口；命中后从不升级元数据，只记一次出现；同一路径字节变了就新建一张 |
 | 手动导入（拖、选文件、粘贴） | — | 无 | 不写 | 已接入总入口（字节相同跳过、显示像素相同的新图进回收站、感知相似的进清单让用户选，#314） |
-| MCP `asset_create` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算 |
+| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。只认受信根（Codex 生成目录、库内目录），助手启动目录不算；受信根外的文件夹走 `asset_import_folder`，在助手那边经用户确认才导（#334） |
 
 写生成记录在总入口里是固定位置的调用方钩子；当前只有网页收录（图片和视频）在用，
 Codex、Grok、Cowart 和手动导入不写。

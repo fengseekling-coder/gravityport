@@ -7,6 +7,7 @@ import { createMcpWorkspace, startMcpServer } from "./helpers/mcp-server-harness
 // rename. Tool names are part of the agent-facing contract and must not drift.
 const LEGACY_TOOL_NAMES = [
   "asset_create",
+  "asset_import_folder",
   "asset_list",
   "asset_search",
   "asset_get",
