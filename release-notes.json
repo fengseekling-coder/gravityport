@@ -8,7 +8,8 @@
       ],
       "fixed": [
         "修复即梦的用户指令和模型提示词混在一起的问题：图片和视频生成时，你的原话进「用户指令」；智能体出图时，智能体写给模型的提示词单独放进「提示词」。",
-        "修复 Gemini 网页版生成的图片收不进来的问题，提示词仍取你在同一轮发的那句话。需要把浏览器扩展更新到 0.15.45。"
+        "修复 Gemini 网页版生成的图片收不进来的问题，提示词仍取你在同一轮发的那句话。需要把浏览器扩展更新到 0.15.45。",
+        "素材库的数据库打不开时，启动提示现在会分清是被别的程序占用还是读取失败，并附上错误码；被占用时会先等几秒再判断，不会误报。"
       ]
     },
     "en": {
@@ -18,7 +19,8 @@
       ],
       "fixed": [
         "Fixed Jimeng mixing up the user instruction and the model prompt. For image and video generation, your own words go into “User instruction”; for agent image generation, the prompt the agent wrote for the model is kept separately under “Prompt”.",
-        "Fixed images generated on the Gemini website not being captured. The prompt still comes from the message you sent in the same turn. Requires browser extension 0.15.45."
+        "Fixed images generated on the Gemini website not being captured. The prompt still comes from the message you sent in the same turn. Requires browser extension 0.15.45.",
+        "When the library database cannot be opened, the startup message now tells apart a database that another program is using from one that could not be read, and shows the error code. If the database is in use, GravityPort waits a few seconds before deciding, instead of failing right away."
       ]
     }
   },
