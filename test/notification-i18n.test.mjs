@@ -98,6 +98,38 @@ test("getLibraryStartupFailureText picks one language per library error code", (
   assert.match(enSqlite.body, /\/tmp\/Migrated.*mosa\.db/);
 });
 
+// 任务 337：库校验失败按「被占用」和「打不开/损坏」分开报，正文带 {libraryDir}
+// 和原始 SQLite 错误码（{sqliteCode}），中英文都取得到。
+test("getLibraryStartupFailureText covers the busy and unreadable library errors with the sqlite code", () => {
+  const busy = { code: "SQLITE_LIBRARY_BUSY", libraryDir: "/tmp/Busy", sqliteCode: "SQLITE_BUSY" };
+  const zhBusy = getLibraryStartupFailureText(busy, "zh");
+  assert.equal(zhBusy.title, "素材库正被别的程序占用");
+  assert.match(zhBusy.body, /^素材库在 \/tmp\/Busy，/);
+  assert.match(zhBusy.body, /mosa\.db/);
+  assert.match(zhBusy.body, /错误码：SQLITE_BUSY/);
+  assert.doesNotMatch(zhBusy.body, /\{libraryDir\}|\{sqliteCode\}/);
+  const enBusy = getLibraryStartupFailureText(busy, "en");
+  assert.equal(enBusy.title, "Your library is in use by another program");
+  assert.match(enBusy.body, /^The library is at \/tmp\/Busy, /);
+  assert.match(enBusy.body, /Error code: SQLITE_BUSY/);
+  assert.doesNotMatch(enBusy.body, /素材库/);
+
+  const unreadable = { code: "SQLITE_LIBRARY_UNREADABLE", libraryDir: "/tmp/Broken", sqliteCode: "SQLITE_CORRUPT" };
+  const zhUnreadable = getLibraryStartupFailureText(unreadable, "zh");
+  assert.equal(zhUnreadable.title, "素材库的数据库打不开");
+  assert.match(zhUnreadable.body, /^素材库在 \/tmp\/Broken，/);
+  assert.match(zhUnreadable.body, /错误码：SQLITE_CORRUPT/);
+  const enUnreadable = getLibraryStartupFailureText(unreadable, "en");
+  assert.equal(enUnreadable.title, "Your library's database could not be opened");
+  assert.match(enUnreadable.body, /^The library is at \/tmp\/Broken, /);
+  assert.match(enUnreadable.body, /Error code: SQLITE_CORRUPT/);
+
+  // cause 没有 code 时（sqliteCode 缺失）正文退到 unknown，不渲染占位符。
+  const noCode = getLibraryStartupFailureText({ code: "SQLITE_LIBRARY_UNREADABLE", libraryDir: "/tmp/X" }, "zh");
+  assert.match(noCode.body, /错误码：unknown/);
+  assert.doesNotMatch(noCode.body, /\{sqliteCode\}/);
+});
+
 test("getLibraryStartupFailureText returns null for unrelated errors", () => {
   assert.equal(getLibraryStartupFailureText(new Error("boom"), "zh"), null);
   assert.equal(getLibraryStartupFailureText({ code: "SOMETHING_ELSE", libraryDir: "/x" }, "en"), null);
