@@ -72,7 +72,9 @@ import {
   type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
   fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
   fetchImportSimilarCheck, resolveImportDuplicates, type ImportSimilarState,
+  fetchWebCapturePairRequests, decideWebCapturePairRequest, type MosaWebCapturePairRequest,
 } from "./mosa-api"
+import { AuthorizationModal, type AuthorizationResult } from "./AuthorizationModal"
 import ImportReviewDialog, { type ImportReviewData, type ImportReviewDecision } from "./ImportReviewDialog"
 import type { AlreadyInLibraryEntry } from "./import-pipeline"
 import { VideoPosterQueue } from "./video-poster"
@@ -567,12 +569,21 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // 「知道了」 latch lives on the failed verify record server-side.
   const [schemaNotice, setSchemaNotice] = useState<{ backupPath: string; targetVersion: number | null; checkedAt: string | null } | null>(null)
   const schemaNoticeOpen = schemaNotice !== null
+  // Task 333 — browser extension pairing requests awaiting the user's decision.
+  // The server's list is authoritative; SSE only signals a refetch.
+  const [pairRequests, setPairRequests] = useState<MosaWebCapturePairRequest[]>([])
+  const pairRequestsRef = useRef<MosaWebCapturePairRequest[]>([])
+  pairRequestsRef.current = pairRequests
+  const pairDecidingRef = useRef<Set<string>>(new Set())
+  const pairRefreshRef = useRef<() => void>(() => {})
+  const pairDecideRef = useRef<(id: string, result: AuthorizationResult) => void>(() => {})
+  const pairRequestsActive = pairRequests.length > 0
   const activeImportReview = importReviewQueue[0]
   const importReviewBlocked = Boolean(
     settings || preview || deleting || permanentDeleteIds || emptyTrashConfirm || renameNoticeOpen
     || schemaNoticeOpen
     || groupRename || groupDeleteConfirm || groupMerge || groupStats || stackRename || groupCreateWithSelection
-    || stackDissolveConfirm || stackTrashConfirm,
+    || stackDissolveConfirm || stackTrashConfirm || pairRequestsActive,
   )
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
   const [generationHistory, setGenerationHistory] = useState<MosaGenerationHistory | null>(null)
@@ -667,10 +678,10 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // are due; this one waits for it to close. Never opens over another dialog.
   const maybeShowSchemaUpgradeNotice = () => {
     if (loadingRef?.current) return
-    if (deletingRef.current || settingsRef.current || renameNoticeRef.current || schemaNoticeRef.current) return
+    if (deletingRef.current || settingsRef.current || renameNoticeRef.current || schemaNoticeRef.current || pairRequestsRef.current.length > 0) return
     fetchSchemaUpgradeNotice().then((notice) => {
       if (notice?.shouldShow !== true) return
-      if (deletingRef.current || settingsRef.current || renameNoticeRef.current || schemaNoticeRef.current) return
+      if (deletingRef.current || settingsRef.current || renameNoticeRef.current || schemaNoticeRef.current || pairRequestsRef.current.length > 0) return
       setSchemaNotice({
         backupPath: String(notice.backupPath || ""),
         targetVersion: notice.targetVersion ?? null,
@@ -1020,6 +1031,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     fetchHealth(controller.signal).then(data => {
       if (!controller.signal.aborted) setHealth(data)
     }).catch(() => {})
+    // Task 333: pick up pairing requests that accumulated before the window
+    // opened (the background runtime holds the queue with no UI to ask).
+    pairRefreshRef.current()
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, refreshKey])
@@ -1036,10 +1050,18 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     stream.addEventListener("open", () => {
       if (sseOpenRef.current) {
         sync?.schedule()
+        // Task 333: events missed while the stream was down are not replayed
+        // (the push carries no backlog), so a reconnect refetches the pairing
+        // queue like a first open does.
+        pairRefreshRef.current()
         return
       }
       sseOpenRef.current = true
+      pairRefreshRef.current()
       readyGateRef.current?.markSseOpen()
+    })
+    stream.addEventListener("web-capture-pair-requests", () => {
+      pairRefreshRef.current()
     })
     stream.addEventListener("ready", event => {
       const payload = parsePayload(event)
@@ -1169,7 +1191,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     const timer = window.setTimeout(() => maybeShowSchemaUpgradeNotice(), 0)
     return () => window.clearTimeout(timer)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, renameNoticeOpen])
+  }, [loading, renameNoticeOpen, pairRequestsActive])
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)")
     const sync = () => setSystemDark(media.matches)
@@ -1318,6 +1340,50 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const notify = (text: string) => setToast({ text: tr(text) })
   const notifyWithAction = (text: string, action: ToastAction, duration = 6000) =>
     setToast({ text: tr(text), action, duration })
+  // Task 333 — pairing queue refetch and decision. Every server-side change
+  // (create, decide, expire) pushes web-capture-pair-requests; the list is
+  // refetched and the dialog shows the head of the queue. When the request
+  // currently on display disappears without one of our own decisions in
+  // flight, its 120-second window ran out on the server.
+  const applyPairRequests = (rows: MosaWebCapturePairRequest[]) => {
+    const activeId = pairRequestsRef.current[0]?.id || ""
+    if (activeId && !pairDecidingRef.current.has(activeId) && !rows.some(row => row.id === activeId)) {
+      notify(tr("浏览器扩展的连接请求已过期，请在扩展里重试"))
+    }
+    pairRequestsRef.current = rows
+    setPairRequests(rows)
+  }
+  pairRefreshRef.current = () => {
+    fetchWebCapturePairRequests().then(rows => applyPairRequests(rows)).catch(() => {})
+  }
+  const handlePairDecision = (id: string, result: AuthorizationResult) => {
+    if (pairDecidingRef.current.has(id)) return
+    pairDecidingRef.current.add(id)
+    const settle = () => {
+      pairDecidingRef.current.delete(id)
+      setPairRequests(old => old.filter(row => row.id !== id))
+      pairRequestsRef.current = pairRequestsRef.current.filter(row => row.id !== id)
+    }
+    if (result !== "allow") {
+      // Deny and timeout still reach the server so a polling extension stops
+      // waiting; a racing expiry (404) is the same outcome for the user.
+      decideWebCapturePairRequest(id, false).catch(() => {})
+      settle()
+      return
+    }
+    decideWebCapturePairRequest(id, true).then(() => {
+      notify(tr("已允许浏览器扩展连接"))
+      settle()
+      pairRefreshRef.current()
+    }).catch(() => {
+      // The request stays pending server-side until its TTL expires; it is
+      // only dropped from the local queue so the dialog closes instead of
+      // looping on a save that just failed.
+      notify(tr("没能保存连接设置"))
+      settle()
+    })
+  }
+  pairDecideRef.current = handlePairDecision
   useEffect(() => {
     // An import in progress holds the toast on screen; the timer resumes with
     // the toast's own duration once the import settles. A newer toast replaces
@@ -2835,7 +2901,10 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         }
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
-        if (renameNoticeOpen) dismissRenameNotice()
+        // The authorization dialog sits at layer 110, above every overlay in
+        // this chain, so its Escape comes first (DESIGN.md hierarchy).
+        if (pairRequestsActive) pairDecideRef.current(pairRequestsRef.current[0]?.id || "", "deny")
+        else if (renameNoticeOpen) dismissRenameNotice()
         else if (schemaNoticeOpen) dismissSchemaUpgradeNotice()
         else if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
@@ -2850,7 +2919,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // the same key and arrives through onMenuSearch instead).
       if (isFocusSearchKey(e, {
         viewIsLibrary: !preview && !settings && !pinterestActive,
-        hasBlockingOverlay: Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen),
+        hasBlockingOverlay: Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || pairRequestsActive),
         targetIsTextEntry: isEditableTarget(e.target),
         platform: isMacPlatform() ? "mac" : "other",
       })) {
@@ -2869,7 +2938,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // on-screen neighbours, Enter opens it (or enters its stack). Off while
       // the viewer, Settings, a menu or a dialog is up, and for a batch.
       const plainKey = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
-      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen
+      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !pairRequestsActive
       if (plainKey && galleryIdle && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {
         const grid = gridRef.current
         const current = selectionRef.current.selected || asset?.id || ""
@@ -2938,7 +3007,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, schemaNoticeOpen])
+  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, schemaNoticeOpen, pairRequestsActive])
   // Fullscreen belongs to the open viewer, never outlives it: the back button,
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
@@ -3344,7 +3413,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         pinterestActive,
         hasOverlay: Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || permanentDeleteIds || emptyTrashConfirm
           || groupDeleteConfirm || groupMerge || groupRename || stackRename || stackDissolveConfirm
-          || stackTrashConfirm || groupStats || groupCreateWithSelection),
+          || stackTrashConfirm || groupStats || groupCreateWithSelection || pairRequestsActive),
         cutActive: cutIdsRef.current.length > 0,
         trashView: active === "回收站",
         hasFiles: topFiles.length > 0,
@@ -3368,7 +3437,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importing, library, active, project, stackId, settings, pinterestActive, menu, deleting, renameNoticeOpen, schemaNoticeOpen,
     permanentDeleteIds, emptyTrashConfirm, groupDeleteConfirm, groupMerge, groupRename, stackRename,
-    stackDissolveConfirm, stackTrashConfirm, groupStats, groupCreateWithSelection, language, debouncedQuery, assetType])
+    stackDissolveConfirm, stackTrashConfirm, groupStats, groupCreateWithSelection, language, debouncedQuery, assetType, pairRequestsActive])
   const navigateAsset = async (direction: number) => {
     if (!visible.length) return
     const index = visible.findIndex(a => a.id === selected)
@@ -5696,6 +5765,25 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             </div>
           </div>
         </div>
+      )}
+      {/* Task 333 — authorization dialog for pending browser extension
+          pairings; the generic component queues, this maps server rows onto it. */}
+      {pairRequests.length > 0 && (
+        <AuthorizationModal
+          requests={pairRequests.map(row => ({
+            key: row.id,
+            title: "允许这个浏览器扩展连接 GravityPort 吗？",
+            consequence: "允许后，这个扩展可以把网页上生成的图和视频存进素材库。",
+            source: row.knownExtension
+              ? (row.extensionVersion
+                ? fillNamed("来自：GravityPort Web Capture {version}", { version: row.extensionVersion })
+                : "来自：GravityPort Web Capture")
+              : "来自：一个浏览器扩展",
+            primaryLabel: "允许连接",
+          }))}
+          language={language}
+          onResult={handlePairDecision}
+        />
       )}
       {renameNoticeOpen && (
         <div className="modal-layer" onClick={(e) => { if (e.target === e.currentTarget) dismissRenameNotice() }}>

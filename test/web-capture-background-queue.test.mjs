@@ -5,6 +5,7 @@
 // behavior — byte tickets, offline prefetch, retry give-up, byte budget and
 // 7-day expiry — is exercised end to end.
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
@@ -287,6 +288,18 @@ function createFetchHarness() {
       if (!appOnline) return Promise.reject(new realmError(`connection refused: ${href}`));
       if (parsed.pathname === "/api/health") return Promise.resolve(jsonResponse({ product: "mosa" }));
       if (parsed.pathname === "/api/web-capture/pair") return Promise.resolve(jsonResponse({ product: "mosa", token: "paired-token" }));
+      // Task 333: the identity challenge must verify against the harness
+      // token, so the worker's proof check passes like a real GravityPort.
+      if (parsed.pathname === "/api/web-capture/identity") {
+        const nonce = JSON.parse(typeof init.body === "string" ? init.body : "{}").nonce;
+        const proof = createHmac("sha256", PAIRING_TOKEN)
+          .update("gravityport-web-capture-identity\0")
+          .update(parsed.port || "80")
+          .update("\0")
+          .update(String(nonce || ""))
+          .digest("base64url");
+        return Promise.resolve(jsonResponse({ proof }));
+      }
       if (parsed.pathname === "/api/ingest/web-capture-status") return Promise.resolve(jsonResponse({ retryRequestId: 0 }));
       if (parsed.pathname === "/api/ingest/web-capture") return Promise.resolve(jsonResponse({ ok: true, assetId: "asset-1" }));
       return Promise.resolve(jsonResponse({ ok: true }));
@@ -324,6 +337,8 @@ async function createHarness({ appOnline = false } = {}) {
     Blob,
     AbortController,
     TextEncoder,
+    // Task 333: the identity challenge signs with WebCrypto.
+    crypto,
     atob,
     btoa,
     setTimeout,
@@ -812,6 +827,163 @@ test("a 401 that cannot be re-paired keeps the ticket through five drains and de
   harness.fireAlarm();
   await waitFor(async () => (await harness.readQueue()).length === 0, { label: "ticket delivered after re-pairing" });
   assert.ok(ingestCalls(harness).length >= 7, "the ticket was posted again after re-pairing");
+});
+
+test("pairing waits for the App user: 202 starts polling, approval stores the token, denial stops", async () => {
+  const harness = await createHarness({ appOnline: true });
+  // Let the startup settings migration finish before removing the Token, or
+  // its late write would put it back (same pattern as the discovery test).
+  await sleep(20);
+  harness.localStore.delete("mosaToken");
+  let approved = false;
+  let polls = 0;
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/web-capture/pair") {
+      return jsonRoute({ product: "mosa", status: "pending", requestId: "req-confirm-1", expiresInMs: 120000 }, 202);
+    }
+    if (url.pathname === "/api/web-capture/pair/req-confirm-1") {
+      polls += 1;
+      return approved
+        ? jsonRoute({ product: "mosa", status: "approved", token: "confirmed-token" })
+        : jsonRoute({ status: "pending" });
+    }
+    return null;
+  });
+  const extensionPage = { id: RUNTIME_ID, url: `chrome-extension://${RUNTIME_ID}/options.html` };
+
+  const pending = harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage);
+  // The worker polls every 2 s; approve between two polls.
+  await waitFor(async () => polls >= 1, { label: "first pairing poll" });
+  approved = true;
+  const response = await pending;
+  assert.equal(response?.ok, true);
+  assert.equal(response.settings.mosaToken, "confirmed-token", "the polled approval stores the token");
+  assert.ok(polls >= 1, "the worker polled instead of holding one request open");
+
+  // Denial: the worker stops and stores nothing.
+  const harness2 = await createHarness({ appOnline: true });
+  await sleep(20);
+  harness2.localStore.delete("mosaToken");
+  harness2.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/web-capture/pair") {
+      return jsonRoute({ product: "mosa", status: "pending", requestId: "req-confirm-2", expiresInMs: 120000 }, 202);
+    }
+    if (url.pathname === "/api/web-capture/pair/req-confirm-2") return jsonRoute({ status: "denied" });
+    return null;
+  });
+  const denied = await harness2.dispatchMessage({ type: "mosa.getSettings" }, extensionPage);
+  assert.equal(denied?.settings?.mosaToken || "", "", "a denial stores no token");
+  const denialPairPosts = harness2.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/pair") && !request.url.includes("/pair/")).length;
+  const denialPolls = harness2.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/pair/req-confirm-2")).length;
+  assert.equal(denialPolls, denialPairPosts, "each discovery round polls at most once after a denial — the wait ends there");
+});
+
+test("two concurrent pairing callers share one flow and send one POST /pair", async () => {
+  const harness = await createHarness({ appOnline: true });
+  await sleep(20);
+  harness.localStore.delete("mosaToken");
+  let pairPosts = 0;
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/web-capture/pair") {
+      pairPosts += 1;
+      return jsonRoute({ product: "mosa", token: "single-flight-token" });
+    }
+    return null;
+  });
+  const extensionPage = { id: RUNTIME_ID, url: `chrome-extension://${RUNTIME_ID}/options.html` };
+  const [first, second] = await Promise.all([
+    harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage),
+    harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage),
+  ]);
+  assert.equal(pairPosts, 1, "the module-level pairing promise collapses concurrent callers");
+  assert.equal(first?.settings?.mosaToken, "single-flight-token");
+  assert.equal(second?.settings?.mosaToken, "single-flight-token");
+});
+
+test("an unreachable App keeps the ticket queued and never opens a pairing request", async () => {
+  const harness = await createHarness();
+  harness.fetchHarness.setMediaHandler(() => pngResponse());
+  const payload = {
+    provider: "chatgpt",
+    mediaKind: "image",
+    imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_nopair&cid=conv1",
+    promptStatus: "not-available",
+  };
+
+  const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(CHATGPT_TAB_URL));
+  assert.equal(response?.ok, true);
+  assert.equal(response.result.reason, "mosa-unavailable");
+  assert.equal((await harness.readQueue()).length, 1);
+  assert.equal(
+    harness.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/pair")).length,
+    0,
+    "task 333: a dead App must not be answered by re-pairing behind the user's back",
+  );
+});
+
+test("a service that fails the identity challenge pauses sends and keeps the ticket", async () => {
+  const harness = await createHarness({ appOnline: true });
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/web-capture/identity") return jsonRoute({ proof: "bogus-proof" });
+    return null; // the ingest route would succeed — it must never be reached
+  });
+  const payload = {
+    provider: "chatgpt",
+    mediaKind: "image",
+    imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_mismatch&cid=conv1",
+    imageBase64: fakeImageBase64(1024),
+    mimeType: "image/png",
+    promptStatus: "not-available",
+  };
+
+  const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(CHATGPT_TAB_URL));
+  assert.equal(response?.ok, true);
+  assert.equal(response.result.status, "queued", "the capture waits in the offline queue");
+  assert.equal((await harness.readQueue()).length, 1);
+
+  harness.fireAlarm();
+  await waitFor(async () => Number((await harness.readQueue())[0]?.attempts || 0) >= 1, { label: "drain challenged once" });
+  const queue = await harness.readQueue();
+  assert.equal(queue.length, 1);
+  assert.match(queue[0].lastError, /不是你的 GravityPort/);
+  await sleep(100);
+  assert.equal(ingestCalls(harness).length, 0, "no bytes and no token reach an unverified service");
+  const appSends = harness.fetchHarness.appRequests.filter((request) => request.url.includes("/api/ingest/"));
+  assert.equal(appSends.length, 0, "no token-bearing request reaches the unverified service at all");
+  const challenges = harness.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/identity"));
+  assert.ok(challenges.length >= 1, "the worker challenged before refusing to send");
+  assert.equal((await harness.readQueue()).length, 1, "the ticket is not dropped");
+});
+
+test("a 401 auto-repairs once; a second 401 within ten minutes does not re-pair again", async () => {
+  const harness = await createHarness({ appOnline: true });
+  let pairPosts = 0;
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/ingest/web-capture") return jsonRoute({ error: "Token rejected", code: "WEB_CAPTURE_UNAUTHORIZED" }, 401);
+    if (url.pathname === "/api/web-capture/pair") {
+      pairPosts += 1;
+      return jsonRoute({ product: "mosa", token: "fresh-token" });
+    }
+    return null;
+  });
+  const payload = {
+    provider: "chatgpt",
+    mediaKind: "image",
+    imageUrl: "https://chatgpt.com/backend-api/estuary/content?id=file_throttle&cid=conv1",
+    imageBase64: fakeImageBase64(1024),
+    mimeType: "image/png",
+    promptStatus: "not-available",
+  };
+
+  const response = await harness.dispatchMessage({ type: "mosa.ingest", payload }, senderFor(CHATGPT_TAB_URL));
+  assert.equal(response?.ok, true, "the 401 is handed to the queue");
+  assert.equal(pairPosts, 1, "the live 401 opened exactly one pairing flow");
+  assert.equal(harness.localStore.get("mosaToken"), "fresh-token", "the repair stored the new token");
+
+  harness.fireAlarm();
+  await waitFor(async () => Number((await harness.readQueue())[0]?.attempts || 0) >= 1, { label: "drain after repair" });
+  await sleep(100);
+  assert.equal(pairPosts, 1, "the second 401 within ten minutes does not re-pair");
 });
 
 test("a 400 refusal drops the ticket at once and the page is told not to retry", async () => {

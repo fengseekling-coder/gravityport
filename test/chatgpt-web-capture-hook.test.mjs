@@ -282,14 +282,22 @@ test("keeps the extension key, version, and pairing identifiers intact across th
 });
 
 test("surfaces MOSA's own ingest error when pairing repair keeps the same connection", async () => {
+  // Task 333: only a 401 may auto-repair (throttled); every other status is
+  // reported as-is, and an unchanged connection must not resend the capture.
   const connection = { baseUrl: "http://127.0.0.1:43517", token: "token-test" };
   const harness = await createBackgroundHarness({
     appOnline: true,
     settings: { mosaBaseUrl: connection.baseUrl, mosaToken: connection.token },
   });
 
-  for (const [status, error] of [[401, "Web Capture Token 无效"], [404, "Web Capture 路由不存在"], [500, "MOSA 内部错误"]]) {
+  for (const [status, error, expectedRepairs] of [
+    [401, "Web Capture Token 无效", 1],
+    [403, "扩展来源未获批准", 0],
+    [404, "Web Capture 路由不存在", 0],
+    [500, "MOSA 内部错误", 0],
+  ]) {
     let requests = 0;
+    let repairs = 0;
     harness.fetchHarness.setAppHandler((url) => {
       if (url.pathname === "/api/ingest/web-capture") {
         requests += 1;
@@ -299,6 +307,7 @@ test("surfaces MOSA's own ingest error when pairing repair keeps the same connec
         return new Response(JSON.stringify({ product: "mosa" }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url.pathname === "/api/web-capture/pair") {
+        repairs += 1;
         return new Response(JSON.stringify({ product: "mosa", token: connection.token }), { status: 200, headers: { "content-type": "application/json" } });
       }
       return null;
@@ -309,6 +318,9 @@ test("surfaces MOSA's own ingest error when pairing repair keeps the same connec
       (thrown) => thrown.message === error && thrown.status === status,
     );
     assert.equal(requests, 1, "an unchanged pairing must not resend the capture");
+    assert.equal(repairs, expectedRepairs, status === 401
+      ? "only a 401 may auto-repair"
+      : `${status} belongs to this capture and must never re-pair`);
   }
 });
 

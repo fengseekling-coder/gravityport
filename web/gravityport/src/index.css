@@ -691,6 +691,19 @@ img.black-image {
   animation: surface-in 180ms var(--ease-out) both;
 }.delete-modal {
   animation: surface-in 320ms var(--ease-out) both;
+}
+/* Task 333: authorization dialog (DESIGN.md 授权确认框). The surface reuses
+   .delete-modal — both classes are applied to the box in JSX, so no variable
+   is duplicated; this block only lifts the layer above the settings window
+   and the viewer (hierarchy 110) and styles the requester/countdown lines. */
+.authorization-layer {
+  z-index: 110;
+}
+.authorization-modal .authorization-source {
+  color: var(--ui-muted);
+  font-size: 12px;
+  line-height: var(--space-5);
+  margin-top: var(--space-2);
 }.toast {
   animation: toast-in 280ms var(--ease-out) both;
 }* {
@@ -3380,7 +3393,7 @@ video.black-image,
   -webkit-app-region: drag;
 }
 .app.native-darwin :is(.brandbar, .toolbar, .detail-heading) :is(button, input, select, textarea, a, label, [role="button"], .column-control),
-.modal-layer, .group-dialog-backdrop,
+.modal-layer, .group-dialog-backdrop, .authorization-layer,
 .context-menu, .toolbar-select-menu, .column-popover, .toast,
 .pinterest-detail-backdrop, .pinterest-confirm-backdrop {
   -webkit-app-region: no-drag;

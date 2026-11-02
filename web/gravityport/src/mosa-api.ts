@@ -562,6 +562,44 @@ export async function requestWebCaptureRetry(): Promise<number> {
   return Math.max(0, Number(data.retryRequestId || 0))
 }
 
+// Task 333 — pairing requests awaiting the user's decision. The server never
+// includes the token or the raw extension origin in these rows.
+export type MosaWebCapturePairRequest = {
+  id: string
+  extensionId: string
+  extensionVersion: string
+  knownExtension: boolean
+  createdAt: number
+  expiresAt: number
+}
+
+/** GET /api/web-capture/pair-requests — the client-authenticated pairing
+ * queue. The list is authoritative; SSE only signals "refetch". */
+export async function fetchWebCapturePairRequests(signal?: AbortSignal): Promise<MosaWebCapturePairRequest[]> {
+  const data = await requestJson<{ requests?: JsonValue }>("/api/web-capture/pair-requests", { signal })
+  const rows = Array.isArray(data.requests) ? data.requests : []
+  return rows
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    .map(row => ({
+      id: String(row.id || ""),
+      extensionId: String(row.extensionId || ""),
+      extensionVersion: String(row.extensionVersion || ""),
+      knownExtension: row.knownExtension === true,
+      createdAt: Number(row.createdAt || 0),
+      expiresAt: Number(row.expiresAt || 0),
+    }))
+    .filter(row => row.id)
+}
+
+/** POST /api/web-capture/pair-requests/<id>/decision — allow or deny one
+ * pending pairing request. Unknown/expired ids answer 404. */
+export async function decideWebCapturePairRequest(id: string, allow: boolean): Promise<void> {
+  await requestJson(`/api/web-capture/pair-requests/${encodeURIComponent(id)}/decision`, {
+    method: "POST",
+    body: { allow },
+  })
+}
+
 export type MosaProviderDeletionSettings = {
   jimengDeleteSyncEnabled: boolean
 }

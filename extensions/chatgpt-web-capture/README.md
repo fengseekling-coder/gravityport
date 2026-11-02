@@ -9,7 +9,7 @@
 1. Chrome 打开 `chrome://extensions` 并开启**开发者模式**。
 2. 选择**加载已解压的扩展程序**，加载本目录。
 3. 打开 GravityPort Desktop App。
-4. 扩展会自动在本机固定 discovery 端口中查找 GravityPort，验证产品身份后完成本地配对，并把地址与 Token 只保存在 `chrome.storage.local`。
+4. 扩展会自动在本机固定 discovery 端口中查找 GravityPort。配对不再静默：扩展发起配对后，GravityPort 会弹出授权确认框，你在 App 里点「允许连接」扩展才拿到 Token（拒绝或在 120 秒内未回应则本次配对失败，扩展会停止并等你重试）。扩展在发送 Token 前还会用签名挑战核对对方确实是持有同一 Token 的 GravityPort；核对不通过（例如端口被别的程序占用）时暂停发送，作品留在离线队列。重装 GravityPort 或 Token 失效时扩展会重新发起配对（自动重配每 10 分钟最多一次）；选项页的「重新配对」按钮随时可以手动发起。地址与 Token 只保存在 `chrome.storage.local`。
 5. 首次安装会自动打开扩展设置页。确认数据说明后勾选**发现新图时自动入库**；新安装默认关闭自动收录。
 6. 刷新要使用的网页。
 

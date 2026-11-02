@@ -495,6 +495,18 @@ const english: Record<string, string> = {
   // Task 351: community links on the About settings page
   "社区：": "Community: ",
   "GitHub 讨论区": "GitHub Discussions",
+  // Task 333 — authorization dialog for browser extension pairing.
+  "允许这个浏览器扩展连接 GravityPort 吗？": "Allow this browser extension to connect to GravityPort?",
+  "允许后，这个扩展可以把网页上生成的图和视频存进素材库。": "Once allowed, this extension can save images and videos generated on web pages to your library.",
+  "来自：GravityPort Web Capture {version}": "From: GravityPort Web Capture {version}",
+  "来自：GravityPort Web Capture": "From: GravityPort Web Capture",
+  "来自：一个浏览器扩展": "From: a browser extension",
+  "不允许": "Don’t Allow",
+  "允许连接": "Allow Connection",
+  "已允许浏览器扩展连接": "Browser extension allowed to connect",
+  "浏览器扩展的连接请求已过期，请在扩展里重试": "The browser extension’s connection request expired. Try again from the extension.",
+  "没能保存连接设置": "Couldn’t save the connection setting",
+  "{seconds} 秒内不回应将视为不允许": "No response within {seconds} seconds counts as Don’t Allow",
 }
 
 export function translate(text: string, language: Language): string {

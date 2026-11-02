@@ -31,14 +31,26 @@ test("desktop Web Capture pairing accepts both development and Chrome Web Store 
   assert.equal(MOSA_WEB_CAPTURE_DEFAULT_ORIGINS, MOSA_WEB_CAPTURE_EXTENSION_ORIGINS.join(","));
 });
 
-test("desktop enables silent Web Capture pairing without a native confirmation flow", async () => {
-  const [mainSource, notificationSource] = await Promise.all([
+test("desktop pairing is confirmed in the App UI, never a native dialog or a silent handout", async () => {
+  const [mainSource, notificationSource, bridgeSource] = await Promise.all([
     readFile(new URL("../desktop/main.mjs", import.meta.url), "utf8"),
     readFile(new URL("../desktop/notification-i18n.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../lib/api/bridge-routes.mjs", import.meta.url), "utf8"),
   ]);
   assert.match(mainSource, /webCapturePairingEnabled:\s*true/);
+  // The confirmation lives in the App's authorization dialog (task 333); the
+  // desktop shell only flips the switch and must never open a native prompt.
   assert.doesNotMatch(mainSource, /confirmWebCapturePairing|WEB_CAPTURE_PAIR_CONFIRM_TIMEOUT_MS|pairConfirm/);
   assert.doesNotMatch(notificationSource, /pairConfirm/);
+  // POST /pair no longer hands out the token unconditionally: it opens (or
+  // merges into) a pending request, and the token leaves only through the
+  // poll route or decide()'s one-shot approval for pre-polling extensions.
+  assert.match(bridgeSource, /status: "pending",\s*\n\s*requestId/);
+  assert.match(bridgeSource, /WEB_CAPTURE_PAIR_POLL_PATTERN/);
+  assert.match(bridgeSource, /webCapturePairRequests\?\.decide\(/);
+  assert.match(bridgeSource, /webCaptureIdentityProof\(/);
+  assert.match(bridgeSource, /WEB_CAPTURE_PAIRING_DENIED/);
+  assert.match(bridgeSource, /WEB_CAPTURE_PAIRING_BUSY/);
 });
 
 test("desktop creates one private persistent Web Capture token", async (t) => {
