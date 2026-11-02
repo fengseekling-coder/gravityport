@@ -6,10 +6,13 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { packagedExecutablePath } from "./desktop-runtime-paths.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
+import { QUIET_QA_MARKER_FILENAME } from "../desktop/quiet-qa-screen.mjs";
+import { launchServicesApplicationType, launchServicesFrontAsn, QuietWatchdog } from "./packaged-quiet-watchdog.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { copyLibraryForRelocation } from "../lib/library-relocation.mjs";
 import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
@@ -26,13 +29,28 @@ const libraryDir = join(temp, "library");
 const userData = join(temp, "user-data");
 await mkdir(libraryDir, { recursive: true });
 await mkdir(userData, { recursive: true });
+// Task 346: the packaged smoke must run quiet (no visible window, no Dock
+// icon, no focus steal). The launcher writes the token marker that the
+// packaged quiet gate (desktop/quiet-qa-screen.mjs) reads at startup, and
+// passes the matching switch on every launch below.
+const quietToken = randomBytes(16).toString("hex");
+await writeFile(join(userData, QUIET_QA_MARKER_FILENAME), `${JSON.stringify({ token: quietToken })}\n`);
+const watchdog = new QuietWatchdog({ intervalMs: 500, log: (line) => console.log(line) });
 const expectedIdentity = JSON.parse(await readFile(resolve(rootDir, "web", "gravityport", "dist", "build-identity.json"), "utf8"));
 let activeLaunch = null;
 
 try {
+  if (process.platform === "darwin") {
+    await watchdog.compile();
+    console.log(`QUIET_WATCHDOG_INITIAL_FRONT ${JSON.stringify(launchServicesFrontAsn())}`);
+  }
+
   activeLaunch = await launchPackaged({ libraryDir, userData });
+  watchdog.track(activeLaunch.child.pid, "packaged-smoke-launch-1");
   const firstHealth = await waitForHealth(`${activeLaunch.origin}/api/health`, activeLaunch.child);
   const renderer = await waitForRenderer(activeLaunch.origin, activeLaunch.cdpPort, activeLaunch.child);
+  assertQuietEvidence(activeLaunch, "launch 1");
+  assertNotForegroundType(activeLaunch.child.pid, "launch 1");
   if (!renderer.appShell) throw new Error("Packaged renderer did not mount the MOSA app shell.");
   if (!renderer.preload) throw new Error("Packaged renderer did not expose the Electron preload API.");
   if (!renderer.clientToken) throw new Error("Packaged renderer did not retain the MOSA client capability.");
@@ -48,9 +66,12 @@ try {
   activeLaunch = null;
 
   activeLaunch = await launchPackaged({ libraryDir, userData });
+  watchdog.track(activeLaunch.child.pid, "packaged-smoke-launch-2");
   const restartHealth = await waitForHealth(`${activeLaunch.origin}/api/health`, activeLaunch.child);
   await assertPackagedHealth(restartHealth, { libraryDir, expectedIdentity });
   const restartRenderer = await waitForRenderer(activeLaunch.origin, activeLaunch.cdpPort, activeLaunch.child);
+  assertQuietEvidence(activeLaunch, "launch 2");
+  assertNotForegroundType(activeLaunch.child.pid, "launch 2");
   if (!restartRenderer.appShell || !restartRenderer.preload) {
     throw new Error("Packaged renderer/preload did not recover after restart.");
   }
@@ -62,6 +83,14 @@ try {
   await verifyBundledMcp({ mcpConfig, importedAssetId });
   console.log("PACKAGED_BUNDLED_MCP_PASS");
 
+  // Task 346 reverse checks, still under the watchdog: the gate must reject a
+  // quiet attempt whose marker is missing or carries a different token, by
+  // exiting non-zero before any window or write. A launch WITHOUT the switch
+  // is deliberately never tested here — it would really show a window.
+  await verifyQuietGateRejections({ watchdog, quietToken });
+  console.log("PACKAGED_QUIET_GATE_REVERSE_PASS");
+
+  watchdog.assertClean();
   console.log(JSON.stringify({
     ok: true,
     storage: restartHealth.storage,
@@ -72,6 +101,7 @@ try {
     import: true,
     restartPersistence: true,
     bundledMcp: true,
+    quietWatchdog: watchdog.summary(),
   }));
 } catch (error) {
   const details = activeLaunch
@@ -80,13 +110,15 @@ try {
   throw new Error(`${error instanceof Error ? error.message : String(error)}${details ? `\n${details}` : ""}`, { cause: error });
 } finally {
   if (activeLaunch) await stopChild(activeLaunch.child);
+  await watchdog.stop();
+  console.log(`QUIET_WATCHDOG_SUMMARY ${JSON.stringify(watchdog.summary())}`);
   await rm(temp, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
 }
 
 async function launchPackaged({ libraryDir: isolatedLibraryDir, userData: isolatedUserData }) {
   const port = await freePort();
   const cdpPort = await freePort();
-  const child = spawn(binary, [...ELECTRON_QA_FLAGS, `--user-data-dir=${isolatedUserData}`, `--remote-debugging-port=${cdpPort}`], {
+  const child = spawn(binary, [...ELECTRON_QA_FLAGS, `--user-data-dir=${isolatedUserData}`, `--remote-debugging-port=${cdpPort}`, `--gravityport-qa-quiet=${quietToken}`], {
     env: {
       ...process.env,
       MOSA_RUNTIME_MODE: "qa",
@@ -105,6 +137,83 @@ async function launchPackaged({ libraryDir: isolatedLibraryDir, userData: isolat
     stdout: collect(child.stdout),
     stderr: collect(child.stderr),
   };
+}
+
+// Task 346: positive quiet evidence straight from the app's own stderr. The
+// matched lines are echoed so the smoke log carries the proof it asserts.
+function assertQuietEvidence(launch, label) {
+  const stderrText = launch.stderr();
+  const quietLine = stderrText.split("\n").find((line) => line.includes("QA_QUIET: packaged on"));
+  const showWindowLine = stderrText.split("\n").find((line) => line.includes("QA_UI_SUPPRESSED: showWindow"));
+  if (!quietLine) {
+    throw new Error(`[${label}] packaged quiet stderr evidence missing "QA_QUIET: packaged on".`);
+  }
+  if (!showWindowLine) {
+    throw new Error(`[${label}] packaged quiet stderr evidence missing "QA_UI_SUPPRESSED: showWindow".`);
+  }
+  console.log(`QUIET_EVIDENCE ${label}: ${quietLine.trim()}`);
+  console.log(`QUIET_EVIDENCE ${label}: ${showWindowLine.trim()}`);
+}
+
+// Corroborating per-launch Launch Services view; the per-sample activation
+// policy inside the watchdog stays authoritative.
+function assertNotForegroundType(pid, label) {
+  const appType = launchServicesApplicationType(pid);
+  console.log(`QUIET_WATCHDOG_LAUNCH_SERVICES_TYPE ${label} pid=${pid} type=${JSON.stringify(appType)}`);
+  if (appType === "Foreground") {
+    throw new Error(`[${label}] the app under test registered as a foreground-type app (ApplicationType=Foreground).`);
+  }
+}
+
+// Reverse quiet-gate checks: the switch present but the marker missing, or
+// the marker carrying a different token. The app must reject the startup
+// (non-zero exit, QA_STARTUP_FAILED on stderr) inside 30 seconds.
+async function verifyQuietGateRejections({ watchdog, quietToken }) {
+  const wrongToken = quietToken.slice(0, 31) + (quietToken.endsWith("a") ? "b" : "a");
+  const cases = [
+    { label: "marker-missing", markerToken: null },
+    { label: "token-mismatch", markerToken: wrongToken },
+  ];
+  for (const testCase of cases) {
+    const reverseUserData = join(temp, `quiet-gate-reverse-${testCase.label}`, "user-data");
+    const reverseLibrary = join(temp, `quiet-gate-reverse-${testCase.label}`, "library");
+    await mkdir(reverseUserData, { recursive: true });
+    await mkdir(reverseLibrary, { recursive: true });
+    if (testCase.markerToken) {
+      await writeFile(join(reverseUserData, QUIET_QA_MARKER_FILENAME), `${JSON.stringify({ token: testCase.markerToken })}\n`);
+    }
+    const port = await freePort();
+    const child = spawn(binary, [...ELECTRON_QA_FLAGS, `--user-data-dir=${reverseUserData}`, `--gravityport-qa-quiet=${quietToken}`], {
+      env: {
+        ...process.env,
+        MOSA_RUNTIME_MODE: "qa",
+        MOSA_LIBRARY_DIR: reverseLibrary,
+        MOSA_DESKTOP_PORT: String(port),
+        MOSA_USER_DATA: reverseUserData,
+        MOSA_QA_RUN: "1",
+        MOSA_DISABLE_BRIDGES: "cowart,cowartDiscovery,codex,grok",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    watchdog.track(child.pid, `quiet-gate-reverse-${testCase.label}`);
+    const stderrText = collect(child.stderr);
+    const outcome = await Promise.race([
+      onceExit(child).then(() => ({ code: child.exitCode })),
+      sleep(30000).then(() => ({ code: "timeout" })),
+    ]);
+    if (outcome.code === "timeout") {
+      await signalProcessTree(child.pid, { force: true });
+      throw new Error(`Quiet gate reverse case ${testCase.label} did not exit within 30s.`);
+    }
+    if (outcome.code === 0) {
+      throw new Error(`Quiet gate reverse case ${testCase.label} exited 0 instead of failing its gate.`);
+    }
+    const stderr = stderrText();
+    if (!stderr.includes(`QA_STARTUP_FAILED: packaged-quiet-gate ${testCase.label}`)) {
+      throw new Error(`Quiet gate reverse case ${testCase.label} stderr missed its QA_STARTUP_FAILED reason. stderr: ${stderr.slice(0, 800)}`);
+    }
+    console.log(`QUIET_GATE_REVERSE ${testCase.label} exit=${outcome.code}`);
+  }
 }
 
 async function assertPackagedHealth(health, { libraryDir: isolatedLibraryDir, expectedIdentity: identity }) {

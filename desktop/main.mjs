@@ -4,7 +4,7 @@ import "../lib/apply-env-aliases.mjs";
 // Launch Services as a regular app. See desktop/quiet-test-mode.mjs.
 import "./quiet-test-mode.mjs";
 import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net, screen, session, shell, Notification } from "electron";
-import { isQuietQaRun, createScreenGuard } from "./quiet-qa-screen.mjs";
+import { evaluateQuietQaRunForElectronApp, createScreenGuard } from "./quiet-qa-screen.mjs";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
@@ -141,7 +141,7 @@ function serviceOutboundFetch(url, init) {
 const desktopDataDir = app.getPath("userData");
 
 // Task 325: Early gate for quiet QA mode across all screen-suppressed operations.
-const quietQaRun = isQuietQaRun({ env: process.env, isPackaged: app.isPackaged });
+const quietQaRun = evaluateQuietQaRunForElectronApp(app).quiet;
 const quietTestApp = quietQaRun && process.platform === "darwin";
 const screenGuard = createScreenGuard({
   quiet: quietQaRun,
