@@ -70,6 +70,7 @@ let settingsMigration;
 let queueDrainPromise;
 let queueMutationPromise = Promise.resolve();
 let queueStatusReportPromise;
+let managedReloadPromise;
 let lastSeenRetryRequestId = 0;
 // Queue tickets whose live POST is still running. The minute drain skips them,
 // so one capture is never posted twice at the same time (review 294 A.5).
@@ -525,6 +526,68 @@ async function captureQueueStatusSnapshot() {
   };
 }
 
+async function readManagedInstall() {
+  try {
+    const response = await fetch(chrome.runtime.getURL("gravityport-managed.json"), { cache: "no-store" });
+    if (!response.ok) return null;
+    const marker = await response.json();
+    if (!marker || marker.schema !== 1 || typeof marker.installId !== "string"
+      || !marker.installId.trim() || marker.installId.length > 64) return null;
+    return { installId: marker.installId, version: marker.version };
+  } catch {
+    return null;
+  }
+}
+
+// A malformed version never authorizes a reload; compare numeric segments,
+// not strings (0.15.10 is newer than 0.15.9).
+function compareManagedExtensionVersions(left, right) {
+  const parse = (value) => {
+    const parts = String(value || "").trim().split(".");
+    if (!parts.length || !parts.every((part) => /^\d+$/.test(part))) return null;
+    return parts.map(Number);
+  };
+  const leftParts = parse(left);
+  const rightParts = parse(right);
+  if (!leftParts || !rightParts) return null;
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const diff = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (diff) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function maybeReloadForManagedUpdate(instruction) {
+  if (managedReloadPromise) return managedReloadPromise;
+  managedReloadPromise = (async () => {
+    if (!instruction || typeof instruction !== "object" || Array.isArray(instruction)
+      || typeof instruction.version !== "string" || !instruction.version.trim()
+      || typeof instruction.installId !== "string" || !instruction.installId.trim()) return;
+
+    const managed = await readManagedInstall();
+    if (!managed || managed.installId !== instruction.installId) return;
+    if (compareManagedExtensionVersions(instruction.version, chrome.runtime.getManifest().version) !== 1) return;
+
+    const diskResponse = await fetch(chrome.runtime.getURL("manifest.json"), { cache: "no-store" });
+    if (!diskResponse.ok || (await diskResponse.json())?.version !== instruction.version) return;
+    if (queueDrainPromise || liveDeliveryIds.size || pendingEnqueueIds.size
+      || chunkedVideoTransfers.size || pendingSpoolTransferIds.size
+      || await readDesktopSyncJob()) return;
+
+    const key = "mosaManagedReloadV1";
+    const stored = (await chrome.storage.local.get(key))?.[key];
+    const sameVersion = stored?.version === instruction.version;
+    const attempts = sameVersion && Number.isInteger(stored.attempts) && stored.attempts >= 0 ? stored.attempts : 0;
+    const now = Date.now();
+    if (sameVersion && (attempts >= 3 || now - Number(stored.lastAt || 0) < 10 * 60 * 1000)) return;
+    await chrome.storage.local.set({
+      [key]: { version: instruction.version, attempts: attempts + 1, lastAt: now },
+    });
+    chrome.runtime.reload();
+  })().catch(() => {}).finally(() => { managedReloadPromise = undefined; });
+  return managedReloadPromise;
+}
+
 function reportCaptureQueueStatus() {
   if (queueStatusReportPromise) return queueStatusReportPromise;
   queueStatusReportPromise = (async () => {
@@ -535,6 +598,7 @@ function reportCaptureQueueStatus() {
     // Task 333: the status loop carries the bearer token every beat — it does
     // not go to a service that failed the identity challenge.
     if (await verifyServiceIdentity(baseUrl, token) !== "ok") return { reported: false, retryRequested: false };
+    const managedInstall = await readManagedInstall();
     const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-status`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
@@ -543,11 +607,14 @@ function reportCaptureQueueStatus() {
       body: JSON.stringify({
         ...(await captureQueueStatusSnapshot()),
         desktopSync: settings.autoCapture === true && !(await readDesktopSyncJob()),
+        extensionId: chrome.runtime.id,
+        managedInstall: managedInstall ? { installId: managedInstall.installId } : null,
       }),
       cache: "no-cache",
     }, 3_000);
     if (!response.ok) return { reported: false, retryRequested: false };
     const body = await response.json().catch(() => ({}));
+    void maybeReloadForManagedUpdate(body?.extensionReload);
     const desktopConversations = Array.isArray(body?.chatgptDesktopConversations) ? body.chatgptDesktopConversations : [];
     if (desktopConversations.length && settings.autoCapture === true) void runDesktopSync(desktopConversations);
     const retryRequestId = Math.max(0, Number(body?.retryRequestId || 0));
