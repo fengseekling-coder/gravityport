@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, mkdir, open, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
-import sharp from "./sharp-runtime.js";
+import { imageDecoder } from "./image-decode-client.js";
 import { readVideoMetadataFromFile } from "./video-metadata.js";
 import { createdAtTimestamp } from "./recent-window.js";
 import { createReferenceAttachmentStore, type ReferenceAttachment } from "./reference-attachment-store.js";
@@ -1159,10 +1159,10 @@ function webCaptureError(message: string, statusCode: number, code: string): Err
 
 async function inspectImageBytes(imageBytes: Buffer): Promise<{ format: string; width: number; height: number; pixelHash: string }> {
   try {
-    const metadata = await sharp(imageBytes, {
+    const metadata = await imageDecoder.metadata(imageBytes, {
       failOn: "error",
       limitInputPixels: WEB_CAPTURE_MAX_IMAGE_PIXELS,
-    }).metadata();
+    });
     const width = Number(metadata.width) || 0;
     const height = Number(metadata.height) || 0;
     const pages = Number(metadata.pages) || 1;

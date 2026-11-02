@@ -4,11 +4,17 @@ import sharp from "./sharp-runtime.js";
 import { orientedImageDimensions } from "./image-dimensions.js";
 import { extractImagePalette, type PaletteColor } from "./image-palette.js";
 import { computePerceptualHash } from "./perceptual-hash.js";
+import { useInProcessImageDecoder } from "./image-decode-client.js";
 import {
   derivativeTempFileName,
   publishDerivativeFile,
   removeStaleDerivativeTempFiles,
 } from "./derivative-temp-file.js";
+
+// This file IS the disposable image process (task 341): sharp already runs
+// outside the MOSA runtime here, so its palette/perceptual-hash calls must
+// decode in-process instead of forking a decoder grandchild.
+useInProcessImageDecoder();
 
 const MAX_DERIVATIVE_INPUT_PIXELS = 40_000_000;
 

@@ -22,6 +22,7 @@ import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, repo
 import { releaseManifestTrustSet } from "../lib/release-manifest-signature.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
+import { runStartupShutdownExit } from "./startup-shutdown.mjs";
 import {
   failureCountFor,
   failureRecordFor,
@@ -2093,8 +2094,13 @@ function reportStartupFailure(error) {
   );
   shuttingDown = true;
   stopBridgeNotificationPoll();
-  void Promise.allSettled([
-    stopOwnedRuntime(),
-    releaseDesktopStartupHandoff(),
-  ]).finally(() => app.exit(1));
+  // Task 341: both shutdown steps are bounded (5s each); a wedged runtime
+  // stop no longer leaves the process — and its library lock — behind.
+  void runStartupShutdownExit({
+    steps: [
+      ["stopOwnedRuntime", stopOwnedRuntime],
+      ["releaseDesktopStartupHandoff", releaseDesktopStartupHandoff],
+    ],
+    exit: (code) => app.exit(code),
+  });
 }
