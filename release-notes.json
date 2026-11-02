@@ -7,7 +7,8 @@
         "新增使用统计开关与首次告知，确认前不发送统计，支持随时在「设置 → 关于」关闭。"
       ],
       "fixed": [
-        "修复即梦的用户指令和模型提示词混在一起的问题：图片和视频生成时，你的原话进「用户指令」；智能体出图时，智能体写给模型的提示词单独放进「提示词」。"
+        "修复即梦的用户指令和模型提示词混在一起的问题：图片和视频生成时，你的原话进「用户指令」；智能体出图时，智能体写给模型的提示词单独放进「提示词」。",
+        "修复 Gemini 网页版生成的图片收不进来的问题，提示词仍取你在同一轮发的那句话。需要把浏览器扩展更新到 0.15.45。"
       ]
     },
     "en": {
@@ -16,7 +17,8 @@
         "Added a usage statistics switch and a first-run notice. Nothing is sent before you confirm, and you can turn it off at any time in Settings → About."
       ],
       "fixed": [
-        "Fixed Jimeng mixing up the user instruction and the model prompt. For image and video generation, your own words go into “User instruction”; for agent image generation, the prompt the agent wrote for the model is kept separately under “Prompt”."
+        "Fixed Jimeng mixing up the user instruction and the model prompt. For image and video generation, your own words go into “User instruction”; for agent image generation, the prompt the agent wrote for the model is kept separately under “Prompt”.",
+        "Fixed images generated on the Gemini website not being captured. The prompt still comes from the message you sent in the same turn. Requires browser extension 0.15.45."
       ]
     }
   },
