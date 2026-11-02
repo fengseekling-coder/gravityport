@@ -87,6 +87,7 @@ test("declares the supported Google media sites and provider content script", ()
 test("Google adapters capture visible images and supported Flow / AI Studio videos with bounded Prompt lookup", () => {
   const executableProviderSource = providerSource.replace(/\/\/.*$/gm, "");
   assert.match(providerSource, /const IMAGE_HOSTS/);
+  assert.match(providerSource, /^  const BLOB_MEDIA_HOSTS = \[[^\n]*"gemini\.google\.com"/m);
   assert.match(providerSource, /getBoundingClientRect/);
   assert.match(providerSource, /document\.images/);
   assert.match(providerSource, /document\.querySelectorAll\?\.\("video"\)/);
