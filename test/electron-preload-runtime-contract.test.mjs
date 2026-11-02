@@ -18,6 +18,7 @@ const electronPath = process.platform === "darwin"
     : resolve(root, "node_modules", "electron", "dist", "electron");
 const EXPECTED_API_KEYS = [
   "acknowledgeRenameNotice",
+  "acknowledgeUsageNotice",
   "cancelUpdateDownload",
   "changeLibraryLocation",
   "checkForUpdates",
@@ -28,6 +29,7 @@ const EXPECTED_API_KEYS = [
   "getMcpClientConfig",
   "getRenameNoticeState",
   "getUpdateReady",
+  "getUsageReportingState",
   "libraryFileFlags",
   "onMenuSearch",
   "onUpdateDownloadProgress",
@@ -41,6 +43,7 @@ const EXPECTED_API_KEYS = [
   "reportRendererReady",
   "setBackgroundCapture",
   "setLocale",
+  "setUsageReporting",
   "setWindowFullScreen",
   "startNativeDrag",
   "writeClipboardFiles",
@@ -119,7 +122,7 @@ test("preload path, module format, security settings, and API surface are stable
   // 已核实服务 origin 上的主框架回答）。任务 318：user-profile 通道删除
   // （安装 ID 不再暴露给界面），invoke 计数 24 → 23。
   // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "only the twenty-five approved invoke channels remain");
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 28, "only the twenty-eight approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);

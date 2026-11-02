@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,6 +15,15 @@ import {
 
 const FIXED_ID = "123e4567-e89b-42d3-a456-426614174000";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+test("desktop main gates prepareAnonymousUsage on persisted notice acknowledgement", async () => {
+  const main = await readFile(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  const start = main.indexOf("const anonymousUsage = prepareAnonymousUsage({");
+  assert.ok(start !== -1);
+  const call = main.slice(start, main.indexOf("});", start) + 3);
+  assert.doesNotMatch(call, /enabled:\s*true/);
+  assert.match(call, /enabled:\s*usageReportAllowed\(\{\s*envDisabled:\s*isTelemetryDisabled\(\),\s*preference:\s*readUsagePreference\(desktopDataDir\)/);
+});
 
 test("anonymous usage creates one random install id and reports first launch once", () => {
   const userDataDir = mkdtempSync(join(tmpdir(), "mosa-usage-"));

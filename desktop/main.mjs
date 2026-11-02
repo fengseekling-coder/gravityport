@@ -39,6 +39,7 @@ import {
 } from "./update-preflight.mjs";
 import { backgroundUpdateGatesPass, createUpdateScheduler, updateReadyNotificationCopy } from "./update-scheduler.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
+import { readUsagePreference, writeUsagePreference, usageReportAllowed } from "./usage-preference.mjs";
 import { acknowledgeRenameNotice, evaluateRenameNoticeState } from "./rename-notice.mjs";
 import { openExternalLinkByPolicy } from "./open-external-link.mjs";
 import { clipboardImageTarget } from "./clipboard-image-path.mjs";
@@ -808,6 +809,46 @@ function registerIPC() {
     }
   });
 
+  ipcMain.handle("usage-reporting-state", async (event) => {
+    if (!trustedRendererEvent(event)) return { enabled: false, envDisabled: true, noticePending: false };
+    const preference = readUsagePreference(desktopDataDir);
+    const envDisabled = isTelemetryDisabled();
+    return {
+      enabled: preference.enabled,
+      envDisabled,
+      noticePending: !envDisabled && preference.noticeAcknowledgedAt === null,
+    };
+  });
+
+  ipcMain.handle("set-usage-reporting", async (event, enabled) => {
+    if (!trustedRendererEvent(event)) return { ok: false };
+    if (typeof enabled !== "boolean" || isTelemetryDisabled()) return { ok: false };
+    const previous = readUsagePreference(desktopDataDir);
+    try {
+      writeUsagePreference(desktopDataDir, { ...previous, enabled });
+      if (enabled) startAnonymousUsageLifecycle();
+      else stopAnonymousUsageLifecycle();
+      return { ok: true, enabled };
+    } catch {
+      return { ok: false, enabled: previous.enabled };
+    }
+  });
+
+  ipcMain.handle("acknowledge-usage-notice", async (event, turnOff) => {
+    if (!trustedRendererEvent(event)) return { ok: false };
+    if (typeof turnOff !== "boolean") return { ok: false };
+    const previous = readUsagePreference(desktopDataDir);
+    const enabled = turnOff ? false : previous.enabled;
+    try {
+      writeUsagePreference(desktopDataDir, { enabled, noticeAcknowledgedAt: Date.now() });
+      if (enabled) startAnonymousUsageLifecycle();
+      else stopAnonymousUsageLifecycle();
+      return { ok: true, enabled };
+    } catch {
+      return { ok: false, enabled: previous.enabled };
+    }
+  });
+
   ipcMain.handle("paste-image", async (event) => {
     if (!trustedRendererEvent(event)) return null;
     const image = clipboard.readImage();
@@ -1382,7 +1423,7 @@ function runAnonymousUsageReport() {
 
   const anonymousUsage = prepareAnonymousUsage({
     userDataDir: desktopDataDir,
-    enabled: true,
+    enabled: usageReportAllowed({ envDisabled: isTelemetryDisabled(), preference: readUsagePreference(desktopDataDir) }),
     platform: process.platform,
     arch: process.arch,
     currentVersion,
