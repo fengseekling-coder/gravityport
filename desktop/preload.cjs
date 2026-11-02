@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onUpdateDownloadProgress: (callback) =>
     ipcRenderer.on("update-download-progress", (_event, progress) => callback(progress)),
   openDownloadPage: () => ipcRenderer.invoke("open-download-page"),
+  revealManagedExtensionFolder: () => ipcRenderer.invoke("reveal-managed-extension-folder"),
   openPinterestAuthorize: (url) => ipcRenderer.invoke("open-pinterest-authorize", url),
   openExternalLink: (url) => ipcRenderer.invoke("open-external-link", url),
   changeLibraryLocation: () => ipcRenderer.invoke("change-library-location"),

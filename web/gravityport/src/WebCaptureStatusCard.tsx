@@ -19,6 +19,7 @@ import {
 import { translate, type Language } from "./i18n.js"
 import { bundledExtensionVersion } from "./bundled-extension-version.js"
 import { handleExternalLinkClick } from "./external-link.js"
+import { desktopAPI } from "./desktop.js"
 import "./web-capture-status.css"
 
 // The extension posts a queue status about once a minute (a chrome.alarms
@@ -105,12 +106,64 @@ export function WebCaptureStatusCardView({
   onDeletionSyncChange,
 }: WebCaptureStatusCardViewProps) {
   const t = (text: string) => translate(text, language)
+  const [copied, setCopied] = useState(false)
+  const copiedTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [lagStartedAt, setLagStartedAt] = useState<number | null>(null)
+  const [clockMs, setClockMs] = useState(() => Date.now())
+  const managed = status?.managedExtension
+  const available = managed?.available === true && Boolean(managed.path)
+  const extensionManaged = available && managed?.extensionManaged === true
+  const storeVersion = status?.lastExtensionId === "bhjibabaiccjjfcdbimeeaoaikhcfncc"
+  const migrate = active && available && !extensionManaged && !storeVersion
+  const managedLag = extensionManaged && active && managed?.version && status?.lastExtensionVersion
+    ? compareExtensionVersions(status.lastExtensionVersion, managed.version) === -1 : false
+  useEffect(() => {
+    if (managedLag && lagStartedAt === null) setLagStartedAt(Date.now())
+    if (!managedLag && lagStartedAt !== null) setLagStartedAt(null)
+  }, [managedLag, lagStartedAt])
+  useEffect(() => {
+    if (!managedLag) return
+    const timer = setInterval(() => setClockMs(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [managedLag])
+  useEffect(() => () => {
+    if (copiedTimeout.current) clearTimeout(copiedTimeout.current)
+  }, [])
+  const copyFolder = async () => {
+    if (!managed?.path) return
+    try {
+      await navigator.clipboard.writeText(managed.path)
+      setCopied(true)
+      if (copiedTimeout.current) clearTimeout(copiedTimeout.current)
+      copiedTimeout.current = setTimeout(() => setCopied(false), 2000)
+    } catch { setCopied(false) }
+  }
+  const showFolder = () => {
+    const api = desktopAPI() as { revealManagedExtensionFolder?: () => Promise<unknown> } | null
+    void api?.revealManagedExtensionFolder?.()
+  }
+  const installationSteps = (
+    <div className="web-capture-note">
+      <p>{t("1. 复制扩展文件夹位置")}</p>
+      <p className="web-capture-row">
+        <code>{managed?.path}</code>
+        <button type="button" className="neutral-button" onClick={copyFolder}>{t("复制位置")}</button>
+        {copied ? <span>{t("已复制")}</span> : null}
+        <button type="button" className="neutral-button" onClick={showFolder}>
+          {t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform) ? "在文件资源管理器中显示" : "在访达中显示")}
+        </button>
+      </p>
+      <p>{t("2. 在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」。")}</p>
+      <p>{t("3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 ⌘⇧G，粘贴位置。）")}</p>
+      <p>{t("然后在扩展设置里打开「自动收录」。")}</p>
+    </div>
+  )
   const loading = status === undefined
   const extensionVersion = status?.lastExtensionVersion || ""
   const versionGap = extensionVersion && bundledVersion
     ? compareExtensionVersions(extensionVersion, bundledVersion)
     : null
-  const outdated = active && versionGap !== null && versionGap < 0
+  const outdated = active && !extensionManaged && !migrate && versionGap !== null && versionGap < 0
   const pending = status?.queue.pending ?? 0
   const lastError = status?.lastError ? status.lastError.slice(0, LAST_ERROR_MAX_CHARS) : ""
   // Offline-storage diagnostics from the extension's queue snapshot
@@ -142,7 +195,14 @@ export function WebCaptureStatusCardView({
           {t("刷新")}
         </button>
       </div>
-      {!loading && !active ? (
+      {!loading && !active && available ? (
+        <div className="web-capture-note">
+          <p>{t("安装浏览器扩展（装一次，以后跟着 App 自动更新）：")}</p>
+          {installationSteps}
+          <small>{t("也可以去官网下载")} <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a></small>
+        </div>
+      ) : null}
+      {!loading && !active && !available ? (
         <p className="web-capture-note">
           {t("前往官网安装浏览器扩展，并在扩展设置中开启「自动收录」。")}{" "}
           <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a>
@@ -152,6 +212,21 @@ export function WebCaptureStatusCardView({
       {!loading && active ? (
         <p className="web-capture-row">
           {t("扩展版本")} {extensionVersion || t("未知")}
+          {extensionManaged ? t("（跟着 App 自动更新）") : null}
+        </p>
+      ) : null}
+      {migrate ? (
+        <div className="web-capture-note">
+          <p>{t("扩展现在需要手动更新。改成跟着 App 自动更新：")}</p>
+          {installationSteps}
+          <p>{t("不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。")}</p>
+        </div>
+      ) : null}
+      {managedLag ? (
+        <p className="web-capture-note">
+          {lagStartedAt !== null && clockMs - lagStartedAt > 5 * 60 * 1000
+            ? t("扩展没有自动更新。打开 chrome://extensions，确认扩展已启用、开发者模式开着，然后点扩展上的刷新按钮。")
+            : t("正在更新扩展，一分钟内完成")}
         </p>
       ) : null}
       {outdated ? (

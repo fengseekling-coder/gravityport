@@ -14,6 +14,7 @@ import { execFile } from "node:child_process";
 import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../lib/runtime-defaults.mjs";
 import { validateRuntimeIsolation } from "../lib/runtime-isolation-guard.mjs";
 import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
+import { installManagedExtension, managedExtensionPaths, readManagedExtension } from "../lib/browser-extension-install.mjs";
 import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../lib/import-staging.mjs";
 import { getDesktopText, getLibrarySchemaNewerDialogText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getStartupFailureText, getUpdateNotificationText } from "./notification-i18n.mjs";
 import { buildMenuTemplate } from "./menu-template.mjs";
@@ -141,6 +142,9 @@ function serviceOutboundFetch(url, init) {
 // never moves userData; that package.json name/productName must never change
 // (see the contract in test/library-location.test.mjs).
 const desktopDataDir = app.getPath("userData");
+const managedBrowserExtensionTarget = managedExtensionPaths(desktopDataDir).target;
+const managedBrowserExtensionSource = process.env.MOSA_BROWSER_EXTENSION_SOURCE || join(process.resourcesPath, "browser-extension", "chrome");
+const managesBrowserExtension = app.isPackaged || Boolean(process.env.MOSA_BROWSER_EXTENSION_SOURCE);
 
 // Task 325: Early gate for quiet QA mode across all screen-suppressed operations.
 const quietQaRun = evaluateQuietQaRunForElectronApp(app).quiet;
@@ -513,6 +517,12 @@ if (!app.requestSingleInstanceLock()) {
     // First paint wins the startup race. Telemetry and every other deferred
     // lifecycle task wait until MOSA has at least presented a window.
     await openMainWindow();
+    if (managesBrowserExtension) {
+      void installManagedExtension({
+        sourceDir: managedBrowserExtensionSource,
+        userDataDir: desktopDataDir,
+      }).catch((error) => console.warn(`[MOSA] browser extension install failed: ${error?.message || error}`));
+    }
     void cleanupLegacyVisualData().catch((error) => {
       console.warn(`[MOSA] legacy visual data cleanup failed: ${error?.message || error}`);
     });
@@ -720,6 +730,17 @@ async function syncPackagedBackgroundAgent(enabled) {
 function registerIPC() {
   if (ipcRegistered) return;
   ipcRegistered = true;
+  ipcMain.handle("reveal-managed-extension-folder", async (event) => {
+    if (!trustedRendererEvent(event)) return { ok: false };
+    const manifestPath = join(managedBrowserExtensionTarget, "manifest.json");
+    try {
+      await access(manifestPath);
+      shell.showItemInFolder(manifestPath);
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
+  });
 
   ipcMain.handle("background-capture-state", async (event) => {
     if (!trustedRendererEvent(event)) return { supported: false, enabled: false };
@@ -1775,6 +1796,7 @@ async function ensureDesktopService() {
         webCaptureToken,
         webCaptureOrigins,
         webCapturePairingEnabled: true,
+        ...(managesBrowserExtension ? { managedExtension: { read: () => readManagedExtension(managedBrowserExtensionTarget) } } : {}),
         clientToken,
         disabledBridges: parseDisabledBridges({ env: process.env }),
         ...(bridgesAfterUpdateReady ? { bridgeStartupGate: bridgesAfterUpdateReady } : {}),

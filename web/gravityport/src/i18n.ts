@@ -453,6 +453,18 @@ const english: Record<string, string> = {
   "同步即梦中的删除": "Sync Jimeng deletions",
   "在即梦网站中删除的作品，对应素材将移到回收站。在 GravityPort 中收藏、评分、分组或加了标签的素材不会被移动。": "Assets deleted on the Jimeng website are moved to Trash. Assets favorited, rated, grouped, or tagged in GravityPort are not moved.",
   "无法保存同步设置": "Couldn’t save sync setting",
+  "安装浏览器扩展（装一次，以后跟着 App 自动更新）：": "Install the browser extension once to receive automatic updates with the app:",
+  "1. 复制扩展文件夹位置": "1. Copy the extension folder location",
+  "复制位置": "Copy location",
+  "2. 在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」。": "2. Open chrome://extensions in Chrome and enable Developer mode (top right).",
+  "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 ⌘⇧G，粘贴位置。）": "3. Select Load unpacked and choose this folder. (Mac: press ⌘⇧G in the file picker and paste the path.)",
+  "然后在扩展设置里打开「自动收录」。": "Then turn on auto-capture in the extension settings.",
+  "也可以去官网下载": "Alternatively, download from the website:",
+  "扩展现在需要手动更新。改成跟着 App 自动更新：": "Your extension currently requires manual updates. Switch to automatic updates with the app:",
+  "不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。": "Don’t remove the old extension first. Load this folder directly to preserve queued captures. After switching, you may delete the old extension folder.",
+  "（跟着 App 自动更新）": " (automatically updated with the app)",
+  "正在更新扩展，一分钟内完成": "Updating the extension; this should finish within a minute.",
+  "扩展没有自动更新。打开 chrome://extensions，确认扩展已启用、开发者模式开着，然后点扩展上的刷新按钮。": "The extension did not update automatically. Open chrome://extensions, confirm it is enabled and Developer mode is on, then click its reload button.",
   "即梦": "Jimeng",
 
   // ── 关于页更新内容（区域五 ABOUT-12）──

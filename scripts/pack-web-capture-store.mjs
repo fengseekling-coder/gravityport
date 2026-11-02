@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { WEB_CAPTURE_RUNTIME_FILES } from "./web-capture-runtime-files.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -22,20 +23,7 @@ await mkdir(outputDir, { recursive: true });
 const staging = await mkdtemp(resolve(tmpdir(), "mosa-web-capture-store-"));
 const localTestStaging = await mkdtemp(resolve(tmpdir(), "mosa-web-capture-local-test-"));
 const localTestZip = resolve(outputDir, `GravityPort-Web-Capture-${version}-Local-Test.zip`);
-const runtimeFiles = [
-  "background.js",
-  "content.css",
-  "content.js",
-  "generation-registry.js",
-  "options.html",
-  "options.js",
-  "page-hook.js",
-  "jimeng-page-hook.js",
-  "provider-jimeng.js",
-  "provider-midjourney.js",
-  "provider-policy.js",
-  "provider-sites.js",
-];
+const runtimeFiles = WEB_CAPTURE_RUNTIME_FILES;
 
 // Every file the manifest loads must ship: a missing content script makes
 // Chrome refuse the whole extension (0.15.39 nearly shipped without three).

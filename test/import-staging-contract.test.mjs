@@ -268,6 +268,7 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "pasteFromClipboard", // 任务 239：主进程对主窗口执行一次 webContents.paste，导入走渲染层统一 paste 监听
     "pasteImage",
     "reportRendererReady",
+    "revealManagedExtensionFolder",
     "setBackgroundCapture", // 任务 329：布尔开关，主进程核实来源后写设置
     "setLocale",
     "setWindowFullScreen",

@@ -494,6 +494,15 @@ export type MosaWebCaptureStatus = {
   tokenConfigured: boolean
   lastIngestAt: string | null
   lastExtensionVersion: string
+  lastExtensionId: string
+  lastManagedInstallId: string
+  managedExtension: {
+    available: boolean
+    path?: string
+    version?: string
+    installId?: string
+    extensionManaged?: boolean
+  }
   totalImported: number
   lastError: string | null
   // storageBytes/storageLimitBytes/urlOnly/evicted come from the extension's
@@ -512,7 +521,7 @@ export type MosaWebCaptureStatus = {
   retryRequestId: number
 }
 
-function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
+function normalizeWebCaptureStatus(input: JsonValue, managedExtension: JsonValue = {}): MosaWebCaptureStatus {
   const queue = (input.queue && typeof input.queue === "object" ? input.queue : {}) as JsonValue
   const items = Array.isArray(queue.items) ? queue.items : []
   const serverTime = (value: unknown): string | null =>
@@ -523,6 +532,12 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
     tokenConfigured: input.tokenConfigured === true,
     lastIngestAt: serverTime(input.lastIngestAt),
     lastExtensionVersion: String(input.lastExtensionVersion || ""),
+    lastExtensionId: String(input.lastExtensionId || ""),
+    lastManagedInstallId: String(input.lastManagedInstallId || ""),
+    managedExtension: managedExtension.available === true
+      ? { available: true, path: String(managedExtension.path || ""), version: String(managedExtension.version || ""),
+          installId: String(managedExtension.installId || ""), extensionManaged: managedExtension.extensionManaged === true }
+      : { available: false },
     totalImported: Math.max(0, Number(input.totalImported || 0)),
     lastError: typeof input.lastError === "string" && input.lastError ? input.lastError : null,
     queue: {
@@ -551,8 +566,8 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
 }
 
 export async function fetchWebCaptureStatus(signal?: AbortSignal): Promise<MosaWebCaptureStatus> {
-  const data = await requestJson<{ bridge?: JsonValue }>("/api/web-capture", { signal })
-  return normalizeWebCaptureStatus(data.bridge || {})
+  const data = await requestJson<{ bridge?: JsonValue; managedExtension?: JsonValue }>("/api/web-capture", { signal })
+  return normalizeWebCaptureStatus(data.bridge || {}, data.managedExtension || {})
 }
 
 /** POST /api/web-capture/retry — asks the paired extension to replay its

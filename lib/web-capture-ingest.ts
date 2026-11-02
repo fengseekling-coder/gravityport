@@ -247,7 +247,7 @@ export function createWebCaptureIngest(options: { store?: Store; libraryDir?: st
     }
     activeIngests = Math.max(0, activeIngests - 1);
   }
-  const state: { enabled: boolean; providers: string[]; lastIngestAt: string | null; lastExtensionVersion: string | null; lastImportCount: number; totalImported: number; totalSkipped: number; lastError: string | null; lastSkippedReason: string | null } = { enabled: Boolean(token) && allowedOriginCount > 0, providers: Object.keys(PROVIDER_CONFIG), lastIngestAt: null, lastExtensionVersion: null, lastImportCount: 0, totalImported: 0, totalSkipped: 0, lastError: null, lastSkippedReason: null };
+  const state: { enabled: boolean; providers: string[]; lastIngestAt: string | null; lastExtensionVersion: string | null; lastExtensionId: string; lastManagedInstallId: string; lastImportCount: number; totalImported: number; totalSkipped: number; lastError: string | null; lastSkippedReason: string | null } = { enabled: Boolean(token) && allowedOriginCount > 0, providers: Object.keys(PROVIDER_CONFIG), lastIngestAt: null, lastExtensionVersion: null, lastExtensionId: "", lastManagedInstallId: "", lastImportCount: 0, totalImported: 0, totalSkipped: 0, lastError: null, lastSkippedReason: null };
   const recentActivity: Metadata[] = [];
   let retryRequestId = 0;
   let clientQueue: Metadata = { reportedAt: null, pending: 0, failed: 0, items: [] };
@@ -284,6 +284,10 @@ export function createWebCaptureIngest(options: { store?: Store; libraryDir?: st
     // Settings card knows it without waiting for a capture.
     const reportedVersion = String(input.extensionVersion || "").trim().slice(0, 64);
     if (reportedVersion) state.lastExtensionVersion = reportedVersion;
+    state.lastExtensionId = typeof input.extensionId === "string" ? input.extensionId.slice(0, 64) : "";
+    const managed = input.managedInstall && typeof input.managedInstall === "object" && !Array.isArray(input.managedInstall)
+      ? input.managedInstall as Metadata : null;
+    state.lastManagedInstallId = typeof managed?.installId === "string" ? managed.installId.slice(0, 64) : "";
     const rawItems = Array.isArray(input.items) ? input.items.slice(0, 20) : [];
     const items = rawItems.map((entry) => {
       const value = entry && typeof entry === "object" && !Array.isArray(entry) ? entry as Metadata : {};

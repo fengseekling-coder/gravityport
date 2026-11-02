@@ -39,6 +39,7 @@ const EXPECTED_API_KEYS = [
   "pasteFromClipboard",
   "pasteImage",
   "reportRendererReady",
+  "revealManagedExtensionFolder",
   "setBackgroundCapture",
   "setLocale",
   "setWindowFullScreen",
@@ -119,7 +120,7 @@ test("preload path, module format, security settings, and API surface are stable
   // 已核实服务 origin 上的主框架回答）。任务 318：user-profile 通道删除
   // （安装 ID 不再暴露给界面），invoke 计数 24 → 23。
   // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "only the twenty-five approved invoke channels remain");
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 26, "only the twenty-six approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
