@@ -285,8 +285,8 @@ const isolationContext = {
 const launchedFromMacosUpdate = Boolean(
   resolveMacosUpdateReadyFile(process.argv, join(desktopDataDir, "updates", "macos")),
 );
-// Task 229 / Task 325: quietTestApp is computed near the top of main.mjs using
-// isQuietQaRun({ env: process.env, isPackaged: app.isPackaged }) && process.platform === "darwin".
+// Task 229 / Task 325 / Task 346: quietTestApp is computed near the top of main.mjs using
+// evaluateQuietQaRunForElectronApp(app).quiet && process.platform === "darwin".
 const desktopStartupHandoffEnabled = process.platform === "darwin"
   && app.isPackaged
   && !isolationContext.qaRun

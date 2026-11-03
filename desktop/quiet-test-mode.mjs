@@ -11,7 +11,6 @@
 // launch never carries. The packaged input smoke (real CGEvent input) and a
 // user's own copy of the app both need the normal activating behavior and pass
 // no switch, so they stay visible.
-import { join } from "node:path";
 import { app } from "electron";
 import { evaluateQuietQaRunForElectronApp } from "./quiet-qa-screen.mjs";
 
