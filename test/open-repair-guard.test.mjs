@@ -59,13 +59,27 @@ function clearMarker(libraryDir, key) {
 }
 
 // Captures console.warn lines for the duration of task() so the one-line
-// skip warnings from the open path can be asserted exactly.
+// skip warnings from the open path can be asserted exactly. Task 347 moved
+// the repairs into deferred maintenance, so the async variant spans a
+// startDeferredMaintenance() await as well.
 function captureWarns(task) {
   const warns = [];
   const original = console.warn;
   console.warn = (...parts) => { warns.push(parts.map(String).join(" ")); };
   try {
     task();
+  } finally {
+    console.warn = original;
+  }
+  return warns;
+}
+
+async function captureWarnsAsync(task) {
+  const warns = [];
+  const original = console.warn;
+  console.warn = (...parts) => { warns.push(parts.map(String).join(" ")); };
+  try {
+    await task();
   } finally {
     console.warn = original;
   }
@@ -195,10 +209,13 @@ test("a BUSY failure in the one-time repair transaction is one warning and the o
 
   let store;
   let stub;
-  const warns = captureWarns(() => {
+  const warns = await captureWarnsAsync(async () => {
     stub = failOneTimeStepTransactionWithBusy("REPAIR_MARKER_KEY");
     try {
       store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+      // Task 347: the repair runs in deferred maintenance now; the stub and
+      // the warn capture must span it.
+      await store.startDeferredMaintenance();
     } finally {
       stub.restore();
     }
@@ -208,14 +225,19 @@ test("a BUSY failure in the one-time repair transaction is one warning and the o
   assert.ok(stub.intercepted, "the stub actually failed the repair's transaction");
   assert.ok(store, "createSqliteAssetStore returned despite the BUSY repair");
   assert.equal(store.storageKind, "sqlite");
-  assert.equal(warns.length, 1, "exactly one warning line");
-  assert.match(warns[0], /capture-history repair skipped/);
-  assert.match(warns[0], /SQLITE_BUSY/);
+  // The failed repair logs exactly one skip line; the deferred chain's other
+  // passes may add unrelated progress lines (search_scope_v3 counts), which
+  // are filtered out here.
+  const skipWarns = warns.filter((line) => line.includes("skipped"));
+  assert.equal(skipWarns.length, 1, "exactly one skip warning line");
+  assert.match(skipWarns[0], /capture-history repair skipped/);
+  assert.match(skipWarns[0], /SQLITE_BUSY/);
   assert.equal(markerValue(libraryDir, REPAIR_MARKER_KEY), null, "the marker rolled back with the data");
   const damaged = await store.getAsset("default", "a1");
   assert.equal(damaged.source?.user_message, "a later turn text", "the repair wrote nothing");
 
   const reopened = openStore(t, projectRoot, libraryDir);
+  await reopened.startDeferredMaintenance();
   const asset = await reopened.getAsset("default", "a1");
   assert.equal(asset.source?.user_message, "first prompt words", "the repair ran on the next open");
   assert.equal(asset.business_fields?.user_message, "first prompt words");
@@ -237,10 +259,11 @@ test("a BUSY failure in the message-id backfill transaction is one warning and t
 
   let store;
   let stub;
-  const warns = captureWarns(() => {
+  const warns = await captureWarnsAsync(async () => {
     stub = failOneTimeStepTransactionWithBusy("GENERATION_MESSAGE_BACKFILL_MARKER_KEY");
     try {
       store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+      await store.startDeferredMaintenance();
     } finally {
       stub.restore();
     }
@@ -250,14 +273,16 @@ test("a BUSY failure in the message-id backfill transaction is one warning and t
   assert.ok(stub.intercepted, "the stub actually failed the backfill's transaction");
   assert.ok(store, "createSqliteAssetStore returned despite the BUSY backfill");
   assert.equal(store.storageKind, "sqlite");
-  assert.equal(warns.length, 1, "exactly one warning line");
-  assert.match(warns[0], /generation message backfill skipped/);
-  assert.match(warns[0], /SQLITE_BUSY/);
+  const skipWarns = warns.filter((line) => line.includes("skipped"));
+  assert.equal(skipWarns.length, 1, "exactly one skip warning line");
+  assert.match(skipWarns[0], /generation message backfill skipped/);
+  assert.match(skipWarns[0], /SQLITE_BUSY/);
   assert.equal(markerValue(libraryDir, GENERATION_MESSAGE_BACKFILL_MARKER_KEY), null, "the marker rolled back with the data");
   const events = await store.listGenerationEvents("default", {});
   assert.deepEqual(events.map((event) => event.message_id), [""], "the backfill wrote nothing");
 
   const reopened = openStore(t, projectRoot, libraryDir);
+  await reopened.startDeferredMaintenance();
   const backfilled = await reopened.listGenerationEvents("default", {});
   assert.deepEqual(backfilled.map((event) => event.message_id), ["msg-9"], "the backfill ran on the next open");
   assert.ok(markerValue(libraryDir, GENERATION_MESSAGE_BACKFILL_MARKER_KEY), "the marker is written on the next open");
@@ -293,10 +318,11 @@ test("a BUSY failure in the cleared-prompt repair transaction is one warning and
 
   let store;
   let stub;
-  const warns = captureWarns(() => {
+  const warns = await captureWarnsAsync(async () => {
     stub = failOneTimeStepTransactionWithBusy("CLEARED_PROMPT_REPAIR_MARKER_KEY");
     try {
       store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+      await store.startDeferredMaintenance();
     } finally {
       stub.restore();
     }
@@ -306,14 +332,16 @@ test("a BUSY failure in the cleared-prompt repair transaction is one warning and
   assert.ok(stub.intercepted, "the stub actually failed the repair's transaction");
   assert.ok(store, "createSqliteAssetStore returned despite the BUSY repair");
   assert.equal(store.storageKind, "sqlite");
-  assert.equal(warns.length, 1, "exactly one warning line");
-  assert.match(warns[0], /cleared-prompt repair skipped/);
-  assert.match(warns[0], /SQLITE_BUSY/);
+  const skipWarns = warns.filter((line) => line.includes("skipped"));
+  assert.equal(skipWarns.length, 1, "exactly one skip warning line");
+  assert.match(skipWarns[0], /cleared-prompt repair skipped/);
+  assert.match(skipWarns[0], /SQLITE_BUSY/);
   assert.equal(markerValue(libraryDir, CLEARED_PROMPT_REPAIR_MARKER_KEY), null, "the marker rolled back with the data");
   const events = await store.listGenerationEvents("default", { assetId: "cp-a" });
   assert.deepEqual(events.map((event) => event.effective_prompt), [""], "the repair wrote nothing");
 
   const reopened = openStore(t, projectRoot, libraryDir);
+  await reopened.startDeferredMaintenance();
   const restored = await reopened.listGenerationEvents("default", { assetId: "cp-a" });
   assert.equal(restored[0].effective_prompt, "Model caption: A neon-lit city skyline reflected in a rainy street.", "the repair ran on the next open");
   assert.equal(restored[0].prompt_status, "visible-caption");

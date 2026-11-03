@@ -27,10 +27,19 @@ async function createLibraryRoot(t, prefix = "mosa-repair-capture-") {
   return { root, projectRoot, libraryDir };
 }
 
-function openStore(t, projectRoot, libraryDir) {
-  const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
-  t.after(() => store.close());
-  return store;
+async function openStore(t, projectRoot, libraryDir, { warns } = {}) {
+  const originalWarn = console.warn;
+  if (warns) console.warn = (...parts) => { warns.push(parts.map(String).join(" ")); };
+  try {
+    const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+    // Task 347: the repair runs from deferred maintenance after the open, so
+    // the helper runs it before returning (with warn capture still open).
+    await store.startDeferredMaintenance();
+    t.after(() => store.close());
+    return store;
+  } finally {
+    console.warn = originalWarn;
+  }
 }
 
 function withRawDatabase(libraryDir, task) {
@@ -162,7 +171,7 @@ test("restores a wrong-turn user message from the earliest non-empty recipe snap
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const asset = await store.getAsset("default", "a1");
   assert.equal(asset.source?.user_message, "first prompt words");
   assert.equal(asset.business_fields?.user_message, "first prompt words");
@@ -202,7 +211,7 @@ test("keeps a current message that is a longer completion of the snapshot prompt
   });
   clearRepairMarker(libraryDir);
 
-  openStore(t, projectRoot, libraryDir);
+  await openStore(t, projectRoot, libraryDir);
   withRawDatabase(libraryDir, (database) => {
     const source = JSON.parse(database.prepare("SELECT source_json FROM assets WHERE id = 'c1'").get().source_json);
     assert.equal(source.user_message, "draw a cat sitting on a mat", "the completion stays untouched");
@@ -224,7 +233,7 @@ test("uses the first non-empty snapshot when the earliest snapshots are blank", 
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const asset = await store.getAsset("default", "b1");
   assert.equal(asset.source?.user_message, "the real first prompt");
 });
@@ -243,7 +252,7 @@ test("leaves assets alone when no snapshot carries a non-empty prompt", async (t
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const changes = await store.listLibraryChangesSince("default", 0);
   assert.equal(changes.changes.filter((change) => change.kind === "library-repaired").length, 0, "nothing to repair, no announcement");
   withRawDatabase(libraryDir, (database) => {
@@ -273,7 +282,7 @@ test("skips trashed images and non-ChatGPT sources", async (t) => {
   });
   clearRepairMarker(libraryDir);
 
-  openStore(t, projectRoot, libraryDir);
+  await openStore(t, projectRoot, libraryDir);
   withRawDatabase(libraryDir, (database) => {
     const rows = database.prepare("SELECT id, source_json FROM assets WHERE id IN ('t1', 'f1') ORDER BY id").all();
     assert.equal(JSON.parse(rows[0].source_json).user_message, "wrong turn text", "trashed image untouched");
@@ -295,7 +304,7 @@ test("removes unidentified duplicate events and keeps the identified sibling", a
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const events = await store.listGenerationEvents("default", { assetId: "e1" });
   assert.deepEqual(events.map((event) => event.id), ["message:conv-e:m1"]);
 });
@@ -312,7 +321,7 @@ test("keeps an unidentified event that a generation relation references", async 
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const events = await store.listGenerationEvents("default", { assetId: "r1" });
   assert.equal(events.length, 2, "both events survive while the relation references the unidentified one");
 });
@@ -327,7 +336,7 @@ test("keeps an unidentified event when no identified sibling exists", async (t) 
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const events = await store.listGenerationEvents("default", { assetId: "s1" });
   assert.equal(events.length, 1, "the lone event is the only record of that generation");
 });
@@ -350,7 +359,7 @@ test("recomputes relation candidates and leaves no rows pointing at removed even
   });
   clearRepairMarker(libraryDir);
 
-  openStore(t, projectRoot, libraryDir);
+  await openStore(t, projectRoot, libraryDir);
   withRawDatabase(libraryDir, (database) => {
     const events = database.prepare("SELECT * FROM generation_events WHERE project_id = 'default' ORDER BY created_at, id").all()
       .map((row) => ({
@@ -394,7 +403,9 @@ test("runs once: reopening does not repair again, notify, or invoke helpers", as
   });
   clearRepairMarker(libraryDir);
 
-  const first = openStore(t, projectRoot, libraryDir);
+  const first = await openStore(t, projectRoot, libraryDir);
+  // Task 347: the repair runs from deferred maintenance after the open.
+  await first.startDeferredMaintenance();
   const firstChanges = await first.listLibraryChangesSince("default", 0);
   const announcement = firstChanges.changes.find((change) => change.kind === "library-repaired");
   assert.ok(announcement, "the first open announces the repair");
@@ -486,7 +497,7 @@ test("a library with nothing to repair opens silently and still writes the marke
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const changes = await store.listLibraryChangesSince("default", 0);
   assert.equal(changes.changes.filter((change) => change.kind === "library-repaired").length, 0);
   assert.ok(repairMarkerValue(libraryDir), "the marker is written even on a no-op run");

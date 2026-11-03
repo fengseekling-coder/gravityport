@@ -189,6 +189,8 @@ test("a v2-marked library rebuilds once more under the v3 rules", async (t) => {
   const stampPrefix = seeded.id.slice("alpha-one-".length, "alpha-one-".length + 4);
 
   const store = openSqliteStore(t, root);
+  // Task 347: the rebuild runs from deferred maintenance after the open.
+  await store.startDeferredMaintenance();
   const hits = async (query) => (await store.listAssets({ projectId: "default", query })).map((entry) => entry.id);
   assert.ok(markerValue(libraryDir, SEARCH_SCOPE_MARKER_KEY), "the v3 marker is written");
   assert.ok(markerValue(libraryDir, LEGACY_SCOPE_MARKER_KEY), "the old v2 marker is left in place");

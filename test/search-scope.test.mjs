@@ -322,6 +322,9 @@ test("opening an old library rebuilds search text once under the whitelist", asy
     database.prepare("SELECT updated_at FROM assets WHERE id = 'legacy-live'").get().updated_at);
 
   const store = openSqliteStore(t, root);
+  // Task 347: the rebuild runs from deferred maintenance after the open, not
+  // on the open path any more.
+  await store.startDeferredMaintenance();
   assert.ok(markerValue(libraryDir), "the rebuild marker is written");
 
   assert.deepEqual(await hits(store, "zqx9"), [], "legacy path fragments leave search");
@@ -358,7 +361,8 @@ test("opening an old library rebuilds search text once under the whitelist", asy
   });
   store.close();
 
-  openSqliteStore(t, root);
+  const secondOpen = openSqliteStore(t, root);
+  await secondOpen.startDeferredMaintenance();
   withRawDatabase(libraryDir, (database) => {
     const row = database.prepare("SELECT search_text FROM assets WHERE id = 'legacy-live'").get();
     assert.match(row.search_text, /zqx9-again/, "no second rebuild once the marker is set");
@@ -373,7 +377,12 @@ test("a BUSY failure during the rebuild is one warning, the open survives, and t
 
   let store;
   let stub;
-  const warns = captureWarns(() => {
+  // Task 347: the rebuild runs in deferred maintenance now, so the BUSY stub
+  // and the warn capture must span startDeferredMaintenance as well.
+  const warns = [];
+  const originalWarn = console.warn;
+  console.warn = (...parts) => { warns.push(parts.map(String).join(" ")); };
+  try {
     stub = failOneTimeStepTransactionWithBusy("SEARCH_SCOPE_MARKER_KEY");
     try {
       store = createSqliteAssetStore({
@@ -381,10 +390,13 @@ test("a BUSY failure during the rebuild is one warning, the open survives, and t
         managerDir: join(root, "project", "mosa"),
         libraryDir,
       });
+      await store.startDeferredMaintenance();
     } finally {
       stub.restore();
     }
-  });
+  } finally {
+    console.warn = originalWarn;
+  }
   t.after(() => store.close());
   assert.ok(stub.intercepted, "the rebuild transaction was the one that failed");
   assert.ok(
@@ -396,6 +408,7 @@ test("a BUSY failure during the rebuild is one warning, the open survives, and t
 
   store.close();
   const retried = openSqliteStore(t, root);
+  await retried.startDeferredMaintenance();
   assert.deepEqual(await hits(retried, "zqx9"), [], "the next open rebuilds");
   assert.ok(markerValue(libraryDir), "the retried rebuild writes the marker");
 });
@@ -435,11 +448,17 @@ test("rebuildSearchScopeTexts never runs twice on an already-rebuilt library", a
 
 test("the rebuild's marker check sits inside its immediate transaction", () => {
   const source = readFileSync(join(LIB_DIR, "asset-search-scope.mjs"), "utf8");
-  const transactionStart = source.indexOf("database.transaction(() => {");
-  const immediate = source.indexOf(").immediate()");
+  // Task 347 added the batched driver after the whole-table original; scope
+  // the count to the original so "exactly one immediate transaction" keeps
+  // describing rebuildSearchScopeTexts itself.
+  const wholeTableStart = source.indexOf("export function rebuildSearchScopeTexts(database");
+  const batchedStart = source.indexOf("export async function rebuildSearchScopeTextsBatched(database");
+  const wholeTableSource = source.slice(wholeTableStart, batchedStart);
+  const transactionStart = wholeTableSource.indexOf("database.transaction(() => {");
+  const immediate = wholeTableSource.indexOf(").immediate()");
   const check = "markerQuery.get(SEARCH_SCOPE_MARKER_KEY)";
-  const fastPath = source.indexOf(check);
-  const lockedCheck = source.indexOf(check, transactionStart);
+  const fastPath = wholeTableSource.indexOf(check);
+  const lockedCheck = wholeTableSource.indexOf(check, transactionStart);
   assert.ok(transactionStart !== -1 && immediate !== -1 && fastPath !== -1 && lockedCheck !== -1, "all anchors exist");
   // A read-only fast path first, so an already-rebuilt library never takes the
   // write lock on open…
@@ -447,7 +466,7 @@ test("the rebuild's marker check sits inside its immediate transaction", () => {
   // …and the authoritative re-check under the lock for two racing first opens.
   assert.ok(transactionStart < lockedCheck && lockedCheck < immediate,
     "the marker is re-checked after the write lock is held, so two concurrent opens cannot both rebuild");
-  assert.equal((source.match(/\.immediate\(\)/g) || []).length, 1, "the rebuild runs exactly one immediate transaction");
+  assert.equal((wholeTableSource.match(/\.immediate\(\)/g) || []).length, 1, "the rebuild runs exactly one immediate transaction");
 });
 
 test("the in-memory JSON store scores the same whitelist", async (t) => {

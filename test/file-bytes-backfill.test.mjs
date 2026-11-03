@@ -30,12 +30,15 @@ async function createLibraryRoot(t, prefix = "mosa-file-bytes-") {
   return { projectRoot, libraryDir, filesDir };
 }
 
-function openStore(t, projectRoot, libraryDir, { captureWarns } = {}) {
+async function openStore(t, projectRoot, libraryDir, { captureWarns } = {}) {
   const warns = [];
   const originalWarn = console.warn;
   if (captureWarns) console.warn = (...parts) => { warns.push(parts.map(String).join(" ")); };
   try {
     const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+    // Task 347: the backfill runs from deferred maintenance after the open;
+    // the helper runs it before returning, with the warn capture still open.
+    await store.startDeferredMaintenance();
     t.after(() => store.close());
     return { store, warns };
   } finally {
@@ -110,7 +113,7 @@ test("createAsset records file size for an imported image with no business_field
   const { projectRoot, libraryDir, filesDir } = await createLibraryRoot(t);
   const stagedPath = join(filesDir, "imported.png");
   await writeFile(stagedPath, ONE_PIXEL_PNG);
-  const { store } = openStore(t, projectRoot, libraryDir);
+  const { store } = await openStore(t, projectRoot, libraryDir);
   // The import-batch route passes the staging root as a trusted source root.
   const asset = await store.createAsset(
     { imagePath: stagedPath, fileName: "imported.png", assetId: "imported-image" },
@@ -124,7 +127,7 @@ test("createAsset records file size for an imported video alongside the dimensio
   const { projectRoot, libraryDir, filesDir } = await createLibraryRoot(t);
   const stagedPath = join(filesDir, "import-clip.mp4");
   await copyFile(CAPTURE_FIXTURE, stagedPath);
-  const { store } = openStore(t, projectRoot, libraryDir);
+  const { store } = await openStore(t, projectRoot, libraryDir);
   const asset = await store.createAsset(
     { imagePath: stagedPath, fileName: "import-clip.mp4", assetId: "imported-video" },
     { trustedSourceRoots: [filesDir] },
@@ -142,7 +145,7 @@ test("createAsset keeps a caller-supplied file size", async (t) => {
   const { projectRoot, libraryDir, filesDir } = await createLibraryRoot(t);
   const stagedPath = join(filesDir, "captured.png");
   await writeFile(stagedPath, ONE_PIXEL_PNG);
-  const { store } = openStore(t, projectRoot, libraryDir);
+  const { store } = await openStore(t, projectRoot, libraryDir);
   const asset = await store.createAsset({
     imagePath: stagedPath,
     fileName: "captured.png",
@@ -157,7 +160,7 @@ test("createAsset keeps the keys of JSON-string business_fields while adding the
   const { projectRoot, libraryDir, filesDir } = await createLibraryRoot(t);
   const stagedPath = join(filesDir, "string-fields.png");
   await writeFile(stagedPath, ONE_PIXEL_PNG);
-  const { store } = openStore(t, projectRoot, libraryDir);
+  const { store } = await openStore(t, projectRoot, libraryDir);
   const asset = await store.createAsset({
     imagePath: stagedPath,
     fileName: "string-fields.png",
@@ -203,7 +206,8 @@ test("backfill fills missing sizes at open, includes trash rows, and preserves e
   });
   clearBackfillMarker(libraryDir);
 
-  const { store, warns } = openStore(t, projectRoot, libraryDir, { captureWarns: true });
+  const { store, warns } = await openStore(t, projectRoot, libraryDir, { captureWarns: true });
+  // Task 347: the backfill runs from deferred maintenance after the open.
   const row = readAssetRow(libraryDir, "img-missing");
   const fields = JSON.parse(row.business_fields_json);
   const staged = await stat(imagePath);
@@ -238,7 +242,8 @@ test("runs once: the marker short-circuits later opens", async (t) => {
     insertAsset(database, { id: "img-once", originalPath: imagePath, businessFields: {} });
   });
   clearBackfillMarker(libraryDir);
-  openStore(t, projectRoot, libraryDir).store.close();
+  const { store: onceStore } = await openStore(t, projectRoot, libraryDir);
+  onceStore.close();
   assert.equal(JSON.parse(readAssetRow(libraryDir, "img-once").business_fields_json).file_bytes, ONE_PIXEL_PNG.length);
 
   // Damage a row again after the marker exists: the next open must not
@@ -247,7 +252,7 @@ test("runs once: the marker short-circuits later opens", async (t) => {
     database.prepare("UPDATE assets SET business_fields_json = ? WHERE id = ?").run(JSON.stringify({}), "img-once");
   });
 
-  openStore(t, projectRoot, libraryDir);
+  const { store: againStore } = await openStore(t, projectRoot, libraryDir);
   assert.deepEqual(JSON.parse(readAssetRow(libraryDir, "img-once").business_fields_json), {});
 });
 
@@ -267,7 +272,7 @@ test("skips missing files silently and rows without an original path", async (t)
   });
   clearBackfillMarker(libraryDir);
 
-  const { warns } = openStore(t, projectRoot, libraryDir, { captureWarns: true });
+  const { store: skipStore, warns } = await openStore(t, projectRoot, libraryDir, { captureWarns: true });
   assert.deepEqual(JSON.parse(readAssetRow(libraryDir, "img-gone").business_fields_json), {});
   assert.deepEqual(JSON.parse(readAssetRow(libraryDir, "img-nopath").business_fields_json), {});
   assert.equal(warns.some((line) => line.includes("file_bytes_backfill_v1")), false);

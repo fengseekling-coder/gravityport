@@ -533,8 +533,11 @@ test("SQLite recent filter and counter share the JSON store's date semantics", a
   }
   database.close();
 
-  // Reopening repairs the derived column, exactly as upgrading from an older build would.
+  // Reopening repairs the derived column, exactly as upgrading from an older
+  // build would. Task 347: the repair runs in deferred maintenance now, so
+  // the reopened store runs it explicitly before the assertions.
   const store = openStore();
+  await store.startDeferredMaintenance();
   const inspect = new Database(sqliteDatabasePath(libraryDir), { readonly: true });
   t.after(() => { try { inspect.close(); } catch { /* already closed */ } });
   const repairedRows = Object.fromEntries(inspect.prepare("SELECT id, created_at, created_at_epoch FROM assets WHERE project_id = 'default'").all().map((row) => [row.id, row]));
@@ -1280,6 +1283,8 @@ test("SQLite one-time FTS cleanup purges legacy trashed-asset rows exactly once"
   }
 
   const reopened = openStore();
+  // Task 347: the cleanup runs from deferred maintenance after the open.
+  await reopened.startDeferredMaintenance();
   const meta = await reopened.migrationStatus();
   assert.ok(meta.fts_trash_row_cleanup_v1, "the cleanup records its completion in library_meta");
   {
@@ -1306,6 +1311,7 @@ test("SQLite one-time FTS cleanup purges legacy trashed-asset rows exactly once"
     }
   }
   const third = openStore();
+  await third.startDeferredMaintenance();
   const metaAfterThirdOpen = await third.migrationStatus();
   assert.equal(metaAfterThirdOpen.fts_trash_row_cleanup_v1, meta.fts_trash_row_cleanup_v1, "the marker is written only once");
   assert.equal(ftsRowCount(asset.id), 1, "the guard key prevents a second cleanup pass");

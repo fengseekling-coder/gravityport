@@ -162,6 +162,15 @@ export interface SqliteAssetStore {
   }>;
   /** One-shot background backfill of perceptual hashes from published thumbnails; no-op once done. */
   startPerceptualHashBackfill(): void;
+  /**
+   * Deferred open maintenance (task 347, rule 27): post-upgrade whole-library
+   * verification, marker-gated derived-column re-derivations, the six one-time
+   * repairs and the FTS trash-row cleanup, all after the service listens.
+   * Runtime-only — MCP/CLI opens never call it. Resolves when every step has
+   * settled (shutdown holds on it); never rejects. An aborted `signal` stops
+   * the sweep between two batches; the next open finishes what it left.
+   */
+  startDeferredMaintenance(options?: { signal?: AbortSignal | null }): Promise<void>;
   /** Cached display-pixel digest ("", never computed) — forwarded to replaceAssetMedia on "replace with sharper". */
   cachedPerceptualPixelDigest(projectId: string, assetId: string): Promise<string>;
   /** Server-side re-verification for /api/import/resolve; { ok: false, code } rejects without touching anything. */

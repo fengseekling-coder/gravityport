@@ -1788,7 +1788,18 @@ async function ensureDesktopService() {
     // helper: a library the new version upgraded must never be handed back
     // to the previous version, which could not open it.
     const updateReadyFile = macosUpdateReadyFile || windowsUpdateReadyFile;
-    if (updateReadyFile) markPendingSchemaUpgrade({ readyFile: updateReadyFile, libraryDir });
+    const pendingSchemaUpgrade = updateReadyFile
+      ? markPendingSchemaUpgrade({ readyFile: updateReadyFile, libraryDir })
+      : null;
+    // Task 347: on an upgrade launch the open can take many seconds, so the
+    // startup splash shows its「正在整理素材库…」line immediately instead of
+    // waiting for the page's 1.5 s timer. Fire-and-forget: the splash is
+    // informational, and a destroyed window must never fail startup.
+    if (pendingSchemaUpgrade?.marked && mainWindow?.webContents && !mainWindow.isDestroyed()) {
+      void mainWindow.webContents
+        .executeJavaScript("window.__gravityportShowOrganizingNote && window.__gravityportShowOrganizingNote()", true)
+        .catch(() => { /* the splash may already have been replaced by the app. */ });
+    }
     setOutboundFetch(serviceOutboundFetch);
     const nextService = await startMosaService({
       port: desktopPort,

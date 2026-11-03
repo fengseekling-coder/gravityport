@@ -6,7 +6,8 @@
         "macOS 版在 GravityPort 关闭后，可由后台服务继续接收浏览器扩展发来的作品；可在「设置 → 连接」中关闭。"
       ],
       "improved": [
-        "新增 MCP 工具 asset_import_folder：AI 助手从其他文件夹导入图片和视频前，会先在助手里请求确认；从源码运行 MCP 时，启动目录不再能直接导入素材库。"
+        "新增 MCP 工具 asset_import_folder：AI 助手从其他文件夹导入图片和视频前，会先在助手里请求确认；从源码运行 MCP 时，启动目录不再能直接导入素材库。",
+        "素材库较大或升级后第一次打开时更快，启动页会提示「正在整理素材库…」。"
       ],
       "fixed": [
         "修复即梦的用户指令和模型提示词混在一起的问题：图片和视频生成时，你的原话进「用户指令」；智能体出图时，智能体写给模型的提示词单独放进「提示词」。",
@@ -20,7 +21,8 @@
         "On macOS, GravityPort’s background service can keep receiving works sent by the browser extension after GravityPort is closed. You can turn this off in Settings → Connect."
       ],
       "improved": [
-        "Added the asset_import_folder MCP tool. Before an AI assistant imports images and videos from another folder, it asks for confirmation inside the assistant. When the MCP server runs from source, its launch directory can no longer be imported directly."
+        "Added the asset_import_folder MCP tool. Before an AI assistant imports images and videos from another folder, it asks for confirmation inside the assistant. When the MCP server runs from source, its launch directory can no longer be imported directly.",
+        "Large libraries, and the first open after an update, now open faster; the startup screen shows a short note while it finishes organizing your library."
       ],
       "fixed": [
         "Fixed Jimeng mixing up the user instruction and the model prompt. For image and video generation, your own words go into “User instruction”; for agent image generation, the prompt the agent wrote for the model is kept separately under “Prompt”.",
