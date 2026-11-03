@@ -1,0 +1,8 @@
+# Exceptions to scripts/check-repo-hygiene.mjs. One per line, always with a reason.
+#   path | reason                 allow every rule for that path
+#   path | rule,rule | reason     allow only the named rules (secret, private-path, work-doc, big-file, media)
+# A path ending in "/" covers the whole folder. Keep this list short: prefer a
+# placeholder, or moving the file out of the repo.
+# 例外清单：一行一个，必须写原因。路径以 "/" 结尾表示整个文件夹。能改成占位写法或挪出仓库就别加例外。
+
+test/c2pa-production-signer.test.mjs | secret | Fake private-key header with the body "leak", used to prove the signer preflight rejects leaked key material.
