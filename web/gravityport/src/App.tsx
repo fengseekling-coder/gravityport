@@ -430,15 +430,6 @@ export default function App() {
   const [settingTab, setSettingTab] = useState("常规与外观")
   const [backgroundCapture, setBackgroundCapture] = useState<{ supported: boolean; enabled: boolean }>({ supported: false, enabled: true })
   const [backgroundCaptureBusy, setBackgroundCaptureBusy] = useState(false)
-  const [usageReporting, setUsageReporting] = useState<{ enabled: boolean; envDisabled: boolean; noticePending: boolean } | null>(null)
-  const [usageReportingBusy, setUsageReportingBusy] = useState(false)
-  useEffect(() => {
-    if (!settings || settingTab !== "关于") return
-    let active = true
-    desktopAPI()?.getUsageReportingState?.().then(state => { if (active) setUsageReporting(state) })
-      .catch(() => { if (active) setUsageReporting(null) })
-    return () => { active = false }
-  }, [settings, settingTab])
   useEffect(() => {
     if (!settings || settingTab !== "连接") return
     let active = true
@@ -544,14 +535,9 @@ export default function App() {
   const [restartPending, setRestartPending] = useState(false)
   // Rename notice (task 116): shown once at first-screen render.
   const [renameNoticeOpen, setRenameNoticeOpen] = useState(false)
-  const [renameNoticeWanted, setRenameNoticeWanted] = useState(false)
-  const [renameNoticeChecked, setRenameNoticeChecked] = useState(false)
-  const [usageNoticePending, setUsageNoticePending] = useState(false)
-  const [usageNoticeOpen, setUsageNoticeOpen] = useState(false)
-  const [usageNoticeBusy, setUsageNoticeBusy] = useState(false)
   const activeImportReview = importReviewQueue[0]
   const importReviewBlocked = Boolean(
-    settings || preview || deleting || permanentDeleteIds || emptyTrashConfirm || renameNoticeOpen || usageNoticeOpen
+    settings || preview || deleting || permanentDeleteIds || emptyTrashConfirm || renameNoticeOpen
     || groupRename || groupDeleteConfirm || groupMerge || groupStats || stackRename || groupCreateWithSelection
     || stackDissolveConfirm || stackTrashConfirm,
   )
@@ -629,27 +615,15 @@ export default function App() {
   const versionOkRef = useRef(false)
   const firstPageOkRef = useRef(false)
   const sseOpenRef = useRef(false)
+  const deletingRef = useRef(deleting)
+  const settingsRef = useRef(settings)
+  const renameNoticeRef = useRef(renameNoticeOpen)
+  deletingRef.current = deleting
+  settingsRef.current = settings
+  renameNoticeRef.current = renameNoticeOpen
   const dismissRenameNotice = () => {
     setRenameNoticeOpen(false)
-    setRenameNoticeWanted(false)
     desktopAPI()?.acknowledgeRenameNotice?.().catch(() => {})
-  }
-  const acknowledgeUsageNotice = async (turnOff: boolean) => {
-    if (usageNoticeBusy) return
-    setUsageNoticeBusy(true)
-    try {
-      const result = await desktopAPI()?.acknowledgeUsageNotice?.(turnOff)
-      if (!result?.ok) throw new Error("usage notice persistence failed")
-      setUsageNoticePending(false)
-      setUsageReporting(s => s ? { ...s, enabled: result.enabled === true, noticePending: false } : s)
-      if (turnOff) setToast({ text: tr("已关闭使用统计") })
-    } catch {
-      setUsageNoticePending(false)
-      setToast({ text: tr("没能保存使用统计设置") })
-    } finally {
-      setUsageNoticeOpen(false)
-      setUsageNoticeBusy(false)
-    }
   }
 
   const [systemDark, setSystemDark] = useState(false)
@@ -1103,24 +1077,13 @@ export default function App() {
     // too early.
     const api = desktopAPI()
     api?.getRenameNoticeState?.().then(notice => {
-      setRenameNoticeWanted(notice?.shouldShow === true)
-    }).catch(() => {}).finally(() => setRenameNoticeChecked(true))
+      if (notice?.shouldShow !== true) return
+      // Guard against dialogs that opened while the async state request was pending.
+      if (deletingRef.current || settingsRef.current || renameNoticeRef.current) return
+      setRenameNoticeOpen(true)
+    }).catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading])
-  useEffect(() => {
-    if (loading || !desktopAPI()?.getUsageReportingState) return
-    desktopAPI()?.getUsageReportingState?.().then(state => {
-      setUsageNoticePending(state?.noticePending === true)
-    }).catch(() => {})
-  }, [loading])
-  const noticeModalBlocked = Boolean(settings || preview || deleting || permanentDeleteIds || emptyTrashConfirm
-    || groupRename || groupDeleteConfirm || groupMerge || groupStats || stackRename || groupCreateWithSelection
-    || stackDissolveConfirm || stackTrashConfirm || activeImportReview || menu)
-  useEffect(() => {
-    if (loading || !renameNoticeChecked || noticeModalBlocked || renameNoticeOpen || usageNoticeOpen) return
-    if (renameNoticeWanted) setRenameNoticeOpen(true)
-    else if (usageNoticePending) setUsageNoticeOpen(true)
-  }, [loading, renameNoticeChecked, noticeModalBlocked, renameNoticeOpen, renameNoticeWanted, usageNoticeOpen, usageNoticePending])
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)")
     const sync = () => setSystemDark(media.matches)
@@ -2747,7 +2710,6 @@ export default function App() {
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
         if (renameNoticeOpen) dismissRenameNotice()
-        else if (usageNoticeOpen) { e.preventDefault(); void acknowledgeUsageNotice(false) }
         else if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         // Fullscreen sits above the viewer in the chain: Esc first leaves the
@@ -2761,7 +2723,7 @@ export default function App() {
       // the same key and arrives through onMenuSearch instead).
       if (isFocusSearchKey(e, {
         viewIsLibrary: !preview && !settings && !pinterestActive,
-        hasBlockingOverlay: Boolean(menu || deleting || renameNoticeOpen || usageNoticeOpen),
+        hasBlockingOverlay: Boolean(menu || deleting || renameNoticeOpen),
         targetIsTextEntry: isEditableTarget(e.target),
         platform: isMacPlatform() ? "mac" : "other",
       })) {
@@ -2780,7 +2742,7 @@ export default function App() {
       // on-screen neighbours, Enter opens it (or enters its stack). Off while
       // the viewer, Settings, a menu or a dialog is up, and for a batch.
       const plainKey = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
-      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen && !usageNoticeOpen
+      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen
       if (plainKey && galleryIdle && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {
         const grid = gridRef.current
         const current = selectionRef.current.selected || asset?.id || ""
@@ -2849,7 +2811,7 @@ export default function App() {
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, usageNoticeOpen, usageNoticeBusy])
+  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen])
   // Fullscreen belongs to the open viewer, never outlives it: the back button,
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
@@ -3214,7 +3176,7 @@ export default function App() {
         targetIsEditable: isEditableTarget(event.target),
         settingsOpen: settings,
         pinterestActive,
-        hasOverlay: Boolean(menu || deleting || renameNoticeOpen || usageNoticeOpen || permanentDeleteIds || emptyTrashConfirm
+        hasOverlay: Boolean(menu || deleting || renameNoticeOpen || permanentDeleteIds || emptyTrashConfirm
           || groupDeleteConfirm || groupMerge || groupRename || stackRename || stackDissolveConfirm
           || stackTrashConfirm || groupStats || groupCreateWithSelection),
         cutActive: cutIdsRef.current.length > 0,
@@ -3238,7 +3200,7 @@ export default function App() {
     window.addEventListener("paste", paste)
     return () => window.removeEventListener("paste", paste)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [importing, library, active, project, stackId, settings, pinterestActive, menu, deleting, renameNoticeOpen, usageNoticeOpen,
+  }, [importing, library, active, project, stackId, settings, pinterestActive, menu, deleting, renameNoticeOpen,
     permanentDeleteIds, emptyTrashConfirm, groupDeleteConfirm, groupMerge, groupRename, stackRename,
     stackDissolveConfirm, stackTrashConfirm, groupStats, groupCreateWithSelection, language, debouncedQuery, assetType])
   const navigateAsset = async (direction: number) => {
@@ -5332,36 +5294,6 @@ export default function App() {
                       return <button className="neutral-button about-update" onClick={checkForUpdates} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
                     })()}
                   </section>
-                  {desktop?.getUsageReportingState && (
-                    <section className="settings-section usage-reporting-section">
-                      <div className="setting-row">
-                        <span>{tr("发送使用统计")}</span>
-                        <button type="button"
-                          className={`settings-switch ${usageReporting?.enabled && !usageReporting.envDisabled ? "enabled" : ""}`}
-                          role="switch"
-                          aria-checked={Boolean(usageReporting?.enabled && !usageReporting.envDisabled)}
-                          aria-label={tr("发送使用统计")}
-                          disabled={!usageReporting || usageReporting.envDisabled || usageReportingBusy}
-                          onClick={async () => {
-                            if (!usageReporting || usageReportingBusy || usageReporting.envDisabled) return
-                            const previous = usageReporting.enabled
-                            setUsageReportingBusy(true)
-                            setUsageReporting(s => s && ({ ...s, enabled: !previous }))
-                            try {
-                              const result = await desktop?.setUsageReporting?.(!previous)
-                              if (!result?.ok) throw new Error("setting failed")
-                              setUsageReporting(s => s && ({ ...s, enabled: result.enabled === true }))
-                            } catch {
-                              setUsageReporting(s => s && ({ ...s, enabled: previous }))
-                              notify("没能保存使用统计设置")
-                            } finally { setUsageReportingBusy(false) }
-                          }}><span /></button>
-                      </div>
-                      <p className="usage-reporting-note">{tr(usageReporting?.envDisabled
-                        ? "已由环境变量 GRAVITYPORT_DISABLE_TELEMETRY 关闭。"
-                        : "每天最多一次，只含随机安装 ID、版本、系统和芯片类型。")}</p>
-                    </section>
-                  )}
                   {(() => {
                     const blocks = buildReleaseNoteBlocks({
                       productVersion: health?.productVersion || "",
@@ -5504,19 +5436,6 @@ export default function App() {
               >
                 {tr("知道了")}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {usageNoticeOpen && !renameNoticeOpen && (
-        <div className="modal-layer" onClick={e => { if (e.target === e.currentTarget) void acknowledgeUsageNotice(false) }}>
-          <div className="delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="usage-notice-title">
-            <div className="delete-icon"><Icon name="info" size={26} /></div>
-            <h3 id="usage-notice-title">{tr("GravityPort 会发送使用统计")}</h3>
-            <p>{tr("每天最多一次，只含随机安装 ID、版本、系统和芯片类型，不含素材、提示词和文件名。可以随时在「设置 → 关于」中关闭。")}</p>
-            <div className="delete-actions">
-              <button className="neutral-button" disabled={usageNoticeBusy} onClick={() => void acknowledgeUsageNotice(true)}>{tr("关闭使用统计")}</button>
-              <button className="primary-button" autoFocus disabled={usageNoticeBusy} onClick={() => void acknowledgeUsageNotice(false)}>{tr("知道了")}</button>
             </div>
           </div>
         </div>

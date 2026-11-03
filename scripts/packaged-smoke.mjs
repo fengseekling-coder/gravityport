@@ -10,7 +10,6 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { packagedExecutablePath } from "./desktop-runtime-paths.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
-import { writeUsagePreference } from "../desktop/usage-preference.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { copyLibraryForRelocation } from "../lib/library-relocation.mjs";
 import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
@@ -27,9 +26,6 @@ const libraryDir = join(temp, "library");
 const userData = join(temp, "user-data");
 await mkdir(libraryDir, { recursive: true });
 await mkdir(userData, { recursive: true });
-// A fresh profile would open the first-run usage notice over the window and
-// block the pointer checks; acknowledge it (QA runs never start usage reporting).
-writeUsagePreference(userData, { enabled: true, noticeAcknowledgedAt: Date.now() });
 const expectedIdentity = JSON.parse(await readFile(resolve(rootDir, "web", "gravityport", "dist", "build-identity.json"), "utf8"));
 let activeLaunch = null;
 

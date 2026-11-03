@@ -2541,12 +2541,6 @@ img.black-image {
 }.app .settings-page .neutral-button {
   min-height: 32px;
   white-space: nowrap;
-}.app .usage-reporting-section .settings-switch:disabled {
-  opacity: 0.5;
-}.app .usage-reporting-note {
-  margin: var(--space-1) 0 0;
-  color: var(--ui-secondary);
-  font-size: 12px;
 }.app .settings-section .setting-row + .setting-row {
   border-top: 1px solid var(--ui-line);
 }.app .setting-row small {

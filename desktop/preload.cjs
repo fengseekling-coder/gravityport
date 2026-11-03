@@ -42,9 +42,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getMcpClientConfig: () => ipcRenderer.invoke("mcp-client-config"),
   getBackgroundCaptureState: () => ipcRenderer.invoke("background-capture-state"),
   setBackgroundCapture: (enabled) => ipcRenderer.invoke("set-background-capture", enabled),
-  getUsageReportingState: () => ipcRenderer.invoke("usage-reporting-state"),
-  setUsageReporting: (enabled) => ipcRenderer.invoke("set-usage-reporting", enabled),
-  acknowledgeUsageNotice: (turnOff) => ipcRenderer.invoke("acknowledge-usage-notice", turnOff),
   onMenuSearch: (callback) => ipcRenderer.on("menu-search", (_event, ...args) => callback(...args)),
   // 任务 96（A6）：大图页「全屏」与窗口系统全屏双向同步——渲染层写窗口全屏态、
   // 订阅主进程广播的 enter/leave-full-screen 变化。

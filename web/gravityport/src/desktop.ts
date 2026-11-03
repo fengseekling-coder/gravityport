@@ -48,9 +48,6 @@ type ElectronAPI = {
   getMcpClientConfig?: () => Promise<McpClientConfig>
   getBackgroundCaptureState?: () => Promise<{ supported: boolean; enabled: boolean }>
   setBackgroundCapture?: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>
-  getUsageReportingState?: () => Promise<{ enabled: boolean; envDisabled: boolean; noticePending: boolean }>
-  setUsageReporting?: (enabled: boolean) => Promise<{ ok: boolean; enabled?: boolean }>
-  acknowledgeUsageNotice?: (turnOff: boolean) => Promise<{ ok: boolean; enabled?: boolean }>
   setWindowFullScreen?: (flag: boolean) => Promise<unknown>
   onWindowFullScreenChange?: (callback: (isFullScreen: boolean) => void) => unknown
   onMenuSearch?: (callback: () => void) => unknown

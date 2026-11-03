@@ -84,7 +84,7 @@ Electron 桌面壳由 `desktop/main.mjs`、`desktop/preload.cjs` 和
 切换库位置和窗口全屏同步。导入成功和可用更新的系统通知由主进程
 直接发出；在系统文件管理器中定位原件走运行时的 `POST /api/open-folder`。业务数据仍由同一个
 本地 HTTP 运行时提供。更新（`update-service.mjs`、`macos-updater.mjs`、
-`windows-updater.mjs`）、使用统计（随机安装 ID，`anonymous-usage.mjs` 与 `usage-preference.mjs`）、扩展配对 Token
+`windows-updater.mjs`）、使用统计（随机安装 ID，`anonymous-usage.mjs`）、扩展配对 Token
 （`web-capture-pairing.mjs`）、旧视觉数据清理（`legacy-visual-cleanup.mjs`）、C2PA helper
 安装和改名提示各在 `desktop/` 下独立成模块。
 
@@ -291,11 +291,10 @@ Web UI 启动时同时读取 `/api/health` 与静态 `build-identity.json`，在
 校验签名，再按版本号和发行通道判断能否更新。`desktop/macos-updater.mjs` /
 `desktop/windows-updater.mjs` 从 `https://gravityport.azhuilab.com/downloads/` 下载对应平台的
 更新包，校验 SHA-256 与签名身份（macOS Team ID / Windows 签名证书指纹）后交给分离的
-helper 替换应用并重启。打包版在用户确认首次使用统计提示后，每个统计日最多发一次无请求体的 `HEAD` 请求，把
-随机安装 ID、平台、架构和版本附在同一清单地址上作为使用统计（随机安装 ID）
-（`desktop/anonymous-usage.mjs`）；首次提示确认前不发送，可在「设置 → 关于」关闭。
-设置 `GRAVITYPORT_DISABLE_TELEMETRY=1`（优先于界面开关）、QA 运行或未打包的开发壳都不会发送。
-发布流程见 [docs/releasing.md](docs/releasing.md)。
+helper 替换应用并重启。打包版在首次启动和每个统计日各发一次无请求体的 `HEAD` 请求，把
+随机安装 ID、平台、架构和版本附在同一清单地址上作为使用统计（假名化，不是完全匿名）
+（`desktop/anonymous-usage.mjs`）；设置 `GRAVITYPORT_DISABLE_TELEMETRY=1`、QA 运行或未打包的
+开发壳都不会发送。发布流程见 [docs/releasing.md](docs/releasing.md)。
 
 ## 5. 存储与媒体处理
 
@@ -783,7 +782,7 @@ Token 写入公共文档、日志或仓库：
 | `GRAVITYPORT_WEB_CAPTURE_ORIGINS` | 网页捕获允许的扩展 origin 列表 |
 | `MOSA_WEB_CAPTURE_PAIR` | 设为 `auto` 时，独立 `npm start` Runtime 也允许扩展静默配对（默认关闭，桌面版始终自动配对） |
 | `MOSA_C2PATOOL_PATH` | C2PA 导出（`lib/c2pa-export.mjs`，目前尚未接入 UI/HTTP/MCP 入口）使用的 `c2patool` 路径覆盖（见 [docs/operations.md](docs/operations.md)） |
-| `GRAVITYPORT_DISABLE_TELEMETRY` | 设为 `1` 时桌面壳不发使用统计（随机安装 ID），优先于设置中的开关（见 PRIVACY.md） |
+| `GRAVITYPORT_DISABLE_TELEMETRY` | 设为 `1` 时桌面壳不发使用统计（见 PRIVACY.md） |
 | `MOSA_FEEDBACK_URL` | 反馈收集服务地址覆盖（默认 `https://gravityport.azhuilab.com/api/feedback`） |
 | `MOSA_FEEDBACK_TIMEOUT_MS` | 反馈转发超时毫秒数（默认 15000） |
 

@@ -617,8 +617,7 @@ test("retired show-in-folder IPC stays removed without expanding renderer author
   // origin 上的主框架回答），23 → 24。任务 318：user-profile 通道删除（安装 ID
   // 不再暴露给界面），24 → 23。
   // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
-  // 任务 335：使用统计三个通道（读状态、改开关、确认提示，主进程核实来源），25 → 28。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 28, "no invoke channel beyond the currently approved narrow requests");
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "no invoke channel beyond the currently approved narrow requests");
   assert.doesNotMatch(preload, /shell\s*[:.]/, "shell is never exposed to the renderer");
   assert.doesNotMatch(preload, /exec\(|spawn\(|execFile\(/, "no arbitrary command execution");
 

@@ -247,7 +247,6 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
   const exposed = [...preload.matchAll(/^\s{2}(\w+):/gm)].map((match) => match[1]).sort();
   assert.deepEqual(exposed, [
     "acknowledgeRenameNotice",
-    "acknowledgeUsageNotice",
     "cancelUpdateDownload",
     "changeLibraryLocation",
     "checkForUpdates",
@@ -258,7 +257,6 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "getMcpClientConfig", // 任务 208：只读，本机 App 路径拼成的 MCP 配置文本
     "getRenameNoticeState",
     "getUpdateReady", // 任务 231：只读，主进程已下好并校验的更新包状态
-    "getUsageReportingState",
     "libraryFileFlags", // drop-back guard: which dropped files already live in the library (booleans only)
     "onMenuSearch",
     "onUpdateDownloadProgress",
@@ -272,7 +270,6 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "reportRendererReady",
     "setBackgroundCapture", // 任务 329：布尔开关，主进程核实来源后写设置
     "setLocale",
-    "setUsageReporting",
     "setWindowFullScreen",
     "startNativeDrag",
     "writeClipboardFiles",
