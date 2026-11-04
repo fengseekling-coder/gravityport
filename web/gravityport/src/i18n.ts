@@ -103,6 +103,11 @@ const english: Record<string, string> = {
   "MOSA 现已更名为 GravityPort": "MOSA Is Now GravityPort",
   "只是换了名字。你的素材、设置和浏览器插件都在原处，不需要做任何操作。": "Just a new name. Your assets, settings, and browser plugin are all still exactly where they were. No action needed.",
   "知道了": "Got it",
+  // app-lifecycle: post-upgrade check failure notice (task 350)
+  "素材库检查发现问题": "Library check found a problem",
+  "这次升级后的检查没有通过。升级前的数据库拷贝已经留着，请别删它。App 照常能用，麻烦在设置的「反馈」里告诉我们。": "The check after this upgrade did not pass. The pre-upgrade database copy is being kept — please don't delete it. The app keeps working normally; please let us know via Feedback in Settings.",
+  "在访达中显示拷贝": "Reveal Copy in Finder",
+  "在资源管理器中显示拷贝": "Reveal Copy in File Explorer",
   "导入完成": "Import complete",
   "部分素材导入失败": "Some assets failed to import", "导入失败": "Import failed",
   "路径已复制": "Path copied", "无法打开该位置": "This location can't be opened",

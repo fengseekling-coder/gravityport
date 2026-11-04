@@ -65,6 +65,7 @@ import {
   toggleAssetFavorite, updateAssetMetadata, uploadVideoPoster, moveAssetsToTrash, setAssetsGroup,
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
   moveAssetsToStack, openLibraryFolder,
+  fetchSchemaUpgradeNotice, acknowledgeSchemaUpgradeNotice,
   fetchLibraryRevision, fetchLibraryChanges, fetchGalleryRows, readMutationState,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
   type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
@@ -535,9 +536,15 @@ export default function App() {
   const [restartPending, setRestartPending] = useState(false)
   // Rename notice (task 116): shown once at first-screen render.
   const [renameNoticeOpen, setRenameNoticeOpen] = useState(false)
+  // Task 350: post-upgrade check failure notice. Shown after the first screen
+  // (or live, when the background check fails while the App is open); one
+  // 「知道了」 latch lives on the failed verify record server-side.
+  const [schemaNotice, setSchemaNotice] = useState<{ backupPath: string; targetVersion: number | null; checkedAt: string | null } | null>(null)
+  const schemaNoticeOpen = schemaNotice !== null
   const activeImportReview = importReviewQueue[0]
   const importReviewBlocked = Boolean(
     settings || preview || deleting || permanentDeleteIds || emptyTrashConfirm || renameNoticeOpen
+    || schemaNoticeOpen
     || groupRename || groupDeleteConfirm || groupMerge || groupStats || stackRename || groupCreateWithSelection
     || stackDissolveConfirm || stackTrashConfirm,
   )
@@ -618,12 +625,36 @@ export default function App() {
   const deletingRef = useRef(deleting)
   const settingsRef = useRef(settings)
   const renameNoticeRef = useRef(renameNoticeOpen)
+  const schemaNoticeRef = useRef(schemaNoticeOpen)
+  const loadingRef = useRef(loading)
   deletingRef.current = deleting
   settingsRef.current = settings
   renameNoticeRef.current = renameNoticeOpen
+  schemaNoticeRef.current = schemaNoticeOpen
+  loadingRef.current = loading
   const dismissRenameNotice = () => {
     setRenameNoticeOpen(false)
     desktopAPI()?.acknowledgeRenameNotice?.().catch(() => {})
+  }
+  // Task 350: ask the local service whether the failed post-upgrade check
+  // still owes the user its dialog. The rename notice opens first when both
+  // are due; this one waits for it to close. Never opens over another dialog.
+  const maybeShowSchemaUpgradeNotice = () => {
+    if (loadingRef?.current) return
+    if (deletingRef.current || settingsRef.current || renameNoticeRef.current || schemaNoticeRef.current) return
+    fetchSchemaUpgradeNotice().then((notice) => {
+      if (notice?.shouldShow !== true) return
+      if (deletingRef.current || settingsRef.current || renameNoticeRef.current || schemaNoticeRef.current) return
+      setSchemaNotice({
+        backupPath: String(notice.backupPath || ""),
+        targetVersion: notice.targetVersion ?? null,
+        checkedAt: notice.checkedAt ?? null,
+      })
+    }).catch(() => {})
+  }
+  const dismissSchemaUpgradeNotice = () => {
+    setSchemaNotice(null)
+    acknowledgeSchemaUpgradeNotice().catch(() => {})
   }
 
   const [systemDark, setSystemDark] = useState(false)
@@ -987,6 +1018,16 @@ export default function App() {
         changes: Array.isArray(payload.changes) ? payload.changes as Parameters<LibrarySyncController["notePush"]>[0]["changes"] : [],
       })
       sync?.schedule()
+      // Task 350: the background check failed while the App is open — the
+      // maintenance pass announced it via library-backfilled; ask the notice
+      // endpoint so the dialog opens without a restart.
+      const changes = Array.isArray(payload.changes) ? payload.changes as Array<Record<string, unknown>> : []
+      if (changes.some(change =>
+        change?.kind === "library-backfilled"
+        && (change?.detail as Record<string, unknown> | undefined)?.reason === "schema_upgrade_verify_failed",
+      )) {
+        window.setTimeout(() => maybeShowSchemaUpgradeNotice(), 0)
+      }
     })
     return () => {
       stream.close()
@@ -1084,6 +1125,15 @@ export default function App() {
     }).catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading])
+  // Task 350 — post-upgrade check failure notice. First ask after the first
+  // screen renders; ask again whenever the rename notice closes (it opens
+  // first when both are due) so this dialog follows it instead of stacking.
+  useEffect(() => {
+    if (loading) return
+    const timer = window.setTimeout(() => maybeShowSchemaUpgradeNotice(), 0)
+    return () => window.clearTimeout(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, renameNoticeOpen])
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)")
     const sync = () => setSystemDark(media.matches)
@@ -2710,6 +2760,7 @@ export default function App() {
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
         if (renameNoticeOpen) dismissRenameNotice()
+        else if (schemaNoticeOpen) dismissSchemaUpgradeNotice()
         else if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         // Fullscreen sits above the viewer in the chain: Esc first leaves the
@@ -2723,7 +2774,7 @@ export default function App() {
       // the same key and arrives through onMenuSearch instead).
       if (isFocusSearchKey(e, {
         viewIsLibrary: !preview && !settings && !pinterestActive,
-        hasBlockingOverlay: Boolean(menu || deleting || renameNoticeOpen),
+        hasBlockingOverlay: Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen),
         targetIsTextEntry: isEditableTarget(e.target),
         platform: isMacPlatform() ? "mac" : "other",
       })) {
@@ -2742,7 +2793,7 @@ export default function App() {
       // on-screen neighbours, Enter opens it (or enters its stack). Off while
       // the viewer, Settings, a menu or a dialog is up, and for a batch.
       const plainKey = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
-      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen
+      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen
       if (plainKey && galleryIdle && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {
         const grid = gridRef.current
         const current = selectionRef.current.selected || asset?.id || ""
@@ -2811,7 +2862,7 @@ export default function App() {
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen])
+  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, schemaNoticeOpen])
   // Fullscreen belongs to the open viewer, never outlives it: the back button,
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
@@ -3176,7 +3227,7 @@ export default function App() {
         targetIsEditable: isEditableTarget(event.target),
         settingsOpen: settings,
         pinterestActive,
-        hasOverlay: Boolean(menu || deleting || renameNoticeOpen || permanentDeleteIds || emptyTrashConfirm
+        hasOverlay: Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || permanentDeleteIds || emptyTrashConfirm
           || groupDeleteConfirm || groupMerge || groupRename || stackRename || stackDissolveConfirm
           || stackTrashConfirm || groupStats || groupCreateWithSelection),
         cutActive: cutIdsRef.current.length > 0,
@@ -3200,7 +3251,7 @@ export default function App() {
     window.addEventListener("paste", paste)
     return () => window.removeEventListener("paste", paste)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [importing, library, active, project, stackId, settings, pinterestActive, menu, deleting, renameNoticeOpen,
+  }, [importing, library, active, project, stackId, settings, pinterestActive, menu, deleting, renameNoticeOpen, schemaNoticeOpen,
     permanentDeleteIds, emptyTrashConfirm, groupDeleteConfirm, groupMerge, groupRename, stackRename,
     stackDissolveConfirm, stackTrashConfirm, groupStats, groupCreateWithSelection, language, debouncedQuery, assetType])
   const navigateAsset = async (direction: number) => {
@@ -5434,6 +5485,36 @@ export default function App() {
                 className="primary-button"
                 onClick={dismissRenameNotice}
               >
+                {tr("知道了")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {schemaNotice && (
+        // Task 350: the post-upgrade check failed. Clicking the backdrop does
+        // NOT dismiss (only 知道了 / Esc does) — the kept backup must be seen.
+        <div className="modal-layer">
+          <div className="delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="schema-upgrade-notice-title">
+            <div className="delete-icon">
+              <Icon name="info" size={26} />
+            </div>
+            <h3 id="schema-upgrade-notice-title">{tr("素材库检查发现问题")}</h3>
+            <p>{tr("这次升级后的检查没有通过。升级前的数据库拷贝已经留着，请别删它。App 照常能用，麻烦在设置的「反馈」里告诉我们。")}</p>
+            <div className="delete-actions">
+              <button
+                className="neutral-button"
+                onClick={() => {
+                  openLibraryFolder(schemaNotice.backupPath, true).catch(() => {
+                    // 404 (file gone) and friends keep the dialog open; the
+                    // existing light toast says so.
+                    notify(tr("无法打开该位置"))
+                  })
+                }}
+              >
+                {isMacPlatform() ? tr("在访达中显示拷贝") : tr("在资源管理器中显示拷贝")}
+              </button>
+              <button className="primary-button" onClick={dismissSchemaUpgradeNotice}>
                 {tr("知道了")}
               </button>
             </div>

@@ -1169,6 +1169,24 @@ export async function openLibraryFolder(path: string, revealFile = false) {
   })
 }
 
+// Task 350: state + acknowledgement for the post-upgrade-failure dialog. The
+// GET answers whether the dialog should show; the POST records "seen" on the
+// failed verify record so the dialog never comes back.
+export type SchemaUpgradeNoticeState = {
+  shouldShow?: boolean
+  backupPath?: string | null
+  targetVersion?: number | null
+  checkedAt?: string | null
+}
+
+export async function fetchSchemaUpgradeNotice(signal?: AbortSignal): Promise<SchemaUpgradeNoticeState> {
+  return requestJson<SchemaUpgradeNoticeState>("/api/schema-upgrade-notice", { signal })
+}
+
+export async function acknowledgeSchemaUpgradeNotice() {
+  return requestJson<{ ok?: boolean }>("/api/schema-upgrade-notice", { method: "POST", body: {} })
+}
+
 // Start the capability load immediately, not only on a later request: the
 // browser path parses the URL fragment, the desktop path asks the main process
 // (task 311) so the very first request already carries the token.

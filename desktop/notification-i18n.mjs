@@ -63,6 +63,9 @@ const desktopTranslations = {
     librarySqliteBusyBody: "素材库在 {libraryDir}，它的数据库文件 mosa.db 暂时打不开，可能有别的程序正在使用它。请关掉其他程序或重启电脑后再打开 GravityPort。不要删除或移动素材库里的文件。错误码：{sqliteCode}。",
     librarySqliteUnreadableTitle: "素材库的数据库打不开",
     librarySqliteUnreadableBody: "素材库在 {libraryDir}，它的数据库文件 mosa.db 读取失败。请先不要删除或修改素材库里的任何文件，把整个素材库文件夹复制一份留存，再联系我们。错误码：{sqliteCode}。",
+    // 任务 350：库比当前 App 新——库文件一个字节都没动，只提示去下载新版。
+    librarySchemaNewerTitle: "需要更新 GravityPort",
+    librarySchemaNewerBody: "这个素材库已经被更新版本的 GravityPort 打开过，当前版本打不开它。请到官网下载最新版。你的素材没有被改动。",
     // Update install failures and install preflight (main process system dialogs).
     updateFailedOnceTitle: "GravityPort {version} 没有装上",
     updateFailedOnceBody: "{reason}已退回 {currentVersion}，下次重启 GravityPort 时会再试一次。",
@@ -135,6 +138,10 @@ const desktopTranslations = {
     librarySqliteBusyBody: "The library is at {libraryDir}, but its mosa.db database file cannot be opened right now — another program may be using it. Close other programs or restart your computer, then open GravityPort again. Do not delete or move any files inside the library folder. Error code: {sqliteCode}.",
     librarySqliteUnreadableTitle: "Your library's database could not be opened",
     librarySqliteUnreadableBody: "The library is at {libraryDir}, but its mosa.db database file could not be read. Do not delete or modify anything in the library folder. Keep a copy of the whole library folder, then contact us. Error code: {sqliteCode}.",
+    // Task 350: the library is newer than this build — nothing was touched,
+    // the user only needs the latest release.
+    librarySchemaNewerTitle: "Update GravityPort Required",
+    librarySchemaNewerBody: "This library was last opened by a newer version of GravityPort, so this version can't open it. Please download the latest version from the website. Your assets were not modified.",
     // Update install failures and install preflight (main process system dialogs).
     updateFailedOnceTitle: "GravityPort {version} did not install",
     updateFailedOnceBody: "{reason} The app went back to {currentVersion}. GravityPort will try again the next time you restart it.",
@@ -189,6 +196,7 @@ const LIBRARY_STARTUP_ERROR_KEYS = {
   SQLITE_LIBRARY_MISSING: ["librarySqliteMissingTitle", "librarySqliteMissingBody"],
   SQLITE_LIBRARY_BUSY: ["librarySqliteBusyTitle", "librarySqliteBusyBody"],
   SQLITE_LIBRARY_UNREADABLE: ["librarySqliteUnreadableTitle", "librarySqliteUnreadableBody"],
+  MOSA_LIBRARY_SCHEMA_NEWER: ["librarySchemaNewerTitle", "librarySchemaNewerBody"],
 };
 
 /**

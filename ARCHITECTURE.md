@@ -337,6 +337,21 @@ SQLite 数据库路径为 `<库目录>/mosa.db`（默认库目录按上文
   最终筛选与排序语义仍由普通资产查询负责。该索引是本地派生数据，不是 embedding
   或语义搜索索引，可由资产元数据重新构建。
 
+升级拷贝与升级后检查（`lib/schema-upgrade-backup.mjs`、`lib/schema-upgrade-verify.mjs`、
+`lib/schema-backup-cleanup.mjs`）：每次真实的 schema 升级都先 `VACUUM INTO` 拍一份
+升级前整库快照到 `<库目录>/.schema-backups/mosa-before-v<新>-from-v<旧>.db`（原子替换，
+同名旧文件不复用），随后在**一个** `BEGIN IMMEDIATE` 事务里重读版本号、跑完全部升级并
+写入待检查记录；几个进程同时第一次打开旧库时，后到者在锁内发现版本已新就放弃并等前一个
+完成。整库深度检查（`integrity_check` + `foreign_key_check`）在开库后的后台维护里由
+worker 线程完成，结论写进 `library_meta` 的 `schema_upgrade_verify`：外键违规按
+（表, 父表）与升级前快照对比，只有变多的组才算不过。检查通过后，后台维护会删掉
+`.schema-backups/` 里所有对得上名字的快照（记录删除时间和释放字节），目录删空一并删除；
+只有跑后台维护的进程（App、后台收图）删除，MCP、命令行不删。检查没有通过时快照保留、
+进 `schema_upgrade_kept_backups` 保留名单（名单里的文件任何后续升级、检查通过都不自动删），
+App 弹一次说明框（`/api/schema-upgrade-notice` 读状态/记已读）。库里比当前 App 更新的
+schema 版本在写任何字节之前就被只读连接拒绝（错误码 `MOSA_LIBRARY_SCHEMA_NEWER`），
+mosa.db 一个字节都不改。
+
 进入搜索文本、FTS 和短词索引的字段由 `lib/asset-search-scope.mjs` 白名单决定（Prompt、
 用户原话、provider/model、标签、名称等），路径、哈希和采集内部字段不参与搜索。
 
@@ -351,7 +366,8 @@ $HOME/GravityPort Library/
 ├── .mosa-runtime.lock              运行时锁
 ├── .mosa-desktop-starting.json     桌面启动/更新交接标记（短时存在）
 ├── .chatgpt-desktop-sync.json      ChatGPT 桌面版对话同步状态
-├── .schema-backups/                schema 升级前的数据库备份
+├── .schema-backups/                schema 升级前的数据库备份（检查通过后自动删，
+│                                   检查不过或进了保留名单的除外）
 ├── assets/
 │   ├── <project-id>/
 │   │   ├── original/               原始媒体

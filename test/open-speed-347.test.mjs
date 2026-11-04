@@ -10,7 +10,7 @@
 // - the startup splash reveals its organizing note by timer or early hook.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -26,7 +26,7 @@ import {
   searchScopeRebuildHelpers,
 } from "../lib/sqlite-asset-store.mjs";
 import { rebuildSearchScopeTexts } from "../lib/asset-search-scope.mjs";
-import { SCHEMA_UPGRADE_VERIFY_KEY } from "../lib/schema-upgrade-verify.mjs";
+import { SCHEMA_UPGRADE_VERIFY_KEY, runSchemaUpgradeVerify } from "../lib/schema-upgrade-verify.mjs";
 import { ensureSchemaUpgradeBackup } from "../lib/schema-upgrade-backup.mjs";
 import { assetSortName } from "../lib/asset-sort.js";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
@@ -336,7 +336,7 @@ function seedSchemaVersion(libraryDir, version) {
   });
 }
 
-test("a schema upgrade verifies in the background: the open succeeds, a foreign-key orphan records failed", async (t) => {
+test("a schema upgrade verifies in the background: an inherited orphan passes, a grown one records failed", async (t) => {
   const { projectRoot, libraryDir } = await createLibraryRoot(t, "mosa-open-speed-verify-bad-");
   bootstrapLibrary(projectRoot, libraryDir);
   seedSchemaVersion(libraryDir, 16);
@@ -362,12 +362,52 @@ test("a schema upgrade verifies in the background: the open succeeds, a foreign-
   // Before the fix the open itself ran the check and threw; now it returns.
   await store.startDeferredMaintenance();
 
+  // Task 350: violations the pre-upgrade snapshot already carried are the
+  // library's own baseline — the check passes, with both counts recorded.
   const record = JSON.parse(markerValue(libraryDir, SCHEMA_UPGRADE_VERIFY_KEY));
-  assert.equal(record.status, "failed", "the failed check is recorded");
-  assert.equal(record.foreignKeyViolations, 1, "the orphan is counted");
+  assert.equal(record.status, "ok", "the snapshot baseline covers the pre-existing orphan");
+  assert.equal(record.foreignKeyViolations, 1, "the orphan is counted on the current side");
+  assert.equal(record.foreignKeyBaselineViolations, 1, "the same orphan is counted on the baseline side");
   assert.equal(record.targetVersion, 17, "the record names the target version");
   assert.ok(record.backupPath, "the record keeps the backup path");
-  assert.ok(existsSync(record.backupPath), "the pre-upgrade snapshot is still on disk");
+  assert.ok(!existsSync(record.backupPath), "the ok verdict deleted the snapshot (task 350)");
+  store.close();
+
+  // A violation group that GREW against a baseline still records the terminal
+  // failed and warns exactly once.
+  const baselineCopy = join(libraryDir, ".schema-backups", "mosa-before-v17-from-v16.db");
+  mkdirSync(join(libraryDir, ".schema-backups"), { recursive: true });
+  withRawDatabase(libraryDir, (database) => {
+    database.exec(`VACUUM INTO '${baselineCopy}'`);
+  });
+  withRawDatabase(libraryDir, (database) => {
+    database.pragma("foreign_keys = OFF");
+    database.prepare(`
+      INSERT INTO recipe_snapshots (
+        project_id, asset_id, snapshot_id, schema_version, recipe_digest, prompt_digest, effective_prompt, user_prompt,
+        negative_prompt, prompt_status, generation_tool, model, provider, skill, style, ratio, theme,
+        references_json, provenance_json, change_summary, created_at
+      ) VALUES (
+        'default', 'missing-asset', 'orphan-s2', '1', '', '', '', '',
+        '', '', '', '', 'chatgpt', '', '', '', '',
+        '[]', '{}', '', '2026-05-01T00:00:00.000Z'
+      )
+    `).run();
+  });
+  const raw = new Database(join(libraryDir, "mosa.db"));
+  try {
+    const rerun = await runSchemaUpgradeVerify(raw, {
+      databasePath: join(libraryDir, "mosa.db"),
+      targetVersion: 17,
+      backupPath: baselineCopy,
+      force: true,
+    });
+    assert.equal(rerun.status, "failed", "the grown violation group is recorded as failed");
+    assert.equal(rerun.foreignKeyViolations, 2);
+    assert.equal(rerun.foreignKeyBaselineViolations, 1);
+  } finally {
+    raw.close();
+  }
   assert.ok(
     warns.some((line) => line.includes("[MOSA] schema upgrade verify failed")),
     `one [MOSA] warning for the failure, got: ${JSON.stringify(warns)}`,
@@ -383,7 +423,8 @@ test("a clean upgrade records ok, and a pending record reruns on the next open",
   const record = JSON.parse(markerValue(libraryDir, SCHEMA_UPGRADE_VERIFY_KEY));
   assert.equal(record.status, "ok");
   assert.equal(record.foreignKeyViolations, 0);
-  assert.ok(record.backupPath && existsSync(record.backupPath));
+  assert.ok(record.backupPath, "the record names the snapshot");
+  assert.ok(!existsSync(record.backupPath), "task 350: the ok verdict deleted the snapshot");
   store.close();
 
   // Simulate a process killed mid-check: the pending record must rerun.

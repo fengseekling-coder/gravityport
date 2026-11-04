@@ -766,7 +766,8 @@ test("SQLite schema v1 upgrades once without changing completed migration state"
   assert.notEqual(schemaAfterUpgrade.updated_at, originalTimestamp);
   assert.deepEqual(migrationState, { value: "completed", updated_at: originalTimestamp });
   assert.deepEqual(migrationDetails, { value: '{"verified":true}', updated_at: originalTimestamp });
-  assert.deepEqual(migrationVersions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17]);
+  // Task 350: every migration step writes its row — 14–16 were missing.
+  assert.deepEqual(migrationVersions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
   assert.equal(parentIndex.name, "asset_versions_parent_idx");
   assert.equal(pixelColumn.name, "pixel_sha256");
   assert.equal(pixelIndex.name, "assets_project_pixel_hash_idx");
@@ -1029,7 +1030,15 @@ test("SQLite refuses to downgrade a newer schema", async (t) => {
 
   assert.throws(
     () => createSqliteAssetStore({ projectRoot: root, managerDir: join(root, "mosa"), libraryDir }),
-    new RegExp(`schema version ${CURRENT_SCHEMA_VERSION + 1} is newer than supported version ${CURRENT_SCHEMA_VERSION}`),
+    (error) => {
+      // Task 350: the refusal carries the fixed MOSA_LIBRARY_SCHEMA_NEWER
+      // code (the desktop maps it to its own dialog) and the message itself
+      // tells the user to update.
+      assert.equal(error.code, "MOSA_LIBRARY_SCHEMA_NEWER");
+      assert.match(error.message, new RegExp(`database schema v${CURRENT_SCHEMA_VERSION + 1}`));
+      assert.match(error.message, /latest GravityPort/);
+      return true;
+    },
   );
   const inspected = new Database(databasePath, { readonly: true });
   assert.deepEqual(inspected.prepare("SELECT value, updated_at FROM library_meta WHERE key = 'schema_version'").get(), { value: String(CURRENT_SCHEMA_VERSION + 1), updated_at: "future" });
