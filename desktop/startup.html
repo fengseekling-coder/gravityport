@@ -87,18 +87,39 @@
       // 避免用户把慢启动当成卡死去强退。正常快速启动永远看不到它。升级数据
       // 库的那次启动由 desktop/main.mjs 在确认升级后立即调用下面的钩子提前
       // 显示。只用 DOM，不调 IPC（启动页不持有任何 renderer 信任白名单）。
+      // 任务 348：升级后的那次开库要在启动页等一次整理数据库（VACUUM，主
+      // 进程同样卡住、发不了消息），所以这行提示超过 10 秒后自己带上已用
+      // 秒数；秒数从骨架页开始算，不用等主进程发任何消息。
       const note = document.getElementById("startup-organizing");
       if (!note) return;
+      const ORGANIZING_BASE_TEXT = "正在整理素材库…";
+      const ELAPSED_VISIBLE_AFTER_SECONDS = 10;
+      const startedAt = Date.now();
       let shown = false;
+      let elapsedTimer = null;
       const show = () => {
         if (shown) return;
         shown = true;
         note.hidden = false;
+        elapsedTimer = setInterval(() => {
+          const seconds = Math.floor((Date.now() - startedAt) / 1000);
+          if (seconds >= ELAPSED_VISIBLE_AFTER_SECONDS) {
+            note.textContent = `${ORGANIZING_BASE_TEXT}（已用 ${seconds} 秒）`;
+            clearInterval(elapsedTimer);
+            elapsedTimer = null;
+          }
+        }, 1000);
       };
       const timer = setTimeout(show, 1500);
       window.__gravityportShowOrganizingNote = () => {
         clearTimeout(timer);
         show();
+      };
+      window.__gravityportStopOrganizingNote = () => {
+        if (elapsedTimer) {
+          clearInterval(elapsedTimer);
+          elapsedTimer = null;
+        }
       };
     })();
   </script>

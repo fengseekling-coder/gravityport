@@ -259,6 +259,8 @@ export interface SqliteAssetStoreOptions {
   projectRoot: string;
   managerDir: string;
   libraryDir: string;
+  /** Test seam (task 348): free bytes on a volume, for the compaction gate. */
+  freeDiskBytes?: (path: string) => number;
 }
 
 export function createSqliteAssetStore(options: SqliteAssetStoreOptions): SqliteAssetStore;

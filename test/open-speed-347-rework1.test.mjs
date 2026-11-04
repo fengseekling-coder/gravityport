@@ -124,7 +124,12 @@ function searchScopeSnapshot(libraryDir) {
   return withRawDatabase(libraryDir, (database) => ({
     rows: database.prepare("SELECT project_id, id, search_text, source_search_text, business_search_text FROM assets ORDER BY project_id, id").all(),
     fts: database.prepare("SELECT project_id, asset_id, content FROM asset_fts ORDER BY project_id, asset_id").all(),
-    terms: database.prepare("SELECT project_id, asset_id, term FROM asset_short_terms ORDER BY project_id, asset_id, term").all(),
+    terms: database.prepare(`
+      SELECT d.project_id, d.asset_id, st.term
+      FROM asset_search_terms st
+      JOIN asset_search_docs d ON d.doc_id = st.doc_id
+      ORDER BY d.project_id, d.asset_id, st.term
+    `).all(),
   }));
 }
 
@@ -354,7 +359,7 @@ test("the pending verify record is written synchronously at the upgrade open", a
   const record = JSON.parse(markerValue(libraryDir, SCHEMA_UPGRADE_VERIFY_KEY));
   assert.equal(record.status, "pending");
   assert.ok(record.backupPath && existsSync(record.backupPath), "the pending record names the pre-upgrade snapshot");
-  assert.equal(record.targetVersion, 17);
+  assert.equal(record.targetVersion, 18);
   await store.startDeferredMaintenance();
   assert.equal(JSON.parse(markerValue(libraryDir, SCHEMA_UPGRADE_VERIFY_KEY)).status, "ok", "the App's maintenance finishes the pending check");
 });

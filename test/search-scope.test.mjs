@@ -87,8 +87,12 @@ function insertLegacyAssetRow(database, { id, asset, prompt, source, deletedAt =
     createdAt: LEGACY_CREATED,
     epoch: Date.parse(LEGACY_CREATED),
   });
-  database.prepare("INSERT INTO asset_fts (project_id, asset_id, content) VALUES ('default', ?, ?)").run(id, legacySearchText);
-  return legacySearchText;
+  const docId = database
+    .prepare("INSERT INTO asset_search_docs (project_id, asset_id) VALUES ('default', ?)")
+    .run(id).lastInsertRowid;
+  // Task 348: the FTS row rides the doc id as its rowid.
+  database.prepare("INSERT INTO asset_fts (rowid, project_id, asset_id, content) VALUES (?, 'default', ?, ?)").run(docId, id, legacySearchText);
+  return { legacySearchText, docId };
 }
 
 async function seedLegacyLibrary(t, root) {
@@ -102,7 +106,7 @@ async function seedLegacyLibrary(t, root) {
   withRawDatabase(libraryDir, (database) => {
     database.transaction(() => {
       database.prepare("DELETE FROM library_meta WHERE key = ?").run(SEARCH_SCOPE_MARKER_KEY);
-      insertLegacyAssetRow(database, {
+      const liveDocId = insertLegacyAssetRow(database, {
         id: "legacy-live",
         asset: "legacy-harbor.png",
         prompt: "lantern harbor study",
@@ -112,7 +116,7 @@ async function seedLegacyLibrary(t, root) {
           content_sha256: "deadbeefcafe0123456789abcdef",
           copied_at: LEGACY_CREATED,
         },
-      });
+      }).docId;
       insertLegacyAssetRow(database, {
         id: "legacy-trash",
         asset: "legacy-trashed.png",
@@ -126,7 +130,7 @@ async function seedLegacyLibrary(t, root) {
         deletedAt: "2026-01-01T00:00:00.000Z",
       });
       for (const term of ["藏经", "经阁", "藏"]) {
-        database.prepare("INSERT INTO asset_short_terms (project_id, asset_id, term) VALUES ('default', 'legacy-live', ?)").run(term);
+        database.prepare("INSERT INTO asset_search_terms (term, doc_id) VALUES (?, ?)").run(term, liveDocId);
       }
     })();
   });
@@ -344,7 +348,12 @@ test("opening an old library rebuilds search text once under the whitelist", asy
     const ftsRows = database.prepare("SELECT asset_id, content FROM asset_fts WHERE project_id = 'default' AND asset_id IN ('legacy-live', 'legacy-trash')").all();
     assert.deepEqual(ftsRows, [{ asset_id: "legacy-live", content: live.search_text }],
       "the live FTS row holds the rebuilt text and the trashed row has no FTS row");
-    const shortTerms = database.prepare("SELECT COUNT(*) AS count FROM asset_short_terms WHERE project_id = 'default' AND asset_id = 'legacy-live'").get();
+    const shortTerms = database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM asset_search_terms st
+      JOIN asset_search_docs d ON d.doc_id = st.doc_id
+      WHERE d.project_id = 'default' AND d.asset_id = 'legacy-live'
+    `).get();
     assert.equal(shortTerms.count, 0, "short terms are rebuilt from the whitelisted text (ASCII only here)");
     const trashText = database.prepare("SELECT search_text FROM assets WHERE id = 'legacy-trash'").get();
     assert.doesNotMatch(trashText.search_text, /zqx9|feedface/, "the trashed row's columns are rebuilt too");

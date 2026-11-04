@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -792,24 +793,41 @@ test("replace-with-new keeps the library asset's curation and trashes the import
 
 // ─── old code opens the new library (original task §7.13) ───────────────────
 
-test("origin/main code opens a library carrying the new table without error", async (t) => {
+test("origin/main code refuses a library carrying the new schema version without touching it", async (t) => {
+  // Task 348 bumped CURRENT_SCHEMA_VERSION to 18, so the old code no longer
+  // opens a new-code library: it must refuse it up front (the newer-schema
+  // guard) instead of guessing at the new tables. The refusal must happen
+  // before any byte changes (the open is read-only until the guard passes).
   assert.ok(existsSync(join(mainCheckout, "lib", "sqlite-asset-store.mjs")), "main checkout is required for this test");
   const { store, sourcesDir } = await makeStore(t, "mosa-dedupe-oldcode-");
   await importAsset(store, await pngFile(sourcesDir, "a.png", 31), { assetId: "a" });
   await drainDerivatives(store);
   store.close();
+  // "Without touching it": the database bytes and the library folder's
+  // top-level entries must be identical before and after the old code's
+  // attempt (no rewrite, no WAL/SHM left behind, no snapshot file).
+  const librarySnapshot = async () => ({
+    db: createHash("sha256").update(await readFile(join(store.libraryDir, "mosa.db"))).digest("hex"),
+    entries: (await readdir(store.libraryDir)).sort(),
+  });
+  const before = await librarySnapshot();
   const script = `
     import { createSqliteAssetStore } from ${JSON.stringify(join(mainCheckout, "lib", "sqlite-asset-store.mjs"))};
-    const store = createSqliteAssetStore({
-      projectRoot: ${JSON.stringify(join(store.libraryDir, "..", "project"))},
-      managerDir: ${JSON.stringify(join(store.libraryDir, "..", "project", "mosa"))},
-      libraryDir: ${JSON.stringify(store.libraryDir)},
-    });
-    const assets = await store.listAssets({ projectId: "default" });
-    if (assets.length !== 1) throw new Error("expected 1 asset, got " + assets.length);
-    store.close();
+    try {
+      const store = createSqliteAssetStore({
+        projectRoot: ${JSON.stringify(join(store.libraryDir, "..", "project"))},
+        managerDir: ${JSON.stringify(join(store.libraryDir, "..", "project", "mosa"))},
+        libraryDir: ${JSON.stringify(store.libraryDir)},
+      });
+      store.close();
+      console.log("OPENED");
+    } catch (error) {
+      console.log("REFUSED " + String(error?.message || error).slice(0, 200));
+    }
   `;
-  execFileSync(process.execPath, ["--input-type=module", "-e", script], { stdio: "pipe" });
+  const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], { stdio: "pipe" }).toString();
+  assert.match(out, /REFUSED GravityPort schema version 18 is newer than supported version 17/, `the old code refuses the v18 library (got: ${out.slice(0, 200)})`);
+  assert.deepEqual(await librarySnapshot(), before, "the refused open leaves the library bytes and files untouched");
 });
 
 // ─── dedupe lookup cost stays negligible on large libraries ─────────────────

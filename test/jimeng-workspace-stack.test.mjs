@@ -7,7 +7,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 
-import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { createSqliteAssetStore, CURRENT_SCHEMA_VERSION } from "../lib/sqlite-asset-store.mjs";
 import { generationSessionKey } from "../lib/generation-session.mjs";
 
 const ONE_PIXEL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==", "base64");
@@ -339,7 +339,7 @@ test("migration 17 runs once and later opens change nothing", async (t) => {
   t.after(() => second.close());
   const afterSecond = snapshot();
   assert.equal(afterFirst, afterSecond, "the second open neither re-migrates nor bumps the revision");
-  assert.match(afterFirst, /"schema":"17"/);
+  assert.match(afterFirst, new RegExp(`"schema":"${CURRENT_SCHEMA_VERSION}"`));
 });
 
 test("migration 17 rolls back completely when it fails mid-way", async (t) => {

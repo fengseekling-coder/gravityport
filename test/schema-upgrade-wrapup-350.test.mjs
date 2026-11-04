@@ -215,7 +215,7 @@ test("an ok upgrade deletes its snapshot; notes.txt and a symlink stay", async (
   mkdirSync(backupDir(libraryDir), { recursive: true });
   writeFileSync(join(backupDir(libraryDir), "notes.txt"), "keep me");
   writeFileSync(join(backupDir(libraryDir), "target.txt"), "symlink target");
-  symlinkSync(join(backupDir(libraryDir), "target.txt"), join(backupDir(libraryDir), "mosa-before-v17-from-v16.db"));
+  symlinkSync(join(backupDir(libraryDir), "target.txt"), join(backupDir(libraryDir), "mosa-before-v18-from-v16.db"));
 
   const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
   t.after(() => { try { store.close(); } catch { /* closed */ } });
@@ -232,7 +232,7 @@ test("an ok upgrade deletes its snapshot; notes.txt and a symlink stay", async (
 
   // A snapshot left behind by a previous failed delete is removed on the next
   // ok open WITHOUT re-running the check (spawnWorker stays silent).
-  const snapshot = vacuumSnapshotInto(libraryDir, 16, 17);
+  const snapshot = vacuumSnapshotInto(libraryDir, 16, 18);
   const reopened = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
   t.after(() => { try { reopened.close(); } catch { /* closed */ } });
   const counting = makeCountingWorker();
@@ -247,7 +247,7 @@ test("legacy snapshots from before the verify record get one background check, t
   const { projectRoot, libraryDir } = await createLibraryRoot(t, "mosa-350-legacy-");
   bootstrapLibrary(projectRoot, libraryDir);
   const first = vacuumSnapshotInto(libraryDir, 14, 15);
-  const second = vacuumSnapshotInto(libraryDir, 16, 17);
+  const second = vacuumSnapshotInto(libraryDir, 16, 18);
   assert.equal(verifyRecord(libraryDir), null, "the fixture starts without a verify record");
 
   const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
@@ -258,7 +258,7 @@ test("legacy snapshots from before the verify record get one background check, t
   assert.equal(counting.calls(), 1, "exactly one legacy check runs (baseline = newest-version copy)");
   const record = verifyRecord(libraryDir);
   assert.equal(record.status, "ok");
-  assert.equal(record.targetVersion, 17, "the baseline is the newest-version snapshot");
+  assert.equal(record.targetVersion, 18, "the baseline is the newest-version snapshot");
   assert.equal(record.trigger, "legacy-recheck");
   assert.ok(!existsSync(first), "the older snapshot is deleted with the rest");
   assert.ok(!existsSync(second), "the checked baseline snapshot is deleted too");
@@ -268,9 +268,9 @@ test("legacy snapshots from before the verify record get one background check, t
 test("a failed verdict never deletes nor re-checks; its snapshot lands on the kept list", async (t) => {
   const { projectRoot, libraryDir } = await createLibraryRoot(t, "mosa-350-failed-terminal-");
   bootstrapLibrary(projectRoot, libraryDir);
-  const snapshot = vacuumSnapshotInto(libraryDir, 16, 17);
+  const snapshot = vacuumSnapshotInto(libraryDir, 16, 18);
   setMarker(libraryDir, SCHEMA_UPGRADE_VERIFY_KEY, JSON.stringify({
-    targetVersion: 17, status: "failed", integrity: "ok", foreignKeyViolations: 3,
+    targetVersion: 18, status: "failed", integrity: "ok", foreignKeyViolations: 3,
     foreignKeyBaselineViolations: 0, trigger: "upgrade", backupPath: snapshot, checkedAt: CREATED,
   }));
 
@@ -281,7 +281,7 @@ test("a failed verdict never deletes nor re-checks; its snapshot lands on the ke
 
   assert.equal(counting.calls(), 0, "failed is terminal: no re-check, no deletion");
   assert.ok(existsSync(snapshot), "the failed snapshot stays");
-  assert.ok(keptEntries(libraryDir).some((entry) => entry.name === "mosa-before-v17-from-v16.db"),
+  assert.ok(keptEntries(libraryDir).some((entry) => entry.name === "mosa-before-v18-from-v16.db"),
     "the snapshot is on the kept list");
 });
 
@@ -304,7 +304,7 @@ test("a grown violation fails the check, keeps its snapshot and drives the notic
   assert.ok(foreignKeyViolationCount(libraryDir) > 0);
   const failedRecord = await withRawDatabasePromise(libraryDir, (database) => runSchemaUpgradeVerify(database, {
     databasePath: join(libraryDir, "mosa.db"),
-    targetVersion: 17,
+    targetVersion: 18,
     backupPath: snapshot,
     force: true,
   }));
@@ -333,7 +333,7 @@ test("a grown violation fails the check, keeps its snapshot and drives the notic
 
   // A NEW upgrade re-snapshots (with the extra violation, matching the
   // library) and passes. The fresh snapshot lands on the SAME official name
-  // as the kept one (both are the 16→17 pair) — the kept-list rule wins and
+  // as the kept one (both are the 16→18 pair) — the kept-list rule wins and
   // the file stays, exactly as the kept-list contract demands ("名单里的文件
   // 以后怎么升级、检查通过都不自动删").
   downgradeSchemaVersion(libraryDir, 16);
@@ -345,7 +345,7 @@ test("a grown violation fails the check, keeps its snapshot and drives the notic
   assert.equal(afterRecord.status, "ok", "the new upgrade check passes (baseline includes the extra violation)");
   assert.ok(existsSync(afterRecord.backupPath), "the kept name is never auto-deleted, whatever later upgrades verify");
   assert.ok(existsSync(snapshot), "the kept snapshot is still there");
-  assert.equal(keptEntries(libraryDir).filter((entry) => entry.name === "mosa-before-v17-from-v16.db").length, 1,
+  assert.equal(keptEntries(libraryDir).filter((entry) => entry.name === "mosa-before-v18-from-v16.db").length, 1,
     "exactly the original entry stays on the kept list");
 });
 
@@ -361,7 +361,7 @@ test("a stale file at the official snapshot name is replaced by a fresh pre-upgr
   });
   // The stale snapshot the old code would have reused: same official name,
   // but 10 assets fewer than the real library.
-  const officialName = "mosa-before-v17-from-v16.db";
+  const officialName = "mosa-before-v18-from-v16.db";
   mkdirSync(backupDir(libraryDir), { recursive: true });
   const stalePath = join(backupDir(libraryDir), officialName);
   withRawDatabase(libraryDir, (database) => {
@@ -474,10 +474,10 @@ test("three concurrent first-time openers all succeed with identical results and
     assert.equal(result.code, 0, `child ${index + 1} exited cleanly (${result.stderr.slice(0, 300)})`);
     assert.ok(result.stdout.includes("child-ok"));
   }
-  assert.equal(withRawDatabase(a.libraryDir, (database) => database.prepare("SELECT value FROM library_meta WHERE key = 'schema_version'").get()?.value), "17");
+  assert.equal(withRawDatabase(a.libraryDir, (database) => database.prepare("SELECT value FROM library_meta WHERE key = 'schema_version'").get()?.value), "18");
   const migrations = withRawDatabase(a.libraryDir, (database) =>
     database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version));
-  assert.deepEqual(migrations, Array.from({ length: CURRENT_SCHEMA_VERSION }, (_, index) => index + 1), "migrations 1..17");
+  assert.deepEqual(migrations, Array.from({ length: CURRENT_SCHEMA_VERSION }, (_, index) => index + 1), "migrations 1..CURRENT_SCHEMA_VERSION");
   assert.deepEqual(backupNames(a.libraryDir).filter((name) => name.includes(".partial")), [],
     "no .partial residue after the concurrent snapshots");
   // The lock re-read: the losers that found the version already current in
@@ -488,7 +488,7 @@ test("three concurrent first-time openers all succeed with identical results and
   assert.ok(existsSync(pendingRecord.backupPath), "the winner's pending snapshot survives the losers' abort");
   // Rework 1: the file at the final name must be the winner's PRE-upgrade
   // image — a loser that vacuumed the already-upgraded library and renamed it
-  // over the winner's snapshot would make this read 17.
+  // over the winner's snapshot would make this read 18.
   assert.equal(snapshotSchemaVersion(pendingRecord.backupPath), 16, "the surviving snapshot is a v16 (pre-upgrade) image");
 
   // Reference: a single uninterrupted upgrade of the same library.
@@ -556,11 +556,11 @@ test("a kill mid-snapshot-deletion resumes and finishes the cleanup", async (t) 
   // Terminal ok record + two stale snapshots: the cleanup pass deletes the
   // first, then the test hook kills the process.
   setMarker(libraryDir, SCHEMA_UPGRADE_VERIFY_KEY, JSON.stringify({
-    targetVersion: 17, status: "ok", integrity: "ok", foreignKeyViolations: 0,
+    targetVersion: 18, status: "ok", integrity: "ok", foreignKeyViolations: 0,
     foreignKeyBaselineViolations: 0, trigger: "upgrade", backupPath: null, checkedAt: CREATED,
   }));
   const first = vacuumSnapshotInto(libraryDir, 14, 15);
-  const second = vacuumSnapshotInto(libraryDir, 16, 17);
+  const second = vacuumSnapshotInto(libraryDir, 16, 18);
 
   mkdirSync(projectRoot, { recursive: true });
   const scriptPath = await writeChildScript(projectRoot);
@@ -610,11 +610,11 @@ test("pre-upgrade foreign-key violations no longer fail the upgrade check", asyn
   // in the record. (The maintenance pass already deleted the upgrade's own
   // snapshot after the ok verdict, so this check uses a fresh baseline copy.)
   insertOrphanStackMember(libraryDir, "ghost-c", "orphan-c");
-  const baselineCopy = vacuumSnapshotInto(libraryDir, 16, 17);
+  const baselineCopy = vacuumSnapshotInto(libraryDir, 16, 18);
   insertOrphanStackMember(libraryDir, "ghost-d", "orphan-d");
   const afterRecord = await withRawDatabasePromise(libraryDir, (database) => runSchemaUpgradeVerify(database, {
     databasePath: join(libraryDir, "mosa.db"),
-    targetVersion: 17,
+    targetVersion: 18,
     backupPath: baselineCopy,
     force: true,
   }));
@@ -733,7 +733,7 @@ test("all-equal group positions re-rank once under the repair marker", async (t)
 
 // --- 9: migration rows and the pre-v10 sync (task 350 #8) -----------------------
 
-test("migration rows 1..17 exist on a new library and after a v13 upgrade; missing rows are filled", async (t) => {
+test("migration rows 1..CURRENT_SCHEMA_VERSION exist on a new library and after a v13 upgrade; missing rows are filled", async (t) => {
   const fresh = await createLibraryRoot(t, "mosa-350-mig-fresh-");
   bootstrapLibrary(fresh.projectRoot, fresh.libraryDir);
   const rowsOf = (libraryDir) => withRawDatabase(libraryDir, (database) =>
@@ -911,10 +911,10 @@ test("the schema-upgrade notice endpoints answer and latch", async (t) => {
   const { startMosaRuntime } = await import("../lib/mosa-runtime.mjs");
   const { projectRoot, libraryDir } = await createLibraryRoot(t, "mosa-350-endpoint-");
   bootstrapLibrary(projectRoot, libraryDir);
-  const snapshot = vacuumSnapshotInto(libraryDir, 16, 17);
+  const snapshot = vacuumSnapshotInto(libraryDir, 16, 18);
   setMarker(libraryDir, "migration_state", "completed");
   setMarker(libraryDir, SCHEMA_UPGRADE_VERIFY_KEY, JSON.stringify({
-    targetVersion: 17, status: "failed", integrity: "ok", foreignKeyViolations: 1,
+    targetVersion: 18, status: "failed", integrity: "ok", foreignKeyViolations: 1,
     foreignKeyBaselineViolations: 0, trigger: "upgrade", backupPath: snapshot, checkedAt: CREATED,
   }));
 
@@ -938,7 +938,7 @@ test("the schema-upgrade notice endpoints answer and latch", async (t) => {
   const initial = await (await get()).json();
   assert.equal(initial.shouldShow, true, "the failed record says show");
   assert.equal(initial.backupPath, snapshot);
-  assert.equal(initial.targetVersion, 17);
+  assert.equal(initial.targetVersion, 18);
 
   const post = await fetch(`${runtime.url}/api/schema-upgrade-notice`, { method: "POST", headers });
   assert.equal((await post.json()).ok, true);
@@ -982,7 +982,7 @@ test("a snapshot vacuumed after another process upgraded is discarded, not renam
   }
   assert.ok(existsSync(gateFile), "the loser parked at the read gate");
 
-  // While it waits, another process completes the ENTIRE upgrade: v17, its
+  // While it waits, another process completes the ENTIRE upgrade: v18, its
   // own true pre-upgrade snapshot, and the pending record.
   const winner = createSqliteAssetStore({ projectRoot: a.projectRoot, managerDir: join(a.projectRoot, "mosa"), libraryDir: a.libraryDir });
   winner.close();
@@ -990,7 +990,7 @@ test("a snapshot vacuumed after another process upgraded is discarded, not renam
   assert.equal(winnerRecord?.status, "pending", "the winner upgraded and wrote its pending record");
   assert.equal(snapshotSchemaVersion(winnerRecord.backupPath), 16, "the winner's snapshot is a genuine v16 image");
 
-  // Release the loser: its vacuum now reads a v17 library.
+  // Release the loser: its vacuum now reads a v18 library.
   writeFileSync(`${gateFile}.go`, "go");
   const loserResult = await loser;
   assert.equal(loserResult.code, 0, `the loser still opened the library (${loserResult.stderr.slice(0, 200)})`);
@@ -1017,7 +1017,7 @@ test("cleanup skips a live writer's partial and never deletes newer version pair
   const dir = backupDir(libraryDir);
   mkdirSync(dir, { recursive: true });
   const deletable = join(dir, "mosa-before-v15-from-v14.db");
-  const newerPair = join(dir, "mosa-before-v17-from-v16.db");
+  const newerPair = join(dir, "mosa-before-v18-from-v16.db");
   const livePartial = join(dir, `mosa-before-v16-from-v15.db.partial-${process.pid}-c0ffee`);
   const deadPartial = join(dir, "mosa-before-v16-from-v15.db.partial-999999999-deadbeef");
   for (const path of [deletable, newerPair, livePartial, deadPartial]) {
@@ -1040,9 +1040,9 @@ test("cleanup skips a live writer's partial and never deletes newer version pair
   assert.ok(existsSync(newerPair), "a newer version pair is never touched by an older verdict");
   assert.ok(existsSync(livePartial), "the live writer's partial is skipped this pass");
   assert.ok(!existsSync(deadPartial), "a dead pid's partial is crashed residue and gets deleted");
-  assert.equal(isPartialFileBeingWritten(`mosa-before-v17-from-v16.db.partial-${process.pid}-c0ffee`), true);
-  assert.equal(isPartialFileBeingWritten("mosa-before-v17-from-v16.db.partial-999999999-deadbeef"), false);
-  assert.equal(isPartialFileBeingWritten("mosa-before-v17-from-v16.db"), false);
+  assert.equal(isPartialFileBeingWritten(`mosa-before-v18-from-v16.db.partial-${process.pid}-c0ffee`), true);
+  assert.equal(isPartialFileBeingWritten("mosa-before-v18-from-v16.db.partial-999999999-deadbeef"), false);
+  assert.equal(isPartialFileBeingWritten("mosa-before-v18-from-v16.db"), false);
 });
 
 // --- 15: concurrent column repairs cannot lock a process out (rework 1 #3) -------
@@ -1124,13 +1124,13 @@ test("a partial whose writer pid exists but is not ours (EPERM) counts as still 
   const original = process.kill;
   process.kill = () => { const error = new Error("operation not permitted"); error.code = "EPERM"; throw error; };
   try {
-    assert.equal(isPartialFileBeingWritten("mosa-before-v17-from-v16.db.partial-4242-c0ffee"), true);
+    assert.equal(isPartialFileBeingWritten("mosa-before-v18-from-v16.db.partial-4242-c0ffee"), true);
   } finally {
     process.kill = original;
   }
   process.kill = () => { const error = new Error("no such process"); error.code = "ESRCH"; throw error; };
   try {
-    assert.equal(isPartialFileBeingWritten("mosa-before-v17-from-v16.db.partial-4242-c0ffee"), false);
+    assert.equal(isPartialFileBeingWritten("mosa-before-v18-from-v16.db.partial-4242-c0ffee"), false);
   } finally {
     process.kill = original;
   }

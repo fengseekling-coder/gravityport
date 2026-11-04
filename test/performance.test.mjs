@@ -43,8 +43,10 @@ test("20k library reopens in under 500ms with all maintenance markers in place",
       @created, @epoch, @created, @sortName
     )
   `);
-  const insertFts = database.prepare("INSERT INTO asset_fts (project_id, asset_id, content) VALUES ('default', ?, ?)");
-  const insertShortTerm = database.prepare("INSERT INTO asset_short_terms (project_id, asset_id, term) VALUES ('default', ?, ?)");
+  // Task 348: short terms key on the doc id now; the FTS row rides it as its rowid.
+  const insertDoc = database.prepare("INSERT INTO asset_search_docs (project_id, asset_id) VALUES ('default', ?)");
+  const insertFts = database.prepare("INSERT INTO asset_fts (rowid, project_id, asset_id, content) VALUES (?, 'default', ?, ?)");
+  const insertShortTerm = database.prepare("INSERT INTO asset_search_terms (term, doc_id) VALUES (?, ?)");
   const insertStack = database.prepare(`
     INSERT INTO asset_stacks (project_id, id, created_at, updated_at, sort_created_at, sort_name, name)
     VALUES ('default', ?, ?, ?, ?, ?, ?)
@@ -74,9 +76,10 @@ test("20k library reopens in under 500ms with all maintenance markers in place",
         epoch: timestampEpoch,
         sortName: id,
       });
-      insertFts.run(id, `${searchFiller} ${index}`);
-      insertShortTerm.run(id, "机械");
-      insertShortTerm.run(id, "未来");
+      const docId = insertDoc.run(id).lastInsertRowid;
+      insertFts.run(docId, id, `${searchFiller} ${index}`);
+      insertShortTerm.run("机械", docId);
+      insertShortTerm.run("未来", docId);
     }
     for (let stack = 0; stack < 600; stack += 1) {
       const stackId = `bench-stack-${stack}`;
@@ -136,8 +139,10 @@ test("50k SQLite library uses indexed filters, starts under 3s, and keeps search
       @created_at, @created_at_epoch, @updated_at, @sort_name
     )
   `);
-  const insertFts = database.prepare("INSERT INTO asset_fts (project_id, asset_id, content) VALUES ('default', ?, ?)");
-  const insertShortTerm = database.prepare("INSERT INTO asset_short_terms (project_id, asset_id, term) VALUES ('default', ?, ?)");
+  // Task 348: short terms key on the doc id now; the FTS row rides it as its rowid.
+  const insertDoc = database.prepare("INSERT INTO asset_search_docs (project_id, asset_id) VALUES ('default', ?)");
+  const insertFts = database.prepare("INSERT INTO asset_fts (rowid, project_id, asset_id, content) VALUES (?, 'default', ?, ?)");
+  const insertShortTerm = database.prepare("INSERT INTO asset_search_terms (term, doc_id) VALUES (?, ?)");
   database.transaction(() => {
     for (let index = 0; index < 50_000; index += 1) {
       const id = `asset-${index}`;
@@ -161,9 +166,10 @@ test("50k SQLite library uses indexed filters, starts under 3s, and keeps search
         updated_at: timestamp,
         sort_name: id,
       });
-      insertFts.run(id, content);
-      insertShortTerm.run(id, "机械");
-      insertShortTerm.run(id, "未来");
+      const docId = insertDoc.run(id).lastInsertRowid;
+      insertFts.run(docId, id, content);
+      insertShortTerm.run("机械", docId);
+      insertShortTerm.run("未来", docId);
     }
   })();
   const planDetails = (sql, ...params) => database.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params).map((row) => row.detail).join("\n");

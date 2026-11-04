@@ -368,7 +368,7 @@ test("a schema upgrade verifies in the background: an inherited orphan passes, a
   assert.equal(record.status, "ok", "the snapshot baseline covers the pre-existing orphan");
   assert.equal(record.foreignKeyViolations, 1, "the orphan is counted on the current side");
   assert.equal(record.foreignKeyBaselineViolations, 1, "the same orphan is counted on the baseline side");
-  assert.equal(record.targetVersion, 17, "the record names the target version");
+  assert.equal(record.targetVersion, 18, "the record names the target version");
   assert.ok(record.backupPath, "the record keeps the backup path");
   assert.ok(!existsSync(record.backupPath), "the ok verdict deleted the snapshot (task 350)");
   store.close();
@@ -542,7 +542,12 @@ function searchScopeSnapshot(libraryDir) {
   return withRawDatabase(libraryDir, (database) => ({
     rows: database.prepare("SELECT project_id, id, search_text, source_search_text, business_search_text FROM assets ORDER BY project_id, id").all(),
     fts: database.prepare("SELECT project_id, asset_id, content FROM asset_fts ORDER BY project_id, asset_id").all(),
-    terms: database.prepare("SELECT project_id, asset_id, term FROM asset_short_terms ORDER BY project_id, asset_id, term").all(),
+    terms: database.prepare(`
+      SELECT d.project_id, d.asset_id, st.term
+      FROM asset_search_terms st
+      JOIN asset_search_docs d ON d.doc_id = st.doc_id
+      ORDER BY d.project_id, d.asset_id, st.term
+    `).all(),
   }));
 }
 
@@ -797,14 +802,20 @@ test("the startup splash reveals the organizing note after 1.5s or on the early-
   assert.ok(script, "the splash carries its timer script inline");
 
   function boot() {
-    const note = { hidden: true };
+    const note = { hidden: true, textContent: "正在整理素材库…" };
     let timerCallback = null;
     let timerDelay = null;
+    let intervalCallback = null;
     let cleared = 0;
+    let intervalsCleared = 0;
+    let now = 0;
     const sandbox = {
       document: { getElementById: (id) => (id === "startup-organizing" ? note : null) },
+      Date: { now: () => now },
       setTimeout: (callback, delay) => { timerCallback = callback; timerDelay = delay; return 7; },
       clearTimeout: () => { cleared += 1; timerCallback = null; },
+      setInterval: (callback) => { intervalCallback = callback; return 9; },
+      clearInterval: () => { intervalsCleared += 1; intervalCallback = null; },
     };
     sandbox.window = sandbox;
     vm.runInNewContext(script, sandbox);
@@ -812,8 +823,14 @@ test("the startup splash reveals the organizing note after 1.5s or on the early-
       note,
       delay: timerDelay,
       fireTimer() { if (timerCallback) timerCallback(); },
+      // Fires the elapsed-seconds ticker once (one simulated second per call).
+      fireElapsedTick(seconds = 1) {
+        now += seconds * 1000;
+        if (intervalCallback) intervalCallback();
+      },
       hook: sandbox.window.__gravityportShowOrganizingNote,
       get clearedCount() { return cleared; },
+      get intervalsClearedCount() { return intervalsCleared; },
     };
   }
 
@@ -830,4 +847,16 @@ test("the startup splash reveals the organizing note after 1.5s or on the early-
   assert.equal(early.clearedCount, 1, "the timer is cancelled so the note never double-fires");
   early.fireTimer();
   assert.equal(early.note.hidden, false, "firing the timer afterwards stays a no-op");
+
+  // Task 348: while the post-upgrade compaction holds the open, the note
+  // counts the elapsed seconds itself — exact text at 2s, elapsed at 12s.
+  const compacting = boot();
+  compacting.fireTimer();
+  compacting.fireElapsedTick(2);
+  assert.equal(compacting.note.textContent, "正在整理素材库…", "at 2s the note is still the plain text");
+  compacting.fireElapsedTick(10);
+  assert.equal(compacting.note.textContent, "正在整理素材库…（已用 12 秒）", "at 12s the note carries the elapsed seconds");
+  assert.equal(compacting.intervalsClearedCount, 1, "the elapsed ticker stops once it starts counting");
+  compacting.fireElapsedTick(1);
+  assert.equal(compacting.note.textContent, "正在整理素材库…（已用 12 秒）", "the ticker no longer fires after clearing");
 });
