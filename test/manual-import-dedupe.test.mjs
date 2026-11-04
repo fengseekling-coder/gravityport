@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import sharp from "sharp";
-import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { CURRENT_SCHEMA_VERSION, createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import { processDerivativeJob } from "../lib/derivative-worker.js";
 import { computePerceptualHash, perceptualHammingDistance } from "../lib/perceptual-hash.js";
 import { importStagingDir } from "../lib/import-staging.mjs";
@@ -793,26 +793,40 @@ test("replace-with-new keeps the library asset's curation and trashes the import
 
 // ─── old code opens the new library (original task §7.13) ───────────────────
 
-test("origin/main code refuses a library carrying the new schema version without touching it", async (t) => {
-  // Task 348 bumped CURRENT_SCHEMA_VERSION to 18, so the old code no longer
-  // opens a new-code library: it must refuse it up front (the newer-schema
-  // guard) instead of guessing at the new tables. The refusal must happen
-  // before any byte changes (the open is read-only until the guard passes).
-  assert.ok(existsSync(join(mainCheckout, "lib", "sqlite-asset-store.mjs")), "main checkout is required for this test");
+// "Without touching it": the database bytes and the library folder's
+// top-level entries must be identical before and after a refused open (no
+// rewrite, no WAL/SHM left behind, no snapshot file).
+async function librarySnapshot(libraryDir) {
+  return {
+    db: createHash("sha256").update(await readFile(join(libraryDir, "mosa.db"))).digest("hex"),
+    entries: (await readdir(libraryDir)).sort(),
+  };
+}
+
+// The cross-version check needs a sibling checkout that really is older. In
+// CI the sibling path resolves to this same checkout (the repository is
+// cloned into a folder named gravityport), so there is no older code to run.
+const mainCheckoutStore = join(mainCheckout, "lib", "sqlite-asset-store.mjs");
+const mainCheckoutSchemaVersion = (() => {
+  if (resolve(mainCheckout) === resolve(repositoryRoot) || !existsSync(mainCheckoutStore)) return null;
+  const match = readFileSync(mainCheckoutStore, "utf8").match(/export const CURRENT_SCHEMA_VERSION = (\d+);/);
+  return match ? Number(match[1]) : null;
+})();
+const olderMainCheckoutSkip = mainCheckoutSchemaVersion != null && mainCheckoutSchemaVersion < CURRENT_SCHEMA_VERSION
+  ? false
+  : "needs a sibling gravityport checkout on an older schema version (not available here, e.g. in CI)";
+
+test("origin/main code refuses a library carrying the new schema version without touching it", { skip: olderMainCheckoutSkip }, async (t) => {
+  // A schema bump means the released code no longer opens a new-code
+  // library: it must refuse it up front (the newer-schema guard) instead of
+  // guessing at the new tables, before any byte changes.
   const { store, sourcesDir } = await makeStore(t, "mosa-dedupe-oldcode-");
   await importAsset(store, await pngFile(sourcesDir, "a.png", 31), { assetId: "a" });
   await drainDerivatives(store);
   store.close();
-  // "Without touching it": the database bytes and the library folder's
-  // top-level entries must be identical before and after the old code's
-  // attempt (no rewrite, no WAL/SHM left behind, no snapshot file).
-  const librarySnapshot = async () => ({
-    db: createHash("sha256").update(await readFile(join(store.libraryDir, "mosa.db"))).digest("hex"),
-    entries: (await readdir(store.libraryDir)).sort(),
-  });
-  const before = await librarySnapshot();
+  const before = await librarySnapshot(store.libraryDir);
   const script = `
-    import { createSqliteAssetStore } from ${JSON.stringify(join(mainCheckout, "lib", "sqlite-asset-store.mjs"))};
+    import { createSqliteAssetStore } from ${JSON.stringify(mainCheckoutStore)};
     try {
       const store = createSqliteAssetStore({
         projectRoot: ${JSON.stringify(join(store.libraryDir, "..", "project"))},
@@ -826,8 +840,36 @@ test("origin/main code refuses a library carrying the new schema version without
     }
   `;
   const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], { stdio: "pipe" }).toString();
-  assert.match(out, /REFUSED GravityPort schema version 18 is newer than supported version 17/, `the old code refuses the v18 library (got: ${out.slice(0, 200)})`);
-  assert.deepEqual(await librarySnapshot(), before, "the refused open leaves the library bytes and files untouched");
+  assert.match(
+    out,
+    new RegExp(`REFUSED GravityPort schema version ${CURRENT_SCHEMA_VERSION} is newer than supported version ${mainCheckoutSchemaVersion}`),
+    `the old code refuses the v${CURRENT_SCHEMA_VERSION} library (got: ${out.slice(0, 200)})`,
+  );
+  assert.deepEqual(await librarySnapshot(store.libraryDir), before, "the refused open leaves the library bytes and files untouched");
+});
+
+// The same guarantee without an older checkout, so it runs everywhere: a
+// library stamped one version ahead of this code is refused untouched.
+test("a library from a newer schema version is refused without touching it", async (t) => {
+  const { store, sourcesDir } = await makeStore(t, "mosa-dedupe-newer-");
+  await importAsset(store, await pngFile(sourcesDir, "a.png", 32), { assetId: "a" });
+  await drainDerivatives(store);
+  store.close();
+  const newerVersion = CURRENT_SCHEMA_VERSION + 1;
+  await withRawDatabase(store, (database) => {
+    database.prepare("UPDATE library_meta SET value = ? WHERE key = 'schema_version'").run(String(newerVersion));
+    database.pragma("wal_checkpoint(TRUNCATE)");
+  });
+  const before = await librarySnapshot(store.libraryDir);
+  assert.throws(
+    () => createSqliteAssetStore({
+      projectRoot: join(store.libraryDir, "..", "project"),
+      managerDir: join(store.libraryDir, "..", "project", "mosa"),
+      libraryDir: store.libraryDir,
+    }),
+    new RegExp(`database schema v${newerVersion}, this build supports v${CURRENT_SCHEMA_VERSION}`),
+  );
+  assert.deepEqual(await librarySnapshot(store.libraryDir), before, "the refused open leaves the library bytes and files untouched");
 });
 
 // ─── dedupe lookup cost stays negligible on large libraries ─────────────────

@@ -9,7 +9,7 @@
 // - a check that FAILS WHILE THE APP IS OPEN (test-only verify delay) opens
 //   the dialog without a restart, via the library-backfilled announcement;
 // - two desktop-shell screenshots (zh/en) of the dialog land in the
-//   350-dialog-*.png files the task names.
+//   350-dialog-*.png files the task names (kept with MOSA_E2E_SHOT_COPY_TO).
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,7 +22,14 @@ export const name = "schema-upgrade-notice";
 export const description =
   "task 350 dialog: seeded failed verdict shows the dialog after the first screen (copy, reveal -> /api/open-folder intercepted, backdrop keeps it, 知道了 latches across restart) -> a live failed check opens it without a restart -> zh/en desktop screenshots";
 
-const SHOT_DIR = "/Users/azhuilab/codex_aigc/素材/日志";
+// Screenshots live in the run's temp root (wiped when the runner exits); a
+// report consumer names a surviving copy directory with MOSA_E2E_SHOT_COPY_TO,
+// the same convention as sidebar-update-line.
+const shotDirFor = (ctx) => join(ctx.libraryDir, "..", "350-shots");
+async function keepShotCopy(fileName, data) {
+  const copyTo = process.env.MOSA_E2E_SHOT_COPY_TO;
+  if (copyTo) await writeFile(join(copyTo, fileName), data).catch(() => {});
+}
 const VERIFY_KEY = "schema_upgrade_verify";
 
 function verifyRecordValue(libraryDir) {
@@ -107,7 +114,7 @@ async function seedLiveFailure(libraryDir, projectRoot, makePng) {
 
 export async function run(ctx) {
   await ctx.prepare();
-  await mkdir(SHOT_DIR, { recursive: true }).catch(() => {});
+  await mkdir(shotDirFor(ctx), { recursive: true });
 
   // ---- Round 1: seeded failed record — dialog, reveal intercept, latch ----
   const server1 = await ctx.startServer();
@@ -124,7 +131,7 @@ export async function run(ctx) {
     if (!result.body.includes("请别删它") || !result.body.includes("设置的「反馈」")) {
       throw new Error(`wrong dialog body: ${result.body}`);
     }
-    if (result.revealCalled !== true) throw new Error("在访达中显示拷贝 did not call /api/open-folder");
+    if (result.revealCalled !== true) throw new Error("the reveal-copy button did not call /api/open-folder");
     if (!String(result.revealPath || "").includes(".schema-backups")) {
       throw new Error(`the reveal path is not inside .schema-backups: ${result.revealPath}`);
     }
@@ -256,7 +263,8 @@ function pageSource({ expectDialog = true, liveWait = false } = {}) {
       return window.__origFetch(input, init);
     };
     const revealButton = Array.from(dialog().querySelectorAll('button'))
-      .find((node) => node.textContent.includes('在访达中显示拷贝'));
+      // macOS says 访达 (Finder), Windows says 资源管理器 (File Explorer).
+      .find((node) => ['在访达中显示拷贝', '在资源管理器中显示拷贝'].some((label) => node.textContent.includes(label)));
     if (!revealButton) throw new Error('reveal button missing: ' + dialog().textContent.slice(0, 200));
     revealButton.click();
     await sleep(600);
@@ -345,8 +353,10 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
     await waitForExpression(cdp, "document.querySelector('.app') && document.readyState === 'complete'", "window settled");
     const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
     if (!shot?.data) throw new Error(`Page.captureScreenshot returned no data for ${language}`);
-    const filePath = join(SHOT_DIR, fileName);
-    await writeFile(filePath, Buffer.from(shot.data, "base64"));
+    const filePath = join(shotDirFor(ctx), fileName);
+    const data = Buffer.from(shot.data, "base64");
+    await writeFile(filePath, data);
+    await keepShotCopy(fileName, data);
     return filePath;
   } catch (error) {
     failed = true;
@@ -354,7 +364,9 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
     // screenshots instead of losing it with the run root.
     try {
       const { copyFile } = await import("node:fs/promises");
-      await copyFile(logFile, join(SHOT_DIR, `350-desktop-${language}-main.log`));
+      const logName = `350-desktop-${language}-main.log`;
+      await copyFile(logFile, join(shotDirFor(ctx), logName));
+      if (process.env.MOSA_E2E_SHOT_COPY_TO) await copyFile(logFile, join(process.env.MOSA_E2E_SHOT_COPY_TO, logName));
     } catch { /* best effort */ }
     throw error;
   } finally {
