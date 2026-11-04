@@ -591,6 +591,57 @@ test("the stack sort_created_at pass reports its repaired rows: cached page refr
   });
 });
 
+// Task 356 (354 fix B): an unnamed stack whose members are all trashed already
+// holds the right sort_name (''). The columns pass must leave it alone and
+// announce nothing — announcing it made the App's live sync drop the batch
+// that carried the "stack emptied" changes. A stack that does need a name
+// takes it from its first LIVE member, the same rule as the per-write sync.
+test("task 356: the stack columns pass skips emptied stacks and names from the first live member", async (t) => {
+  const { projectRoot, libraryDir } = await createLibraryRoot(t, "mosa-356-stack-columns-");
+  bootstrapLibrary(projectRoot, libraryDir);
+  const trashedAt = "2026-05-05T00:00:00.000Z";
+  withRawDatabase(libraryDir, (database) => {
+    database.transaction(() => {
+      insertAssetRow(database, { id: "gone-a", asset: "aaa.png", deletedAt: trashedAt });
+      insertAssetRow(database, { id: "gone-b", asset: "bbb.png", deletedAt: trashedAt });
+      insertAssetRow(database, { id: "gone-c", asset: "ccc.png", deletedAt: trashedAt });
+      insertAssetRow(database, { id: "kept", asset: "zzz.png" });
+      const stackRow = database.prepare(`
+        INSERT INTO asset_stacks (project_id, id, created_at, updated_at, sort_created_at, sort_name, name)
+        VALUES ('default', ?, ?, ?, ?, '', '')
+      `);
+      stackRow.run("emptied", CREATED, CREATED, CREATED);
+      stackRow.run("mixed", CREATED, CREATED, CREATED);
+      insertStackMember(database, { stackId: "emptied", assetId: "gone-a", position: 0 });
+      insertStackMember(database, { stackId: "emptied", assetId: "gone-b", position: 1 });
+      insertStackMember(database, { stackId: "mixed", assetId: "gone-c", position: 0 });
+      insertStackMember(database, { stackId: "mixed", assetId: "kept", position: 1 });
+    })();
+  });
+  const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+  t.after(() => { try { store.close(); } catch { /* closed */ } });
+
+  await store.startDeferredMaintenance();
+
+  assert.equal(markerValue(libraryDir, "derived:stack_sort_columns"), "1", "the columns pass ran to completion");
+  const sortNames = withRawDatabase(libraryDir, (database) => Object.fromEntries(
+    database.prepare("SELECT id, sort_name FROM asset_stacks WHERE project_id = 'default' ORDER BY id").all()
+      .map((row) => [row.id, row.sort_name]),
+  ));
+  assert.equal(sortNames.emptied, "", "an emptied unnamed stack keeps its empty sort name");
+  assert.equal(
+    sortNames.mixed,
+    assetSortName({ theme: "", asset: "zzz.png", id: "kept" }),
+    "the name comes from the first live member, not the trashed position-0 one",
+  );
+
+  const { changes } = await store.listLibraryChangesSince("default", 0);
+  const announcements = changes.filter((change) => change.kind === "library-backfilled"
+    && change.detail?.reason === "derived:stack_sort_columns");
+  assert.equal(announcements.length, 1, "one announcement for the one stack that needed a name");
+  assert.equal(announcements[0].detail.rowsChanged, 1, "the emptied stack is not counted as repaired");
+});
+
 // --- 6: a media replacement must not clobber fields a repair fixed ---------------
 
 test("a media replacement keeps fields fixed between its row read and its write", async (t) => {
