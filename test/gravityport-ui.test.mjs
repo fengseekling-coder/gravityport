@@ -131,8 +131,24 @@ describe("fetchAssetPage query mapping", () => {
       assert.equal(page.nextCursor, "cur-1");
       assert.equal(page.revision, "r9");
       assert.equal(page.assets.length, 1);
+      assert.equal(page.stack, null, "non-stack pages carry no stack summary");
 
       calls.length = 0;
+      globalThis.fetch = async (input) => {
+        calls.push(String(input));
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            // 355: the stack endpoint's summary rides along — the empty-stack
+            // view exit reads its live member count without a second request.
+            stack: { id: "st-1", name: "S", count: "0", cover_asset_id: null },
+            assets: [],
+            page: { total: 0, nextCursor: null },
+            revision: "r10",
+          }),
+        };
+      };
       await adapterModule.fetchAssetPage({
         project: "default", q: "", sort: "name", scope: "trash",
         mediaKind: "all", stackId: "st-1",
@@ -143,6 +159,28 @@ describe("fetchAssetPage query mapping", () => {
       assert.equal(stackUrl.searchParams.get("includeTotal"), "0");
       assert.equal(stackUrl.searchParams.get("cursor"), "cur-1");
       assert.equal(stackUrl.searchParams.get("view"), null, "stack members are the raw collection");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("parses the stack endpoint's live summary for the empty-stack view exit (355)", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        stack: { id: "st-9", name: "栈", count: "0", cover_asset_id: null },
+        assets: [],
+        page: { total: 0, nextCursor: null, limit: 100, sort: "manual" },
+        revision: "42:dv1",
+      }),
+    });
+    try {
+      const page = await adapterModule.fetchAssetPage({
+        project: "default", q: "", sort: "newest", scope: "all", mediaKind: "all", stackId: "st-9",
+      });
+      assert.deepEqual(page.stack, { id: "st-9", name: "栈", count: 0, cover_asset_id: null });
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -305,5 +343,32 @@ describe("the built shell", () => {
       assert.ok(allowed, `every shell reference must be same-origin root-absolute: ${url}`);
     }
     assert.match(shell, /<div id="root"><\/div>/, "React mounts into #root");
+  });
+});
+
+// 355 wiring contract: the main load effect's SUCCESS branch must consult the
+// stack page's live summary — a sync fallback's same-view reload of an emptied
+// stack gets a 200 empty page, so the STACK_NOT_FOUND catch never fires and
+// the exit has to come from the summary. Reverse verification (comment out the
+// exitStackReplace call in that block) turns this red; the behavior itself is
+// e2e-verified by live-sync-view-gone.
+describe("355 reload-path view exits (App.tsx wiring)", () => {
+  it("exits a dead stack view from the page summary in the load effect's success branch", async () => {
+    const source = await readFile(join(uiRoot, "src", "App.tsx"), "utf8");
+    const block = source.match(/if \(stackId && stackViewDead\(page\.stack\)\) \{([\s\S]{0,200}?)\n\s*\}/);
+    assert.ok(block, "the reload success branch must consult the page's stack summary");
+    assert.match(
+      block[1],
+      /\n\s+exitStackReplace\(\)\s*\n\s*return/,
+      "a dead stack page must exit the view, not commit the empty window",
+    );
+  });
+  it("exits a deleted group view through one shared exit helper on both paths", async () => {
+    const source = await readFile(join(uiRoot, "src", "App.tsx"), "utf8");
+    assert.match(source, /const exitDeletedGroupView = \(\) => goTo\(\{ active: "所有素材" \}, \{ replace: true \}\)/);
+    // The incremental commit's deleted-group branch and the fresh-stats
+    // liveness check (the fallback reload's exit) both go through it.
+    const calls = source.match(/^\s+exitDeletedGroupView\(\)$/gm) || [];
+    assert.equal(calls.length, 2, "exactly the incremental branch and groupLivenessCheck call it");
   });
 });

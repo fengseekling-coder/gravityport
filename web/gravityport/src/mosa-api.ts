@@ -104,6 +104,10 @@ export type AssetPage = {
   nextCursor: string | null
   total: number | null
   revision: string | null
+  /** The viewed stack's live summary, present only on stack-scoped pages
+   * (GET /api/asset-stacks/:id/assets already returns it; count is the live
+   * member number the empty-stack view exit reads — 355). */
+  stack: { id: string; name: string; count: number; cover_asset_id: string | null } | null
 }
 
 type JsonValue = Record<string, unknown>
@@ -585,11 +589,20 @@ export async function fetchAssetPage(q: AssetQuery, options: { limit?: number; c
     : `/api/assets?${params}&view=gallery`
   const data = await requestJson<JsonValue>(path, { signal: options.signal })
   const page = (data.page && typeof data.page === "object" ? data.page : {}) as JsonValue
+  const stackRaw = data.stack && typeof data.stack === "object" ? (data.stack as JsonValue) : null
   return {
     assets: (Array.isArray(data.assets) ? data.assets : []).map(item => normalizeAsset(item as JsonValue, q.project)),
     nextCursor: page.nextCursor ? String(page.nextCursor) : null,
     total: page.total == null || !Number.isFinite(Number(page.total)) ? null : Number(page.total),
     revision: data.revision == null ? null : String(data.revision),
+    stack: stackRaw
+      ? {
+        id: String(stackRaw.id ?? ""),
+        name: String(stackRaw.name ?? ""),
+        count: Number(stackRaw.count ?? 0),
+        cover_asset_id: stackRaw.cover_asset_id ? String(stackRaw.cover_asset_id) : null,
+      }
+      : null,
   }
 }
 

@@ -142,6 +142,10 @@ function createHarness({ paused: pausedOverride } = {}) {
   const library = createFakeLibrary();
   const commits = [];
   const fallbacks = [];
+  // 355: the batch each fallback dropped, in order — the reload the fallback
+  // triggers re-fetches only the current view, so this is the evidence the
+  // app's view-exit decisions must read.
+  const fallbackChanges = [];
   const timers = [];
   let clock = 1_000_000;
   const mutation = { epoch: 0, pending: 0 };
@@ -168,7 +172,10 @@ function createHarness({ paused: pausedOverride } = {}) {
         currentView.cards = [...commit.cards];
         currentView.loadedCardIds = commit.cards.map(card => card.id);
       },
-      onFallback: reason => fallbacks.push(reason),
+      onFallback: (reason, changes) => {
+        fallbacks.push(reason);
+        fallbackChanges.push(changes ?? null);
+      },
     }),
     fetchRevision: async () => library.token(),
     fetchChanges: (project, since) => library.fetchChanges(project, since),
@@ -203,7 +210,7 @@ function createHarness({ paused: pausedOverride } = {}) {
     sync.notePageRevision(revisionToken, null);
     await settle();
   };
-  return { library, stacks: library.stacks, suppressIds: library.suppressIds, sync, commits, fallbacks, timers, flushTimers, settle, mutation, currentView, loadPage, baselineAtCommit: () => baselineAtCommit, clockRef: { get: () => clock, set: (v) => { clock = v } } };
+  return { library, stacks: library.stacks, suppressIds: library.suppressIds, sync, commits, fallbacks, fallbackChanges, timers, flushTimers, settle, mutation, currentView, loadPage, baselineAtCommit: () => baselineAtCommit, clockRef: { get: () => clock, set: (v) => { clock = v } } };
 }
 
 const ids = (cards) => cards.map(card => card.id);
@@ -814,6 +821,90 @@ describe("library-sync controller", () => {
     assert.ok(ids(lastCommit.cards).includes("a6"), "concurrent change a6 merged in same run");
     assert.deepEqual(ids(lastCommit.cards), ["a6", "a5", "a4"]);
     assert.equal(h.sync.getBaseline(), h.library.revision, "baseline advances to match library revision");
+  });
+
+  // 355: a library-backfilled record in the same envelope as the records that
+  // emptied the viewed stack aborts classifyChanges mid-batch, and the
+  // fallback reloads only the CURRENT view — the stack page comes back as a
+  // 200 empty page (the stack row survives with 0 members), not
+  // STACK_NOT_FOUND. The reload path can only make the right call when the
+  // dropped batch is not silently lost, so onFallback carries it.
+  it("hands the dropped batch to onFallback when library-backfilled shares the envelope (355)", async () => {
+    const h = createHarness();
+    for (let i = 1; i <= 5; i += 1) h.library.addAsset(`a${i}`);
+    await h.sync.ensureBaseline("default");
+    await h.loadPage(["a5", "a4", "a3"]);
+    // The batch that emptied the viewed stack, then the backfilled record
+    // 347's deferred maintenance writes for the same rows — the shape the
+    // live-sync-view-gone failure produced (354 report, journal rev 17-19).
+    h.library.journalPush({ kind: "asset-deleted", entityType: "asset", entityId: "a5" });
+    h.library.journalPush({ kind: "stack-members-changed", entityType: "stack", entityId: "s1", assetIds: ["a5"] });
+    h.library.journalPush({ kind: "library-backfilled", entityType: "stack", entityId: "", detail: { reason: "derived:stack_sort_columns", rowsChanged: 1 } });
+    h.sync.schedule();
+    await h.settle();
+    assert.deepEqual(h.fallbacks, ["library-backfilled"]);
+    assert.equal(h.sync.getBaseline(), null, "the fallback reload re-establishes the baseline");
+    const dropped = h.fallbackChanges[0];
+    assert.ok(Array.isArray(dropped) && dropped.length === 3, "the dropped batch reaches onFallback");
+    assert.deepEqual(
+      dropped.map(change => change.kind),
+      ["asset-deleted", "stack-members-changed", "library-backfilled"],
+      "the emptying records ride along, not just the backfilled one",
+    );
+  });
+
+  // 355: the same fallback通路 with the viewed group deleted — the journal
+  // evidence is unreachable after the reload (the baseline jumps past it), so
+  // the dropped batch is what lets the app-side decision see the deletion;
+  // the liveness check on the fresh sidebar stats does the exit itself.
+  it("hands the dropped group-deleted record to onFallback when a backfilled record shares the envelope (355)", async () => {
+    const h = createHarness();
+    for (let i = 1; i <= 3; i += 1) h.library.addAsset(`a${i}`);
+    await h.sync.ensureBaseline("default");
+    await h.loadPage(["a3", "a2", "a1"]);
+    h.library.journalPush({ kind: "group-deleted", entityType: "group", entityId: "GoneA", assetIds: ["a1"], detail: { trashed: false, ungrouped: true } });
+    h.library.journalPush({ kind: "library-backfilled", entityType: "stack", entityId: "", detail: { reason: "derived:stack_sort_columns", rowsChanged: 1 } });
+    h.sync.schedule();
+    await h.settle();
+    assert.deepEqual(h.fallbacks, ["library-backfilled"]);
+    const dropped = h.fallbackChanges[0];
+    assert.ok(Array.isArray(dropped) && dropped.length === 2, "the dropped batch reaches onFallback");
+    assert.equal(dropped[0].kind, "group-deleted");
+    assert.equal(dropped[0].entityId, "GoneA");
+  });
+
+  // 355 change 3: a rename inside the dropped batch must reach onFallback —
+  // the reload would otherwise re-fetch the OLD name's empty page and the
+  // liveness check would exit to 所有素材, losing the follow.
+  it("hands the dropped group-renamed record to onFallback when a backfilled record shares the envelope (355)", async () => {
+    const h = createHarness();
+    for (let i = 1; i <= 3; i += 1) h.library.addAsset(`a${i}`);
+    await h.sync.ensureBaseline("default");
+    await h.loadPage(["a3", "a2", "a1"]);
+    h.library.journalPush({ kind: "group-renamed", entityType: "group", entityId: "RenameB", detail: { to: "RenamedC" } });
+    h.library.journalPush({ kind: "library-backfilled", entityType: "stack", entityId: "", detail: { reason: "derived:stack_sort_columns", rowsChanged: 1 } });
+    h.sync.schedule();
+    await h.settle();
+    assert.deepEqual(h.fallbacks, ["library-backfilled"]);
+    const dropped = h.fallbackChanges[0];
+    assert.ok(Array.isArray(dropped) && dropped.length === 2);
+    assert.equal(dropped[0].kind, "group-renamed");
+    assert.equal(dropped[0].detail.to, "RenamedC");
+  });
+
+  it("a data-version-only fallback passes no dropped batch (no changes were read)", async () => {
+    const h = createHarness();
+    for (let i = 1; i <= 3; i += 1) h.library.addAsset(`a${i}`);
+    await h.sync.ensureBaseline("default");
+    await h.loadPage(["a3", "a2", "a1"]);
+    // Same counter, new data version: the file was rewritten by another
+    // connection without journalling.
+    h.library.bumpDataVersion();
+    h.sync.notePush({ revision: h.library.token() });
+    h.sync.schedule();
+    await h.settle();
+    assert.deepEqual(h.fallbacks, ["data-version-only"]);
+    assert.equal(h.fallbackChanges[0], null);
   });
 });
 

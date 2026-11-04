@@ -48,7 +48,7 @@ import {
 import { deriveEmptyState } from "./empty-state"
 import { describeGroupStats } from "./group-stats"
 import { createLibrarySync, type LibrarySyncCommit, type LibrarySyncController, type LibrarySyncHooks, type LibrarySyncView } from "./library-sync"
-import { focusAfterRemoval } from "./gallery-reconcile"
+import { focusAfterRemoval, followedGroupRename, stackViewDead } from "./gallery-reconcile"
 import {
   checkVersionConsistency,
   createReadyGate,
@@ -850,6 +850,16 @@ export default function App() {
           if (target > collected.length) await followUpPages(target)
         }
         if (controller.signal.aborted) return
+        // 355: a sync fallback's same-view reload can land on a stack view
+        // whose members were all removed while this batch was dropped. The
+        // reload itself succeeds (the stack row survives with 0 members), so
+        // the STACK_NOT_FOUND catch below never runs — the live summary the
+        // stack page already carries is the verdict, same as the incremental
+        // path's. Exit before committing the empty window.
+        if (stackId && stackViewDead(page.stack)) {
+          exitStackReplace()
+          return
+        }
         // Cross-page selections outrun the loaded window, so only ids the
         // PREVIOUS window contained can be re-judged against the fresh one:
         // a member that left the view is dropped, off-page members are kept
@@ -1753,6 +1763,11 @@ export default function App() {
     if (!stackId) return
     goTo({ stackId: "", stackName: "" }, { replace: true })
   }
+  // The viewed group no longer exists (deleted elsewhere, or renamed away by
+  // a batch this client dropped): fall back to 所有素材, replacing the
+  // history entry. Shared by the incremental commit's deleted-group branch
+  // and the fresh-sidebar-stats liveness check the reload path leans on.
+  const exitDeletedGroupView = () => goTo({ active: "所有素材" }, { replace: true })
   const navigateHistory = (direction: -1 | 1) => {
     const next = navHistory.index + direction
     if (next < 0) {
@@ -1846,7 +1861,7 @@ export default function App() {
     if (!active.startsWith("group:")) return
     const name = active.slice("group:".length)
     if (nav.groups.some(entry => entry.name.toLowerCase() === name.toLowerCase())) return
-    goTo({ active: "所有素材" }, { replace: true })
+    exitDeletedGroupView()
   }
   // The one merge result landing spot. Runs only while the view, the loaded
   // window and the app's own mutations are exactly what the sync saw.
@@ -1901,14 +1916,13 @@ export default function App() {
     // the group we are inside was deleted or renamed — follow or leave, each
     // replacing the current history entry.
     if (stackId) {
-      const stackDead = commit.stack === null
-        || (commit.stack != null && commit.stack.count === 0)
+      const stackDead = stackViewDead(commit.stack)
         || commit.classify.dissolvedStacks.includes(stackId)
       if (stackDead) exitStackReplace()
     } else if (active.startsWith("group:")) {
       const name = active.slice("group:".length)
       if (commit.classify.deletedGroups.includes(name)) {
-        goTo({ active: "所有素材" }, { replace: true })
+        exitDeletedGroupView()
       } else if (commit.classify.groupRenames.has(name)) {
         let target: string = name
         while (commit.classify.groupRenames.has(target)) {
@@ -1935,7 +1949,18 @@ export default function App() {
   })
   syncHooksRef.current = {
     onCommit: applySyncCommit,
-    onFallback: () => refreshNavigation(),
+    // 355: a fallback's reload re-fetches the CURRENT view, so evidence that
+    // only exists in the dropped batch must be applied first — a viewed group
+    // renamed away would otherwise reload as the old name's empty page and
+    // the fresh-stats liveness check would then exit to 所有素材, losing the
+    // follow the incremental path keeps. Jump to the new name, then reload.
+    onFallback: (reason, changes) => {
+      if (changes && !stackId && active.startsWith("group:")) {
+        const target = followedGroupRename(changes, active.slice("group:".length))
+        if (target) goTo({ active: `group:${target}` }, { replace: true })
+      }
+      refreshNavigation()
+    },
   }
   refreshNavigationStatsRef.current = () => {
     fetchProjects().then(list => setProjects(list)).catch(() => {})
