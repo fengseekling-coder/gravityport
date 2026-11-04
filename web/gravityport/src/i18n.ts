@@ -20,7 +20,7 @@ const english: Record<string, string> = {
   "所有素材": "All assets", "常规与外观": "General",
   "收藏": "Favorites", "回收站": "Trash",
   "素材已移至回收站": "Asset moved to Trash", "素材库": "Library", "待整理": "Unsorted",
-  "智能分组": "Smart groups", "我的分组": "My groups", "添加我的分组": "Add a personal group",
+  "智能分组": "Smart Stacks", "我的分组": "My groups", "添加我的分组": "Add a personal group",
   "分组管理": "Group management", "重命名分组": "Rename group", "上移分组": "Move group up", "下移分组": "Move group down",
   "导出分组": "Export group", "保存中": "Saving",
   "关系类型": "Relation type", "保存关系": "Save relation", "删除关系": "Delete relation", "提供方验证关系不可修改": "Provider-verified relations are locked",
