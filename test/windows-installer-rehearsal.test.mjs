@@ -37,13 +37,40 @@ async function powershell(command) {
 
 const psLiteral = (value) => `'${String(value).replaceAll("'", "''")}'`;
 
-// Runs an installer or uninstaller and returns its exit code.
+// Runs an installer or uninstaller and returns its exit code plus the
+// captured output. Review 270 中-2 / task 352: `stdio: "ignore"` left a
+// failure holding nothing but the exit code.
 function run(file, args) {
   return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(file, args, { stdio: "ignore", windowsHide: true });
+    const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += String(chunk); });
+    child.stderr.on("data", (chunk) => { output += String(chunk); });
     child.once("error", rejectRun);
-    child.once("exit", (code) => resolveRun(code));
+    child.once("exit", (code) => resolveRun({ code, output: output.trim() }));
   });
+}
+
+const attachInstallerOutput = (result) => (result.output ? `\ninstaller output:\n${result.output}` : "");
+
+// What a failed install or uninstall left behind on this account (review 270
+// 中-2): install folder variants, shortcuts and the Settings > Apps entry.
+async function leftoverInventory() {
+  const installRoot = join(process.env.LOCALAPPDATA, "Programs", product);
+  const desktop = await powershell("[Environment]::GetFolderPath('Desktop')");
+  const startMenuShortcut = join(process.env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", `${product}.lnk`);
+  const uninstallKey = `HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${product}`;
+  const entries = {
+    installRoot: existsSync(installRoot),
+    appDir: existsSync(join(installRoot, "app")),
+    appOld: existsSync(join(installRoot, "app.old")),
+    appRemoving: existsSync(join(installRoot, "app.removing")),
+    uninstaller: existsSync(join(installRoot, `Uninstall ${product}.exe`)),
+    desktopShortcut: existsSync(join(desktop, `${product}.lnk`)),
+    startMenuShortcut: existsSync(startMenuShortcut),
+    uninstallKey: (await powershell(`Test-Path -LiteralPath ${psLiteral(uninstallKey)}`)) === "True",
+  };
+  return JSON.stringify(entries);
 }
 
 async function treeDigest(dir) {
@@ -263,7 +290,11 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
   const sandbox = await mkdtemp(join(tmpdir(), "mosa-installer-rehearsal-"));
   try {
     // First install.
-    assert.equal(await run(installer, ["/S"]), 0, "silent install exit code");
+    const firstInstall = await run(installer, ["/S"]);
+    if (firstInstall.code !== 0) {
+      throw new Error(`silent install exit code ${firstInstall.code}`
+        + `${attachInstallerOutput(firstInstall)}\nleftover inventory:\n${await leftoverInventory()}`);
+    }
     const packaged = await treeDigest(packageDir);
     const installed = await treeDigest(appDir);
     assert.deepEqual([...installed.keys()].sort(), [...packaged.keys()].sort(), "installed files match the package");
@@ -287,8 +318,10 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
     // While the installed app is open, installing over it and uninstalling it
     // are both refused; silent runs give up and leave it running untouched.
     const app = await openInstalledApp(exe, sandbox);
-    assert.equal(await run(installer, ["/S"]), 2, "installing over the open app is refused");
-    assert.equal(await run(uninstaller, ["/S", `_?=${installRoot}`]), 2, "uninstalling the open app is refused");
+    const overOpenApp = await run(installer, ["/S"]);
+    assert.equal(overOpenApp.code, 2, `installing over the open app is refused${attachInstallerOutput(overOpenApp)}`);
+    const overOpenUninstall = await run(uninstaller, ["/S", `_?=${installRoot}`]);
+    assert.equal(overOpenUninstall.code, 2, `uninstalling the open app is refused${attachInstallerOutput(overOpenUninstall)}`);
     assert.ok(existsSync(exe), "the open app stays in place");
     assert.equal(existsSync(join(installRoot, "app.old")), false);
     assert.equal(existsSync(join(installRoot, "app.removing")), false);
@@ -297,7 +330,8 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
 
     // The same while only an AI assistant's MCP server runs from the app.
     const mcpServer = await startInstalledMcpServer({ exe, appDir, libraryDir: app.libraryDir, sandbox });
-    assert.equal(await run(installer, ["/S"]), 2, "installing under a running MCP server is refused");
+    const underMcpServer = await run(installer, ["/S"]);
+    assert.equal(underMcpServer.code, 2, `installing under a running MCP server is refused${attachInstallerOutput(underMcpServer)}`);
     assert.ok(existsSync(exe) && mcpServer.exitCode === null, "the MCP server keeps running");
     mcpServer.stdin.end();
     await stopEverythingRunningFrom(installRoot);
@@ -307,9 +341,9 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
     await writeFile(leftover, "older");
     const heldMs = await waitUntilFolderCanMove(appDir);
     console.log(`app folder free to move after ${heldMs} ms`);
-    const upgradeExit = await run(installer, ["/S"]);
-    if (upgradeExit !== 0) {
-      assert.fail(`upgrade exit code ${upgradeExit} (2 = the app folder could not be renamed). Holding ${appDir}:\n${await describeProcessesHolding(appDir)}`);
+    const upgrade = await run(installer, ["/S"]);
+    if (upgrade.code !== 0) {
+      assert.fail(`upgrade exit code ${upgrade.code} (2 = the app folder could not be renamed). Holding ${appDir}:\n${await describeProcessesHolding(appDir)}${attachInstallerOutput(upgrade)}`);
     }
     assert.equal(existsSync(leftover), false, "files from the previous copy are gone");
     assert.equal(existsSync(join(installRoot, "app.old")), false, "the previous copy is removed");
@@ -320,7 +354,8 @@ scope("the Windows installer installs, refuses to touch a running copy, upgrades
     await writeFile(join(installRoot, ".MOSA-update-rehearsal", "previous", names.windowsExecutableName), "previous");
 
     // The uninstaller copies itself to %TEMP% and returns at once.
-    assert.equal(await run(uninstaller, ["/S"]), 0, "silent uninstall exit code");
+    const uninstallRun = await run(uninstaller, ["/S"]);
+    assert.equal(uninstallRun.code, 0, `silent uninstall exit code${attachInstallerOutput(uninstallRun)}`);
     await waitUntil(async () => !existsSync(installRoot), "the install folder is removed");
     assert.equal(existsSync(startMenuShortcut), false, "Start menu shortcut removed");
     assert.equal(existsSync(desktopShortcut), false, "desktop shortcut removed");
