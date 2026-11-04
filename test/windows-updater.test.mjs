@@ -663,3 +663,31 @@ test("Windows apply helper sets a failure step before each step that can fail", 
   assert.match(script, /GP_UPDATE_FAILURE code=\$\(\$script:MosaStep\) exit=1/, "the outer catch logs the failing step first");
   assert.match(script, /GP_UPDATE_KEPT_NEW exit=34/, "the kept-new branch logs its own code");
 });
+
+test("351: generated PowerShell scripts never show MOSA in user-facing sentences", () => {
+  // Sentences thrown to the user or written to the update log must say
+  // GravityPort. Everything below is deliberately kept: compatibility names
+  // for old installs and internal identifiers that never reach the user.
+  const compatWhitelist = [
+    /MOSA-win32-x64/i,        // legacy payload directory name accepted by the extractor
+    /\.MOSA-update-/i,        // legacy staging directory prefix swept on later boots
+    /--mosa-update-ready-file/i, // cross-version CLI contract between app and helper
+    /Mosa[A-Z]/,              // internal identifiers: MosaStep, Get-MosaSignatureInfo, ...
+    /^\s*#/,                  // script comments are never shown to users
+  ];
+  for (const [name, script] of [
+    ["windowsMoveDirectoryRetryScript", windowsMoveDirectoryRetryScript()],
+    ["windowsInstallProcessDrainScript", windowsInstallProcessDrainScript()],
+    ["windowsUpdateHelperScript", windowsUpdateHelperScript()],
+  ]) {
+    const offenders = script
+      .split("\n")
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => /mosa/i.test(line) && !compatWhitelist.some((pattern) => pattern.test(line)));
+    assert.deepEqual(
+      offenders,
+      [],
+      `${name} must keep MOSA only in compatibility names; offender lines: ${offenders.map(({ index, line }) => `${index + 1}: ${line.trim()}`).join(" | ")}`,
+    );
+  }
+});

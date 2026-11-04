@@ -128,7 +128,9 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 `asset_create` 对受信根之外的单张图一律拒绝（HTTP 导入和各桥接不受影响）；要导入其他
 文件夹，助手改用 `asset_import_folder`，服务端通过 MCP elicitation 在助手那边请用户确认
 （客户端在 `initialize` 里声明了 `elicitation` 能力才发确认请求；decline、cancel、超时、
-不支持一律 `IMPORT_NOT_CONFIRMED`，什么都不导）。确认只对本次调用和这个文件夹生效，
+不支持、连接异常一律 `IMPORT_NOT_CONFIRMED`，错误带 `reason`（`declined` / `timeout` /
+`unsupported` / `unavailable`，任务 351）并随 `structuredContent.error` 下发，什么都不导）。
+确认只对本次调用和这个文件夹生效，
 不记住。17 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
 （仅 `asset_archive` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
 

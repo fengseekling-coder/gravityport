@@ -120,6 +120,11 @@ npm run desktop:package:windows
 
 完整的数据边界见[隐私政策](PRIVACY.md)，私密漏洞报告见[安全政策](SECURITY.md)。
 
+## 社区
+
+- [Discord](https://discord.gg/rArXAShSkQ)：聊天、提问、晒作品。
+- [GitHub 讨论区](https://github.com/fengseekling-coder/gravityport/discussions)：提问、提想法。
+
 ## 文档
 
 用户指南：

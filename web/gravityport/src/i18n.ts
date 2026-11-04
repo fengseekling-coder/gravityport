@@ -386,6 +386,9 @@ const english: Record<string, string> = {
   // Task 316: viewer empty stage when the original file is gone
   "原图找不到了": "Original file not found",
   "打开素材位置": "Open asset location",
+  // Task 351: community links on the About settings page
+  "社区：": "Community: ",
+  "GitHub 讨论区": "GitHub Discussions",
 }
 
 export function translate(text: string, language: Language): string {

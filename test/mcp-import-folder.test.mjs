@@ -120,7 +120,7 @@ test("recursive:true announces subfolders and imports them", async (t) => {
   assert.equal(result.structuredContent.imported, 1);
 });
 
-async function expectRefusal(t, reply) {
+async function expectRefusal(t, reply, expectedReason) {
   const { workspace, server } = await setupServer(t, { elicitation: true });
   const folder = join(workspace.root, "batch");
   const imagePath = await writePngFixture(join(folder, "one.png"), { color: "#8f3170" });
@@ -130,22 +130,25 @@ async function expectRefusal(t, reply) {
   server.respond(request.id, reply);
   const result = await resultPromise;
   assertImportError(result, "IMPORT_NOT_CONFIRMED");
-  assert.match(result.structuredContent.error.message, /drag the images into GravityPort/);
+  // 任务 351:the three "no" stories are distinguishable; declined covers
+  // decline, cancel, and an accept without allow:true alike.
+  assert.equal(result.structuredContent.error.reason, expectedReason);
+  assert.match(result.structuredContent.error.message, /nothing was imported/);
   const list = await server.callToolStrict("asset_list", {});
   assert.equal(list.structuredContent.assets.length, 0);
   assert.ok(await readFile(imagePath), "the source file is untouched");
 }
 
 test("an elicitation decline imports nothing", async (t) => {
-  await expectRefusal(t, { action: "decline" });
+  await expectRefusal(t, { action: "decline" }, "declined");
 });
 
 test("an elicitation cancel imports nothing", async (t) => {
-  await expectRefusal(t, { action: "cancel" });
+  await expectRefusal(t, { action: "cancel" }, "declined");
 });
 
 test("an accept without allow:true imports nothing", async (t) => {
-  await expectRefusal(t, { action: "accept", content: { allow: false } });
+  await expectRefusal(t, { action: "accept", content: { allow: false } }, "declined");
 });
 
 test("a client without elicitation support gets IMPORT_NOT_CONFIRMED without being asked", async (t) => {
@@ -155,6 +158,8 @@ test("a client without elicitation support gets IMPORT_NOT_CONFIRMED without bei
 
   const result = await server.callTool("asset_import_folder", { folderPath: folder });
   assertImportError(result, "IMPORT_NOT_CONFIRMED");
+  assert.equal(result.structuredContent.error.reason, "unsupported");
+  assert.match(result.structuredContent.error.message, /nothing was imported/);
   assert.equal(server.responses.some((message) => message.method === "elicitation/create"), false);
   const list = await server.callToolStrict("asset_list", {});
   assert.equal(list.structuredContent.assets.length, 0);
@@ -168,6 +173,9 @@ test("a timed-out confirmation is refused and a late reply is dropped silently",
   const requestPromise = server.waitForServerRequest("elicitation/create");
   const result = await server.callTool("asset_import_folder", { folderPath: folder });
   assertImportError(result, "IMPORT_NOT_CONFIRMED");
+  assert.equal(result.structuredContent.error.reason, "timeout");
+  assert.match(result.structuredContent.error.message, /nothing was imported/);
+  assert.match(result.structuredContent.error.message, /try again/, "the timeout message offers one more attempt");
   const list = await server.callToolStrict("asset_list", {});
   assert.equal(list.structuredContent.assets.length, 0);
 
@@ -179,6 +187,24 @@ test("a timed-out confirmation is refused and a late reply is dropped silently",
   assert.equal(server.stderr, "");
   assert.equal(server.responses.some((message) => message.error?.code === -32601), false);
   assert.deepEqual((await server.request("ping")).result, {});
+});
+
+test("closing stdin while the confirmation is open fails with reason unavailable", async (t) => {
+  const { workspace, server } = await setupServer(t, { elicitation: true });
+  const folder = join(workspace.root, "batch");
+  await writePngFixture(join(folder, "one.png"), { color: "#7c4a8f" });
+
+  const resultPromise = server.callTool("asset_import_folder", { folderPath: folder });
+  const request = await server.waitForServerRequest("elicitation/create");
+  // 任务 351:stdin gone means no reply can ever arrive — the call must settle
+  // immediately as unavailable instead of holding until the 50 s timeout.
+  server.child.stdin.end();
+  const result = await resultPromise;
+  assertImportError(result, "IMPORT_NOT_CONFIRMED");
+  assert.equal(result.structuredContent.error.reason, "unavailable");
+  assert.match(result.structuredContent.error.message, /nothing was imported/);
+  // stdin is closed, so the server is shutting down — no follow-up asset_list
+  // here; "nothing was imported" is covered by the error message above.
 });
 
 test("a folder inside the Codex generated images root imports without confirmation", async (t) => {

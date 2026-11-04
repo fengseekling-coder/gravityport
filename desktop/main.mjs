@@ -16,6 +16,7 @@ import { validateRuntimeIsolation } from "../lib/runtime-isolation-guard.mjs";
 import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
 import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../lib/import-staging.mjs";
 import { getDesktopText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getUpdateNotificationText } from "./notification-i18n.mjs";
+import { buildMenuTemplate } from "./menu-template.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
@@ -606,74 +607,11 @@ function pruneInjectedMenuItems(menu) {
 }
 
 function buildMenu() {
-  const template = [
-    {
-      id: "mosa-menu-app",
-      label: app.name,
-      submenu: [
-        { id: "mosa-menu-about", role: "about", label: getDesktopText("menuAbout", currentLocale) },
-        { id: "mosa-menu-app-separator-1", type: "separator" },
-        { id: "mosa-menu-services", role: "services", label: getDesktopText("menuServices", currentLocale) },
-        { id: "mosa-menu-app-separator-2", type: "separator" },
-        { id: "mosa-menu-hide", role: "hide", label: getDesktopText("menuHide", currentLocale) },
-        { id: "mosa-menu-hide-others", role: "hideOthers", label: getDesktopText("menuHideOthers", currentLocale) },
-        { id: "mosa-menu-show-all", role: "unhide", label: getDesktopText("menuShowAll", currentLocale) },
-        { id: "mosa-menu-app-separator-3", type: "separator" },
-        { id: "mosa-menu-quit", role: "quit", label: getDesktopText("menuQuit", currentLocale) },
-      ],
-    },
-    {
-      id: "mosa-menu-file",
-      label: getDesktopText("menuFile", currentLocale),
-      submenu: [
-        { id: "mosa-menu-close", role: "close", label: getDesktopText("menuClose", currentLocale) },
-      ],
-    },
-    {
-      id: "mosa-menu-edit",
-      label: getDesktopText("menuEdit", currentLocale),
-      submenu: [
-        { id: "mosa-menu-undo", role: "undo", label: getDesktopText("menuUndo", currentLocale) },
-        { id: "mosa-menu-redo", role: "redo", label: getDesktopText("menuRedo", currentLocale) },
-        { id: "mosa-menu-edit-separator-1", type: "separator" },
-        { id: "mosa-menu-cut", role: "cut", label: getDesktopText("menuCut", currentLocale) },
-        { id: "mosa-menu-copy", role: "copy", label: getDesktopText("menuCopy", currentLocale) },
-        { id: "mosa-menu-paste", role: "paste", label: getDesktopText("menuPaste", currentLocale) },
-        { id: "mosa-menu-paste-match-style", role: "pasteAndMatchStyle", label: getDesktopText("menuPasteAndMatchStyle", currentLocale) },
-        { id: "mosa-menu-delete", role: "delete", label: getDesktopText("menuDelete", currentLocale) },
-        { id: "mosa-menu-select-all", role: "selectAll", label: getDesktopText("menuSelectAll", currentLocale) },
-      ],
-    },
-    {
-      id: "mosa-menu-view",
-      label: getDesktopText("menuView", currentLocale),
-      submenu: [
-        {
-          id: "mosa-menu-search",
-          label: getDesktopText("menuSearch", currentLocale),
-          accelerator: "CmdOrCtrl+F",
-          click: () => sendToWindow("menu-search"),
-        },
-        { id: "mosa-menu-view-separator-1", type: "separator" },
-        { id: "mosa-menu-reset-zoom", role: "resetZoom", label: getDesktopText("menuResetZoom", currentLocale) },
-        { id: "mosa-menu-zoom-in", role: "zoomIn", label: getDesktopText("menuZoomIn", currentLocale) },
-        { id: "mosa-menu-zoom-out", role: "zoomOut", label: getDesktopText("menuZoomOut", currentLocale) },
-        { id: "mosa-menu-view-separator-2", type: "separator" },
-        { id: "mosa-menu-toggle-fullscreen", role: "togglefullscreen", label: getDesktopText("menuToggleFullScreen", currentLocale) },
-      ],
-    },
-    {
-      id: "mosa-menu-window",
-      label: getDesktopText("menuWindow", currentLocale),
-      submenu: [
-        { id: "mosa-menu-minimize", role: "minimize", label: getDesktopText("menuMinimize", currentLocale) },
-        { id: "mosa-menu-window-zoom", role: "zoom", label: getDesktopText("menuZoom", currentLocale) },
-        { id: "mosa-menu-window-separator-1", type: "separator" },
-        { id: "mosa-menu-bring-all-to-front", role: "front", label: getDesktopText("menuBringAllToFront", currentLocale) },
-      ],
-    },
-  ];
-  const menu = Menu.buildFromTemplate(template);
+  const menu = Menu.buildFromTemplate(buildMenuTemplate({
+    platform: process.platform,
+    locale: currentLocale,
+    onSearch: () => sendToWindow("menu-search"),
+  }));
   Menu.setApplicationMenu(menu);
   if (desktopPlatform.capabilities.hideApplicationMenuBar && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setMenuBarVisibility(false);

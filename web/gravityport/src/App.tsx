@@ -75,6 +75,12 @@ import {
 import ImportReviewDialog, { type ImportReviewData, type ImportReviewDecision } from "./ImportReviewDialog"
 import type { AlreadyInLibraryEntry } from "./import-pipeline"
 import { VideoPosterQueue } from "./video-poster"
+import { handleExternalLinkClick } from "./external-link.js"
+
+// 任务 351：关于页社区入口。Discord 只放行任务单授权的这一个邀请链接
+// （desktop/open-external-link.mjs 的 allowlist 同步只放行它）。
+const DISCORD_INVITE_URL = "https://discord.gg/rArXAShSkQ"
+const GITHUB_DISCUSSIONS_URL = "https://github.com/fengseekling-coder/gravityport/discussions"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
 
@@ -5369,6 +5375,16 @@ export default function App() {
                       }
                       return <button className="neutral-button about-update" onClick={checkForUpdates} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
                     })()}
+                  </section>
+                  <section className="settings-section">
+                    {/* 任务 351:不放 release-notes 类——关于页流程把第一个
+                        .release-notes 块当开发中分栏数行数,这里借用它会撞车。 */}
+                    <p className="web-capture-note">
+                      {tr("社区：")}
+                      <a href={DISCORD_INVITE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DISCORD_INVITE_URL)}>Discord</a>
+                      {" · "}
+                      <a href={GITHUB_DISCUSSIONS_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, GITHUB_DISCUSSIONS_URL)}>{tr("GitHub 讨论区")}</a>
+                    </p>
                   </section>
                   {(() => {
                     const blocks = buildReleaseNoteBlocks({

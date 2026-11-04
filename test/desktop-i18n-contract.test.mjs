@@ -63,33 +63,39 @@ test("desktop notifications keep localized import and update copy", () => {
 test("main localizes custom menu labels without changing roles or accelerators", async () => {
   const main = await read("desktop/main.mjs");
   const menu = sliceBetween(main, "function buildMenu()", "function registerIPC()");
+  // 任务 351：菜单模板抽到 desktop/menu-template.mjs（可在测试里按平台构建），
+  // buildMenu 只负责装菜单和 prune；标签/角色断言跟着搬到模板文件上。
+  const template = await read("desktop/menu-template.mjs");
 
   assert.match(main, /getDesktopText/);
   assert.match(main, /const MOSA_MENU_ID_PREFIX = "mosa-menu-"/);
   assert.match(main, /function pruneInjectedMenuItems\(menu\)/);
   assert.match(main, /child\.type !== "normal" \|\| child\.id\?\.startsWith\(MOSA_MENU_ID_PREFIX\)/);
-  assert.match(menu, /id:\s*"mosa-menu-app"/);
-  assert.match(menu, /id:\s*"mosa-menu-file"/);
-  assert.match(menu, /id:\s*"mosa-menu-edit"/);
-  assert.match(menu, /id:\s*"mosa-menu-view"/);
-  assert.match(menu, /id:\s*"mosa-menu-window"/);
+  assert.match(main, /buildMenuTemplate\(\{/);
+  assert.match(template, /id:\s*"mosa-menu-app"/);
+  assert.match(template, /id:\s*"mosa-menu-file"/);
+  assert.match(template, /id:\s*"mosa-menu-edit"/);
+  assert.match(template, /id:\s*"mosa-menu-view"/);
+  assert.match(template, /id:\s*"mosa-menu-window"/);
   for (const label of Object.values(DESKTOP_TEXT).slice(0, 5).flatMap(({ zh, en }) => [zh, en])) {
-    assert.doesNotMatch(menu, new RegExp(`label\\s*:\\s*${label.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}`));
+    assert.doesNotMatch(template, new RegExp(`label\\s*:\\s*${label.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}`));
   }
-  assert.equal((menu.match(/getDesktopText\s*\(/g) || []).length >= 6, true, "all custom labels must use desktop i18n");
+  assert.equal((template.match(/getDesktopText\s*\(/g) || []).length >= 6, true, "all custom labels must use desktop i18n");
 
   for (const role of [
     "about", "services", "hide", "hideOthers", "unhide", "quit", "close",
     "undo", "redo", "cut", "copy", "paste", "pasteAndMatchStyle", "delete", "selectAll",
     "resetZoom", "zoomIn", "zoomOut", "togglefullscreen", "minimize", "zoom", "front",
   ]) {
-    assert.match(menu, new RegExp(`role\\s*:\\s*"${role}"`), `${role} role remains available`);
+    assert.match(template, new RegExp(`role\\s*:\\s*"${role}"`), `${role} role remains available`);
   }
   // 2026-09: the "Import Asset" menu item retired with the manual import
   // modal, so the File menu keeps only Close and the ⌘N accelerator is gone.
-  assert.doesNotMatch(menu, /CmdOrCtrl\+N/);
-  assert.doesNotMatch(menu, /menu-import/);
-  assert.match(menu, /accelerator\s*:\s*"CmdOrCtrl\+F"/);
+  assert.doesNotMatch(template, /CmdOrCtrl\+N/);
+  assert.doesNotMatch(template, /menu-import/);
+  assert.match(template, /accelerator\s*:\s*"CmdOrCtrl\+F"/);
+  // 351：搜索项的点击回调由 main.mjs 注入，模板保持无 Electron 依赖。
+  assert.match(template, /click:\s*onSearch/);
   assert.match(menu, /sendToWindow\("menu-search"\)/);
   assert.match(menu, /pruneInjectedMenuItems\(menu\);/);
   assert.match(menu, /setImmediate\(\(\) =>/);

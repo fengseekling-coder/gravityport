@@ -669,9 +669,13 @@ function buildImportConfirmationMessage(folderPath, count, skippedCount, recursi
 
 /**
  * Ask the user for permission through the AI assistant (MCP elicitation, form
- * mode). Resolves true only for a reply with action "accept" and allow: true;
- * decline, cancel, errors, malformed replies and the timeout all resolve false.
- * The request id carries the gp-elicit- prefix so the reply channel can tell
+ * mode). 任务 351:resolves { confirmed, reason } so the failure the assistant
+ * sees says WHY nothing was imported instead of blending "no support", "the
+ * user said no" and "nobody answered" into one message. confirmed is true only
+ * for a reply with action "accept" and allow: true. reason (confirmed false):
+ * "declined" for decline/cancel/allow:false, "timeout" when no reply arrives
+ * in time, "unavailable" for a dropped connection or a malformed reply. The
+ * request id carries the gp-elicit- prefix so the reply channel can tell
  * server-initiated requests apart from the client's own (numeric) ids.
  */
 function requestImportConfirmation(message) {
@@ -679,12 +683,21 @@ function requestImportConfirmation(message) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pendingElicitations.delete(elicitationId);
-      resolve(false);
+      resolve({ confirmed: false, reason: "timeout" });
     }, elicitTimeoutMs());
     pendingElicitations.set(elicitationId, {
       resolve: (reply) => {
         clearTimeout(timer);
-        resolve(reply?.result?.action === "accept" && reply?.result?.content?.allow === true);
+        const action = reply?.result?.action;
+        if (action === "accept" && reply?.result?.content?.allow === true) {
+          resolve({ confirmed: true, reason: null });
+          return;
+        }
+        // stdin closing settles pending prompts with a null reply; anything
+        // that is not a real accept/decline/cancel answer means the assistant
+        // connection cannot carry the confirmation.
+        const declined = action === "decline" || action === "cancel" || (action === "accept" && reply?.result?.content?.allow === false);
+        resolve({ confirmed: false, reason: declined ? "declined" : "unavailable" });
       },
     });
     send({
@@ -701,6 +714,24 @@ function requestImportConfirmation(message) {
       },
     });
   });
+}
+
+/**
+ * 任务 351:IMPORT_NOT_CONFIRMED with a machine-readable reason and an English
+ * message the assistant can act on; every variant states that nothing was
+ * imported. The error code stays IMPORT_NOT_CONFIRMED (existing assistants
+ * branch on it); `reason` rides alongside and into structuredContent.error.
+ */
+function importNotConfirmedError(reason, folderPath) {
+  const messages = {
+    unsupported: `This assistant cannot show a confirmation prompt, so images cannot be imported from ${folderPath} with this tool; nothing was imported. Ask the user to drag the images into GravityPort instead.`,
+    declined: `The user did not agree to import from ${folderPath}; nothing was imported. Do not push the user to retry.`,
+    timeout: `The confirmation prompt waited ${Math.round(elicitTimeoutMs() / 1000)} seconds without an answer and has expired; nothing was imported. If the prompt is still open, tell the user it has expired and ask whether they want to try again.`,
+    unavailable: `The confirmation request could not be completed (the assistant connection dropped or the reply was malformed); nothing was imported from ${folderPath}.`,
+  };
+  const error = mcpImportError("IMPORT_NOT_CONFIRMED", messages[reason] || messages.unavailable);
+  error.reason = reason;
+  return error;
 }
 
 /**
@@ -738,13 +769,12 @@ async function importFolderWithConfirmation(args) {
   if (!await folderIsWithinTrustedRoots(folderRealPath)) {
     // Show the resolved path: the folder actually read, not a `..` or
     // symlinked spelling of it.
-    const confirmed = clientSupportsElicitation
-      && await requestImportConfirmation(buildImportConfirmationMessage(folderRealPath, files.length, skipped, recursive));
-    if (!confirmed) {
-      throw mcpImportError(
-        "IMPORT_NOT_CONFIRMED",
-        `The user has not confirmed importing from ${folderPath} (the assistant cannot ask for confirmation, the user declined, or the request timed out); nothing was imported. Ask the user to drag the images into GravityPort instead.`,
-      );
+    let confirmation = { confirmed: false, reason: "unsupported" };
+    if (clientSupportsElicitation) {
+      confirmation = await requestImportConfirmation(buildImportConfirmationMessage(folderRealPath, files.length, skipped, recursive));
+    }
+    if (!confirmation.confirmed) {
+      throw importNotConfirmedError(confirmation.reason, folderPath);
     }
   }
   const { source } = args;
@@ -1148,10 +1178,13 @@ async function handleRequest(message) {
       await handleToolCall(id, params);
     } catch (error) {
       if (error?.statusCode && error?.code) {
+        // 任务 351:IMPORT_NOT_CONFIRMED carries a reason (unsupported /
+        // declined / timeout / unavailable) next to the code so the assistant
+        // can tell the three "not confirmed" stories apart.
         sendResult(id, {
           content: [{ type: "text", text: error.message }],
           isError: true,
-          structuredContent: { error: { code: error.code, message: error.message } },
+          structuredContent: { error: { code: error.code, message: error.message, ...(error.reason ? { reason: error.reason } : {}) } },
         });
       } else sendError(id, -32603, error.message);
     }

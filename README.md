@@ -120,6 +120,11 @@ Desktop packaging needs Node.js 22.x; the repository pins `22.23.1` in `.nvmrc` 
 
 See [PRIVACY.md](PRIVACY.md) for the full data boundary and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
+## Community
+
+- [Discord](https://discord.gg/rArXAShSkQ): chat, ask questions, and share what you make.
+- [GitHub Discussions](https://github.com/fengseekling-coder/gravityport/discussions): ask questions and share ideas.
+
 ## Documentation
 
 User guides:

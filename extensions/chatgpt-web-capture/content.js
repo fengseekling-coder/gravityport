@@ -1004,6 +1004,20 @@
     return rank * 10_000 + Math.min(cleanPromptText(prompt).length, 5_000);
   }
 
+  // 任务 351:the capture toast used to echo the internal promptStatus code
+  // after the old success check mark. Say what happened in plain words
+  // instead: an empty prompt admits none was captured, page-visible text
+  // (rank 1-2 in lib/prompt-rank.mjs PROMPT_STATUS_RANK) notes it came off the
+  // page, and a real generation prompt (rank 3+) needs no qualifier. A test
+  // locks the mapping and keeps the raw codes out of the toast.
+  const GENERATION_PROMPT_STATUSES = ["generation-tool-prompt", "image-generation-revised-prompt", "user-edited"];
+
+  function importPromptNote(promptStatus, prompt) {
+    if (!cleanPromptText(prompt)) return "（没拿到提示词）";
+    if (GENERATION_PROMPT_STATUSES.includes(String(promptStatus || ""))) return "";
+    return "（提示词取自页面说明）";
+  }
+
   function metaPromptQuality(entry) {
     const explicitPriority = Number(entry?.promptPriority || entry?.prompt_priority) || 0;
     return explicitPriority * 1_000_000 + promptQuality(entry?.promptStatus || entry?.prompt_status, entry?.prompt);
@@ -1939,9 +1953,10 @@
           showToast("已排队 · GravityPort 打开后自动入库");
         }
       } else if (result.status === "imported") {
-        const label = resolved.prompt ? resolved.promptStatus : "no-caption";
-        showToast(`GravityPort 入库 ✓ ${label}`);
-        setStatus(`已入库 · ${label} · 共${savedKeys.size}`);
+        // 任务 351:plain-language confirmation; the promptStatus code is
+        // internal and never shown to the user.
+        showToast(`已收进 GravityPort${importPromptNote(resolved.promptStatus, resolved.prompt)}`);
+        setStatus(`已入库 · 共${savedKeys.size}`);
       } else if (result.upgraded) {
         showToast("GravityPort 已升级提示词");
         setStatus(`提示词已升级 · 共${savedKeys.size}`);

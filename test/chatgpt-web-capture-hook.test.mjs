@@ -5236,3 +5236,53 @@ test("ChatGPT: a refused capture (not retryable) is never sent again automatical
   await attempt(600_000);
   assert.equal(context.ingestMessages.length, 1);
 });
+
+// 任务 351:the capture confirmation must speak plainly — no internal
+// promptStatus codes on screen. The mapping (every lib/prompt-rank.mjs
+// PROMPT_STATUS_RANK value, plus the old display fallback) is locked here:
+//   没拿到提示词  → not-available, not-available-in-session,
+//                  image-generation-prompt-unavailable, and any empty prompt
+//   页面说明      → user-message, provider-visible-prompt, session-user-prompt,
+//                  task-user-prompt, canvas-alt-text-only, visible-caption
+//   生图提示词    → generation-tool-prompt, image-generation-revised-prompt,
+//                  user-edited (no suffix)
+test("the capture toast maps every promptStatus to a plain phrase and never shows the code", () => {
+  const cleanPromptText = /function cleanPromptText\(text\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0];
+  const generationStatuses = /const GENERATION_PROMPT_STATUSES = \[[^\]]*\];/.exec(contentSource)?.[0];
+  const importPromptNote = /function importPromptNote\(promptStatus, prompt\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0];
+  assert.ok(cleanPromptText && generationStatuses && importPromptNote, "content.js defines importPromptNote next to cleanPromptText");
+  const context = { Array, String };
+  vm.runInNewContext(`${cleanPromptText}\n${generationStatuses}\n${importPromptNote}\n
+    globalThis.note = (status, prompt) => importPromptNote(status, prompt);`, context, { filename: "content-import-prompt-note.js" });
+  const note = context.note;
+
+  // 没拿到提示词
+  for (const status of ["not-available", "not-available-in-session", "image-generation-prompt-unavailable"]) {
+    assert.equal(note(status, "  "), "（没拿到提示词）", status);
+    assert.equal(note(status, ""), "（没拿到提示词）", status);
+  }
+  assert.equal(note("generation-tool-prompt", ""), "（没拿到提示词）", "an empty prompt says so regardless of the status");
+  assert.equal(note("no-caption", ""), "（没拿到提示词）", "the old display fallback reads the same");
+
+  // 提示词取自页面说明
+  for (const status of ["user-message", "provider-visible-prompt", "session-user-prompt", "task-user-prompt", "canvas-alt-text-only", "visible-caption"]) {
+    assert.equal(note(status, "a prompt from the page"), "（提示词取自页面说明）", status);
+  }
+  assert.equal(note("some-future-status", "a prompt from the page"), "（提示词取自页面说明）", "unknown statuses with a prompt read as page text");
+
+  // 拿到了生图提示词:不加尾巴
+  for (const status of ["generation-tool-prompt", "image-generation-revised-prompt", "user-edited"]) {
+    assert.equal(note(status, "a real generation prompt"), "", status);
+  }
+
+  // 旧提示里的状态码不再出现在任何提示文案或状态栏里。
+  assert.doesNotMatch(contentSource, /入库 ✓/);
+  for (const code of ["visible-caption", "no-caption", "generation-tool-prompt", "user-message", "provider-visible-prompt"]) {
+    const toastLine = contentSource.split("\n").find((line) => line.includes("showToast(`已收进 GravityPort"));
+    assert.ok(toastLine, "the imported toast line exists");
+    assert.doesNotMatch(toastLine, new RegExp(code), `the toast line must not interpolate ${code}`);
+  }
+  const statusLine = contentSource.split("\n").find((line) => line.includes("setStatus(`已入库"));
+  assert.ok(statusLine, "the imported status line exists");
+  assert.doesNotMatch(statusLine, /\$\{label\}/, "the status bar no longer shows the internal label");
+});
