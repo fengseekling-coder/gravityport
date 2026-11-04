@@ -86,6 +86,20 @@ export function createHookHarness(payload, conversationId = "conversation-test",
   const windowMessageListeners = [];
   const consoleDebugs = [];
   const observers = [];
+  // Task 353: the fake fetch answers per URL. A URL a test did not stage
+  // gets a 404 — exactly what the real network did to the old cookie-only
+  // recovery endpoints, which the previous always-succeed fake hid.
+  const fetchRoutes = new Map();
+  const notFoundResponse = () => ({
+    ok: false,
+    status: 404,
+    headers: { get: () => "" },
+    text: async () => "",
+    json: async () => {
+      throw new Error("404 body carries no JSON");
+    },
+    clone: () => notFoundResponse(),
+  });
   let contentPort = null;
   const documentElement = { dataset: {} };
   // The blob-asset hooks need the page's Blob, Response and URL.createObjectURL.
@@ -151,10 +165,18 @@ export function createHookHarness(payload, conversationId = "conversation-test",
         const override = options.respond(String(url), init);
         if (override) return override;
       }
+      const route = fetchRoutes.get(String(url));
+      if (!route) return notFoundResponse();
+      const body = typeof route.body === "string" ? route.body : JSON.stringify(payload);
+      // contentType stays empty unless a test stages it, so routing through
+      // the interceptor's JSON/text branches matches the old fake's behavior.
       return {
-        ok: true,
-        clone: () => ({ text: async () => JSON.stringify(payload) }),
-        text: async () => JSON.stringify(payload),
+        ok: route.status >= 200 && route.status < 300,
+        status: route.status,
+        headers: { get: (name) => String(name || "").toLowerCase() === "content-type" ? (route.contentType || "") : "" },
+        clone: () => ({ text: async () => body }),
+        text: async () => body,
+        json: async () => JSON.parse(body),
       };
     },
     addEventListener: (type, listener) => {
@@ -285,8 +307,14 @@ export function createHookHarness(payload, conversationId = "conversation-test",
       await setImmediate();
     },
     async harvest(init, url = "https://chatgpt.com/backend-api/conversation/test") {
+      // Staging the URL is what "the page fetched this and the server
+      // answered with the payload" means; anything unstaged answers 404.
+      fetchRoutes.set(String(url), { status: 200, body: JSON.stringify(payload), contentType: "" });
       await window.fetch(url, init);
       await setImmediate();
+    },
+    registerFetchResponse(url, body, { status = 200, contentType = "" } = {}) {
+      fetchRoutes.set(String(url), { status, body, contentType });
     },
     async xhrLoad(url, { responseType = "", responseText = "", response = null, contentType = "" } = {}) {
       const xhr = new sandbox.XMLHttpRequest();
@@ -302,12 +330,6 @@ export function createHookHarness(payload, conversationId = "conversation-test",
     async socketFrame(data) {
       const socket = new window.WebSocket("wss://chatgpt.com/client/hubs/conversations");
       socket.emit(data);
-      await setImmediate();
-      await setImmediate();
-    },
-    async refreshCurrentConversation() {
-      assert.ok(contentPort, "page hook should listen for refresh requests");
-      contentPort.postMessage({ source: "mosa-chatgpt-capture", type: "refresh-current-conversation" });
       await setImmediate();
       await setImmediate();
     },

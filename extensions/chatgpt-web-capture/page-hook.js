@@ -29,7 +29,6 @@
       post("capture-state", { enabled: captureEnabled });
       return;
     }
-    if (data.type === "refresh-current-conversation") refreshCurrentConversation().catch(() => {});
   }
 
   function handPortToContent() {
@@ -610,6 +609,10 @@
       providerGenerationCallId: extra.providerGenerationCallId || extra.generationCallId || "",
       providerResponseId: extra.providerResponseId || extra.responseId || "",
       generationRequestPrompt: extra.generationRequestPrompt || "",
+      // The image title ChatGPT attaches to the tool result (metadata
+      // image_gen_title). Only the persisted-binding store consumes it today;
+      // it is not an App ingest field.
+      imageGenTitle: extra.imageGenTitle || "",
       promptStatus: extra.promptStatus || (p ? "user-message" : "not-available"),
       promptSource: extra.promptSource || "",
       promptPriority: Number(extra.promptPriority) || 0,
@@ -666,6 +669,12 @@
       || message?.metadata?.image_generation_title
       || message?.metadata?.imageGenerationTitle
     );
+    const imageGenTitle = [
+      message?.metadata?.image_gen_title,
+      message?.metadata?.imageGenTitle,
+      message?.metadata?.image_generation_title,
+      message?.metadata?.imageGenerationTitle,
+    ].find((value) => typeof value === "string" && value.trim()) || "";
     const generationToolMarker = /(dall[-_.]?e|image[_ .-]?(gen|generation)|text2im|imagegen)/i.test(toolMarker)
       || Boolean(
         message?.metadata?.dalle
@@ -925,6 +934,7 @@
             generationStatus: output.generationStatus !== "unknown" ? output.generationStatus : unitStatus,
             model,
             generationRequestPrompt: requestPrompt,
+            imageGenTitle,
             via: "message-generation-unit",
             isGeneration: true,
           });
@@ -946,6 +956,7 @@
             promptScope: "attempt",
             generationStatus: unitStatus,
             model,
+            imageGenTitle,
             via: "message-generation-attempt",
             isGeneration: true,
           });
@@ -1307,7 +1318,7 @@
 
   function harvest(text, via) {
     if (!text || text.length < 20) return;
-    const maxHarvestBytes = via === "conversation-refresh" ? 32_000_000 : 12_000_000;
+    const maxHarvestBytes = 12_000_000;
     if (text.length > maxHarvestBytes) {
       post("harvest-skipped", { reason: "payload-too-large", size: text.length, via });
       return;
@@ -1606,14 +1617,20 @@
       // A separator is at most 4 characters (\r\n\r\n) and every earlier one
       // is already processed, so only the window near the new chunk can hold
       // the next separator.
-      const from = Math.max(0, state.buffer.length - 3);
+      let scanFrom = Math.max(0, state.buffer.length - 3);
       state.buffer += chunk;
-      let match = /\r?\n\r?\n/.exec(state.buffer.slice(from));
+      let match = /\r?\n\r?\n/.exec(state.buffer.slice(scanFrom));
       while (match) {
-        const cut = from + match.index;
+        const cut = scanFrom + match.index;
         const block = state.buffer.slice(0, cut);
         state.buffer = state.buffer.slice(cut + match[0].length);
         processEventBlock(block);
+        // Later separators in this same chunk are matched against the already
+        // trimmed buffer, so their offset restarts at zero — reusing the
+        // pre-chunk offset here silently swallowed text between blocks
+        // whenever one push arrived while a partial block was still buffered
+        // (review 2-4, task 353 split test).
+        scanFrom = 0;
         match = /\r?\n\r?\n/.exec(state.buffer);
       }
       return true;
@@ -1671,73 +1688,13 @@
     }
   }
 
-  // Keep the original fetch so an explicit refresh cannot recurse through the
-  // general fetch interceptor below.
-  const originalFetch = window.fetch;
-  const conversationRefreshAt = new Map();
-  const conversationRefreshBackoffUntil = new Map();
-  const CONVERSATION_REFRESH_COOLDOWN_MS = 2_500;
-  const CONVERSATION_REFRESH_SOFT_FAILURE_BACKOFF_MS = 60_000;
-
-  async function refreshCurrentConversation() {
-    if (!isCaptureEnabled()) return;
-    const conversationId = conversationIdFromLocation();
-    if (!conversationId) return;
-
-    const now = Date.now();
-    const backoffUntil = conversationRefreshBackoffUntil.get(conversationId) || 0;
-    if (now < backoffUntil) return;
-    const previous = conversationRefreshAt.get(conversationId) || 0;
-    if (now - previous < CONVERSATION_REFRESH_COOLDOWN_MS) return;
-    conversationRefreshAt.set(conversationId, now);
-    if (conversationRefreshAt.size > 20) {
-      for (const [id, at] of conversationRefreshAt) {
-        if (now - at > CONVERSATION_REFRESH_COOLDOWN_MS * 4) conversationRefreshAt.delete(id);
-      }
-    }
-
-    const encodedConversationId = encodeURIComponent(conversationId);
-    const base = location.origin || "https://chatgpt.com";
-    const endpoints = [
-      `${base}/backend-api/conversations/${encodedConversationId}`,
-      `${base}/backend-api/conversation/${encodedConversationId}`,
-      `${base}/backend-api/f/conversation/${encodedConversationId}`,
-    ];
-    let lastStatus = 0;
-    for (const endpoint of endpoints) {
-      try {
-        const response = await originalFetch(endpoint, {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!response?.ok) {
-          lastStatus = Number(response?.status) || 0;
-          continue;
-        }
-        const contentType = String(response.headers?.get?.("content-type") || "").toLowerCase();
-        if (/json/.test(contentType)) {
-          // The explicit recovery endpoint is already structured conversation
-          // JSON. Parse it directly instead of materializing a second giant
-          // text copy and rejecting long chats by byte count. This keeps late
-          // Prompt recovery working for very large creative conversations.
-          walkObject(await response.json(), { conversationId });
-        } else {
-          harvest(await response.text(), "conversation-refresh");
-        }
-        return;
-      } catch {
-        // Try the alternate first-party conversation endpoint.
-      }
-    }
-    const soft = [403, 404, 410].includes(lastStatus);
-    if (soft) {
-      conversationRefreshBackoffUntil.set(
-        conversationId,
-        Date.now() + CONVERSATION_REFRESH_SOFT_FAILURE_BACKOFF_MS,
-      );
-    }
-    post("conversation-refresh-failed", { status: lastStatus, soft });
-  }
+  // Task 353 (2026-11-03): the cookie-only "re-read the active conversation"
+  // recovery channel is gone. All three endpoints it could read answered 404
+  // in a real capture, and the page's own conversation reads (kept below in
+  // the fetch interceptor) carry neither the tool prompt nor the caption, so
+  // the channel could never deliver what it promised. Prompts exist only in
+  // the live push; the interceptor still harvests whatever the page itself
+  // fetches (images, titles).
 
   // Commands no longer arrive over window messages: any page script could
   // forge those. Only the request for a (replacement) port is accepted here,
@@ -2098,6 +2055,10 @@
     }
     reportConversationTurnBindings(parsed);
   }
+
+  // The page's real fetch, kept aside so the interceptor below can delegate
+  // without recursing into itself.
+  const originalFetch = window.fetch;
 
   window.fetch = async function mosaFetch(...args) {
     const response = await originalFetch.apply(this, args);

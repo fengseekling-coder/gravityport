@@ -316,6 +316,16 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
   } : undefined
   const stackPositionRaw = Number(input.stack_position)
   const stackPosition = input.stack_position != null && Number.isFinite(stackPositionRaw) ? stackPositionRaw : undefined
+  // 提示词2: task 353 splits ChatGPT's two texts the other way round — new
+  // captures store the real image-tool prompt as prompt and the model's
+  // description of the finished image in source.model_caption, so 提示词2
+  // shows the caption first. Older assets have no model_caption and keep the
+  // previous display: the stored generation_request_prompt, but only while it
+  // says something different from 提示词1 (post-353 captures already show it
+  // as 提示词1, so the identical text would only duplicate the tab).
+  const modelCaption = String(source.model_caption || "")
+  const requestPrompt = String(source.generation_request_prompt || fields.generation_request_prompt || "")
+  const prompt2 = modelCaption || (requestPrompt && requestPrompt.trim() !== String(input.prompt || "").trim() ? requestPrompt : "")
   return {
     id: String(input.id || ""),
     project_id: String(input.project_id || project),
@@ -332,7 +342,7 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     preview_ready: input.preview_ready !== false && Boolean(input.preview_url),
     image_path: path,
     prompt: String(input.prompt || ""),
-    prompt2: String(source.generation_request_prompt || fields.generation_request_prompt || ""),
+    prompt2,
     user_instruction: String(source.user_message || fields.user_message || ""),
     introduction: String(fields.introduction || fields.description || input.description || ""),
     tags: asStringArray(input.tags),

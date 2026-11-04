@@ -66,7 +66,6 @@
    */
   const failedNetworkIdentityKeys = new Set();
   const promptUpgradeInFlight = new Set();
-  const promptRecoveryTimers = new Map();
   const generationEvidenceRecoveryTimers = new Map();
   const autoStabilityStates = new Map();
   const autoStabilityTimers = new Map();
@@ -90,10 +89,6 @@
   const queuedToastKeys = new Set(); // keys whose "queued" notice already showed
   const errorToastKeys = new Set(); // "key message" pairs whose error already showed
   const sizeFailureStates = new Map(); // stable image identity -> bounded small-file retry state
-  // The conversation endpoint is enough to recover a caption that was rendered
-  // from ChatGPT's cache, but was never seen by the page network hook.
-  const conversationRefreshRequestedAt = new Map();
-  const CONVERSATION_REFRESH_COOLDOWN_MS = 2_500;
   let toastTimer = null;
   let autoCapture = false;
   let scanTimer = null;
@@ -196,11 +191,6 @@
     imagePromptMap.clear();
     generationRegistry?.clear?.();
     capturedCandidates.clear();
-    conversationRefreshRequestedAt.clear();
-    for (const timers of promptRecoveryTimers.values()) {
-      for (const timer of timers) clearTimeout(timer);
-    }
-    promptRecoveryTimers.clear();
     for (const timers of generationEvidenceRecoveryTimers.values()) {
       for (const timer of timers) clearTimeout(timer);
     }
@@ -718,10 +708,6 @@
     if (scanTimer) clearTimeout(scanTimer);
     if (manualHookDisableTimer) clearTimeout(manualHookDisableTimer);
     observer?.disconnect();
-    for (const timers of promptRecoveryTimers.values()) {
-      for (const timer of timers) clearTimeout(timer);
-    }
-    promptRecoveryTimers.clear();
     for (const timers of generationEvidenceRecoveryTimers.values()) {
       for (const timer of timers) clearTimeout(timer);
     }
@@ -867,6 +853,148 @@
       }
     }
     return entry;
+  }
+
+  // ---- Persisted generation bindings (task 353, user decision 2026-11-03) ----
+  //
+  // A ChatGPT image's prompt texts exist only in the real-time push. They used
+  // to live solely in this script's memory, so a page refresh, a conversation
+  // switch or a second tab lost them before the image surfaced. Every push
+  // with a provider file id is therefore mirrored into chrome.storage.session
+  // (the same store the background already uses for the desktop-sync job; the
+  // existing "storage" permission covers it), keyed by that file id, so the
+  // registry can be rehydrated wherever the image later appears. Session
+  // storage dies with the browser session — the same lifetime the push itself
+  // has. One storage key per file id: concurrent tabs never overwrite each
+  // other's records.
+  const GENERATION_BINDING_KEY_PREFIX = "mosaGenerationBinding:";
+  const GENERATION_BINDINGS_MAX = 200;
+  const GENERATION_BINDINGS_TTL_MS = 24 * 60 * 60 * 1000;
+  // Re-runnable: a switch back to a conversation must see records that were
+  // persisted after boot, so hydration only guards against overlapping runs.
+  let generationBindingsHydration = null;
+
+  function generationBindingRecord(meta) {
+    const assetId = normalizeAssetId(meta?.assetId);
+    if (!assetId) return null;
+    const record = {
+      assetId,
+      prompt: cleanPromptText(meta?.prompt),
+      promptStatus: String(meta?.promptStatus || meta?.prompt_status || ""),
+      promptSource: String(meta?.promptSource || meta?.prompt_source || ""),
+      promptPriority: Number(meta?.promptPriority || meta?.prompt_priority) || 0,
+      promptScope: String(meta?.promptScope || meta?.prompt_scope || ""),
+      generationRequestPrompt: String(meta?.generationRequestPrompt || meta?.generation_request_prompt || ""),
+      imageGenTitle: String(meta?.imageGenTitle || meta?.image_gen_title || ""),
+      conversationId: String(meta?.conversationId || meta?.conversation_id || ""),
+      messageId: String(meta?.messageId || meta?.message_id || ""),
+      generationContextId: String(meta?.generationContextId || meta?.generation_context_id || ""),
+      providerToolCallId: String(meta?.providerToolCallId || meta?.provider_tool_call_id || ""),
+      providerGenerationCallId: String(meta?.providerGenerationCallId || meta?.provider_generation_call_id || ""),
+      providerResponseId: String(meta?.providerResponseId || meta?.provider_response_id || ""),
+      generationStatus: normalizeGenerationStatus(meta?.generationStatus || meta?.generation_status),
+      model: String(meta?.model || ""),
+      isGeneration: Boolean(meta?.isGeneration),
+      capturedAt: String(meta?.capturedAt || new Date().toISOString()),
+    };
+    if (!record.prompt && !record.generationRequestPrompt && !record.isGeneration) return null;
+    return record;
+  }
+
+  function generationBindingEntry(record) {
+    // Feed the record through the same shape rememberMeta gives the registry.
+    return {
+      ...record,
+      imageUrl: "",
+      imageKey: `asset:${record.assetId}`,
+      bound: Boolean(record.prompt),
+    };
+  }
+
+  async function persistGenerationBinding(meta) {
+    const record = generationBindingRecord(meta);
+    if (!record) return;
+    const key = `${GENERATION_BINDING_KEY_PREFIX}${record.assetId}`;
+    try {
+      const stored = await chrome.storage?.session?.get?.(key);
+      const existing = stored?.[key];
+      await chrome.storage?.session?.set?.({
+        [key]: existing && typeof existing === "object"
+          ? mergeGenerationBindingRecords(existing, record)
+          : record,
+      });
+    } catch {
+      // Session storage may be unavailable (access level not granted yet);
+      // the in-memory registry still carries the binding for this page.
+    }
+  }
+
+  // Several pushes describe the same file (placeholder, caption, final
+  // status). Keep the best text per field instead of letting the latest
+  // placeholder erase the caption that arrived earlier.
+  function mergeGenerationBindingRecords(existing, incoming) {
+    const winner = metaPromptQuality(incoming) >= metaPromptQuality(existing) ? incoming : existing;
+    const other = winner === incoming ? existing : incoming;
+    return {
+      ...other,
+      ...winner,
+      generationRequestPrompt: winner.generationRequestPrompt || other.generationRequestPrompt || "",
+      imageGenTitle: winner.imageGenTitle || other.imageGenTitle || "",
+      conversationId: winner.conversationId || other.conversationId || "",
+      messageId: winner.messageId || other.messageId || "",
+      generationContextId: winner.generationContextId || other.generationContextId || "",
+      providerToolCallId: winner.providerToolCallId || other.providerToolCallId || "",
+      providerGenerationCallId: winner.providerGenerationCallId || other.providerGenerationCallId || "",
+      providerResponseId: winner.providerResponseId || other.providerResponseId || "",
+      model: winner.model || other.model || "",
+      generationStatus: winner.generationStatus !== "unknown" ? winner.generationStatus : other.generationStatus,
+      isGeneration: Boolean(winner.isGeneration || other.isGeneration),
+      capturedAt: String(winner.capturedAt || "") >= String(other.capturedAt || "")
+        ? winner.capturedAt
+        : other.capturedAt,
+    };
+  }
+
+  async function hydratePersistedGenerationBindings() {
+    if (generationBindingsHydration) return generationBindingsHydration;
+    generationBindingsHydration = (async () => {
+      let stored;
+      try {
+        stored = await chrome.storage?.session?.get?.(null);
+      } catch {
+        return;
+      }
+      const records = Object.entries(stored || {})
+        .filter(([key]) => key.startsWith(GENERATION_BINDING_KEY_PREFIX))
+        .map(([, value]) => value)
+        .filter((value) => value && typeof value === "object" && normalizeAssetId(value.assetId));
+      if (!records.length) return;
+
+      // Bound both the count and the age: a hint store must never grow
+      // without limits, and a binding older than the push itself is worthless.
+      const now = Date.now();
+      const fresh = records
+        .filter((record) => {
+          const at = Date.parse(record.capturedAt || "");
+          return Number.isFinite(at) && now - at <= GENERATION_BINDINGS_TTL_MS;
+        })
+        .sort((left, right) => String(left.capturedAt || "").localeCompare(String(right.capturedAt || "")))
+        .slice(-GENERATION_BINDINGS_MAX);
+      const staleKeys = records
+        .filter((record) => !fresh.includes(record))
+        .map((record) => `${GENERATION_BINDING_KEY_PREFIX}${normalizeAssetId(record.assetId)}`);
+      if (staleKeys.length) {
+        chrome.storage?.session?.remove?.(staleKeys).catch?.(() => {});
+      }
+
+      const registry = generationRegistryForPage();
+      if (!registry) return;
+      for (const record of fresh) registry.remember(generationBindingEntry(record));
+      scheduleScan(true);
+    })().finally(() => {
+      generationBindingsHydration = null;
+    });
+    return generationBindingsHydration;
   }
 
   /**
@@ -1184,7 +1312,6 @@
 
     const age = now - state.firstSeenAt;
     if (status === "in_progress") {
-      requestCurrentConversationRefresh(candidate);
       if (!pixelSignature) {
         scheduleAutoStabilityRetry(candidate, reason, 1_200);
         return { ready: false, forceTerminalRefresh: false };
@@ -1202,7 +1329,6 @@
     }
 
     if (status === "partial") {
-      requestCurrentConversationRefresh(candidate);
       if (!pixelSignature) {
         scheduleAutoStabilityRetry(candidate, reason, 1_500);
         return { ready: false, forceTerminalRefresh: false };
@@ -1282,7 +1408,6 @@
       if (savedRank < 0 || savedRank >= nextRank) continue;
       const candidateKey = candidateOperationKey(candidate) || candidate.key || candidate.imageUrl;
       if (!candidateKey || promptUpgradeInFlight.has(candidateKey)) continue;
-      clearPromptRecovery(candidate.key || candidate.imageUrl || candidateKey);
 
       promptUpgradeInFlight.add(candidateKey);
       withAutoCaptureSlot(() => ingestCandidate(candidate, {
@@ -1293,38 +1418,6 @@
         .catch(() => {})
         .finally(() => promptUpgradeInFlight.delete(candidateKey));
     }
-  }
-
-  function clearPromptRecovery(candidateKey) {
-    const timers = promptRecoveryTimers.get(candidateKey);
-    if (timers) {
-      for (const timer of timers) clearTimeout(timer);
-      promptRecoveryTimers.delete(candidateKey);
-    }
-  }
-
-  function schedulePromptRecovery(candidate, { needPrompt = true, needTerminal = false } = {}) {
-    const candidateKey = candidate?.key || candidate?.imageUrl;
-    const imageRef = candidate?.imageUrl || candidateKey || "";
-    if (!candidateKey || !imageRef || promptRecoveryTimers.has(candidateKey)) return;
-
-    // The image can become visible before ChatGPT stores its tool caption.
-    // Re-read the active conversation on the same bounded schedule used by
-    // generation-evidence recovery; the context registry can then bind a late
-    // prompt even after the image was already archived.
-    const delays = [2_800, 7_200, 15_000];
-    const timers = delays.map((delay, index) => setTimeout(() => {
-      const bound = findGenerationEvidenceForCandidate(candidate) || findBoundPromptForImage(imageRef);
-      const promptReady = !needPrompt || Boolean(bound?.prompt);
-      const terminalReady = !needTerminal || isTerminalGenerationStatus(bound?.generationStatus);
-      if (promptReady && terminalReady) {
-        clearPromptRecovery(candidateKey);
-        return;
-      }
-      requestCurrentConversationRefresh(candidate);
-      if (index === delays.length - 1) promptRecoveryTimers.delete(candidateKey);
-    }, delay));
-    promptRecoveryTimers.set(candidateKey, timers);
   }
 
   function enqueueDomFallback(candidate) {
@@ -1340,7 +1433,6 @@
     if (!autoCapture || !isRecoverableGenerationCandidate(candidate)) return;
     const candidateKey = candidateLookupKeys(candidate)[0] || candidate?.key || candidate?.imageUrl || "";
     if (!candidateKey || generationEvidenceRecoveryTimers.has(candidateKey)) return;
-    requestCurrentConversationRefresh(candidate);
     const timers = GENERATION_EVIDENCE_RECOVERY_DELAYS.map((delay, index) => setTimeout(() => {
       if (findGenerationEvidenceForCandidate(candidate)) {
         const activeTimers = generationEvidenceRecoveryTimers.get(candidateKey) || [];
@@ -1349,7 +1441,6 @@
         enqueueAuto(candidate, "evidence-recovered");
         return;
       }
-      requestCurrentConversationRefresh(candidate);
       if (index !== GENERATION_EVIDENCE_RECOVERY_DELAYS.length - 1) return;
       generationEvidenceRecoveryTimers.delete(candidateKey);
       enqueueDomFallback(candidate);
@@ -1489,30 +1580,11 @@
     return ids.length === 1 ? ids[0] : "";
   }
 
-  function requestCurrentConversationRefresh(candidate) {
-    const conversationId = conversationIdFromUrl();
-    if (!conversationId) return false;
-
-    const imageRef = candidate?.imageUrl || candidate?.key || "";
-    const proxy = chatGptImageProxyInfo(imageRef);
-    // Do not ask the page hook to inspect the active conversation for an image
-    // from a different ChatGPT conversation.
-    if (proxy?.conversationId && proxy.conversationId !== conversationId) return false;
-
-    const now = Date.now();
-    const lastRequested = conversationRefreshRequestedAt.get(conversationId) || 0;
-    if (now - lastRequested < CONVERSATION_REFRESH_COOLDOWN_MS) return false;
-    conversationRefreshRequestedAt.set(conversationId, now);
-    if (conversationRefreshRequestedAt.size > 20) {
-      for (const [id, at] of conversationRefreshRequestedAt) {
-        if (now - at > CONVERSATION_REFRESH_COOLDOWN_MS * 4) conversationRefreshRequestedAt.delete(id);
-      }
-    }
-
-    // page-hook.js derives the endpoint from its own location; the content
-    // script never supplies a URL or any credential-bearing request detail.
-    return postToPageHook("refresh-current-conversation", { conversationId });
-  }
+  // Task 353 (2026-11-03): there is no "ask the page hook to re-read the
+  // conversation" recovery anymore — the endpoints answered 404 and the
+  // page's own conversation reads carry no prompt. Prompts live only in the
+  // real-time push, which the hook binds while it arrives; persisted
+  // bindings (chrome.storage.session) carry them across refreshes/tabs.
 
   function resolvePrompt(imageUrl, candidate) {
     const userMessage = userMessageForCandidate(candidate);
@@ -1837,17 +1909,10 @@
     setStatus(`保存中… (${reason})`);
 
     try {
-      // Ask the MAIN-world hook to re-read only the active conversation before
-      // waiting. Cached ChatGPT pages otherwise render the image without
-      // replaying the conversation response through the fetch/XHR interceptors.
+      // There is no conversation re-read to wait for (task 353): the prompt
+      // either arrived with the live push (bound in the registry) or it is
+      // not recoverable at this moment at all.
       const imageRef = candidate.imageUrl || key;
-      const refreshRequested = !findBoundPromptForImage(imageRef)
-        && requestCurrentConversationRefresh(candidate);
-      const promptWaitMs = manual ? 700 : refreshRequested ? 450 : 0;
-      const promptWaitDeadline = Date.now() + promptWaitMs;
-      while (Date.now() < promptWaitDeadline && !findBoundPromptForImage(imageRef)) {
-        await new Promise((r) => setTimeout(r, 150));
-      }
       if (taskConversationEpoch !== conversationEpoch) return null;
       const resolved = resolvePrompt(imageRef, candidate);
       const { mimeType, imageBase64 } = await bytesFromUrlOrImg(candidate);
@@ -1933,16 +1998,6 @@
       // downloading, after resolvePrompt had already returned no prompt.
       const lateBound = findGenerationEvidenceForCandidate(candidate) || findBoundPromptForImage(imageRef);
       if (lateBound?.prompt) schedulePromptUpgrade(lateBound);
-      const needsPromptRecovery = !lateBound?.prompt
-        && !["visible-caption", "generation-tool-prompt"].includes(resolved.promptStatus);
-      const latestStatus = normalizeGenerationStatus(lateBound?.generationStatus || resolved.generationStatus);
-      const needsTerminalRecovery = !isTerminalGenerationStatus(latestStatus);
-      if (needsPromptRecovery || needsTerminalRecovery) {
-        schedulePromptRecovery(candidate, {
-          needPrompt: needsPromptRecovery,
-          needTerminal: needsTerminalRecovery,
-        });
-      }
 
       if (result.status === "queued") {
         // The background keeps the capture until GravityPort is open again, so
@@ -2411,7 +2466,7 @@
         if (nextConversationId) {
           const previousConversationId = activeConversationId;
           adoptConversationId(nextConversationId);
-          if (autoCapture && nextConversationId !== previousConversationId) requestCurrentConversationRefresh(null);
+          if (nextConversationId !== previousConversationId) hydratePersistedGenerationBindings();
         } else if (activeConversationId) {
           // Leaving a named conversation for a true new-chat/non-conversation
           // route is a real boundary. The reverse transition (empty -> assigned
@@ -2485,6 +2540,10 @@
         setStatus(`${autoCapture ? "自动开" : "自动关"} · hook✓`);
         return;
       }
+      // Persist BEFORE the conversation-identity gate: a push that arrives
+      // while another conversation is open is exactly the one whose image has
+      // not surfaced yet, and the file-id record is conversation-agnostic.
+      persistGenerationBinding(data.payload);
       if (data.payload.prompt || data.payload.imageUrl || data.payload.imageKey) {
         const meta = rememberMeta(data.payload);
         if (!meta) return;
@@ -2519,29 +2578,11 @@
         if (pageHookSyncTimer) clearTimeout(pageHookSyncTimer);
         pageHookSyncTimer = null;
         if (desired) {
-          requestCurrentConversationRefresh(null);
           if (autoCapture) scheduleScan(true);
         }
       } else {
         syncPageHookCaptureEnabled();
       }
-      return;
-    }
-
-    // A failed recovery used to be invisible, so captures kept landing without
-    // a caption and nothing on screen said why.
-    if (data.type === "conversation-refresh-failed") {
-      const status = Number(data.payload?.status) || 0;
-      if (data.payload?.soft) {
-        setStatus(
-          `实时 Hook 正常 · 历史会话回读不可用${status ? ` (${status})` : ""}`,
-        );
-        return;
-      }
-      setStatus(
-        `会话元数据读取失败${status ? ` (${status})` : ""}，提示词可能缺失`,
-        true,
-      );
       return;
     }
 
@@ -2734,10 +2775,10 @@
   // Boot. page-hook.js is a document_start MAIN-world content script.
   loadSettings().then(() => {
     syncPageHookCaptureEnabled();
+    hydratePersistedGenerationBindings();
     if (autoCapture) {
       if (document.documentElement) startObs();
       else document.addEventListener("DOMContentLoaded", startObs, { once: true });
-      requestCurrentConversationRefresh(null);
       scheduleScan(true);
       scheduleSessionTitleReport(0);
       if (desktopSyncRun) startDesktopSyncWatch();
@@ -2787,7 +2828,6 @@
     setStatus(autoCapture ? "自动开" : "自动关");
     if (autoCapture) {
       startObs();
-      requestCurrentConversationRefresh(null);
       scheduleScan(true);
       scheduleSessionTitleReport(0);
     } else {

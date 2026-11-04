@@ -66,6 +66,13 @@ function captureQueueMaxBytes() {
   return override > 0 ? override : CAPTURE_QUEUE_MAX_BYTES;
 }
 
+// Task 353: ChatGPT content scripts mirror live generation bindings (prompt
+// texts keyed by provider file id) into chrome.storage.session so a refresh,
+// a conversation switch or another tab can still match the image. Session
+// storage is trusted-context-only by default; open it to content scripts once
+// per worker start. No new permission — "storage" already covers this API.
+chrome.storage.session?.setAccessLevel?.({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" }).catch?.(() => {});
+
 function openCaptureMediaDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(CAPTURE_MEDIA_DB, 1);
