@@ -273,3 +273,51 @@ describe("focusAfterRemoval", () => {
     assert.equal(reconcile.focusAfterRemoval(["a", "b"], ["a", "b"], "b"), "b"); // untouched
   });
 });
+
+// 355: one dead-stack verdict shared by the incremental commit path and the
+// full-reload path (a sync fallback reloads a stack whose members were all
+// removed — the reload succeeds with a 200 empty page, so the verdict has to
+// come from the live summary instead of STACK_NOT_FOUND).
+describe("stackViewDead", () => {
+  it("kills a gone stack row and a surviving row without live members", () => {
+    assert.equal(reconcile.stackViewDead(null), true, "the stack row itself is gone");
+    assert.equal(reconcile.stackViewDead({ id: "s1", name: "", count: 0, cover_asset_id: null }), true, "0 live members = dead view");
+    assert.equal(reconcile.stackViewDead({ id: "s1", name: "S", count: 2, cover_asset_id: "a1" }), false);
+  });
+  it("keeps the view alive without evidence (no summary in this sync)", () => {
+    assert.equal(reconcile.stackViewDead(undefined), false);
+  });
+});
+
+// 355 change 3: a rename inside a batch the client drops (full-refresh
+// record in the same envelope) must be resolved from the dropped records
+// BEFORE the fallback's reload — the reload re-fetches the current view and
+// would otherwise land on the old name's empty page.
+describe("followedGroupRename", () => {
+  const renamed = (from, to) => ({ kind: "group-renamed", entityType: "group", entityId: from, detail: { to } });
+  const deleted = (name) => ({ kind: "group-deleted", entityType: "group", entityId: name, detail: { trashed: false, ungrouped: true } });
+
+  it("follows a single rename and multi-hop chains", () => {
+    assert.equal(reconcile.followedGroupRename([renamed("A", "B")], "A"), "B");
+    assert.equal(reconcile.followedGroupRename([renamed("A", "B"), renamed("B", "C")], "A"), "C");
+  });
+  it("returns null when the current group was not renamed", () => {
+    assert.equal(reconcile.followedGroupRename([renamed("A", "B")], "X"), null);
+    assert.equal(reconcile.followedGroupRename([], "A"), null);
+    assert.equal(reconcile.followedGroupRename([renamed("A", "B")], ""), null);
+  });
+  it("returns null when the chain ends in a deletion — the liveness check exits instead", () => {
+    assert.equal(reconcile.followedGroupRename([renamed("A", "B"), deleted("B")], "A"), null);
+  });
+  it("returns null on rename loops instead of guessing", () => {
+    assert.equal(reconcile.followedGroupRename([renamed("A", "B"), renamed("B", "A")], "A"), null);
+    assert.equal(reconcile.followedGroupRename([renamed("A", "B"), renamed("B", "C"), renamed("C", "B")], "A"), null);
+  });
+  it("ignores foreign record kinds in the dropped batch", () => {
+    assert.equal(reconcile.followedGroupRename([
+      { kind: "asset-deleted", entityType: "asset", entityId: "a1" },
+      { kind: "library-backfilled", entityType: "stack", entityId: "", detail: { reason: "x", rowsChanged: 1 } },
+      renamed("A", "B"),
+    ], "A"), "B");
+  });
+});

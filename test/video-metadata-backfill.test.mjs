@@ -26,15 +26,28 @@ async function createLibraryRoot(t, prefix = "mosa-video-backfill-") {
   const bootstrap = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
   bootstrap.close();
   await mkdir(filesDir, { recursive: true });
+  // Task 347: the bootstrap open no longer writes the one-time backfill
+  // markers (they moved to deferred maintenance). Mark the file-bytes pass
+  // done so it stays out of these video-pass fixtures — previously the
+  // open-path bootstrap had already consumed it.
+  withRawDatabase(libraryDir, (database) => {
+    database.prepare(`
+      INSERT INTO library_meta (key, value, updated_at) VALUES ('file_bytes_backfill_v1', '1', ?)
+      ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at
+    `).run(new Date().toISOString());
+  });
   return { projectRoot, libraryDir, filesDir };
 }
 
-function openStore(t, projectRoot, libraryDir, { captureWarns } = {}) {
+async function openStore(t, projectRoot, libraryDir, { captureWarns } = {}) {
   const warns = [];
   const originalWarn = console.warn;
   if (captureWarns) console.warn = (...parts) => { warns.push(parts.map(String).join(" ")); };
   try {
     const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+    // Task 347: the backfill runs from deferred maintenance after the open;
+    // the helper runs it before returning, with the warn capture still open.
+    await store.startDeferredMaintenance();
     t.after(() => store.close());
     return { store, warns };
   } finally {
@@ -114,7 +127,8 @@ test("fills missing dimensions, corrects a wrong duration, and preserves every o
   });
   clearBackfillMarker(libraryDir);
 
-  const { store, warns } = openStore(t, projectRoot, libraryDir, { captureWarns: true });
+  const { store, warns } = await openStore(t, projectRoot, libraryDir, { captureWarns: true });
+  // Task 347: the backfill runs from deferred maintenance after the open.
   const row = readAssetRow(libraryDir, "v-fill");
   const fields = JSON.parse(row.business_fields_json);
   assert.equal(fields.width, 72);
@@ -159,7 +173,7 @@ test("includes trash rows and leaves correct rows alone", async (t) => {
   });
   clearBackfillMarker(libraryDir);
 
-  openStore(t, projectRoot, libraryDir);
+  const { store: onceStore } = await openStore(t, projectRoot, libraryDir);
   const trashed = JSON.parse(readAssetRow(libraryDir, "v-trashed").business_fields_json);
   assert.equal(trashed.width, 72);
   assert.equal(trashed.height, 128);
@@ -186,7 +200,7 @@ test("skips missing files silently and unreadable files with one log line", asyn
   });
   clearBackfillMarker(libraryDir);
 
-  const { warns } = openStore(t, projectRoot, libraryDir, { captureWarns: true });
+  const { store: skipStore, warns } = await openStore(t, projectRoot, libraryDir, { captureWarns: true });
   assert.deepEqual(JSON.parse(readAssetRow(libraryDir, "v-gone").business_fields_json), {});
   assert.deepEqual(JSON.parse(readAssetRow(libraryDir, "v-broken").business_fields_json), {});
   const skipped = warns.filter((line) => line.includes("unreadable video file skipped"));
@@ -203,7 +217,8 @@ test("runs once: the marker short-circuits later opens", async (t) => {
     insertVideoAsset(database, { id: "v-once", originalPath: videoPath, businessFields: { duration_seconds: 7 } });
   });
   clearBackfillMarker(libraryDir);
-  openStore(t, projectRoot, libraryDir).store.close();
+  const { store: firstStore } = await openStore(t, projectRoot, libraryDir);
+  firstStore.close();
 
   // Damage a row again after the marker exists: the next open must not
   // "helpfully" repair it — the pass is one-time by design.
@@ -211,7 +226,7 @@ test("runs once: the marker short-circuits later opens", async (t) => {
     database.prepare("UPDATE assets SET business_fields_json = ? WHERE id = ?").run(JSON.stringify({}), "v-once");
   });
 
-  openStore(t, projectRoot, libraryDir);
+  const { store: againStore } = await openStore(t, projectRoot, libraryDir);
   assert.deepEqual(JSON.parse(readAssetRow(libraryDir, "v-once").business_fields_json), {});
 });
 
@@ -221,7 +236,7 @@ test("createAsset reads dimensions for an imported video with no business_fields
   const { projectRoot, libraryDir, filesDir } = await createLibraryRoot(t);
   const stagedPath = join(filesDir, "import-clip.mp4");
   await copyFile(CAPTURE_FIXTURE, stagedPath);
-  const { store } = openStore(t, projectRoot, libraryDir);
+  const { store } = await openStore(t, projectRoot, libraryDir);
   // The import-batch route passes the staging root as a trusted source root.
   const asset = await store.createAsset(
     { imagePath: stagedPath, fileName: "import-clip.mp4", assetId: "imported-video" },
@@ -236,7 +251,7 @@ test("createAsset keeps caller-supplied dimensions on an imported video", async 
   const { projectRoot, libraryDir, filesDir } = await createLibraryRoot(t);
   const stagedPath = join(filesDir, "import-clip-2.mp4");
   await copyFile(CAPTURE_FIXTURE, stagedPath);
-  const { store } = openStore(t, projectRoot, libraryDir);
+  const { store } = await openStore(t, projectRoot, libraryDir);
   const asset = await store.createAsset({
     imagePath: stagedPath,
     fileName: "import-clip-2.mp4",

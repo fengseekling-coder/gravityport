@@ -16,7 +16,7 @@ GravityPort 是一个本地优先的创意资产库。它把图像和视频原�
 只有在显式配置本地 ingest Token 和允许的扩展 origin 后才启用；Packaged Desktop
 会在本地自动生成 Token，并只授权固定的 GravityPort 扩展 origin 完成配对。
 
-桌面版的出站连接仅限：更新清单与更新包、匿名使用统计、C2PA helper 下载、用户主动连接时的
+桌面版的出站连接仅限：更新清单与更新包、使用统计（随机安装 ID）、C2PA helper 下载、用户主动连接时的
 Pinterest 授权中转与 Pinterest API，以及用户在设置页点击发送时的反馈转发；它们都不携带
 素材库内容（见 [PRIVACY.md](PRIVACY.md) 的 Network Boundary）。
 
@@ -84,7 +84,7 @@ Electron 桌面壳由 `desktop/main.mjs`、`desktop/preload.cjs` 和
 切换库位置和窗口全屏同步。导入成功和可用更新的系统通知由主进程
 直接发出；在系统文件管理器中定位原件走运行时的 `POST /api/open-folder`。业务数据仍由同一个
 本地 HTTP 运行时提供。更新（`update-service.mjs`、`macos-updater.mjs`、
-`windows-updater.mjs`）、匿名统计（`anonymous-usage.mjs`）、扩展配对 Token
+`windows-updater.mjs`）、使用统计（随机安装 ID，`anonymous-usage.mjs`）、扩展配对 Token
 （`web-capture-pairing.mjs`）、旧视觉数据清理（`legacy-visual-cleanup.mjs`）、C2PA helper
 安装和改名提示各在 `desktop/` 下独立成模块。
 
@@ -121,9 +121,18 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 （无复制配置时兜底读取）的顺序解析；任何位置都找不到库时报错退出，MCP 永远不新建素材库。
 开库后每次工具调用前都会核对 `mosa.db` 的设备号与 inode，库被移动或删除时拒绝读写并返回
 `LIBRARY_DATABASE_CHANGED`。本地视觉检索已移除：`asset_search` 只做文本与时间检索，老客户端
-缓存旧 schema 传来的 `visual: true` 会被接受并忽略。当前工具覆盖：
+缓存旧 schema 传来的 `visual: true` 会被接受并忽略。
 
-- `asset_create`、`asset_list`、`asset_get`
+导入只认受信根：Codex 生成目录和素材库目录（库内 `assets/`、`imports/`；legacy 库另有历史
+目录）。AI 助手启动时所在的目录不是受信根（任务 334，桌面版、源码接法同一规则）：
+`asset_create` 对受信根之外的单张图一律拒绝（HTTP 导入和各桥接不受影响）；要导入其他
+文件夹，助手改用 `asset_import_folder`，服务端通过 MCP elicitation 在助手那边请用户确认
+（客户端在 `initialize` 里声明了 `elicitation` 能力才发确认请求；decline、cancel、超时、
+不支持一律 `IMPORT_NOT_CONFIRMED`，什么都不导）。确认只对本次调用和这个文件夹生效，
+不记住。17 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
+（仅 `asset_archive` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
+
+- `asset_create`、`asset_import_folder`、`asset_list`、`asset_get`
 - `asset_search`（文本与时间范围组合）、`asset_provenance_export`（导出脱敏 provenance bundle 与未签名的 C2PA assertion payload）
 - `asset_update_metadata`、`asset_attach_prompt`
 - `asset_archive`、`asset_duplicate`
@@ -275,7 +284,7 @@ Web UI 启动时同时读取 `/api/health` 与静态 `build-identity.json`，在
 外部服务时不允许移动。macOS 上可选的 Web Capture 后台 supervisor 与桌面壳通过库目录中的
 `.mosa-desktop-starting.json` 交接标记协调，细节见 [docs/operations.md](docs/operations.md)。
 
-### 4.3 桌面更新与匿名统计
+### 4.3 桌面更新与使用统计（随机安装 ID）
 
 `desktop/update-service.mjs` 从 `https://gravityport.azhuilab.com/releases/gravityport/latest.json`
 拉取发布清单（禁止重定向），配置了发布公钥时先用 `lib/release-manifest-signature.mjs`
@@ -283,7 +292,7 @@ Web UI 启动时同时读取 `/api/health` 与静态 `build-identity.json`，在
 `desktop/windows-updater.mjs` 从 `https://gravityport.azhuilab.com/downloads/` 下载对应平台的
 更新包，校验 SHA-256 与签名身份（macOS Team ID / Windows 签名证书指纹）后交给分离的
 helper 替换应用并重启。打包版在首次启动和每个统计日各发一次无请求体的 `HEAD` 请求，把
-随机安装 ID、平台、架构和版本附在同一清单地址上作为匿名使用统计
+随机安装 ID、平台、架构和版本附在同一清单地址上作为使用统计（假名化，不是完全匿名）
 （`desktop/anonymous-usage.mjs`）；设置 `GRAVITYPORT_DISABLE_TELEMETRY=1`、QA 运行或未打包的
 开发壳都不会发送。发布流程见 [docs/releasing.md](docs/releasing.md)。
 
@@ -328,6 +337,21 @@ SQLite 数据库路径为 `<库目录>/mosa.db`（默认库目录按上文
   最终筛选与排序语义仍由普通资产查询负责。该索引是本地派生数据，不是 embedding
   或语义搜索索引，可由资产元数据重新构建。
 
+升级拷贝与升级后检查（`lib/schema-upgrade-backup.mjs`、`lib/schema-upgrade-verify.mjs`、
+`lib/schema-backup-cleanup.mjs`）：每次真实的 schema 升级都先 `VACUUM INTO` 拍一份
+升级前整库快照到 `<库目录>/.schema-backups/mosa-before-v<新>-from-v<旧>.db`（原子替换，
+同名旧文件不复用），随后在**一个** `BEGIN IMMEDIATE` 事务里重读版本号、跑完全部升级并
+写入待检查记录；几个进程同时第一次打开旧库时，后到者在锁内发现版本已新就放弃并等前一个
+完成。整库深度检查（`integrity_check` + `foreign_key_check`）在开库后的后台维护里由
+worker 线程完成，结论写进 `library_meta` 的 `schema_upgrade_verify`：外键违规按
+（表, 父表）与升级前快照对比，只有变多的组才算不过。检查通过后，后台维护会删掉
+`.schema-backups/` 里所有对得上名字的快照（记录删除时间和释放字节），目录删空一并删除；
+只有跑后台维护的进程（App、后台收图）删除，MCP、命令行不删。检查没有通过时快照保留、
+进 `schema_upgrade_kept_backups` 保留名单（名单里的文件任何后续升级、检查通过都不自动删），
+App 弹一次说明框（`/api/schema-upgrade-notice` 读状态/记已读）。库里比当前 App 更新的
+schema 版本在写任何字节之前就被只读连接拒绝（错误码 `MOSA_LIBRARY_SCHEMA_NEWER`），
+mosa.db 一个字节都不改。
+
 进入搜索文本、FTS 和短词索引的字段由 `lib/asset-search-scope.mjs` 白名单决定（Prompt、
 用户原话、provider/model、标签、名称等），路径、哈希和采集内部字段不参与搜索。
 
@@ -342,7 +366,8 @@ $HOME/GravityPort Library/
 ├── .mosa-runtime.lock              运行时锁
 ├── .mosa-desktop-starting.json     桌面启动/更新交接标记（短时存在）
 ├── .chatgpt-desktop-sync.json      ChatGPT 桌面版对话同步状态
-├── .schema-backups/                schema 升级前的数据库备份
+├── .schema-backups/                schema 升级前的数据库备份（检查通过后自动删，
+│                                   检查不过或进了保留名单的除外）
 ├── assets/
 │   ├── <project-id>/
 │   │   ├── original/               原始媒体
@@ -607,7 +632,7 @@ flowchart TD
 | Grok Build CLI | 来源路径 → 字节 → 像素 | 会话工具调用参数 | 不写 | 已接入总入口；字节/像素命中自己的图会升级提示词和出处字段（另一路径的同字节文件记 `grok_alternate_paths`），命中别家收的图只记一次出现，不改提示词、用户指令、`generation_tool`、`model`、`prompt_status` |
 | Cowart | 来源路径 → 字节 → 像素 | 画布 alt text | 不写 | 已接入总入口；命中后从不升级元数据，只记一次出现；同一路径字节变了就新建一张 |
 | 手动导入（拖、选文件、粘贴） | — | 无 | 不写 | 已接入总入口（字节相同跳过、显示像素相同的新图进回收站、感知相似的进清单让用户选，#314） |
-| MCP `asset_create` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算 |
+| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。只认受信根（Codex 生成目录、库内目录），助手启动目录不算；受信根外的文件夹走 `asset_import_folder`，在助手那边经用户确认才导（#334） |
 
 写生成记录在总入口里是固定位置的调用方钩子；当前只有网页收录（图片和视频）在用，
 Codex、Grok、Cowart 和手动导入不写。
@@ -773,7 +798,7 @@ Token 写入公共文档、日志或仓库：
 | `GRAVITYPORT_WEB_CAPTURE_ORIGINS` | 网页捕获允许的扩展 origin 列表 |
 | `MOSA_WEB_CAPTURE_PAIR` | 设为 `auto` 时，独立 `npm start` Runtime 也允许扩展静默配对（默认关闭，桌面版始终自动配对） |
 | `MOSA_C2PATOOL_PATH` | C2PA 导出（`lib/c2pa-export.mjs`，目前尚未接入 UI/HTTP/MCP 入口）使用的 `c2patool` 路径覆盖（见 [docs/operations.md](docs/operations.md)） |
-| `GRAVITYPORT_DISABLE_TELEMETRY` | 设为 `1` 时桌面壳不发匿名使用统计（见 PRIVACY.md） |
+| `GRAVITYPORT_DISABLE_TELEMETRY` | 设为 `1` 时桌面壳不发使用统计（见 PRIVACY.md） |
 | `MOSA_FEEDBACK_URL` | 反馈收集服务地址覆盖（默认 `https://gravityport.azhuilab.com/api/feedback`） |
 | `MOSA_FEEDBACK_TIMEOUT_MS` | 反馈转发超时毫秒数（默认 15000） |
 

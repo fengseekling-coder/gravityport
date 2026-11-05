@@ -57,6 +57,15 @@ const desktopTranslations = {
     libraryStateInvalidBody: "素材库在 {libraryDir}，数据库没有标记为已就绪。请从备份恢复素材库后重新打开 GravityPort。",
     librarySqliteMissingTitle: "素材库的数据库文件不见了",
     librarySqliteMissingBody: "素材库在 {libraryDir}，里面的 mosa.db 找不到了。请从备份恢复 mosa.db 后重新打开 GravityPort。",
+    // 任务 337：库校验失败按「被占用」和「打不开/损坏」分开报，正文末尾带原始
+    // SQLite 错误码，方便用户截图回来定位。
+    librarySqliteBusyTitle: "素材库正被别的程序占用",
+    librarySqliteBusyBody: "素材库在 {libraryDir}，它的数据库文件 mosa.db 暂时打不开，可能有别的程序正在使用它。请关掉其他程序或重启电脑后再打开 GravityPort。不要删除或移动素材库里的文件。错误码：{sqliteCode}。",
+    librarySqliteUnreadableTitle: "素材库的数据库打不开",
+    librarySqliteUnreadableBody: "素材库在 {libraryDir}，它的数据库文件 mosa.db 读取失败。请先不要删除或修改素材库里的任何文件，把整个素材库文件夹复制一份留存，再联系我们。错误码：{sqliteCode}。",
+    // 任务 350：库比当前 App 新——库文件一个字节都没动，只提示去下载新版。
+    librarySchemaNewerTitle: "需要更新 GravityPort",
+    librarySchemaNewerBody: "这个素材库已经被更新版本的 GravityPort 打开过，当前版本打不开它。请到官网下载最新版。你的素材没有被改动。",
     // Update install failures and install preflight (main process system dialogs).
     updateFailedOnceTitle: "GravityPort {version} 没有装上",
     updateFailedOnceBody: "{reason}已退回 {currentVersion}，下次重启 GravityPort 时会再试一次。",
@@ -124,6 +133,15 @@ const desktopTranslations = {
     libraryStateInvalidBody: "The library is at {libraryDir}, and its database was never marked as ready. Restore the library from a backup, then open GravityPort again.",
     librarySqliteMissingTitle: "Your library's database is missing",
     librarySqliteMissingBody: "The library is at {libraryDir}, but its mosa.db file is missing. Restore mosa.db from a backup, then open GravityPort again.",
+    // 任务 337：被占用与打不开/损坏分开报，正文末尾同样带原始 SQLite 错误码。
+    librarySqliteBusyTitle: "Your library is in use by another program",
+    librarySqliteBusyBody: "The library is at {libraryDir}, but its mosa.db database file cannot be opened right now — another program may be using it. Close other programs or restart your computer, then open GravityPort again. Do not delete or move any files inside the library folder. Error code: {sqliteCode}.",
+    librarySqliteUnreadableTitle: "Your library's database could not be opened",
+    librarySqliteUnreadableBody: "The library is at {libraryDir}, but its mosa.db database file could not be read. Do not delete or modify anything in the library folder. Keep a copy of the whole library folder, then contact us. Error code: {sqliteCode}.",
+    // Task 350: the library is newer than this build — nothing was touched,
+    // the user only needs the latest release.
+    librarySchemaNewerTitle: "Update GravityPort Required",
+    librarySchemaNewerBody: "This library was last opened by a newer version of GravityPort, so this version can't open it. Please download the latest version from the website. Your assets were not modified.",
     // Update install failures and install preflight (main process system dialogs).
     updateFailedOnceTitle: "GravityPort {version} did not install",
     updateFailedOnceBody: "{reason} The app went back to {currentVersion}. GravityPort will try again the next time you restart it.",
@@ -176,21 +194,29 @@ const LIBRARY_STARTUP_ERROR_KEYS = {
   MOSA_LIBRARY_DATABASE_MISSING: ["libraryDatabaseMissingTitle", "libraryDatabaseMissingBody"],
   MOSA_LIBRARY_STATE_INVALID: ["libraryStateInvalidTitle", "libraryStateInvalidBody"],
   SQLITE_LIBRARY_MISSING: ["librarySqliteMissingTitle", "librarySqliteMissingBody"],
+  SQLITE_LIBRARY_BUSY: ["librarySqliteBusyTitle", "librarySqliteBusyBody"],
+  SQLITE_LIBRARY_UNREADABLE: ["librarySqliteUnreadableTitle", "librarySqliteUnreadableBody"],
+  MOSA_LIBRARY_SCHEMA_NEWER: ["librarySchemaNewerTitle", "librarySchemaNewerBody"],
 };
 
 /**
  * Startup-failure dialog text for a broken-library error, in one language
  * only. Returns null for anything else so generic startup errors keep using
  * the generic startupErrorTitle + error message. The error carries the
- * library directory (error.libraryDir); the body names it.
+ * library directory (error.libraryDir); the body names it. 任务 337：库校验
+ * 失败的错误（lib/sqlite-asset-store.mjs）还带原始 SQLite 错误码
+ * （error.sqliteCode），正文末尾用它替换 {sqliteCode}。
  */
 export function getLibraryStartupFailureText(error, locale) {
   const keys = error && LIBRARY_STARTUP_ERROR_KEYS[error.code];
   if (!keys) return null;
   const libraryDir = typeof error.libraryDir === "string" ? error.libraryDir : "";
+  const sqliteCode = typeof error.sqliteCode === "string" && error.sqliteCode ? error.sqliteCode : "unknown";
   return {
     title: getDesktopText(keys[0], locale),
-    body: getDesktopText(keys[1], locale).replace(/\{libraryDir\}/g, libraryDir),
+    body: getDesktopText(keys[1], locale)
+      .replace(/\{libraryDir\}/g, libraryDir)
+      .replace(/\{sqliteCode\}/g, sqliteCode),
   };
 }
 

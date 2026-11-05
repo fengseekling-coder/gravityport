@@ -48,7 +48,7 @@ import {
 import { deriveEmptyState } from "./empty-state"
 import { describeGroupStats } from "./group-stats"
 import { createLibrarySync, type LibrarySyncCommit, type LibrarySyncController, type LibrarySyncHooks, type LibrarySyncView } from "./library-sync"
-import { focusAfterRemoval } from "./gallery-reconcile"
+import { focusAfterRemoval, followedGroupRename, stackViewDead } from "./gallery-reconcile"
 import {
   checkVersionConsistency,
   createReadyGate,
@@ -65,6 +65,7 @@ import {
   toggleAssetFavorite, updateAssetMetadata, uploadVideoPoster, moveAssetsToTrash, setAssetsGroup,
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
   moveAssetsToStack, openLibraryFolder,
+  fetchSchemaUpgradeNotice, acknowledgeSchemaUpgradeNotice,
   fetchLibraryRevision, fetchLibraryChanges, fetchGalleryRows, readMutationState,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
   type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
@@ -428,6 +429,18 @@ export default function App() {
   const [selected, setSelected] = useState("")
   const [settings, setSettings] = useState(false)
   const [settingTab, setSettingTab] = useState("常规与外观")
+  const [backgroundCapture, setBackgroundCapture] = useState<{ supported: boolean; enabled: boolean }>({ supported: false, enabled: true })
+  const [backgroundCaptureBusy, setBackgroundCaptureBusy] = useState(false)
+  useEffect(() => {
+    if (!settings || settingTab !== "连接") return
+    let active = true
+    desktopAPI()?.getBackgroundCaptureState?.().then(state => {
+      if (active) setBackgroundCapture({ supported: state.supported === true, enabled: state.enabled === true })
+    }).catch(() => {
+      if (active) setBackgroundCapture({ supported: false, enabled: true })
+    })
+    return () => { active = false }
+  }, [settings, settingTab])
   // A connect/disconnect from Settings remounts PinterestView so it rereads
   // the status instead of showing boards of an account that is gone.
   const [pinterestViewKey, setPinterestViewKey] = useState(0)
@@ -523,9 +536,15 @@ export default function App() {
   const [restartPending, setRestartPending] = useState(false)
   // Rename notice (task 116): shown once at first-screen render.
   const [renameNoticeOpen, setRenameNoticeOpen] = useState(false)
+  // Task 350: post-upgrade check failure notice. Shown after the first screen
+  // (or live, when the background check fails while the App is open); one
+  // 「知道了」 latch lives on the failed verify record server-side.
+  const [schemaNotice, setSchemaNotice] = useState<{ backupPath: string; targetVersion: number | null; checkedAt: string | null } | null>(null)
+  const schemaNoticeOpen = schemaNotice !== null
   const activeImportReview = importReviewQueue[0]
   const importReviewBlocked = Boolean(
     settings || preview || deleting || permanentDeleteIds || emptyTrashConfirm || renameNoticeOpen
+    || schemaNoticeOpen
     || groupRename || groupDeleteConfirm || groupMerge || groupStats || stackRename || groupCreateWithSelection
     || stackDissolveConfirm || stackTrashConfirm,
   )
@@ -606,12 +625,36 @@ export default function App() {
   const deletingRef = useRef(deleting)
   const settingsRef = useRef(settings)
   const renameNoticeRef = useRef(renameNoticeOpen)
+  const schemaNoticeRef = useRef(schemaNoticeOpen)
+  const loadingRef = useRef(loading)
   deletingRef.current = deleting
   settingsRef.current = settings
   renameNoticeRef.current = renameNoticeOpen
+  schemaNoticeRef.current = schemaNoticeOpen
+  loadingRef.current = loading
   const dismissRenameNotice = () => {
     setRenameNoticeOpen(false)
     desktopAPI()?.acknowledgeRenameNotice?.().catch(() => {})
+  }
+  // Task 350: ask the local service whether the failed post-upgrade check
+  // still owes the user its dialog. The rename notice opens first when both
+  // are due; this one waits for it to close. Never opens over another dialog.
+  const maybeShowSchemaUpgradeNotice = () => {
+    if (loadingRef?.current) return
+    if (deletingRef.current || settingsRef.current || renameNoticeRef.current || schemaNoticeRef.current) return
+    fetchSchemaUpgradeNotice().then((notice) => {
+      if (notice?.shouldShow !== true) return
+      if (deletingRef.current || settingsRef.current || renameNoticeRef.current || schemaNoticeRef.current) return
+      setSchemaNotice({
+        backupPath: String(notice.backupPath || ""),
+        targetVersion: notice.targetVersion ?? null,
+        checkedAt: notice.checkedAt ?? null,
+      })
+    }).catch(() => {})
+  }
+  const dismissSchemaUpgradeNotice = () => {
+    setSchemaNotice(null)
+    acknowledgeSchemaUpgradeNotice().catch(() => {})
   }
 
   const [systemDark, setSystemDark] = useState(false)
@@ -807,6 +850,16 @@ export default function App() {
           if (target > collected.length) await followUpPages(target)
         }
         if (controller.signal.aborted) return
+        // 355: a sync fallback's same-view reload can land on a stack view
+        // whose members were all removed while this batch was dropped. The
+        // reload itself succeeds (the stack row survives with 0 members), so
+        // the STACK_NOT_FOUND catch below never runs — the live summary the
+        // stack page already carries is the verdict, same as the incremental
+        // path's. Exit before committing the empty window.
+        if (stackId && stackViewDead(page.stack)) {
+          exitStackReplace()
+          return
+        }
         // Cross-page selections outrun the loaded window, so only ids the
         // PREVIOUS window contained can be re-judged against the fresh one:
         // a member that left the view is dropped, off-page members are kept
@@ -975,6 +1028,16 @@ export default function App() {
         changes: Array.isArray(payload.changes) ? payload.changes as Parameters<LibrarySyncController["notePush"]>[0]["changes"] : [],
       })
       sync?.schedule()
+      // Task 350: the background check failed while the App is open — the
+      // maintenance pass announced it via library-backfilled; ask the notice
+      // endpoint so the dialog opens without a restart.
+      const changes = Array.isArray(payload.changes) ? payload.changes as Array<Record<string, unknown>> : []
+      if (changes.some(change =>
+        change?.kind === "library-backfilled"
+        && (change?.detail as Record<string, unknown> | undefined)?.reason === "schema_upgrade_verify_failed",
+      )) {
+        window.setTimeout(() => maybeShowSchemaUpgradeNotice(), 0)
+      }
     })
     return () => {
       stream.close()
@@ -1072,6 +1135,15 @@ export default function App() {
     }).catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading])
+  // Task 350 — post-upgrade check failure notice. First ask after the first
+  // screen renders; ask again whenever the rename notice closes (it opens
+  // first when both are due) so this dialog follows it instead of stacking.
+  useEffect(() => {
+    if (loading) return
+    const timer = window.setTimeout(() => maybeShowSchemaUpgradeNotice(), 0)
+    return () => window.clearTimeout(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, renameNoticeOpen])
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)")
     const sync = () => setSystemDark(media.matches)
@@ -1691,6 +1763,11 @@ export default function App() {
     if (!stackId) return
     goTo({ stackId: "", stackName: "" }, { replace: true })
   }
+  // The viewed group no longer exists (deleted elsewhere, or renamed away by
+  // a batch this client dropped): fall back to 所有素材, replacing the
+  // history entry. Shared by the incremental commit's deleted-group branch
+  // and the fresh-sidebar-stats liveness check the reload path leans on.
+  const exitDeletedGroupView = () => goTo({ active: "所有素材" }, { replace: true })
   const navigateHistory = (direction: -1 | 1) => {
     const next = navHistory.index + direction
     if (next < 0) {
@@ -1784,7 +1861,7 @@ export default function App() {
     if (!active.startsWith("group:")) return
     const name = active.slice("group:".length)
     if (nav.groups.some(entry => entry.name.toLowerCase() === name.toLowerCase())) return
-    goTo({ active: "所有素材" }, { replace: true })
+    exitDeletedGroupView()
   }
   // The one merge result landing spot. Runs only while the view, the loaded
   // window and the app's own mutations are exactly what the sync saw.
@@ -1839,14 +1916,13 @@ export default function App() {
     // the group we are inside was deleted or renamed — follow or leave, each
     // replacing the current history entry.
     if (stackId) {
-      const stackDead = commit.stack === null
-        || (commit.stack != null && commit.stack.count === 0)
+      const stackDead = stackViewDead(commit.stack)
         || commit.classify.dissolvedStacks.includes(stackId)
       if (stackDead) exitStackReplace()
     } else if (active.startsWith("group:")) {
       const name = active.slice("group:".length)
       if (commit.classify.deletedGroups.includes(name)) {
-        goTo({ active: "所有素材" }, { replace: true })
+        exitDeletedGroupView()
       } else if (commit.classify.groupRenames.has(name)) {
         let target: string = name
         while (commit.classify.groupRenames.has(target)) {
@@ -1873,7 +1949,18 @@ export default function App() {
   })
   syncHooksRef.current = {
     onCommit: applySyncCommit,
-    onFallback: () => refreshNavigation(),
+    // 355: a fallback's reload re-fetches the CURRENT view, so evidence that
+    // only exists in the dropped batch must be applied first — a viewed group
+    // renamed away would otherwise reload as the old name's empty page and
+    // the fresh-stats liveness check would then exit to 所有素材, losing the
+    // follow the incremental path keeps. Jump to the new name, then reload.
+    onFallback: (reason, changes) => {
+      if (changes && !stackId && active.startsWith("group:")) {
+        const target = followedGroupRename(changes, active.slice("group:".length))
+        if (target) goTo({ active: `group:${target}` }, { replace: true })
+      }
+      refreshNavigation()
+    },
   }
   refreshNavigationStatsRef.current = () => {
     fetchProjects().then(list => setProjects(list)).catch(() => {})
@@ -2698,6 +2785,7 @@ export default function App() {
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
         if (renameNoticeOpen) dismissRenameNotice()
+        else if (schemaNoticeOpen) dismissSchemaUpgradeNotice()
         else if (deleting) setDeleting(false)
         else if (menu) setMenu(null)
         // Fullscreen sits above the viewer in the chain: Esc first leaves the
@@ -2711,7 +2799,7 @@ export default function App() {
       // the same key and arrives through onMenuSearch instead).
       if (isFocusSearchKey(e, {
         viewIsLibrary: !preview && !settings && !pinterestActive,
-        hasBlockingOverlay: Boolean(menu || deleting || renameNoticeOpen),
+        hasBlockingOverlay: Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen),
         targetIsTextEntry: isEditableTarget(e.target),
         platform: isMacPlatform() ? "mac" : "other",
       })) {
@@ -2730,7 +2818,7 @@ export default function App() {
       // on-screen neighbours, Enter opens it (or enters its stack). Off while
       // the viewer, Settings, a menu or a dialog is up, and for a batch.
       const plainKey = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
-      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen
+      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen
       if (plainKey && galleryIdle && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {
         const grid = gridRef.current
         const current = selectionRef.current.selected || asset?.id || ""
@@ -2799,7 +2887,7 @@ export default function App() {
     window.addEventListener("keydown", key)
     return () => window.removeEventListener("keydown", key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen])
+  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, schemaNoticeOpen])
   // Fullscreen belongs to the open viewer, never outlives it: the back button,
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
@@ -3164,7 +3252,7 @@ export default function App() {
         targetIsEditable: isEditableTarget(event.target),
         settingsOpen: settings,
         pinterestActive,
-        hasOverlay: Boolean(menu || deleting || renameNoticeOpen || permanentDeleteIds || emptyTrashConfirm
+        hasOverlay: Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || permanentDeleteIds || emptyTrashConfirm
           || groupDeleteConfirm || groupMerge || groupRename || stackRename || stackDissolveConfirm
           || stackTrashConfirm || groupStats || groupCreateWithSelection),
         cutActive: cutIdsRef.current.length > 0,
@@ -3188,7 +3276,7 @@ export default function App() {
     window.addEventListener("paste", paste)
     return () => window.removeEventListener("paste", paste)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [importing, library, active, project, stackId, settings, pinterestActive, menu, deleting, renameNoticeOpen,
+  }, [importing, library, active, project, stackId, settings, pinterestActive, menu, deleting, renameNoticeOpen, schemaNoticeOpen,
     permanentDeleteIds, emptyTrashConfirm, groupDeleteConfirm, groupMerge, groupRename, stackRename,
     stackDissolveConfirm, stackTrashConfirm, groupStats, groupCreateWithSelection, language, debouncedQuery, assetType])
   const navigateAsset = async (direction: number) => {
@@ -5199,6 +5287,38 @@ export default function App() {
                   <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
                   <McpClientConfigCard language={language} />
                   <WebCaptureStatusCard language={language} />
+                  {backgroundCapture.supported && (
+                    <div className="web-capture-toggle">
+                      <div className="web-capture-toggle-row">
+                        <span>{tr("关闭 GravityPort 后继续收录")}</span>
+                        <button
+                          type="button"
+                          className={`settings-switch ${backgroundCapture.enabled ? "enabled" : ""}`}
+                          role="switch"
+                          aria-checked={backgroundCapture.enabled}
+                          aria-label={tr("关闭 GravityPort 后继续收录")}
+                          disabled={backgroundCaptureBusy}
+                          onClick={async () => {
+                            if (backgroundCaptureBusy) return
+                            const previous = backgroundCapture.enabled
+                            setBackgroundCaptureBusy(true)
+                            setBackgroundCapture(s => ({ ...s, enabled: !previous }))
+                            try {
+                              const result = await desktopAPI()?.setBackgroundCapture?.(!previous)
+                              if (!result?.ok) throw new Error("setting failed")
+                              setBackgroundCapture(s => ({ ...s, enabled: result.enabled }))
+                            } catch {
+                              setBackgroundCapture(s => ({ ...s, enabled: previous }))
+                              notify("没能更改后台收录设置")
+                            } finally {
+                              setBackgroundCaptureBusy(false)
+                            }
+                          }}
+                        ><span /></button>
+                      </div>
+                      <p className="web-capture-toggle-note">{tr("GravityPort 关闭时，由后台服务继续接收浏览器扩展发来的作品。")}</p>
+                    </div>
+                  )}
                 </>
               ) : settingTab === "反馈" ? (
                 <FeedbackPanel language={language} />
@@ -5390,6 +5510,36 @@ export default function App() {
                 className="primary-button"
                 onClick={dismissRenameNotice}
               >
+                {tr("知道了")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {schemaNotice && (
+        // Task 350: the post-upgrade check failed. Clicking the backdrop does
+        // NOT dismiss (only 知道了 / Esc does) — the kept backup must be seen.
+        <div className="modal-layer">
+          <div className="delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="schema-upgrade-notice-title">
+            <div className="delete-icon">
+              <Icon name="info" size={26} />
+            </div>
+            <h3 id="schema-upgrade-notice-title">{tr("素材库检查发现问题")}</h3>
+            <p>{tr("这次升级后的检查没有通过。升级前的数据库拷贝已经留着，请别删它。App 照常能用，麻烦在设置的「反馈」里告诉我们。")}</p>
+            <div className="delete-actions">
+              <button
+                className="neutral-button"
+                onClick={() => {
+                  openLibraryFolder(schemaNotice.backupPath, true).catch(() => {
+                    // 404 (file gone) and friends keep the dialog open; the
+                    // existing light toast says so.
+                    notify(tr("无法打开该位置"))
+                  })
+                }}
+              >
+                {isMacPlatform() ? tr("在访达中显示拷贝") : tr("在资源管理器中显示拷贝")}
+              </button>
+              <button className="primary-button" onClick={dismissSchemaUpgradeNotice}>
                 {tr("知道了")}
               </button>
             </div>

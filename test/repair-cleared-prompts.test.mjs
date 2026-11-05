@@ -26,10 +26,19 @@ async function createLibraryRoot(t, prefix = "mosa-repair-cleared-prompts-") {
   return { projectRoot, libraryDir };
 }
 
-function openStore(t, projectRoot, libraryDir) {
-  const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
-  t.after(() => store.close());
-  return store;
+async function openStore(t, projectRoot, libraryDir, { warns } = {}) {
+  const originalWarn = console.warn;
+  if (warns) console.warn = (...parts) => { warns.push(parts.map(String).join(" ")); };
+  try {
+    const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
+    // Task 347: the repair runs from deferred maintenance after the open, so
+    // the helper runs it before returning (with warn capture still open).
+    await store.startDeferredMaintenance();
+    t.after(() => store.close());
+    return store;
+  } finally {
+    console.warn = originalWarn;
+  }
 }
 
 function withRawDatabase(libraryDir, task) {
@@ -117,7 +126,7 @@ test("restores the stored caption on an image whose only generation record was c
   console.warn = (...parts) => { warns.push(parts.map(String).join(" ")); };
   let store;
   try {
-    store = openStore(t, projectRoot, libraryDir);
+    store = await openStore(t, projectRoot, libraryDir);
   } finally {
     console.warn = originalWarn;
   }
@@ -160,7 +169,7 @@ test("leaves both records alone when an image has a second record that still hol
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const events = await store.listGenerationEvents("default", { assetId: "a2" });
   assert.equal(events.length, 2, "both records survive");
   const good = events.find((event) => event.id === "e-a2-good");
@@ -182,7 +191,7 @@ test("leaves records alone when the image prompt is the user's own words, not a 
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const events = await store.listGenerationEvents("default", { assetId: "a3" });
   assert.equal(events[0].effective_prompt, "");
   assert.equal(events[0].prompt_status, "not-available");
@@ -198,7 +207,7 @@ test("leaves records alone when the image is in the trash", async (t) => {
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const events = await store.listGenerationEvents("default", { assetId: "a4" });
   assert.equal(events[0].effective_prompt, "");
   assert.equal(events[0].prompt_status, "not-available");
@@ -214,7 +223,7 @@ test("leaves records alone when the prompt status is not not-available", async (
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   const events = await store.listGenerationEvents("default", { assetId: "a5" });
   assert.equal(events[0].effective_prompt, "");
   assert.equal(events[0].prompt_status, "visible-caption");
@@ -234,7 +243,7 @@ test("leaves records alone when the capture is not a plugin-captured ChatGPT ima
   });
   clearRepairMarker(libraryDir);
 
-  const store = openStore(t, projectRoot, libraryDir);
+  const store = await openStore(t, projectRoot, libraryDir);
   for (const [id, assetId] of [
     ["e-a6-provider", "a6"],
     ["e-a7-channel", "a7"],
@@ -261,7 +270,9 @@ test("runs once: reopening does not repair again or announce, and the marker sho
   });
   clearRepairMarker(libraryDir);
 
-  const first = openStore(t, projectRoot, libraryDir);
+  const first = await openStore(t, projectRoot, libraryDir);
+  // Task 347: the repair runs from deferred maintenance after the open.
+  await first.startDeferredMaintenance();
   const firstChanges = await first.listLibraryChangesSince("default", 0);
   assert.equal(firstChanges.changes.filter((change) => change.kind === "library-repaired").length, 1);
   first.close();

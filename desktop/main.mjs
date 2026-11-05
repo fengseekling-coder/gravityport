@@ -10,6 +10,7 @@ import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
 import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../lib/runtime-defaults.mjs";
 import { validateRuntimeIsolation } from "../lib/runtime-isolation-guard.mjs";
 import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
@@ -21,6 +22,7 @@ import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, repo
 import { releaseManifestTrustSet } from "../lib/release-manifest-signature.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
+import { runStartupShutdownExit } from "./startup-shutdown.mjs";
 import {
   failureCountFor,
   failureRecordFor,
@@ -85,6 +87,14 @@ import { createMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { isTelemetryDisabled } from "../lib/env-aliases.mjs";
 import { setOutboundFetch } from "../lib/outbound-fetch.mjs";
+import {
+  BACKGROUND_AGENT_LABEL,
+  shouldManageBackgroundAgent,
+  buildBackgroundAgentPlist,
+  syncBackgroundAgent,
+  readBackgroundCaptureSetting,
+  writeBackgroundCaptureSetting,
+} from "./background-capture-launchd.mjs";
 
 const preloadPath = fileURLToPath(new URL("./preload.cjs", import.meta.url));
 const startupShellPath = fileURLToPath(new URL("./startup.html", import.meta.url));
@@ -733,9 +743,71 @@ function trustedRendererEvent(event) {
   return isTrustedRendererEvent(event, { windowRef: mainWindow, serviceOrigin: verifiedServiceOrigin() });
 }
 
+function backgroundCaptureSupported() {
+  return shouldManageBackgroundAgent({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    env: process.env,
+  });
+}
+
+function launchctlBackground(args) {
+  return new Promise((resolveResult) => {
+    execFile("/bin/launchctl", args, { timeout: 5000 }, (error, _stdout, stderr) => {
+      resolveResult({ code: error ? (error.code || 1) : 0, stderr: stderr || error?.message || "" });
+    });
+  });
+}
+
+async function syncPackagedBackgroundAgent(enabled) {
+  const logDir = join(homedir(), "Library", "Logs", "GravityPort");
+  mkdirSync(logDir, { recursive: true });
+  return syncBackgroundAgent({
+    enabled,
+    desiredXml: buildBackgroundAgentPlist({
+      execPath: process.execPath,
+      agentEntry: join(appRoot, "desktop", "background-capture-agent.mjs"),
+      userDataDir: desktopDataDir,
+      logDir,
+    }),
+    plistPath: join(homedir(), "Library", "LaunchAgents", BACKGROUND_AGENT_LABEL + ".plist"),
+    uid: process.getuid(),
+    launchctl: launchctlBackground,
+  });
+}
+
 function registerIPC() {
   if (ipcRegistered) return;
   ipcRegistered = true;
+
+  ipcMain.handle("background-capture-state", async (event) => {
+    if (!trustedRendererEvent(event)) return { supported: false, enabled: false };
+    return {
+      supported: backgroundCaptureSupported(),
+      enabled: readBackgroundCaptureSetting(desktopDataDir).enabled,
+    };
+  });
+
+  ipcMain.handle("set-background-capture", async (event, enabled) => {
+    if (!trustedRendererEvent(event)) return { ok: false };
+    if (typeof enabled !== "boolean") return { ok: false };
+    const previous = readBackgroundCaptureSetting(desktopDataDir).enabled;
+    if (!backgroundCaptureSupported()) return { ok: false, enabled: previous };
+    try {
+      writeBackgroundCaptureSetting(desktopDataDir, enabled);
+      const result = await syncPackagedBackgroundAgent(enabled);
+      if (!result.ok) {
+        writeBackgroundCaptureSetting(desktopDataDir, previous);
+        await syncPackagedBackgroundAgent(previous);
+        return { ok: false, enabled: previous };
+      }
+      return { ok: true, enabled };
+    } catch (error) {
+      console.warn(`[MOSA] background capture agent: settings failed: ${error?.message || error}`);
+      try { writeBackgroundCaptureSetting(desktopDataDir, previous); } catch {}
+      return { ok: false, enabled: previous };
+    }
+  });
 
   ipcMain.handle("paste-image", async (event) => {
     if (!trustedRendererEvent(event)) return null;
@@ -1716,7 +1788,18 @@ async function ensureDesktopService() {
     // helper: a library the new version upgraded must never be handed back
     // to the previous version, which could not open it.
     const updateReadyFile = macosUpdateReadyFile || windowsUpdateReadyFile;
-    if (updateReadyFile) markPendingSchemaUpgrade({ readyFile: updateReadyFile, libraryDir });
+    const pendingSchemaUpgrade = updateReadyFile
+      ? markPendingSchemaUpgrade({ readyFile: updateReadyFile, libraryDir })
+      : null;
+    // Task 347: on an upgrade launch the open can take many seconds, so the
+    // startup splash shows its「正在整理素材库…」line immediately instead of
+    // waiting for the page's 1.5 s timer. Fire-and-forget: the splash is
+    // informational, and a destroyed window must never fail startup.
+    if (pendingSchemaUpgrade?.marked && mainWindow?.webContents && !mainWindow.isDestroyed()) {
+      void mainWindow.webContents
+        .executeJavaScript("window.__gravityportShowOrganizingNote && window.__gravityportShowOrganizingNote()", true)
+        .catch(() => { /* the splash may already have been replaced by the app. */ });
+    }
     setOutboundFetch(serviceOutboundFetch);
     const nextService = await startMosaService({
       port: desktopPort,
@@ -1763,6 +1846,21 @@ async function ensureDesktopService() {
     }
     service = nextService;
     await releaseDesktopStartupHandoff();
+    if (backgroundCaptureSupported()) {
+      try {
+        const enabled = readBackgroundCaptureSetting(desktopDataDir).enabled;
+        void syncPackagedBackgroundAgent(enabled).then(
+          (result) => {
+            if (!result.ok) console.warn(`[MOSA] background capture agent: ${result.action} failed: ${result.error || "unknown"}`);
+          },
+          (error) => {
+            console.warn(`[MOSA] background capture agent: sync failed: ${error?.message || error}`);
+          },
+        );
+      } catch (error) {
+        console.warn(`[MOSA] background capture agent: sync failed: ${error?.message || error}`);
+      }
+    }
     // The library is open and usable — record its location for the next
     // launch (no-op when the user has already moved the library and the
     // location file exists). A failure here never blocks a running library.
@@ -1966,8 +2064,13 @@ function reportStartupFailure(error) {
   );
   shuttingDown = true;
   stopBridgeNotificationPoll();
-  void Promise.allSettled([
-    stopOwnedRuntime(),
-    releaseDesktopStartupHandoff(),
-  ]).finally(() => app.exit(1));
+  // Task 341: both shutdown steps are bounded (5s each); a wedged runtime
+  // stop no longer leaves the process — and its library lock — behind.
+  void runStartupShutdownExit({
+    steps: [
+      ["stopOwnedRuntime", stopOwnedRuntime],
+      ["releaseDesktopStartupHandoff", releaseDesktopStartupHandoff],
+    ],
+    exit: (code) => app.exit(code),
+  });
 }

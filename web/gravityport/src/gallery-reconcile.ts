@@ -179,6 +179,55 @@ export function classifyChanges(
   }
 }
 
+/** One dead-stack verdict for both paths that can observe the stack (355):
+ * the incremental commit's summary and a full reload's page summary. `null`
+ * means the stack row is gone; count 0 means it survives with no live
+ * members — a full reload gets a 200 empty page, not STACK_NOT_FOUND, so the
+ * load-failure branch never fires and the verdict comes from here. `undefined`
+ * is "no evidence this sync" (no rows were fetched) and stays alive. */
+export function stackViewDead(stack: { count: number } | null | undefined): boolean {
+  return stack === null || (stack != null && stack.count === 0)
+}
+
+/** The viewed group was renamed inside a batch the client is about to drop:
+ * a full-refresh record (library-backfilled, unknown kind, …) aborts
+ * classifyChanges before the rename bookkeeping, and the full reload the
+ * fallback triggers can only re-fetch the CURRENT view — so the follow has
+ * to be resolved from the dropped records before the reload. Resolves the
+ * rename chain from `currentName` across `changes`; returns null when the
+ * current group was not renamed, when the chain loops, or when the final
+ * name was itself deleted in the same batch (the reload then falls back to
+ * 所有素材 through the sidebar liveness check). Pure; unit-tested. */
+export function followedGroupRename(
+  changes: readonly LibraryChange[],
+  currentName: string,
+): string | null {
+  if (!currentName) return null
+  const renames = new Map<string, string>()
+  const deleted = new Set<string>()
+  for (const change of changes) {
+    if (change.kind === "group-renamed") {
+      const to = typeof change.detail?.to === "string" ? change.detail.to : ""
+      if (change.entityId && to) renames.set(change.entityId, to)
+    } else if (change.kind === "group-deleted" && change.entityId) {
+      deleted.add(change.entityId)
+    }
+  }
+  let target: string = currentName
+  const seen = new Set<string>([target])
+  while (renames.has(target)) {
+    const next = renames.get(target) as string
+    // A loop (including one that returns to the current name) cannot be
+    // resolved from a same-batch rename table — decline the follow; the
+    // reload's liveness check still lands somewhere safe.
+    if (seen.has(next)) return null
+    target = next
+    seen.add(target)
+  }
+  if (target === currentName || deleted.has(target)) return null
+  return target
+}
+
 // ─── ordering ────────────────────────────────────────────────────────────────
 
 /** Unicode code point comparison — what SQLite's TEXT memcmp (UTF-8 byte

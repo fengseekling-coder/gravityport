@@ -56,6 +56,9 @@ const english: Record<string, string> = {
   "关闭设置": "Close settings", "外观": "Appearance",
   "隐藏": "Hide", "显示": "Show", "界面语言": "Language",
   "版本更新": "Software updates",
+  "关闭 GravityPort 后继续收录": "Keep capturing after GravityPort quits",
+  "GravityPort 关闭时，由后台服务继续接收浏览器扩展发来的作品。": "While GravityPort is closed, a background service keeps receiving captures from the browser extension.",
+  "没能更改后台收录设置": "Could not change the background capture setting",
   "检查更新": "Check for updates",
   "无法保存偏好，仅在当前会话生效": "Unable to save. Preferences apply to this session only.",
   "在查看器中打开": "Open in viewer", "在素材库中显示": "Show in library", "复制图片": "Copy image",
@@ -100,6 +103,11 @@ const english: Record<string, string> = {
   "MOSA 现已更名为 GravityPort": "MOSA Is Now GravityPort",
   "只是换了名字。你的素材、设置和浏览器插件都在原处，不需要做任何操作。": "Just a new name. Your assets, settings, and browser plugin are all still exactly where they were. No action needed.",
   "知道了": "Got it",
+  // app-lifecycle: post-upgrade check failure notice (task 350)
+  "素材库检查发现问题": "Library check found a problem",
+  "这次升级后的检查没有通过。升级前的数据库拷贝已经留着，请别删它。App 照常能用，麻烦在设置的「反馈」里告诉我们。": "The check after this upgrade did not pass. The pre-upgrade database copy is being kept — please don't delete it. The app keeps working normally; please let us know via Feedback in Settings.",
+  "在访达中显示拷贝": "Reveal Copy in Finder",
+  "在资源管理器中显示拷贝": "Reveal Copy in File Explorer",
   "导入完成": "Import complete",
   "部分素材导入失败": "Some assets failed to import", "导入失败": "Import failed",
   "路径已复制": "Path copied", "无法打开该位置": "This location can't be opened",
@@ -284,6 +292,8 @@ const english: Record<string, string> = {
   "Flow 页面可见提示词（未验证为实际生图提示词）": "Flow provider-visible prompt (not verified as the generation prompt)",
   "Google AI Studio 页面可见用户提示词（未验证为实际生图提示词）": "Google AI Studio visible user prompt (not verified as the generation prompt)",
   "即梦页面可见提示词（未验证为实际生图提示词）": "Jimeng visible prompt (not verified as the generation prompt)",
+  "即梦按原话提交，没有返回改写版": "Jimeng submitted your words as-is (no rewritten prompt returned)",
+  "即梦智能体交给模型的提示词": "Prompt Jimeng's agent sent to the model",
   "Midjourney 页面可见提示词（未验证为实际生图提示词）": "Midjourney visible prompt (not verified as the generation prompt)",
   // Task 158: settings feedback page. Error-copy keys mirror the route codes
   // in feedback-api.ts (FEEDBACK_OFFLINE / _RATE_LIMITED / _TOO_LARGE /

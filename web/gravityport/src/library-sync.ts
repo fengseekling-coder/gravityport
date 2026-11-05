@@ -84,7 +84,11 @@ export type LibrarySyncStats = Record<string, number | string>
 
 export interface LibrarySyncHooks {
   onCommit(commit: LibrarySyncCommit): void
-  onFallback(reason: LibrarySyncFallbackReason): void
+  /** `changes` carries the batch the fallback dropped, when one was read:
+   * the full reload it triggers can only re-fetch the CURRENT view, so
+   * view-exit evidence that only exists in that batch (a viewed group
+   * renamed away) must be applied by the caller before the reload. */
+  onFallback(reason: LibrarySyncFallbackReason, changes?: readonly LibraryChange[]): void
 }
 
 export interface LibrarySyncDeps {
@@ -204,14 +208,14 @@ export function createLibrarySync(deps: LibrarySyncDeps): LibrarySyncController 
     stats[key] = (Number(stats[key]) || 0) + 1
   }
 
-  const fallback = (reason: LibrarySyncFallbackReason) => {
+  const fallback = (reason: LibrarySyncFallbackReason, changes?: readonly LibraryChange[]) => {
     count(reason)
     pushBuffer = null
     rowsFailures = 0
     pinned.clear()
     // The full reload re-establishes the baseline from the fresh page.
     noteBaseline(null)
-    deps.hooks().onFallback(reason)
+    deps.hooks().onFallback(reason, changes)
   }
 
   const waitForMutationsToSettle = () => {
@@ -346,7 +350,7 @@ export function createLibrarySync(deps: LibrarySyncDeps): LibrarySyncController 
           }
         }
         if (!envelope.complete) {
-          fallback("incomplete")
+          fallback("incomplete", envelope.changes)
           break
         }
         if (envelope.currentRevision <= baseline) {
@@ -360,13 +364,14 @@ export function createLibrarySync(deps: LibrarySyncDeps): LibrarySyncController 
             classify.fullRefreshReason === "library-backfilled" ? "library-backfilled"
               : classify.fullRefreshReason === "library-changed-detail" ? "library-changed-detail"
                 : "unknown-kind",
+            envelope.changes,
           )
           break
         }
         const dropped = new Set(classify.droppedDerivativeIds)
         const fetchIds = classify.affectedAssetIds.filter(id => !dropped.has(id))
         if (fetchIds.length > MAX_FETCH_IDS) {
-          fallback("too-many-ids")
+          fallback("too-many-ids", envelope.changes)
           break
         }
 
@@ -381,7 +386,7 @@ export function createLibrarySync(deps: LibrarySyncDeps): LibrarySyncController 
             count("rows-request-errors")
             rowsFailures += 1
             if (rowsFailures >= 2) {
-              fallback("rows-failed")
+              fallback("rows-failed", envelope.changes)
             } else {
               schedule()
             }

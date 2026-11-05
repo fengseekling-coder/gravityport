@@ -7,7 +7,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 
-import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { createSqliteAssetStore, CURRENT_SCHEMA_VERSION } from "../lib/sqlite-asset-store.mjs";
 import { generationSessionKey } from "../lib/generation-session.mjs";
 
 const ONE_PIXEL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==", "base64");
@@ -166,6 +166,9 @@ test("migration 17 merges same-window Jimeng assets and removes their emptied re
   insertAutoStack(db, "stack-old-b", "web-jimeng:rec-b1");
   addMember(db, "stack-old-b", "jm-m3", 0);
   rewindToSchema16(db);
+  // Task 347: the raw edits above stale the derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  db.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   db.close();
 
   const reopened = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
@@ -192,6 +195,9 @@ test("migration 17 leaves workspace=0 captures ungrouped", async (t) => {
   insertAutoStack(db, "stack-old-c", "web-jimeng:rec-c1");
   addMember(db, "stack-old-c", "jm-w1", 0);
   rewindToSchema16(db);
+  // Task 347: the raw edits above stale the derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  db.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   db.close();
 
   const reopened = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
@@ -216,6 +222,9 @@ test("migration 17 never touches renamed Jimeng record stacks", async (t) => {
   addMember(db, "stack-renamed", "jm-r1", 0);
   addMember(db, "stack-renamed", "jm-r2", 1);
   rewindToSchema16(db);
+  // Task 347: the raw edits above stale the derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  db.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   db.close();
 
   const reopened = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
@@ -248,6 +257,9 @@ test("migration 17 respects exclusions and manual stacks", async (t) => {
   addMember(db, "stack-manual", "jm-x4", 0);
   addMember(db, "stack-manual", "jm-x5", 1);
   rewindToSchema16(db);
+  // Task 347: the raw edits above stale the derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  db.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   db.close();
 
   const reopened = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
@@ -278,6 +290,9 @@ test("migration 17 leaves Jimeng assets the user moved into another source's aut
   addMember(db, "stack-chat", "jm-o1", 1);
   addMember(db, "stack-chat", "jm-o2", 2);
   rewindToSchema16(db);
+  // Task 347: the raw edits above stale the derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  db.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   db.close();
 
   const reopened = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
@@ -298,6 +313,9 @@ test("migration 17 runs once and later opens change nothing", async (t) => {
   const db = openRaw(libraryDir);
   for (const id of ["jm-o1", "jm-o2"]) addPageUrl(db, id, "https://jimeng.jianying.com/ai-tool/generate?workspace=888111222333&type=image");
   rewindToSchema16(db);
+  // Task 347: the raw edits above stale the derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  db.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   db.close();
 
   const openStore = () => createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
@@ -321,7 +339,7 @@ test("migration 17 runs once and later opens change nothing", async (t) => {
   t.after(() => second.close());
   const afterSecond = snapshot();
   assert.equal(afterFirst, afterSecond, "the second open neither re-migrates nor bumps the revision");
-  assert.match(afterFirst, /"schema":"17"/);
+  assert.match(afterFirst, new RegExp(`"schema":"${CURRENT_SCHEMA_VERSION}"`));
 });
 
 test("migration 17 rolls back completely when it fails mid-way", async (t) => {
@@ -335,6 +353,9 @@ test("migration 17 rolls back completely when it fails mid-way", async (t) => {
   insertAutoStack(db, "stack-old-g", "web-jimeng:rec-g1");
   addMember(db, "stack-old-g", "jm-e1", 0);
   rewindToSchema16(db);
+  // Task 347: the raw edits above stale the derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  db.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   db.close();
 
   const sabotage = openRaw(libraryDir);

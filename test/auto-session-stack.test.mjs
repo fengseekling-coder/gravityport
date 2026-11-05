@@ -465,6 +465,9 @@ async function seedLegacyV15Library(t) {
   const database = new Database(join(libraryDir, "mosa.db"));
   const timestamp = "2026-05-01T00:00:00.000Z";
   database.prepare("UPDATE library_meta SET value = '15' WHERE key = 'schema_version'").run();
+  // Task 347: the raw-seeded rows carry empty derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  database.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   const insert = database.prepare(`
     INSERT INTO assets (
       project_id, id, asset, original_path, content_sha256, prompt, skill, style, ratio, business_fields_json, theme,
@@ -565,6 +568,9 @@ test("the backfill appends to an auto stack that predates it instead of forking 
   const database = new Database(join(libraryDir, "mosa.db"));
   const timestamp = "2026-05-01T00:00:00.000Z";
   database.prepare("UPDATE library_meta SET value = '15' WHERE key = 'schema_version'").run();
+  // Task 347: the raw-seeded rows carry empty derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  database.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   database.prepare(`
     INSERT INTO assets (
       project_id, id, asset, original_path, content_sha256, prompt, skill, style, ratio, business_fields_json, theme,
@@ -597,6 +603,9 @@ async function seedLegacyV15LibraryWithManualTargets(t) {
   const database = new Database(join(libraryDir, "mosa.db"));
   const timestamp = "2026-05-01T00:00:00.000Z";
   database.prepare("UPDATE library_meta SET value = '15' WHERE key = 'schema_version'").run();
+  // Task 347: the raw-seeded rows carry empty derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  database.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   const insert = database.prepare(`
     INSERT INTO assets (
       project_id, id, asset, original_path, content_sha256, prompt, skill, style, ratio, business_fields_json, theme,
@@ -726,6 +735,9 @@ test("5k-library backfill and single ingest stay fast with session keys", { skip
     }
   })();
   database.prepare("UPDATE library_meta SET value = '15' WHERE key = 'schema_version'").run();
+  // Task 347: the raw-seeded rows carry empty derived session keys; clear the
+  // marker so the reopen re-derives them like a pre-347 open did.
+  database.prepare("DELETE FROM library_meta WHERE key = 'derived:generation_session_key'").run();
   database.close();
 
   const backfillStarted = performance.now();

@@ -57,9 +57,9 @@
   const VIDEO_TRANSFER_CHUNK_BYTES = 3 * 1024 * 1024;
   const PROMPT_RETRY_DELAYS = [900, 2_700, 7_200, 15_000, 30_000];
   const PROMPT_RETRY_PROVIDERS = new Set(["gemini", "flow", "google-ai-studio"]);
-  // Generated Google media can be rendered through page-local blob URLs. Keep
-  // the gate limited to the supported media-generation surfaces.
-  const BLOB_MEDIA_HOSTS = ["aistudio.google.com", "labs.google", "flow.google.com"];
+  // Gemini, AI Studio, and Flow can render generated images through page-local
+  // blob URLs. Keep the gate limited to these supported generation surfaces.
+  const BLOB_MEDIA_HOSTS = ["gemini.google.com", "aistudio.google.com", "labs.google", "flow.google.com"];
   // A failed Flow media probe must not re-fire on every scan tick; bounded
   // per-media backoff replaces an unbounded retry loop.
   const FLOW_PROBE_BACKOFF_DELAYS = [15_000, 60_000, 300_000];
@@ -248,8 +248,8 @@
         const url = new URL(src);
         // A blob handle is page-local. Do not read a handle carrying another
         // origin, even if a page happens to render it in an image element.
-        // Generated Google media can be rendered through page-local blob URLs.
-        // Keep the gate limited to the supported video-generation surfaces.
+        // Gemini, AI Studio, and Flow can render generated images as page-local
+        // blob URLs. Only accept handles belonging to the supported page origin.
         if (!BLOB_MEDIA_HOSTS.includes(location.hostname) || url.origin !== location.origin) return null;
         return { kind: "local", url: src };
       } catch {

@@ -318,6 +318,10 @@ test("desktop package keeps every required runtime surface", () => {
     "/web/gravityport/dist/index.html",
     "/web/gravityport/dist/build-identity.json",
     "/desktop/main.mjs",
+    "/desktop/background-capture-agent.mjs",
+    "/desktop/background-runtime-entry.mjs",
+    "/desktop/web-capture-supervisor.mjs",
+    "/desktop/background-capture-launchd.mjs",
     "/desktop/notification-i18n.mjs",
     "/desktop/platform/index.mjs",
     "/desktop/preload.cjs",
@@ -612,7 +616,8 @@ test("retired show-in-folder IPC stays removed without expanding renderer author
   // 任务 311：get-client-token（客户端凭据不进网址片段，主进程只对已核实服务
   // origin 上的主框架回答），23 → 24。任务 318：user-profile 通道删除（安装 ID
   // 不再暴露给界面），24 → 23。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 23, "no invoke channel beyond the currently approved narrow requests");
+  // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "no invoke channel beyond the currently approved narrow requests");
   assert.doesNotMatch(preload, /shell\s*[:.]/, "shell is never exposed to the renderer");
   assert.doesNotMatch(preload, /exec\(|spawn\(|execFile\(/, "no arbitrary command execution");
 

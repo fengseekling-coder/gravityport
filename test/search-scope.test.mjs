@@ -87,8 +87,12 @@ function insertLegacyAssetRow(database, { id, asset, prompt, source, deletedAt =
     createdAt: LEGACY_CREATED,
     epoch: Date.parse(LEGACY_CREATED),
   });
-  database.prepare("INSERT INTO asset_fts (project_id, asset_id, content) VALUES ('default', ?, ?)").run(id, legacySearchText);
-  return legacySearchText;
+  const docId = database
+    .prepare("INSERT INTO asset_search_docs (project_id, asset_id) VALUES ('default', ?)")
+    .run(id).lastInsertRowid;
+  // Task 348: the FTS row rides the doc id as its rowid.
+  database.prepare("INSERT INTO asset_fts (rowid, project_id, asset_id, content) VALUES (?, 'default', ?, ?)").run(docId, id, legacySearchText);
+  return { legacySearchText, docId };
 }
 
 async function seedLegacyLibrary(t, root) {
@@ -102,7 +106,7 @@ async function seedLegacyLibrary(t, root) {
   withRawDatabase(libraryDir, (database) => {
     database.transaction(() => {
       database.prepare("DELETE FROM library_meta WHERE key = ?").run(SEARCH_SCOPE_MARKER_KEY);
-      insertLegacyAssetRow(database, {
+      const liveDocId = insertLegacyAssetRow(database, {
         id: "legacy-live",
         asset: "legacy-harbor.png",
         prompt: "lantern harbor study",
@@ -112,7 +116,7 @@ async function seedLegacyLibrary(t, root) {
           content_sha256: "deadbeefcafe0123456789abcdef",
           copied_at: LEGACY_CREATED,
         },
-      });
+      }).docId;
       insertLegacyAssetRow(database, {
         id: "legacy-trash",
         asset: "legacy-trashed.png",
@@ -126,7 +130,7 @@ async function seedLegacyLibrary(t, root) {
         deletedAt: "2026-01-01T00:00:00.000Z",
       });
       for (const term of ["藏经", "经阁", "藏"]) {
-        database.prepare("INSERT INTO asset_short_terms (project_id, asset_id, term) VALUES ('default', 'legacy-live', ?)").run(term);
+        database.prepare("INSERT INTO asset_search_terms (term, doc_id) VALUES (?, ?)").run(term, liveDocId);
       }
     })();
   });
@@ -322,6 +326,9 @@ test("opening an old library rebuilds search text once under the whitelist", asy
     database.prepare("SELECT updated_at FROM assets WHERE id = 'legacy-live'").get().updated_at);
 
   const store = openSqliteStore(t, root);
+  // Task 347: the rebuild runs from deferred maintenance after the open, not
+  // on the open path any more.
+  await store.startDeferredMaintenance();
   assert.ok(markerValue(libraryDir), "the rebuild marker is written");
 
   assert.deepEqual(await hits(store, "zqx9"), [], "legacy path fragments leave search");
@@ -341,7 +348,12 @@ test("opening an old library rebuilds search text once under the whitelist", asy
     const ftsRows = database.prepare("SELECT asset_id, content FROM asset_fts WHERE project_id = 'default' AND asset_id IN ('legacy-live', 'legacy-trash')").all();
     assert.deepEqual(ftsRows, [{ asset_id: "legacy-live", content: live.search_text }],
       "the live FTS row holds the rebuilt text and the trashed row has no FTS row");
-    const shortTerms = database.prepare("SELECT COUNT(*) AS count FROM asset_short_terms WHERE project_id = 'default' AND asset_id = 'legacy-live'").get();
+    const shortTerms = database.prepare(`
+      SELECT COUNT(*) AS count
+      FROM asset_search_terms st
+      JOIN asset_search_docs d ON d.doc_id = st.doc_id
+      WHERE d.project_id = 'default' AND d.asset_id = 'legacy-live'
+    `).get();
     assert.equal(shortTerms.count, 0, "short terms are rebuilt from the whitelisted text (ASCII only here)");
     const trashText = database.prepare("SELECT search_text FROM assets WHERE id = 'legacy-trash'").get();
     assert.doesNotMatch(trashText.search_text, /zqx9|feedface/, "the trashed row's columns are rebuilt too");
@@ -358,7 +370,8 @@ test("opening an old library rebuilds search text once under the whitelist", asy
   });
   store.close();
 
-  openSqliteStore(t, root);
+  const secondOpen = openSqliteStore(t, root);
+  await secondOpen.startDeferredMaintenance();
   withRawDatabase(libraryDir, (database) => {
     const row = database.prepare("SELECT search_text FROM assets WHERE id = 'legacy-live'").get();
     assert.match(row.search_text, /zqx9-again/, "no second rebuild once the marker is set");
@@ -373,7 +386,12 @@ test("a BUSY failure during the rebuild is one warning, the open survives, and t
 
   let store;
   let stub;
-  const warns = captureWarns(() => {
+  // Task 347: the rebuild runs in deferred maintenance now, so the BUSY stub
+  // and the warn capture must span startDeferredMaintenance as well.
+  const warns = [];
+  const originalWarn = console.warn;
+  console.warn = (...parts) => { warns.push(parts.map(String).join(" ")); };
+  try {
     stub = failOneTimeStepTransactionWithBusy("SEARCH_SCOPE_MARKER_KEY");
     try {
       store = createSqliteAssetStore({
@@ -381,10 +399,13 @@ test("a BUSY failure during the rebuild is one warning, the open survives, and t
         managerDir: join(root, "project", "mosa"),
         libraryDir,
       });
+      await store.startDeferredMaintenance();
     } finally {
       stub.restore();
     }
-  });
+  } finally {
+    console.warn = originalWarn;
+  }
   t.after(() => store.close());
   assert.ok(stub.intercepted, "the rebuild transaction was the one that failed");
   assert.ok(
@@ -396,6 +417,7 @@ test("a BUSY failure during the rebuild is one warning, the open survives, and t
 
   store.close();
   const retried = openSqliteStore(t, root);
+  await retried.startDeferredMaintenance();
   assert.deepEqual(await hits(retried, "zqx9"), [], "the next open rebuilds");
   assert.ok(markerValue(libraryDir), "the retried rebuild writes the marker");
 });
@@ -435,11 +457,17 @@ test("rebuildSearchScopeTexts never runs twice on an already-rebuilt library", a
 
 test("the rebuild's marker check sits inside its immediate transaction", () => {
   const source = readFileSync(join(LIB_DIR, "asset-search-scope.mjs"), "utf8");
-  const transactionStart = source.indexOf("database.transaction(() => {");
-  const immediate = source.indexOf(").immediate()");
+  // Task 347 added the batched driver after the whole-table original; scope
+  // the count to the original so "exactly one immediate transaction" keeps
+  // describing rebuildSearchScopeTexts itself.
+  const wholeTableStart = source.indexOf("export function rebuildSearchScopeTexts(database");
+  const batchedStart = source.indexOf("export async function rebuildSearchScopeTextsBatched(database");
+  const wholeTableSource = source.slice(wholeTableStart, batchedStart);
+  const transactionStart = wholeTableSource.indexOf("database.transaction(() => {");
+  const immediate = wholeTableSource.indexOf(").immediate()");
   const check = "markerQuery.get(SEARCH_SCOPE_MARKER_KEY)";
-  const fastPath = source.indexOf(check);
-  const lockedCheck = source.indexOf(check, transactionStart);
+  const fastPath = wholeTableSource.indexOf(check);
+  const lockedCheck = wholeTableSource.indexOf(check, transactionStart);
   assert.ok(transactionStart !== -1 && immediate !== -1 && fastPath !== -1 && lockedCheck !== -1, "all anchors exist");
   // A read-only fast path first, so an already-rebuilt library never takes the
   // write lock on open…
@@ -447,7 +475,7 @@ test("the rebuild's marker check sits inside its immediate transaction", () => {
   // …and the authoritative re-check under the lock for two racing first opens.
   assert.ok(transactionStart < lockedCheck && lockedCheck < immediate,
     "the marker is re-checked after the write lock is held, so two concurrent opens cannot both rebuild");
-  assert.equal((source.match(/\.immediate\(\)/g) || []).length, 1, "the rebuild runs exactly one immediate transaction");
+  assert.equal((wholeTableSource.match(/\.immediate\(\)/g) || []).length, 1, "the rebuild runs exactly one immediate transaction");
 });
 
 test("the in-memory JSON store scores the same whitelist", async (t) => {

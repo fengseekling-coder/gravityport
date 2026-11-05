@@ -264,6 +264,8 @@ test("backfill runs after the capture-history repair: deleted duplicates stay go
   clearMarkers(libraryDir, { backfill: true, repair: true });
 
   const store = openStore(t, projectRoot, libraryDir);
+  // Task 347: repair and backfill run from deferred maintenance after the open.
+  await store.startDeferredMaintenance();
   const events = await store.listGenerationEvents("default", {});
   const byId = new Map(events.map((event) => [event.id, event]));
   assert.equal(byId.has(deletedId), false, "the repair deleted its duplicates in this same open");
@@ -297,6 +299,8 @@ test("backfill fills only conversation-matching events and never scans again aft
   clearMarkers(libraryDir);
 
   const store = openStore(t, projectRoot, libraryDir);
+  // Task 347: the backfill runs from deferred maintenance after the open.
+  await store.startDeferredMaintenance();
   const events = await store.listGenerationEvents("default", {});
   const byId = new Map(events.map((event) => [event.id, event]));
   assert.equal(byId.get("e-a").message_id, "msg-9", "matching conversation is filled");

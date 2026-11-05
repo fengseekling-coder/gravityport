@@ -8,6 +8,108 @@ import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 
+// Task 347 (audit 261 batch 5): a steady-state 20k library must reopen fast —
+// every whole-library probe/repair moved off the open path behind the
+// derived:* / one-time markers, so a normal reopen pays neither. The first
+// open (and any open whose markers are missing) still runs its background
+// sweeps after startDeferredMaintenance, which is exactly the rule-27
+// contract; this test pins the reopen budget.
+test("20k library reopens in under 500ms with all maintenance markers in place", { skip: process.env.MOSA_PERF_TEST !== "1" }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-perf-reopen-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const libraryDir = join(root, "library");
+  await mkdir(join(projectRoot, "generated-images"), { recursive: true });
+  const bootstrap = createSqliteAssetStore({ projectRoot, managerDir, libraryDir });
+  bootstrap.close();
+
+  const filler = "整理 红色机械未来城市 red mechanical future city variant ";
+  const searchFiller = filler.repeat(60); // ≈2KB of search text per asset
+  const timestamp = new Date().toISOString();
+  const timestampEpoch = Date.parse(timestamp);
+  const database = new Database(join(libraryDir, "mosa.db"));
+  database.prepare("INSERT INTO projects (id, created_at) VALUES ('default', ?)").run(timestamp);
+  const insertAsset = database.prepare(`
+    INSERT INTO assets (
+      project_id, id, asset, original_path, content_sha256, prompt, skill, style, ratio, business_fields_json, theme,
+      favorite, archived, group_name, category, rating, version_change, source_type, source_json, metadata_json, search_text,
+      tags_text, business_search_text, source_search_text, media_kind, source_group, conversation_id, generation_session_key, generation_batch,
+      created_at, created_at_epoch, updated_at, sort_name
+    ) VALUES (
+      'default', @id, @asset, '/bench', 'bench', @filler, '', @style, '', '{}', '',
+      @favorite, @archived, 'group-bench', 'category-bench', 0, '', 'web-chatgpt', @source, '{}', @searchText,
+      '', '', 'web-chatgpt', @mediaKind, 'web-chatgpt', @conversation, @sessionKey, 'batch',
+      @created, @epoch, @created, @sortName
+    )
+  `);
+  // Task 348: short terms key on the doc id now; the FTS row rides it as its rowid.
+  const insertDoc = database.prepare("INSERT INTO asset_search_docs (project_id, asset_id) VALUES ('default', ?)");
+  const insertFts = database.prepare("INSERT INTO asset_fts (rowid, project_id, asset_id, content) VALUES (?, 'default', ?, ?)");
+  const insertShortTerm = database.prepare("INSERT INTO asset_search_terms (term, doc_id) VALUES (?, ?)");
+  const insertStack = database.prepare(`
+    INSERT INTO asset_stacks (project_id, id, created_at, updated_at, sort_created_at, sort_name, name)
+    VALUES ('default', ?, ?, ?, ?, ?, ?)
+  `);
+  const insertStackMember = database.prepare(`
+    INSERT INTO asset_stack_members (project_id, stack_id, asset_id, position, added_at)
+    VALUES ('default', ?, ?, ?, ?)
+  `);
+  database.transaction(() => {
+    for (let index = 0; index < 20_000; index += 1) {
+      const id = `bench-${index}`;
+      const trashed = index % 20 === 0; // 5% in the trash
+      const conversation = `conversation-${index % 100}`;
+      insertAsset.run({
+        id,
+        asset: `${id}.png`,
+        filler,
+        style: `style-${index % 20}`,
+        favorite: index % 17 === 0 ? 1 : 0,
+        archived: 0,
+        searchText: `${searchFiller} ${index}`,
+        mediaKind: index % 30 === 0 ? "video" : "image",
+        conversation,
+        sessionKey: index % 4 === 0 ? `web-chatgpt:${conversation}` : "",
+        source: JSON.stringify({ type: "web-chatgpt", conversation_id: conversation }),
+        created: timestamp,
+        epoch: timestampEpoch,
+        sortName: id,
+      });
+      const docId = insertDoc.run(id).lastInsertRowid;
+      insertFts.run(docId, id, `${searchFiller} ${index}`);
+      insertShortTerm.run("机械", docId);
+      insertShortTerm.run("未来", docId);
+    }
+    for (let stack = 0; stack < 600; stack += 1) {
+      const stackId = `bench-stack-${stack}`;
+      insertStack.run(stackId, timestamp, timestamp, timestamp, stackId, `Bench Stack ${stack}`);
+      for (let position = 0; position < 5; position += 1) {
+        insertStackMember.run(stackId, `bench-${stack * 5 + position}`, position, timestamp);
+      }
+    }
+  })();
+  database.close();
+
+  // First open runs every background sweep once (markers written), so the
+  // measured reopen below sees the steady state.
+  const first = createSqliteAssetStore({ projectRoot, managerDir, libraryDir });
+  await first.startDeferredMaintenance();
+  first.close();
+
+  const reopenSamples = [];
+  for (let sample = 0; sample < 5; sample += 1) {
+    const started = performance.now();
+    const reopened = createSqliteAssetStore({ projectRoot, managerDir, libraryDir });
+    reopenSamples.push(performance.now() - started);
+    reopened.close();
+  }
+  reopenSamples.sort((a, b) => a - b);
+  const median = reopenSamples[2];
+  t.diagnostic(`20k reopen samples=${reopenSamples.map((value) => value.toFixed(1)).join(",")} median=${median.toFixed(1)}ms`);
+  assert.ok(median < 500, `20k reopen median ${median.toFixed(1)}ms exceeded 500ms`);
+});
+
 test("50k SQLite library uses indexed filters, starts under 3s, and keeps search P95 under 100ms", { skip: process.env.MOSA_PERF_TEST !== "1" }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-perf-"));
   // Windows can keep SQLite WAL/SHM handles alive for a short moment after
@@ -37,8 +139,10 @@ test("50k SQLite library uses indexed filters, starts under 3s, and keeps search
       @created_at, @created_at_epoch, @updated_at, @sort_name
     )
   `);
-  const insertFts = database.prepare("INSERT INTO asset_fts (project_id, asset_id, content) VALUES ('default', ?, ?)");
-  const insertShortTerm = database.prepare("INSERT INTO asset_short_terms (project_id, asset_id, term) VALUES ('default', ?, ?)");
+  // Task 348: short terms key on the doc id now; the FTS row rides it as its rowid.
+  const insertDoc = database.prepare("INSERT INTO asset_search_docs (project_id, asset_id) VALUES ('default', ?)");
+  const insertFts = database.prepare("INSERT INTO asset_fts (rowid, project_id, asset_id, content) VALUES (?, 'default', ?, ?)");
+  const insertShortTerm = database.prepare("INSERT INTO asset_search_terms (term, doc_id) VALUES (?, ?)");
   database.transaction(() => {
     for (let index = 0; index < 50_000; index += 1) {
       const id = `asset-${index}`;
@@ -62,9 +166,10 @@ test("50k SQLite library uses indexed filters, starts under 3s, and keeps search
         updated_at: timestamp,
         sort_name: id,
       });
-      insertFts.run(id, content);
-      insertShortTerm.run(id, "机械");
-      insertShortTerm.run(id, "未来");
+      const docId = insertDoc.run(id).lastInsertRowid;
+      insertFts.run(docId, id, content);
+      insertShortTerm.run("机械", docId);
+      insertShortTerm.run("未来", docId);
     }
   })();
   const planDetails = (sql, ...params) => database.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params).map((row) => row.detail).join("\n");

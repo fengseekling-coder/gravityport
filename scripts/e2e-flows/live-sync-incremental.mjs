@@ -33,13 +33,58 @@ export async function run(ctx) {
     if (ids.length !== SEED_TOTAL) throw new Error(`seeded ${ids.length}, expected ${SEED_TOTAL}`);
     const favoriteTarget = ids[149]; // 视口里的第 150 张（页面内已全部加载）
     const trashTarget = ids[119];
+    // 342: on Windows CI the scroll-load phase stalled while the seeded
+    // cards' derivative backfill was still journaling. Loading the 260-card
+    // window is prep, not the subject under test, so wait for the library to
+    // settle before opening the page. Two conditions, both required: every
+    // asset carries its final width/height (gallery-scroll-restore.mjs
+    // allDimsSettled) and the library revision holds still for 1.5s (the
+    // page-side waitQuiet criterion below, moved to the Node side). The
+    // "opens while churn is in flight" case is live-sync-import-derivatives'.
+    const waitForLibraryQuiet = async () => {
+      const startedAt = Date.now();
+      const deadline = startedAt + 60000;
+      let lastRevision = null;
+      let stableSince = startedAt;
+      let missingDimensions = 0;
+      const allDimsSettled = async () => {
+        let cursor = "";
+        let count = 0;
+        missingDimensions = 0;
+        do {
+          const data = await ctx.api(server.origin, "GET",
+            `/api/assets?project=default&view=gallery&limit=250${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+          for (const asset of data.assets || []) {
+            const fields = asset.business_fields || {};
+            if (!(Number(fields.width) > 0 && Number(fields.height) > 0)) missingDimensions += 1;
+            count += 1;
+          }
+          cursor = data.page?.nextCursor || "";
+        } while (cursor);
+        return missingDimensions === 0 && count >= SEED_TOTAL;
+      };
+      for (;;) {
+        if (Date.now() >= deadline) {
+          throw new Error(`library never went quiet before opening the page (waited ${Date.now() - startedAt}ms): `
+            + `revision=${JSON.stringify(lastRevision)}, assets missing width/height=${missingDimensions}`);
+        }
+        const dimsSettled = await allDimsSettled();
+        const { revision } = await ctx.api(server.origin, "GET", "/api/library-revision?project=default");
+        if (revision !== lastRevision) { lastRevision = revision; stableSince = Date.now(); }
+        if (dimsSettled && Date.now() - stableSince >= 1500) break;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      return Date.now() - startedAt;
+    };
+    const quietMs = await waitForLibraryQuiet();
+    console.log(`[e2e] flow live-sync-incremental: library quiet after ${quietMs}ms, opening the page`);
     const result = await ctx.runInPage(server, incrementalSource(favoriteTarget, trashTarget), { windowSize: [1440, 940] });
     if (result?.loaded !== SEED_TOTAL || result?.favoriteShown !== true || result?.trashGone !== true
       || result?.createdFirst !== true || result?.fullReloads !== 0 || result?.sidebarTrash !== 1
       || result?.totalAfterCreate !== SEED_TOTAL) {
       throw new Error(`live-sync-incremental result: ${JSON.stringify(result)}`);
     }
-    return { ...result };
+    return { ...result, quietMs };
   } finally {
     await server.stop();
   }
@@ -77,12 +122,46 @@ function incrementalSource(favoriteTarget, trashTarget) {
     // Keep nudging to the bottom until the window is complete: a slow runner
     // can still be fetching when a fixed number of scrolls runs out, and with
     // nobody scrolling the next page never triggers.
+    // 342: when this stalls on CI the bare timeout message carries no
+    // evidence, so sample the loading state every 2s (keep the last 30) and
+    // attach the trajectory to the timeout error. The flow still fails.
+    const pagedRequestCount = () => performance.getEntriesByType('resource')
+      .filter(entry => assetsPath(entry.name) === '/api/assets' && new URL(entry.name).searchParams.has('cursor'))
+      .length;
+    const samples = [];
+    const scrollStartedAt = Date.now();
+    const sampler = setInterval(() => {
+      const g = grid();
+      samples.push({
+        t: Date.now() - scrollStartedAt,
+        loaded: loadedCount(),
+        scrollTop: Math.round(g?.scrollTop || 0),
+        scrollHeight: g?.scrollHeight || 0,
+        clientHeight: g?.clientHeight || 0,
+        pagedRequests: pagedRequestCount(),
+        visibility: document.visibilityState,
+      });
+      if (samples.length > 30) samples.splice(0, samples.length - 30);
+    }, 2000);
     const scroller = grid();
-    await waitFor(() => {
-      if (loadedCount() === ${SEED_TOTAL}) return true;
-      scroller.scrollTop = scroller.scrollHeight;
-      return false;
-    }, 'all 260 cards loaded', 90000);
+    try {
+      await waitFor(() => {
+        if (loadedCount() === ${SEED_TOTAL}) return true;
+        scroller.scrollTop = scroller.scrollHeight;
+        return false;
+      }, 'all 260 cards loaded', 90000);
+    } catch (error) {
+      throw new Error(String(error?.message || error) + ' ' + JSON.stringify({
+        loaded: loadedCount(),
+        pagedRequests: pagedRequestCount(),
+        syncStats: window.__mosaLibrarySync?.stats() ?? null,
+        visibility: document.visibilityState,
+        hasFocus: document.hasFocus(),
+        samples,
+      }));
+    } finally {
+      clearInterval(sampler);
+    }
     // The seeded cards queue thumbnail work that journals its own library
     // changes. Count delta requests only once the library has gone quiet, so
     // background derivative changes are not billed to the step under test.

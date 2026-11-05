@@ -44,6 +44,14 @@
     header .bar:nth-child(2) { width: 220px; }
     .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 20px; }
     .card { aspect-ratio: 4 / 5; border-radius: 12px; }
+    /* 任务 347：开库慢时的状态行。跟随骨架的呼吸动画，不另加东西。 */
+    .organizing-note {
+      margin: 4px 20px 0;
+      font-size: 12px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .organizing-note[hidden] { display: none; }
     .inspector { padding: 20px 16px; }
     .inspector h1 { margin: 0 0 20px; font-size: 15px; }
     .line { height: 12px; margin: 12px 0; }
@@ -62,6 +70,7 @@
   </aside>
   <main>
     <header class="pulse"><div class="bar"></div><div class="bar"></div></header>
+    <p id="startup-organizing" class="organizing-note" hidden>正在整理素材库…</p>
     <div class="grid pulse">
       <div class="card"></div><div class="card"></div><div class="card"></div><div class="card"></div>
       <div class="card"></div><div class="card"></div><div class="card"></div><div class="card"></div>
@@ -71,5 +80,58 @@
     <h1>资产检视器</h1>
     <div class="line"></div><div class="line short"></div><div class="line"></div><div class="line short"></div>
   </aside>
+  <script>
+    (() => {
+      // 任务 347：主进程在开库期间是卡住的，没法通知启动页，所以提示由页面
+      // 自己决定——骨架页超过约 1.5 秒还没被真正的界面换走，就显示这行状态，
+      // 避免用户把慢启动当成卡死去强退。正常快速启动永远看不到它。升级数据
+      // 库的那次启动由 desktop/main.mjs 在确认升级后立即调用下面的钩子提前
+      // 显示。只用 DOM，不调 IPC（启动页不持有任何 renderer 信任白名单）。
+      // 任务 348：升级后的那次开库要在启动页等一次整理数据库（VACUUM，主
+      // 进程同样卡住、发不了消息），所以这行提示超过 10 秒后自己带上已用
+      // 秒数；秒数从骨架页开始算，不用等主进程发任何消息。
+      // 启动页拿不到 App 里的语言设置（不调 IPC），按系统语言选：中文系统
+      // 显示中文，其余显示英文。秒数每秒更新，直到真正的界面换走启动页。
+      const english = typeof navigator !== "undefined" && !/^zh\b/i.test(String(navigator.language || ""));
+      const TEXT = english
+        ? { starting: "GravityPort is starting", inspector: "Inspector", organizing: "Organizing your library…", elapsed: (seconds) => ` (${seconds}s so far)` }
+        : { starting: "GravityPort 正在启动", inspector: "资产检视器", organizing: "正在整理素材库…", elapsed: (seconds) => `（已用 ${seconds} 秒）` };
+      if (english) {
+        document.documentElement.lang = "en";
+        document.body.setAttribute("aria-label", TEXT.starting);
+        const inspectorTitle = document.querySelector(".inspector h1");
+        if (inspectorTitle) inspectorTitle.textContent = TEXT.inspector;
+      }
+      const note = document.getElementById("startup-organizing");
+      if (!note) return;
+      note.textContent = TEXT.organizing;
+      const ELAPSED_VISIBLE_AFTER_SECONDS = 10;
+      const startedAt = Date.now();
+      let shown = false;
+      let elapsedTimer = null;
+      const show = () => {
+        if (shown) return;
+        shown = true;
+        note.hidden = false;
+        elapsedTimer = setInterval(() => {
+          const seconds = Math.floor((Date.now() - startedAt) / 1000);
+          if (seconds >= ELAPSED_VISIBLE_AFTER_SECONDS) {
+            note.textContent = `${TEXT.organizing}${TEXT.elapsed(seconds)}`;
+          }
+        }, 1000);
+      };
+      const timer = setTimeout(show, 1500);
+      window.__gravityportShowOrganizingNote = () => {
+        clearTimeout(timer);
+        show();
+      };
+      window.__gravityportStopOrganizingNote = () => {
+        if (elapsedTimer) {
+          clearInterval(elapsedTimer);
+          elapsedTimer = null;
+        }
+      };
+    })();
+  </script>
 </body>
 </html>

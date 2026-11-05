@@ -127,6 +127,10 @@ class McpServerProcess {
     this.responses = [];
     this.stderr = "";
     this.nextId = 1;
+    // Ids this client sent; waitForResponse only ever matches these, so a
+    // server-initiated request (elicitation, id "gp-elicit-…") can never be
+    // mistaken for the answer to a client request.
+    this.ownIds = new Set();
     let buffer = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
@@ -150,6 +154,7 @@ class McpServerProcess {
   send(method, params) {
     const id = this.nextId;
     this.nextId += 1;
+    this.ownIds.add(id);
     const message = { jsonrpc: "2.0", id, method };
     if (params !== undefined) message.params = params;
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
@@ -158,6 +163,15 @@ class McpServerProcess {
 
   sendRaw(text) {
     this.child.stdin.write(text);
+  }
+
+  /** Reply to a server-initiated request (elicitation) like a real client. */
+  respond(id, result) {
+    this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+  }
+
+  respondError(id, error) {
+    this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error })}\n`);
   }
 
   async request(method, params) {
@@ -182,11 +196,28 @@ class McpServerProcess {
   async waitForResponse(id, { timeoutMs = 10_000 } = {}) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const found = this.responses.find((message) => message.id === id);
+      const found = this.responses.find((message) => this.ownIds.has(message.id) && message.id === id);
       if (found) return found;
       await delay(20);
     }
     throw new Error(`MCP server produced no response for id ${id} within ${timeoutMs}ms. stderr: ${this.stderr.slice(-2000)}`);
+  }
+
+  /**
+   * Wait for a server-initiated request (a message carrying a method, such as
+   * elicitation/create). Returns the newest matching request so the test can
+   * inspect its params and answer via respond() with the request's own id;
+   * pass minimumCount to wait for a later request when an earlier one was
+   * already answered.
+   */
+  async waitForServerRequest(method, { timeoutMs = 10_000, minimumCount = 1 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const matches = this.responses.filter((message) => message.method === method);
+      if (matches.length >= minimumCount) return matches[matches.length - 1];
+      await delay(20);
+    }
+    throw new Error(`MCP server sent fewer than ${minimumCount} ${method} requests within ${timeoutMs}ms. stderr: ${this.stderr.slice(-2000)}`);
   }
 
   async waitForCondition(description, predicate, { timeoutMs = 10_000 } = {}) {

@@ -262,8 +262,6 @@ GravityPort 自带 MCP 服务，通过 stdio 通信，不额外占用端口。AI
 - macOS 上请先把 GravityPort 拖进「应用程序」文件夹再复制配置；从「下载」或磁盘映像里直接运行时路径是临时的，设置里会提醒。App 更新后路径不变，配置不用重新复制。
 - 记录的素材库找不到（例如外接硬盘没接）时，MCP 服务会在 stderr 写明原因后退出，不会新建一个空库。
 
-`asset_create` 只能导入 Codex 生成目录和素材库目录里的图，其他路径的图会返回 `IMAGE_PATH_NOT_READABLE`。
-
 ### 从源码运行
 
 先执行一次 `npm ci` 完成构建。以 Codex 为例，在 `~/.codex/config.toml` 中加入：
@@ -279,10 +277,13 @@ args = ["/absolute/path/to/gravityport/mcp/server.mjs"]
 - `GRAVITYPORT_LIBRARY_DIR`：素材库的绝对路径，优先级最高。
 - `GRAVITYPORT_LIBRARY_LOCATION_FILE`：桌面版的 `library-location.json`（macOS 在 `~/Library/Application Support/mosa/`），跟随桌面版里挪过的位置。
 
+导入规则（桌面版和从源码运行相同）：AI 助手可以直接导入 Codex 生成目录和素材库目录（库内 `assets/`、`imports/`）里的图；其他文件夹要用 `asset_import_folder` 整个导入，GravityPort 会在 AI 助手那边请你确认，助手不支持确认（或你拒绝、超时）时导不了。不在允许目录里的单张图会被 `asset_create` 拒绝（`IMAGE_PATH_NOT_READABLE`）。MCP 启动时所在的目录不算允许目录：从家目录启动助手，家目录里的文件也不会被静默导入。
+
 MCP 工具包括：
 
 ```text
 asset_create
+asset_import_folder
 asset_list
 asset_search
 asset_get

@@ -6,6 +6,52 @@
   },
   "releases": [
     {
+      "version": "0.3.9",
+      "date": "2026-11-05",
+      "zh": {
+        "new": [
+          "macOS 上关闭 GravityPort 后，后台服务会继续接收浏览器扩展发来的作品并存入素材库；可在「设置 → 连接」中关闭。",
+          "新增 MCP 工具 asset_import_folder：AI 助手从其他文件夹导入图片和视频前，会先在助手中请求确认。"
+        ],
+        "improved": [
+          "大素材库打开更快。升级后首次打开会整理一次素材库，启动页显示「正在整理素材库…」和已用时间。",
+          "素材库文件更小，编辑提示词、清空回收站更快。",
+          "升级后检查通过时，自动删除升级前留下的数据库拷贝以释放空间；未通过时保留拷贝并给出提示。",
+          "素材库被更新版本的 GravityPort 打开过后，旧版本会提示更新，不再改动该素材库。",
+          "素材库数据库无法打开时，启动提示会区分「被其他程序占用」和「读取失败」，并附错误码；被占用时先等待几秒再判断，避免误报。",
+          "启动页在非中文系统上显示英文。"
+        ],
+        "fixed": [
+          "修复即梦的用户指令和模型提示词混在一起的问题：图片、视频生成时，用户原话归入「用户指令」；智能体出图时，智能体写给模型的提示词单独归入「提示词」。",
+          "修复 Gemini 网页版生成的图片无法收录的问题，提示词仍取同一轮发送的消息。需将浏览器扩展更新到 0.15.45。",
+          "修复 Windows 上删除部分图片时 App 闪退的问题；单张图片读取出错不再导致 App 关闭，素材照常移入回收站。",
+          "修复后台整理素材库时，正在查看的空堆叠或已删除分组偶尔停在空白页、不自动退出的问题。"
+        ],
+        "other": []
+      },
+      "en": {
+        "new": [
+          "On macOS, a background service keeps receiving works from the browser extension and saves them to the library after GravityPort is closed. It can be turned off in Settings → Connect.",
+          "Added the asset_import_folder MCP tool. Before an AI assistant imports images and videos from another folder, it asks for confirmation in the assistant."
+        ],
+        "improved": [
+          "Large libraries open faster. The first open after an update organizes the library once, and the startup screen shows “Organizing your library…” with the elapsed time.",
+          "Library files are smaller, and editing prompts and emptying the Trash are faster.",
+          "After an update, once the library check passes, the pre-update database copy is deleted to free up space. If the check does not pass, the copy is kept and a notice is shown.",
+          "If a newer version of GravityPort has opened a library, older versions now ask for an update instead of changing it.",
+          "When the library database cannot be opened, the startup message now distinguishes a database in use by another program from one that could not be read, and shows the error code. If the database is in use, GravityPort waits a few seconds before deciding, to avoid false alarms.",
+          "The startup screen is shown in English on non-Chinese systems."
+        ],
+        "fixed": [
+          "Fixed Jimeng mixing up the user instruction and the model prompt. For image and video generation, the user’s own words go into “User instruction”; for agent image generation, the prompt the agent wrote for the model is kept separately under “Prompt”.",
+          "Fixed images generated on the Gemini website not being captured. The prompt still comes from the message sent in the same turn. Requires browser extension 0.15.45.",
+          "Fixed GravityPort closing unexpectedly on Windows when deleting certain images. If an image cannot be read, the App keeps running and the asset still moves to the Trash.",
+          "Fixed a rare case where an empty stack or deleted group being viewed could stay on a blank page instead of exiting automatically while the library was organized in the background."
+        ],
+        "other": []
+      }
+    },
+    {
       "version": "0.3.8",
       "date": "2026-11-01",
       "zh": {

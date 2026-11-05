@@ -249,6 +249,25 @@ describe("describeSource", () => {
 });
 
 describe("promptNotice", () => {
+  it("labels Jimeng submitted and agent prompts while preserving the legacy notice", () => {
+    const asset = (promptSource, promptStatus = "provider-visible-prompt") => ({
+      prompt: "prompt",
+      source: { type: "web-jimeng", provider: "jimeng", prompt_source: promptSource, prompt_status: promptStatus },
+    });
+    assert.deepEqual(inspectorInfoModule.promptNotice(asset("jimeng-submitted-prompt")), {
+      key: "jimengSubmittedPrompt", text: "即梦按原话提交，没有返回改写版",
+    });
+    assert.deepEqual(inspectorInfoModule.promptNotice(asset("jimeng-agent-prompt", "generation-tool-prompt")), {
+      key: "jimengAgentPrompt", text: "即梦智能体交给模型的提示词",
+    });
+    assert.deepEqual(inspectorInfoModule.promptNotice(asset("")), {
+      key: "jimengVisiblePromptUnverified", text: "即梦页面可见提示词（未验证为实际生图提示词）",
+    });
+    assert.equal(inspectorInfoModule.promptNotice({
+      ...asset("jimeng-agent-prompt", "generation-tool-prompt"),
+      source: { type: "web-chatgpt", provider: "chatgpt", prompt_status: "generation-tool-prompt" },
+    }), null);
+  });
   it("returns webPromptUnavailable when web source has no prompt", () => {
     const asset = {
       prompt: "",

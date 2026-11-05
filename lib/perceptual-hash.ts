@@ -1,4 +1,4 @@
-import sharp from "./sharp-runtime.js";
+import { imageDecoder } from "./image-decode-client.js";
 
 /**
  * Perceptual fingerprint of an image, computed from the 400px derivative
@@ -46,23 +46,11 @@ export function parsePerceptualHash(encoded: string): { algorithm: string; hash:
 
 /** 9×8 grayscale difference hash: each bit records whether a pixel is darker
  * than its left neighbor. Resists rescaling, recompression and format changes
- * while staying an order of magnitude cheaper than a DCT hash. */
+ * while staying an order of magnitude cheaper than a DCT hash.
+ *
+ * Task 341: the decode runs in the image-decode child process (verbatim
+ * implementation in image-decode-ops.ts), so a native crash cannot reach the
+ * MOSA runtime process. */
 export async function computePerceptualHash(input: Buffer | string): Promise<string> {
-  const raw = await sharp(input, { failOn: "error" })
-    .removeAlpha()
-    .grayscale()
-    .resize(9, 8, { fit: "fill" })
-    .raw()
-    .toBuffer();
-  let high = 0;
-  let low = 0;
-  for (let y = 0; y < 8; y += 1) {
-    for (let x = 0; x < 8; x += 1) {
-      const bit = raw[y * 9 + x] < raw[y * 9 + x + 1] ? 1 : 0;
-      if (y < 4) high = (high * 2) | bit;
-      else low = (low * 2) | bit;
-    }
-  }
-  const hex = (high >>> 0).toString(16).padStart(8, "0") + (low >>> 0).toString(16).padStart(8, "0");
-  return `${PERCEPTUAL_HASH_ALGORITHM}:${hex}`;
+  return imageDecoder.perceptualHash(input);
 }

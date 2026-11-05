@@ -91,6 +91,26 @@ function topPaginationSource(targetCardId) {
     await sleep(300);
 
     // 4. 收藏首张素材，统计期间 gallery-rows 请求数
+    // The seeded cards queue thumbnail work that journals its own library
+    // changes, and each derivative flush fetches gallery rows too. On a slow
+    // runner (Windows CI) that work is still draining here, so count only once
+    // the library has gone quiet — same rule as live-sync-incremental.
+    const waitQuiet = async (label) => {
+      const deadline = Date.now() + 90000;
+      let last = null;
+      let stableSince = Date.now();
+      while (Date.now() < deadline) {
+        const { revision } = await api('/api/library-revision?project=default');
+        if (revision !== last) { last = revision; stableSince = Date.now(); }
+        else if (Date.now() - stableSince >= 1500) {
+          await sleep(300);
+          return;
+        }
+        await sleep(250);
+      }
+      throw new Error('Timed out waiting for the library to go quiet before ' + label);
+    };
+    await waitQuiet('favorite');
     const beforeRows = deltaCalls('/api/gallery-rows');
     await api('/api/assets/default/' + ${JSON.stringify(targetCardId)} + '/favorite', 'POST');
     await waitFor(() => document.querySelector('.asset-card[data-asset-id="' + ${JSON.stringify(targetCardId)} + '"] .favorite-mark'), 'favorite mark displayed');

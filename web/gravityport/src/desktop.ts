@@ -46,6 +46,8 @@ type ElectronAPI = {
   acknowledgeRenameNotice?: () => Promise<unknown>
   changeLibraryLocation?: () => Promise<{ ok?: boolean; libraryDir?: string; error?: string }>
   getMcpClientConfig?: () => Promise<McpClientConfig>
+  getBackgroundCaptureState?: () => Promise<{ supported: boolean; enabled: boolean }>
+  setBackgroundCapture?: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>
   setWindowFullScreen?: (flag: boolean) => Promise<unknown>
   onWindowFullScreenChange?: (callback: (isFullScreen: boolean) => void) => unknown
   onMenuSearch?: (callback: () => void) => unknown

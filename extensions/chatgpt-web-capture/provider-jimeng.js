@@ -15,7 +15,7 @@
 
   const MEDIA_HOST_SUFFIXES = [".byteimg.com", ".jimeng.com", ".vlabvod.com"];
   const IMAGE_PATH_HINTS = [/\.webp($|[?#])/i, /\.png($|[?#])/i, /\.jpeg($|[?#])/i, /\.jpg($|[?#])/i, /aigc_resize/i, /tos-cn-i/i];
-  const PROMPT_KEYS = ["prompt", "prompt_text", "first_prompt", "video_prompt", "image_prompt", "user_prompt", "description"];
+  const PROMPT_KEYS = ["prompt", "prompt_text", "first_prompt", "video_prompt", "image_prompt", "user_prompt"];
   const MODEL_KEYS = ["model_name", "model", "model_version", "aigc_model"];
   // Live get_asset_list records carry `created_time` (seconds) on the record
   // and `create_time` on each item's common_attr (seen 2026-10-23).
@@ -85,12 +85,12 @@
     return null;
   }
 
-  function firstStringValue(object, keys, { maxLength = 8000, minLength = 1 } = {}) {
+  function firstStringValue(object, keys, { maxLength = 8000, minLength = 1, allowJson = false } = {}) {
     for (const key of keys) {
       const value = object?.[key];
       if (typeof value === "string") {
         const trimmed = value.trim();
-        if (trimmed.length >= minLength && trimmed.length <= maxLength && !trimmed.startsWith("{")) return trimmed;
+        if (trimmed.length >= minLength && trimmed.length <= maxLength && (allowJson || !trimmed.startsWith("{"))) return trimmed;
       }
     }
     return "";
@@ -172,7 +172,9 @@
       width: Number(largeImages?.[0]?.width || bestImage?.width || commonAttr.width || video.width) || 0,
       height: Number(largeImages?.[0]?.height || bestImage?.height || commonAttr.height || video.height) || 0,
       durationSeconds: Number(commonAttr.duration || video.duration) || 0,
-      prompt: firstStringValue(item, PROMPT_KEYS) || firstStringValue(commonAttr, PROMPT_KEYS),
+      prompt: firstStringValue(item, PROMPT_KEYS, { allowJson: true }) || firstStringValue(commonAttr, PROMPT_KEYS, { allowJson: true }),
+      promptKind: "submitted",
+      userMessage: firstStringValue(item, PROMPT_KEYS, { allowJson: true }) || firstStringValue(commonAttr, PROMPT_KEYS, { allowJson: true }),
       // Live responses nest the model under aigc_image_params.<kind>_params.model_config.
       model: firstStringValue(item, MODEL_KEYS) || nestedModelName(item.aigc_image_params),
       referenceUrls: [],
@@ -238,6 +240,47 @@
     return urls.slice(0, MAX_REFERENCE_IMAGES);
   }
 
+  function agentUserMessages(mapping, submits) {
+    const result = {};
+    const messages = Object.entries(mapping);
+    const serialized = messages.map(([id, message]) => [id, JSON.stringify(message)]);
+    for (const submitId of Object.keys(submits)) {
+      if (!submitId) continue;
+      for (const [id, text] of serialized) {
+        if (!text?.includes(submitId)) continue;
+        let current = id;
+        const seenIds = new Set();
+        for (let step = 0; step < 50 && current && !seenIds.has(current); step += 1) {
+          seenIds.add(current);
+          const message = mapping[current];
+          if (!message || typeof message !== "object") break;
+          if (message.author?.role === "user") {
+            const parts = Array.isArray(message.content?.content_parts) ? message.content.content_parts : [];
+            result[submitId] = parts.filter((part) => typeof part?.text === "string")
+              .map((part) => part.text).join("").trim().slice(0, 8000);
+            break;
+          }
+          current = typeof message.metadata?.parent_message_id === "string"
+            ? message.metadata.parent_message_id : "";
+        }
+        if (result[submitId]) break;
+      }
+    }
+    return result;
+  }
+
+  function agentInstructionFromMetricsExtra(metricsExtra) {
+    if (typeof metricsExtra !== "string" || metricsExtra.length > 65_536) return "";
+    try {
+      const prompt = JSON.parse(metricsExtra)?.prompt;
+      if (typeof prompt !== "string") return "";
+      const trimmed = prompt.trim();
+      return trimmed.length >= 1 && trimmed.length <= 8000 ? trimmed : "";
+    } catch {
+      return "";
+    }
+  }
+
   /**
    * Walk one /mweb/v1/ JSON response and extract finished generation items.
    * Record containers are recognized structurally (objects carrying an
@@ -253,12 +296,12 @@
     }
     const records = [];
     let visited = 0;
-    const walk = (node, recordContext, keyHint = "") => {
+    const walk = (node, recordContext, keyHint = "", agentContext = null) => {
       if (!node || typeof node !== "object" || visited >= MAX_WALK_NODES) return;
       visited += 1;
       let context = recordContext;
       if (Array.isArray(node)) {
-        for (const entry of node) walk(entry, context);
+        for (const entry of node) walk(entry, context, "", agentContext);
         return;
       }
       if (Array.isArray(node.item_list)) {
@@ -278,14 +321,22 @@
         context = {
           capturedAtMs,
           recordId,
-          prompt: firstStringValue(node, PROMPT_KEYS),
-          model: firstStringValue(node, MODEL_KEYS),
+          prompt: firstStringValue(node, PROMPT_KEYS, { allowJson: true }),
+          model: firstStringValue(node, MODEL_KEYS) || firstStringValue(node.model_info, MODEL_KEYS),
         };
         for (const item of node.item_list) {
           const extracted = extractJimengItem(item);
           if (!extracted) continue;
           extracted.capturedAtMs = context.capturedAtMs ?? normalizeTimestampMs(item.common_attr?.create_time);
           extracted.prompt = extracted.prompt || context.prompt;
+          const isAgent = Boolean(agentContext)
+            || (typeof node.mode === "string" && /^creation_agent/i.test(node.mode))
+            || (typeof item.aigc_image_params?.aigc_mode === "string"
+              && /^creation_agent/i.test(item.aigc_image_params.aigc_mode));
+          extracted.promptKind = isAgent ? "agent" : "submitted";
+          extracted.userMessage = isAgent
+            ? (agentInstructionFromMetricsExtra(node.metrics_extra) || agentContext?.userMessage || "")
+            : extracted.prompt;
           extracted.model = extracted.model || context.model;
           extracted.historyId = context.recordId;
           extracted.generationStatus = node.status === 30 ? "failed" : node.status === 10 || node.status === 50 ? "completed" : "in_progress";
@@ -293,8 +344,20 @@
           records.push(extracted);
         }
       }
+      const mapping = node.conversation_session?.mapping;
+      const submits = node.submit_id_data_map;
+      const instructions = submits && typeof submits === "object" && !Array.isArray(submits)
+        ? agentUserMessages(mapping && typeof mapping === "object" && !Array.isArray(mapping) ? mapping : {}, submits)
+        : null;
       for (const [key, value] of Object.entries(node)) {
-        if (value && typeof value === "object") walk(value, context, key);
+        if (!value || typeof value !== "object") continue;
+        if (instructions && key === "submit_id_data_map") {
+          for (const [submitId, submit] of Object.entries(submits)) {
+            walk(submit, context, submitId, { userMessage: instructions[submitId] || "" });
+          }
+        } else {
+          walk(value, context, key, agentContext);
+        }
       }
     };
     walk(root, null);
@@ -319,6 +382,8 @@
     mediaUrlInfo,
     resourceKeyForUrl,
     isMediaHost,
+    basePayload,
+    manualPayload,
   });
   if (typeof chrome === "undefined" || !chrome?.runtime?.id) return;
 
@@ -329,6 +394,8 @@
   const seen = new Set();
   const baseline = new Set();
   const learnedByKey = new Map();
+  const pendingInstructionUpgrades = new Map();
+  const upgradedInstructionIdentities = new Set();
   let captureInFlight = 0;
   const captureWaiters = [];
   let toastTimer = null;
@@ -474,14 +541,16 @@
   }
 
   function basePayload(record, mediaKind, mediaUrl) {
+    const prompt = record.prompt || "";
     return {
       provider: "jimeng",
       mediaKind,
       mimeType: mimeTypeForUrl(mediaUrl, mediaKind),
       pageUrl: location.href,
-      promptStatus: record.prompt ? "provider-visible-prompt" : "not-available",
-      promptSource: record.prompt ? "jimeng-visible-prompt" : "",
-      prompt: record.prompt || "",
+      promptStatus: prompt ? (record.promptKind === "agent" ? "generation-tool-prompt" : "provider-visible-prompt") : "not-available",
+      promptSource: prompt ? (record.promptKind === "agent" ? "jimeng-agent-prompt" : "jimeng-submitted-prompt") : "",
+      prompt,
+      ...(record.userMessage ? { userMessage: record.userMessage } : {}),
       model: record.model || "",
       captureMode: "automatic",
       capturedAt: new Date().toISOString(),
@@ -565,6 +634,14 @@
           if (handOffNeedsRetry(response)) releaseSeenForRetry(key);
           return { ok: false, error: response?.error };
         }
+        if (record.promptKind === "agent" && !record.userMessage && record.identity
+          && !upgradedInstructionIdentities.has(record.identity)) {
+          pendingInstructionUpgrades.set(record.identity, mediaKind);
+          while (pendingInstructionUpgrades.size > SEEN_MAX) {
+            pendingInstructionUpgrades.delete(pendingInstructionUpgrades.keys().next().value);
+          }
+          upgradeLateAgentInstruction(learnedByKey.get(record.identity) || record);
+        }
         return { ok: true };
       } catch (error) {
         releaseSeenForRetry(key);
@@ -577,12 +654,14 @@
     if (!record.image && !record.video) return;
     const key = record.identity || record.image?.resourceId || record.video?.resourceId || "";
     if (!key) return;
-    const previous = learnedByKey.get(key) || { image: null, video: null, prompt: "", model: "", historyId: "", generationStatus: "", referenceUrls: [], width: 0, height: 0, durationSeconds: 0, identity: record.identity, capturedAtMs: null };
+    const previous = learnedByKey.get(key) || { image: null, video: null, prompt: "", promptKind: "submitted", userMessage: "", model: "", historyId: "", generationStatus: "", referenceUrls: [], width: 0, height: 0, durationSeconds: 0, identity: record.identity, capturedAtMs: null };
     const merged = {
       identity: record.identity || previous.identity,
       image: (!previous.image || (record.image && record.image.width * record.image.height > previous.image.width * previous.image.height)) && record.image ? record.image : previous.image,
       video: record.video || previous.video,
       prompt: record.prompt || previous.prompt,
+      promptKind: record.promptKind === "agent" || previous.promptKind === "agent" ? "agent" : "submitted",
+      userMessage: record.userMessage || previous.userMessage,
       model: record.model || previous.model,
       historyId: record.historyId || previous.historyId,
       generationStatus: record.generationStatus || previous.generationStatus,
@@ -594,6 +673,27 @@
     };
     learnedByKey.set(key, merged);
     while (learnedByKey.size > SEEN_MAX) learnedByKey.delete(learnedByKey.keys().next().value);
+  }
+
+  function upgradeLateAgentInstruction(record) {
+    if (record.promptKind !== "agent" || !record.identity || !record.userMessage
+      || upgradedInstructionIdentities.has(record.identity)) return;
+    const mediaKind = pendingInstructionUpgrades.get(record.identity);
+    if (!mediaKind || !seen.has(`jimeng:${mediaKind}:${record.identity}`)) return;
+    upgradedInstructionIdentities.add(record.identity);
+    pendingInstructionUpgrades.delete(record.identity);
+    void chrome.runtime.sendMessage({
+      type: "mosa.upgradeMetadata",
+      payload: {
+        provider: "jimeng",
+        mediaKind,
+        providerAssetId: record.identity,
+        generationContextId: record.historyId || "",
+        userMessage: record.userMessage,
+        promptSource: "jimeng-agent-prompt",
+        prompt: "",
+      },
+    }).catch(() => {});
   }
 
   function attemptAutomaticCapture() {
@@ -609,6 +709,7 @@
         debugLog("history record skipped", mediaKey, record.capturedAtMs ? "older than this page" : "no timestamp");
         continue;
       }
+      upgradeLateAgentInstruction(record);
       const hasImage = record.image && Math.min(record.image.width || 0, record.image.height || 0) >= MIN_AUTO_IMAGE_EDGE;
       if (record.image && !hasImage) debugLog("image too small or size unknown, waiting", mediaKey, `${record.image.width || 0}x${record.image.height || 0}`);
       const hasVideo = Boolean(record.video);
@@ -731,16 +832,17 @@
     }
   }
 
-  function manualPayload(mediaKind, mediaUrl, { prompt = "", model = "", width = 0, height = 0, identity = "", historyId = "" } = {}) {
+  function manualPayload(mediaKind, mediaUrl, { prompt = "", promptKind = "submitted", userMessage = "", model = "", width = 0, height = 0, identity = "", historyId = "" } = {}) {
     const resourceId = resourceKeyForUrl(mediaUrl) || identity;
     return {
       provider: "jimeng",
       mediaKind,
       mimeType: mimeTypeForUrl(mediaUrl, mediaKind),
       pageUrl: location.href,
-      promptStatus: prompt ? "provider-visible-prompt" : "not-available",
-      promptSource: prompt ? "jimeng-visible-prompt" : "",
+      promptStatus: prompt ? (promptKind === "agent" ? "generation-tool-prompt" : "provider-visible-prompt") : "not-available",
+      promptSource: prompt ? (promptKind === "agent" ? "jimeng-agent-prompt" : "jimeng-submitted-prompt") : "",
       prompt,
+      ...(userMessage ? { userMessage } : {}),
       model,
       captureMode: "manual",
       capturedAt: new Date().toISOString(),
@@ -809,6 +911,8 @@
         if (mediaUrl) {
           const payload = manualPayload("video", mediaUrl, {
             prompt: learned?.record.prompt || "",
+            promptKind: learned?.record.promptKind || "submitted",
+            userMessage: learned?.record.userMessage || "",
             model: learned?.record.model || "",
             width: learned?.record.width || 0,
             height: learned?.record.height || 0,
@@ -859,6 +963,8 @@
       const mediaUrl = learned?.candidate?.url || info.url;
       const payload = manualPayload("image", mediaUrl, {
         prompt: learned?.record.prompt || "",
+        promptKind: learned?.record.promptKind || "submitted",
+        userMessage: learned?.record.userMessage || "",
         model: learned?.record.model || "",
         width: learned?.record.width || info?.width || 0,
         height: learned?.record.height || info?.height || 0,
