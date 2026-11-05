@@ -2,6 +2,20 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.9 — 2026-11-05 / Preview
+
+### Desktop
+
+- On macOS, a background service registered by the installed app keeps receiving works from the browser extension and saves them to the library while GravityPort is closed; it can be turned off in Settings → Connect.
+- New `asset_import_folder` MCP tool: imports from folders outside the Codex directory and the library ask for confirmation in the AI assistant first.
+- Large libraries open faster, library files are smaller, and editing prompts and emptying the Trash are faster. The first open after an update organizes the library once while the startup screen shows progress, in English on non-Chinese systems.
+- After an update, the pre-update database copy is deleted once the library check passes and kept with a notice when it does not. Older versions refuse to change a library opened by a newer version and ask for an update. Startup errors tell a database in use apart from one that cannot be read.
+- Fixes: Jimeng user instructions and model prompts are kept apart; deleting certain images no longer closes the app on Windows; an empty stack or deleted group no longer stays on a blank page after background organizing.
+
+### Web Capture
+
+- Extension 0.15.45: images generated on the Gemini website are captured again, with the prompt from the same turn.
+
 ## 0.3.8 — 2026-11-01 / Preview
 
 ### Desktop
