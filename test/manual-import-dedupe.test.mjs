@@ -869,7 +869,21 @@ test("a library from a newer schema version is refused without touching it", asy
     }),
     new RegExp(`database schema v${newerVersion}, this build supports v${CURRENT_SCHEMA_VERSION}`),
   );
-  assert.deepEqual(await librarySnapshot(store.libraryDir), before, "the refused open leaves the library bytes and files untouched");
+  // The refusal probe may leave an empty -wal and a -shm behind: deleting
+  // them is unsafe while another process could be opening the same library
+  // (task 357). Everything else — the database bytes above all — is untouched.
+  const after = await librarySnapshot(store.libraryDir);
+  const journalFiles = new Set(["mosa.db-wal", "mosa.db-shm"]);
+  assert.equal(after.db, before.db, "the refused open leaves mosa.db byte-identical");
+  assert.deepEqual(
+    after.entries.filter((name) => !journalFiles.has(name)),
+    before.entries.filter((name) => !journalFiles.has(name)),
+    "the refused open adds no other file",
+  );
+  const walPath = join(store.libraryDir, "mosa.db-wal");
+  if (existsSync(walPath)) {
+    assert.equal((await readFile(walPath)).length, 0, "a -wal left by the probe holds no frames");
+  }
 });
 
 // ─── dedupe lookup cost stays negligible on large libraries ─────────────────

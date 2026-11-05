@@ -1090,6 +1090,9 @@ test("two concurrent openers of a current-version library missing columns both s
     assert.ok(result.stdout.includes("child-ok"));
   }
   withRawDatabase(a.libraryDir, (database) => {
+    // Task 357: the racing repairs used to leave an index missing rows about
+    // one run in seven; the columns coming back is not enough.
+    assert.equal(database.pragma("integrity_check", { simple: true }), "ok", "the racing repairs leave every index consistent");
     const info = database.prepare("SELECT name FROM pragma_table_info('assets')").all().map((row) => row.name);
     for (const column of ["provider_asset_id", "logical_output_id", "tags_text", "created_at_epoch"]) {
       assert.ok(info.includes(column), `column ${column} is back`);
