@@ -42,7 +42,7 @@ jobs:
           if (@('MOSA', 'GravityPort') -notcontains $env:RELEASE_PRODUCT) { throw "Unexpected product: $env:RELEASE_PRODUCT" }
 
       - name: Check out the release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
@@ -59,7 +59,7 @@ jobs:
           "RELEASE_VERSION=$($env:RELEASE_TAG.Substring(1))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -146,7 +146,7 @@ jobs:
           "INSTALLER_PATH=$installer" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Upload the Windows Preview artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.product }}-${{ inputs.tag }}-windows-preview-x64
           if-no-files-found: error
