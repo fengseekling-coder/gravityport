@@ -829,6 +829,7 @@ test("the startup splash reveals the organizing note after 1.5s or on the early-
         if (intervalCallback) intervalCallback();
       },
       hook: sandbox.window.__gravityportShowOrganizingNote,
+      stop: sandbox.window.__gravityportStopOrganizingNote,
       get clearedCount() { return cleared; },
       get intervalsClearedCount() { return intervalsCleared; },
     };
@@ -856,7 +857,62 @@ test("the startup splash reveals the organizing note after 1.5s or on the early-
   assert.equal(compacting.note.textContent, "正在整理素材库…", "at 2s the note is still the plain text");
   compacting.fireElapsedTick(10);
   assert.equal(compacting.note.textContent, "正在整理素材库…（已用 12 秒）", "at 12s the note carries the elapsed seconds");
-  assert.equal(compacting.intervalsClearedCount, 1, "the elapsed ticker stops once it starts counting");
+  // A count frozen at its first value reads as a hang; it keeps going until
+  // the real UI replaces the splash or the stop hook runs.
   compacting.fireElapsedTick(1);
-  assert.equal(compacting.note.textContent, "正在整理素材库…（已用 12 秒）", "the ticker no longer fires after clearing");
+  assert.equal(compacting.note.textContent, "正在整理素材库…（已用 13 秒）", "the count keeps advancing every second");
+  assert.equal(compacting.intervalsClearedCount, 0, "the ticker is not stopped by its own first update");
+  compacting.stop();
+  assert.equal(compacting.intervalsClearedCount, 1, "the stop hook ends the ticker");
+});
+
+// The splash cannot read the App's language preference (no IPC), so it
+// follows the system language: Chinese systems keep Chinese, every other
+// system gets English — including the static skeleton labels.
+test("the startup splash follows the system language for its text", () => {
+  const html = readFileSync(join(REPO_ROOT, "desktop", "startup.html"), "utf8");
+  const script = (html.match(/<script>([\s\S]*?)<\/script>/) || [])[1];
+  function boot(language) {
+    const note = { hidden: true, textContent: "正在整理素材库…" };
+    const inspectorTitle = { textContent: "资产检视器" };
+    const documentElement = { lang: "zh-CN" };
+    const bodyAttributes = { "aria-label": "GravityPort 正在启动" };
+    let intervalCallback = null;
+    let now = 0;
+    const sandbox = {
+      navigator: { language },
+      document: {
+        documentElement,
+        body: { setAttribute: (name, value) => { bodyAttributes[name] = value; } },
+        querySelector: (selector) => (selector === ".inspector h1" ? inspectorTitle : null),
+        getElementById: (id) => (id === "startup-organizing" ? note : null),
+      },
+      Date: { now: () => now },
+      setTimeout: (callback) => { callback(); return 7; },
+      clearTimeout: () => {},
+      setInterval: (callback) => { intervalCallback = callback; return 9; },
+      clearInterval: () => { intervalCallback = null; },
+    };
+    sandbox.window = sandbox;
+    vm.runInNewContext(script, sandbox);
+    return {
+      note, inspectorTitle, documentElement, bodyAttributes,
+      tick(seconds) { now += seconds * 1000; if (intervalCallback) intervalCallback(); },
+    };
+  }
+
+  const en = boot("en-US");
+  assert.equal(en.note.textContent, "Organizing your library…");
+  en.tick(12);
+  assert.equal(en.note.textContent, "Organizing your library… (12s so far)");
+  assert.equal(en.inspectorTitle.textContent, "Inspector");
+  assert.equal(en.documentElement.lang, "en");
+  assert.equal(en.bodyAttributes["aria-label"], "GravityPort is starting");
+
+  const zh = boot("zh-Hans-CN");
+  assert.equal(zh.note.textContent, "正在整理素材库…");
+  zh.tick(12);
+  assert.equal(zh.note.textContent, "正在整理素材库…（已用 12 秒）");
+  assert.equal(zh.inspectorTitle.textContent, "资产检视器", "a Chinese system keeps the Chinese skeleton labels");
+  assert.equal(zh.documentElement.lang, "zh-CN");
 });

@@ -90,9 +90,21 @@
       // 任务 348：升级后的那次开库要在启动页等一次整理数据库（VACUUM，主
       // 进程同样卡住、发不了消息），所以这行提示超过 10 秒后自己带上已用
       // 秒数；秒数从骨架页开始算，不用等主进程发任何消息。
+      // 启动页拿不到 App 里的语言设置（不调 IPC），按系统语言选：中文系统
+      // 显示中文，其余显示英文。秒数每秒更新，直到真正的界面换走启动页。
+      const english = typeof navigator !== "undefined" && !/^zh\b/i.test(String(navigator.language || ""));
+      const TEXT = english
+        ? { starting: "GravityPort is starting", inspector: "Inspector", organizing: "Organizing your library…", elapsed: (seconds) => ` (${seconds}s so far)` }
+        : { starting: "GravityPort 正在启动", inspector: "资产检视器", organizing: "正在整理素材库…", elapsed: (seconds) => `（已用 ${seconds} 秒）` };
+      if (english) {
+        document.documentElement.lang = "en";
+        document.body.setAttribute("aria-label", TEXT.starting);
+        const inspectorTitle = document.querySelector(".inspector h1");
+        if (inspectorTitle) inspectorTitle.textContent = TEXT.inspector;
+      }
       const note = document.getElementById("startup-organizing");
       if (!note) return;
-      const ORGANIZING_BASE_TEXT = "正在整理素材库…";
+      note.textContent = TEXT.organizing;
       const ELAPSED_VISIBLE_AFTER_SECONDS = 10;
       const startedAt = Date.now();
       let shown = false;
@@ -104,9 +116,7 @@
         elapsedTimer = setInterval(() => {
           const seconds = Math.floor((Date.now() - startedAt) / 1000);
           if (seconds >= ELAPSED_VISIBLE_AFTER_SECONDS) {
-            note.textContent = `${ORGANIZING_BASE_TEXT}（已用 ${seconds} 秒）`;
-            clearInterval(elapsedTimer);
-            elapsedTimer = null;
+            note.textContent = `${TEXT.organizing}${TEXT.elapsed(seconds)}`;
           }
         }, 1000);
       };
