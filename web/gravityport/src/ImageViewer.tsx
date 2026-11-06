@@ -9,7 +9,7 @@ const CONTROLS_IDLE_MS = 2000
 const FIT_PAD_TOP = 16
 const CONTROLS_GAP = 8
 
-export default function ImageViewer({ width, height, src, originalSrc, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, onOpenLocation, message }: {
+export default function ImageViewer({ width, height, src, originalSrc, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, onOpenLocation, message, openLocationLabel }: {
   width: number; height: number; src?: string; originalSrc?: string; isVideo?: boolean; language: Language; disabled: boolean
   fullscreen: boolean
   onNavigate: (direction: number) => void
@@ -17,6 +17,8 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
   onContextMenu: (x: number, y: number) => void
   onOpenLocation: () => void
   message: string
+  /** 任务 359（EMPTY-11b）：按平台给「在访达/文件资源管理器中显示」，由 App 传入。 */
+  openLocationLabel: string
 }) {
   const stage = useRef<HTMLDivElement>(null)
   const controlsBar = useRef<HTMLDivElement>(null)
@@ -204,7 +206,7 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
   }, [])
   const pannable = usedWidth * scale > size.width || usedHeight * scale > size.height
   return <div className="image-viewer" onPointerMove={revealControls}>
-    <div ref={stage} className={`viewer-stage ${pannable ? "pannable" : ""} ${dragging ? "dragging" : ""}`} aria-label={tr("图片预览")}
+    <div ref={stage} className={`viewer-stage ${pannable ? "pannable" : ""} ${dragging ? "dragging" : ""}`} aria-label={tr("素材预览")}
       onDoubleClick={event => {
         // Native video controls own their surface: a double-click there must
         // not toggle fit/1:1 (and Chromium's controls add no fullscreen of
@@ -232,8 +234,8 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
       {src && mediaError
         ? <div className="viewer-missing" role="status">
           <Icon name="image" size={32} />
-          <p>{tr("原图找不到了")}</p>
-          <button onClick={onOpenLocation}>{tr("打开素材位置")}</button>
+          <p>{tr("找不到原始文件")}</p>
+          <button onClick={onOpenLocation}>{openLocationLabel}</button>
         </div>
         : src && isVideo
           ? <video className="viewer-image" src={src} controls autoPlay loop controlsList="nofullscreen nodownload noremoteplayback" disablePictureInPicture onLoadedMetadata={event => probeSize(event.currentTarget)} onError={() => setMediaError(true)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />
@@ -251,7 +253,7 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
       <button aria-label={tr("放大")} title={tr("放大")} disabled={scale >= 4} onClick={() => zoomTo(scale * 1.25)}><Icon name="plus" size={16} /></button>
       <span className="viewer-divider" />
       <button className={manualScale === null ? "active" : ""} aria-pressed={manualScale === null} onClick={fit} title={tr("适合窗口")}><Icon name="expand" size={16} /><span>{tr("适合窗口")}</span></button>
-      <button className={manualScale === 1 ? "active" : ""} aria-pressed={manualScale === 1} title={tr("原始尺寸")} onClick={() => zoomTo(1)}>1:1</button>
+      <button className={manualScale === 1 ? "active" : ""} aria-pressed={manualScale === 1} title={tr("实际大小")} onClick={() => zoomTo(1)}>1:1</button>
       <span className="viewer-divider" />
       <button aria-pressed={fullscreen} title={tr(fullscreen ? "退出全屏" : "全屏")} onClick={onToggleFullscreen}>
         <Icon name={fullscreen ? "fullscreen-exit" : "fullscreen"} size={16} />

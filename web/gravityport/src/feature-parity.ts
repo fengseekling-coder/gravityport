@@ -10,3 +10,11 @@ export function sanitizeAssetForExport(value: unknown): unknown {
 }
 
 export const relationTypes = ["edited_from", "variant_of", "derived_from", "based_on"] as const
+
+// 任务 359（MAIN-27m~p）：关系类型的界面叫法（中文作 i18n 键），代码值不变。
+export const RELATION_LABELS: Record<(typeof relationTypes)[number], string> = {
+  edited_from: "改自",
+  variant_of: "变体",
+  derived_from: "衍生自",
+  based_on: "基于",
+}

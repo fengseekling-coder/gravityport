@@ -34,7 +34,7 @@ export async function run(ctx) {
     const r1 = result.rounds[0];
     assertEqual(r1.label, "1", "round 1 label");
     assertOk(r1.backToDownloadButton, "round 1: button back to clickable 下载并更新 (MACOS_UPDATE_FAILED)");
-    assertOk(r1.failToasts.some((t) => t.includes("更新失败，请稍后重试")), `round 1: 更新失败 toast shown (got ${JSON.stringify(r1.failToasts)})`);
+    assertOk(r1.failToasts.some((t) => t.includes("无法更新。请稍后重试。")), `round 1: 更新失败 toast shown (got ${JSON.stringify(r1.failToasts)})`);
 
     // Rounds 2–4: dialog-already-shown codes and cancel — back to clickable,
     // NO failure toast (the main process already raised its own dialog).
@@ -49,7 +49,7 @@ export async function run(ctx) {
     const r5 = result.rounds[4];
     assertEqual(r5.label, "5", "round 5 label");
     assertOk(r5.backToDownloadButton, "round 5: button back to clickable 下载并更新 (thrown error)");
-    assertOk(r5.failToasts.some((t) => t.includes("更新失败，请稍后重试")), `round 5: 更新失败 toast shown (got ${JSON.stringify(r5.failToasts)})`);
+    assertOk(r5.failToasts.some((t) => t.includes("无法更新。请稍后重试。")), `round 5: 更新失败 toast shown (got ${JSON.stringify(r5.failToasts)})`);
 
     // Round 6: installing — the app quits next, so the button stays on the
     // downloading state (primary disabled at 正在下载 0% + 取消下载) after 1s,
@@ -120,7 +120,7 @@ function pageHelpers() {
       scan();
     };
     const clearToasts = () => { window.__e2eToasts.length = 0; };
-    const failToasts = () => window.__e2eToasts.filter((t) => t.includes('更新失败'));
+    const failToasts = () => window.__e2eToasts.filter((t) => t.includes('无法更新'));
     // The downloading state: disabled primary at 正在下载 0% next to 取消下载.
     const downloadingState = () => {
       const actions = document.querySelector('.settings-content .about-update-actions');

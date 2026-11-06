@@ -2,8 +2,8 @@
 // English leaks (sidebar 即梦 -> Jimeng, vendor chip, role-less reference
 // hover title), the viewer's missing-original empty stage (the reveal button
 // is asserted to exist but never clicked — it would open Finder), the three
-// inspector fetches surfacing 500s as 加载失败 instead of looking like empty
-// data, and the 查看 entry for version families that carry no generation
+// inspector fetches surfacing 500s as 无法加载 instead of looking like empty
+// data, and the 展开 entry for version families that carry no generation
 // records (badge stays hidden there; the generation-record control keeps it).
 // Each ctx.runInPage boots a fresh page, so the language preference is
 // persisted at the end of the Chinese round and read at the English boot
@@ -12,7 +12,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 export const name = "ui-polish-316";
-export const description = "missing original shows the viewer empty stage -> three inspector fetches at 500 show 加载失败, never 暂无生成关系 -> version family without records gets 查看 and VersionCompare -> record-keeping control keeps its badge -> English sidebar shows Jimeng, vendor chip translates, role-less reference title translates, role stays raw";
+export const description = "missing original shows the viewer empty stage -> three inspector fetches at 500 show 无法加载, never 暂无生成记录 -> version family without records gets 展开 and VersionCompare -> record-keeping control keeps its badge -> English sidebar shows Jimeng, vendor chip translates, role-less reference title translates, role stays raw";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -136,24 +136,24 @@ export async function run(ctx) {
     const expect = (condition, message) => { if (condition !== true) problems.push(message); };
     const missingStage = zh.missingStage || {};
     expect(missingStage.shown === true, `viewer empty stage never appeared: ${JSON.stringify(missingStage)}`);
-    expect(missingStage.text === "原图找不到了", `empty stage copy is ${JSON.stringify(missingStage.text)}`);
-    expect(missingStage.buttonLabel === "打开素材位置", `empty stage button is ${JSON.stringify(missingStage.buttonLabel)}`);
+    expect(missingStage.text === "找不到原始文件", `empty stage copy is ${JSON.stringify(missingStage.text)}`);
+    expect(missingStage.buttonLabel === "在访达中显示", `empty stage button is ${JSON.stringify(missingStage.buttonLabel)}`);
     const errorState = zh.errorState || {};
-    expect(errorState.treeShowsFailure === true, "版本树 list does not show 加载失败 on 500s");
-    expect(errorState.versionSectionShowsFailure === true, "版本 section does not show 加载失败 on 500s");
-    expect(errorState.referenceSectionShowsFailure === true, "参考图 section does not show 加载失败 on 500s");
-    expect(errorState.emptyTextGone === true, "暂无生成关系 still rendered while the fetches failed");
+    expect(errorState.treeShowsFailure === true, "版本树 list does not show 无法加载 on 500s");
+    expect(errorState.versionSectionShowsFailure === true, "版本 section does not show 无法加载 on 500s");
+    expect(errorState.referenceSectionShowsFailure === true, "参考图 section does not show 无法加载 on 500s");
+    expect(errorState.emptyTextGone === true, "暂无生成记录 still rendered while the fetches failed");
     const family = zh.family || {};
-    expect(family.viewVisible === true, "version family without records shows no 查看 entry");
+    expect(family.viewVisible === true, "version family without records shows no 展开 entry");
     expect(family.badgeAbsent === true, "version family without records must not show a badge");
     expect(family.comparePresent === true, `VersionCompare did not render: ${JSON.stringify(family)}`);
     const control = zh.control || {};
-    expect(control.viewVisible === true, "generation-record asset lost its 查看 entry");
+    expect(control.viewVisible === true, "generation-record asset lost its 展开 entry");
     expect(control.badgeText === "1", `generation-record badge is ${JSON.stringify(control.badgeText)}`);
     expect(en.sidebarJimeng === true, "English sidebar has no Jimeng group row");
     expect(en.sidebarChineseGone === true, "English sidebar still shows 即梦");
     expect(en.vendorChip === "Jimeng", `English vendor chip is ${JSON.stringify(en.vendorChip)}`);
-    expect(en.rolelessTitle === "Reference 1", `English role-less reference title is ${JSON.stringify(en.rolelessTitle)}`);
+    expect(en.rolelessTitle === "Reference image 1", `English role-less reference title is ${JSON.stringify(en.rolelessTitle)}`);
     expect(en.roleTitle === "草图", `English role reference title must stay raw, got ${JSON.stringify(en.roleTitle)}`);
     if (problems.length) throw new Error(`ui-polish-316: ${problems.join("; ")} — ${JSON.stringify({ zh, en })}`);
     return {
@@ -233,7 +233,7 @@ function zhScenes(config) {
       await closeViewer();
 
       // Scene 2: all three inspector fetches answer 500. The UI must show
-      // 加载失败 everywhere the empty texts used to pretend "no data".
+      // 无法加载 everywhere the empty texts used to pretend "no data".
       const realFetch = window.fetch;
       window.fetch = (input, init) => {
         const url = typeof input === "string" ? input : String(input && input.url || "");
@@ -245,30 +245,30 @@ function zhScenes(config) {
       await openInspector(config.plainId);
       await waitFor(() => {
         const tree = document.querySelector('.version-list[aria-label="版本树"]');
-        return tree && tree.textContent.includes("加载失败");
-      }, "版本树 shows 加载失败");
+        return tree && tree.textContent.includes("无法加载");
+      }, "版本树 shows 无法加载");
       const versionSection = sections().find((section) => section.querySelector('.version-list[aria-label="版本"]'));
       const referenceSection = sections().find((section) => {
         const heading = section.querySelector(".field-heading span");
         return heading && heading.textContent === "参考图";
       });
       scenes.errorState = {
-        treeShowsFailure: (document.querySelector('.version-list[aria-label="版本树"]')?.textContent || "").includes("加载失败"),
-        versionSectionShowsFailure: Boolean(versionSection) && versionSection.textContent.includes("加载失败"),
-        referenceSectionShowsFailure: Boolean(referenceSection) && referenceSection.textContent.includes("加载失败"),
-        emptyTextGone: !document.body.textContent.includes("暂无生成关系"),
+        treeShowsFailure: (document.querySelector('.version-list[aria-label="版本树"]')?.textContent || "").includes("无法加载"),
+        versionSectionShowsFailure: Boolean(versionSection) && versionSection.textContent.includes("无法加载"),
+        referenceSectionShowsFailure: Boolean(referenceSection) && referenceSection.textContent.includes("无法加载"),
+        emptyTextGone: !document.body.textContent.includes("暂无生成记录"),
       };
       window.fetch = realFetch;
 
       // Scene 3: a version family with no generation records still gets the
-      // 查看 entry (no badge), and expanding it renders VersionCompare.
+      // 展开 entry (no badge), and expanding it renders VersionCompare.
       await openInspector(config.familyParentId);
       const familyHeading = await waitFor(() => {
         const heading = treeHeading();
-        if (heading && Array.from(heading.querySelectorAll(".section-action")).some((button) => button.textContent.trim() === "查看")) return heading;
+        if (heading && Array.from(heading.querySelectorAll(".section-action")).some((button) => button.textContent.trim() === "展开")) return heading;
         return null;
-      }, "family 查看 entry");
-      const familyView = Array.from(familyHeading.querySelectorAll(".section-action")).find((button) => button.textContent.trim() === "查看");
+      }, "family 展开 entry");
+      const familyView = Array.from(familyHeading.querySelectorAll(".section-action")).find((button) => button.textContent.trim() === "展开");
       familyView.click();
       await waitFor(() => document.querySelector(".version-compare"), "VersionCompare");
       scenes.family = {
@@ -288,7 +288,7 @@ function zhScenes(config) {
         return null;
       }, "control badge");
       scenes.control = {
-        viewVisible: Array.from(controlHeading.querySelectorAll(".section-action")).some((button) => ["查看", "收起"].includes(button.textContent.trim())),
+        viewVisible: Array.from(controlHeading.querySelectorAll(".section-action")).some((button) => ["展开", "收起"].includes(button.textContent.trim())),
         badgeText: (controlHeading.querySelector(".settings-badge")?.textContent || "").trim(),
       };
 
@@ -359,7 +359,7 @@ function enScenes(config) {
         const buttons = Array.from(document.querySelectorAll(".details .reference-thumbnail"));
         return buttons.length >= 2 ? buttons.map((button) => button.getAttribute("title")) : null;
       }, "reference titles");
-      scenes.rolelessTitle = titles.find((title) => /^Reference \d+$/.test(title || "")) || null;
+      scenes.rolelessTitle = titles.find((title) => /^Reference image \d+$/.test(title || "")) || null;
       scenes.roleTitle = titles.includes("草图") ? "草图" : null;
 
       // Back to Chinese so later rounds of this flow (screenshots etc.) are

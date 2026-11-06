@@ -86,7 +86,7 @@ function importSource() {
     // A text file matches no supported media extension: the UI must refuse it
     // loudly instead of pretending it imported.
     dispatchPaste(new File(['not an image'], 'notes.txt', { type: 'text/plain' }));
-    await waitFor(() => document.querySelector('.toast')?.textContent.includes('导入失败'), 'unsupported type rejected');
+    await waitFor(() => /无法导入。1 个文件格式不支持。/.test(document.querySelector('.toast')?.textContent || ''), 'unsupported type rejected');
     await sleep(400);
     const rejectedImport = cardCount() === 2;
     const countAfterReject = cardCount();

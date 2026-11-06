@@ -242,8 +242,9 @@ async function requestJsonAttempt<T>(path: string, {
     catch {
       // 200 with a non-JSON body (proxy/gateway error page) must surface as an
       // error, never as an empty success the gallery would read as "no assets".
-      if (!result.ok) throw new Error(result.statusText || `HTTP ${result.status}`)
-      throw new Error(`Invalid JSON response: HTTP ${result.status}`)
+      // 任务 359：客户端错误带 code，describeError 按码出双语整句。
+      if (!result.ok) throw httpError(result.status, result.statusText)
+      throw httpError(result.status, `Invalid JSON response: HTTP ${result.status}`)
     }
     if (result.ok) return data as T
     // 任务 314：GET 也可能 401（读接口同样要凭据），统一走「重新换 cookie
@@ -251,9 +252,12 @@ async function requestJsonAttempt<T>(path: string, {
     if (attempt === 0 && data.code === "MOSA_CLIENT_UNAUTHORIZED" && await ensureClientSession()) continue
     const error = new Error(String(data.error || result.statusText || `HTTP ${result.status}`))
     if (typeof data.code === "string") (error as Error & { code?: string }).code = data.code
+    // 服务端给了 error 文字但没有 code：保持无码，走未知错误兜底；只有没有
+    // 可用错误文字的失败才按 HTTP_ERROR 出「无法连接本地服务（HTTP n）」。
+    else if (!data.error) Object.assign(error, { code: "HTTP_ERROR", status: result.status })
     throw error
   }
-  throw new Error("GravityPort session authorization expired")
+  throw sessionExpiredError()
 }
 
 const e = encodeURIComponent
@@ -808,9 +812,34 @@ const emptyOutcome = (total: number): BatchOutcome =>
 const BATCH_CHUNK_SIZE = 1000
 const STACK_MOVE_CHUNK_SIZE = 2000
 
+// 任务 359：客户端错误带 code，describeError 按码出双语整句（原文进 message
+// 供日志与 {detail} 兜底）。
+function httpError(status: number, detail = ""): Error {
+  const error = new Error(detail || `HTTP ${status}`) as Error & { code?: string; status?: number }
+  error.code = "HTTP_ERROR"
+  error.status = status
+  return error
+}
+
+function sessionExpiredError(): Error {
+  const error = new Error("GravityPort session authorization expired") as Error & { code?: string }
+  error.code = "SESSION_EXPIRED"
+  return error
+}
+
+function codedError(code: string, message: string): Error {
+  const error = new Error(message) as Error & { code?: string }
+  error.code = code
+  return error
+}
+
 function failureMessage(error: unknown): string {
   return describeError(error)
 }
+
+// 批量接口没给出某条的明确结果时的兜底错误文字；界面各批量动作有自己的固定
+// 整句（任务 359：全部失败不再把这句英文原样上屏），它只作内部兜底。
+const BATCH_PARTIAL_FALLBACK = "Some assets could not be updated"
 
 async function runBatchAction(
   project: string,
@@ -840,14 +869,14 @@ async function runBatchAction(
         onConfirmed?.(item)
         if (item.ok === false) {
           failedIds.add(item.id)
-          if (!firstError) firstError = item.error || "Some assets could not be updated"
+          if (!firstError) firstError = item.error || BATCH_PARTIAL_FALLBACK
         }
       }
       // Rows the response stayed silent about were not confirmed either.
       for (const id of chunk) {
         if (!confirmed.has(id) && !failedIds.has(id)) {
           failedIds.add(id)
-          if (!firstError) firstError = "Some assets could not be updated"
+          if (!firstError) firstError = BATCH_PARTIAL_FALLBACK
         }
       }
     } catch (error) {
@@ -937,15 +966,15 @@ export async function fetchRawGroupAssets(project: string, group: string, signal
   const assets: JsonValue[] = []
   let cursor = ""
   for (;;) {
-    if (signal?.aborted) throw new Error("Group export cancelled")
+    if (signal?.aborted) throw codedError("GROUP_EXPORT_CANCELLED", "Group export cancelled")
     if (cursor) {
-      if (seenCursors.has(cursor)) throw new Error("Group export pagination stalled")
+      if (seenCursors.has(cursor)) throw codedError("GROUP_EXPORT_FAILED", "Group export pagination stalled")
       seenCursors.add(cursor)
     }
     const params = new URLSearchParams({ project, group, limit: "100" })
     if (cursor) params.set("cursor", cursor)
     const data = await requestJson<{ assets?: JsonValue[]; page?: { nextCursor?: string | null } }>(`/api/assets?${params}`, { signal })
-    if (!Array.isArray(data.assets)) throw new Error("Group export returned no asset list")
+    if (!Array.isArray(data.assets)) throw codedError("GROUP_EXPORT_FAILED", "Group export returned no asset list")
     for (const item of data.assets) {
       const id = String(item?.id || "")
       if (id && seenIds.has(id)) continue
@@ -1051,7 +1080,15 @@ export async function stageImportFile(file: File): Promise<string> {
       credentials: "same-origin",
     })
     const data = await result.json().catch(() => ({})) as JsonValue
-    if (!result.ok) throw new Error(String(data.error || `HTTP ${result.status}`))
+    if (!result.ok) {
+      const error = new Error(String(data.error || `HTTP ${result.status}`)) as Error & { code?: string }
+      if (typeof data.code === "string") error.code = data.code
+      // 服务端给了 error 文字但没有 code：保持无码（未知错误走 {detail} 兜底，
+      // 导入原因里不可翻译的原因按「缺省只显示前半句」丢弃），只有纯网络层
+      // 失败才按 HTTP_ERROR 出「无法连接本地服务」。
+      else if (!data.error) { error.code = "HTTP_ERROR"; (error as Error & { status?: number }).status = result.status }
+      throw error
+    }
     return String(data.path || "")
   } finally {
     endMutation()

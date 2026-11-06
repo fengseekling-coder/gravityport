@@ -261,14 +261,14 @@ describe("VersionCompare rendering (task 217)", () => {
     const zh = renderToStaticMarkup(createElement(VersionCompare, props));
     assert.match(zh, /<h4>版本对比<\/h4>/);
     const en = renderToStaticMarkup(createElement(VersionCompare, { ...props, language: "en" }));
-    assert.match(en, /<h4>Compare versions<\/h4>/);
+    assert.match(en, /<h4>Version comparison<\/h4>/);
     assert.match(en, /aria-label="Base version"/);
     assert.match(en, /aria-label="Target version"/);
   });
 
   it("keeps the round copy wired through translate + fill", () => {
     assert.equal(fill(translate("第 {n} 轮", "zh"), { n: 2 }), "第 2 轮");
-    assert.equal(fill(translate("第 {n} 轮", "en"), { n: 2 }), "Turn 2");
+    assert.equal(fill(translate("第 {n} 轮", "en"), { n: 2 }), "Round 2");
     assert.equal(translate("无轮次", "zh"), "无轮次");
     assert.equal(translate("无轮次", "en"), "No round");
   });

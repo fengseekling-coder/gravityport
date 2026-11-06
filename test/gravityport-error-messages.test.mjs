@@ -65,13 +65,14 @@ test("unknown error code returns empty string", () => {
   assert.equal(errorMessagesModule.messageForErrorCode(undefined), "");
 });
 
-test("each Chinese error message has a corresponding entry in i18n english map", () => {
-  const i18nSource = readFileSync(join(srcRoot, "i18n.ts"), "utf8");
-  const i18nKeys = new Set(extractI18nKeys(i18nSource).map((entry) => entry.key));
-
+// 任务 359：错误码文案中英两份都在 error-messages.ts，不再靠 i18n 键二次翻译。
+test("each error code carries both a zh and an en sentence", () => {
   for (const code of REQUIRED_CODES) {
-    const message = errorMessagesModule.messageForErrorCode(code);
-    assert.ok(i18nKeys.has(message), `i18n.ts is missing English translation for "${message}" (code ${code})`);
+    const zh = errorMessagesModule.messageForErrorCode(code, "zh");
+    const en = errorMessagesModule.messageForErrorCode(code, "en");
+    assert.ok(zh, `code ${code} must map to a Chinese sentence`);
+    assert.ok(en, `code ${code} must map to an English sentence`);
+    assert.notEqual(zh, en, `code ${code} must not reuse the Chinese sentence as English`);
   }
 });
 
@@ -87,7 +88,7 @@ test("failureMessage in mosa-api maps recognized error codes to Chinese and fall
     const outcomeStacked = await mosaApiModule.moveAssetsToStack("default", ["a1"], "target-stack");
     assert.equal(
       outcomeStacked.firstError,
-      "素材已在其他堆叠里，列表已刷新，请重新拖动",
+      "无法堆叠素材。素材已在其他堆叠中，列表已刷新，请重试。",
       "ASSET_ALREADY_STACKED code must map to localized Chinese message"
     );
 
@@ -98,10 +99,11 @@ test("failureMessage in mosa-api maps recognized error codes to Chinese and fall
     }), { status: 400, headers: { "content-type": "application/json" } });
 
     const outcomeFallback = await mosaApiModule.moveAssetsToStack("default", ["a1"], "target-stack");
+    // 任务 359：未识别的码走 {detail} 兜底，原文进括号。
     assert.equal(
       outcomeFallback.firstError,
-      "Raw server failure message",
-      "Unrecognized code must fall back to error.message"
+      "无法完成操作（UNKNOWN_UNRECOGNIZED_CODE）",
+      "Unrecognized code must fall back to the unknown sentence with the code as detail"
     );
 
     // 3. Other required error codes map to their Chinese message as well
@@ -123,11 +125,17 @@ test("failureMessage in mosa-api maps recognized error codes to Chinese and fall
 test("describeError is the shared path for App.tsx and mosa-api: code first, then message", () => {
   const { describeError } = errorMessagesModule;
   const stacked = Object.assign(new Error("Asset already in another stack"), { code: "ASSET_ALREADY_STACKED" });
-  assert.equal(describeError(stacked), "素材已在其他堆叠里，列表已刷新，请重新拖动");
+  assert.equal(describeError(stacked), "无法堆叠素材。素材已在其他堆叠中，列表已刷新，请重试。");
+  assert.equal(describeError(stacked, "en"), "Couldn’t stack assets. An asset is already in another stack. The list was refreshed. Try again.");
+  // 未识别的错误走 {detail} 兜底，原文放括号（规范：技术信息放句末括号）。
   const unknown = Object.assign(new Error("Raw server failure message"), { code: "UNKNOWN_UNRECOGNIZED_CODE" });
-  assert.equal(describeError(unknown), "Raw server failure message");
-  assert.equal(describeError(new Error("plain")), "plain");
-  assert.equal(describeError("text"), "text");
+  // {detail} 取状态码或服务端 code（规范与审查表 ERR-UNKNOWN）。
+  assert.equal(describeError(unknown), "无法完成操作（UNKNOWN_UNRECOGNIZED_CODE）");
+  assert.equal(describeError(new Error("plain")), "无法完成操作（plain）");
+  assert.equal(describeError("text"), "无法完成操作（text）");
+  // 客户端错误码：HTTP_ERROR 带状态码、分组错误带名字。
+  assert.equal(describeError(Object.assign(new Error("HTTP 502"), { code: "HTTP_ERROR", status: 502 })), "无法连接本地服务（HTTP 502）");
+  assert.equal(describeError(Object.assign(new Error("Group already exists: 风景"), { code: "GROUP_ALREADY_EXISTS" })), "已有名为「风景」的分组。");
   for (const code of REQUIRED_CODES) {
     assert.equal(describeError({ code, message: "raw" }), errorMessagesModule.messageForErrorCode(code));
   }

@@ -133,7 +133,7 @@ describe("buildReleaseNoteBlocks", () => {
       t: identity,
       data: { ...fixtureData, unreleased: { zh: [], en: [] } },
     });
-    assert.deepEqual(blocks[0].groups, [{ heading: "", lines: ["还没有记录"] }]);
+    assert.deepEqual(blocks[0].groups, [{ heading: "", lines: ["暂无更新记录"] }]);
   });
 
   it("released version recorded in release-notes.json: one block with the entry and its date", () => {
@@ -145,7 +145,7 @@ describe("buildReleaseNoteBlocks", () => {
       data: fixtureData,
     });
     assert.equal(blocks.length, 1);
-    assert.equal(blocks[0].title, "当前版本 1.1.0 更新内容");
+    assert.equal(blocks[0].title, "当前版本 v1.1.0 更新内容");
     assert.equal(blocks[0].date, "2026年10月16日");
     assert.deepEqual(blocks[0].groups, [{ heading: "", lines: ["当前版本的说明"] }]);
   });
@@ -187,7 +187,7 @@ describe("buildReleaseNoteBlocks", () => {
       t: identity,
       data: fixtureData,
     });
-    assert.deepEqual(blocks[0].groups, [{ heading: "", lines: ["这个版本没有更新说明"] }]);
+    assert.deepEqual(blocks[0].groups, [{ heading: "", lines: ["此版本没有更新说明"] }]);
     assert.equal(blocks[0].date, "");
   });
 
@@ -201,10 +201,10 @@ describe("buildReleaseNoteBlocks", () => {
       data: fixtureData,
     });
     assert.equal(blocks.length, 2);
-    assert.equal(blocks[0].title, "新版本 1.2.0 更新内容");
+    assert.equal(blocks[0].title, "新版本 v1.2.0 更新内容");
     assert.equal(blocks[0].date, expectedAvailableDate("zh-CN"));
     assert.deepEqual(blocks[0].groups, [{ heading: "", lines: ["新版第一条", "新版第二条", "新版第三条"] }]);
-    assert.equal(blocks[1].title, "当前版本 1.1.0 更新内容");
+    assert.equal(blocks[1].title, "当前版本 v1.1.0 更新内容");
     // The release entry carries a date-only value, which must render as that
     // calendar day regardless of the viewer's timezone.
     assert.equal(blocks[1].date, "2026年10月16日");
@@ -220,7 +220,7 @@ describe("buildReleaseNoteBlocks", () => {
       data: fixtureData,
     });
     assert.equal(blocks.length, 2);
-    assert.equal(blocks[0].title, "新版本 1.2.0 更新内容");
+    assert.equal(blocks[0].title, "新版本 v1.2.0 更新内容");
   });
 
   it("manifest notes without newlines become one sentence", () => {
@@ -301,7 +301,7 @@ describe("buildReleaseNoteBlocks", () => {
       data: fixtureData,
     });
     assert.equal(blocks.length, 1);
-    assert.equal(blocks[0].title, "当前版本 1.1.0 更新内容");
+    assert.equal(blocks[0].title, "当前版本 v1.1.0 更新内容");
   });
 
   it("idle update state never produces a new-version block", () => {
@@ -325,10 +325,10 @@ describe("buildReleaseNoteBlocks", () => {
       updateState: availableState,
       data: fixtureData,
     });
-    assert.equal(blocks[0].title, "What’s new in 1.2.0");
+    assert.equal(blocks[0].title, "Release notes for new version v1.2.0");
     assert.equal(blocks[0].date, expectedAvailableDate("en"));
     assert.deepEqual(blocks[0].groups, [{ heading: "", lines: ["English first", "English second"] }]);
-    assert.equal(blocks[1].title, "What’s new in 1.1.0");
+    assert.equal(blocks[1].title, "Release notes for current version v1.1.0");
     assert.equal(blocks[1].date, "Oct 16, 2026");
     assert.deepEqual(blocks[1].groups, [{ heading: "", lines: ["Current version note"] }]);
   });
@@ -353,7 +353,7 @@ describe("buildReleaseNoteBlocks", () => {
       t: identity,
     });
     assert.equal(blocks.length, 1);
-    assert.equal(blocks[0].title, "当前版本 0.0.0-no-such-version 更新内容");
-    assert.deepEqual(blocks[0].groups, [{ heading: "", lines: ["这个版本没有更新说明"] }]);
+    assert.equal(blocks[0].title, "当前版本 v0.0.0-no-such-version 更新内容");
+    assert.deepEqual(blocks[0].groups, [{ heading: "", lines: ["此版本没有更新说明"] }]);
   });
 });

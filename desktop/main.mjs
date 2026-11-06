@@ -15,7 +15,7 @@ import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../li
 import { validateRuntimeIsolation } from "../lib/runtime-isolation-guard.mjs";
 import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
 import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../lib/import-staging.mjs";
-import { getDesktopText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getUpdateNotificationText } from "./notification-i18n.mjs";
+import { getDesktopText, getLibrarySchemaNewerDialogText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getUpdateNotificationText } from "./notification-i18n.mjs";
 import { buildMenuTemplate } from "./menu-template.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
@@ -220,22 +220,18 @@ function recordLibraryLocationAfterSuccessfulOpen() {
 }
 
 // Locale at startup-failure time. The renderer has not run yet when the
-// library location is resolved below, so this stays the "zh" default here —
-// the same trade-off reportStartupFailure() makes. Declared above that
-// resolution because the error path reads it during module evaluation.
-let currentLocale = "zh"; // safe default matching original Chinese-only notifications
+// library location is resolved below, so this starts from the system locale
+// (任务 359：英文系统不再看到中文弹窗), and the renderer's set-locale still
+// overrides it as soon as the interface reports its language.
+let currentLocale = /^en\b/i.test(String(app.getLocale?.() || "")) ? "en" : "zh";
 
 function showLibraryLocationErrorAndExit(error) {
-  const english = currentLocale === "en";
-  const title = english ? "Can't open your library" : "无法打开素材库";
-  const body = error?.code === MOSA_LIBRARY_NOT_FOUND
-    ? (english
-      ? `Your library was last at ${error.libraryDir} and can't be found. If it's on an external drive, connect it and open the app again.`
-      : `上次使用的素材库在 ${error.libraryDir}，现在找不到了。如果它在外接硬盘上，请接好后重新打开。`)
-    : (english
-      ? `The file that records your library location can't be read: ${error.locationFile}. The app stopped so it doesn't create an empty library.`
-      : `记录素材库位置的文件读不出来：${error.locationFile}。为了不新建一个空库，App 已停止启动。`);
-  screenGuard.errorBox(title, body);
+  // 任务 359（NATIVE-01/02）：两条文字进 notification-i18n 表。
+  const key = error?.code === MOSA_LIBRARY_NOT_FOUND
+    ? { title: "libraryLocationMissingTitle", body: "libraryLocationMissingBody", dir: error?.libraryDir }
+    : { title: "libraryLocationFileUnreadableTitle", body: "libraryLocationFileUnreadableBody", dir: error?.locationFile };
+  const body = getDesktopText(key.body, currentLocale).replace(/\{libraryDir\}/g, String(key.dir || ""));
+  screenGuard.errorBox(getDesktopText(key.title, currentLocale), body);
   // Nothing has started yet, so exit synchronously: app.exit() does not halt
   // module evaluation, and a rethrow would surface a second "JavaScript error
   // in the main process" dialog on top of the one the user just dismissed.
@@ -1228,9 +1224,10 @@ function registerIPC() {
     if (process.env.MOSA_LIBRARY_DIR) return { ok: false, reason: "managed" };
     if (service?.mode !== "owned") return { ok: false, reason: "attached" };
 
+    // 任务 359（NATIVE-16）：选择器文字进 notification-i18n 表。
     const selection = await screenGuard.openDialog(mainWindow, {
-      title: currentLocale === "en" ? "Choose a new GravityPort library location" : "选择新的 GravityPort 素材库位置",
-      buttonLabel: currentLocale === "en" ? "Choose" : "选择",
+      title: getDesktopText("chooseLibraryLocationTitle", currentLocale),
+      buttonLabel: getDesktopText("chooseLibraryLocationButton", currentLocale),
       properties: ["openDirectory", "createDirectory"],
     });
     if (selection.canceled || !selection.filePaths?.[0]) return { ok: false, reason: "cancelled" };
@@ -1239,16 +1236,13 @@ function registerIPC() {
     const validation = await validateRelocationTarget({ currentLibraryDir: libraryDir, nextLibraryDir });
     if (!validation.ok) return { ok: false, reason: validation.reason };
 
+    // 任务 359（NATIVE-17）：确认框文字进 notification-i18n 表。
     const confirmation = await screenGuard.messageBox(mainWindow, {
       type: "question",
-      title: currentLocale === "en" ? "Move GravityPort Library" : "移动 GravityPort 素材库",
-      message: currentLocale === "en"
-        ? "Move the current library to the selected folder?"
-        : "将当前素材库移动到所选文件夹？",
-      detail: currentLocale === "en"
-        ? "GravityPort will close its local library service, copy all assets and metadata, then restart. The original is removed only after the copy succeeds."
-        : "GravityPort 会先关闭本地素材库服务，完整复制素材与元数据，然后自动重启。复制成功前不会删除原素材库。",
-      buttons: currentLocale === "en" ? ["Cancel", "Move and Restart"] : ["取消", "移动并重启"],
+      title: getDesktopText("moveLibraryTitle", currentLocale),
+      message: getDesktopText("moveLibraryMessage", currentLocale),
+      detail: getDesktopText("moveLibraryDetail", currentLocale),
+      buttons: [getDesktopText("moveLibraryCancel", currentLocale), getDesktopText("moveLibraryRestart", currentLocale)],
       defaultId: 1,
       cancelId: 0,
       noLink: true,
@@ -1621,11 +1615,12 @@ async function createMainWindow() {
         app.exit(1);
         return;
       }
+      // 任务 359（NATIVE-18）：崩溃框走 notification-i18n，补中文。
       void screenGuard.messageBox(mainWindow, {
         type: "error",
         title: "GravityPort",
-        message: "GravityPort's interface stopped unexpectedly and could not recover automatically.",
-        buttons: ["Restart GravityPort", "Close"],
+        message: getDesktopText("rendererCrashBody", currentLocale),
+        buttons: [getDesktopText("rendererCrashRestart", currentLocale), getDesktopText("rendererCrashClose", currentLocale)],
         defaultId: 0,
         cancelId: 1,
       }).then(({ response }) => {
@@ -1993,13 +1988,29 @@ function reportStartupFailure(error) {
     return;
   }
   // A broken library (missing mosa.db, incomplete state) gets its own dialog
-  // in the current language; everything else keeps the generic startup title
-  // with the raw error message.
+  // in the current language. 任务 359（NATIVE-03b）：其余失败不再把原始英文
+  // error.message 弹给用户，改用固定正文（细节只进日志）。
   const libraryFailure = getLibraryStartupFailureText(error, currentLocale);
-  screenGuard.errorBox(
-    libraryFailure ? libraryFailure.title : getDesktopText("startupErrorTitle", currentLocale),
-    libraryFailure ? libraryFailure.body : message,
-  );
+  // 任务 359（NATIVE-09c）：库比 App 新的框带「前往官网下载 / 取消」。
+  if (error?.code === "MOSA_LIBRARY_SCHEMA_NEWER") {
+    const schemaNewerDialog = getLibrarySchemaNewerDialogText(currentLocale);
+    void screenGuard.messageBox(mainWindow && !mainWindow.isDestroyed() ? mainWindow : null, {
+      type: "warning",
+      title: schemaNewerDialog.title,
+      message: schemaNewerDialog.body,
+      buttons: schemaNewerDialog.buttons,
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    }).then(({ response }) => {
+      if (response === 0) void screenGuard.openExternal(MOSA_DOWNLOAD_PAGE_URL);
+    });
+  } else if (libraryFailure) {
+    screenGuard.errorBox(libraryFailure.title, libraryFailure.body);
+  } else {
+    console.error(`[MOSA] startup failure detail: ${error?.stack || message}`);
+    screenGuard.errorBox(getDesktopText("startupErrorTitle", currentLocale), getDesktopText("startupErrorBody", currentLocale));
+  }
   shuttingDown = true;
   stopBridgeNotificationPoll();
   // Task 341: both shutdown steps are bounded (5s each); a wedged runtime

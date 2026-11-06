@@ -38,7 +38,8 @@ export default function ColumnControl({ value, onChange, language }: {
       trigger.current?.focus()
     }
   }}>
-    <button ref={trigger} className={`column-trigger ${open ? "open" : ""}`} aria-label={`${tr("视图")}: ${value} ${tr("列")}`} title={tr("调整列数")} aria-expanded={open} aria-controls={open ? id : undefined} onClick={event => { focusWhenOpened.current = event.detail === 0; setOpen(!open) }}>
+    {/* 任务 359（MAIN-10a）：读屏名与弹层同名「列数」，中文全角冒号进翻译表。 */}
+    <button ref={trigger} className={`column-trigger ${open ? "open" : ""}`} aria-label={tr("列数：{n}").replace("{n}", String(value))} title={tr("调整列数")} aria-expanded={open} aria-controls={open ? id : undefined} onClick={event => { focusWhenOpened.current = event.detail === 0; setOpen(!open) }}>
       <Icon name="grid" size={16} /><span>{value}</span>
     </button>
     {open && <div id={id} className="column-popover" role="group" aria-label={tr("列数")}>

@@ -330,8 +330,8 @@ test("defaults capture off and keeps Chrome permissions minimal", () => {
 });
 
 test("manual fallback controls cover ChatGPT images and Google videos", () => {
-  assert.match(contentSource, /data-action="save-visible">保存当前图</);
-  assert.match(contentSource, /data-action="save-all">保存全部大图</);
+  assert.match(contentSource, /data-action="save-visible">保存当前图片</);
+  assert.match(contentSource, /data-action="save-all">保存全部图片</);
   assert.match(backgroundSource, /id: "mosa-save-video"/);
   assert.match(backgroundSource, /contexts: \["video"\]/);
   assert.match(providerSource, /"mosa\.capture\.saveVideoWithPrompt"/);
@@ -447,7 +447,7 @@ test("ChatGPT DOM hook reacts to both src and srcset changes", () => {
 
 test("oversized ChatGPT metadata fails visibly while DOM fallback remains available", () => {
   assert.match(contentSource, /data\.type === "harvest-skipped"/);
-  assert.match(contentSource, /会话元数据过大，已启用图片兜底/);
+  assert.match(contentSource, /对话信息过大，将先保存图片/);
   assert.match(contentSource, /function enqueueDomFallback\(candidate\)/);
 });
 
@@ -3697,7 +3697,7 @@ function currentChatGptAutoCaptureHarness() {
     "MAX_BLOB_ASSETS", "SESSION_CACHE_MAX", "SIZE_FAILURE_LIMIT", "SIZE_FAILURE_BACKOFF_MS",
     "AUTO_STABILITY_DELAY_MS", "AUTO_IN_PROGRESS_STALE_MS", "AUTO_PARTIAL_FALLBACK_MS", "DOM_MEDIA_GRACE_MS",
     "SESSION_TITLE_MAX_LENGTH", "SESSION_TITLE_PLACEHOLDERS", "SYSTEM_HINT_LABEL_LINES",
-    "DELIVERY_RETRY_MAX", "DELIVERY_RETRY_GAP_MS", "PAGE_READ_ATTEMPTS_MAX", "GENERATION_PROMPT_STATUSES",
+    "DELIVERY_RETRY_MAX", "DELIVERY_RETRY_GAP_MS", "PAGE_READ_ATTEMPTS_MAX",
   ].map((name) => new RegExp(`const ${name} = [^;]+;`).exec(contentSource)?.[0]);
   assert.ok(constants.every(Boolean), "auto-capture constants should be extractable from content.js");
 
@@ -3716,11 +3716,13 @@ function currentChatGptAutoCaptureHarness() {
     "isSavedCandidate", "rememberSavedCandidate", "savedGenerationStatusForCandidate", "rememberSavedPrompt",
     "clearAutoStability", "scheduleAutoStabilityRetry", "autoCandidateReadiness",
     "isArchiveWorthyCandidate", "canAttempt", "noteAutomaticFailure", "enqueueAuto", "ingestCandidate", "findCandidateForMeta", "resolvePrompt",
+    // 任务 359：错误上屏前的统一映射（ingestCandidate 的 catch 会调用它）。
+    "friendlyCaptureError",
     "bytesFromUrlOrImg", "waitForRenderedCandidate", "renderedCandidateFor", "originalBytesFromUrl", "canvasBytesFromImage",
     "arrayBufferToBase64", "decodedImageDimensions",
     "userMessageForCandidate", "stripSystemHintLabelLines", "messageScopeForCandidate", "domCaptionForCandidate", "messageIdsForCandidate", "messageIdForCandidate",
     "buildStoredPrompt", "cleanPromptText", "extractPlaceHints", "promptMentionsPlace", "looksLikeGenerationCaption", "isWeakChatPrompt",
-    "scorePromptText", "promptQuality", "metaPromptQuality", "importPromptNote",
+    "scorePromptText", "promptQuality", "metaPromptQuality",
   ];
   const source = names.map((name) => {
     const match = new RegExp(`\\n {2}(?:async )?function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource);
@@ -5201,9 +5203,9 @@ test("ChatGPT: a queued capture is not sent again and says it is queued, not fai
   const { context, clock, attempt } = chatGptHandOffHarness({ ok: true, result: { status: "queued", reason: "mosa-unavailable" } });
   await attempt();
   assert.equal(context.ingestMessages.length, 1);
-  assert.equal(context.statusTexts.at(-1), "已排队 · GravityPort 打开后自动入库");
+  assert.equal(context.statusTexts.at(-1), "已暂存，打开 GravityPort 后自动收录");
   assert.equal(context.toasts.filter((toast) => toast.isError).length, 0, "a queued capture never shows an error");
-  const notices = context.toasts.filter((toast) => toast.message === "已排队 · GravityPort 打开后自动入库");
+  const notices = context.toasts.filter((toast) => toast.message === "已暂存，打开 GravityPort 后自动收录");
   assert.equal(notices.length, 1, "the queued notice shows once for this key");
 
   await attempt(180_000);
@@ -5243,43 +5245,16 @@ test("ChatGPT: a refused capture (not retryable) is never sent again automatical
 //                  task-user-prompt, canvas-alt-text-only, visible-caption
 //   生图提示词    → generation-tool-prompt, image-generation-revised-prompt,
 //                  user-edited (no suffix)
-test("the capture toast maps every promptStatus to a plain phrase and never shows the code", () => {
-  const cleanPromptText = /function cleanPromptText\(text\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0];
-  const generationStatuses = /const GENERATION_PROMPT_STATUSES = \[[^\]]*\];/.exec(contentSource)?.[0];
-  const importPromptNote = /function importPromptNote\(promptStatus, prompt\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0];
-  assert.ok(cleanPromptText && generationStatuses && importPromptNote, "content.js defines importPromptNote next to cleanPromptText");
-  const context = { Array, String };
-  vm.runInNewContext(`${cleanPromptText}\n${generationStatuses}\n${importPromptNote}\n
-    globalThis.note = (status, prompt) => importPromptNote(status, prompt);`, context, { filename: "content-import-prompt-note.js" });
-  const note = context.note;
-
-  // 没拿到提示词
-  for (const status of ["not-available", "not-available-in-session", "image-generation-prompt-unavailable"]) {
-    assert.equal(note(status, "  "), "（没拿到提示词）", status);
-    assert.equal(note(status, ""), "（没拿到提示词）", status);
-  }
-  assert.equal(note("generation-tool-prompt", ""), "（没拿到提示词）", "an empty prompt says so regardless of the status");
-  assert.equal(note("no-caption", ""), "（没拿到提示词）", "the old display fallback reads the same");
-
-  // 提示词取自页面说明
-  for (const status of ["user-message", "provider-visible-prompt", "session-user-prompt", "task-user-prompt", "canvas-alt-text-only", "visible-caption"]) {
-    assert.equal(note(status, "a prompt from the page"), "（提示词取自页面说明）", status);
-  }
-  assert.equal(note("some-future-status", "a prompt from the page"), "（提示词取自页面说明）", "unknown statuses with a prompt read as page text");
-
-  // 拿到了生图提示词:不加尾巴
-  for (const status of ["generation-tool-prompt", "image-generation-revised-prompt", "user-edited"]) {
-    assert.equal(note(status, "a real generation prompt"), "", status);
-  }
-
-  // 旧提示里的状态码不再出现在任何提示文案或状态栏里。
+test("the capture toast uses the 359 wording and never shows the promptStatus code", () => {
+  // 351 first replaced the raw promptStatus in this toast; 359 (EXT-34) then
+  // fixed the final wording: "已保存到 GravityPort" with or without a prompt.
+  const toastLine = contentSource.split("\n").find((line) => line.includes("showToast(resolved.prompt ?"));
+  assert.ok(toastLine, "the saved toast line exists");
+  assert.match(toastLine, /"已保存到 GravityPort"/);
+  assert.match(toastLine, /"已保存到 GravityPort，无提示词"/);
+  assert.doesNotMatch(toastLine, /promptStatus/, "the toast must not interpolate the internal status");
   assert.doesNotMatch(contentSource, /入库 ✓/);
-  for (const code of ["visible-caption", "no-caption", "generation-tool-prompt", "user-message", "provider-visible-prompt"]) {
-    const toastLine = contentSource.split("\n").find((line) => line.includes("showToast(`已收进 GravityPort"));
-    assert.ok(toastLine, "the imported toast line exists");
-    assert.doesNotMatch(toastLine, new RegExp(code), `the toast line must not interpolate ${code}`);
-  }
-  const statusLine = contentSource.split("\n").find((line) => line.includes("setStatus(`已入库"));
-  assert.ok(statusLine, "the imported status line exists");
-  assert.doesNotMatch(statusLine, /\$\{label\}/, "the status bar no longer shows the internal label");
+  const statusLine = contentSource.split("\n").find((line) => line.includes("setStatus(`已保存 · 共"));
+  assert.ok(statusLine, "the saved status line exists");
+  assert.doesNotMatch(statusLine, /promptStatus|\$\{label\}/, "the status bar no longer shows the internal label");
 });

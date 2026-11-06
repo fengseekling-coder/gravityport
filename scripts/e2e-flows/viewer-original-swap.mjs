@@ -141,7 +141,7 @@ function viewerScenes(config) {
     const zoomText = () => (document.querySelector(".viewer-controls output")?.textContent || "").trim();
     const zoomPercent = () => parseInt(zoomText(), 10) / 100;
     const viewerMedia = () => document.querySelector(".image-viewer .viewer-image");
-    const oneToOneButton = () => Array.from(document.querySelectorAll(".viewer-controls button")).find((button) => button.title === "原始尺寸");
+    const oneToOneButton = () => Array.from(document.querySelectorAll(".viewer-controls button")).find((button) => button.title === "实际大小");
     const zoomInButton = () => document.querySelector('.viewer-controls button[aria-label="放大"]');
     const requestsTo = (path) => performance.getEntriesByType("resource").filter((entry) => pathOfSrc(entry.name) === path).length;
     const closeViewer = async () => {

@@ -13,7 +13,7 @@ import { translate, type Language } from "./i18n"
 import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } from "./context-menus"
 import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberIds, listStackMemberPaths, dropAssetsOnCard } from "./library-actions"
 import { planStackDropUndo, runStackDropUndo } from "./stack-drop-undo"
-import { describeError } from "./error-messages"
+import { describeError, messageForErrorCode } from "./error-messages"
 import {
   dragIdsForCard, dragGhostCount, pointOutsideWindow, nativeDragPaths,
   createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop, planStackMerge,
@@ -33,8 +33,8 @@ import { galleryKeyAction, isFocusSearchKey, neighbourAssetId } from "./gallery-
 import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
 import { computeConversationRounds, conversationRoundRows, roundCompareSelection, roundLine, type ConversationRoundRow } from "./conversation-rounds"
 import VersionCompare, { type VersionCompareEntry } from "./version-compare"
-import { sanitizeAssetForExport, relationTypes } from "./feature-parity"
-import { aspectRatioLabel, formatVideoDuration, describeSource, promptNotice, trashReasonNotice, resolveReferences } from "./inspector-info"
+import { sanitizeAssetForExport, relationTypes, RELATION_LABELS } from "./feature-parity"
+import { aspectRatioLabel, formatVideoDuration, describeSource, promptNotice, trashReasonNotice, resolveReferences, SOURCE_LABEL_MAP } from "./inspector-info"
 import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, removeTagFromStored, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
@@ -54,6 +54,7 @@ import {
   createReadyGate,
   fill,
   installResultFeedback,
+  libraryLocationFailureText,
   mapUpdateResult,
   buildUpdateText,
   type UpdateUiState,
@@ -143,8 +144,15 @@ function inspectorHeaderLine(info: ReturnType<typeof describeSource>, tr: (text:
   return tr(template).replace("{source}", tr(info.sourceLabel)).replace("{date}", info.dateLabel)
 }
 
-function errorMessage(error: unknown): string {
-  return describeError(error)
+function errorMessage(error: unknown, language: Language): string {
+  return describeError(error, language)
+}
+
+// 任务 359（写死文字 2）：版本树副行里的 provider 原值（chatgpt 等小写代号）
+// 过一遍显示名；型号是设备数据，保留原文。
+const PROVIDER_LABELS: Record<string, string> = {
+  chatgpt: "ChatGPT", gemini: "Gemini", flow: "Flow", "google-ai-studio": "Google AI Studio",
+  jimeng: "即梦", midjourney: "Midjourney", codex: "Codex", cowart: "Cowart", grok: "Grok",
 }
 
 // Task 146 card dragging.
@@ -415,7 +423,10 @@ export default function App() {
   // once settings/viewer/confirmation dialogs are closed.
   const [importReviewQueue, setImportReviewQueue] = useState<ImportReviewData[]>([])
   const [importReviewBusy, setImportReviewBusy] = useState(false)
-  const [loadError, setLoadError] = useState("")
+// 任务 359（S-03 / EMPTY-02）：loadError 存错误本身，渲染时再翻译——
+// version-mismatch 与 project-switch 各有固定句且前者不显示「重试」。
+type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } | { kind: "load"; error: unknown } | null
+  const [loadError, setLoadError] = useState<LoadErrorState>(null)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [pageTotal, setPageTotal] = useState<number | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -461,6 +472,15 @@ export default function App() {
   const [cardInfo, setCardInfo] = useState(preferences.cardInfo)
   const [language, setLanguage] = useState<Language>(preferences.language)
   const tr = (text: string) => translate(text, language)
+  // 任务 359（HC-16）：分组统计「按来源」的原始来源码过显示名。
+  const sourceDisplayLabel = (code: string) => {
+    const known = SOURCE_LABEL_MAP[code]
+    return known ? tr(known) : code
+  }
+  const providerDisplayLabel = (provider: string) => {
+    const known = PROVIDER_LABELS[provider]
+    return known ? tr(known) : provider
+  }
   const [savedLocally, setSavedLocally] = useState(true)
   useEffect(() => {
     try {
@@ -804,7 +824,7 @@ export default function App() {
     }
     setLoading(true)
     galleryLoadingRef.current = true
-    setLoadError("")
+    setLoadError(null)
     const run = async () => {
       try {
         // Review 2-6 D.1: a view with no baseline yet pins one from the
@@ -929,7 +949,7 @@ export default function App() {
           exitStackReplace()
           return
         }
-        setLoadError(errorMessage(error))
+        setLoadError({ kind: "load", error })
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false)
@@ -1086,7 +1106,7 @@ export default function App() {
       )
       if (cancelled) return
       if (mismatch) {
-        setLoadError(tr("界面与本地服务版本不一致。请退出旧版 GravityPort 后重新打开当前版本。"))
+        setLoadError({ kind: "version-mismatch" })
         return
       }
       if (!versionOkRef.current) {
@@ -1241,7 +1261,7 @@ export default function App() {
         setRelationDrafts({})
         setNewRelation(null)
       }
-    } catch (error) { if (identity === relationSelectionRef.current) notify(errorMessage(error)) }
+    } catch (error) { if (identity === relationSelectionRef.current) notify(errorMessage(error, language)) }
     finally { setRelationBusy(false) }
   }
   const selectHistoryAsset = (id: string) => {
@@ -1271,7 +1291,7 @@ export default function App() {
       const committed = focusSelection(selectionRef.current.selectedIds, selectionRef.current.selected, id)
       applySelection(committed.selectedIds, committed.selected)
     }).catch(error => {
-      if (!controller.signal.aborted) notify(errorMessage(error))
+      if (!controller.signal.aborted) notify(errorMessage(error, language))
     })
   }
   assetsRef.current = assets
@@ -1338,7 +1358,7 @@ export default function App() {
   // plus a navigation-key reload of the current view (an explicit user
   // request — full reload on purpose, review 2-6 E.2).
   const refreshCurrentView = () => {
-    notify(tr("正在刷新..."))
+    notify("正在刷新…")
     refreshNavigation()
   }
   // Translate, then fill the named placeholders ({count}, {completed}, …).
@@ -1355,11 +1375,21 @@ export default function App() {
     const clip = (display: GenerationDisplay) => (display.prompt ? display.prompt.slice(0, 12) : tr("无提示词记录"))
     return `${clip(upstream)} → ${clip(downstream)}`
   }
-  // Batch outcomes share one toast grammar: any failure → the existing
-  // 「…X 项，Y 项失败」 line; full success → single or counted text.
-  const notifyBatchOutcome = (doneCount: number, failed: number, texts: { single: string; multi: string; partial: string }) => {
-    if (failed) notify(tr(texts.partial).replace("X", String(doneCount)).replace("Y", String(failed)))
-    else notify(doneCount > 1 ? fillNamed(texts.multi, { count: doneCount }) : texts.single)
+  // Batch outcomes share one toast grammar (任务 359 TOAST-13~15): a full
+  // failure shows the action's own fixed sentence (never the server's raw
+  // text), a partial failure uses the named {count}/{failed} template, and a
+  // full success picks the singular or counted line by number.
+  const notifyBatchOutcome = (doneCount: number, failed: number, texts: {
+    single: string; multi: string; partialSingle: string; partialMulti: string; allFailed: string
+  }) => {
+    if (failed && !doneCount) { notify(texts.allFailed); return }
+    if (failed) {
+      notify(doneCount === 1
+        ? fillNamed(texts.partialSingle, { failed })
+        : fillNamed(texts.partialMulti, { count: doneCount, failed }))
+      return
+    }
+    notify(doneCount === 1 ? texts.single : fillNamed(texts.multi, { count: doneCount }))
   }
   // The in-flight lock lives in a ref: the render-state flag is stale inside
   // same-tick re-entrancy (scroll listener + IntersectionObserver firing
@@ -1394,7 +1424,7 @@ export default function App() {
       librarySyncRef.current?.notePageRevision(page.revision, baselineAtStart)
       return merged
     } catch (error) {
-      if (!controller.signal.aborted) notify(errorMessage(error))
+      if (!controller.signal.aborted) notify(errorMessage(error, language))
       return null
     }
     finally {
@@ -1685,7 +1715,7 @@ export default function App() {
     const revert = projectRevertRef.current
     projectRevertRef.current = null
     if (!revert) {
-      setLoadError(tr("项目切换失败"))
+      setLoadError({ kind: "project-switch" })
       return
     }
     // The restored view is the SAME view that was interrupted: prime the
@@ -1694,7 +1724,7 @@ export default function App() {
     viewKeyRef.current = projectRevertKeyRef.current
     selectionViewKeyRef.current = projectRevertKeyRef.current
     revert()
-    notify("项目切换失败，已恢复原项目")
+    notify("无法切换项目。已恢复原项目。")
   }
   const switchProject = (next: string) => {
     if (!next || next === project) return
@@ -1717,7 +1747,7 @@ export default function App() {
         setSortOrder(snapshot.sortOrder); setAssetType(snapshot.assetType)
         applySelection(snapshot.selectedIds, snapshot.selected)
         setPreview(snapshot.preview)
-        setLoadError("")
+        setLoadError(null)
         setProject(snapshot.project)
       }
     }
@@ -1730,7 +1760,7 @@ export default function App() {
     // Old-project rows must never linger under the new project, not even
     // while the new project's first page is still in flight.
     setAssets([]); setNextCursor(null)
-    setLoadError("")
+    setLoadError(null)
     setPreview(false)
     setProject(next)
   }
@@ -1783,7 +1813,7 @@ export default function App() {
       return
     }
     if (next >= navHistory.stack.length) {
-      notify("已是最新浏览位置")
+      notify("已在最新位置")
       return
     }
     let snap = navHistory.stack[next]
@@ -2034,7 +2064,7 @@ export default function App() {
     const controller = new AbortController()
     selectAllAbortRef.current = controller
     selectAllInFlightRef.current = true
-    setToast({ text: tr("正在全选") })
+    setToast({ text: tr("正在全选…") })
     try {
       const collected: string[] = []
       const seen = new Set<string>()
@@ -2060,7 +2090,9 @@ export default function App() {
           if (item.stack?.id && !stackId) stackOf.set(item.id, item.stack.id)
           if (item.image_path) pathOf.set(item.id, item.image_path)
         }
-        setToast({ text: `${tr("正在全选")} ${collected.length}${page.total ? ` / ${page.total}` : "…"}` })
+        setToast({ text: page.total
+          ? fillNamed("正在全选 {count} / {total}…", { count: collected.length, total: page.total })
+          : fillNamed("正在全选 {count}…", { count: collected.length }) })
         morePages = Boolean(page.nextCursor)
         if (!morePages) break
         cursor = page.nextCursor ?? undefined
@@ -2070,12 +2102,12 @@ export default function App() {
       if (collected.length) {
         selectAllPagesRef.current = { viewKey: requestViewKey, stackOf, pathOf }
         applySelection(collected, replaceSelection(collected, selectionRef.current.selected))
-        setToast({ text: (morePages
-          ? tr("结果过大，已选前 N 项")
-          : tr("已选 N 项")).replace("N", String(collected.length)) })
+        setToast({ text: morePages
+          ? fillNamed("已选择前 {count} 项。已达选择上限。", { count: collected.length })
+          : fillNamed("已选择 {count} 项", { count: collected.length }) })
       }
     } catch (error) {
-      if (!controller.signal.aborted) notify(errorMessage(error))
+      if (!controller.signal.aborted) notify(errorMessage(error, language))
     } finally {
       if (selectAllAbortRef.current === controller) selectAllAbortRef.current = null
       selectAllInFlightRef.current = false
@@ -2289,7 +2321,7 @@ export default function App() {
       let failed = 0
       let firstError = ""
       for (const id of stackIds) {
-        try { await assignStackToGroup(targetProject, id, name) } catch (error) { failed += 1; firstError ||= errorMessage(error) }
+        try { await assignStackToGroup(targetProject, id, name) } catch (error) { failed += 1; firstError ||= errorMessage(error, language) }
       }
       return { succeeded: stackIds.length - failed, failed, firstError }
     }
@@ -2369,7 +2401,7 @@ export default function App() {
     const stackIds = insideStack ? [] : [...new Set(dragIds.map(stackOf).filter(Boolean))]
     const nativeController = createNativeDragController({
       api: desktopAPI(),
-      onError: () => notify(tr("当前素材无法拖出到其他应用")),
+      onError: () => notify("无法将素材拖到其他应用"),
     })
     let pathsOverLimit = false
     let membersAbort: AbortController | null = null
@@ -2413,7 +2445,7 @@ export default function App() {
     if (!controller.supported() || !pointOutsideWindow(event, window)) return false
     if (!drag.stackIds.length) {
       if (!controller.startIfOutside(event, window)) return false
-      if (drag.pathsOverLimit) notify(tr("一次最多拖出 512 个文件，已带出前 512 个"))
+      if (drag.pathsOverLimit) notify(fillNamed("已拖出前 {limit} 个素材，已达单次上限", { limit: NATIVE_DRAG_MAX_FILES }))
       cancelCardDrag(drag)
       suppressCardDragClickRef.current = true
       return true
@@ -2426,15 +2458,15 @@ export default function App() {
     drag.membersPromise?.then(({ paths, overLimit }) => {
       if (cardDragRef.current !== drag) return
       if (!paths.length || !controller.begin(drag.dragIds, paths) || !controller.startIfOutside(event, window)) {
-        notify(tr("当前素材无法拖出到其他应用"))
+        notify("无法将素材拖到其他应用")
       } else if (overLimit) {
-        notify(tr("一次最多拖出 512 个文件，已带出前 512 个"))
+        notify(fillNamed("已拖出前 {limit} 个素材，已达单次上限", { limit: NATIVE_DRAG_MAX_FILES }))
       }
       cancelCardDrag(drag)
       suppressCardDragClickRef.current = true
     }).catch(() => {
       if (cardDragRef.current !== drag) return
-      notify(tr("当前素材无法拖出到其他应用"))
+      notify("无法将素材拖到其他应用")
       cancelCardDrag(drag)
       suppressCardDragClickRef.current = true
     })
@@ -2575,7 +2607,7 @@ export default function App() {
         if (undo.createdStackId) await dissolveStack(undo.project, undo.createdStackId)
         else if (undo.movedIds.length) {
           const loosened = await moveAssetsToStack(undo.project, undo.movedIds, null)
-          if (loosened.failed) throw new Error(loosened.firstError || tr("撤销失败"))
+          if (loosened.failed) throw new Error(loosened.firstError || "undo failed")
         }
         for (const source of undo.sources) {
           if (source.memberIds.length < 2) continue
@@ -2583,10 +2615,11 @@ export default function App() {
           if (source.name && rebuilt.name !== source.name) await renameStack(undo.project, rebuilt.id, source.name)
         }
       }
-      notify(tr("已撤销"))
+      notify("已撤销")
       refreshCurrentView()
-    } catch (error) {
-      notify(errorMessage(error))
+    } catch {
+      // 任务 359（TOAST-26b）：撤销失败显示固定句，不再透出服务器原文。
+      notify("无法撤销")
       refreshCurrentView()
     }
   }
@@ -2596,29 +2629,41 @@ export default function App() {
     try {
       if (gesture.dragIds.length === 1 && gesture.stackIds.length === 1) {
         await assignStackToGroup(project, gesture.stackIds[0], groupName)
-        notify(groupName ? fillNamed("堆叠已移动到「{group}」", { group: groupName }) : tr("堆叠已移出分组"))
+        notify(groupName ? fillNamed("已将堆叠移到「{group}」", { group: groupName }) : "已将堆叠移出分组")
       } else if (gesture.stackIds.length) {
         // A selection with stacks: every stack moves whole, plain cards as
         // themselves; the count is one per card, like the menu's batch.
         const outcome = await assignBatchToGroup(project, gesture.dragIds, groupName)
-        if (!outcome.succeeded) { notify(outcome.firstError || tr(groupName ? "添加分组失败" : "移除分组失败")); return }
+        if (!outcome.succeeded) { notify(groupName ? fillNamed("无法将素材移到「{group}」", { group: groupName }) : "无法将素材移出分组"); return }
         notify(outcome.failed
           ? (groupName
-              ? tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-              : tr("已从分组移除 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+              ? (outcome.succeeded === 1
+                  ? fillNamed("已将 1 项移到「{group}」，{failed} 项无法移动", { group: groupName, failed: outcome.failed })
+                  : fillNamed("已将 {count} 项移到「{group}」，{failed} 项无法移动", { count: outcome.succeeded, group: groupName, failed: outcome.failed }))
+              : (outcome.succeeded === 1
+                  ? fillNamed("已将 1 项移出分组，{failed} 项无法移出", { failed: outcome.failed })
+                  : fillNamed("已将 {count} 项移出分组，{failed} 项无法移出", { count: outcome.succeeded, failed: outcome.failed })))
           : groupName
-            ? fillNamed("已把 {count} 项移到「{group}」", { count: outcome.succeeded, group: groupName })
-            : fillNamed("已把 {count} 项移出分组", { count: outcome.succeeded }))
+            ? (outcome.succeeded === 1
+                ? fillNamed("已将 1 项移到「{group}」", { group: groupName })
+                : fillNamed("已将 {count} 项移到「{group}」", { count: outcome.succeeded, group: groupName }))
+            : (outcome.succeeded === 1
+                ? "已将 1 项移出分组"
+                : fillNamed("已将 {count} 项移出分组", { count: outcome.succeeded })))
       } else {
         const outcome = await setAssetsGroup(project, gesture.dragIds, groupName)
-        if (!outcome.succeeded) { notify(outcome.firstError || tr(groupName ? "添加分组失败" : "移除分组失败")); return }
+        if (!outcome.succeeded) { notify(groupName ? fillNamed("无法将素材移到「{group}」", { group: groupName }) : "无法将素材移出分组"); return }
         notify(groupName
-          ? fillNamed("已把 {count} 个素材移到「{group}」", { count: outcome.succeeded, group: groupName })
-          : fillNamed("已把 {count} 个素材移出分组", { count: outcome.succeeded }))
+          ? (outcome.succeeded === 1
+              ? fillNamed("已将 1 个素材移到「{group}」", { group: groupName })
+              : fillNamed("已将 {count} 个素材移到「{group}」", { count: outcome.succeeded, group: groupName }))
+          : (outcome.succeeded === 1
+              ? "已将 1 个素材移出分组"
+              : fillNamed("已将 {count} 个素材移出分组", { count: outcome.succeeded })))
       }
       applySelection([], "")
       scheduleSync()
-    } catch (error) { notify(errorMessage(error)) }
+    } catch (error) { notify(errorMessage(error, language)) }
     finally { cardDragMutationRef.current = false }
   }
   // Task 196: a drag carrying stacks merges. Onto a stack card, every
@@ -2643,14 +2688,14 @@ export default function App() {
       const targetStack = targetAsset.stack?.id ? targetAsset.stack : null
       if (targetStack) {
         const outcome = await moveAssetsToStack(originProject, movedIds, targetStack.id)
-        if (!outcome.succeeded) { notify(outcome.firstError || tr("合并堆叠失败")); return }
+        if (!outcome.succeeded) { notify("无法合并堆叠"); return }
         const moved = movedIds.filter(id => !outcome.failedIds.includes(id))
         const undo: StackUndoPlan = { kind: "unmerge", project: originProject, movedIds: moved, sources }
         notifyWithAction(outcome.failed
-          ? tr("已合并 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
+          ? fillNamed("已将 {count} 个素材合并到堆叠，{failed} 个无法合并", { count: outcome.succeeded, failed: outcome.failed })
           : targetStack.name
-            ? fillNamed("已合并到堆叠「{name}」，共 {count} 项", { name: targetStack.name, count: moved.length })
-            : fillNamed("已合并到堆叠，共 {count} 项", { count: moved.length }), {
+            ? fillNamed("已将 {count} 个素材合并到堆叠「{name}」", { name: targetStack.name, count: moved.length })
+            : fillNamed("已将 {count} 个素材合并到堆叠", { count: moved.length }), {
           label: tr("撤销"),
           run: () => { void runStackUndo(undo) },
         })
@@ -2660,21 +2705,21 @@ export default function App() {
         const sourceIds = sources.flatMap(source => source.memberIds)
         const loosened = await moveAssetsToStack(originProject, sourceIds, null)
         if (loosened.failed) {
-          notify(loosened.firstError || tr("合并堆叠失败"))
+          notify("无法合并堆叠")
           scheduleSync()
           return
         }
         const ids = [drop.cardId, ...movedIds]
         const stack = await createStack(originProject, ids, drop.cardId)
         const undo: StackUndoPlan = { kind: "unmerge", project: originProject, movedIds: [], sources, createdStackId: stack.id }
-        notifyWithAction(fillNamed("已堆叠 {count} 项素材", { count: ids.length }), {
+        notifyWithAction(ids.length === 1 ? tr("已堆叠 1 个素材") : fillNamed("已堆叠 {count} 个素材", { count: ids.length }), {
           label: tr("撤销"),
           run: () => { void runStackUndo(undo) },
         })
       }
       applySelection([], "")
       scheduleSync()
-    } catch (error) { notify(errorMessage(error)); scheduleSync() }
+    } catch (error) { notify(errorMessage(error, language)); scheduleSync() }
     finally { cardDragMutationRef.current = false }
   }
   const runRootStackDrop = async (drop: CardDropTarget, gesture: CardDragFinish) => {
@@ -2692,7 +2737,7 @@ export default function App() {
     try {
       const result = await dropAssetsOnCard(originProject, gesture.dragIds, drop.cardId)
       if (result.mode === "noop" || !result.movedAssetIds.length) {
-        notify(tr("素材已在这个堆叠里"))
+        notify("素材已在此堆叠中")
       } else {
         const movedCount = result.movedAssetIds.length
         let message = ""
@@ -2700,14 +2745,14 @@ export default function App() {
           const hasFromOtherStack = result.sources.some(s => s.movedAssetIds.length > 0)
           if (hasFromOtherStack) {
             message = result.stack?.name
-              ? fillNamed("已把 {count} 个素材移到堆叠「{name}」", { count: movedCount, name: result.stack.name })
-              : fillNamed("已把 {count} 个素材移到堆叠", { count: movedCount })
+              ? fillNamed("已将 {count} 个素材移到堆叠「{name}」", { count: movedCount, name: result.stack.name })
+              : fillNamed("已将 {count} 个素材移到堆叠", { count: movedCount })
           } else {
-            message = fillNamed("已向堆叠加入 {count} 项素材", { count: movedCount })
+            message = fillNamed("已将 {count} 个素材移到堆叠", { count: movedCount })
           }
         } else {
           const totalCount = result.stack?.count ?? (movedCount + 1)
-          message = fillNamed("已堆叠 {count} 项素材", { count: totalCount })
+          message = totalCount === 1 ? tr("已堆叠 1 个素材") : fillNamed("已堆叠 {count} 个素材", { count: totalCount })
         }
         const plan = planStackDropUndo(originProject, result)
         if (plan) {
@@ -2723,7 +2768,7 @@ export default function App() {
       applySelection([], "")
       scheduleSync()
     } catch (error) {
-      notify(errorMessage(error))
+      notify(errorMessage(error, language))
       scheduleSync()
     } finally {
       cardDragMutationRef.current = false
@@ -2743,9 +2788,9 @@ export default function App() {
       // between pointerdown and PATCH; reload the stack and ask for a new drag
       // instead of leaking the server's validation prose.
       if ((error as { code?: string })?.code === "STACK_ORDER_MISMATCH") {
-        notify(tr("堆叠内容已发生变化，已刷新，请重新拖动排序"))
+        notify("堆叠内容已变化，列表已刷新。请重新排序。")
         scheduleSync()
-      } else notify(errorMessage(error))
+      } else notify(errorMessage(error, language))
     } finally { cardDragMutationRef.current = false }
   }
   cardDragFinishRef.current = (drop, side, gesture) => {
@@ -2880,7 +2925,7 @@ export default function App() {
         && !splitSelectionStacks(selectionIds).stackIds.length) {
         e.preventDefault()
         cutIdsRef.current = [...selectionIds]
-        notify("已剪切")
+        notify(selectionIds.length === 1 ? tr("已剪切 1 个素材") : fillNamed("已剪切 {count} 个素材", { count: selectionIds.length }))
       }
       if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
         if (!cutIdsRef.current.length) return
@@ -2948,7 +2993,7 @@ export default function App() {
   // progress in the toast.
   const importFiles = async (files: File[], groupName?: string): Promise<string[]> => {
     if (!files.length) return []
-    if (importing) { notify("正在导入，请稍候"); return [] }
+    if (importing) { notify("无法开始导入。请等待当前导入完成。"); return [] }
     const supported = library?.supportedMediaExtensions
     const isSupported = (name: string) => {
       if (!supported || !supported.length) return true
@@ -2981,9 +3026,14 @@ export default function App() {
               pendingImportCardsRef.current.push(...arrived)
             }
           }
-          const text = fillNamed("正在导入 {completed}/{total} · 成功 {imported} · 失败 {failed}", {
-            completed: progress.completed, total: progress.total, imported: progress.imported, failed: progress.failed,
-          })
+          // 任务 359（TOAST-09a/b）：进度只讲进行中；有失败才补一句失败数。
+          const text = progress.failed > 0
+            ? fillNamed("正在导入 {completed} / {total}…，{failed} 个无法导入", {
+                completed: progress.completed, total: progress.total, failed: progress.failed,
+              })
+            : fillNamed("正在导入 {completed} / {total}…", {
+                completed: progress.completed, total: progress.total,
+              })
           if (pendingImportCardsRef.current.length) {
             notifyWithAction(text, { label: tr("查看"), run: () => {
               // The toast can outlive the view the cards were held for.
@@ -3003,39 +3053,54 @@ export default function App() {
           }
         },
       })
-      const firstReason = result.errors[0]?.reason
+      // 任务 359（TOAST-10a~j）：结果按「成功数 / 失败数 / 重复 / 不支持」
+      // 组合出整句；{reason} 只在能按错误码翻译时填入（缺省只显示前半句），
+      // 服务器英文原文不再上屏；失败提示不被「正在检查相似素材」盖掉。
       const dupCount = result.alreadyInLibrary.length
-      let baseText: string
+      const firstReasonCode = result.errors[0]?.code || ""
+      const firstReason = firstReasonCode ? messageForErrorCode(firstReasonCode, language) : ""
+      let baseText = ""
       if (!result.imported && !result.failed && dupCount > 0) {
         baseText = result.skipped > 0
-          ? fillNamed("{dup} 张已在素材库中，{skipped} 个文件格式不支持，没有导入", { dup: dupCount, skipped: result.skipped })
-          : fillNamed("{dup} 张已在素材库中，没有导入", { dup: dupCount })
+          ? fillNamed(dupCount === 1 ? "1 个文件已在素材库中，{skipped} 个文件格式不支持，未导入" : "{count} 个文件已在素材库中，{skipped} 个文件格式不支持，未导入", { count: dupCount, skipped: result.skipped })
+          : fillNamed(dupCount === 1 ? "1 个文件已在素材库中，未导入" : "{count} 个文件已在素材库中，未导入", { count: dupCount })
       } else if (result.imported > 0 && dupCount > 0) {
         baseText = result.skipped > 0
-          ? fillNamed("已导入 {imported} 张，{skipped} 个文件格式不支持，{dup} 张已在素材库中", { imported: result.imported, skipped: result.skipped, dup: dupCount })
-          : fillNamed("已导入 {imported} 张，{dup} 张已在素材库中", { imported: result.imported, dup: dupCount })
+          ? (result.imported === 1
+              ? fillNamed("已导入 1 个素材，{count} 个文件已在素材库中，{skipped} 个文件格式不支持", { count: dupCount, skipped: result.skipped })
+              : fillNamed("已导入 {imported} 个素材，{count} 个文件已在素材库中，{skipped} 个文件格式不支持", { imported: result.imported, count: dupCount, skipped: result.skipped }))
+          : (result.imported === 1
+              ? fillNamed("已导入 1 个素材，{count} 个文件已在素材库中", { count: dupCount })
+              : fillNamed("已导入 {imported} 个素材，{count} 个文件已在素材库中", { imported: result.imported, count: dupCount }))
       } else if (!result.imported && !result.failed) {
-        notify("导入失败")
+        // 全是格式不支持时不再只说笼统的「导入失败」，带上数量（TOAST-10b）。
+        notify(result.skipped > 0 ? fillNamed("无法导入。{skipped} 个文件格式不支持。", { skipped: result.skipped }) : fillNamed("无法导入素材。{reason}", { reason: "" }))
         baseText = ""
       } else if (result.failed) {
-        notify(firstReason ? `${tr("部分素材导入失败")}：${firstReason}` : tr("部分素材导入失败"))
-        baseText = ""
+        baseText = result.imported > 0
+          ? (result.imported === 1
+              ? fillNamed("已导入 1 个素材，{failed} 个无法导入。{reason}", { failed: result.failed, reason: firstReason })
+              : fillNamed("已导入 {imported} 个素材，{failed} 个无法导入。{reason}", { imported: result.imported, failed: result.failed, reason: firstReason }))
+          : fillNamed("无法导入素材。{reason}", { reason: firstReason })
       } else if (result.skipped) {
-        baseText = fillNamed("有 {count} 个文件格式不支持，已跳过", { count: result.skipped })
+        baseText = result.imported === 1
+          ? fillNamed("已导入 1 个素材，{skipped} 个文件格式不支持，已跳过", { skipped: result.skipped })
+          : fillNamed("已导入 {imported} 个素材，{skipped} 个文件格式不支持，已跳过", { imported: result.imported, skipped: result.skipped })
       } else {
-        baseText = tr("导入完成")
+        baseText = result.imported === 1 ? tr("已导入 1 个素材") : fillNamed("已导入 {imported} 个素材", { imported: result.imported })
       }
       // Review 2-6: the sync reconciles the import's changes (the per-batch
       // inserts already carried the cards); no navigation-key reload here.
       if (result.createdIds.length) {
-        notify(`${baseText}${tr("· 正在检查相似的图…")}`)
+        // 失败提示保持原样，不被「正在检查相似素材」后缀盖掉（TOAST-10e）。
+        notify(result.failed ? baseText : fillNamed("{result} · 正在检查相似素材…", { result: baseText }))
         void queueImportReview(project, result.createdIds, groupName || "", stackId, stackName, result.alreadyInLibrary)
       } else if (baseText) {
         notify(baseText)
       }
       return result.createdIds
     } catch (error) {
-      notify(errorMessage(error))
+      notify(errorMessage(error, language))
       return []
     } finally {
       importingRef.current = false
@@ -3103,7 +3168,7 @@ export default function App() {
           const locationLabel = existingAsset.stackId
             ? fillNamed("堆叠「{stack}」", { stack: existingAsset.stackName || existingAsset.stackId })
             : existingAsset.groupName
-              ? fillNamed("现在在：分组 {group}", { group: existingAsset.groupName })
+              ? fillNamed("当前位置：「{group}」", { group: existingAsset.groupName })
               : tr("未分组")
           return {
             existingAssetId: existingAsset.id,
@@ -3149,12 +3214,16 @@ export default function App() {
           ? (response as { results: Array<{ ok?: boolean }> }).results
           : []
         const failed = results.filter((entry) => entry.ok === false).length
-        if (failed > 0) notify(fillNamed("{failed} 项未能处理", { failed }))
+        if (failed > 0) {
+          notify(language === "en" && failed === 1
+            ? tr("1 项所选操作无法应用")
+            : fillNamed("有 {failed} 项所选操作无法应用", { failed }))
+        }
       }
       dismissImportReview()
       scheduleSync()
     } catch (error) {
-      notify(errorMessage(error))
+      notify(errorMessage(error, language))
     } finally {
       setImportReviewBusy(false)
     }
@@ -3182,7 +3251,7 @@ export default function App() {
     }
     const topLevel = Array.from(dataTransfer?.files || [])
     const scan = collectDroppedFiles(dataTransfer, {
-      onScanProgress: count => notify(fillNamed("正在扫描拖入的文件…已找到 {count} 个", { count })),
+      onScanProgress: count => notify(fillNamed("正在扫描文件… 已找到 {count} 个", { count })),
     })
     const flagLibrary = desktopAPI()?.libraryFileFlags
     const flags: Promise<boolean[]> = flagLibrary && topLevel.length
@@ -3195,14 +3264,16 @@ export default function App() {
           // importFiles returns early on an empty list without touching the
           // gate, so release it here or every later SSE refresh stays held.
           releaseDropScanGate()
-          if (skipped) notify(fillNamed("{count} 个文件已在素材库中，没有重复导入", { count: skipped }))
+          if (skipped) notify(skipped === 1
+            ? tr("1 个文件已在素材库中，未导入")
+            : fillNamed("{count} 个文件已在素材库中，未导入", { count: skipped }))
           return
         }
         return importFiles(files, groupName)
       })
       .catch(error => {
         releaseDropScanGate()
-        notify(errorMessage(error))
+        notify(errorMessage(error, language))
       })
   }
   // Paste-to-import continuation (task 239): mirrors importDroppedFiles —
@@ -3225,7 +3296,7 @@ export default function App() {
         folderNotice = unreadable.some(Boolean)
         const files = topFiles.filter((_, index) => !unreadable[index])
         if (!files.length) {
-          if (folderNotice) notify(tr("文件夹请拖进窗口导入"))
+          if (folderNotice) notify("无法粘贴文件夹。请将文件夹拖入窗口导入。")
           return
         }
         scanned = files
@@ -3237,17 +3308,21 @@ export default function App() {
       const flagged = await flags
       const { files: kept, skipped } = excludeLibraryFiles(scanned, scanned.filter((_, index) => flagged[index] === true))
       if (skipped && !kept.length) {
-        notify(fillNamed("{count} 个文件已在素材库中，没有重复导入", { count: skipped }))
+        notify(skipped === 1
+          ? tr("1 个文件已在素材库中，未导入")
+          : fillNamed("{count} 个文件已在素材库中，未导入", { count: skipped }))
         return
       }
       const createdIds = await importFiles(renameSynthesizedPasteFiles(kept, language, new Date()), groupNameForActive(active))
       if (createdIds.length && !importVisibleInActiveView({ active, query: debouncedQuery, assetType, stackId })) {
-        notify(fillNamed("已导入 {count} 个，在「所有素材」里", { count: createdIds.length }))
+        notify(createdIds.length === 1
+          ? tr("已导入 1 个素材，可在「所有素材」中查看")
+          : fillNamed("已导入 {count} 个素材，可在「所有素材」中查看", { count: createdIds.length }))
       } else if (folderNotice) {
-        notify(tr("文件夹请拖进窗口导入"))
+        notify("无法粘贴文件夹。请将文件夹拖入窗口导入。")
       }
     } catch (error) {
-      notify(errorMessage(error))
+      notify(errorMessage(error, language))
     }
   }
   useEffect(() => {
@@ -3266,7 +3341,7 @@ export default function App() {
         hasFiles: topFiles.length > 0,
       })
       if (decision !== "import") {
-        if (decision === "trash-blocked") notify(tr("回收站里不能导入"))
+        if (decision === "trash-blocked") notify("无法在回收站中导入素材")
         return
       }
       // collectDroppedFiles reads dataTransfer.items synchronously — inside
@@ -3274,7 +3349,7 @@ export default function App() {
       const entryScan = Array.from(dataTransfer?.items || [])
         .some(item => { try { return Boolean(item.webkitGetAsEntry?.()) } catch { return false } })
         ? collectDroppedFiles(dataTransfer, {
-          onScanProgress: count => notify(fillNamed("正在扫描拖入的文件…已找到 {count} 个", { count })),
+          onScanProgress: count => notify(fillNamed("正在扫描文件… 已找到 {count} 个", { count })),
         })
         : null
       void runPasteImport(topFiles, entryScan)
@@ -3306,7 +3381,7 @@ export default function App() {
       const updated = await toggleAssetFavorite(asset.project_id, asset.id)
       setAssets(old => old.map(a => a.id === updated.id ? mergeAssetDetail(a, updated) : a))
       scheduleSync()
-    } catch (error) { notify(errorMessage(error)) }
+    } catch (error) { notify(errorMessage(error, language)) }
   }
   const remove = async () => {
     // The selection is bound to the current view (reset on view change,
@@ -3327,7 +3402,7 @@ export default function App() {
       setDeleting(false)
       setPreview(false)
       if (!outcome.succeeded) {
-        notify(outcome.firstError || tr("素材未能移至回收站"))
+        notify("无法将素材移到回收站")
         return
       }
       // Only rows the server confirmed leave the grid; a partial chunk
@@ -3338,13 +3413,15 @@ export default function App() {
       applySelection([], moved.has(selectionRef.current.selected) ? "" : selectionRef.current.selected)
       // A partial failure still offers undo for the rows that did move.
       notifyWithAction(outcome.failed
-        ? tr("已移至回收站 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-        : "素材已移至回收站", {
+        ? (movedIds.length === 1
+            ? fillNamed("已将 1 个素材移到回收站，{failed} 个无法移动", { failed: outcome.failed })
+            : fillNamed("已将 {count} 个素材移到回收站，{failed} 个无法移动", { count: movedIds.length, failed: outcome.failed }))
+        : (movedIds.length === 1 ? tr("已将 1 个素材移到回收站") : fillNamed("已将 {count} 个素材移到回收站", { count: movedIds.length })), {
         label: tr("撤销"),
         run: () => { void undoTrashMove(originProject, movedIds) },
       })
       scheduleSync()
-    } catch (error) { notify(errorMessage(error)) }
+    } catch (error) { notify(errorMessage(error, language)) }
   }
   // Undo for a move-to-trash: restore exactly the ids the server confirmed
   // moving, then reload whatever view is current (the user may have navigated
@@ -3355,9 +3432,11 @@ export default function App() {
       const outcome = await restoreAssets(originProject, ids)
       refreshCurrentView()
       notifyBatchOutcome(ids.filter(id => !outcome.failedIds.includes(id)).length, outcome.failed, {
-        single: "素材已恢复至素材库", multi: "已恢复 {count} 个素材", partial: "已恢复 X 项，Y 项失败",
+        single: "已恢复 1 个素材", multi: "已恢复 {count} 个素材",
+        partialSingle: "已恢复 1 个素材，{failed} 个无法恢复", partialMulti: "已恢复 {count} 个素材，{failed} 个无法恢复",
+        allFailed: "无法恢复素材",
       })
-    } catch (error) { notify(errorMessage(error)) }
+    } catch (error) { notify(errorMessage(error, language)) }
   }
   // 不再提醒 only skips plain moves: a selection holding a stack card takes
   // every member with it, so it always confirms.
@@ -3376,11 +3455,13 @@ export default function App() {
       setMenu(null)
       setPreview(false)
       notifyBatchOutcome(ids.filter(id => !outcome.failedIds.includes(id)).length, outcome.failed, {
-        single: "素材已恢复至素材库", multi: "已恢复 {count} 个素材", partial: "已恢复 X 项，Y 项失败",
+        single: "已恢复 1 个素材", multi: "已恢复 {count} 个素材",
+        partialSingle: "已恢复 1 个素材，{failed} 个无法恢复", partialMulti: "已恢复 {count} 个素材，{failed} 个无法恢复",
+        allFailed: "无法恢复素材",
       })
       applySelection([], "")
       scheduleSync()
-    } catch (error) { notify(errorMessage(error)) }
+    } catch (error) { notify(errorMessage(error, language)) }
   }
   // Permanent delete from trash: the viewer closes first when it is showing a
   // victim, so a playing video file cannot hold the media open mid-delete.
@@ -3391,38 +3472,42 @@ export default function App() {
     if (preview && asset && ids.includes(asset.id)) setPreview(false)
     try {
       const outcome = await permanentlyDeleteAssets(project, ids)
-      if (!outcome.succeeded) { notify(outcome.firstError || "永久删除失败"); return }
+      if (!outcome.succeeded) { notify("无法永久删除素材"); return }
       const deleted = new Set(ids.filter(id => !outcome.failedIds.includes(id)))
       setAssets(old => old.filter(a => !deleted.has(a.id)))
       applySelection([], deleted.has(selectionRef.current.selected) ? "" : selectionRef.current.selected)
       notifyBatchOutcome(deleted.size, outcome.failed, {
-        single: "素材已永久删除", multi: "已永久删除 {count} 个素材", partial: "已永久删除 X 项，Y 项失败",
+        single: "已永久删除 1 个素材", multi: "已永久删除 {count} 个素材",
+        partialSingle: "已永久删除 1 个素材，{failed} 个无法删除", partialMulti: "已永久删除 {count} 个素材，{failed} 个无法删除",
+        allFailed: "无法永久删除素材",
       })
       scheduleSync()
-    } catch (error) { notify(errorMessage(error)) }
+    } catch (error) { notify(errorMessage(error, language)) }
   }
   const confirmEmptyTrash = async () => {
     setEmptyTrashConfirm(false)
     try {
       const result = await emptyTrash(project)
       const failedCount = Array.isArray(result.failed) ? result.failed.length : 0
-      if (result.partial) notify(fillNamed("{count} 个素材暂时无法永久删除，稍后会重试", { count: failedCount }))
-      else notify("回收站已清空")
+      if (result.partial) notify(failedCount === 1
+        ? tr("1 个素材无法永久删除，将稍后重试")
+        : fillNamed("{count} 个素材无法永久删除，将稍后重试", { count: failedCount }))
+      else notify("已清空回收站")
       applySelection([], "")
       setAssets([])
       scheduleSync()
-    } catch (error) { notify(errorMessage(error)) }
+    } catch (error) { notify(errorMessage(error, language)) }
   }
   const assignGroup = (name: string) => {
     if (!asset) return
     setAssetsGroup(asset.project_id, [asset.id], name)
       .then(outcome => {
-        if (!outcome.succeeded) { notify(outcome.firstError || tr(name ? "添加分组失败" : "移除分组失败")); return }
+        if (!outcome.succeeded) { notify(name ? fillNamed("无法将素材移到「{group}」", { group: name }) : "无法将素材移出分组"); return }
         setAssets(old => old.map(a => a.id === asset.id ? { ...a, group: name } : a))
-        notify(name ? "已添加到分组" : "已从分组移除")
+        notify(name ? fillNamed("已将 1 个素材移到「{group}」", { group: name }) : "已将 1 个素材移出分组")
         scheduleSync()
       })
-      .catch(error => notify(errorMessage(error)))
+      .catch(error => notify(errorMessage(error, language)))
   }
   const writeText = async (text: string) => {
     const api = desktopAPI()
@@ -3445,8 +3530,8 @@ export default function App() {
         const blob = await response.blob()
         await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })])
       }
-      notify(`${tr("复制图片")} ${tr("完成")}`)
-    } catch { notify(tr("复制图片失败")) }
+      notify("已复制图片")
+    } catch { notify("无法复制图片") }
   }
   // Several files onto the system clipboard (task 198): what pastes into
   // Finder, Explorer, chat apps and web pages as that many files. A single
@@ -3458,21 +3543,25 @@ export default function App() {
       const { paths, overLimit } = await collect(NATIVE_DRAG_MAX_FILES)
       const result = paths.length ? await api.writeClipboardFiles(paths) : null
       const count = Number(result?.count) || 0
-      if (!result?.ok || !count) { notify(tr("复制图片失败")); return }
+      if (!result?.ok || !count) { notify("无法复制图片"); return }
       const skipped = Number(result.skipped) || 0
-      if (overLimit) notify(fillNamed("最多复制 {limit} 张，已复制前 {count} 张", { limit: NATIVE_DRAG_MAX_FILES, count }))
-      else if (skipped) notify(fillNamed("已复制 {count} 张，{skipped} 张找不到", { count, skipped }))
-      else notify(fillNamed("已复制 {count} 张图片", { count }))
-    } catch { notify(tr("复制图片失败")) }
+      if (overLimit) notify(count === 1
+        ? fillNamed("已复制前 1 个素材，单次最多复制 {limit} 个", { limit: NATIVE_DRAG_MAX_FILES })
+        : fillNamed("已复制前 {count} 个素材，单次最多复制 {limit} 个", { limit: NATIVE_DRAG_MAX_FILES, count }))
+      else if (skipped) notify(count === 1
+        ? fillNamed("已复制 1 个素材，{skipped} 个无法复制", { skipped })
+        : fillNamed("已复制 {count} 个素材，{skipped} 个无法复制", { count, skipped }))
+      else notify(count === 1 ? tr("已复制 1 个素材") : fillNamed("已复制 {count} 个素材", { count }))
+    } catch { notify("无法复制图片") }
   }
   // Paths as text, one per line, same order and expansion as the files.
   const copyPaths = async (collect: () => Promise<{ paths: string[] }>) => {
     try {
       const { paths } = await collect()
-      if (!paths.length) { notify(tr("复制失败")); return }
+      if (!paths.length) { notify("无法复制路径"); return }
       await writeText(paths.join("\n"))
-      notify(fillNamed("已复制 {count} 条路径", { count: paths.length }))
-    } catch { notify(tr("复制失败")) }
+      notify(paths.length === 1 ? tr("已复制 1 条路径") : fillNamed("已复制 {count} 条路径", { count: paths.length }))
+    } catch { notify("无法复制路径") }
   }
   const exportAsset = () => {
     if (!asset) return
@@ -3482,7 +3571,7 @@ export default function App() {
     document.body.appendChild(link)
     link.click()
     link.remove()
-    notify(`${tr("导出至")} ${tr("完成")}`)
+    notify("已导出")
   }
   const revealAssetPath = async () => {
     if (!asset) return
@@ -3492,8 +3581,8 @@ export default function App() {
     } catch { /* fall through to copying the path */ }
     try {
       await writeText(asset.image_path || asset.image_url)
-      notify(tr("路径已复制"))
-    } catch { notify(tr("无法打开该位置")) }
+      notify("无法打开所在位置，已复制路径")
+    } catch { notify("无法打开此位置") }
   }
 
   // ===== Context menu: open helpers, shared paste, action dispatch =====
@@ -3504,7 +3593,9 @@ export default function App() {
   const translateMenuEntries = (entries: MenuEntry[], selectionCount: number): MenuEntry[] =>
     entries.map(entry => {
       if (entry.kind === "item") {
-        return { ...entry, label: fillNamed(entry.label, { count: selectionCount }), submenu: entry.submenu ? translateMenuEntries(entry.submenu, selectionCount) : undefined }
+        // 任务 359（MENU-02b/02d）：多选的英文用复数（enLabel），中文同文。
+        const label = entry.enLabel && language === "en" ? entry.enLabel : entry.label
+        return { ...entry, label: fillNamed(label, { count: selectionCount }), submenu: entry.submenu ? translateMenuEntries(entry.submenu, selectionCount) : undefined }
       }
       if (entry.kind === "heading") return { ...entry, label: fillNamed(entry.label, { count: selectionCount }) }
       return entry
@@ -3625,13 +3716,13 @@ export default function App() {
       const target = index + (id === "group-move-up" ? -1 : 1)
       if (index < 0 || target < 0 || target >= names.length) return
       ;[names[index], names[target]] = [names[target], names[index]]
-      reorderGroups(project, names).then(scheduleSync).catch(error => notify(errorMessage(error)))
+      reorderGroups(project, names).then(scheduleSync).catch(error => notify(errorMessage(error, language)))
     }
     else if (id.startsWith("group-color:")) {
-      recolorGroup(project, name, id.slice("group-color:".length)).then(scheduleSync).catch(error => notify(errorMessage(error)))
+      recolorGroup(project, name, id.slice("group-color:".length)).then(scheduleSync).catch(error => notify(errorMessage(error, language)))
     }
     else if (id === "group-stats") {
-      fetchGroupStats(project, name).then(result => setGroupStats({ name, values: result.stats })).catch(error => notify(errorMessage(error)))
+      fetchGroupStats(project, name).then(result => setGroupStats({ name, values: result.stats })).catch(error => notify(errorMessage(error, language)))
     }
     else if (id === "group-export") {
       if (exportingGroup) return
@@ -3649,7 +3740,7 @@ export default function App() {
           link.click()
           link.remove()
         } finally { window.setTimeout(() => URL.revokeObjectURL(url), 30_000) }
-      }).catch(error => notify(errorMessage(error))).finally(() => setExportingGroup(""))
+      }).catch(error => notify(errorMessage(error, language))).finally(() => setExportingGroup(""))
     }
     else if (id === "group-merge") {
       const other = navigation?.groups.find(item => item.name !== name)
@@ -3666,13 +3757,23 @@ export default function App() {
     cutIdsRef.current = []
     moveAssetsToStack(project, ids, targetStackId)
       .then(outcome => {
-        if (!outcome.succeeded) { notify(outcome.firstError || tr("粘贴失败")); return }
-        notify(outcome.failed
-          ? tr("已粘贴 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-          : targetStackId ? tr("已粘贴到堆叠") : tr("已移出堆叠"))
+        if (!outcome.succeeded) { notify("无法粘贴素材"); return }
+        if (outcome.failed) {
+          notify(targetStackId
+            ? (outcome.succeeded === 1
+                ? fillNamed("已将 1 个素材移到堆叠，{failed} 个无法移动", { failed: outcome.failed })
+                : fillNamed("已将 {count} 个素材移到堆叠，{failed} 个无法移动", { count: outcome.succeeded, failed: outcome.failed }))
+            : (outcome.succeeded === 1
+                ? fillNamed("已将 1 个素材移出堆叠，{failed} 个无法移出", { failed: outcome.failed })
+                : fillNamed("已将 {count} 个素材移出堆叠，{failed} 个无法移出", { count: outcome.succeeded, failed: outcome.failed })))
+        } else {
+          notify(targetStackId
+            ? (outcome.succeeded === 1 ? tr("已将 1 个素材移到堆叠") : fillNamed("已将 {count} 个素材移到堆叠", { count: outcome.succeeded }))
+            : (outcome.succeeded === 1 ? tr("已将 1 个素材移出堆叠") : fillNamed("已将 {count} 个素材移出堆叠", { count: outcome.succeeded })))
+        }
         scheduleSync()
       })
-      .catch(error => notify(errorMessage(error)))
+      .catch(error => notify(errorMessage(error, language)))
   }
 
   // Batch group assignment for the asset menu (add via submenu, remove, and
@@ -3681,16 +3782,26 @@ export default function App() {
     if (!asset) return
     assignBatchToGroup(asset.project_id, batchIds, name)
       .then(outcome => {
-        if (!outcome.succeeded) { notify(outcome.firstError || tr(name ? "添加分组失败" : "移除分组失败")); return }
+        if (!outcome.succeeded) { notify(name ? fillNamed("无法将素材移到「{group}」", { group: name }) : "无法将素材移出分组"); return }
         setSelectedIds([])
         notify(outcome.failed
           ? (name
-              ? tr("已加入分组 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-              : tr("已从分组移除 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
-          : name ? tr("已添加到分组") : tr("已从分组移除"))
+              ? (outcome.succeeded === 1
+                  ? fillNamed("已将 1 个素材移到「{group}」，{failed} 个无法移动", { group: name, failed: outcome.failed })
+                  : fillNamed("已将 {count} 个素材移到「{group}」，{failed} 个无法移动", { count: outcome.succeeded, group: name, failed: outcome.failed }))
+              : (outcome.succeeded === 1
+                  ? fillNamed("已将 1 个素材移出分组，{failed} 个无法移出", { failed: outcome.failed })
+                  : fillNamed("已将 {count} 个素材移出分组，{failed} 个无法移出", { count: outcome.succeeded, failed: outcome.failed })))
+          : (name
+              ? (outcome.succeeded === 1
+                  ? fillNamed("已将 1 个素材移到「{group}」", { group: name })
+                  : fillNamed("已将 {count} 个素材移到「{group}」", { count: outcome.succeeded, group: name }))
+              : (outcome.succeeded === 1
+                  ? "已将 1 个素材移出分组"
+                  : fillNamed("已将 {count} 个素材移出分组", { count: outcome.succeeded }))))
         scheduleSync()
       })
-      .catch(error => notify(errorMessage(error)))
+      .catch(error => notify(errorMessage(error, language)))
   }
 
   // 标为已整理 (task 304): plain cards plus every member of each stack card,
@@ -3703,23 +3814,23 @@ export default function App() {
       const ids = [...new Set([...plainIds, ...members.flat()])]
       if (!ids.length) return
       const { outcome, newlyOrganizedIds } = await setAssetsCurated(targetProject, ids, true)
-      if (!outcome.succeeded) { notify(outcome.firstError || tr("标为已整理失败")); return }
+      if (!outcome.succeeded) { notify("无法标为已整理"); return }
       applySelection([], "")
       const text = outcome.failed
-        ? tr("已标为整理好 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed))
-        : tr("已标为整理好")
+        ? fillNamed("已将 {count} 个素材标为已整理，{failed} 个无法标记", { count: outcome.succeeded, failed: outcome.failed })
+        : "已标为已整理"
       if (newlyOrganizedIds.length) {
         notifyWithAction(text, { label: tr("撤销"), run: () => { void undoMarkSorted(targetProject, newlyOrganizedIds) } })
       } else notify(text)
       scheduleSync()
-    } catch (error) { notify(errorMessage(error)) }
+    } catch (error) { notify(errorMessage(error, language)) }
   }
   const undoMarkSorted = async (targetProject: string, ids: string[]) => {
     try {
       const { outcome } = await setAssetsCurated(targetProject, ids, false)
       scheduleSync()
-      notify(outcome.succeeded ? tr("已撤销") : outcome.firstError || tr("撤销失败"))
-    } catch (error) { notify(errorMessage(error)) }
+      notify(outcome.succeeded ? "已撤销" : "无法撤销")
+    } catch (error) { notify(errorMessage(error, language)) }
   }
 
   const runMenuAction = (id: string) => {
@@ -3737,35 +3848,42 @@ export default function App() {
     }
     else if (id === "cut") {
       cutIdsRef.current = ids
-      notify("已剪切")
+      notify(ids.length === 1 ? tr("已剪切 1 个素材") : fillNamed("已剪切 {count} 个素材", { count: ids.length }))
     }
     else if (id === "copy-prompt") {
-      if (!asset?.prompt) { notify(tr("无提示词记录")); return }
-      writeText(asset.prompt).then(() => notify(`${tr("复制提示词")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
+      if (!asset?.prompt) { notify("此素材没有提示词记录"); return }
+      writeText(asset.prompt).then(() => notify("已复制提示词")).catch(() => notify("无法复制提示词"))
     }
     else if (id === "copy-path" && ids.length > 1) void copyPaths(() => batchFilePaths(ids))
     else if (id === "copy-path") {
       if (!asset) return
-      writeText(asset.image_path || asset.image_url).then(() => notify(`${tr("复制路径")} ${tr("完成")}`)).catch(() => notify(tr("复制失败")))
+      writeText(asset.image_path || asset.image_url).then(() => notify("已复制路径")).catch(() => notify("无法复制路径"))
     }
     else if (id === "toggle-favorite") {
       if (ids.length > 1 && asset) {
-        setAssetsFavorite(asset.project_id, ids, !asset.favorite)
+        const favoriting = !asset.favorite
+        setAssetsFavorite(asset.project_id, ids, favoriting)
           .then(outcome => {
-            if (!outcome.succeeded) { notify(outcome.firstError || tr("收藏失败")); return }
+            if (!outcome.succeeded) { notify(favoriting ? "无法收藏素材" : "无法取消收藏"); return }
             setSelectedIds([])
             if (outcome.failed) {
-              notify(tr("已收藏 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+              notify(outcome.succeeded === 1
+                ? (favoriting
+                    ? fillNamed("已收藏 1 个素材，{failed} 个无法收藏", { failed: outcome.failed })
+                    : fillNamed("已取消收藏 1 个素材，{failed} 个无法取消收藏", { failed: outcome.failed }))
+                : (favoriting
+                    ? fillNamed("已收藏 {count} 个素材，{failed} 个无法收藏", { count: outcome.succeeded, failed: outcome.failed })
+                    : fillNamed("已取消收藏 {count} 个素材，{failed} 个无法取消收藏", { count: outcome.succeeded, failed: outcome.failed })))
             }
             scheduleSync()
           })
-          .catch(error => notify(errorMessage(error)))
+          .catch(error => notify(errorMessage(error, language)))
       } else void toggleFavorite()
     }
     else if (id === "add-to-group") {
       // The trash menu keeps the old flat entry: it still needs the group
       // picked in the sidebar.
-      if (!group) { notify(tr("请先在左侧选择或新建分组")); return }
+      if (!group) { notify("请先在侧栏中选择或新建分组"); return }
       assignSelectionToGroup(group)
     }
     else if (id === "add-to-group:create" || id === "stack-add-to-group:create") {
@@ -3796,20 +3914,20 @@ export default function App() {
       if (!stackId) return
       removeAssetsFromStack(project, stackId, ids)
         .then(() => {
-          notify(fill(tr("已从堆叠移出 {count} 项素材"), { count: ids.length }))
+          notify(ids.length === 1 ? tr("已将 1 个素材移出堆叠") : fillNamed("已将 {count} 个素材移出堆叠", { count: ids.length }))
           applySelection([], "")
           scheduleSync()
         })
-        .catch(error => notify(errorMessage(error)))
+        .catch(error => notify(errorMessage(error, language)))
     }
     else if (id === "stack-selected") {
       createStack(project, ids, asset?.id || ids[0] || "")
         .then(() => {
-          notify(fill(tr("已堆叠 {count} 项素材"), { count: ids.length }))
+          notify(ids.length === 1 ? tr("已堆叠 1 个素材") : fillNamed("已堆叠 {count} 个素材", { count: ids.length }))
           applySelection([], "")
           scheduleSync()
         })
-        .catch(error => notify(errorMessage(error)))
+        .catch(error => notify(errorMessage(error, language)))
     }
     // Stack menu — every action reads the stack the menu was opened on.
     else if (id === "open-stack") goTo({ stackId: target.stackId, stackName: target.stackName })
@@ -3820,19 +3938,19 @@ export default function App() {
       const groupName = id.slice("stack-add-to-group:".length)
       assignStackToGroup(project, target.stackId, groupName)
         .then(() => {
-          notify(fill(tr("堆叠已移动到「{group}」"), { group: groupName }))
+          notify(fillNamed("已将堆叠移到「{group}」", { group: groupName }))
           scheduleSync()
         })
-        .catch(error => notify(errorMessage(error)))
+        .catch(error => notify(errorMessage(error, language)))
     }
     else if (id === "stack-mark-sorted") void markSorted(project, [], [target.stackId])
     else if (id === "stack-remove-from-group") {
       assignStackToGroup(project, target.stackId, "")
         .then(() => {
-          notify(tr("堆叠已移出分组"))
+          notify("已将堆叠移出分组")
           scheduleSync()
         })
-        .catch(error => notify(errorMessage(error)))
+        .catch(error => notify(errorMessage(error, language)))
     }
     else if (id === "rename-stack") setStackRename({ stackId: target.stackId, initialName: target.stackName, draft: target.stackName })
     else if (id === "dissolve-stack") setStackDissolveConfirm({ stackId: target.stackId, stackCount: target.stackCount })
@@ -3864,12 +3982,12 @@ export default function App() {
   }
   const addToActiveGroup = () => {
     if (!asset) return
-    if (!group) { notify(tr("请先在左侧选择或新建分组")); return }
+    if (!group) { notify("请先在侧栏中选择或新建分组"); return }
     assignGroup(group)
   }
   const checkForUpdates = async () => {
     const api = desktopAPI()
-    if (!api?.checkForUpdates) { notify(tr("网页版请访问官网获取最新版本")); return }
+    if (!api?.checkForUpdates) { notify("网页版请前往官网获取最新版本"); return }
     if (updateState.phase === "checking") return
     setUpdateState({ phase: "checking" })
     try {
@@ -3881,21 +3999,22 @@ export default function App() {
       } else if (state.phase === "available") {
         notify(fill(tr("发现新版本 v{version}"), { version: state.latestVersion }))
       } else if (state.phase === "unavailable") {
-        notify(tr("请先把 App 拖进『应用程序』文件夹再更新"))
+        notify("请先将 GravityPort 移到「应用程序」文件夹，再更新")
       } else if (state.phase === "error") {
-        notify(tr("暂时无法检查更新"))
+        notify("无法检查更新。请稍后重试。")
       }
     } catch (error) {
       setUpdateState({ phase: "error" })
-      notify(String((error as Error)?.message || tr("暂时无法检查更新")))
+      // 任务 359（S-01）：不再显示异常原文。
+      notify("无法检查更新。请稍后重试。")
     }
   }
   // Task 302 — toast copy for the install-result table; every string already
   // exists in i18n, so the map stays inside the update handlers.
   const notifyInstallToast = (toast: "failed" | "current" | "move-to-applications") => {
-    if (toast === "failed") notify(tr("更新失败，请稍后重试"))
+    if (toast === "failed") notify("无法更新。请稍后重试。")
     else if (toast === "current") notify(tr("已是最新版本"))
-    else if (toast === "move-to-applications") notify(tr("请先把 App 拖进『应用程序』文件夹再更新"))
+    else if (toast === "move-to-applications") notify("请先将 GravityPort 移到「应用程序」文件夹，再更新")
   }
   // Leaves the downloading state for the clickable update button; a no-op once
   // the phase has moved on (e.g. the user cancelled while the call was in
@@ -3919,7 +4038,7 @@ export default function App() {
       if (feedback.toast) notifyInstallToast(feedback.toast)
     } catch (error) {
       exitDownloadingState()
-      notify(tr("更新失败，请稍后重试"))
+      notify("无法更新。请稍后重试。")
     }
   }
   // Task 231 — restart into the staged, verified update. The install flow
@@ -3938,17 +4057,17 @@ export default function App() {
       if (feedback.toast) notifyInstallToast(feedback.toast)
     } catch {
       setRestartPending(false)
-      notify(tr("更新失败，请稍后重试"))
+      notify("无法更新。请稍后重试。")
     }
   }
-  // Task 253 — the one-line sidebar reminder above 用户中心. The label is
+  // Task 253 — the one-line sidebar reminder above 「设置」. The label is
   // split around the version string so the number can carry its own weight
   // while the surrounding text truncates; everything the row shows comes from
   // the staged-update state, the click stays restartToUpdate.
   const updateReadyLine = (() => {
     if (!updateReady) return null
     const versionText = updateReady.version || ""
-    const label = fill(tr("新版本 {version}"), { version: versionText })
+    const label = fill(tr("v{version} 已就绪"), { version: versionText })
     const at = versionText ? label.indexOf(versionText) : -1
     return {
       title: fill(tr("重启并更新到 v{version}"), { version: versionText }),
@@ -3963,24 +4082,28 @@ export default function App() {
   }
   const openDownloadPage = () => {
     desktopAPI()?.openDownloadPage?.().then(result => {
-      if (!result?.ok) notify(tr("暂时无法检查更新"))
-    }).catch(() => notify(tr("暂时无法检查更新")))
+      if (!result?.ok) notify("无法打开下载页面")
+    }).catch(() => notify("无法打开下载页面"))
   }
   const changeLibraryLocation = async () => {
     const api = desktopAPI()
-    if (!api?.changeLibraryLocation) { notify(tr("请在桌面版中修改素材库位置")); return }
+    if (!api?.changeLibraryLocation) { notify("存储位置仅可在桌面版中修改"); return }
     try {
       const result = await api.changeLibraryLocation()
+      // 任务 359（HC-06）：桥接只返回 reason，不返回 error。用户在选文件夹
+      // 时点「取消」不算失败、不提示；其余原因按 SET-05 统一句加括号原因。
       if (result && result.ok === false) {
-        notify(String(result.error || tr("无法打开该位置")))
+        const failureText = libraryLocationFailureText(result.reason, fill)
+        if (failureText === null) return
+        notify(failureText)
         return
       }
-      notify(tr("已保存"))
+      notify("已更改存储位置")
       // The library location itself moved: this is a different library, so a
       // full window reload (not an incremental sync) is the correct reaction.
       refreshNavigation()
-    } catch (error) {
-      notify(String((error as Error)?.message || error))
+    } catch {
+      notify("无法更改存储位置")
     }
   }
   const openStorageLocation = async () => {
@@ -3988,12 +4111,12 @@ export default function App() {
     if (!target) return
     try {
       await openLibraryFolder(target)
-      notify(tr("已在桌面端打开存储位置"))
+      notify("已打开存储位置")
     } catch {
       try {
         await writeText(target)
-        notify("路径已复制，请在系统文件管理器中打开")
-      } catch { notify("浏览器无法直接打开本地文件夹，请手动复制路径") }
+        notify("无法打开存储位置，路径已复制")
+      } catch { notify("无法打开存储位置。请手动复制路径。") }
     }
   }
   const createNamedGroup = () => {
@@ -4011,7 +4134,7 @@ export default function App() {
         })
         .catch((error: Error & { code?: string }) => {
           if (error?.code === "GROUP_ALREADY_EXISTS" && index < existing + 20) attempt(index + 1)
-          else notify(errorMessage(error))
+          else notify(errorMessage(error, language))
         })
     }
     attempt(existing + 1)
@@ -4045,11 +4168,17 @@ export default function App() {
       setAssets(old => old.map(a => a.id === updated.id ? mergeAssetDetail(a, updated) : a))
       setPromptEdit(old => old && old.assetId === target.assetId && old.project === target.project ? null : old)
       notify("已保存")
-    }).catch(error => notify(errorMessage(error))).finally(() => {
+    }).catch(() => notify("无法保存提示词")).finally(() => {
       setSavingPromptId(old => old === target.assetId ? null : old)
     })
   }
-  const timeLabel = (value?: string) => (value ? value.slice(0, 10) : "")
+  // 任务 359（MAIN-27aj）：版本树 / 版本历史的日期与摘要行用同一个本地化格式。
+  const timeLabel = (value?: string) => {
+    if (!value) return ""
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return value.slice(0, 10)
+    return new Intl.DateTimeFormat(language === "zh" ? "zh-CN" : "en", { year: "numeric", month: "short", day: "numeric" }).format(date)
+  }
   // The one set of card event handlers shared by both render paths (mount-all
   // branch and windowed card()), including the drag-gesture entry point.
   const cardEventHandlers = (a: MosaAsset) => ({
@@ -4168,8 +4297,8 @@ export default function App() {
               </button>
               {section === 1 && <button
                 className="add-group"
-                aria-label={tr("添加我的分组")}
-                title={tr("添加分组")}
+                aria-label={tr("新建分组")}
+                title={tr("新建分组")}
                 onClick={createNamedGroup}
               ><Icon name="plus" size={16} /></button>}
             </div>
@@ -4228,18 +4357,22 @@ export default function App() {
                 {updateReadyLine.versionText && <strong className="update-ready-version">{updateReadyLine.versionText}</strong>}
                 {updateReadyLine.tail}
               </span>
-              <span className="update-ready-action">{restartPending ? tr("正在更新…") : tr("重启更新")}</span>
+              <span className="update-ready-action">{restartPending ? tr("正在更新…") : tr("重启并更新")}</span>
             </button>
           </div>
         )}
         <button className="user-button" onClick={() => setSettings(true)}>
           <Icon name="user" size={14} />
-          <span>{tr("用户中心")}</span>
+          <span>{tr("设置")}</span>
           <Icon name="settings" size={14} />
         </button>
       </aside>
       {(groupRename || groupDeleteConfirm || groupMerge || groupStats) && <div className="group-dialog-backdrop" role="presentation">
-        <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("分组管理")}>
+        {/* 任务 359（DLG-06a）：读屏名称跟随各自标题，不再共用「分组管理」。 */}
+        <div className="group-dialog" role="dialog" aria-modal="true" aria-label={groupRename ? tr("重命名分组")
+          : groupDeleteConfirm ? fillNamed("删除分组「{group}」？", { group: groupDeleteConfirm })
+          : groupMerge ? fillNamed("合并分组「{source}」", { source: groupMerge.source })
+          : `${tr("分组统计")} · ${groupStats?.name || ""}`}>
           {groupRename && <form onSubmit={event => {
             event.preventDefault()
             const name = groupRename.draft.trim()
@@ -4247,32 +4380,36 @@ export default function App() {
             renameGroup(project, groupRename.original, name).then(() => {
               if (active === `group:${groupRename.original}`) goTo({ active: `group:${name}` })
               scheduleSync(); setGroupRename(null)
-            }).catch(error => notify(errorMessage(error)))
-          }}><h3>{tr("重命名分组")}</h3><input autoFocus value={groupRename.draft} maxLength={80} onChange={event => setGroupRename(old => old ? { ...old, draft: event.target.value } : old)} /><div className="group-dialog-actions"><button type="button" className="neutral-button" onClick={() => setGroupRename(null)}>{tr("取消")}</button><button type="submit" className="primary-button">{tr("保存")}</button></div></form>}
-          {groupDeleteConfirm && <><h3>{tr("删除分组")}</h3><p>{tr("仅删除分组，保留其中全部素材。")}</p><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupDeleteConfirm(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
+            }).catch(error => notify(errorMessage(error, language)))
+          }}><h3>{tr("重命名分组")}</h3><input autoFocus value={groupRename.draft} maxLength={80} onChange={event => setGroupRename(old => old ? { ...old, draft: event.target.value } : old)} /><div className="group-dialog-actions"><button type="button" className="neutral-button" onClick={() => setGroupRename(null)}>{tr("取消")}</button><button type="submit" className="primary-button">{tr("重命名")}</button></div></form>}
+          {groupDeleteConfirm && <><h3>{fillNamed("删除分组「{group}」？", { group: groupDeleteConfirm })}</h3><p>{tr("分组中的素材不会被删除。")}</p><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupDeleteConfirm(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
             const name = groupDeleteConfirm
             deleteGroupKeepingAssets(project, name).then(() => {
               if (active === `group:${name}`) goTo({ active: "所有素材" })
               scheduleSync(); setGroupDeleteConfirm(null)
-            }).catch(error => notify(errorMessage(error)))
+            }).catch(error => notify(errorMessage(error, language)))
           }}>{tr("删除分组")}</button></div></>}
-          {groupMerge && <><h3>{tr("合并分组")}</h3><p>{groupMerge.source} →</p><select value={groupMerge.target} onChange={event => setGroupMerge(old => old ? { ...old, target: event.target.value } : old)}>{navigation?.groups.filter(item => item.name !== groupMerge.source).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupMerge(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
+          {groupMerge && <><h3>{fillNamed("合并分组「{source}」", { source: groupMerge.source })}</h3><p>{tr("合并到：")}</p><p className="group-dialog-error">{fillNamed("「{source}」中的素材将移到所选分组，「{source}」随后删除。", { source: groupMerge.source })}</p><select value={groupMerge.target} onChange={event => setGroupMerge(old => old ? { ...old, target: event.target.value } : old)}>{navigation?.groups.filter(item => item.name !== groupMerge.source).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupMerge(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
             const { source, target } = groupMerge
             mergeGroups(project, source, target).then(() => {
               if (active === `group:${source}`) goTo({ active: `group:${target}` })
               scheduleSync(); setGroupMerge(null)
-            }).catch(error => notify(errorMessage(error)))
-          }}>{tr("确认合并")}</button></div></>}
+            }).catch(error => notify(errorMessage(error, language)))
+          }}>{tr("合并")}</button></div></>}
           {groupStats && (() => {
             const described = describeGroupStats(groupStats.values)
             return <>
               <h3>{tr("分组统计")} · {groupStats.name}</h3>
               <div className="group-stats-data">
-                {described.overview.map(item => <p key={item.label}>{tr(item.label)}: {item.value}</p>)}
+                {/* 任务 359（DLG-09b）：标签 + 数值不写冒号。 */}
+                {described.overview.map(item => <p key={item.label}>{language === "en" && item.enLabel ? item.enLabel : tr(item.label)} {item.value}</p>)}
                 {described.facets.map(facet => <div key={facet.title} className="group-stats-facet">
                   <strong>{tr(facet.title)}</strong>
                   {facet.entries.length
-                    ? facet.entries.map(entry => <p key={entry.name}>{entry.name}: {entry.count}</p>)
+                    ? facet.entries.map(entry => <p key={entry.name}>
+                        {/* 任务 359（HC-16）：来源码过显示名（ChatGPT 网页版…），分类原样。 */}
+                        {facet.title === "按来源" ? sourceDisplayLabel(entry.name) : entry.name} {entry.count}
+                      </p>)
                     : <p>{tr(facet.emptyText)}</p>}
                 </div>)}
               </div>
@@ -4292,19 +4429,19 @@ export default function App() {
               if (!name) return
               renameStack(project, stackRename.stackId, name)
                 .then(() => {
-                  notify(tr("堆叠已重命名"))
+                  notify("已重命名堆叠")
                   setAssets(old => old.map(a => a.stack && a.stack.id === stackRename.stackId ? { ...a, stack: { ...a.stack, name } } : a))
                   if (stackId === stackRename.stackId) setStackName(name)
                   setStackRename(null)
                   scheduleSync()
                 })
-                .catch(error => notify(errorMessage(error)))
+                .catch(error => notify(errorMessage(error, language)))
             }}>
               <h3>{tr("重命名堆叠")}</h3>
               <input autoFocus value={stackRename.draft} maxLength={80} onChange={event => setStackRename(old => old ? { ...old, draft: event.target.value } : old)} />
               <div className="group-dialog-actions">
                 <button type="button" className="neutral-button" onClick={() => setStackRename(null)}>{tr("取消")}</button>
-                <button type="submit" className="primary-button">{tr("保存")}</button>
+                <button type="submit" className="primary-button">{tr("重命名")}</button>
               </div>
             </form>
           </div>
@@ -4316,8 +4453,8 @@ export default function App() {
         <div className="modal-layer delete-layer" onClick={event => { if (event.target === event.currentTarget) setStackDissolveConfirm(null) }}>
           <div className="delete-modal" role="alertdialog" aria-modal="true">
             <div className="delete-icon"><Icon name="layers" size={26} /></div>
-            <h3>{tr("解散这个堆叠？")}</h3>
-            <p>{tr("仅解除素材之间的堆叠关系，不会删除或归档任何素材。")}</p>
+            <h3>{tr("解散堆叠？")}</h3>
+            <p>{tr("堆叠中的素材将恢复为独立素材，不会被删除。")}</p>
             <div className="delete-actions">
               <button className="neutral-button" onClick={() => setStackDissolveConfirm(null)}>{tr("取消")}</button>
               <button className="primary-button" onClick={() => {
@@ -4327,12 +4464,14 @@ export default function App() {
                   .then(result => {
                     // The server echoes the members it released; the toast
                     // counts those, not the stale menu-time count.
-                    notify(fill(tr("已解散堆叠 · {count} 个素材已恢复为独立素材"), { count: result.assetIds.length }))
+                    notify(result.assetIds.length === 1
+                      ? tr("已解散堆叠，1 个素材已恢复为独立素材")
+                      : fillNamed("已解散堆叠，{count} 个素材已恢复为独立素材", { count: result.assetIds.length }))
                     setAssets(old => old.map(a => a.stack && a.stack.id === target.stackId ? { ...a, stack: null } : a))
                     if (stackId === target.stackId) goTo({ stackId: "", stackName: "" })
                     scheduleSync()
                   })
-                  .catch(error => notify(errorMessage(error)))
+                  .catch(error => notify(errorMessage(error, language)))
               }}>{tr("解散堆叠")}</button>
             </div>
           </div>
@@ -4345,8 +4484,8 @@ export default function App() {
         <div className="modal-layer delete-layer" onClick={event => { if (event.target === event.currentTarget) setStackTrashConfirm(null) }}>
           <div className="delete-modal" role="alertdialog" aria-modal="true">
             <div className="delete-icon"><Icon name="trash" size={26} /></div>
-            <h3>{tr("将这个堆叠移到回收站？")}</h3>
-            <p>{fill(tr("其中的 {count} 个素材也会一起移到回收站。你可以之后从回收站恢复。"), { count: stackTrashConfirm.stackCount })}</p>
+            <h3>{tr("将堆叠移到回收站？")}</h3>
+            <p>{fillNamed("堆叠中的 {count} 个素材将一并移到回收站，90 天内可恢复。", { count: stackTrashConfirm.stackCount })}</p>
             <div className="delete-actions">
               <button className="neutral-button" onClick={() => setStackTrashConfirm(null)}>{tr("取消")}</button>
               <button className="primary-button" onClick={() => {
@@ -4354,18 +4493,23 @@ export default function App() {
                 setStackTrashConfirm(null)
                 trashStack(project, target.stackId)
                   .then(outcome => {
-                    if (outcome.failed) {
-                      notify(tr("已移至回收站 X 项，Y 项失败").replace("X", String(outcome.succeeded)).replace("Y", String(outcome.failed)))
+                    // 任务 359（TOAST-17）：全部失败固定句，不再出现「0 项」。
+                    if (outcome.failed && !outcome.succeeded) {
+                      notify("无法将堆叠移到回收站")
+                    } else if (outcome.failed) {
+                      notify(fillNamed("已将 {count} 个素材移到回收站，{failed} 个无法移动", { count: outcome.succeeded, failed: outcome.failed }))
                     } else if (outcome.succeeded) {
-                      notify(fill(tr("堆叠已移到回收站，共 {count} 个素材"), { count: outcome.succeeded }))
+                      notify(outcome.succeeded === 1
+                        ? tr("已将堆叠及其中 1 个素材移到回收站")
+                        : fillNamed("已将堆叠及其中 {count} 个素材移到回收站", { count: outcome.succeeded }))
                     }
                     const failedIds = new Set(outcome.failedIds)
                     setAssets(old => old.filter(a => !(a.stack && a.stack.id === target.stackId && !failedIds.has(a.id))))
                     if (stackId === target.stackId) goTo({ stackId: "", stackName: "" })
                     scheduleSync()
                   })
-                  .catch(error => notify(errorMessage(error)))
-              }}>{tr("移至回收站")}</button>
+                  .catch(error => notify(errorMessage(error, language)))
+              }}>{tr("移到回收站")}</button>
             </div>
           </div>
         </div>
@@ -4375,30 +4519,33 @@ export default function App() {
       (duplicate name) shows inside the dialog and keeps it open. */}
       {groupCreateWithSelection && (
         <div className="group-dialog-backdrop" role="presentation" onClick={event => { if (event.target === event.currentTarget) setGroupCreateWithSelection(null) }}>
-          <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("新建分组并移入")}>
+          <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("用所选素材新建分组")}>
             <form onSubmit={event => {
               event.preventDefault()
               const name = groupCreateWithSelection.draft.trim()
               if (!name) return
               const target = groupCreateWithSelection
+              let moveFailedTo = ""
               createGroup(project, name)
-                .then(() => {
-                  if (target.target === "stack" && target.targetStackId) return assignStackToGroup(project, target.targetStackId, name).then(() => {})
-                  return assignBatchToGroup(project, [...batchIds], name).then(outcome => {
-                    if (!outcome.succeeded) throw new Error(outcome.firstError || tr("添加分组失败"))
-                  })
+                .then(async () => {
+                  if (target.target === "stack" && target.targetStackId) { await assignStackToGroup(project, target.targetStackId, name); return }
+                  const outcome = await assignBatchToGroup(project, [...batchIds], name)
+                  // 任务 359（TOAST-21b）：创建成功但移入失败给出带分组名的整句。
+                  if (!outcome.succeeded) { moveFailedTo = name; throw new Error("move-into-group-failed") }
                 })
                 .then(() => {
                   notify(target.target === "stack"
-                    ? fill(tr("堆叠已移动到「{group}」"), { group: name })
-                    : tr("已添加到分组"))
+                    ? fillNamed("已新建分组「{group}」，堆叠已移到其中", { group: name })
+                    : fillNamed("已新建分组「{group}」，{count} 个素材已移到其中", { group: name, count: batchIds.length }))
                   if (target.target === "asset") setSelectedIds([])
                   setGroupCreateWithSelection(null)
                   scheduleSync()
                 })
-                .catch(error => setGroupCreateError(errorMessage(error)))
+                .catch(error => setGroupCreateError(moveFailedTo
+                  ? fillNamed("无法将素材移到「{group}」。", { group: moveFailedTo })
+                  : describeError(error, language)))
             }}>
-              <h3>{tr("新建分组并移入")}</h3>
+              <h3>{tr("用所选素材新建分组")}</h3>
               <input autoFocus value={groupCreateWithSelection.draft} maxLength={80} onChange={event => {
                 setGroupCreateError("")
                 setGroupCreateWithSelection(old => old ? { ...old, draft: event.target.value } : old)
@@ -4406,7 +4553,7 @@ export default function App() {
               {groupCreateError && <p className="group-dialog-error" role="alert">{groupCreateError}</p>}
               <div className="group-dialog-actions">
                 <button type="button" className="neutral-button" onClick={() => setGroupCreateWithSelection(null)}>{tr("取消")}</button>
-                <button type="submit" className="primary-button">{tr("保存")}</button>
+                <button type="submit" className="primary-button">{tr("新建")}</button>
               </div>
             </form>
           </div>
@@ -4445,16 +4592,16 @@ export default function App() {
             )}
           </div>
           {preview && <div className="viewer-title"><strong>{asset?.name}</strong><span>{Math.max(1, visible.findIndex(a => a.id === asset?.id) + 1)} / {visible.length}</span></div>}
-          {!preview && stackId && <div className="viewer-title"><strong>{stackName}</strong><span>{visible.length} {tr("素材")}</span></div>}
+          {!preview && stackId && <div className="viewer-title"><strong>{stackName}</strong><span>{visible.length === 1 ? tr("1 个素材") : fillNamed("{count} 个素材", { count: visible.length })}</span></div>}
           <div className="toolbar-right">
             {preview ? (
               <>
                 {active !== "回收站" && <button onClick={requestDelete}>
                   <Icon name="trash" size={12} />
-                  {tr("删除")}</button>}
+                  {tr("移到回收站")}</button>}
                 <button onClick={() => setDetail(!detail)}>
                   <Icon name="info" size={16} />
-                  {tr(detail ? "隐藏详情" : "显示详情")}</button>
+                  {tr(detail ? "隐藏素材详情" : "显示素材详情")}</button>
               </>
             ) : pinterestActive ? null : (
               <>
@@ -4477,13 +4624,13 @@ export default function App() {
                   />
                   <Icon name="search" size={12} />
                 </label>
-                {!detail && <button className="detail-toggle" aria-label={tr("显示详情")} title={tr("显示详情")} aria-expanded={false} onClick={() => setDetail(true)}><Icon name="inspector" size={16} /></button>}
+                {!detail && <button className="detail-toggle" aria-label={tr("显示素材详情")} title={tr("显示素材详情")} aria-expanded={false} onClick={() => setDetail(true)}><Icon name="inspector" size={16} /></button>}
               </>
             )}
           </div>
         </header>
         {preview ? (
-          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} originalSrc={asset?.mediaKind === "video" ? undefined : asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} onOpenLocation={() => void revealAssetPath()} message={toast?.text ?? ""} />
+          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} originalSrc={asset?.mediaKind === "video" ? undefined : asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} onOpenLocation={() => void revealAssetPath()} message={toast?.text ?? ""} openLocationLabel={isMacPlatform() ? tr("在访达中显示") : tr("在文件资源管理器中显示")} />
         ) : pinterestActive ? (
           <PinterestView
             key={pinterestViewKey}
@@ -4525,7 +4672,7 @@ export default function App() {
                   <button
                     key={a.id}
                     data-asset-id={a.id}
-                    aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
+                    aria-label={a.stack ? fillNamed("查看堆叠 {name}", { name: a.stack.name || a.name }) : `${tr("查看素材")} ${a.name}`}
                     className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""} ${cardDropClassFor(a.id)}`}
                     style={{ aspectRatio: `${a.width} / ${a.height}` }}
                     {...cardEventHandlers(a)}
@@ -4544,7 +4691,7 @@ export default function App() {
                       </span>
                     )}
                     {active === "回收站" && a.deleted_at && (
-                      <span className="trash-countdown">{fillNamed("{count} 天后删除", { count: trashRemainingDays(a.deleted_at, Date.now()) })}</span>
+                      <span className="trash-countdown">{(days => days === 1 ? tr("剩余 1 天") : fillNamed("剩余 {count} 天", { count: days }))(trashRemainingDays(a.deleted_at, Date.now()))}</span>
                     )}
                     {cardInfo && <span className="card-name">{a.stack ? a.stack.name || a.name : a.name}</span>}
                   </button>
@@ -4559,7 +4706,7 @@ export default function App() {
                 <button
                   key={a.id}
                   data-asset-id={a.id}
-                  aria-label={`${tr("查看素材")} ${a.stack ? `${tr("堆叠")} ${a.stack.name}` : a.name}`}
+                  aria-label={a.stack ? fillNamed("查看堆叠 {name}", { name: a.stack.name || a.name }) : `${tr("查看素材")} ${a.name}`}
                   className={`asset-card ${selectionSet.has(a.id) && !settings ? "asset-selected" : ""} ${cardDropClassFor(a.id)}`}
                   style={placementStyle(globalIndex)}
                   {...cardEventHandlers(a)}
@@ -4578,7 +4725,7 @@ export default function App() {
                     </span>
                   )}
                   {active === "回收站" && a.deleted_at && (
-                    <span className="trash-countdown">{fillNamed("{count} 天后删除", { count: trashRemainingDays(a.deleted_at, Date.now()) })}</span>
+                    <span className="trash-countdown">{(days => days === 1 ? tr("剩余 1 天") : fillNamed("剩余 {count} 天", { count: days }))(trashRemainingDays(a.deleted_at, Date.now()))}</span>
                   )}
                   {cardInfo && <span className="card-name">{a.stack ? a.stack.name || a.name : a.name}</span>}
                 </button>
@@ -4598,8 +4745,22 @@ export default function App() {
                   ))}
               </>
             })()}
-            {loading && <div className="empty-state" role="status">{tr("加载中")}</div>}
-            {!loading && loadError && <div className="empty-state" role="alert"><Icon name="info" size={30} /><p>{loadError}</p><button onClick={refreshNavigation}>{tr("重试")}</button></div>}
+            {loading && <div className="empty-state" role="status">{tr("正在加载…")}</div>}
+            {!loading && loadError && (() => {
+              // 任务 359（EMPTY-02）：固定句在渲染时翻译；版本不一致不显示
+              // 「重试」（再试还是不一致）。
+              const knownCode = loadError.kind === "load" && (loadError.error as { code?: string })?.code
+              const knownText = loadError.kind === "load" && knownCode ? describeError(loadError.error, language) : ""
+              const detail = loadError.kind === "load"
+                ? (loadError.error instanceof Error ? loadError.error.message : String(loadError.error))
+                : ""
+              const text = loadError.kind === "version-mismatch"
+                ? tr("GravityPort 版本不一致。请退出旧版，再重新打开当前版本。")
+                : loadError.kind === "project-switch"
+                  ? tr("无法切换项目")
+                  : knownText || fillNamed("无法加载素材（{detail}）。", { detail })
+              return <div className="empty-state" role="alert"><Icon name="info" size={30} /><p>{text}</p>{loadError.kind !== "version-mismatch" && <button onClick={refreshNavigation}>{tr("重试")}</button>}</div>
+            })()}
             {!loading && !loadError && visible.length === 0 && (
               (() => {
                 const empty = deriveEmptyState({
@@ -4645,7 +4806,7 @@ export default function App() {
             </button>
           </div>
           <div className="asset-summary">
-            <button className="summary-image" aria-label={tr("预览当前素材")} onClick={() => setPreview(true)}>{asset.thumbnail_url ? <ThumbMedia src={asset.thumbnail_url} alt="" /> : null}{asset.mediaKind === "video" && <VideoMark />}<Icon name="expand" /></button>
+            <button className="summary-image" aria-label={tr("在查看器中打开")} onClick={() => setPreview(true)}>{asset.thumbnail_url ? <ThumbMedia src={asset.thumbnail_url} alt="" /> : null}{asset.mediaKind === "video" && <VideoMark />}<Icon name="expand" /></button>
             <div className="asset-meta">
               <div className="asset-title">
                 <span className="asset-name" title={asset.name}>{asset.name}</span>
@@ -4660,23 +4821,24 @@ export default function App() {
               </div>
               <span className="muted">{headerLine}</span>
               {trashReasonInfo && <span className="trash-reason">{tr(trashReasonInfo.text)}</span>}
-              <button className="summary-preview" onClick={() => setPreview(true)}>{tr("打开预览")}<Icon name="right" size={12} /></button>
+              <button className="summary-preview" onClick={() => setPreview(true)}>{tr("在查看器中打开")}<Icon name="right" size={12} /></button>
             </div>
           </div>
           <div className="asset-properties">
               {([
                 ["格式", asset.format || "—"],
                 ["尺寸", asset.width > 1 && asset.height > 1 ? `${asset.width} × ${asset.height}` : "—"],
-                ["比例", aspectRatioLabel(asset.width, asset.height)],
+                ["宽高比", aspectRatioLabel(asset.width, asset.height)],
                 ...(asset.mediaKind === "video" && asset.duration_seconds
                   ? [["时长", formatVideoDuration(asset.duration_seconds)]]
                   : []),
                 ["大小", humanSize(asset.size_bytes)],
               ] as [string, string][]).map(([label, value]) => (
-                <span className="property-tag" key={label} title={`${tr(label)}: ${tr(value)}`} aria-label={`${tr(label)}: ${tr(value)}`}>{tr(value)}</span>
+                // 任务 359（MAIN-19a）：中文全角冒号、英文半角，按语言取。
+                <span className="property-tag" key={label} title={`${tr(label)}${language === "en" ? ": " : "："}${tr(value)}`} aria-label={`${tr(label)}${language === "en" ? ": " : "："}${tr(value)}`}>{tr(value)}</span>
               ))}
               {sourceInfo?.groupLabel ? (
-                <span className="property-tag" title={`${tr("分组")}: ${sourceInfo.groupLabel}`} aria-label={`${tr("分组")}: ${sourceInfo.groupLabel}`}>{sourceInfo.groupLabel}</span>
+                <span className="property-tag" title={`${tr("分组")}${language === "en" ? ": " : "："}${sourceInfo.groupLabel}`} aria-label={`${tr("分组")}${language === "en" ? ": " : "："}${sourceInfo.groupLabel}`}>{sourceInfo.groupLabel}</span>
               ) : null}
           </div>
           <div className="tags" ref={tagsRowRef}>
@@ -4691,7 +4853,7 @@ export default function App() {
                       const remaining = removeTagFromStored(currentTags, t)
                       updateAssetMetadata(asset.project_id, asset.id, { tags: remaining })
                         .then(updated => setAssets(old => old.map(item => item.id === updated.id ? mergeAssetDetail(item, updated) : item)))
-                        .catch(error => notify(errorMessage(error)))
+                        .catch(error => notify(errorMessage(error, language)))
                     }}>×</button>
                 </span>
               )
@@ -4703,11 +4865,11 @@ export default function App() {
             {addingTag && <form className="tag-editor" onSubmit={e => {
               e.preventDefault()
               const tag = tagDraft.trim()
-              if (!tag) { setTagError("请输入标签名称"); return }
-              if (currentTags.some(existing => existing.toLocaleLowerCase() === tag.toLocaleLowerCase())) { setTagError("标签已存在"); return }
+              if (!tag) { setTagError("请输入标签名称。"); return }
+              if (currentTags.some(existing => existing.toLocaleLowerCase() === tag.toLocaleLowerCase())) { setTagError("已有同名标签。"); return }
               updateAssetMetadata(asset.project_id, asset.id, { tags: [...currentTags, tag] }).then(updated => {
                 setAssets(old => old.map(a => a.id === updated.id ? mergeAssetDetail(a, updated) : a))
-              }).catch(error => notify(errorMessage(error)))
+              }).catch(error => notify(errorMessage(error, language)))
               setExpandedTags(true)
               setTagDraft("")
               setTagError("")
@@ -4744,8 +4906,11 @@ export default function App() {
                 style={{ background: c }}
                 aria-label={`${tr("复制颜色")} ${c}`}
                 onClick={async () => {
-                  try { await writeText(c) } catch { navigator.clipboard?.writeText(c) }
-                  notify(`${tr("已复制")} ${c}`)
+                  // 任务 359（TOAST-06i）：失败不能再报「已复制」。
+                  try {
+                    try { await writeText(c) } catch { await navigator.clipboard?.writeText(c) }
+                    notify(fillNamed("已复制颜色 {color}", { color: c }))
+                  } catch { notify("无法复制颜色") }
                 }}
               />
             ))}
@@ -4754,8 +4919,8 @@ export default function App() {
             <div className="field-heading">
               <span className="prompt-tabs" role="group" aria-label={tr("提示词")}>
                 {asset.prompt2 ? <>
-                  <button className={promptVariant === 1 ? "active" : ""} aria-pressed={promptVariant === 1} onClick={() => { setPromptVariant(1); setExpandedPrompt(false) }}>{tr("提示词1")}</button>
-                  <button className={promptVariant === 2 ? "active" : ""} aria-pressed={promptVariant === 2} onClick={() => { setPromptVariant(2); setExpandedPrompt(false); setPromptEdit(null) }}>{tr("提示词2")}</button>
+                  <button className={promptVariant === 1 ? "active" : ""} aria-pressed={promptVariant === 1} onClick={() => { setPromptVariant(1); setExpandedPrompt(false) }}>{tr("提示词 1")}</button>
+                  <button className={promptVariant === 2 ? "active" : ""} aria-pressed={promptVariant === 2} onClick={() => { setPromptVariant(2); setExpandedPrompt(false); setPromptEdit(null) }}>{tr("提示词 2")}</button>
                 </> : tr("提示词")}
               </span>
               <span className="field-actions">
@@ -4763,9 +4928,9 @@ export default function App() {
                 <button
                   aria-label={tr("复制提示词")}
                   onClick={async () => {
-                    if (!shownPrompt) { notify(tr("无提示词记录")); return }
-                    try { await writeText(shownPrompt); notify("提示词已复制") }
-                    catch { notify(String(tr("复制失败"))) }
+                    if (!shownPrompt) { notify("此素材没有提示词记录"); return }
+                    try { await writeText(shownPrompt); notify("已复制提示词") }
+                    catch { notify("无法复制提示词") }
                   }}
                 >
                   <Icon name="copy" size={16} />
@@ -4798,7 +4963,7 @@ export default function App() {
               <>
                 <ReadingText
                   id="asset-prompt"
-                  text={shownPrompt || tr(promptNoticeInfo?.key === "webPromptUnavailable" ? "网页来源未暴露原始生图提示词" : "无提示词记录")}
+                  text={shownPrompt || tr(promptNoticeInfo?.key === "webPromptUnavailable" ? "该网页未提供原始提示词" : "无提示词记录")}
                   expanded={expandedPrompt}
                   onToggle={() => setExpandedPrompt(!expandedPrompt)}
                   expandLabel={tr("展开提示词")}
@@ -4814,13 +4979,13 @@ export default function App() {
             <div className="field-heading">
               <span>{tr("用户指令")}</span>
               <button aria-label={tr("复制用户指令")} disabled={!asset.user_instruction}
-                onClick={() => writeText(asset.user_instruction).then(() => notify(tr("已复制"))).catch(() => notify(tr("复制失败")))}>
+                onClick={() => writeText(asset.user_instruction).then(() => notify("已复制用户指令")).catch(() => notify("无法复制用户指令"))}>
                 <Icon name="copy" size={16} />
               </button>
             </div>
             <ReadingText
               id="asset-instruction"
-              text={asset.user_instruction || tr("未提供用户指令")}
+              text={asset.user_instruction || tr("无用户指令记录")}
               expanded={expandedInstruction}
               onToggle={() => setExpandedInstruction(!expandedInstruction)}
               expandLabel={tr("展开用户指令")}
@@ -4833,8 +4998,11 @@ export default function App() {
               <button
                 aria-label={tr("复制内容介绍")}
                 onClick={async () => {
-                  try { await writeText(asset.introduction); notify("内容介绍已复制") }
-                  catch { navigator.clipboard?.writeText(asset.introduction) }
+                  // 任务 359（TOAST-06g）：复制失败要有反馈，不再静默。
+                  try {
+                    try { await writeText(asset.introduction) } catch { await navigator.clipboard?.writeText(asset.introduction) }
+                    notify("已复制内容介绍")
+                  } catch { notify("无法复制内容介绍") }
                 }}
               >
                 <Icon name="copy" size={16} />
@@ -4842,7 +5010,7 @@ export default function App() {
             </div>
             <div className={`detail-reading ${expandedIntro ? "expanded" : ""}`}>
               <p id="asset-introduction">{asset.introduction}</p>
-              <button className="reading-toggle" aria-expanded={expandedIntro} aria-controls="asset-introduction" onClick={() => setExpandedIntro(!expandedIntro)}>{expandedIntro ? tr("收起") : tr("展开介绍")}<Icon name={expandedIntro ? "minus" : "down"} size={12} /></button>
+              <button className="reading-toggle" aria-expanded={expandedIntro} aria-controls="asset-introduction" onClick={() => setExpandedIntro(!expandedIntro)}>{expandedIntro ? tr("收起") : tr("展开内容介绍")}<Icon name={expandedIntro ? "minus" : "down"} size={12} /></button>
             </div>
           </section>}
           {(() => {
@@ -4854,9 +5022,9 @@ export default function App() {
                 <span>{tr("参考图")}</span>
               </div>
               {inspectorFetchError.recipes
-                ? <span className="muted">{tr("加载失败")}</span>
+                ? <span className="muted">{tr("无法加载")}</span>
                 : <div className="reference-gallery" aria-label={tr("参考图缩略图")}>
-                {references.map(reference => <button key={reference.key} className="reference-thumbnail" title={/^参考图 \d+$/.test(reference.label) ? tr(reference.label) : reference.label} aria-label={tr("预览参考图")} onClick={() => window.open(reference.openUrl || reference.thumbnailUrl, "_blank", "noopener")}>
+                {references.map(reference => <button key={reference.key} className="reference-thumbnail" title={/^参考图 \d+$/.test(reference.label) ? tr(reference.label) : reference.label} aria-label={tr("打开参考图")} onClick={() => window.open(reference.openUrl || reference.thumbnailUrl, "_blank", "noopener")}>
                   <img className="reference-image" src={reference.thumbnailUrl} alt="" loading="lazy" />
                 </button>)}
               </div>}
@@ -4880,7 +5048,7 @@ export default function App() {
                 if (versionRounds.mode !== "context" && !badgeCount && !hasVersionFamily) return null
                 return <span className="field-actions">
                   {badgeCount ? <span className="settings-badge">{badgeCount}</span> : null}
-                  <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "查看")}</button>
+                  <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "展开")}</button>
                 </span>
               })()}
             </div>
@@ -4914,13 +5082,14 @@ export default function App() {
                     key: String(event.id || index),
                     thumbnailUrl: output?.thumbnail_url,
                     title: (event.effective_prompt || event.user_prompt || tr("无提示词记录")).slice(0, 60),
-                    detail: `${timeLabel(event.created_at)}${event.provider ? ` · ${event.provider}` : ""}${event.model ? ` · ${event.model}` : ""}${event.turn_index != null ? ` · ${tr("轮次")} ${event.turn_index}` : ""}`,
+                    // 任务 359（MAIN-26q）：来源过显示名、日期本地化、轮次统一「第 N 轮」。
+                    detail: `${timeLabel(event.created_at)}${event.provider ? ` · ${providerDisplayLabel(event.provider)}` : ""}${event.turn_index != null ? ` · ${fillNamed("第 {n} 轮", { n: event.turn_index })}` : ""}`,
                     onClick: () => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) },
                   })
                 })}
               {inspectorFetchError.history
-                ? <span className="muted">{tr("加载失败")}</span>
-                : !generationHistory?.events?.length && <span className="muted">{tr("暂无生成关系")}</span>}
+                ? <span className="muted">{tr("无法加载")}</span>
+                : !generationHistory?.events?.length && <span className="muted">{tr("暂无生成记录")}</span>}
             </div>
             {versionTreeOpen && (() => {
               // Every block below renders the same thumbnail rows as the list
@@ -4993,8 +5162,8 @@ export default function App() {
                 {generationTreeRows(generationHistory).map(({ event, depth, parentIds, relationTypes }) => {
                   const display = generationDisplay(generationHistory, event.id, asset)
                   const ancestry = !parentIds.length
-                    ? tr("根节点")
-                    : relationTypes[0] === "edited_from" ? tr("改自上一张") : tr(String(relationTypes[0] || "derived_from"))
+                    ? tr("初始生成")
+                    : relationTypes[0] === "edited_from" ? tr("改自上一个素材") : tr(RELATION_LABELS[(relationTypes[0] || "derived_from") as keyof typeof RELATION_LABELS] || String(relationTypes[0]))
                   return InspectorRow({
                     key: `tree-${event.id}`,
                     rowClassName: "generation-tree-row",
@@ -5002,7 +5171,7 @@ export default function App() {
                     emptyThumb: !display.known,
                     thumbnailUrl: display.asset?.thumbnail_url,
                     isCurrent: display.isCurrent,
-                    title: display.known ? (display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录")) : tr("不在这段对话里的生成记录"),
+                    title: display.known ? (display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录")) : tr("不属于此对话的生成记录"),
                     detail: `${ancestry}${display.turnIndex != null ? ` · ${turnLine(display.turnIndex)}` : ""}`,
                     staticRow: !display.known,
                     onClick: jumpToDisplay(display),
@@ -5021,15 +5190,15 @@ export default function App() {
                       <small>{relationPairLine(upstream, downstream)}</small>
                     </span>
                     <select disabled={locked || relationBusy} aria-label={tr("关系类型")} value={relationDrafts[key] || relation.relation_type} onChange={event => setRelationDrafts(old => ({ ...old, [key]: event.target.value }))}>
-                      {relationTypes.map(type => <option key={type} value={type}>{tr(type)}</option>)}
+                      {relationTypes.map(type => <option key={type} value={type}>{tr(RELATION_LABELS[type] || type)}</option>)}
                     </select>
-                    {locked ? <small>{tr("提供方验证关系不可修改")}</small> : <>
+                    {locked ? <small>{tr("已由来源平台验证，无法修改")}</small> : <>
                       <button disabled={relationBusy} onClick={() => void mutateRelation(() => editGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, previousRelationType: relation.relation_type, relationType: relationDrafts[key] || relation.relation_type, evidence: relation.evidence }))}>{tr("保存关系")}</button>
-                      <button disabled={relationBusy} onClick={() => { if (window.confirm(tr("确认删除这条生成关系？"))) void mutateRelation(() => removeGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, relationType: relation.relation_type })) }}>{tr("删除关系")}</button>
+                      <button disabled={relationBusy} onClick={() => { if (window.confirm(tr("删除生成关系？"))) void mutateRelation(() => removeGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, relationType: relation.relation_type })) }}>{tr("删除关系")}</button>
                     </>}
                   </div>
                 })}
-                {candidateList.length > 0 && <h4>{tr("候选关系")}</h4>}
+                {candidateList.length > 0 && <h4>{tr("建议关系")}</h4>}
                 {candidateList.map(candidate => {
                   const upstream = generationDisplay(generationHistory, candidate.parent_generation_id, asset)
                   const downstream = generationDisplay(generationHistory, candidate.child_generation_id, asset)
@@ -5040,9 +5209,9 @@ export default function App() {
                       <RelationThumb display={downstream} onClick={jumpToDisplay(downstream)} label={tr("查看素材")} />
                       <small>{relationPairLine(upstream, downstream)}</small>
                     </span>
-                    <small>{fillNamed(tr("把握 {percent}%"), { percent: Math.round((candidate.confidence || 0) * 100) })}</small>
+                    <small>{fillNamed(tr("可信度 {percent}%"), { percent: Math.round((candidate.confidence || 0) * 100) })}</small>
                     <button disabled={relationBusy} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: candidate.child_generation_id, parentGenerationId: candidate.parent_generation_id, relationType: candidate.suggested_relation_type || "derived_from", evidence: candidate.evidence }))}>{tr("确认关系")}</button>
-                    <button disabled={relationBusy} onClick={() => void mutateRelation(() => dismissGenerationCandidate(project, candidate.child_generation_id, candidate.parent_generation_id))}>{tr("忽略候选")}</button>
+                    <button disabled={relationBusy} onClick={() => void mutateRelation(() => dismissGenerationCandidate(project, candidate.child_generation_id, candidate.parent_generation_id))}>{tr("忽略建议")}</button>
                   </div>
                 })}
                 {!!generationHistory?.events?.length && <div className="generation-relation-editor">
@@ -5084,7 +5253,7 @@ export default function App() {
                         })()}
                       <div className="relation-choice-list" aria-label={tr("关联生成")}>
                         {choices.length === 0
-                          ? <span className="muted">{tr("这段对话里没有别的图可以关联")}</span>
+                          ? <span className="muted">{tr("此对话中没有可关联的其他素材")}</span>
                           : <>
                             {visibleChoices.map(choice => InspectorRow({
                               key: `choice-${choice.asset.id}`,
@@ -5096,18 +5265,18 @@ export default function App() {
                               onClick: () => setNewRelation(old => old ? { ...old, other: generationIdForAsset(String(choice.asset.id)) } : old),
                             }))}
                             {choices.length > 6 && <button className="relation-show-all" onClick={() => setShowAllRelationChoices(!showAllRelationChoices)}>
-                              {showAllRelationChoices ? tr("收起") : fillNamed(tr("显示全部 {count} 张"), { count: choices.length })}
+                              {showAllRelationChoices ? tr("收起") : fillNamed("显示全部 {count} 个", { count: choices.length })}
                             </button>}
                           </>}
                       </div>
-                      <select aria-label={tr("关系方向")} value={newRelation.direction} onChange={event => setNewRelation(old => old ? { ...old, direction: event.target.value } : old)}><option value="candidate-parent">{tr("关联项为上游")}</option><option value="candidate-child">{tr("关联项为下游")}</option></select>
-                      <select aria-label={tr("关系类型")} value={newRelation.type} onChange={event => setNewRelation(old => old ? { ...old, type: event.target.value } : old)}>{relationTypes.map(type => <option value={type} key={type}>{tr(type)}</option>)}</select>
-                      <button disabled={relationBusy || !newRelation.other || newRelation.other === newRelation.anchor} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: newRelation.direction === "candidate-child" ? newRelation.other : newRelation.anchor, parentGenerationId: newRelation.direction === "candidate-child" ? newRelation.anchor : newRelation.other, relationType: newRelation.type }))}>{tr("确认添加")}</button>
+                      <select aria-label={tr("关系方向")} value={newRelation.direction} onChange={event => setNewRelation(old => old ? { ...old, direction: event.target.value } : old)}><option value="candidate-parent">{tr("关联生成为前序")}</option><option value="candidate-child">{tr("关联生成为后续")}</option></select>
+                      <select aria-label={tr("关系类型")} value={newRelation.type} onChange={event => setNewRelation(old => old ? { ...old, type: event.target.value } : old)}>{relationTypes.map(type => <option value={type} key={type}>{tr(RELATION_LABELS[type] || type)}</option>)}</select>
+                      <button disabled={relationBusy || !newRelation.other || newRelation.other === newRelation.anchor} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: newRelation.direction === "candidate-child" ? newRelation.other : newRelation.anchor, parentGenerationId: newRelation.direction === "candidate-child" ? newRelation.anchor : newRelation.other, relationType: newRelation.type }))}>{tr("添加")}</button>
                     </div>
                   })()}
                 </div>}
                 <h4>{tr("版本历史")}</h4>
-                {inspectorFetchError.versions && <span className="muted">{tr("加载失败")}</span>}
+                {inspectorFetchError.versions && <span className="muted">{tr("无法加载")}</span>}
                 {(versions || []).map(v => InspectorRow({
                   key: `version-${v.id}`,
                   thumbnailUrl: v.thumbnail_url,
@@ -5121,7 +5290,7 @@ export default function App() {
                 {versions && versions.length > 1 && <VersionCompare
                   key={`family-${asset?.id || ""}`}
                   language={language}
-                  fields={["尺寸", "提示词", "版本"]}
+                  fields={["尺寸", "提示词", "变更说明"]}
                   entries={versions.map(v => ({
                     id: v.id,
                     label: `${tr("版本")} ${v.version_index}`,
@@ -5129,7 +5298,7 @@ export default function App() {
                     values: {
                       "尺寸": `${v.width} × ${v.height}`,
                       "提示词": v.prompt,
-                      "版本": v.version_change || "",
+                      "变更说明": v.version_change || "",
                     },
                   }))}
                   defaultBaseId={versions[0].id}
@@ -5143,7 +5312,7 @@ export default function App() {
               <span>{tr("版本")}</span>
               {versions && versions.length > 1 && <span className="settings-badge">{versions.length}</span>}
             </div>
-            {inspectorFetchError.versions && <span className="muted">{tr("加载失败")}</span>}
+            {inspectorFetchError.versions && <span className="muted">{tr("无法加载")}</span>}
             <div className="version-list" aria-label={tr("版本")}>
               {(versions || []).map(v => (
                 <button
@@ -5157,7 +5326,7 @@ export default function App() {
                   <span>
                     {tr("版本")} {v.version_index}
                     <small>
-                      {v.version_change || ""} {v.format || "—"} · {v.width} × {v.height} · {timeLabel(v.created_at)}
+                      {[v.version_change || "", v.format || "—"].filter(Boolean).join(" · ")} · {v.width} × {v.height} · {timeLabel(v.created_at)}
                     </small>
                   </span>
                   <Icon name="right" size={11} />
@@ -5282,11 +5451,11 @@ export default function App() {
                       <div className="storage-description"><strong>{tr("存储位置")}</strong><span title={library?.path || ""}>{library?.path || "—"}</span></div>
                       <div className="storage-actions">
                         <button className="neutral-button" onClick={openStorageLocation}>{tr("打开")}</button>
-                        <button className="neutral-button" onClick={changeLibraryLocation}>{tr("修改")}</button>
+                        <button className="neutral-button" onClick={changeLibraryLocation}>{tr("更改…")}</button>
                       </div>
                     </div>
                   </section>
-                  <div className="settings-note"><p>{library ? `${tr("存储类型")}: ${library.storage}` : ""}</p></div>
+                  <div className="settings-note"><p>{library ? `${tr("存储类型")} ${library.storage}` : ""}</p></div>
                 </>
               ) : settingTab === "连接" ? (
                 <>
@@ -5296,13 +5465,13 @@ export default function App() {
                   {backgroundCapture.supported && (
                     <div className="web-capture-toggle">
                       <div className="web-capture-toggle-row">
-                        <span>{tr("关闭 GravityPort 后继续收录")}</span>
+                        <span>{tr("后台收录")}</span>
                         <button
                           type="button"
                           className={`settings-switch ${backgroundCapture.enabled ? "enabled" : ""}`}
                           role="switch"
                           aria-checked={backgroundCapture.enabled}
-                          aria-label={tr("关闭 GravityPort 后继续收录")}
+                          aria-label={tr("后台收录")}
                           disabled={backgroundCaptureBusy}
                           onClick={async () => {
                             if (backgroundCaptureBusy) return
@@ -5315,14 +5484,14 @@ export default function App() {
                               setBackgroundCapture(s => ({ ...s, enabled: result.enabled }))
                             } catch {
                               setBackgroundCapture(s => ({ ...s, enabled: previous }))
-                              notify("没能更改后台收录设置")
+                              notify("无法更改后台收录设置")
                             } finally {
                               setBackgroundCaptureBusy(false)
                             }
                           }}
                         ><span /></button>
                       </div>
-                      <p className="web-capture-toggle-note">{tr("GravityPort 关闭时，由后台服务继续接收浏览器扩展发来的作品。")}</p>
+                      <p className="web-capture-toggle-note">{tr("GravityPort 关闭后，继续接收浏览器扩展发来的素材。")}</p>
                     </div>
                   )}
                 </>
@@ -5425,7 +5594,7 @@ export default function App() {
               </div>
               {!savedLocally && <div className="settings-footnote" role="status">
                 <Icon name="info" size={12} />
-                {tr("无法保存偏好，仅在当前会话生效")}
+                {tr("无法保存偏好设置。更改将在退出 GravityPort 后失效。")}
               </div>}
             </div>
           </div>
@@ -5458,8 +5627,8 @@ export default function App() {
             <div className="delete-icon">
               <Icon name="trash" size={26} />
             </div>
-            <h3>{tr("是否移至回收站？")}</h3>
-            <p>{tr("素材会在回收站保留 90 天，期间可以随时还原。")}</p>
+            <h3>{tr("移到回收站？")}</h3>
+            <p>{tr("移到回收站的素材保留 90 天，期间可恢复。")}</p>
             <div className="delete-actions">
               <label>
                 <input
@@ -5467,14 +5636,14 @@ export default function App() {
                   checked={skipConfirm}
                   onChange={(e) => setSkipConfirm(e.target.checked)}
                 />
-                {tr("不再提醒")}</label>
+                {tr("不再询问")}</label>
               <button
                 className="neutral-button"
                 onClick={() => setDeleting(false)}
               >
                 {tr("取消")}</button>
               <button className="primary-button" onClick={remove}>
-                {tr("移至回收站")}</button>
+                {tr("移到回收站")}</button>
             </div>
           </div>
         </div>
@@ -5485,8 +5654,8 @@ export default function App() {
             <div className="delete-icon">
               <Icon name="trash" size={26} />
             </div>
-            <h3>{permanentDeleteIds.length > 1 ? fillNamed("永久删除 {count} 个素材？", { count: permanentDeleteIds.length }) : tr("永久删除这个素材？")}</h3>
-            <p>{tr("永久删除后无法恢复。")}</p>
+            <h3>{permanentDeleteIds.length > 1 ? fillNamed("永久删除 {count} 个素材？", { count: permanentDeleteIds.length }) : tr("永久删除素材？")}</h3>
+            <p>{tr("此操作无法撤销。")}</p>
             <div className="delete-actions">
               <button className="neutral-button" onClick={() => setPermanentDeleteIds(null)}>
                 {tr("取消")}</button>
@@ -5503,7 +5672,7 @@ export default function App() {
               <Icon name="trash" size={26} />
             </div>
             <h3>{tr("清空回收站？")}</h3>
-            <p>{tr("回收站中的所有素材都会被永久删除，且无法恢复。")}</p>
+            <p>{tr("回收站中的所有素材将被永久删除。此操作无法撤销。")}</p>
             <div className="delete-actions">
               <button className="neutral-button" onClick={() => setEmptyTrashConfirm(false)}>
                 {tr("取消")}</button>
@@ -5519,14 +5688,14 @@ export default function App() {
             <div className="delete-icon">
               <Icon name="info" size={26} />
             </div>
-            <h3 id="rename-notice-title">{tr("MOSA 现已更名为 GravityPort")}</h3>
-            <p>{tr("只是换了名字。你的素材、设置和浏览器插件都在原处，不需要做任何操作。")}</p>
+            <h3 id="rename-notice-title">{tr("MOSA 已更名为 GravityPort")}</h3>
+            <p>{tr("素材、设置和浏览器扩展均保持不变，无需任何操作。")}</p>
             <div className="delete-actions">
               <button
                 className="primary-button"
                 onClick={dismissRenameNotice}
               >
-                {tr("知道了")}
+                {tr("好")}
               </button>
             </div>
           </div>
@@ -5540,8 +5709,8 @@ export default function App() {
             <div className="delete-icon">
               <Icon name="info" size={26} />
             </div>
-            <h3 id="schema-upgrade-notice-title">{tr("素材库检查发现问题")}</h3>
-            <p>{tr("这次升级后的检查没有通过。升级前的数据库拷贝已经留着，请别删它。App 照常能用，麻烦在设置的「反馈」里告诉我们。")}</p>
+            <h3 id="schema-upgrade-notice-title">{tr("素材库升级检查未通过")}</h3>
+            <p>{tr("GravityPort 可以继续使用。升级前的备份已保留，请勿删除，并在「设置 > 反馈」中报告此问题。")}</p>
             <div className="delete-actions">
               <button
                 className="neutral-button"
@@ -5549,14 +5718,14 @@ export default function App() {
                   openLibraryFolder(schemaNotice.backupPath, true).catch(() => {
                     // 404 (file gone) and friends keep the dialog open; the
                     // existing light toast says so.
-                    notify(tr("无法打开该位置"))
+                    notify("无法打开此位置")
                   })
                 }}
               >
-                {isMacPlatform() ? tr("在访达中显示拷贝") : tr("在资源管理器中显示拷贝")}
+                {isMacPlatform() ? tr("在访达中显示备份") : tr("在文件资源管理器中显示备份")}
               </button>
               <button className="primary-button" onClick={dismissSchemaUpgradeNotice}>
-                {tr("知道了")}
+                {tr("好")}
               </button>
             </div>
           </div>

@@ -9,7 +9,7 @@
  */
 
 export type MenuEntry =
-  | { kind: "item"; id: string; label: string; icon?: string; danger?: boolean; disabled?: boolean; shortcut?: string; submenu?: MenuEntry[]; color?: string }
+  | { kind: "item"; id: string; label: string; enLabel?: string; icon?: string; danger?: boolean; disabled?: boolean; shortcut?: string; submenu?: MenuEntry[]; color?: string }
   | { kind: "separator" }
   | { kind: "heading"; label: string }
 
@@ -53,7 +53,7 @@ function buildSectionedMenu(sections: (MenuEntry[] | null | undefined)[]): MenuE
 
 const groupSubmenu = (prefix: string, groups: MenuContext["groups"]): MenuEntry[] => {
   const entries: MenuEntry[] = [
-    { kind: "item", id: `${prefix}:create`, label: "新建分组并移入" },
+    { kind: "item", id: `${prefix}:create`, label: "用所选素材新建分组…" },
   ]
   if (groups.length) {
     entries.push({ kind: "separator" })
@@ -91,13 +91,13 @@ export function buildContextMenu(ctx: MenuContext): MenuEntry[] {
     }
     const isMultiple = ctx.selectionCount > 1
     const headingSection: MenuEntry[] | null = isMultiple
-      ? [{ kind: "heading", label: "已选 {count} 项" }]
+      ? [{ kind: "heading", label: "已选择 {count} 项" }]
       : null
     return buildSectionedMenu([
       headingSection,
       [
         ...(isMultiple ? [] : [{ kind: "item" as const, id: "open-viewer", label: "在查看器中打开", icon: "external" }]),
-        { kind: "item" as const, id: "copy-path", label: "复制路径", icon: "link" },
+        { kind: "item" as const, id: "copy-path", label: "复制路径", enLabel: isMultiple ? "Copy paths" : undefined, icon: "link" },
       ],
       [
         { kind: "item" as const, id: "restore-selection", label: isMultiple ? "恢复 {count} 个素材" : "恢复", icon: "inbox" },
@@ -127,7 +127,7 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
   const hasStacks = ctx.selectionHasStacks
 
   const headingSection: MenuEntry[] | null = isMultiple
-    ? [{ kind: "heading", label: "已选 {count} 项" }]
+    ? [{ kind: "heading", label: "已选择 {count} 项" }]
     : null
 
   const openSection = isMultiple ? null : [
@@ -139,9 +139,9 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
   // members); the prompt copy stays single-only.
   const copySection = isMultiple
     ? [
-        ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "copy-image", label: "复制图片", icon: "image" }] : []),
+        ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "copy-image", label: "复制图片", enLabel: "Copy images", icon: "image" }] : []),
         { kind: "item" as const, id: "cut", label: "剪切", icon: "scissors", disabled: hasStacks },
-        { kind: "item" as const, id: "copy-path", label: "复制路径", icon: "link" },
+        { kind: "item" as const, id: "copy-path", label: "复制路径", enLabel: "Copy paths", icon: "link" },
       ]
     : [
         { kind: "item" as const, id: "copy-image", label: "复制图片", icon: "image" },
@@ -152,15 +152,16 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
 
   const organizeSection: MenuEntry[] = [
     { kind: "item", id: "toggle-favorite", label: ctx.favorite ? "取消收藏" : "收藏", icon: "heart" },
-    { kind: "item", id: "add-to-group", label: "添加分组", icon: "plus", submenu: groupSubmenu("add-to-group", ctx.groups) },
-    { kind: "item", id: "remove-from-group", label: "移除分组", icon: "folder", disabled: !ctx.anyGrouped },
+    { kind: "item", id: "add-to-group", label: "移到分组", icon: "plus", submenu: groupSubmenu("add-to-group", ctx.groups) },
+    { kind: "item", id: "remove-from-group", label: "移出分组", icon: "folder", disabled: !ctx.anyGrouped },
     ...(ctx.unorganizedView ? [{ kind: "item" as const, id: "mark-sorted", label: "标为已整理", icon: "check" }] : []),
   ]
 
   // A selection containing stack nodes exports nothing (old grammar): the
-  // whole section disappears instead of greying out.
-  const exportSection = hasStacks ? null : [
-    { kind: "item" as const, id: "export", label: "导出至", icon: "external" },
+  // whole section disappears instead of greying out. 任务 359：多选时导出仍只
+  // 处理焦点那一张，这一项整个不显示；单选时按 Apple 惯例写「导出…」。
+  const exportSection = hasStacks || isMultiple ? null : [
+    { kind: "item" as const, id: "export", label: "导出…", icon: "external" },
   ]
 
   // Stack section only when it applies: inside a stack → move out (single and
@@ -174,7 +175,7 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
   }
 
   const dangerSection = [
-    { kind: "item" as const, id: "move-to-trash", label: "移至回收站", icon: "trash", danger: true },
+    { kind: "item" as const, id: "move-to-trash", label: "移到回收站", icon: "trash", danger: true },
   ]
 
   return buildSectionedMenu([
@@ -203,16 +204,16 @@ function buildStackMenu(ctx: MenuContext): MenuEntry[] {
       { kind: "item" as const, id: "stack-copy-paths", label: "复制全部路径", icon: "link" },
     ],
     [
-      { kind: "item" as const, id: "stack-add-to-group", label: "添加分组", icon: "plus", submenu: groupSubmenu("stack-add-to-group", ctx.groups) },
-      { kind: "item" as const, id: "stack-remove-from-group", label: "移除分组", icon: "folder" },
+      { kind: "item" as const, id: "stack-add-to-group", label: "移到分组", icon: "plus", submenu: groupSubmenu("stack-add-to-group", ctx.groups) },
+      { kind: "item" as const, id: "stack-remove-from-group", label: "移出分组", icon: "folder" },
       ...(ctx.unorganizedView ? [{ kind: "item" as const, id: "stack-mark-sorted", label: "标为已整理", icon: "check" }] : []),
     ],
     [
-      { kind: "item" as const, id: "rename-stack", label: "重命名堆叠" },
+      { kind: "item" as const, id: "rename-stack", label: "重命名堆叠…" },
       { kind: "item" as const, id: "dissolve-stack", label: "解散堆叠" },
     ],
     [
-      { kind: "item" as const, id: "stack-move-to-trash", label: "移至回收站", icon: "trash", danger: true },
+      { kind: "item" as const, id: "stack-move-to-trash", label: "移到回收站", icon: "trash", danger: true },
     ],
   ])
 }
@@ -234,7 +235,7 @@ function buildStackBlankMenu(ctx: MenuContext): MenuEntry[] {
     [{ kind: "item" as const, id: "back-to-library", label: "返回素材库", icon: "left" }],
     pasteSection,
     [
-      { kind: "item" as const, id: "rename-stack", label: "重命名堆叠" },
+      { kind: "item" as const, id: "rename-stack", label: "重命名堆叠…" },
       { kind: "item" as const, id: "dissolve-stack", label: "解散堆叠" },
     ],
     [
@@ -280,7 +281,7 @@ export type GroupMenuContext = {
  * the highlighted sidebar row already names the group. */
 export function buildGroupMenu(ctx: GroupMenuContext): MenuEntry[] {
   return buildSectionedMenu([
-    [{ kind: "item", id: "group-rename", label: "重命名分组" }],
+    [{ kind: "item", id: "group-rename", label: "重命名分组…" }],
     [
       { kind: "item", id: "group-move-up", label: "上移分组", disabled: ctx.index <= 0 },
       { kind: "item", id: "group-move-down", label: "下移分组", disabled: ctx.index < 0 || ctx.index >= ctx.groupCount - 1 },
@@ -293,8 +294,8 @@ export function buildGroupMenu(ctx: GroupMenuContext): MenuEntry[] {
     ],
     [
       { kind: "item", id: "group-stats", label: "分组统计" },
-      { kind: "item", id: "group-export", label: "导出分组", disabled: ctx.exporting },
-      ...(ctx.groupCount > 1 ? [{ kind: "item" as const, id: "group-merge", label: "合并分组" }] : []),
+      { kind: "item", id: "group-export", label: "导出分组…", disabled: ctx.exporting },
+      ...(ctx.groupCount > 1 ? [{ kind: "item" as const, id: "group-merge", label: "合并分组…" }] : []),
     ],
     [{ kind: "item", id: "group-delete", label: "删除分组", icon: "trash", danger: true }],
   ])

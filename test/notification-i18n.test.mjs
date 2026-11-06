@@ -8,21 +8,23 @@ import { getLibraryStartupFailureText, getNotificationTextForAssetsImported } fr
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 test("getNotificationTextForAssetsImported formats the count placeholder", () => {
-  assert.equal(getNotificationTextForAssetsImported(1, "zh"), "1 个新素材已导入");
-  assert.equal(getNotificationTextForAssetsImported(5, "zh"), "5 个新素材已导入");
-  assert.equal(getNotificationTextForAssetsImported(1, "en"), "1 new asset imported");
-  assert.equal(getNotificationTextForAssetsImported(12, "en"), "12 new assets imported");
+  // 任务 359（NOTIF-01）：结果句「已导入 N 个新素材」。
+  assert.equal(getNotificationTextForAssetsImported(1, "zh"), "已导入 1 个新素材");
+  assert.equal(getNotificationTextForAssetsImported(5, "zh"), "已导入 5 个新素材");
+  assert.equal(getNotificationTextForAssetsImported(1, "en"), "Imported 1 new asset");
+  assert.equal(getNotificationTextForAssetsImported(12, "en"), "Imported 12 new assets");
 });
 
 test("getNotificationTextForAssetsImported falls back to zh for unknown locale", () => {
-  assert.equal(getNotificationTextForAssetsImported(3, "es"), "3 个新素材已导入");
+  assert.equal(getNotificationTextForAssetsImported(3, "es"), "已导入 3 个新素材");
 });
 
 test("main.mjs localizes bridge and update notifications", async () => {
   const source = await readFile(resolve(repositoryRoot, "desktop/main.mjs"), "utf8");
   assert.match(source, /getNotificationTextForAssetsImported/);
   assert.match(source, /getUpdateNotificationText/);
-  assert.match(source, /let currentLocale\s*=\s*"zh"/);
+  // 任务 359：启动期语言取系统语言（app.getLocale），不再固定 zh。
+  assert.match(source, /let currentLocale = .*app\.getLocale/);
   // Bridge poll uses the i18n helper instead of a hardcoded string.
   assert.match(source, /getNotificationTextForAssetsImported\(delta,\s*currentLocale\)/);
   // Update reminders stay localized while the trusted main process owns the
@@ -69,60 +71,60 @@ test("the React shell syncs the resolved locale to the main process", async () =
   assert.match(appSource, /desktopAPI\(\)\?\.setLocale\?\.\(language === "en" \? "en" : "zh"\)/);
 });
 
+// 任务 359（NATIVE-04/05）：标题统一「无法打开素材库」，原因进正文。
 test("getLibraryStartupFailureText picks one language per library error code", () => {
   const databaseMissing = { code: "MOSA_LIBRARY_DATABASE_MISSING", libraryDir: "/tmp/Lib" };
   const zhMissing = getLibraryStartupFailureText(databaseMissing, "zh");
-  assert.equal(zhMissing.title, "素材库的数据库文件不见了");
-  assert.match(zhMissing.body, /^素材库在 \/tmp\/Lib，/);
-  assert.match(zhMissing.body, /mosa\.db/);
+  assert.equal(zhMissing.title, "无法打开素材库");
+  assert.match(zhMissing.body, /^素材库（\/tmp\/Lib）缺少数据文件（mosa\.db）。/);
   assert.doesNotMatch(zhMissing.body, /Restore|GravityPort again/);
   const enMissing = getLibraryStartupFailureText(databaseMissing, "en");
-  assert.equal(enMissing.title, "Your library's database is missing");
-  assert.match(enMissing.body, /^The library is at \/tmp\/Lib, /);
+  assert.equal(enMissing.title, "Couldn’t open the library");
+  assert.match(enMissing.body, /^The library \(\/tmp\/Lib\) is missing its data file/);
   assert.doesNotMatch(enMissing.body, /素材库/);
 
   const stateInvalid = { code: "MOSA_LIBRARY_STATE_INVALID", libraryDir: "/tmp/State" };
   const zhState = getLibraryStartupFailureText(stateInvalid, "zh");
-  assert.equal(zhState.title, "素材库状态不完整");
-  assert.match(zhState.body, /素材库在 \/tmp\/State，/);
+  assert.equal(zhState.title, "无法打开素材库");
+  assert.match(zhState.body, /素材库（\/tmp\/State）的数据不完整/);
   const enState = getLibraryStartupFailureText(stateInvalid, "en");
-  assert.equal(enState.title, "Your library is in an incomplete state");
-  assert.match(enState.body, /The library is at \/tmp\/State, /);
+  assert.equal(enState.title, "Couldn’t open the library");
+  assert.match(enState.body, /The data in the library \(\/tmp\/State\) is incomplete/);
 
   const sqliteMissing = { code: "SQLITE_LIBRARY_MISSING", libraryDir: "/tmp/Migrated" };
   const zhSqlite = getLibraryStartupFailureText(sqliteMissing, "zh");
-  assert.equal(zhSqlite.title, "素材库的数据库文件不见了");
-  assert.match(zhSqlite.body, /\/tmp\/Migrated.*mosa\.db/);
+  assert.equal(zhSqlite.title, "无法打开素材库");
+  assert.match(zhSqlite.body, /（\/tmp\/Migrated）缺少数据文件（mosa\.db）/);
   const enSqlite = getLibraryStartupFailureText(sqliteMissing, "en");
-  assert.equal(enSqlite.title, "Your library's database is missing");
-  assert.match(enSqlite.body, /\/tmp\/Migrated.*mosa\.db/);
+  assert.equal(enSqlite.title, "Couldn’t open the library");
+  assert.match(enSqlite.body, /\(\/tmp\/Migrated\) is missing its data file \(mosa\.db\)/);
 });
 
 // 任务 337：库校验失败按「被占用」和「打不开/损坏」分开报，正文带 {libraryDir}
 // 和原始 SQLite 错误码（{sqliteCode}），中英文都取得到。
+// 任务 337 / 359（NATIVE-07/08）：错误码放句末括号，标题统一。
 test("getLibraryStartupFailureText covers the busy and unreadable library errors with the sqlite code", () => {
   const busy = { code: "SQLITE_LIBRARY_BUSY", libraryDir: "/tmp/Busy", sqliteCode: "SQLITE_BUSY" };
   const zhBusy = getLibraryStartupFailureText(busy, "zh");
-  assert.equal(zhBusy.title, "素材库正被别的程序占用");
-  assert.match(zhBusy.body, /^素材库在 \/tmp\/Busy，/);
-  assert.match(zhBusy.body, /mosa\.db/);
-  assert.match(zhBusy.body, /错误码：SQLITE_BUSY/);
+  assert.equal(zhBusy.title, "无法打开素材库");
+  assert.match(zhBusy.body, /^素材库（\/tmp\/Busy）的数据文件（mosa\.db）暂时无法打开/);
+  assert.match(zhBusy.body, /（错误码：SQLITE_BUSY）/);
   assert.doesNotMatch(zhBusy.body, /\{libraryDir\}|\{sqliteCode\}/);
   const enBusy = getLibraryStartupFailureText(busy, "en");
-  assert.equal(enBusy.title, "Your library is in use by another program");
-  assert.match(enBusy.body, /^The library is at \/tmp\/Busy, /);
-  assert.match(enBusy.body, /Error code: SQLITE_BUSY/);
+  assert.equal(enBusy.title, "Couldn’t open the library");
+  assert.match(enBusy.body, /^The data file \(mosa\.db\) in the library \(\/tmp\/Busy\) can’t be opened/);
+  assert.match(enBusy.body, /\(Error code: SQLITE_BUSY\)/);
   assert.doesNotMatch(enBusy.body, /素材库/);
 
   const unreadable = { code: "SQLITE_LIBRARY_UNREADABLE", libraryDir: "/tmp/Broken", sqliteCode: "SQLITE_CORRUPT" };
   const zhUnreadable = getLibraryStartupFailureText(unreadable, "zh");
-  assert.equal(zhUnreadable.title, "素材库的数据库打不开");
-  assert.match(zhUnreadable.body, /^素材库在 \/tmp\/Broken，/);
-  assert.match(zhUnreadable.body, /错误码：SQLITE_CORRUPT/);
+  assert.equal(zhUnreadable.title, "无法打开素材库");
+  assert.match(zhUnreadable.body, /^无法读取素材库（\/tmp\/Broken）的数据文件（mosa\.db）/);
+  assert.match(zhUnreadable.body, /（错误码：SQLITE_CORRUPT）/);
   const enUnreadable = getLibraryStartupFailureText(unreadable, "en");
-  assert.equal(enUnreadable.title, "Your library's database could not be opened");
-  assert.match(enUnreadable.body, /^The library is at \/tmp\/Broken, /);
-  assert.match(enUnreadable.body, /Error code: SQLITE_CORRUPT/);
+  assert.equal(enUnreadable.title, "Couldn’t open the library");
+  assert.match(enUnreadable.body, /^Couldn’t read the data file \(mosa\.db\) in the library \(\/tmp\/Broken\)/);
+  assert.match(enUnreadable.body, /\(Error code: SQLITE_CORRUPT\)/);
 
   // cause 没有 code 时（sqliteCode 缺失）正文退到 unknown，不渲染占位符。
   const noCode = getLibraryStartupFailureText({ code: "SQLITE_LIBRARY_UNREADABLE", libraryDir: "/tmp/X" }, "zh");
@@ -138,6 +140,8 @@ test("getLibraryStartupFailureText returns null for unrelated errors", () => {
 
 test("reportStartupFailure shows the library dialog through the i18n table", async () => {
   const source = await readFile(resolve(repositoryRoot, "desktop/main.mjs"), "utf8");
+  // 任务 359（NATIVE-03b/09c）：固定正文兜底、细节进日志；库比 App 新带两个按钮。
   assert.match(source, /getLibraryStartupFailureText\(error,\s*currentLocale\)/);
-  assert.match(source, /libraryFailure \? libraryFailure\.title : getDesktopText\("startupErrorTitle", currentLocale\)/);
+  assert.match(source, /getLibrarySchemaNewerDialogText\(currentLocale\)/);
+  assert.match(source, /getDesktopText\("startupErrorBody", currentLocale\)/);
 });

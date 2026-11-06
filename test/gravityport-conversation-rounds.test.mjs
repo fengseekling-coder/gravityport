@@ -278,19 +278,20 @@ describe("roundLine — the second line text (task 144 item 2)", () => {
     assert.equal(lineOf({ isCurrent: false, turnIndex: null }, null), "");
   });
 
-  it("English uses singular turn when turns is 1 and plural otherwise", () => {
+  it("English uses singular round when turns is 1 and plural otherwise", () => {
     const en = (row, turns) => roundLine(row, { turns }, enT);
-    assert.equal(en({ isCurrent: true, turnIndex: 2 }, 1), "1 turn · this asset, turn 2");
-    assert.equal(en({ isCurrent: false, turnIndex: 3 }, 1), "1 turn · turn 3");
-    assert.equal(en({ isCurrent: true, turnIndex: null }, 1), "1 turn · this asset");
-    assert.equal(en({ isCurrent: false, turnIndex: null }, 1), "1 turn");
-    assert.equal(en({ isCurrent: true, turnIndex: 2 }, 5), "5 turns · this asset, turn 2");
-    assert.equal(en({ isCurrent: false, turnIndex: 3 }, 5), "5 turns · turn 3");
-    assert.equal(en({ isCurrent: true, turnIndex: null }, 5), "5 turns · this asset");
-    assert.equal(en({ isCurrent: false, turnIndex: null }, 5), "5 turns");
-    assert.equal(en({ isCurrent: true, turnIndex: 1 }, null), "This asset, turn 1");
-    assert.equal(en({ isCurrent: false, turnIndex: 2 }, null), "Turn 2");
-    assert.equal(en({ isCurrent: true, turnIndex: null }, null), "This asset");
+    // 任务 359（MAIN-26f~p）：英文 turn 统一 round，当前行带 (current)。
+    assert.equal(en({ isCurrent: true, turnIndex: 2 }, 1), "1 round · Round 2 (current)");
+    assert.equal(en({ isCurrent: false, turnIndex: 3 }, 1), "1 round · Round 3");
+    assert.equal(en({ isCurrent: true, turnIndex: null }, 1), "1 round · Current");
+    assert.equal(en({ isCurrent: false, turnIndex: null }, 1), "1 round");
+    assert.equal(en({ isCurrent: true, turnIndex: 2 }, 5), "5 rounds · Round 2 (current)");
+    assert.equal(en({ isCurrent: false, turnIndex: 3 }, 5), "5 rounds · Round 3");
+    assert.equal(en({ isCurrent: true, turnIndex: null }, 5), "5 rounds · Current");
+    assert.equal(en({ isCurrent: false, turnIndex: null }, 5), "5 rounds");
+    assert.equal(en({ isCurrent: true, turnIndex: 1 }, null), "Round 1 (current)");
+    assert.equal(en({ isCurrent: false, turnIndex: 2 }, null), "Round 2");
+    assert.equal(en({ isCurrent: true, turnIndex: null }, null), "Current");
   });
 });
 

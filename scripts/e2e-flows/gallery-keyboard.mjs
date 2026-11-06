@@ -1,8 +1,8 @@
 // GravityPort React UI flow: keyboard browsing in the gallery. Arrow keys
 // move the inspected card, Enter opens the viewer, ⌘F / Ctrl+F focuses the
-// search field, and Delete honours 不再提醒 like the menu's 移至回收站.
+// search field, and Delete honours 不再询问 like the menu's 移到回收站.
 export const name = "gallery-keyboard";
-export const description = "arrow keys move the inspected card -> Enter opens the viewer -> ⌘F/Ctrl+F focuses search -> Delete skips the confirmation once 不再提醒 is ticked";
+export const description = "arrow keys move the inspected card -> Enter opens the viewer -> ⌘F/Ctrl+F focuses search -> Delete skips the confirmation once 不再询问 is ticked";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -72,7 +72,7 @@ function pageSource() {
     const findFocused = (await waitFor(() => document.activeElement === search, 'the search field focus')) === true;
     search.blur();
 
-    // Delete: the first press asks; tick 不再提醒 and confirm; the next one moves straight to the Trash.
+    // Delete: the first press asks; tick 不再询问 and confirm; the next one moves straight to the Trash.
     const before = cards().length;
     cards()[0].click();
     await sleep(150);
@@ -80,7 +80,7 @@ function pageSource() {
     const modal = await waitFor(() => document.querySelector('.delete-modal'), 'the move-to-trash confirmation');
     const firstDeleteAsked = Boolean(modal);
     modal.querySelector('input[type="checkbox"]').click();
-    Array.from(modal.querySelectorAll('button')).find((button) => button.textContent.trim() === '移至回收站').click();
+    Array.from(modal.querySelectorAll('button')).find((button) => button.textContent.trim() === '移到回收站').click();
     await waitFor(() => !document.querySelector('.delete-modal') && cards().length === before - 1, 'the first card in the Trash');
     cards()[0].click();
     await sleep(150);

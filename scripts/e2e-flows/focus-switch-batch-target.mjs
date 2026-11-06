@@ -137,11 +137,11 @@ function flowSource(config) {
       bubbles: true, cancelable: true, clientX: 600, clientY: 400,
     }));
     const item = await waitFor(() => Array.from(document.querySelectorAll('.context-menu button'))
-      .find((entry) => entry.textContent.trim() === '移至回收站') || null, 'trash menu item');
+      .find((entry) => entry.textContent.trim() === '移到回收站') || null, 'trash menu item');
     item.click();
     await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'delete confirm');
     const confirm = Array.from(document.querySelectorAll('[role="alertdialog"] button'))
-      .find((button) => button.textContent.trim() === '移至回收站');
+      .find((button) => button.textContent.trim() === '移到回收站');
     confirm.click();
     const navSmall = (label) => Array.from(document.querySelectorAll('.main-nav button'))
       .find((button) => Array.from(button.querySelectorAll(':scope > span')).some((span) => span.textContent.trim() === label))

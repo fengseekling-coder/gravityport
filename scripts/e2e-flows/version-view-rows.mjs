@@ -176,7 +176,7 @@ const HELPERS = `
       .find((heading) => heading.querySelector('span')?.textContent === '版本树');
     const openViewer = async () => {
       await waitFor(() => treeHeading() && treeHeading().querySelector('.section-action'), '查看 action');
-      Array.from(treeHeading().querySelectorAll('.section-action')).find((b) => b.textContent.trim() === '查看').click();
+      Array.from(treeHeading().querySelectorAll('.section-action')).find((b) => b.textContent.trim() === '展开').click();
       await waitFor(() => Boolean(region()), '展开的版本树区域');
     };
     const selectCard = async (assetId) => {
@@ -220,7 +220,7 @@ function firstStageSource(config) {
     const cards = await waitFor(() => {
       const list = Array.from(region().querySelectorAll('.generation-candidate-card'));
       return list.length === 2 ? list : null;
-    }, '两张候选关系卡');
+    }, '两张建议关系卡');
     const [upstream, downstream, downstream4] = await Promise.all([
       assetJson(config.asset2Id), assetJson(config.asset3Id), assetJson(config.asset4Id),
     ]);
@@ -231,8 +231,8 @@ function firstStageSource(config) {
     const candidatePairSrcs = true;
     const secondCandidatePairSrcs = true;
     const confidenceText = Array.from(confirmCard.querySelectorAll(':scope > small'))
-      .map((el) => el.textContent).find((t) => t.includes('把握')) || '';
-    if (confidenceText !== '把握 69%') throw new Error('候选把握文本不符合打分预期: ' + confidenceText);
+      .map((el) => el.textContent).find((t) => t.includes('可信度')) || '';
+    if (confidenceText !== '可信度 69%') throw new Error('候选可信度文本不符合打分预期: ' + confidenceText);
 
     // Confirming writes the relation and removes that candidate (the other
     // card stays until it is dismissed below).
@@ -268,11 +268,11 @@ function firstStageSource(config) {
       const list = Array.from(region().querySelectorAll('.generation-candidate-card'));
       return list.length === 1 ? list[0] : null;
     }, '只剩 4←3 候选卡');
-    Array.from(freshDismissCard.querySelectorAll('button')).find((b) => b.textContent.trim() === '忽略候选').click();
+    Array.from(freshDismissCard.querySelectorAll('button')).find((b) => b.textContent.trim() === '忽略建议').click();
     await waitFor(async () => {
       const stage = await relationRows(config.asset3Id);
       return !stage.candidates.some((c) => c.child_generation_id === child4);
-    }, '忽略候选从接口候选列表消失');
+    }, '忽略建议从接口候选列表消失');
     const dismissedCardGone = await waitFor(() => !region().querySelector('.generation-candidate-card'), '忽略后候选卡全部消失');
     const stageNow = await relationRows(config.asset3Id);
     const child4b = (stageNow.events.find((e) => e.output_asset_id === config.asset4Id)
@@ -341,18 +341,18 @@ function secondStageSource(config) {
     // Rows are ordered by turn, so the picker lists asset 1 then asset 2.
     if (!srcsAre(pickerImgs, [a1, a2])) throw new Error('关联列表缩略图不对: ' + pickerImgs.join('|'));
 
-    // Pick asset 1, keep 关联项为上游, confirm: relation asset1 → asset3.
+    // Pick asset 1, keep 关联生成为前序, confirm: relation asset1 → asset3.
     pickerRows[0].click();
     await waitFor(() => pickerRows[0].getAttribute('aria-pressed') === 'true', '选中行高亮 aria-pressed');
     const choiceSelected = pickerRows[0].getAttribute('aria-pressed') === 'true';
     setSelect(create.querySelector('select[aria-label="关系方向"]'), 'candidate-parent');
-    Array.from(create.querySelectorAll('button')).find((b) => b.textContent.trim() === '确认添加').click();
+    Array.from(create.querySelectorAll('button')).find((b) => b.textContent.trim() === '添加').click();
     await waitFor(async () => {
       const stage = await relationRows(config.asset3Id);
       const p = stage.events.find((e) => e.output_asset_id === config.asset1Id);
       const c = stage.events.find((e) => e.output_asset_id === config.asset3Id);
       return stage.relations.some((r) => r.parent_generation_id === (p || {}).id && r.child_generation_id === (c || {}).id);
-    }, '确认添加写入 第1张→第3张');
+    }, '添加写入 第1张→第3张');
     const addCreatedRelation = true;
 
     // Confirmed relations render as pair rows; edit the type of 1→3, then delete it.

@@ -88,7 +88,7 @@ function projectSwitchResilienceSource(config) {
     patchFetch(assetPageFor('alpha'), async () => new Response(JSON.stringify({ error: 'injected failure' }), {
       status: 500, headers: { 'content-type': 'application/json' } }));
     await chooseProject('alpha');
-    await waitFor(() => (document.querySelector('.toast')?.textContent || '').includes('项目切换失败'), 'revert toast');
+    await waitFor(() => (document.querySelector('.toast')?.textContent || '').includes('无法切换项目'), 'revert toast');
     // The restored view keeps the marker search filter, so the grid is empty —
     // the inspector (id-addressed) and the switcher are the truth here.
     await waitFor(() => switcherLabel() === 'default' && !cardFor(config.alphaId)

@@ -1,7 +1,7 @@
 // GravityPort React UI flow (task 291): manual-import dedupe. Byte-identical
 // files skip with 「已在素材库中」, a rescaled copy pops up in the import
 // review next to the library original, the review offers to move the original
-// into the target group, and 「按所选处理」 applies exactly what was picked; a
+// into the target group, and 「应用」 applies exactly what was picked; a
 // second run through 「取消」 changes nothing.
 export const name = "import-dedupe";
 export const description = "identical drop skips, rescaled copy opens the review, move+trash apply, cancel keeps everything";
@@ -140,7 +140,7 @@ function flowSource() {
       await makeFile('dedupe-new-c.png', 40, 30, 'vertical'),
     ]);
     await waitFor(() => reviewDialog(), 'import review dialog opens');
-    await waitFor(() => toastText().includes('已导入 2 张，1 张已在素材库中'), 'dedupe toast text');
+    await waitFor(() => toastText().includes('已导入 2 个素材，1 个文件已在素材库中'), 'dedupe toast text');
     const toastAfterFirstRun = toastText();
     const elsewhereRows = reviewSectionRows('已在素材库的其他位置');
     const duplicateRows = reviewSectionRows('可能重复');
@@ -150,11 +150,11 @@ function flowSource() {
     }
     const firstRunReviewRows = elsewhereRows + duplicateRows;
     reviewOption('移到「' + GROUP_G + '」')?.click();
-    reviewOption('删掉新的')?.click();
+    reviewOption('将新导入的移到回收站')?.click();
     const applyButton = Array.from(reviewDialog().querySelectorAll('.review-foot .primary-button'))
-      .find((button) => (button.textContent || '').includes('按所选处理'));
+      .find((button) => (button.textContent || '').includes('应用'));
     applyButton.click();
-    await waitFor(() => !reviewDialog(), 'review closes after 按所选处理');
+    await waitFor(() => !reviewDialog(), 'review closes after 应用');
     const firstRun = { reviewRows: firstRunReviewRows, applied: true, toast: toastAfterFirstRun };
 
     // ── Second run: copy skips in place (original already in G), the

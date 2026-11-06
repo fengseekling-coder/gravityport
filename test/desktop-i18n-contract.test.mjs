@@ -14,10 +14,11 @@ const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const DESKTOP_TEXT = {
   menuFile: { zh: "文件", en: "File" },
   menuEdit: { zh: "编辑", en: "Edit" },
-  menuView: { zh: "视图", en: "View" },
+  // 任务 359（MENU-19）：照 macOS 系统叫「显示」。
+  menuView: { zh: "显示", en: "View" },
   menuSearch: { zh: "搜索", en: "Search" },
   menuWindow: { zh: "窗口", en: "Window" },
-  startupErrorTitle: { zh: "GravityPort 无法启动", en: "GravityPort could not start" },
+  startupErrorTitle: { zh: "GravityPort 无法启动", en: "GravityPort couldn’t start" },
 };
 
 function sliceBetween(source, startMarker, endMarker) {
@@ -46,16 +47,17 @@ test("getDesktopText resolves desktop labels in zh/en and falls back safely", ()
 });
 
 test("desktop notifications keep localized import and update copy", () => {
-  assert.equal(getNotificationTextForAssetsImported(1, "en"), "1 new asset imported");
-  assert.equal(getNotificationTextForAssetsImported(12, "en"), "12 new assets imported");
-  assert.equal(getNotificationTextForAssetsImported(3, "ja"), "3 个新素材已导入");
+  // 任务 359（NOTIF-01/02）：结果句「已导入 N 个新素材」；新版本通知正文只留下一步。
+  assert.equal(getNotificationTextForAssetsImported(1, "en"), "Imported 1 new asset");
+  assert.equal(getNotificationTextForAssetsImported(12, "en"), "Imported 12 new assets");
+  assert.equal(getNotificationTextForAssetsImported(3, "ja"), "已导入 3 个新素材");
   assert.deepEqual(getUpdateNotificationText("0.3.0", "zh"), {
-    title: "GravityPort v0.3.0 可更新",
-    body: "新版本已发布，点击打开 GravityPort 查看更新。",
+    title: "GravityPort v0.3.0 可用",
+    body: "点击查看更新内容",
   });
   assert.deepEqual(getUpdateNotificationText("v0.3.0", "en"), {
     title: "GravityPort v0.3.0 is available",
-    body: "A new version is available. Click to open GravityPort and review the update.",
+    body: "Click to view what’s new",
   });
   assert.equal("getNotificationText" in desktopI18n, false, "removed updater helper is not kept as dead API");
 });
@@ -129,10 +131,13 @@ test("startup failures route the localized title while preserving the raw error 
   assert.match(reportStartupFailure, /const message\s*=\s*error instanceof Error\s*\?\s*error\.message\s*:\s*String\(error\)/);
   assert.match(reportStartupFailure, /getDesktopText\s*\(\s*"startupErrorTitle"\s*,\s*currentLocale\s*\)/);
   // Broken-library errors get their own localized title/body from the i18n
-  // table; every other failure keeps the raw error message.
+  // table; 任务 359（NATIVE-03b）：其余失败不再弹原始英文 error.message，
+  // 固定正文 + 细节只进日志；库比 App 新（NATIVE-09c）带「前往官网下载 / 取消」。
   assert.match(reportStartupFailure, /getLibraryStartupFailureText\s*\(\s*error,\s*currentLocale\s*\)/);
+  assert.match(reportStartupFailure, /getLibrarySchemaNewerDialogText\s*\(\s*currentLocale\s*\)/);
+  assert.match(reportStartupFailure, /MOSA_DOWNLOAD_PAGE_URL/);
   assert.match(reportStartupFailure, /screenGuard\.errorBox\s*\(/);
-  assert.match(reportStartupFailure, /libraryFailure\s*\?\s*libraryFailure\.body\s*:\s*message/);
+  assert.match(reportStartupFailure, /getDesktopText\s*\(\s*"startupErrorBody"\s*,\s*currentLocale\s*\)/);
 });
 
 test("package metadata stays frozen and the runtime preload preserves its approved surface", async () => {

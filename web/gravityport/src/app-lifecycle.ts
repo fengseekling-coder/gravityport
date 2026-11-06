@@ -265,6 +265,16 @@ export function buildUpdateText(
     };
   }
 
+  // 任务 359（ABOUT-10b）：开发版根本不检查更新，与「检查失败」分开显示。
+  if (state.phase === "disabled") {
+    return {
+      badgeText: `${versionLabel} · ${t("开发版不检查更新")}`,
+      buttonLabel: t("检查更新"),
+      buttonDisabled: false,
+      downloadAndInstall: false,
+    };
+  }
+
   if (state.phase === "available") {
     const published = state.publishedAt
       ? ` · ${fill(t("发布于 {date}"), { date: readableDate(state.publishedAt, language) })}`
@@ -282,7 +292,7 @@ export function buildUpdateText(
 
   if (state.phase === "unavailable") {
     return {
-      badgeText: `${versionLabel} · ${t("请先把 App 拖进『应用程序』文件夹再更新")}`,
+      badgeText: `${versionLabel} · ${t("请先将 GravityPort 移到「应用程序」文件夹，再更新")}`,
       buttonLabel: null,
       buttonDisabled: false,
       downloadAndInstall: false,
@@ -290,9 +300,25 @@ export function buildUpdateText(
   }
 
   return {
-    badgeText: `${versionLabel} · ${t("暂时无法检查更新")}`,
+    badgeText: `${versionLabel} · ${t("无法检查更新")}`,
     buttonLabel: t("检查更新"),
     buttonDisabled: false,
     downloadAndInstall: false,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Library location change failures (task 359 / HC-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * 任务 359：桌面端 change-library-location 失败只返回 reason（cancelled /
+ * managed / attached / unavailable / 校验原因），从不返回 error。取消不算
+ * 失败（用户在选文件夹框点了取消），不提示；其余原因给一句统一文案，原始
+ * reason 放句末括号。返回 null 表示不提示。
+ */
+export function libraryLocationFailureText(reason: unknown, fillFn: (text: string, values: Record<string, string | number>) => string): string | null {
+  if (reason === "cancelled") return null;
+  const detail = typeof reason === "string" && reason.trim() ? reason.trim() : "unknown";
+  return fillFn("无法更改存储位置（{reason}）。", { reason: detail });
 }

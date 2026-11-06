@@ -44,7 +44,9 @@ type ElectronAPI = {
   reportRendererReady?: () => Promise<unknown>
   getRenameNoticeState?: () => Promise<{ shouldShow?: boolean }>
   acknowledgeRenameNotice?: () => Promise<unknown>
-  changeLibraryLocation?: () => Promise<{ ok?: boolean; libraryDir?: string; error?: string }>
+  // 任务 359（HC-06）：桥接只返回 reason（cancelled/managed/attached/
+  // unavailable/校验原因…），从不返回 error。
+  changeLibraryLocation?: () => Promise<{ ok?: boolean; libraryDir?: string; reason?: string }>
   getMcpClientConfig?: () => Promise<McpClientConfig>
   getBackgroundCaptureState?: () => Promise<{ supported: boolean; enabled: boolean }>
   setBackgroundCapture?: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>

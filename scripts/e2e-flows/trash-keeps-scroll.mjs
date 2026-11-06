@@ -165,7 +165,7 @@ function pageSource() {
       const skip = dialog.querySelector('input[type="checkbox"]');
       if (skip && !skip.checked) skip.click();
       await sleep(50);
-      Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent.trim() === '移至回收站').click();
+      Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent.trim() === '移到回收站').click();
     };
     const trashVia = async (how, card) => {
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
@@ -174,7 +174,7 @@ function pageSource() {
         const r = card.getBoundingClientRect();
         card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 20 }));
         await waitFor(() => document.querySelector('.context-menu'), 'context menu');
-        Array.from(document.querySelectorAll('.context-menu button')).find((entry) => entry.textContent.trim() === '移至回收站').click();
+        Array.from(document.querySelectorAll('.context-menu button')).find((entry) => entry.textContent.trim() === '移到回收站').click();
       } else {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
       }

@@ -902,12 +902,12 @@ test("the startup splash follows the system language for its text", () => {
   }
 
   const en = boot("en-US");
-  assert.equal(en.note.textContent, "Organizing your library…");
+  assert.equal(en.note.textContent, "Organizing the library…");
   en.tick(12);
-  assert.equal(en.note.textContent, "Organizing your library… (12s so far)");
-  assert.equal(en.inspectorTitle.textContent, "Inspector");
+  assert.equal(en.note.textContent, "Organizing the library… (12s elapsed)");
+  assert.equal(en.inspectorTitle.textContent, "Asset details");
   assert.equal(en.documentElement.lang, "en");
-  assert.equal(en.bodyAttributes["aria-label"], "GravityPort is starting");
+  assert.equal(en.bodyAttributes["aria-label"], "Starting GravityPort");
 
   const zh = boot("zh-Hans-CN");
   assert.equal(zh.note.textContent, "正在整理素材库…");
