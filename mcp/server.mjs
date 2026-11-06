@@ -628,7 +628,7 @@ function mcpImportError(code, message) {
  * deep. Plain files with a MEDIA_EXTENSIONS suffix are the import candidates;
  * every other entry seen (symbolic links, files of other types) counts as
  * skipped. Throws IMPORT_FOLDER_TOO_LARGE as soon as one more file would break
- * the cap, so nothing imports and no confirmation is asked for.
+ * the cap, so nothing imports.
  */
 async function scanImportFolder(folderRealPath, recursive) {
   const files = [];

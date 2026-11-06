@@ -632,7 +632,7 @@ flowchart TD
 | Grok Build CLI | 来源路径 → 字节 → 像素 | 会话工具调用参数 | 不写 | 已接入总入口；字节/像素命中自己的图会升级提示词和出处字段（另一路径的同字节文件记 `grok_alternate_paths`），命中别家收的图只记一次出现，不改提示词、用户指令、`generation_tool`、`model`、`prompt_status` |
 | Cowart | 来源路径 → 字节 → 像素 | 画布 alt text | 不写 | 已接入总入口；命中后从不升级元数据，只记一次出现；同一路径字节变了就新建一张 |
 | 手动导入（拖、选文件、粘贴） | — | 无 | 不写 | 已接入总入口（字节相同跳过、显示像素相同的新图进回收站、感知相似的进清单让用户选，#314） |
-| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。只认受信根（Codex 生成目录、库内目录），助手启动目录不算；受信根外的文件夹走 `asset_import_folder`，在助手那边经用户确认才导（#334） |
+| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。接受任意本地绝对路径，相对路径拒绝；不再在助手那边弹确认（#364，取代 #334 的受信根加确认） |
 
 写生成记录在总入口里是固定位置的调用方钩子；当前只有网页收录（图片和视频）在用，
 Codex、Grok、Cowart 和手动导入不写。
