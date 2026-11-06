@@ -118,7 +118,9 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 不创建额外的 HTTP 端口：SQLite 库依靠 WAL 与桌面/Web 运行时并存；JSON 兼容库必须独占
 运行时锁，不能与正在运行的 App 同时写入。库位置按 `GRAVITYPORT_LIBRARY_DIR`、配置里的
 `GRAVITYPORT_LIBRARY_LOCATION_FILE`、桌面版 userData 下的 `library-location.json`
-（无复制配置时兜底读取）的顺序解析；任何位置都找不到库时报错退出，MCP 永远不新建素材库。
+（无复制配置时兜底读取）的顺序解析；任何位置都找不到库时服务照常回答 `initialize` 与
+`tools/list`，每次工具调用先重新找库，找不到就返回 `LIBRARY_NOT_FOUND`（库损坏或位置记录读不出
+时返回 `LIBRARY_UNAVAILABLE`）；MCP 永远不新建素材库。
 开库后每次工具调用前都会核对 `mosa.db` 的设备号与 inode，库被移动或删除时拒绝读写并返回
 `LIBRARY_DATABASE_CHANGED`。本地视觉检索已移除：`asset_search` 只做文本与时间检索，老客户端
 缓存旧 schema 传来的 `visual: true` 会被接受并忽略。

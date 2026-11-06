@@ -66,17 +66,20 @@ function describeLibraryStartupError(error) {
   }
   return null;
 }
+// A missing or unreadable library no longer stops the server (task 362): it
+// still answers initialize and tools/list, so an assistant can see the tools
+// before GravityPort has ever been opened, and every tool call retries the
+// library first. Until one opens, calls answer LIBRARY_NOT_FOUND or
+// LIBRARY_UNAVAILABLE with the same bilingual reason stderr gets; nothing is
+// created anywhere. All of the state below stays unset until openLibrary()
+// succeeds.
 let libraryDir;
-try {
-  libraryDir = resolveCurrentLibraryDir();
-} catch (error) {
-  const described = describeLibraryStartupError(error);
-  if (described) {
-    process.stderr.write(`${described}\n`);
-    process.exit(1);
-  }
-  throw error;
-}
+let store = null;
+let databasePath = "";
+let databaseIdentity = null;
+let directStoreLease = null;
+let directStoreClosed = false;
+let openingLibrary = null;
 // Task 315: one redacted stderr line per uncaught crash, then Node's default
 // exit. stdout must stay protocol-only. No unhandledRejection listener: Node's
 // default mode raises unhandled rejections as uncaught exceptions, and
@@ -93,74 +96,116 @@ process.on("uncaughtExceptionMonitor", (error) => {
 // from the desktop app (or following its location file), MCP uses the same library
 // layout as the desktop runtime.
 const desktopMode = Boolean(process.versions.electron || locationFile);
-const explicitLibraryDir = desktopMode || process.env.MOSA_LIBRARY_DIR ? libraryDir : null;
-let store;
-try {
-  store = createAssetStore({
-    projectRoot,
-    managerDir,
-    libraryDir,
-    explicitLibraryDir,
-    ...(desktopMode ? { assetsRoot: join(libraryDir, "assets"), generatedImagesDir: join(libraryDir, "imports") } : {}),
-  });
-} catch (error) {
-  // A configured directory that holds a broken library (managed media without
-  // mosa.db, a database that never completed) must stop the server with the
-  // store's bilingual message — never fall through to any other location.
-  if (error?.code === "MOSA_LIBRARY_DATABASE_MISSING" || error?.code === "MOSA_LIBRARY_STATE_INVALID"
-    || error?.code === "SQLITE_LIBRARY_MISSING") {
-    process.stderr.write(`${error.message}\n`);
-    process.exit(1);
+const STORE_UNAVAILABLE_CODES = new Set([
+  "MOSA_LIBRARY_DATABASE_MISSING",
+  "MOSA_LIBRARY_STATE_INVALID",
+  "SQLITE_LIBRARY_MISSING",
+]);
+
+/**
+ * Returns null once the library is open, or { code, message } when it is
+ * missing (LIBRARY_NOT_FOUND) or present but unusable (LIBRARY_UNAVAILABLE).
+ * Any other error still throws: an unexpected failure is not a missing library.
+ */
+async function openLibrary() {
+  if (store) return null;
+  let resolvedDir;
+  try {
+    resolvedDir = resolveCurrentLibraryDir();
+  } catch (error) {
+    const described = describeLibraryStartupError(error);
+    if (!described) throw error;
+    const code = error.code === MOSA_LIBRARY_NOT_FOUND ? "LIBRARY_NOT_FOUND" : "LIBRARY_UNAVAILABLE";
+    return { code, message: described };
   }
-  throw error;
+  const explicitLibraryDir = desktopMode || process.env.MOSA_LIBRARY_DIR ? resolvedDir : null;
+  let opened;
+  try {
+    opened = createAssetStore({
+      projectRoot,
+      managerDir,
+      libraryDir: resolvedDir,
+      explicitLibraryDir,
+      ...(desktopMode ? { assetsRoot: join(resolvedDir, "assets"), generatedImagesDir: join(resolvedDir, "imports") } : {}),
+    });
+  } catch (error) {
+    // A configured directory that holds a broken library (managed media without
+    // mosa.db, a database that never completed) is reported with the store's
+    // bilingual message — never fall through to any other location.
+    if (STORE_UNAVAILABLE_CODES.has(error?.code)) return { code: "LIBRARY_UNAVAILABLE", message: error.message };
+    throw error;
+  }
+  // SQLite uses WAL plus insert-only managed filenames for safe App+MCP coexistence.
+  //
+  // SQLite WAL mode lets one writer and many readers operate concurrently against
+  // the same database file. Each connection holds an independent WAL snapshot,
+  // so the App (HTTP UI) and the MCP stdio server can be running at the same time
+  // without blocking each other. The store is configured with:
+  //   journal_mode = WAL
+  //   busy_timeout = 5000   (5s wait for the writer lock before failing)
+  //   cache_size = -20000   (20 MB page cache)
+  //   temp_store = MEMORY   (temp tables never touch disk)
+  //   foreign_keys = ON
+  // A writer commit waits at most 5 s for any active reader snapshot, which is
+  // well below the typical interactive request budget.
+  //
+  // Originals are managed as insert-only content-hash filenames inside the
+  // library directory, so the filesystem never mutates a file in place. The
+  // SQLite store is therefore authoritative for metadata; concurrent writers
+  // from MCP and App only ever produce additive metadata rows. That is what
+  // makes the JSON fallback (which has no cross-process transaction support)
+  // unable to share the same contract.
+  //
+  // The legacy JSON backend has no cross-process metadata transaction, so it
+  // must share the runtime's exclusive lease instead of allowing two writers
+  // to race over JSON files. JSON mode therefore *cannot* coexist with an
+  // active App or another MCP writer; the lock below makes that explicit.
+  let lease = null;
+  if (opened.storageKind === "json") {
+    try {
+      lease = await acquireMosaRuntimeLock({ libraryDir: resolvedDir });
+    } catch (error) {
+      opened.close?.();
+      throw error;
+    }
+  }
+  // Record the mosa.db file identity (device + inode) the store was opened
+  // against. A later move or deletion of the library changes or removes that
+  // file; every tool call re-stats it so no write can land in a library that is
+  // no longer the one this server opened. The legacy JSON backend has no
+  // mosa.db to watch; its moves are covered by the location-file check below.
+  const openedDatabasePath = join(resolvedDir, LIBRARY_DATABASE_FILE);
+  let identity = null;
+  try {
+    const databaseInfo = statSync(openedDatabasePath);
+    if (databaseInfo.isFile()) identity = { dev: databaseInfo.dev, ino: databaseInfo.ino };
+  } catch {
+    identity = null;
+  }
+  libraryDir = resolvedDir;
+  databasePath = openedDatabasePath;
+  databaseIdentity = identity;
+  directStoreLease = lease;
+  store = opened;
+  return null;
 }
-// Record the mosa.db file identity (device + inode) the store was opened
-// against. A later move or deletion of the library changes or removes that
-// file; every tool call re-stats it so no write can land in a library that is
-// no longer the one this server opened. The legacy JSON backend has no
-// mosa.db to watch; its moves are covered by the location-file check below.
-const databasePath = join(libraryDir, LIBRARY_DATABASE_FILE);
-let databaseIdentity = null;
-try {
-  const databaseInfo = statSync(databasePath);
-  if (databaseInfo.isFile()) databaseIdentity = { dev: databaseInfo.dev, ino: databaseInfo.ino };
-} catch {
-  databaseIdentity = null;
+
+/** One open attempt at a time: concurrent tool calls share it. */
+function ensureLibraryOpen() {
+  if (store) return Promise.resolve(null);
+  if (!openingLibrary) {
+    openingLibrary = openLibrary().finally(() => { openingLibrary = null; });
+  }
+  return openingLibrary;
 }
-// SQLite uses WAL plus insert-only managed filenames for safe App+MCP coexistence.
-//
-// SQLite WAL mode lets one writer and many readers operate concurrently against
-// the same database file. Each connection holds an independent WAL snapshot,
-// so the App (HTTP UI) and the MCP stdio server can be running at the same time
-// without blocking each other. The store is configured with:
-//   journal_mode = WAL
-//   busy_timeout = 5000   (5s wait for the writer lock before failing)
-//   cache_size = -20000   (20 MB page cache)
-//   temp_store = MEMORY   (temp tables never touch disk)
-//   foreign_keys = ON
-// A writer commit waits at most 5 s for any active reader snapshot, which is
-// well below the typical interactive request budget.
-//
-// Originals are managed as insert-only content-hash filenames inside the
-// library directory, so the filesystem never mutates a file in place. The
-// SQLite store is therefore authoritative for metadata; concurrent writers
-// from MCP and App only ever produce additive metadata rows. That is what
-// makes the JSON fallback (which has no cross-process transaction support)
-// unable to share the same contract.
-//
-// The legacy JSON backend has no cross-process metadata transaction, so it
-// must share the runtime's exclusive lease instead of allowing two writers
-// to race over JSON files. JSON mode therefore *cannot* coexist with an
-// active App or another MCP writer; the lock below makes that explicit.
-const directStoreLease = store.storageKind === "json"
-  ? await acquireMosaRuntimeLock({ libraryDir })
-  : null;
-let directStoreClosed = false;
+
+const startupFailure = await ensureLibraryOpen();
+if (startupFailure) process.stderr.write(`${startupFailure.message}\n`);
 
 async function closeDirectStore() {
   if (directStoreClosed) return;
   directStoreClosed = true;
-  try { store.close?.(); } finally { await directStoreLease?.release().catch(() => {}); }
+  try { store?.close?.(); } finally { await directStoreLease?.release().catch(() => {}); }
 }
 
 const TOOL_ASSET_CREATE = "asset_create";
@@ -1136,6 +1181,23 @@ async function handleRequest(message) {
     return;
   }
   if (method === "tools/call") {
+    // No library yet (GravityPort never opened, drive unplugged): try again on
+    // every call, so opening the App is enough and the assistant need not restart.
+    let unavailable;
+    try {
+      unavailable = await ensureLibraryOpen();
+    } catch (error) {
+      sendError(id, -32603, error.message);
+      return;
+    }
+    if (unavailable) {
+      sendResult(id, {
+        content: [{ type: "text", text: unavailable.message }],
+        isError: true,
+        structuredContent: { error: { code: unavailable.code, message: unavailable.message } },
+      });
+      return;
+    }
     // Moving the library in the desktop copies it and deletes the original.
     // This process still holds the old location, so refuse instead of
     // reading or writing a library that is gone; a restart follows the move.
