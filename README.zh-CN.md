@@ -6,7 +6,7 @@
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#下载)
 
-> **为 AI 创作留住本地视觉记忆。**
+> **让每一次 AI 创作，有迹可循**
 > 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
 
 GravityPort 是一个 AI 素材管理工具：把 ChatGPT、Gemini、Flow、Google AI Studio、Codex、Grok、即梦 生成的图片和视频，连同 Prompt、参考图和来源，自动收进你自己电脑上的素材库。
