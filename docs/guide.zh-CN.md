@@ -277,7 +277,7 @@ args = ["/absolute/path/to/gravityport/mcp/server.mjs"]
 - `GRAVITYPORT_LIBRARY_DIR`：素材库的绝对路径，优先级最高。
 - `GRAVITYPORT_LIBRARY_LOCATION_FILE`：桌面版的 `library-location.json`（macOS 在 `~/Library/Application Support/mosa/`），跟随桌面版里挪过的位置。
 
-导入规则（桌面版和从源码运行相同）：AI 助手可以直接导入 Codex 生成目录和素材库目录（库内 `assets/`、`imports/`）里的图；其他文件夹要用 `asset_import_folder` 整个导入，GravityPort 会在 AI 助手那边请你确认，没确认就导不了：助手不支持确认框（`unsupported`）、你拒绝或取消（`declined`）、超过 50 秒没回答（`timeout`）各有各的提示，AI 助手会把原因讲清楚，而不是只说「没确认」。不在允许目录里的单张图会被 `asset_create` 拒绝（`IMAGE_PATH_NOT_READABLE`）。MCP 启动时所在的目录不算允许目录：从家目录启动助手，家目录里的文件也不会被静默导入。
+导入规则（桌面版和从源码运行相同）：AI 助手可以直接导入本地任意绝对路径下的单张图片（`asset_create`）或整个文件夹（`asset_import_folder`），无需在助手中弹窗确认；相对路径会被拒绝。只导入支持的图片和视频格式，跳过符号链接，支持去重保护；单次文件夹导入最多 1000 个文件，导入后源文件夹保持不变。
 
 MCP 工具包括：
 

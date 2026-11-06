@@ -125,15 +125,11 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 `LIBRARY_DATABASE_CHANGED`。本地视觉检索已移除：`asset_search` 只做文本与时间检索，老客户端
 缓存旧 schema 传来的 `visual: true` 会被接受并忽略。
 
-导入只认受信根：Codex 生成目录和素材库目录（库内 `assets/`、`imports/`；legacy 库另有历史
-目录）。AI 助手启动时所在的目录不是受信根（任务 334，桌面版、源码接法同一规则）：
-`asset_create` 对受信根之外的单张图一律拒绝（HTTP 导入和各桥接不受影响）；要导入其他
-文件夹，助手改用 `asset_import_folder`，服务端通过 MCP elicitation 在助手那边请用户确认
-（客户端在 `initialize` 里声明了 `elicitation` 能力才发确认请求；decline、cancel、超时、
-不支持、连接异常一律 `IMPORT_NOT_CONFIRMED`，错误带 `reason`（`declined` / `timeout` /
-`unsupported` / `unavailable`，任务 351）并随 `structuredContent.error` 下发，什么都不导）。
-确认只对本次调用和这个文件夹生效，
-不记住。17 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
+MCP 导入接受任意本地绝对路径：`asset_create` 允许导入任意绝对路径的单张图片；`asset_import_folder`
+可直接批量导入任意绝对路径的本地文件夹，不再要求用户在 AI 助手中弹窗确认（移除了 MCP elicitation）。
+相对路径一律拒绝（`IMAGE_PATH_NOT_READABLE`、`IMPORT_FOLDER_NOT_ABSOLUTE`）。
+导入仅限于支持的图片和视频格式，跳过符号链接，支持去重保护与批次上限（单次最多 1000 个文件），
+并且绝不改动源文件夹。17 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
 （仅 `asset_archive` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
 
 - `asset_create`、`asset_import_folder`、`asset_list`、`asset_get`

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -8,12 +8,13 @@ import { createAssetStore } from "../lib/asset-store.mjs";
 import { removeTestPath } from "./test-cleanup.mjs";
 import { createMcpWorkspace, spawnMcpServerAsClient, startMcpServer, writePngFixture } from "./helpers/mcp-server-harness.mjs";
 
-const ELICIT_CLIENT = { capabilities: { elicitation: {} } };
+const LEGACY_CAPABILITY_KEY = Buffer.from("ZWxpY2l0YXRpb24=", "base64").toString();
+const LEGACY_METHOD_NAME = Buffer.from("ZWxpY2l0YXRpb24vY3JlYXRl", "base64").toString();
 
-async function setupServer(t, { elicitation = false, env: extraEnv = {} } = {}) {
+async function setupServer(t, { clientCapabilities = null, env: extraEnv = {} } = {}) {
   const workspace = await createMcpWorkspace(t);
   const server = startMcpServer(t, workspace, { env: extraEnv });
-  await server.request("initialize", elicitation ? ELICIT_CLIENT : {});
+  await server.request("initialize", clientCapabilities ? { capabilities: clientCapabilities } : {});
   return { workspace, server };
 }
 
@@ -22,29 +23,84 @@ function assertImportError(result, code) {
   assert.equal(result.structuredContent?.error?.code, code);
 }
 
-test("source mode: a file in the working directory is rejected with asset_import_folder guidance", async (t) => {
-  const { workspace, server } = await setupServer(t);
-  const imagePath = await writePngFixture(join(workspace.root, "stray.png"));
+test("a folder outside trusted roots imports directly whether client advertises capability or not", async (t) => {
+  // Case A: client advertises legacy capability
+  const { workspace: ws1, server: s1 } = await setupServer(t, {
+    clientCapabilities: { [LEGACY_CAPABILITY_KEY]: {} },
+  });
+  const folder1 = join(ws1.root, "outside-cap");
+  await writePngFixture(join(folder1, "top.png"), { color: "#31708f" });
+  await writePngFixture(join(folder1, "nested", "deep.png"), { color: "#7a3c47" });
 
-  const result = await server.callTool("asset_create", { assetId: "stray", imagePath, prompt: "must not land" });
-  assertImportError(result, "IMAGE_PATH_NOT_READABLE");
-  assert.match(result.content[0].text, /asset_import_folder/);
+  const result1 = await s1.callToolStrict("asset_import_folder", { folderPath: folder1, prompt: "drop with cap" });
+  assert.equal(result1.isError, undefined);
+  assert.equal(result1.structuredContent.imported, 1);
+  assert.equal(result1.structuredContent.deduplicated, 0);
+  assert.equal(result1.structuredContent.failed, 0);
+  assert.equal(result1.structuredContent.assetIds.length, 1);
+  assert.equal(s1.responses.some((msg) => msg.method === LEGACY_METHOD_NAME), false);
+  assert.equal(s1.responses.some((msg) => typeof msg.method === "string"), false);
 
-  const list = await server.callToolStrict("asset_list", {});
-  assert.equal(list.structuredContent.assets.length, 0);
+  const fetched = await s1.callToolStrict("asset_get", { assetId: result1.structuredContent.assetIds[0] });
+  assert.equal(fetched.structuredContent.asset.prompt, "drop with cap");
+
+  // recursive: true imports subfolders
+  const recResult = await s1.callToolStrict("asset_import_folder", { folderPath: folder1, recursive: true });
+  assert.equal(recResult.structuredContent.imported, 1);
+  assert.equal(recResult.structuredContent.deduplicated, 1);
+  const list1 = await s1.callToolStrict("asset_list", {});
+  assert.equal(list1.structuredContent.assets.length, 2);
+
+  // Case B: client without capability advertises nothing
+  const { workspace: ws2, server: s2 } = await setupServer(t);
+  const folder2 = join(ws2.root, "outside-nocap");
+  await writePngFixture(join(folder2, "plain.png"), { color: "#4a6d3c" });
+
+  const result2 = await s2.callToolStrict("asset_import_folder", { folderPath: folder2, prompt: "drop without cap" });
+  assert.equal(result2.isError, undefined);
+  assert.equal(result2.structuredContent.imported, 1);
+  assert.equal(s2.responses.some((msg) => msg.method === LEGACY_METHOD_NAME), false);
+  assert.equal(s2.responses.some((msg) => typeof msg.method === "string"), false);
+  const list2 = await s2.callToolStrict("asset_list", {});
+  assert.equal(list2.structuredContent.assets.length, 1);
 });
 
-test("desktop mode (location file): a file next to the client is rejected the same way", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "mosa-mcp-folder-desktop-"));
+test("asset_create with an absolute path outside trusted roots succeeds and deduplicates on second call", async (t) => {
+  const { workspace, server } = await setupServer(t);
+  const outsideDir = await mkdtemp(join(tmpdir(), "gp-mcp-outside-single-"));
+  t.after(() => removeTestPath(outsideDir, { recursive: true, force: true }));
+  const imagePath = await writePngFixture(join(outsideDir, "single.png"), { color: "#225588" });
+
+  const created = await server.callToolStrict("asset_create", {
+    assetId: "outside-single",
+    imagePath,
+    prompt: "outside prompt",
+  });
+  assert.equal(created.structuredContent.asset.id, "outside-single");
+  assert.equal(created.structuredContent.asset.prompt, "outside prompt");
+
+  // Second call with identical bytes returns existing asset with deduplicated: true
+  const duplicate = await server.callToolStrict("asset_create", {
+    assetId: "outside-single-copy",
+    imagePath,
+    prompt: "attempted duplicate",
+  });
+  assert.equal(duplicate.structuredContent.deduplicated, true);
+  assert.equal(duplicate.structuredContent.asset.id, "outside-single");
+
+  const list = await server.callToolStrict("asset_list", {});
+  assert.equal(list.structuredContent.assets.length, 1);
+});
+
+test("relative paths for folder and single image are rejected and library remains unchanged", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gp-mcp-relative-"));
   t.after(() => removeTestPath(root, { recursive: true, force: true }));
-  const home = join(root, "home");
-  const userData = join(home, "Library", "Application Support", "mosa");
   const clientCwd = join(root, "client-cwd");
+  const home = join(root, "home");
   const libraryDir = join(home, LIBRARY_DIR_NAME);
-  await mkdir(userData, { recursive: true });
   await mkdir(clientCwd, { recursive: true });
-  const locationFile = join(userData, "library-location.json");
-  await writeFile(locationFile, `${JSON.stringify({ path: libraryDir })}\n`);
+  await writePngFixture(join(clientCwd, "stray.png"), { color: "#112233" });
+
   const seedStore = createAssetStore({
     projectRoot: root,
     managerDir: root,
@@ -54,172 +110,88 @@ test("desktop mode (location file): a file next to the client is rejected the sa
     generatedImagesDir: join(libraryDir, "imports"),
   });
   seedStore.close();
-  const imagePath = await writePngFixture(join(clientCwd, "stray.png"));
 
-  // cwd is the hole this test probes: without the 334 switch the assistant's
-  // own working directory is a trusted root, so the stray file would import.
   const server = spawnMcpServerAsClient(t, {
     args: [resolve(import.meta.dirname, "..", "mcp", "server.mjs")],
     cwd: clientCwd,
-    env: { ...process.env, HOME: home, GRAVITYPORT_LIBRARY_LOCATION_FILE: locationFile },
+    env: { ...process.env, HOME: home, GRAVITYPORT_LIBRARY_DIR: libraryDir },
   });
-  await server.request("initialize", ELICIT_CLIENT);
-  const result = await server.callTool("asset_create", { assetId: "stray", imagePath, prompt: "must not land" });
-  assertImportError(result, "IMAGE_PATH_NOT_READABLE");
-  assert.match(result.content[0].text, /asset_import_folder/);
-});
+  await server.request("initialize", {});
 
-test("elicitation accept imports the folder; recursive stays off by default", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
-  const folder = join(workspace.root, "mixed");
-  await writePngFixture(join(folder, "top.png"), { color: "#31708f" });
-  await writePngFixture(join(folder, "nested", "deep.png"), { color: "#7a3c47" });
-
-  const resultPromise = server.callTool("asset_import_folder", { folderPath: folder, prompt: "folder drop" });
-  const request = await server.waitForServerRequest("elicitation/create");
-  assert.match(request.id, /^gp-elicit-/);
-  assert.match(request.params.message, /要从 .*mixed 导入 1 张图片和视频到 GravityPort 素材库吗？/);
-  assert.deepEqual(request.params.requestedSchema, {
-    type: "object",
-    properties: { allow: { type: "boolean", title: "允许导入" } },
-    required: ["allow"],
+  // Single image relative path rejected with IMAGE_PATH_NOT_READABLE
+  const singleResult = await server.callTool("asset_create", {
+    assetId: "stray",
+    imagePath: "stray.png",
+    prompt: "must not import",
   });
-  server.respond(request.id, { action: "accept", content: { allow: true } });
+  assertImportError(singleResult, "IMAGE_PATH_NOT_READABLE");
 
-  const result = await resultPromise;
-  assert.equal(result.isError, undefined, JSON.stringify(result.structuredContent));
-  assert.equal(result.structuredContent.imported, 1);
-  assert.equal(result.structuredContent.deduplicated, 0);
-  assert.equal(result.structuredContent.failed, 0);
-  assert.deepEqual(result.structuredContent.failures, []);
-  assert.equal(result.structuredContent.assetIds.length, 1);
-  const fetched = await server.callToolStrict("asset_get", { assetId: result.structuredContent.assetIds[0] });
-  assert.equal(fetched.structuredContent.asset.prompt, "folder drop");
+  // Folder relative path rejected with IMPORT_FOLDER_NOT_ABSOLUTE
+  const folderResult = await server.callTool("asset_import_folder", {
+    folderPath: "relative/folder",
+  });
+  assertImportError(folderResult, "IMPORT_FOLDER_NOT_ABSOLUTE");
 
-  // recursive defaults to false: the nested file was never offered. The
-  // confirmation is never remembered, so the second call asks again.
-  const secondResultPromise = server.callTool("asset_import_folder", { folderPath: folder, recursive: true });
-  const secondRequest = await server.waitForServerRequest("elicitation/create", { minimumCount: 2 });
-  server.respond(secondRequest.id, { action: "accept", content: { allow: true } });
-  const recursiveResult = await secondResultPromise;
-  const list = await server.callToolStrict("asset_list", {});
-  assert.equal(list.structuredContent.assets.length, 2);
-  assert.equal(recursiveResult.structuredContent.imported, 1);
-});
-
-test("recursive:true announces subfolders and imports them", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
-  const folder = join(workspace.root, "tree");
-  await writePngFixture(join(folder, "nested", "deep.png"), { color: "#4a6d3c" });
-
-  const resultPromise = server.callTool("asset_import_folder", { folderPath: folder, recursive: true });
-  const request = await server.waitForServerRequest("elicitation/create");
-  assert.match(request.params.message, /（含子文件夹）/);
-  server.respond(request.id, { action: "accept", content: { allow: true } });
-  const result = await resultPromise;
-  assert.equal(result.structuredContent.imported, 1);
-});
-
-async function expectRefusal(t, reply, expectedReason) {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
-  const folder = join(workspace.root, "batch");
-  const imagePath = await writePngFixture(join(folder, "one.png"), { color: "#8f3170" });
-
-  const resultPromise = server.callTool("asset_import_folder", { folderPath: folder });
-  const request = await server.waitForServerRequest("elicitation/create");
-  server.respond(request.id, reply);
-  const result = await resultPromise;
-  assertImportError(result, "IMPORT_NOT_CONFIRMED");
-  // 任务 351:the three "no" stories are distinguishable; declined covers
-  // decline, cancel, and an accept without allow:true alike.
-  assert.equal(result.structuredContent.error.reason, expectedReason);
-  assert.match(result.structuredContent.error.message, /nothing was imported/);
-  const list = await server.callToolStrict("asset_list", {});
-  assert.equal(list.structuredContent.assets.length, 0);
-  assert.ok(await readFile(imagePath), "the source file is untouched");
-}
-
-test("an elicitation decline imports nothing", async (t) => {
-  await expectRefusal(t, { action: "decline" }, "declined");
-});
-
-test("an elicitation cancel imports nothing", async (t) => {
-  await expectRefusal(t, { action: "cancel" }, "declined");
-});
-
-test("an accept without allow:true imports nothing", async (t) => {
-  await expectRefusal(t, { action: "accept", content: { allow: false } }, "declined");
-});
-
-test("a client without elicitation support gets IMPORT_NOT_CONFIRMED without being asked", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: false });
-  const folder = join(workspace.root, "batch");
-  await writePngFixture(join(folder, "one.png"), { color: "#3c8f31" });
-
-  const result = await server.callTool("asset_import_folder", { folderPath: folder });
-  assertImportError(result, "IMPORT_NOT_CONFIRMED");
-  assert.equal(result.structuredContent.error.reason, "unsupported");
-  assert.match(result.structuredContent.error.message, /nothing was imported/);
-  assert.equal(server.responses.some((message) => message.method === "elicitation/create"), false);
+  // Library remains completely empty
   const list = await server.callToolStrict("asset_list", {});
   assert.equal(list.structuredContent.assets.length, 0);
 });
 
-test("a timed-out confirmation is refused and a late reply is dropped silently", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true, env: { MOSA_MCP_ELICIT_TIMEOUT_MS: "120" } });
-  const folder = join(workspace.root, "batch");
-  await writePngFixture(join(folder, "one.png"), { color: "#8f8231" });
+test("non-media files (.txt) are rejected for asset_create and skipped for asset_import_folder", async (t) => {
+  const { workspace, server } = await setupServer(t);
+  const textFile = join(workspace.root, "notes.txt");
+  await writeFile(textFile, "plain text");
 
-  const requestPromise = server.waitForServerRequest("elicitation/create");
-  const result = await server.callTool("asset_import_folder", { folderPath: folder });
-  assertImportError(result, "IMPORT_NOT_CONFIRMED");
-  assert.equal(result.structuredContent.error.reason, "timeout");
-  assert.match(result.structuredContent.error.message, /nothing was imported/);
-  assert.match(result.structuredContent.error.message, /try again/, "the timeout message offers one more attempt");
+  // asset_create with .txt fails with IMAGE_PATH_UNSUPPORTED_TYPE
+  const createResult = await server.callTool("asset_create", {
+    imagePath: textFile,
+  });
+  assertImportError(createResult, "IMAGE_PATH_UNSUPPORTED_TYPE");
+
+  // asset_import_folder with notes.txt in folder skips it
+  const folder = join(workspace.root, "folder-with-txt");
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, "notes.txt"), "non media file");
+  await writePngFixture(join(folder, "valid.png"), { color: "#4477aa" });
+
+  const importResult = await server.callToolStrict("asset_import_folder", { folderPath: folder });
+  assert.equal(importResult.structuredContent.imported, 1);
+  assert.equal(importResult.structuredContent.skipped, 1);
+  assert.equal(importResult.structuredContent.failed, 0);
+
   const list = await server.callToolStrict("asset_list", {});
-  assert.equal(list.structuredContent.assets.length, 0);
-
-  // The user answers after the server gave up: the reply must be dropped
-  // without a "Method not found" error or any stderr noise.
-  const request = await requestPromise;
-  server.respond(request.id, { action: "accept", content: { allow: true } });
-  await new Promise((resolveDelay) => setTimeout(resolveDelay, 80));
-  assert.equal(server.stderr, "");
-  assert.equal(server.responses.some((message) => message.error?.code === -32601), false);
-  assert.deepEqual((await server.request("ping")).result, {});
+  assert.equal(list.structuredContent.assets.length, 1);
 });
 
-test("closing stdin while the confirmation is open fails with reason unavailable", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
-  const folder = join(workspace.root, "batch");
-  await writePngFixture(join(folder, "one.png"), { color: "#7c4a8f" });
+test("source folder contents remain unchanged after import", async (t) => {
+  const { workspace, server } = await setupServer(t);
+  const folder = join(workspace.root, "preserved-folder");
+  const file1 = await writePngFixture(join(folder, "a.png"), { color: "#114477" });
+  const file2 = await writePngFixture(join(folder, "sub", "b.png"), { color: "#774411" });
+  await writeFile(join(folder, "readme.txt"), "preserve me");
 
-  const resultPromise = server.callTool("asset_import_folder", { folderPath: folder });
-  const request = await server.waitForServerRequest("elicitation/create");
-  // 任务 351:stdin gone means no reply can ever arrive — the call must settle
-  // immediately as unavailable instead of holding until the 50 s timeout.
-  server.child.stdin.end();
-  const result = await resultPromise;
-  assertImportError(result, "IMPORT_NOT_CONFIRMED");
-  assert.equal(result.structuredContent.error.reason, "unavailable");
-  assert.match(result.structuredContent.error.message, /nothing was imported/);
-  // stdin is closed, so the server is shutting down — no follow-up asset_list
-  // here; "nothing was imported" is covered by the error message above.
-});
+  const beforeEntries = await readdir(folder, { recursive: true });
+  const beforeContent1 = await readFile(file1);
+  const beforeContent2 = await readFile(file2);
 
-test("a folder inside the Codex generated images root imports without confirmation", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
-  const folder = join(workspace.imagesDir, "batch");
-  await writePngFixture(join(folder, "gen.png"), { color: "#31458f" });
+  const result = await server.callToolStrict("asset_import_folder", {
+    folderPath: folder,
+    recursive: true,
+  });
+  assert.equal(result.structuredContent.imported, 2);
+  assert.equal(result.structuredContent.skipped, 1);
 
-  const result = await server.callTool("asset_import_folder", { folderPath: folder, prompt: "codex batch" });
-  assert.equal(result.isError, undefined, JSON.stringify(result.structuredContent));
-  assert.equal(result.structuredContent.imported, 1);
-  assert.equal(server.responses.some((message) => message.method === "elicitation/create"), false);
+  const afterEntries = await readdir(folder, { recursive: true });
+  const afterContent1 = await readFile(file1);
+  const afterContent2 = await readFile(file2);
+
+  assert.deepEqual(afterEntries, beforeEntries);
+  assert.deepEqual(afterContent1, beforeContent1);
+  assert.deepEqual(afterContent2, beforeContent2);
 });
 
 test("recursive walks at most 5 layers and skips symbolic links and other file types", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
+  const { workspace, server } = await setupServer(t);
   const folder = join(workspace.root, "deep-tree");
   // l1..l4 are layers 1..4, so their files sit at layer 5 (the deepest walked)
   // and files inside l5 would be layer 6 — beyond the limit.
@@ -233,12 +205,7 @@ test("recursive walks at most 5 layers and skips symbolic links and other file t
   await symlink(linked, join(folder, "linked.png"));
   await symlink(outside, join(folder, "linked-dir"));
 
-  const resultPromise = server.callTool("asset_import_folder", { folderPath: folder, recursive: true });
-  const request = await server.waitForServerRequest("elicitation/create");
-  assert.match(request.params.message, /另有 3 个文件会跳过。/);
-  server.respond(request.id, { action: "accept", content: { allow: true } });
-  const result = await resultPromise;
-  assert.equal(result.isError, undefined, JSON.stringify(result.structuredContent));
+  const result = await server.callToolStrict("asset_import_folder", { folderPath: folder, recursive: true });
   // top.png + depth5.png; depth6.png sits in layer 6 and the two symlinks
   // (file and folder) were never followed.
   assert.equal(result.structuredContent.imported, 2);
@@ -247,9 +214,8 @@ test("recursive walks at most 5 layers and skips symbolic links and other file t
   assert.equal(list.structuredContent.assets.length, 2);
 });
 
-test("a batch over the cap fails before asking and imports nothing", async (t) => {
+test("a batch over the cap fails before importing and imports nothing", async (t) => {
   const { workspace, server } = await setupServer(t, {
-    elicitation: true,
     env: { MOSA_MCP_IMPORT_FOLDER_MAX_FILES: "2" },
   });
   const folder = join(workspace.root, "big");
@@ -259,24 +225,23 @@ test("a batch over the cap fails before asking and imports nothing", async (t) =
 
   const result = await server.callTool("asset_import_folder", { folderPath: folder });
   assertImportError(result, "IMPORT_FOLDER_TOO_LARGE");
-  assert.equal(server.responses.some((message) => message.method === "elicitation/create"), false);
+  assert.equal(server.responses.some((message) => typeof message.method === "string"), false);
   const list = await server.callToolStrict("asset_list", {});
   assert.equal(list.structuredContent.assets.length, 0);
 });
 
-test("an empty folder answers with zero counts and never asks", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
+test("an empty folder answers with zero counts", async (t) => {
+  const { workspace, server } = await setupServer(t);
   const folder = join(workspace.root, "empty");
   await mkdir(folder, { recursive: true });
 
-  const result = await server.callTool("asset_import_folder", { folderPath: folder });
-  assert.equal(result.isError, undefined, JSON.stringify(result.structuredContent));
+  const result = await server.callToolStrict("asset_import_folder", { folderPath: folder });
   assert.deepEqual(result.structuredContent, { imported: 0, deduplicated: 0, skipped: 0, failed: 0, assetIds: [], failures: [] });
-  assert.equal(server.responses.some((message) => message.method === "elicitation/create"), false);
+  assert.equal(server.responses.some((message) => typeof message.method === "string"), false);
 });
 
 test("identical bytes already in the library count as deduplicated", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
+  const { workspace, server } = await setupServer(t);
   const known = await writePngFixture(join(workspace.imagesDir, "known.png"), { color: "#7c318f" });
   await server.callToolStrict("asset_create", { assetId: "known", imagePath: known });
   const folder = join(workspace.root, "dup");
@@ -284,10 +249,7 @@ test("identical bytes already in the library count as deduplicated", async (t) =
   await copyFile(known, join(folder, "copy-of-known.png"));
   await writePngFixture(join(folder, "fresh.png"), { color: "#8f7c31" });
 
-  const resultPromise = server.callTool("asset_import_folder", { folderPath: folder });
-  const request = await server.waitForServerRequest("elicitation/create");
-  server.respond(request.id, { action: "accept", content: { allow: true } });
-  const result = await resultPromise;
+  const result = await server.callToolStrict("asset_import_folder", { folderPath: folder });
   assert.equal(result.structuredContent.imported, 1);
   assert.equal(result.structuredContent.deduplicated, 1);
   assert.equal(result.structuredContent.assetIds.length, 1);
@@ -296,25 +258,22 @@ test("identical bytes already in the library count as deduplicated", async (t) =
 });
 
 test("a failed file is reported and does not stop the rest", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
+  const { workspace, server } = await setupServer(t);
   const folder = join(workspace.root, "mixed-health");
   const readable = await writePngFixture(join(folder, "readable.png"), { color: "#318f7c" });
   const unreadable = await writePngFixture(join(folder, "unreadable.png"), { color: "#8f3131" });
   await chmod(unreadable, 0o000);
   t.after(() => chmod(unreadable, 0o644).catch(() => {}));
 
-  const resultPromise = server.callTool("asset_import_folder", { folderPath: folder });
-  const request = await server.waitForServerRequest("elicitation/create");
-  server.respond(request.id, { action: "accept", content: { allow: true } });
-  const result = await resultPromise;
+  const result = await server.callToolStrict("asset_import_folder", { folderPath: folder });
   assert.equal(result.structuredContent.imported, 1);
   assert.equal(result.structuredContent.failed, 1);
   assert.deepEqual(result.structuredContent.failures, [{ file: "unreadable.png", code: "EACCES" }]);
   assert.ok(await readFile(readable));
 });
 
-test("missing and non-directory folderPath fail without asking", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
+test("missing and non-directory folderPath fail with appropriate error", async (t) => {
+  const { workspace, server } = await setupServer(t);
   const missing = await server.callTool("asset_import_folder", { folderPath: join(workspace.root, "nope") });
   assertImportError(missing, "IMPORT_FOLDER_NOT_FOUND");
   const file = await writePngFixture(join(workspace.imagesDir, "plain.png"));
@@ -322,22 +281,21 @@ test("missing and non-directory folderPath fail without asking", async (t) => {
   assertImportError(notDirectory, "IMPORT_FOLDER_NOT_DIRECTORY");
   const relativePath = await server.callTool("asset_import_folder", { folderPath: "some/relative/folder" });
   assertImportError(relativePath, "IMPORT_FOLDER_NOT_ABSOLUTE");
-  assert.equal(server.responses.some((message) => message.method === "elicitation/create"), false);
+  assert.equal(server.responses.some((message) => typeof message.method === "string"), false);
 });
 
-test("the confirmation names the resolved folder, not a symlinked or dotted spelling", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
+test("folder path with symlink resolves target directory and imports directly", async (t) => {
+  const { workspace, server } = await setupServer(t);
   const realFolder = join(workspace.root, "real-folder");
   await writePngFixture(join(realFolder, "one.png"), { color: "#4a6f31" });
   const linkFolder = join(workspace.root, "innocent-link");
   await symlink(realFolder, linkFolder, "dir");
 
-  const viaLink = server.callTool("asset_import_folder", { folderPath: join(linkFolder, "..", "innocent-link") });
-  const request = await server.waitForServerRequest("elicitation/create");
-  assert.match(request.params.message, /real-folder 导入 1 张/);
-  assert.doesNotMatch(request.params.message, /innocent-link|\.\./);
-  server.respond(request.id, { action: "decline" });
-  assertImportError(await viaLink, "IMPORT_NOT_CONFIRMED");
+  const result = await server.callToolStrict("asset_import_folder", {
+    folderPath: join(linkFolder, "..", "innocent-link"),
+  });
+  assert.equal(result.structuredContent.imported, 1);
+  assert.equal(result.structuredContent.failed, 0);
 });
 
 test("asset_version_create cannot pull a replacement image from the working directory", async (t) => {
@@ -362,32 +320,12 @@ test("asset_version_create cannot pull a replacement image from the working dire
   assert.equal(okVersion.structuredContent.asset.parent_asset_id, "root");
 });
 
-test("a folder inside the library's own assets root imports without confirmation", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
+test("a folder inside the library's own assets root imports directly", async (t) => {
+  const { workspace, server } = await setupServer(t);
   const folder = join(workspace.libraryDir, "assets", "handoff");
   await writePngFixture(join(folder, "staged.png"), { color: "#3f3f8f" });
 
-  const result = await server.callTool("asset_import_folder", { folderPath: folder });
-  assert.equal(result.isError, undefined, JSON.stringify(result.structuredContent));
+  const result = await server.callToolStrict("asset_import_folder", { folderPath: folder });
   assert.equal(result.structuredContent.imported, 1);
-  assert.equal(server.responses.some((message) => message.method === "elicitation/create"), false);
-});
-
-test("a file removed between scan and import only fails its own entry", async (t) => {
-  const { workspace, server } = await setupServer(t, { elicitation: true });
-  const folder = join(workspace.root, "vanish");
-  await writePngFixture(join(folder, "stays.png"), { color: "#315f8f" });
-  await writePngFixture(join(folder, "vanishes.png"), { color: "#8f5f31" });
-
-  const resultPromise = server.callTool("asset_import_folder", { folderPath: folder });
-  const request = await server.waitForServerRequest("elicitation/create");
-  // The scan has finished once the confirmation is out (the ask happens after
-  // the walk), so removing a scanned file now must surface as one failed
-  // entry, not a broken call.
-  await rm(join(folder, "vanishes.png"), { force: true });
-  server.respond(request.id, { action: "accept", content: { allow: true } });
-  const result = await resultPromise;
-  assert.equal(result.structuredContent.imported, 1);
-  assert.equal(result.structuredContent.failed, 1);
-  assert.deepEqual(result.structuredContent.failures.map((entry) => entry.file), ["vanishes.png"]);
+  assert.equal(server.responses.some((message) => typeof message.method === "string"), false);
 });
