@@ -4,7 +4,8 @@ import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { desktopDistributionFromEnvironment, requiresPlatformSigning } from "../lib/release-distribution.mjs";
+import { fileURLToPath } from "node:url";
+import { desktopDistributionFromEnvironment, requiresMacDeveloperIdSigning, requiresPlatformSigning } from "../lib/release-distribution.mjs";
 import { resolveReleaseProduct } from "../scripts/release-product.mjs";
 import { desktopLicensesOutputDir, writeDesktopLicenses } from "../scripts/third-party-licenses.mjs";
 import { windowsSignOptionsFromEnvironment } from "../scripts/windows-signing.mjs";
@@ -143,35 +144,38 @@ const AD_HOC_SIGN_CONFIG = {
 
 export function macReleasePackagingConfig(env = process.env) {
   const distribution = desktopDistributionFromEnvironment(env);
-  if (!requiresPlatformSigning(distribution)) return { osxSign: AD_HOC_SIGN_CONFIG };
+  if (!requiresMacDeveloperIdSigning(distribution)) return { osxSign: AD_HOC_SIGN_CONFIG };
 
   const identity = String(env.MOSA_MACOS_SIGN_IDENTITY || "").trim();
-  const appleId = String(env.APPLE_ID || "").trim();
-  const appleIdPassword = String(env.APPLE_APP_SPECIFIC_PASSWORD || "").trim();
+  const keychain = String(env.MOSA_MACOS_SIGN_KEYCHAIN || "").trim();
   const teamId = String(env.APPLE_TEAM_ID || "").trim();
+  const notaryProfile = String(env.MOSA_NOTARY_KEYCHAIN_PROFILE || "").trim();
   const missing = [
     ["MOSA_MACOS_SIGN_IDENTITY", identity],
-    ["APPLE_ID", appleId],
-    ["APPLE_APP_SPECIFIC_PASSWORD", appleIdPassword],
+    ["MOSA_MACOS_SIGN_KEYCHAIN", keychain],
     ["APPLE_TEAM_ID", teamId],
+    ["MOSA_NOTARY_KEYCHAIN_PROFILE", notaryProfile],
   ].filter(([, value]) => !value).map(([name]) => name);
   if (missing.length) {
     throw new Error(`MOSA release build requires: ${missing.join(", ")}`);
   }
 
+  const entitlements = fileURLToPath(new URL("entitlements.mac.plist", import.meta.url));
   return {
     osxSign: {
       identity,
+      keychain,
       identityValidation: true,
-      preAutoEntitlements: true,
-      optionsForFile: () => ({ hardenedRuntime: true }),
+      preAutoEntitlements: false,
+      optionsForFile: () => ({
+        entitlements,
+        hardenedRuntime: true,
+      }),
       strictVerify: true,
       continueOnError: false,
     },
     osxNotarize: {
-      appleId,
-      appleIdPassword,
-      teamId,
+      keychainProfile: notaryProfile,
     },
   };
 }
@@ -249,7 +253,7 @@ export function packageIgnorePatternsForTarget(target = resolveDesktopPackagingT
   /^\/desktop\/assets(?:\/|$)/,
   // License texts ship once, in Resources/licenses/ (see scripts/third-party-licenses.mjs).
   /^\/desktop\/licenses(?:\/|$)/,
-  /^\/desktop\/(?:forge\.config\.mjs|icon-assets\.mjs)$/,
+  /^\/desktop\/(?:forge\.config\.mjs|icon-assets\.mjs|entitlements\.mac\.plist)$/,
   /^\/lib\/.*(?:\.ts|\.js\.map)$/,
   /^\/node_modules\/\.package-lock\.json$/,
   new RegExp(`^/node_modules/(?!(?:better-sqlite3|detect-libc|node-addon-api|semver|sharp)(?:/|$)|@img(?:/(?:${allowedImagePackages})(?:/|$)|$)).+`),

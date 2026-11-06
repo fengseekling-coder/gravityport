@@ -6,7 +6,7 @@ import { createReadStream } from "node:fs";
 import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresPlatformSigning } from "../lib/release-distribution.mjs";
+import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresMacDeveloperIdSigning } from "../lib/release-distribution.mjs";
 import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
 import { verifyMacosReleaseApp } from "./verify-macos-release.mjs";
 

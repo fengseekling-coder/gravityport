@@ -91,24 +91,68 @@ test("macOS release verification staples first, then validates notarization and 
   ]);
 });
 
-test("macOS preview verification requires only a valid packaged code signature", async () => {
+test("macOS preview verification requires Developer ID, Team ID, runtime, staple, and spctl", async () => {
   const calls = [];
   const runner = async (command, args) => {
     calls.push([command, ...args]);
     if (command === "/usr/bin/codesign" && args[0] === "-dv") {
-      return { stdout: "", stderr: "Identifier=com.azhuilab.mosa\nSignature=adhoc\n" };
+      return {
+        stdout: "",
+        stderr: [
+          "Identifier=com.azhuilab.mosa",
+          "CodeDirectory v=20500 size=500 flags=0x10000(runtime) hashes=10+7 location=embedded",
+          `Authority=${IDENTITY}`,
+          "TeamIdentifier=TEAM123456",
+        ].join("\n"),
+      };
     }
     return { stdout: "", stderr: "" };
   };
   const result = await verifyMacosReleaseApp({
     appPath: ".",
-    env: {},
+    env: { APPLE_TEAM_ID: "TEAM123456", MOSA_MACOS_SIGN_IDENTITY: IDENTITY },
     runner,
+    staple: true,
     distribution: "preview",
   });
   assert.equal(result.distribution, "preview");
   assert.equal(result.bundleId, "com.azhuilab.mosa");
-  assert.deepEqual(calls.map((call) => call[0]), ["/usr/bin/codesign", "/usr/bin/codesign"]);
+  assert.equal(result.teamId, "TEAM123456");
+  assert.deepEqual(calls.map((call) => call.slice(0, 3)), [
+    ["/usr/bin/codesign", "--verify", "--deep"],
+    ["/usr/bin/codesign", "-dv", "--verbose=4"],
+    ["/usr/bin/xcrun", "stapler", "staple"],
+    ["/usr/bin/xcrun", "stapler", "validate"],
+    ["/usr/sbin/spctl", "-a", "-vv"],
+  ]);
+
+  // Preview rejects ad-hoc signed apps
+  const adHocRunner = async (command, args) => {
+    if (command === "/usr/bin/codesign" && args[0] === "-dv") {
+      return { stdout: "", stderr: "Identifier=com.azhuilab.mosa\nSignature=adhoc\n" };
+    }
+    return { stdout: "", stderr: "" };
+  };
+  await assert.rejects(
+    verifyMacosReleaseApp({
+      appPath: ".",
+      env: { APPLE_TEAM_ID: "TEAM123456", MOSA_MACOS_SIGN_IDENTITY: IDENTITY },
+      runner: adHocRunner,
+      distribution: "preview",
+    }),
+    /macOS release app is ad-hoc signed; Developer ID signing is required\./,
+  );
+});
+
+test("macOS release verification rejects development distribution", async () => {
+  await assert.rejects(
+    verifyMacosReleaseApp({
+      appPath: ".",
+      env: {},
+      distribution: "development",
+    }),
+    /Release artifacts must use preview or production distribution mode\./,
+  );
 });
 
 test("Windows release signature requires a valid Authenticode signer pinned by thumbprint", () => {

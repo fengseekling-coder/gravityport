@@ -5,7 +5,7 @@ import { access, lstat, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresPlatformSigning } from "../lib/release-distribution.mjs";
+import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresMacDeveloperIdSigning } from "../lib/release-distribution.mjs";
 import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
 import { verifyMacosReleaseApp } from "./verify-macos-release.mjs";
 
@@ -50,15 +50,15 @@ export function assertMacAppMetadata({ bundleId, bundleName, executable, version
 export function macDmgReleaseCredentials(env = process.env) {
   const credentials = {
     identity: nonEmpty(env.MOSA_MACOS_SIGN_IDENTITY),
-    appleId: nonEmpty(env.APPLE_ID),
-    appleIdPassword: nonEmpty(env.APPLE_APP_SPECIFIC_PASSWORD),
+    keychain: nonEmpty(env.MOSA_MACOS_SIGN_KEYCHAIN),
     teamId: nonEmpty(env.APPLE_TEAM_ID),
+    notaryProfile: nonEmpty(env.MOSA_NOTARY_KEYCHAIN_PROFILE),
   };
   const missing = [
     ["MOSA_MACOS_SIGN_IDENTITY", credentials.identity],
-    ["APPLE_ID", credentials.appleId],
-    ["APPLE_APP_SPECIFIC_PASSWORD", credentials.appleIdPassword],
+    ["MOSA_MACOS_SIGN_KEYCHAIN", credentials.keychain],
     ["APPLE_TEAM_ID", credentials.teamId],
+    ["MOSA_NOTARY_KEYCHAIN_PROFILE", credentials.notaryProfile],
   ].filter(([, value]) => !value).map(([name]) => name);
   if (missing.length) throw new Error(`MOSA DMG release requires: ${missing.join(", ")}`);
   return credentials;
@@ -119,18 +119,21 @@ async function verifyMountedDmg({ mountPath, expectedVersion, runner, product })
 }
 
 async function signAndNotarizeDmg({ dmgPath, credentials, runner }) {
-  await runner("/usr/bin/codesign", [
+  const codesignArgs = [
     "--force",
     "--sign", credentials.identity,
     "--timestamp",
-    dmgPath,
-  ]);
+  ];
+  if (credentials.keychain) {
+    codesignArgs.push("--keychain", credentials.keychain);
+  }
+  codesignArgs.push(dmgPath);
+  await runner("/usr/bin/codesign", codesignArgs);
   await runner("/usr/bin/xcrun", [
     "notarytool", "submit", dmgPath,
-    "--apple-id", credentials.appleId,
-    "--password", credentials.appleIdPassword,
-    "--team-id", credentials.teamId,
+    "--keychain-profile", credentials.notaryProfile,
     "--wait",
+    "--timeout", "6h",
   ]);
   await runner("/usr/bin/xcrun", ["stapler", "staple", dmgPath]);
   await runner("/usr/bin/xcrun", ["stapler", "validate", dmgPath]);
@@ -162,12 +165,12 @@ export async function makeMacosDmg({
   assertMacAppMetadata(metadata, version, product);
 
   const normalizedDistribution = normalizeDesktopDistribution(distribution);
-  const production = requiresPlatformSigning(normalizedDistribution);
+  const signingRequired = requiresMacDeveloperIdSigning(normalizedDistribution);
   let credentials = null;
   if (normalizedDistribution !== "development") {
     await verifyMacosReleaseApp({ appPath, env, runner, staple: false, distribution: normalizedDistribution });
   }
-  if (production) credentials = macDmgReleaseCredentials(env);
+  if (signingRequired) credentials = macDmgReleaseCredentials(env);
 
   const dmgPath = macDmgOutputPath({ rootDir, outDir, version, arch, product });
   await mkdir(dirname(dmgPath), { recursive: true });
@@ -205,7 +208,7 @@ export async function makeMacosDmg({
     await runner("/usr/bin/hdiutil", ["detach", mountPath]);
     mounted = false;
 
-    if (production) await signAndNotarizeDmg({ dmgPath, credentials, runner });
+    if (signingRequired) await signAndNotarizeDmg({ dmgPath, credentials, runner });
     await access(dmgPath);
     return { dmgPath, appPath, version, bundleId: metadata.bundleId, distribution: normalizedDistribution };
   } finally {

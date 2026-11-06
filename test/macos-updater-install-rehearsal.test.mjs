@@ -450,8 +450,8 @@ previewScope("rehearsal: cross-name update refuses to overwrite an existing Grav
   }
 });
 
-previewScope("rehearsal: production team identifier rules", async () => {
-  const root = await mkdtemp(join(tmpdir(), "mosa-rehearsal-prod-"));
+previewScope("rehearsal: team identifier and signature transition rules in preview", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-rehearsal-team-"));
   const appsDir = join(root, "apps");
   try {
     const payloadRoot = join(root, "payload");
@@ -461,7 +461,7 @@ previewScope("rehearsal: production team identifier rules", async () => {
       appName: "MOSA.app",
       execName: "MOSA",
       version: VERSION,
-      distribution: "production",
+      distribution: "preview",
       marker: "new",
     });
     const zipPath = await makePayloadZip({ root: payloadRoot, appName: "MOSA.app" });
@@ -469,7 +469,7 @@ previewScope("rehearsal: production team identifier rules", async () => {
     const installApp = join(appsDir, "MOSA.app");
     const failureLog = join(payloadRoot, "apply-update-error.log");
 
-    // 1) old without a team, new signed by the manifest team -> succeeds.
+    // Case A: Transition (ad-hoc old app without Team ID -> new app signed with manifest Team ID) -> succeeds.
     await mkdir(appsDir, { recursive: true });
     await makeFakeApp({ root: appsDir, appName: "MOSA.app", execName: "MOSA", version: "0.2.1-rc.34", marker: "old" });
     await writeFile(join(root, "team-map-a.tsv"), `TEAMAAAAA1${TAB}EXTRACTED_PAYLOAD\n`, "utf8");
@@ -479,14 +479,14 @@ previewScope("rehearsal: production team identifier rules", async () => {
       installAppPath: installApp,
       zipPath,
       appName: "MOSA.app",
-      distribution: "production",
+      distribution: "preview",
       teamIdentifier: "TEAMAAAAA1",
       envExtra: { MOSA_TEST_TEAM_MAP: join(root, "team-map-a.tsv") },
     });
-    await waitFor(() => markerOf(installApp) === "new", { label: "old-none production success (replacement installed)" });
-    await waitFor(() => transactionDirs(appsDir).length === 0, { label: "old-none production success (transaction cleanup)" });
+    await waitFor(() => markerOf(installApp) === "new", { label: "case A: transition ad-hoc -> signed success" });
+    await waitFor(() => transactionDirs(appsDir).length === 0, { label: "case A: transaction cleanup" });
 
-    // 2) old with the same team as the payload and the manifest -> succeeds.
+    // Case B: Signed -> Signed (same Team ID on old app, new app, and manifest) -> succeeds.
     await rm(appsDir, { recursive: true, force: true });
     await mkdir(appsDir, { recursive: true });
     await makeFakeApp({ root: appsDir, appName: "MOSA.app", execName: "MOSA", version: "0.2.1-rc.34", marker: "old" });
@@ -501,20 +501,21 @@ previewScope("rehearsal: production team identifier rules", async () => {
       installAppPath: installApp,
       zipPath,
       appName: "MOSA.app",
-      distribution: "production",
+      distribution: "preview",
       teamIdentifier: "TEAMAAAAA1",
       envExtra: { MOSA_TEST_TEAM_MAP: join(root, "team-map-b.tsv") },
     });
-    await waitFor(() => markerOf(installApp) === "new", { label: "same-team production success (replacement installed)" });
-    await waitFor(() => transactionDirs(appsDir).length === 0, { label: "same-team production success (transaction cleanup)" });
+    await waitFor(() => markerOf(installApp) === "new", { label: "case B: same-team signed -> signed success" });
+    await waitFor(() => transactionDirs(appsDir).length === 0, { label: "case B: transaction cleanup" });
 
-    // 3) old team differs from the payload team -> refused, nothing changes.
+    // Case C: Signed -> ad-hoc (old app has Team ID, manifest has no Team ID, payload is ad-hoc) -> refused, old app intact.
     await rm(appsDir, { recursive: true, force: true });
     await mkdir(appsDir, { recursive: true });
     await makeFakeApp({ root: appsDir, appName: "MOSA.app", execName: "MOSA", version: "0.2.1-rc.34", marker: "old" });
+    await rm(failureLog, { force: true });
     await writeFile(
       join(root, "team-map-c.tsv"),
-      `TEAMBBBBB2${TAB}EXTRACTED_PAYLOAD\nTEAMAAAAA1${TAB}${installApp}\n`,
+      `TEAMAAAAA1${TAB}${installApp}\n`,
       "utf8",
     );
     await launchHelper({
@@ -523,30 +524,67 @@ previewScope("rehearsal: production team identifier rules", async () => {
       installAppPath: installApp,
       zipPath,
       appName: "MOSA.app",
-      distribution: "production",
-      teamIdentifier: "TEAMBBBBB2",
+      distribution: "preview",
+      teamIdentifier: "",
       envExtra: { MOSA_TEST_TEAM_MAP: join(root, "team-map-c.tsv") },
     });
-    await waitFor(() => existsSync(failureLog), { label: "team-mismatch failure log" });
-    assert.equal(markerOf(installApp), "old", "a team-mismatched payload must never replace the app");
+    await waitFor(() => existsSync(failureLog), { label: "case C: signed -> ad-hoc failure log" });
+    assert.equal(markerOf(installApp), "old", "signed app must never be replaced by an unpinned ad-hoc update");
 
-    // 4) payload team differs from the manifest team -> refused.
+    // Case D: Signed -> wrong Team ID (manifest pins TEAMBBBBB2, old app and payload have TEAMAAAAA1) -> refused.
     await rm(appsDir, { recursive: true, force: true });
     await mkdir(appsDir, { recursive: true });
     await makeFakeApp({ root: appsDir, appName: "MOSA.app", execName: "MOSA", version: "0.2.1-rc.34", marker: "old" });
     await rm(failureLog, { force: true });
+    await writeFile(
+      join(root, "team-map-d.tsv"),
+      `TEAMAAAAA1${TAB}EXTRACTED_PAYLOAD\nTEAMAAAAA1${TAB}${installApp}\n`,
+      "utf8",
+    );
     await launchHelper({
       root,
       stubs,
       installAppPath: installApp,
       zipPath,
       appName: "MOSA.app",
-      distribution: "production",
-      teamIdentifier: "TEAMCCCCC3",
-      envExtra: { MOSA_TEST_TEAM_MAP: join(root, "team-map-c.tsv") },
+      distribution: "preview",
+      teamIdentifier: "TEAMBBBBB2",
+      envExtra: { MOSA_TEST_TEAM_MAP: join(root, "team-map-d.tsv") },
     });
-    await waitFor(() => existsSync(failureLog), { label: "manifest-mismatch failure log" });
-    assert.equal(markerOf(installApp), "old");
+    await waitFor(() => existsSync(failureLog), { label: "case D: wrong team failure log" });
+    assert.equal(markerOf(installApp), "old", "mismatched manifest team must never replace the app");
+
+    // Case E: Signed -> tampered payload (manifest pins TEAMAAAAA1, old has TEAMAAAAA1, but payload signature broken) -> refused.
+    await rm(appsDir, { recursive: true, force: true });
+    await mkdir(appsDir, { recursive: true });
+    await makeFakeApp({ root: appsDir, appName: "MOSA.app", execName: "MOSA", version: "0.2.1-rc.34", marker: "old" });
+    await rm(failureLog, { force: true });
+    const tamperedPayloadRoot = join(root, "tampered-payload");
+    await mkdir(tamperedPayloadRoot, { recursive: true });
+    await makeFakeApp({
+      root: tamperedPayloadRoot,
+      appName: "MOSA.app",
+      execName: "MOSA",
+      version: VERSION,
+      distribution: "preview",
+      marker: "tampered",
+    });
+    // Add extra file after signing so codesign --verify fails
+    await writeFile(join(tamperedPayloadRoot, "MOSA.app", "Contents", "tampered-file"), "evil");
+    const tamperedZipPath = await makePayloadZip({ root: tamperedPayloadRoot, appName: "MOSA.app" });
+    const tamperedFailureLog = join(tamperedPayloadRoot, "apply-update-error.log");
+    await launchHelper({
+      root,
+      stubs,
+      installAppPath: installApp,
+      zipPath: tamperedZipPath,
+      appName: "MOSA.app",
+      distribution: "preview",
+      teamIdentifier: "TEAMAAAAA1",
+      envExtra: { MOSA_TEST_TEAM_MAP: join(root, "team-map-b.tsv") },
+    });
+    await waitFor(() => existsSync(tamperedFailureLog), { label: "case E: tampered payload failure log" });
+    assert.equal(markerOf(installApp), "old", "tampered payload must never replace the app");
     assert.equal(existsSync(join(root, "trash")), false, "nothing may reach the Trash on a refused payload");
   } finally {
     await removeTestPath(root, { recursive: true, force: true });
@@ -644,7 +682,16 @@ previewScope("rehearsal failure: REPLACE_FAILED when the previous app cannot be 
     const { logPath } = await launchHelper({ root, stubs, installAppPath: lockedApp, zipPath, appName: "MOSA.app" });
     await assertFailureRestored({ root, appsDir, logPath, code: "REPLACE_FAILED" });
   } finally {
-    if (existsSync(lockedApp)) execFileSync("/usr/bin/chflags", ["nouchg", lockedApp]);
+    if (existsSync(lockedApp)) {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        try {
+          execFileSync("/usr/bin/chflags", ["nouchg", lockedApp]);
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+    }
     await removeTestPath(root, { recursive: true, force: true });
   }
 });

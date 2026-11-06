@@ -35,6 +35,7 @@ export async function prepareDesktopReleaseManifest({
   previousManifest = null,
   publishedAt = new Date().toISOString(),
   notes = null,
+  env = process.env,
 } = {}) {
   const cleanVersion = String(version || "").trim();
   if (!VERSION_PATTERN.test(cleanVersion)) throw new Error("Invalid MOSA release version.");
@@ -65,10 +66,12 @@ export async function prepareDesktopReleaseManifest({
         ...(cleanMacTeamIdentifier ? { teamIdentifier: cleanMacTeamIdentifier } : {}),
       })
     : null;
-  // The Desktop reader enforces the same rule; fail here with the publishing
-  // context so a production release can never leave without its pinned team.
-  if (normalizedBuildIdentity.distribution === "production" && macos && !macos.teamIdentifier) {
-    throw new Error("Production macOS releases require a platforms.macos teamIdentifier.");
+  const expectedAppleTeamId = String(env.APPLE_TEAM_ID || "").trim().toUpperCase();
+  if (macos && !macos.teamIdentifier) {
+    throw new Error("macOS releases require a platforms.macos teamIdentifier.");
+  }
+  if (macos && expectedAppleTeamId && macos.teamIdentifier !== expectedAppleTeamId) {
+    throw new Error(`Release macOS teamIdentifier ${macos.teamIdentifier} does not match APPLE_TEAM_ID ${expectedAppleTeamId}.`);
   }
   const windows = windowsArtifactPath
     ? await artifactMetadata({
@@ -238,7 +241,7 @@ async function main() {
     version: args.version,
     macArtifactPath: args.mac || "",
     macAppName: args["mac-app-name"] || "MOSA.app",
-    macTeamIdentifier: args["mac-team-identifier"] || "",
+    macTeamIdentifier: args["mac-team-identifier"] || process.env.APPLE_TEAM_ID || "",
     windowsArtifactPath: args.windows || "",
     windowsInstallerPath: args["windows-installer"] || "",
     windowsPayloadExeName: args["windows-payload-exe-name"] || "MOSA.exe",
