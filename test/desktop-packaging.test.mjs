@@ -132,7 +132,10 @@ test("macOS release DMG credentials fail closed", () => {
   });
 });
 
-test("make-macos-dmg notarizes with --keychain-profile and never passes --password or --apple-id", async () => {
+// The DMG script is macOS-only; platform is injected so Linux CI still checks the
+// notarytool arguments. Windows runners cannot create the /Applications symlink
+// the fake hdiutil mount needs, so the test skips there.
+test("make-macos-dmg notarizes with --keychain-profile and never passes --password or --apple-id", { skip: process.platform === "win32" && "needs POSIX symlinks for the fake DMG mount" }, async () => {
   const root = await mkdtemp(join(tmpdir(), "mosa-dmg-test-"));
   try {
     await writeFile(join(root, "package.json"), JSON.stringify({ version: "0.3.0" }));
@@ -189,6 +192,7 @@ test("make-macos-dmg notarizes with --keychain-profile and never passes --passwo
       distribution: "preview",
       env,
       runner,
+      platform: "darwin",
     });
 
     const notaryCall = commands.find((c) => c.args.includes("notarytool"));
@@ -351,7 +355,7 @@ test("release packaging enables Developer ID hardened signing and notarization i
     assert.equal(config.osxSign.continueOnError, false);
     const fileOpts = config.osxSign.optionsForFile("/tmp/MOSA.app");
     assert.equal(fileOpts.hardenedRuntime, true);
-    assert.ok(fileOpts.entitlements.endsWith("desktop/entitlements.mac.plist"));
+    assert.ok(fileOpts.entitlements.replaceAll("\\", "/").endsWith("desktop/entitlements.mac.plist"));
     assert.deepEqual(config.osxNotarize, {
       keychainProfile: "gravityport-notary",
     });
