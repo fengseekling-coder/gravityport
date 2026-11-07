@@ -76,23 +76,24 @@ test("each error code carries both a zh and an en sentence", () => {
   }
 });
 
-// 任务 366：导入与素材文件的四个码，中英都是审查表定稿句，一字不改。
+// 任务 366：导入与素材文件的四个码，中英都是定稿句，一字不改。三个导入码
+// 任务 369 换成用户 11-07 定稿的「导入失败，…」句式。
 const TASK_366_CODES = {
   STAGING_FILE_TOO_LARGE: {
-    zh: "无法导入。文件过大。",
-    en: "Couldn’t import. The file is too large.",
+    zh: "导入失败，文件过大。",
+    en: "Import failed. The file is too large.",
   },
   SOURCE_CHANGED_DURING_IMPORT: {
-    zh: "无法导入。文件在导入过程中被修改。",
-    en: "Couldn’t import. The file was modified during import.",
+    zh: "导入失败，文件在导入过程中被修改。请重新导入。",
+    en: "Import failed. The file was modified during import. Import it again.",
   },
   ASSET_FILE_BUSY: {
     zh: "无法完成操作。素材文件正在使用中，请关闭后重试。",
     en: "Couldn’t complete the action. The asset files are in use. Close them and try again.",
   },
   IMAGE_CONTENT_NOT_MEDIA: {
-    zh: "无法导入。文件不是支持的图片或视频。",
-    en: "Couldn’t import. The file isn’t a supported image or video.",
+    zh: "导入失败，文件不是支持的格式。请检查文件格式再重新导入。",
+    en: "Import failed. The file format isn’t supported. Check the file format and import again.",
   },
 };
 
@@ -101,6 +102,52 @@ test("task 366 import and asset-file codes use the reviewed sentences verbatim",
     assert.equal(errorMessagesModule.messageForErrorCode(code, "zh"), pack.zh, `${code} zh sentence must match the review table`);
     assert.equal(errorMessagesModule.messageForErrorCode(code, "en"), pack.en, `${code} en sentence must match the review table`);
   }
+});
+
+// 任务 369：部分失败的整句 = 模板 + 原因尾巴，逐字对用户 11-07 定稿表。
+const TASK_369_TAILS = {
+  IMAGE_CONTENT_NOT_MEDIA: {
+    zh: "文件不是支持的格式。请检查文件格式再重新导入。",
+    en: "The file format isn’t supported. Check the file format and import again.",
+  },
+  STAGING_FILE_TOO_LARGE: { zh: "文件过大。", en: "The file is too large." },
+  SOURCE_CHANGED_DURING_IMPORT: {
+    zh: "文件在导入过程中被修改。请重新导入。",
+    en: "The file was modified during import. Import it again.",
+  },
+};
+
+test("task 369 import failure tails drop only the leading 导入失败 / Import failed", () => {
+  for (const [code, pack] of Object.entries(TASK_369_TAILS)) {
+    assert.equal(errorMessagesModule.importFailureTail(code, "zh"), pack.zh, `${code} zh tail`);
+    assert.equal(errorMessagesModule.importFailureTail(code, "en"), pack.en, `${code} en tail`);
+  }
+  assert.equal(errorMessagesModule.importFailureTail("ASSET_FILE_BUSY", "zh"), "");
+  assert.equal(errorMessagesModule.importFailureTail("IMPORT_FAILED", "en"), "");
+  assert.equal(errorMessagesModule.importFailureTail("", "zh"), "");
+});
+
+test("task 369 partial-failure sentences match the user's approved copy word for word", () => {
+  const i18nSource = readFileSync(join(srcRoot, "i18n.ts"), "utf8");
+  const appSource = readFileSync(join(srcRoot, "App.tsx"), "utf8");
+  const templates = {
+    one: { zh: "已导入 1 个素材，{failed} 个导入失败，{tail}", en: "Imported 1 asset. {failed} failed to import. {tail}" },
+    many: { zh: "已导入 {imported} 个素材，{failed} 个导入失败，{tail}", en: "Imported {imported} assets. {failed} failed to import. {tail}" },
+  };
+  for (const pack of Object.values(templates)) {
+    assert.ok(i18nSource.includes(`${JSON.stringify(pack.zh)}: ${JSON.stringify(pack.en)},`), `i18n entry for ${pack.zh}`);
+    assert.ok(appSource.includes(`fillNamed(${JSON.stringify(pack.zh)}`), `App uses ${pack.zh}`);
+  }
+  const fill = (text, values) => text.replace(/\{(\w+)\}/g, (_, key) => String(values[key]));
+  const tail = (lang) => errorMessagesModule.importFailureTail("IMAGE_CONTENT_NOT_MEDIA", lang);
+  assert.equal(fill(templates.many.zh, { imported: 3, failed: 2, tail: tail("zh") }),
+    "已导入 3 个素材，2 个导入失败，文件不是支持的格式。请检查文件格式再重新导入。");
+  assert.equal(fill(templates.many.en, { imported: 3, failed: 2, tail: tail("en") }),
+    "Imported 3 assets. 2 failed to import. The file format isn’t supported. Check the file format and import again.");
+  assert.equal(fill(templates.one.zh, { failed: 2, tail: errorMessagesModule.importFailureTail("STAGING_FILE_TOO_LARGE", "zh") }),
+    "已导入 1 个素材，2 个导入失败，文件过大。");
+  // 全部失败：只显示整句，不再套「无法导入素材。」。
+  assert.match(appSource, /result\.failed && firstTail\) \{[\s\S]{0,700}?: firstReason\n/);
 });
 
 test("failureMessage in mosa-api maps recognized error codes to Chinese and falls back to error.message", async () => {

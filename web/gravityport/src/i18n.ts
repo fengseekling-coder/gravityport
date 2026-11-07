@@ -259,6 +259,8 @@ const english: Record<string, string> = {
   "无法导入素材。{reason}": "Couldn’t import assets. {reason}",
   "已导入 1 个素材，{failed} 个无法导入。{reason}": "Imported 1 asset. {failed} couldn’t be imported. {reason}",
   "已导入 {imported} 个素材，{failed} 个无法导入。{reason}": "Imported {imported} assets. {failed} couldn’t be imported. {reason}",
+  "已导入 1 个素材，{failed} 个导入失败，{tail}": "Imported 1 asset. {failed} failed to import. {tail}",
+  "已导入 {imported} 个素材，{failed} 个导入失败，{tail}": "Imported {imported} assets. {failed} failed to import. {tail}",
   "{count} 个文件已在素材库中，未导入": "{count} files are already in the library. Nothing imported.",
   "1 个文件已在素材库中，未导入": "Nothing imported. 1 file is already in the library.",
   "{count} 个文件已在素材库中，{skipped} 个文件格式不支持，未导入": "Nothing imported. {count} files are already in the library. {skipped} unsupported files were skipped.",

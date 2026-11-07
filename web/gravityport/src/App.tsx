@@ -13,7 +13,7 @@ import { translate, type Language } from "./i18n"
 import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } from "./context-menus"
 import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberIds, listStackMemberPaths, dropAssetsOnCard } from "./library-actions"
 import { planStackDropUndo, runStackDropUndo } from "./stack-drop-undo"
-import { describeError, messageForErrorCode } from "./error-messages"
+import { describeError, importFailureTail, messageForErrorCode } from "./error-messages"
 import {
   dragIdsForCard, dragGhostCount, pointOutsideWindow, nativeDragPaths,
   createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop, planStackMerge,
@@ -3059,6 +3059,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       const dupCount = result.alreadyInLibrary.length
       const firstReasonCode = result.errors[0]?.code || ""
       const firstReason = firstReasonCode ? messageForErrorCode(firstReasonCode, language) : ""
+      // 任务 369：这三个导入码有用户定稿的整句，全部失败只显示整句，部分失败
+      // 接「{failed} 个导入失败，」+ 原因尾巴，不再和外层「无法导入」连说两遍。
+      const firstTail = firstReasonCode ? importFailureTail(firstReasonCode, language) : ""
       let baseText = ""
       if (!result.imported && !result.failed && dupCount > 0) {
         baseText = result.skipped > 0
@@ -3076,6 +3079,12 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         // 全是格式不支持时不再只说笼统的「导入失败」，带上数量（TOAST-10b）。
         notify(result.skipped > 0 ? fillNamed("无法导入。{skipped} 个文件格式不支持。", { skipped: result.skipped }) : fillNamed("无法导入素材。{reason}", { reason: "" }))
         baseText = ""
+      } else if (result.failed && firstTail) {
+        baseText = result.imported > 0
+          ? (result.imported === 1
+              ? fillNamed("已导入 1 个素材，{failed} 个导入失败，{tail}", { failed: result.failed, tail: firstTail })
+              : fillNamed("已导入 {imported} 个素材，{failed} 个导入失败，{tail}", { imported: result.imported, failed: result.failed, tail: firstTail }))
+          : firstReason
       } else if (result.failed) {
         baseText = result.imported > 0
           ? (result.imported === 1

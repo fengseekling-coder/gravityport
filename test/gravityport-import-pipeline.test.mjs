@@ -516,7 +516,7 @@ describe("runImport with mocked fetch", () => {
     )
     assert.equal(tooLarge.failed, 1)
     assert.equal(tooLarge.errors[0].code, "STAGING_FILE_TOO_LARGE")
-    assert.equal(errorMessages.messageForErrorCode(tooLarge.errors[0].code, "zh"), "无法导入。文件过大。")
+    assert.equal(errorMessages.messageForErrorCode(tooLarge.errors[0].code, "zh"), "导入失败，文件过大。")
 
     // 2. Import batch: the per-item result carries the server code (here the
     //    task 366 content sniff) instead of the old empty-code discard.
@@ -541,10 +541,10 @@ describe("runImport with mocked fetch", () => {
     )
     assert.equal(notMedia.failed, 1)
     assert.equal(notMedia.errors[0].code, "IMAGE_CONTENT_NOT_MEDIA")
-    assert.equal(errorMessages.messageForErrorCode(notMedia.errors[0].code, "zh"), "无法导入。文件不是支持的图片或视频。")
+    assert.equal(errorMessages.messageForErrorCode(notMedia.errors[0].code, "zh"), "导入失败，文件不是支持的格式。请检查文件格式再重新导入。")
     assert.equal(
       errorMessages.messageForErrorCode(notMedia.errors[0].code, "en"),
-      "Couldn’t import. The file isn’t a supported image or video.",
+      "Import failed. The file format isn’t supported. Check the file format and import again.",
     )
   })
 

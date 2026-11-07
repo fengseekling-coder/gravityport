@@ -90,24 +90,34 @@ const ERROR_CODE_MESSAGES: Record<string, MessagePack> = {
     zh: "无法完成操作。分组「{group}」已不存在。",
     en: "Couldn’t complete the action. Group “{group}” no longer exists.",
   },
-  // 服务端已有的导入/素材文件错误码，任务 366 按审查表定稿接上（原文照抄）：
+  // 服务端已有的导入/素材文件错误码，任务 366 接上；三个导入码的句子
+  // 任务 369 换成用户 11-07 定稿（「导入失败，…」句式，一字不改）：
   STAGING_FILE_TOO_LARGE: {
-    zh: "无法导入。文件过大。",
-    en: "Couldn’t import. The file is too large.",
+    zh: "导入失败，文件过大。",
+    en: "Import failed. The file is too large.",
   },
   SOURCE_CHANGED_DURING_IMPORT: {
-    zh: "无法导入。文件在导入过程中被修改。",
-    en: "Couldn’t import. The file was modified during import.",
+    zh: "导入失败，文件在导入过程中被修改。请重新导入。",
+    en: "Import failed. The file was modified during import. Import it again.",
   },
   ASSET_FILE_BUSY: {
     zh: "无法完成操作。素材文件正在使用中，请关闭后重试。",
     en: "Couldn’t complete the action. The asset files are in use. Close them and try again.",
   },
   IMAGE_CONTENT_NOT_MEDIA: {
-    zh: "无法导入。文件不是支持的图片或视频。",
-    en: "Couldn’t import. The file isn’t a supported image or video.",
+    zh: "导入失败，文件不是支持的格式。请检查文件格式再重新导入。",
+    en: "Import failed. The file format isn’t supported. Check the file format and import again.",
   },
 };
+
+// 任务 369：部分失败时接在「{failed} 个导入失败，」后面的原因尾巴，
+// 是上面整句去掉开头的「导入失败，」/「Import failed. 」，不另起句子。
+const IMPORT_FAILURE_TAIL_CODES = new Set([
+  "IMAGE_CONTENT_NOT_MEDIA",
+  "STAGING_FILE_TOO_LARGE",
+  "SOURCE_CHANGED_DURING_IMPORT",
+]);
+const IMPORT_FAILED_PREFIX = { zh: "导入失败，", en: "Import failed. " };
 
 const UNKNOWN_MESSAGE: MessagePack = {
   zh: "无法完成操作（{detail}）",
@@ -126,6 +136,18 @@ export function messageForErrorCode(code: string, language: Language = "zh"): st
   const pack = ERROR_CODE_MESSAGES[code];
   if (!pack) return "";
   return language === "en" ? pack.en : pack.zh;
+}
+
+/**
+ * Task 369: the reason tail for a partial import failure ("已导入 3 个素材，
+ * 2 个导入失败，<tail>"), or "" when the code has no such sentence — the
+ * caller then keeps its pre-369 wording.
+ */
+export function importFailureTail(code: string, language: Language = "zh"): string {
+  if (!IMPORT_FAILURE_TAIL_CODES.has(code)) return "";
+  const full = messageForErrorCode(code, language);
+  const prefix = language === "en" ? IMPORT_FAILED_PREFIX.en : IMPORT_FAILED_PREFIX.zh;
+  return full.startsWith(prefix) ? full.slice(prefix.length) : "";
 }
 
 type ErrorWithFields = Error & { code?: string; status?: number; maxFiles?: number };
