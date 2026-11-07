@@ -10,10 +10,17 @@ import { deferTestPathRemoval } from "./test-cleanup.mjs";
 import { ingestWebCapture } from "../lib/web-capture-ingest.js";
 import { generationSessionKey } from "../lib/generation-session.mjs";
 import { sourceSearchDisplayName } from "../lib/asset-search-scope.mjs";
+import {
+  createBackgroundHarness,
+  senderFor,
+  fakeImageBase64,
+  CHATGPT_TAB_URL,
+  JIMENG_TAB_URL,
+  MIDJOURNEY_TAB_URL,
+} from "./helpers/background-harness.mjs";
 
 const extensionRoot = new URL("../extensions/chatgpt-web-capture/", import.meta.url);
 const manifest = JSON.parse(await readFile(new URL("manifest.json", extensionRoot), "utf8"));
-const backgroundSource = await readFile(new URL("background.js", extensionRoot), "utf8");
 const providerPolicySource = await readFile(new URL("provider-policy.js", extensionRoot), "utf8");
 const providerJimengSource = await readFile(new URL("provider-jimeng.js", extensionRoot), "utf8");
 const providerMidjourneySource = await readFile(new URL("provider-midjourney.js", extensionRoot), "utf8");
@@ -621,19 +628,30 @@ test("midjourney URL parser accepts the live-site format (UUID job ids, 0_<n>_64
   assert.equal(midjourney.parseMidjourneyMediaUrl("https://cdn.midjourney.com/1b2c3d4e-5f60/0_0_640_N.webp"), null, "a truncated id is rejected");
 });
 
-test("background re-derives the original from a live-format preview URL", () => {
-  const match = /function fetchMidjourneyOriginal[\s\S]*?const originalUrl/.exec(backgroundSource);
-  assert.ok(match, "fetchMidjourneyOriginal is present");
-  const body = match[0];
-  const idPattern = new RegExp(/test\(segments\[0\]\)/.source);
-  assert.match(body, idPattern);
-  const idRegex = /!(\/\^\[0-9a-f\][^\n]*?\/i)\.test\(segments\[0\]\)/.exec(body);
-  const fileRegex = /const previewMatch = (\/\^0_[^\n]*?\/i)\.exec/.exec(body);
-  assert.ok(idRegex && fileRegex, "both URL rules are literal regexes");
-  const toRegExp = (literal) => new RegExp(literal.slice(1, literal.lastIndexOf("/")), "i");
-  assert.ok(toRegExp(idRegex[1]).test("1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d"));
-  assert.ok(toRegExp(fileRegex[1]).test("0_3_640_N.webp"));
-  assert.ok(toRegExp(fileRegex[1]).test("0_3.png"));
+test("background re-derives the original from a live-format preview URL", async () => {
+  const harness = await createBackgroundHarness();
+  const fetched = [];
+  harness.fetchHarness.setMediaHandler((url, init) => {
+    fetched.push({ url: String(url), init });
+    return new Response(new Uint8Array(256), {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    });
+  });
+
+  const preview = "https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3_640_N.webp";
+  const result = await harness.context.fetchMidjourneyOriginal(preview);
+  assert.equal(fetched.length, 1);
+  assert.equal(fetched[0].url, "https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3.png");
+  assert.equal(fetched[0].init.credentials, "include");
+  assert.equal(fetched[0].init.cache, "no-cache");
+  assert.equal(result.mimeType, "image/png");
+  assert.equal(result.finalUrl, "https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3.png");
+
+  // Invalid preview URLs reject
+  await assert.rejects(harness.context.fetchMidjourneyOriginal("https://not-midjourney.com/1b2c3d4e/0_0.png"), /Unsupported Midjourney preview URL/);
+  await assert.rejects(harness.context.fetchMidjourneyOriginal("https://cdn.midjourney.com/invalid-uuid/0_0.png"), /Unsupported Midjourney preview URL/);
+  await assert.rejects(harness.context.fetchMidjourneyOriginal("https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/not-a-preview.png"), /Unsupported Midjourney preview URL/);
 });
 
 test("midjourney baseline rules separate lazy history from fresh generations", () => {
@@ -647,25 +665,74 @@ test("midjourney baseline rules separate lazy history from fresh generations", (
   assert.match(providerMidjourneySource, /firstScanDone/, "the first scan baselines whatever the page already shows");
 });
 
-test("background gates the new providers and downloads Midjourney originals with cookies", () => {
-  assert.match(backgroundSource, /WEB_IMAGE_PROVIDERS = new Set\(\["chatgpt", "gemini", "flow", "google-ai-studio", "jimeng", "midjourney"\]\)/);
-  assert.match(backgroundSource, /WEB_VIDEO_PROVIDERS = new Set\(\["flow", "google-ai-studio", "jimeng", "midjourney"\]\)/);
-  assert.match(backgroundSource, /"cdn\.midjourney\.com",/);
-  assert.match(backgroundSource, /host\.endsWith\("\.byteimg\.com"\)/);
-  assert.match(backgroundSource, /host\.endsWith\("\.jimeng\.com"\)/);
-  assert.match(backgroundSource, /host\.endsWith\("\.vlabvod\.com"\)/);
-  assert.match(backgroundSource, /async function fetchMidjourneyOriginal\(previewUrl\)/);
-  assert.match(backgroundSource, /hostname\.toLowerCase\(\) !== "cdn\.midjourney\.com"/);
-  assert.match(backgroundSource, /\/0_\$\{previewMatch\[1\]\}\.png/);
-  assert.match(backgroundSource, /\{ credentials: "include", cache: "no-cache" \}/);
-  assert.match(backgroundSource, /message\.type === "mosa\.fetchMidjourneyOriginal"\) return context\.provider === "midjourney";/);
-  assert.match(backgroundSource, /context\.provider === "jimeng"/);
-  assert.match(backgroundSource, /context\.provider === "midjourney"/);
-  assert.match(backgroundSource, /media_variant: String\(payload\.mediaVariant \|\| payload\.media_variant \|\| ""\)/);
+test("background gates the new providers and downloads Midjourney originals with cookies", async () => {
+  const harness = await createBackgroundHarness({ appOnline: true });
+  await harness.triggerInstalled({ reason: "install" });
+
+  // 1. Context menus cover jimeng and midjourney patterns, including save-video.
+  const saveImage = harness.createdContextMenus.find((menu) => menu.id === "mosa-save-image");
+  const saveVideo = harness.createdContextMenus.find((menu) => menu.id === "mosa-save-video");
+  assert.ok(saveImage && saveVideo);
+  assert.deepEqual(JSON.parse(JSON.stringify(saveVideo.contexts)), ["video"]);
   for (const pattern of ["https://jimeng.jianying.com/*", "https://www.midjourney.com/*"]) {
-    assert.ok(backgroundSource.includes(pattern), `context menus must cover ${pattern}`);
+    assert.ok(saveImage.documentUrlPatterns.includes(pattern), `save-image menu covers ${pattern}`);
+    assert.ok(saveVideo.documentUrlPatterns.includes(pattern), `save-video menu covers ${pattern}`);
   }
-  assert.match(backgroundSource, /id: "mosa-save-video"/);
+
+  // 2. Fetch original via message dispatch: only midjourney provider is allowed.
+  harness.fetchHarness.setMediaHandler(() => {
+    return new Response(new Uint8Array(256), {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    });
+  });
+
+  const preview = "https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3_640_N.webp";
+  const midjourneySender = senderFor(MIDJOURNEY_TAB_URL);
+  const mjResponse = await harness.dispatchMessage({ type: "mosa.fetchMidjourneyOriginal", previewUrl: preview }, midjourneySender);
+  assert.equal(mjResponse.ok, true);
+  assert.equal(mjResponse.finalUrl, "https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3.png");
+
+  // Non-midjourney tab cannot call mosa.fetchMidjourneyOriginal
+  const chatgptSender = senderFor(CHATGPT_TAB_URL);
+  const chatgptResponse = await harness.dispatchMessage({ type: "mosa.fetchMidjourneyOriginal", previewUrl: preview }, chatgptSender);
+  assert.equal(chatgptResponse.ok, false);
+  assert.equal(chatgptResponse.error, "GravityPort rejected a message from an unsupported sender.");
+
+  // 3. Provider gating: jimeng and midjourney images with media_variant pass to ingest route.
+  let ingestPayload = null;
+  harness.fetchHarness.setAppHandler((url, init) => {
+    if (url.pathname === "/api/ingest/web-capture") {
+      ingestPayload = JSON.parse(init.body);
+      return new Response(JSON.stringify({ ok: true, assetId: "asset-1" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return null;
+  });
+
+  const jimengSender = senderFor(JIMENG_TAB_URL);
+  const jimengCapture = await harness.dispatchMessage({
+    type: "mosa.ingest",
+    payload: {
+      provider: "jimeng",
+      mediaKind: "image",
+      imageBase64: fakeImageBase64(128),
+      mediaVariant: "upscale",
+    },
+  }, jimengSender);
+  assert.equal(jimengCapture.ok, true);
+  assert.equal(ingestPayload.provider, "jimeng");
+  assert.equal(ingestPayload.media_variant, "upscale");
+
+  // 4. Remote media allowed domains check in assertAllowedRemoteMediaUrl
+  for (const trusted of [
+    "https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3.png",
+    "https://p16-va.byteimg.com/tos-maliva-p/image.png",
+    "https://sf16-sg.jimeng.com/image.png",
+    "https://v2.vlabvod.com/video.mp4",
+  ]) {
+    assert.doesNotThrow(() => harness.context.assertAllowedRemoteMediaUrl(trusted));
+  }
+  assert.throws(() => harness.context.assertAllowedRemoteMediaUrl("https://evil.com/leak.png"), /Unsupported media host/);
 });
 
 async function noiseImage(seed, width = 640, height = 900) {

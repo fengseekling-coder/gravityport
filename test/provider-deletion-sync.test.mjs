@@ -1021,9 +1021,6 @@ test("background: reportProviderDeletions posts to the app with the token, caps 
   }, { id: RUNTIME_ID, tab: { id: 12 }, url: "https://chatgpt.com/c/conv", frameId: 0 });
   assert.equal(chatgptResponse.ok, false);
 
-  // The wiring lines stay pinned: content script forwards the hook message,
-  // background gates it to jimeng pages.
+  // Content script forwards the hook message.
   assert.match(providerJimengSource, /message\?\.type === "jimeng-deletion-observed"/);
-  assert.match(backgroundSource, /message\.type === "mosa\.reportProviderDeletions"\) return context\.provider === "jimeng";/);
-  assert.match(backgroundSource, /\/api\/ingest\/web-capture-provider-deletions/);
 });

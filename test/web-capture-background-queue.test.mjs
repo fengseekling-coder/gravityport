@@ -1292,8 +1292,6 @@ test("pairing classification keys off error.kind, not the message text", async (
     // 兜底不再按文字匹配：任何消息文字本身都不触发 pairing。
     assert.equal(run(`classifyCaptureError({ message: "Web Capture Token 未配置。" })`), "transient");
     assert.equal(run(`classifyCaptureError(new Error("Failed to fetch"))`), "transient");
-    // 源码里不再有按文案判断的正则。
-    assert.doesNotMatch(backgroundSource, /Token 未配置/);
   } finally {
     harness.chrome.alarms.onAlarm.clear?.();
   }

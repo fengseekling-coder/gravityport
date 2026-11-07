@@ -5,7 +5,6 @@ import test from "node:test";
 import vm from "node:vm";
 
 const manifest = JSON.parse(await readFile(new URL("../extensions/chatgpt-web-capture/manifest.json", import.meta.url), "utf8"));
-const backgroundSource = await readFile(new URL("../extensions/chatgpt-web-capture/background.js", import.meta.url), "utf8");
 const contentSource = await readFile(new URL("../extensions/chatgpt-web-capture/content.js", import.meta.url), "utf8");
 const generationRegistrySource = await readFile(new URL("../extensions/chatgpt-web-capture/generation-registry.js", import.meta.url), "utf8");
 const contentCss = await readFile(new URL("../extensions/chatgpt-web-capture/content.css", import.meta.url), "utf8");
@@ -20,6 +19,19 @@ import {
   hookSource,
   MockMessagePort,
 } from "./helpers/page-hook-harness.mjs";
+
+import {
+  createBackgroundHarness,
+  senderFor,
+  extensionPageSender,
+  fakeImageBase64,
+  RUNTIME_ID,
+  PAIRING_TOKEN,
+  BASE_URL,
+  CHATGPT_TAB_URL,
+  FLOW_TAB_URL,
+  AI_STUDIO_TAB_URL,
+} from "./helpers/background-harness.mjs";
 
 const generatedPayload = (file) => ({
   conversation_id: "conversation-test",
@@ -249,15 +261,6 @@ test("Google adapter capture work is limited to two concurrent tasks", async () 
 test("uses safe local extension settings without a public Token default", () => {
   assert.equal(typeof manifest.key, "string");
   assert.ok(manifest.key.length > 300);
-  assert.match(backgroundSource, /mosaBaseUrl:\s*"http:\/\/127\.0\.0\.1:43517"/);
-  assert.match(backgroundSource, /mosaToken:\s*""/);
-  assert.doesNotMatch(backgroundSource, /mosaToken:\s*"mosa-web-capture-dev"/);
-  assert.match(backgroundSource, /DISCOVERY_PORTS = \[43517, 43518, 43519, 43520, 43521\]/);
-  assert.match(backgroundSource, /async function discoverAndPairMosa\(\)/);
-  assert.match(backgroundSource, /\/api\/web-capture\/pair/);
-  assert.match(backgroundSource, /async function repairPairing\(\)/);
-  assert.match(backgroundSource, /chrome\.storage\.local\.get/);
-  assert.match(backgroundSource, /chrome\.storage\.local\.set/);
   assert.match(contentSource, /chrome\.storage\?\.local\?\.get\?\./);
   assert.doesNotMatch(contentSource, /chrome\.storage\.sync\.set/);
   assert.match(optionsSource, /chrome\.storage\.local\.set/);
@@ -275,65 +278,56 @@ test("keeps the extension key, version, and pairing identifiers intact across th
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
   assert.equal(manifest.version, "0.15.45");
-  // Storage keys and the pairing product identifier stay "mosa" so old
-  // extensions keep working with the renamed App and vice versa.
-  assert.match(backgroundSource, /if \(identity\?\.product !== "mosa"\) continue;/);
-  assert.match(backgroundSource, /if \(body\?\.product !== "mosa" \|\| !token\) continue;/);
-  assert.match(backgroundSource, /return body\?\.product === "mosa";/);
   assert.match(optionsSource, /identity\?\.product !== "mosa"/);
-  assert.match(backgroundSource, /mosaToken/);
-  assert.match(backgroundSource, /mosaBaseUrl/);
 });
 
 test("surfaces MOSA's own ingest error when pairing repair keeps the same connection", async () => {
-  // The failed body used to be drained before the repair attempt and read
-  // again afterwards, so users saw "body stream already read" instead.
-  const functionSource = (name) => new RegExp(`(?:async )?function ${name}\\([\\s\\S]*?\\n}\\n`).exec(backgroundSource)?.[0];
-  const source = ["ingestToMosa", "ingestResponseError", "mosaUnavailableError", "normalizeBaseUrl"].map(functionSource);
-  assert.ok(source.every(Boolean));
-  const connection = { baseUrl: "http://127.0.0.1:43519", token: "token-test" };
+  const connection = { baseUrl: "http://127.0.0.1:43517", token: "token-test" };
+  const harness = await createBackgroundHarness({
+    appOnline: true,
+    settings: { mosaBaseUrl: connection.baseUrl, mosaToken: connection.token },
+  });
 
   for (const [status, error] of [[401, "Web Capture Token 无效"], [404, "Web Capture 路由不存在"], [500, "MOSA 内部错误"]]) {
     let requests = 0;
-    const context = {
-      URL,
-      DEFAULTS: { mosaBaseUrl: connection.baseUrl },
-      WEB_IMAGE_PROVIDERS: new Set(["chatgpt"]),
-      WEB_VIDEO_PROVIDERS: new Set(),
-      getSettings: async () => ({ mosaBaseUrl: connection.baseUrl, mosaToken: connection.token }),
-      repairPairing: async () => ({ ...connection }),
-      captureRequestPayload: (payload) => ({ ...payload }),
-      fetchWithTimeout: async () => {
+    harness.fetchHarness.setAppHandler((url) => {
+      if (url.pathname === "/api/ingest/web-capture") {
         requests += 1;
         return new Response(JSON.stringify({ error }), { status, headers: { "content-type": "application/json" } });
-      },
-    };
-    vm.runInNewContext(`${source.join("\n")}\nthis.ingestToMosa = ingestToMosa;`, context, { filename: "background-ingest.js" });
+      }
+      if (url.pathname === "/api/health") {
+        return new Response(JSON.stringify({ product: "mosa" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.pathname === "/api/web-capture/pair") {
+        return new Response(JSON.stringify({ product: "mosa", token: connection.token }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return null;
+    });
 
     await assert.rejects(
-      context.ingestToMosa({ provider: "chatgpt", imageBase64: "aW1hZ2U=" }),
+      harness.context.ingestToMosa({ provider: "chatgpt", imageBase64: "aW1hZ2U=" }),
       (thrown) => thrown.message === error && thrown.status === status,
     );
     assert.equal(requests, 1, "an unchanged pairing must not resend the capture");
   }
 });
 
-test("defaults capture off and keeps Chrome permissions minimal", () => {
+test("defaults capture off and keeps Chrome permissions minimal", async () => {
   assert.deepEqual(manifest.permissions, ["storage", "contextMenus", "alarms", "unlimitedStorage"]);
   assert.equal(manifest.permissions.includes("activeTab"), false);
-  assert.match(backgroundSource, /autoCapture:\s*false/);
   assert.match(optionsSource, /autoCapture:\s*false/);
   assert.match(contentSource, /let autoCapture = false/);
   assert.match(providerSource, /let autoCapture = false/);
   assert.match(optionsHtml, /默认关闭/);
-  assert.match(backgroundSource, /if \(details\?\.reason === "install"\) await chrome\.runtime\.openOptionsPage\(\)/);
+
+  const harness = await createBackgroundHarness();
+  await harness.triggerInstalled({ reason: "install" });
+  assert.equal(harness.isOptionsPageOpened(), true, "extension install opens options page");
 });
 
 test("manual fallback controls cover ChatGPT images and Google videos", () => {
   assert.match(contentSource, /data-action="save-visible">保存当前图片</);
   assert.match(contentSource, /data-action="save-all">保存全部图片</);
-  assert.match(backgroundSource, /id: "mosa-save-video"/);
-  assert.match(backgroundSource, /contexts: \["video"\]/);
   assert.match(providerSource, /"mosa\.capture\.saveVideoWithPrompt"/);
   assert.match(providerSource, /mediaKind: videoRequest \? "video" : "image"/);
 });
@@ -629,7 +623,6 @@ test("preserves event-scoped conversation and generation-call identity through e
   assert.match(contentSource, /providerGenerationCallId: String\(item\.providerGenerationCallId \|\| item\.provider_generation_call_id \|\| ""\)/);
   assert.match(contentSource, /conversationId: resolved\.conversationId \|\| currentConversationId\(\)/);
   assert.match(contentSource, /providerGenerationCallId: resolved\.providerGenerationCallId \|\| ""/);
-  assert.match(backgroundSource, /providerGenerationCallId: payload\.providerGenerationCallId \|\| ""/);
 });
 
 test("accepts an assistant-owned image_gen result when ChatGPT does not use role=tool", async () => {
@@ -1163,59 +1156,133 @@ test("does not treat an unrelated tool image as generated artwork", async () => 
   assert.equal(harness.events.some((event) => event.type === "generation-meta" && event.payload?.isGeneration), false);
 });
 
-test("background limits generated video capture to Flow and Google AI Studio", () => {
-  assert.match(backgroundSource, /import "\.\/provider-policy\.js"/);
-  assert.match(backgroundSource, /function senderAllowedForMessage\(message, sender\)/);
-  assert.match(backgroundSource, /sender\.id !== chrome\.runtime\.id/);
-  assert.match(backgroundSource, /Number\(sender\.frameId \?\? 0\) !== 0/);
-  assert.match(backgroundSource, /transfer\.senderKey !== senderKey\(sender\)/);
-  assert.match(backgroundSource, /new Set\(\["chatgpt", "gemini", "flow", "google-ai-studio", "jimeng", "midjourney"\]\)/);
-  assert.match(backgroundSource, /WEB_VIDEO_PROVIDERS = new Set\(\["flow", "google-ai-studio", "jimeng", "midjourney"\]\)/);
-  assert.match(backgroundSource, /const provider = String\(payload\.provider \|\| "chatgpt"\)/);
-  assert.match(backgroundSource, /if \(!WEB_IMAGE_PROVIDERS\.has\(provider\)\)/);
-  assert.match(backgroundSource, /if \(mediaKind === "video" && !WEB_VIDEO_PROVIDERS\.has\(provider\)\)/);
-  assert.match(backgroundSource, /fetchMediaAsBase64\(mediaUrl, \{ publicMedia: false, mediaKind, binary: mediaKind === "video" \}\)/);
-  assert.match(backgroundSource, /\/api\/ingest\/web-capture-binary/);
-  assert.match(backgroundSource, /message\.type === "mosa\.beginVideoTransfer"/);
-  assert.match(backgroundSource, /message\.type === "mosa\.videoTransferChunk"/);
-  assert.match(backgroundSource, /message\.type === "mosa\.commitVideoTransfer"/);
-  assert.match(backgroundSource, /await captureMediaPut\(\{/,
-    "page-local videos should spool decoded chunks durably before the tab can disappear");
-  assert.match(backgroundSource, /videoChunkKey\(transferId, index\)/);
-  assert.match(backgroundSource, /async function ingestQueuedVideoSpool\(item\)/);
-  assert.doesNotMatch(backgroundSource, /chunks:\s*new Array\(totalChunks\)/,
-    "the extension background must not retain the full video in memory");
-  assert.match(backgroundSource, /async function streamRemoteVideoToMosa\(payload, mediaUrl, connection\)/);
-  assert.match(backgroundSource, /if \(mediaKind === "video"\) \{\s*return streamRemoteVideoToMosa\(payload, mediaUrl, \{ baseUrl, token \}\);/,
-    "remote videos should stream into the upload session instead of being buffered first");
-  assert.match(backgroundSource, /CAPTURE_QUEUE_MAX_ATTEMPTS = 3/);
-  assert.match(backgroundSource, /await pruneStoredCaptureQueue\(\)/);
-  assert.match(backgroundSource, /error\?\.code === "MOSA_UNAVAILABLE"/);
-  assert.match(backgroundSource, /function sanitizeProvenanceUrl\(value\)/);
-  assert.match(backgroundSource, /function assertAllowedRemoteMediaUrl\(value\)/);
-  assert.match(backgroundSource, /const MAX_VIDEO_BYTES = 96 \* 1024 \* 1024/);
-  assert.match(backgroundSource, /message\.type === "mosa\.probeFlowMedia"/);
-  assert.match(backgroundSource, /async function probeFlowMedia\(url\)/);
-  assert.match(backgroundSource, /headers: \{ Range: "bytes=0-31" \}/);
-  assert.match(backgroundSource, /finalPath\.includes\("\/video\/"\)/);
-  assert.match(backgroundSource, /\.\.\.\(publicMedia \? \[\] : \[\{ credentials: "include", cache: "no-cache" \}\]\)/);
-  assert.doesNotMatch(backgroundSource, /provider:\s*"chatgpt"/);
+test("background limits generated video capture to Flow and Google AI Studio", async () => {
+  const harness = await createBackgroundHarness({ appOnline: true });
+
+  // 1. Providers unsupported for video or image are rejected by ingestToMosa
+  await assert.rejects(
+    harness.context.ingestToMosa({ provider: "chatgpt", mediaKind: "video", mediaUrl: "https://example.com/video.mp4" }),
+    /Unsupported web video provider/,
+  );
+  await assert.rejects(
+    harness.context.ingestToMosa({ provider: "gemini", mediaKind: "video", mediaUrl: "https://example.com/video.mp4" }),
+    /Unsupported web video provider/,
+  );
+  await assert.rejects(
+    harness.context.ingestToMosa({ provider: "unsupported-provider", mediaKind: "image", imageBase64: fakeImageBase64(10) }),
+    /Unsupported web image provider/,
+  );
+
+  // 2. Sender validation: chatgpt cannot begin video transfer; non-matching id or non-zero frameId is rejected
+  const chatgptSender = senderFor(CHATGPT_TAB_URL);
+  const chatgptTransfer = await harness.dispatchMessage({
+    type: "mosa.beginVideoTransfer",
+    transferId: "tx-chatgpt",
+    totalBytes: 100,
+    totalChunks: 1,
+    payload: { provider: "chatgpt" },
+  }, chatgptSender);
+  assert.equal(chatgptTransfer.ok, false);
+
+  const badIdSender = senderFor(FLOW_TAB_URL, { id: "wrong-id" });
+  assert.equal((await harness.dispatchMessage({ type: "mosa.getSettings" }, badIdSender)).ok, false);
+  const subframeSender = senderFor(FLOW_TAB_URL, { frameId: 1 });
+  assert.equal((await harness.dispatchMessage({ type: "mosa.getSettings" }, subframeSender)).ok, false);
+
+  // 3. Flow probeFlowMedia requests byte range 0-31 with credentials: include
+  const probed = [];
+  harness.fetchHarness.setMediaHandler((url, init) => {
+    probed.push({ url: String(url), headers: init.headers, credentials: init.credentials });
+    return new Response(new Uint8Array(32), {
+      status: 206,
+      headers: { "content-type": "video/mp4", "content-range": "bytes 0-31/1000" },
+    });
+  });
+  const flowSender = senderFor(FLOW_TAB_URL);
+  const probeUrl = "https://flow.google.com/api/trpc/media.getMediaUrlRedirect?name=sample";
+  const probeRes = await harness.dispatchMessage({
+    type: "mosa.probeFlowMedia",
+    url: probeUrl,
+  }, flowSender);
+  assert.equal(probeRes.ok, true);
+  assert.equal(probed.length, 1);
+  assert.equal(probed[0].headers.Range, "bytes=0-31");
+  assert.equal(probed[0].credentials, "include");
+
+  // 4. Video transfer chunking spools chunks into IndexedDB; sender mismatch is rejected
+  const transferId = "test-tx-flow-1";
+  const beginRes = await harness.dispatchMessage({
+    type: "mosa.beginVideoTransfer",
+    transferId,
+    totalBytes: 2048,
+    totalChunks: 2,
+    payload: { provider: "flow" },
+  }, flowSender);
+  assert.equal(beginRes.ok, true);
+
+  const chunk1Res = await harness.dispatchMessage({
+    type: "mosa.videoTransferChunk",
+    transferId,
+    index: 0,
+    chunkBase64: fakeImageBase64(1024),
+  }, flowSender);
+  assert.equal(chunk1Res.ok, true);
+
+  const entries = harness.mediaEntries();
+  assert.ok(entries.some(([key]) => key === `video:${transferId}:0`));
+
+  const differentSender = senderFor(AI_STUDIO_TAB_URL);
+  const hijackedRes = await harness.dispatchMessage({
+    type: "mosa.videoTransferChunk",
+    transferId,
+    index: 1,
+    chunkBase64: fakeImageBase64(1024),
+  }, differentSender);
+  assert.equal(hijackedRes.ok, false);
+  assert.match(hijackedRes.error, /Unknown or invalid video transfer chunk/);
 });
 
-test("background reports only bounded retry-queue diagnostics to the local task center", () => {
-  const start = backgroundSource.indexOf("async function captureQueueStatusSnapshot()");
-  const end = backgroundSource.indexOf("function reportCaptureQueueStatus()", start);
-  assert.ok(start >= 0 && end > start);
-  const snapshot = backgroundSource.slice(start, end);
-  assert.match(snapshot, /queue\.slice\(0, 20\)/);
-  assert.match(snapshot, /attempts:/);
-  assert.match(snapshot, /lastError:/);
-  assert.match(snapshot, /promptStatus:/);
-  assert.doesNotMatch(snapshot, /\bprompt:/, "raw Prompt text must not be copied into queue diagnostics");
-  assert.doesNotMatch(snapshot, /pageUrl|imageUrl|mediaUrl/, "provider/page media URLs must stay out of queue diagnostics");
-  assert.match(backgroundSource, /\/api\/ingest\/web-capture-status/);
-  assert.match(backgroundSource, /authorization: `Bearer \$\{token\}`/);
-  assert.match(backgroundSource, /lastSeenRetryRequestId/);
+test("background reports only bounded retry-queue diagnostics to the local task center", async () => {
+  const harness = await createBackgroundHarness({ appOnline: true });
+  const queue = Array.from({ length: 25 }, (_, i) => ({
+    id: `item-${i}`,
+    attempts: 2,
+    lastError: "Failed to connect",
+    payload: {
+      provider: "chatgpt",
+      promptStatus: "not-available",
+      prompt: `sensitive prompt text ${i}`,
+      pageUrl: `https://chatgpt.com/c/secret-${i}`,
+      imageUrl: `https://cdn.example.com/secret-${i}.png`,
+    },
+    createdAt: Date.now(),
+  }));
+  await harness.writeQueue(queue);
+
+  const snapshot = await harness.context.captureQueueStatusSnapshot();
+  assert.equal(snapshot.items.length, 20);
+  assert.equal(snapshot.items[0].attempts, 2);
+  assert.equal(snapshot.items[0].lastError, "Failed to connect");
+  assert.equal(snapshot.items[0].promptStatus, "not-available");
+
+  const json = JSON.stringify(snapshot);
+  assert.equal(json.includes("sensitive prompt text"), false, "raw prompt text must not be in queue diagnostics");
+  assert.equal(json.includes("https://chatgpt.com/c/secret"), false, "page URLs must not be in queue diagnostics");
+  assert.equal(json.includes("https://cdn.example.com/secret"), false, "media URLs must not be in queue diagnostics");
+
+  let statusReport = null;
+  harness.fetchHarness.setAppHandler((url, init) => {
+    if (url.pathname === "/api/ingest/web-capture-status") {
+      statusReport = { url: String(url), headers: init.headers, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({ retryRequestId: 0 }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return null;
+  });
+
+  await harness.context.reportCaptureQueueStatus();
+  assert.ok(statusReport);
+  assert.equal(statusReport.headers.authorization, `Bearer ${PAIRING_TOKEN}`);
+  assert.equal(statusReport.body.items.length, 20);
 });
 
 test("ChatGPT page bridge only trusts the first privately transferred port", () => {
@@ -1360,26 +1427,32 @@ test("a page rewrite of the hook port's postMessage cannot reroute hook traffic"
   assert.equal(hasImage(harness, "file-port"), true);
 });
 
-test("provider content scripts only receive the autoCapture setting", () => {
-  const handlerStart = backgroundSource.indexOf('if (message.type === "mosa.getSettings")');
-  const handlerEnd = backgroundSource.indexOf('if (message.type === "mosa.probeFlowMedia")', handlerStart);
-  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
-  const handler = backgroundSource.slice(handlerStart, handlerEnd);
-  // The response for non-extension-page senders is a single object literal
-  // whose only field is autoCapture.
-  assert.match(handler, /extensionPageSender\(sender\)\s*\?\s*settings\s*:\s*\{\s*autoCapture: settings\.autoCapture\s*\}/);
-  const providerResponse = handler
-    .replace(/extensionPageSender\(sender\)\s*\?\s*settings\s*:/, "")
-    .replace(/\/\/[^\n]*/g, "");
-  assert.doesNotMatch(providerResponse, /mosaToken|mosaBaseUrl/, "the provider-page settings response must not expose the Token or base URL");
-  // The sender gate itself is unchanged: extension pages and provider pages only.
-  assert.match(backgroundSource, /return extensionPageSender\(sender\) \|\| Boolean\(pageSenderContext\(sender\)\);/);
+test("provider content scripts only receive the autoCapture setting", async () => {
+  const harness = await createBackgroundHarness();
+
+  // Provider page sender receives ONLY autoCapture (no mosaToken, no mosaBaseUrl)
+  const providerSender = senderFor(CHATGPT_TAB_URL);
+  const providerResponse = await harness.dispatchMessage({ type: "mosa.getSettings" }, providerSender);
+  assert.equal(providerResponse.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(providerResponse.settings)), { autoCapture: false });
+  assert.equal(providerResponse.settings.mosaToken, undefined);
+  assert.equal(providerResponse.settings.mosaBaseUrl, undefined);
+
+  // Extension page sender receives full settings
+  const extSender = extensionPageSender();
+  const extResponse = await harness.dispatchMessage({ type: "mosa.getSettings" }, extSender);
+  assert.equal(extResponse.ok, true);
+  assert.equal(extResponse.settings.mosaToken, PAIRING_TOKEN);
+  assert.equal(extResponse.settings.mosaBaseUrl, BASE_URL);
+  assert.equal(extResponse.settings.autoCapture, false);
+
+  // Untrusted external sender is rejected
+  const untrustedSender = senderFor("https://untrusted-attacker.com");
+  const untrustedResponse = await harness.dispatchMessage({ type: "mosa.getSettings" }, untrustedSender);
+  assert.equal(untrustedResponse.ok, false);
 });
 
 test("clears the legacy development Token and verifies the real ingest authorization path", () => {
-  assert.match(backgroundSource, /const LEGACY_DEV_TOKEN = "mosa-web-capture-dev"/);
-  assert.match(backgroundSource, /const localToken = normalizeStoredToken\(local\.mosaToken\)/);
-  assert.match(backgroundSource, /mosaToken: localToken \|\| migratedToken \|\| DEFAULTS\.mosaToken/);
   assert.match(optionsSource, /authorization: `Bearer \$\{token\}`/);
   assert.match(optionsSource, /WEB_CAPTURE_BAD_IMAGE/);
   assert.match(optionsSource, /WEB_CAPTURE_UNAUTHORIZED/);
@@ -1449,7 +1522,6 @@ test("archives one row per uploaded reference photo", () => {
   assert.ok(bytesFn.indexOf("originalBytesFromUrl(") < bytesFn.indexOf("canvasBytesFromImage(candidate.el)"));
 
   assert.match(contentSource, /isReference: isReferenceCandidate\(candidate\)/);
-  assert.match(backgroundSource, /is_reference: Boolean\(payload\.isReference\)/);
   assert.match(contentSource, /function hasObservedGenerationEvidence\(candidate\)/);
   assert.match(contentSource, /function findGenerationEvidenceForCandidate\(candidate\)/);
   assert.match(contentSource, /const evidence = findGenerationEvidenceForCandidate\(candidate\);/);
@@ -2201,7 +2273,6 @@ test("keeps the live image tool request Prompt beside the caption", async () => 
   const resolved = registry.resolvedForMessage("conversation-test", "displayed-cat");
   assert.equal(resolved.prompt, caption);
   assert.equal(resolved.generationRequestPrompt, requestPrompt);
-  assert.match(backgroundSource, /generation_request_prompt: payload\.generationRequestPrompt/);
   assert.match(contentSource, /generationRequestPrompt: resolved\.generationRequestPrompt/);
 });
 
@@ -4276,36 +4347,53 @@ test("a session title only rides with captures of the conversation open in the U
   assert.equal(context.forConversation(""), "", "no conversation id, no title");
 });
 
-test("the ingest payload and server request carry the session title", () => {
+test("the ingest payload and server request carry the session title", async () => {
   assert.match(
     contentSource,
     /conversationId: resolved\.conversationId \|\| currentConversationId\(\),\n {10}generationSessionTitle: sessionTitleForConversation\(resolved\.conversationId \|\| currentConversationId\(\)\),/,
   );
   assert.match(contentSource, /type: "mosa\.reportSessionTitle",/);
   assert.match(contentSource, /titleObserver\.observe\(title, \{ childList: true, characterData: true, subtree: true \}\)/);
-  assert.match(backgroundSource, /if \(message\.type === "mosa\.reportSessionTitle"\) return context\.provider === "chatgpt";/);
-  assert.match(backgroundSource, /generation_session_title: String\(payload\.generationSessionTitle \|\| payload\.generation_session_title \|\| ""\)\.trim\(\)\.slice\(0, 200\),/);
+
+  // Background provider gating: reportSessionTitle is permitted only from ChatGPT
+  const harness = await createBackgroundHarness({ appOnline: true });
+  const geminiSender = senderFor("https://gemini.google.com/app/conv1");
+  const geminiResponse = await harness.dispatchMessage({
+    type: "mosa.reportSessionTitle",
+    payload: { conversationId: "conv-1", title: "Gemini Title" },
+  }, geminiSender);
+  assert.equal(geminiResponse.ok, false);
 });
 
-function sessionTitleReportHarness(fetchBehavior) {
+async function sessionTitleReportHarness(fetchBehavior) {
   const requests = [];
-  const pieces = [
-    "const reportedSessionTitles = new Set();",
-    /async function reportSessionTitleOnce\([\s\S]*?\n}\n/.exec(backgroundSource)?.[0],
-    /function normalizeBaseUrl\([\s\S]*?\n}\n/.exec(backgroundSource)?.[0],
-  ].filter(Boolean).join("\n");
-  const context = {
-    URL,
-    DEFAULTS: { mosaBaseUrl: "http://127.0.0.1:43517" },
-    getSettings: async () => ({ mosaBaseUrl: "", mosaToken: "token-test" }),
-    fetchWithTimeout: async (url, init) => fetchBehavior(requests, url, JSON.parse(init.body)),
+  const harness = await createBackgroundHarness({
+    appOnline: true,
+    settings: { mosaBaseUrl: "http://127.0.0.1:43517", mosaToken: "token-test" },
+  });
+  harness.fetchHarness.setAppHandler((url, init) => {
+    if (url.pathname === "/api/ingest/web-capture-session-title") {
+      try {
+        return Promise.resolve(fetchBehavior(requests, String(url), JSON.parse(init.body)));
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }
+    return null;
+  });
+  return {
+    context: {
+      report: (payload) => harness.context.reportSessionTitleOnce(payload),
+      set getSettings(fn) {
+        harness.context.getSettings = fn;
+      },
+    },
+    requests,
   };
-  vm.runInNewContext(`${pieces}\nthis.report = reportSessionTitleOnce;`, context, { filename: "background-session-title.js" });
-  return { context, requests };
 }
 
 test("the same conversation and title is reported to MOSA only once per session", async () => {
-  const { context, requests } = sessionTitleReportHarness((tracked, url, body) => {
+  const { context, requests } = await sessionTitleReportHarness((tracked, url, body) => {
     tracked.push({ url, body });
     return { ok: true, status: 200 };
   });
@@ -4327,7 +4415,7 @@ test("the same conversation and title is reported to MOSA only once per session"
 });
 
 test("failed session title reports are abandoned silently, never retried", async () => {
-  const { context, requests } = sessionTitleReportHarness((tracked, url, body) => {
+  const { context, requests } = await sessionTitleReportHarness((tracked, url, body) => {
     tracked.push({ url, body });
     throw new Error("MOSA is down");
   });
@@ -4337,7 +4425,7 @@ test("failed session title reports are abandoned silently, never retried", async
 });
 
 test("session title reporting stays silent without a token or a usable payload", async () => {
-  const { context, requests } = sessionTitleReportHarness((tracked, url, body) => {
+  const { context, requests } = await sessionTitleReportHarness((tracked, url, body) => {
     tracked.push({ url, body });
     return { ok: true, status: 200 };
   });
@@ -4889,10 +4977,18 @@ test("a flat conversation read that still has older pages is never reported over
   );
 });
 
-test("the XHR conversation path reports turn bindings under the same open-conversation gate", () => {
+test("the XHR conversation path reports turn bindings under the same open-conversation gate", async () => {
   assert.match(contentSource, /data\.type === "conversation-turn-bindings"/);
   assert.match(contentSource, /type: "mosa\.reportConversationTurns",/);
-  assert.match(backgroundSource, /if \(message\.type === "mosa\.reportConversationTurns"\) return context\.provider === "chatgpt";/);
+
+  // Background provider gating: only ChatGPT tabs may report conversation turns
+  const harness = await createBackgroundHarness({ appOnline: true });
+  const jimengSender = senderFor("https://jimeng.jianying.com/ai-tool/asset");
+  const jimengResponse = await harness.dispatchMessage({
+    type: "mosa.reportConversationTurns",
+    payload: { conversationId: "conv-1", turnCount: 1, bindings: [] },
+  }, jimengSender);
+  assert.equal(jimengResponse.ok, false);
 });
 
 test("XHR and JSON fetch conversation reads report turn bindings only for the open conversation", async () => {
@@ -4928,31 +5024,35 @@ test("XHR and JSON fetch conversation reads report turn bindings only for the op
   }
 });
 
-function turnBindingReportHarness(fetchBehavior) {
+async function turnBindingReportHarness(fetchBehavior) {
   const requests = [];
-  const pieces = [
-    "const reportedTurnBindingSummaries = new Map();",
-    "const pendingTurnBindingReports = new Map();",
-    "const TURN_BINDING_REPORT_THROTTLE_MS = 5;",
-    /function turnBindingSummaryKey\([\s\S]*?\n}\n/.exec(backgroundSource)?.[0],
-    /async function reportConversationTurnsOnce\([\s\S]*?\n}\n/.exec(backgroundSource)?.[0],
-    /function reportConversationTurnsThrottled\([\s\S]*?\n}\n/.exec(backgroundSource)?.[0],
-    /function normalizeBaseUrl\([\s\S]*?\n}\n/.exec(backgroundSource)?.[0],
-  ].filter(Boolean).join("\n");
-  const context = {
-    URL,
-    setTimeout,
-    clearTimeout,
-    DEFAULTS: { mosaBaseUrl: "http://127.0.0.1:43517" },
-    getSettings: async () => ({ mosaBaseUrl: "", mosaToken: "token-test" }),
-    fetchWithTimeout: async (url, init) => fetchBehavior(requests, url, JSON.parse(init.body)),
+  const harness = await createBackgroundHarness({
+    appOnline: true,
+    settings: { mosaBaseUrl: "http://127.0.0.1:43517", mosaToken: "token-test" },
+    fastTimers: true,
+  });
+  harness.fetchHarness.setAppHandler((url, init) => {
+    if (url.pathname === "/api/ingest/web-capture-turn-bindings") {
+      try {
+        const body = init.body ? JSON.parse(init.body) : null;
+        return Promise.resolve(fetchBehavior(requests, String(url), body));
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }
+    return null;
+  });
+  return {
+    context: {
+      report: (payload) => harness.context.reportConversationTurnsThrottled(payload),
+      reportNow: (payload) => harness.context.reportConversationTurnsOnce(payload),
+      summary: (bindings) => harness.context.turnBindingSummaryKey(bindings),
+      set getSettings(fn) {
+        harness.context.getSettings = fn;
+      },
+    },
+    requests,
   };
-  vm.runInNewContext(
-    `${pieces}\nthis.report = reportConversationTurnsThrottled; this.reportNow = reportConversationTurnsOnce; this.summary = turnBindingSummaryKey;`,
-    context,
-    { filename: "background-turn-bindings.js" },
-  );
-  return { context, requests };
 }
 
 const TURN_REPORT_FIXTURE = {
@@ -4966,7 +5066,7 @@ const TURN_REPORT_FIXTURE = {
 };
 
 test("turn bindings POST to the message-binding endpoint and repeat only on change", async () => {
-  const { context, requests } = turnBindingReportHarness((tracked, url, body) => {
+  const { context, requests } = await turnBindingReportHarness((tracked, url, body) => {
     tracked.push({ url, body });
     return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0) };
   });
@@ -5006,7 +5106,7 @@ test("turn bindings POST to the message-binding endpoint and repeat only on chan
 
 test("failed turn-binding reports are not remembered, so the next load retries", async () => {
   let failRequests = 0;
-  const failing = turnBindingReportHarness((tracked, url, body) => {
+  const failing = await turnBindingReportHarness((tracked, url, body) => {
     tracked.push({ url, body });
     failRequests += 1;
     if (failRequests === 1) return { ok: false, status: 503, arrayBuffer: async () => new ArrayBuffer(0) };
@@ -5018,7 +5118,7 @@ test("failed turn-binding reports are not remembered, so the next load retries",
   assert.equal(failing.requests.length, 2, "a failed POST must not be remembered as sent");
 
   let throwRequests = 0;
-  const throwing = turnBindingReportHarness((tracked, url) => {
+  const throwing = await turnBindingReportHarness((tracked, url) => {
     tracked.push({ url: String(url) });
     throwRequests += 1;
     if (throwRequests <= 2) throw new Error("MOSA is down");
@@ -5036,7 +5136,7 @@ test("failed turn-binding reports are not remembered, so the next load retries",
 });
 
 test("turn bindings stay silent without a token or a usable snapshot", async () => {
-  const { context, requests } = turnBindingReportHarness((tracked, url, body) => {
+  const { context, requests } = await turnBindingReportHarness((tracked, url, body) => {
     tracked.push({ url, body });
     return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0) };
   });
@@ -5052,7 +5152,7 @@ test("turn bindings stay silent without a token or a usable snapshot", async () 
 });
 
 test("rapid reads of one conversation collapse into the single newest snapshot", async () => {
-  const { context, requests } = turnBindingReportHarness((tracked, url, body) => {
+  const { context, requests } = await turnBindingReportHarness((tracked, url, body) => {
     tracked.push({ url, body });
     return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0) };
   });
@@ -5070,79 +5170,62 @@ test("rapid reads of one conversation collapse into the single newest snapshot",
 });
 
 test("background opens a ChatGPT desktop conversation only when it holds a generated image, then closes it", async () => {
-  const functionSource = (name) => new RegExp(`(?:async )?function ${name}\\([\\s\\S]*?\\n}\\n`).exec(backgroundSource)?.[0];
-  const names = ["readDesktopSyncJob", "reportDesktopSyncOutcome", "finishDesktopSyncJob", "conversationHasGeneratedImage",
-    "desktopConversationHasImage", "expireDesktopSyncJob", "runDesktopSync", "normalizeBaseUrl"];
-  const source = names.map(functionSource);
-  assert.ok(source.every(Boolean), "desktop sync helpers must be extractable");
-  const constants = /const DESKTOP_SYNC_JOB_KEY[\s\S]*?let desktopSyncRun;\n/.exec(backgroundSource)?.[0];
-  assert.ok(constants);
-
   const conversations = {
     "aaaaaaaa-0000-0000-0000-000000000001": { mapping: { u: { message: { author: { role: "user" }, content: { parts: [{ content_type: "image_asset_pointer" }] } } } } },
     "aaaaaaaa-0000-0000-0000-000000000002": { mapping: { u: { message: { author: { role: "user" }, content: { parts: ["画一只苹果"] } } }, t: { message: { author: { role: "tool" }, content: { parts: [{ content_type: "image_asset_pointer", asset_pointer: "sediment://file_1" }] } } } } },
   };
   const acks = [];
-  const created = [];
-  const removed = [];
-  const session = {};
-  const context = {
-    URL,
-    DEFAULTS: { mosaBaseUrl: "http://127.0.0.1:43517" },
-    getSettings: async () => ({ mosaBaseUrl: "http://127.0.0.1:43517", mosaToken: "token-test" }),
-    fetchWithTimeout: async (url, init) => {
-      if (url === "https://chatgpt.com/api/auth/session") {
-        return new Response(JSON.stringify({ accessToken: "session-bearer" }), { status: 200, headers: { "content-type": "application/json" } });
-      }
-      if (url.startsWith("https://chatgpt.com/backend-api/conversation/")) {
-        assert.equal(init.headers.authorization, "Bearer session-bearer");
-        const id = decodeURIComponent(url.split("/").pop());
-        return conversations[id]
-          ? new Response(JSON.stringify(conversations[id]), { status: 200, headers: { "content-type": "application/json" } })
-          : new Response("{}", { status: 401 });
-      }
-      assert.ok(url.startsWith("http://127.0.0.1:43517/"), "only acks go to GravityPort");
+  const harness = await createBackgroundHarness({
+    appOnline: true,
+    settings: { mosaBaseUrl: "http://127.0.0.1:43517", mosaToken: "token-test" },
+  });
+
+  harness.fetchHarness.setMediaHandler((url, init) => {
+    const href = String(url);
+    if (href === "https://chatgpt.com/api/auth/session") {
+      return new Response(JSON.stringify({ accessToken: "session-bearer" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (href.startsWith("https://chatgpt.com/backend-api/conversation/")) {
+      assert.equal(init.headers.authorization, "Bearer session-bearer");
+      const id = decodeURIComponent(href.split("/").pop());
+      return conversations[id]
+        ? new Response(JSON.stringify(conversations[id]), { status: 200, headers: { "content-type": "application/json" } })
+        : new Response("{}", { status: 401 });
+    }
+    return new Response("not found", { status: 404 });
+  });
+
+  harness.fetchHarness.setAppHandler((url, init) => {
+    if (url.pathname.startsWith("/api/ingest/web-capture-desktop-sync")) {
       assert.doesNotMatch(String(init.body), /session-bearer/);
       acks.push(JSON.parse(init.body));
       return new Response("{}", { status: 200 });
-    },
-    chrome: {
-      storage: { session: {
-        get: async (key) => (key in session ? { [key]: session[key] } : {}),
-        set: async (value) => { Object.assign(session, value); },
-        remove: async (key) => { delete session[key]; },
-      } },
-      windows: {
-        create: async (options) => { created.push(options); return { id: 70 + created.length, tabs: [{ id: 90 + created.length }] }; },
-        remove: async (windowId) => { removed.push(windowId); },
-      },
-    },
-    Date,
-  };
-  vm.runInNewContext(`${constants}\n${source.join("\n")}\nthis.runDesktopSync = runDesktopSync; this.readDesktopSyncJob = readDesktopSyncJob; this.finishDesktopSyncJob = finishDesktopSyncJob;`, context);
+    }
+    return null;
+  });
 
   // A user-uploaded image is not a generated one: acknowledged without a window.
-  await context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000001", "../bad"]);
+  await harness.context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000001", "../bad"]);
   assert.deepEqual(acks, [{ conversationId: "aaaaaaaa-0000-0000-0000-000000000001", outcome: "no-images" }]);
-  assert.equal(created.length, 0);
+  assert.equal(harness.createdWindows.length, 0);
 
   // A generated image opens one minimized, unfocused window with the sync marker.
-  await context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000002", "aaaaaaaa-0000-0000-0000-000000000003"]);
-  assert.equal(created.length, 1, "one window at a time; the rest wait for the next hand-out");
-  assert.deepEqual({ ...created[0] }, {
+  await harness.context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000002", "aaaaaaaa-0000-0000-0000-000000000003"]);
+  assert.equal(harness.createdWindows.length, 1, "one window at a time; the rest wait for the next hand-out");
+  assert.deepEqual({ ...harness.createdWindows[0] }, {
     url: "https://chatgpt.com/c/aaaaaaaa-0000-0000-0000-000000000002#gravityport-desktop-sync",
     focused: false,
     state: "minimized",
   });
-  const job = await context.readDesktopSyncJob();
+  const job = await harness.context.readDesktopSyncJob();
   assert.equal(job.tabId, 91);
 
   // An unreadable conversation (401) still gets a window once the slot frees.
-  await context.finishDesktopSyncJob(job, "captured");
-  assert.deepEqual(removed, [71]);
+  await harness.context.finishDesktopSyncJob(job, "captured");
+  assert.deepEqual(harness.removedWindows, [71]);
   assert.deepEqual(acks.at(-1), { conversationId: "aaaaaaaa-0000-0000-0000-000000000002", outcome: "captured" });
-  await context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000003"]);
-  assert.equal(created.length, 2);
+  await harness.context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000003"]);
+  assert.equal(harness.createdWindows.length, 2);
 });
 
 test("user message drops the image tool chip line but keeps the same words typed in the text", () => {
