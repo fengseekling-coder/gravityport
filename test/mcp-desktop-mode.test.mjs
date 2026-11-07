@@ -11,7 +11,7 @@ import { removeTestPath } from "./test-cleanup.mjs";
 import { spawnMcpServerAsClient, writePngFixture } from "./helpers/mcp-server-harness.mjs";
 
 const SERVER_PATH = resolve(import.meta.dirname, "..", "mcp", "server.mjs");
-const TOOL_COUNT = 17;
+const TOOL_COUNT = 24;
 
 async function desktopLikeHome(t) {
   const root = await mkdtemp(join(tmpdir(), "mosa-mcp-desktop-"));

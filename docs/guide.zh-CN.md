@@ -206,7 +206,7 @@ Cowart 快照可提供画布说明与来源，但不保证具有完整生图 Pro
 
 ### 堆叠
 
-把一张卡片拖到另一张上即可建堆叠或并入堆叠（放错可在 6 秒内撤销），多选后右键「堆叠所选」也可以。双击堆叠进入成员视图，「返回素材库」或后退键退出。堆叠内可以直接拖动卡片排序；右键「剪切」再在堆叠上「粘贴到此堆叠」（或堆叠空白处「粘贴」）可以把素材在堆叠之间搬移（⌘X / ⌘V，Windows 为 Ctrl+X / Ctrl+V）。右键「解散堆叠」只解除堆叠关系，不删除、不归档任何素材。
+把一张卡片拖到另一张上即可建堆叠或并入堆叠（放错可在 6 秒内撤销），多选后右键「堆叠所选」也可以。双击堆叠进入成员视图，「返回素材库」或后退键退出。堆叠内可以直接拖动卡片排序；右键「剪切」再在堆叠上「粘贴到此堆叠」（或堆叠空白处「粘贴」）可以把素材在堆叠之间搬移（⌘X / ⌘V，Windows 为 Ctrl+X / Ctrl+V）。右键「解散堆叠」只解除堆叠关系，不删除、不归档任何素材。也可以让 AI 助手通过 MCP 建堆叠、加图、改名、移出或解散，见下文「MCP 与接口」。
 
 ### 分组
 
@@ -299,6 +299,13 @@ generation_record
 generation_list
 generation_relation_record
 generation_lineage
+stack_create
+stack_add_assets
+stack_rename
+stack_remove_assets
+stack_dissolve
+stack_get
+stack_list
 ```
 
 `asset_list` 和 `GET /api/assets` 支持 `limit` 与 `cursor` 分页，默认 100 条、最大 250 条；`GET /api/assets` 还可用 `createdAfter` / `createdBefore` 传入 ISO-8601 时间做包含边界的创建时间过滤。
@@ -312,6 +319,8 @@ generation_lineage
 创建子版本时，使用 `asset_version_create` 并传入非空的 `version_change`；有新图时传入 `imagePath`，不传则复制父图作为配方快照；需要读取某个素材的不可变配方快照历史时，使用 `asset_recipe_history`。
 
 生成历史与素材版本是两套关系。`generation_record` 记录一次独立生成，即使输出图片已经被内容去重；`generation_relation_record` 只在有明确证据时记录 `edited_from`、`variant_of`、`derived_from` 或 `based_on`；`generation_lineage` 读取相连的生成图。普通 MCP 调用方不能把记录标成 `provider_verified`，该等级只保留给 GravityPort 直接接入并验证 provider 响应的受信集成。
+
+堆叠：`stack_create` 把两张以上素材建成一个堆叠，可以指定封面（不指定就用第一张）和名字（最多 80 个字）；一张素材只能在一个堆叠里，有图已经在别的堆叠里时报 `ASSET_ALREADY_STACKED`，整次不生效。`stack_add_assets` 往已有堆叠里加图，`stack_rename` 改名，`stack_remove_assets` 把图移出堆叠（只剩一张时堆叠自动解散），`stack_dissolve` 解散堆叠；移出和解散都不删除、不归档素材，和在 App 里操作一样，被移出或解散的图之后不会再被自动堆叠。`stack_get` 查看一个堆叠里有哪些图，`stack_list` 按名字找堆叠。同一张图要出现在几个堆叠里时，先用 `asset_duplicate` 复制一份，再把副本放进另一个堆叠。`asset_get`、`asset_list`、`asset_search` 返回的每张素材都带 `stack` 字段：在堆叠里时是 `{ id, name, count, is_cover }`，不在时是 `null`；`asset_import_folder` 遇到库里已有的文件，会在 `duplicates` 里给出库里那张的 `assetId`。GravityPort 开着时，AI 助手建好的堆叠会直接出现在画廊里。
 
 本地 HTTP 运行时同时提供：
 

@@ -48,6 +48,8 @@ test("a folder outside trusted roots imports directly whether client advertises 
   const recResult = await s1.callToolStrict("asset_import_folder", { folderPath: folder1, recursive: true });
   assert.equal(recResult.structuredContent.imported, 1);
   assert.equal(recResult.structuredContent.deduplicated, 1);
+  assert.equal(recResult.structuredContent.duplicates.length, 1);
+  assert.equal(recResult.structuredContent.duplicates[0].assetId, result1.structuredContent.assetIds[0]);
   const list1 = await s1.callToolStrict("asset_list", {});
   assert.equal(list1.structuredContent.assets.length, 2);
 
@@ -236,7 +238,7 @@ test("an empty folder answers with zero counts", async (t) => {
   await mkdir(folder, { recursive: true });
 
   const result = await server.callToolStrict("asset_import_folder", { folderPath: folder });
-  assert.deepEqual(result.structuredContent, { imported: 0, deduplicated: 0, skipped: 0, failed: 0, assetIds: [], failures: [] });
+  assert.deepEqual(result.structuredContent, { imported: 0, deduplicated: 0, skipped: 0, failed: 0, assetIds: [], duplicates: [], failures: [] });
   assert.equal(server.responses.some((message) => typeof message.method === "string"), false);
 });
 

@@ -129,8 +129,8 @@ MCP 导入接受任意本地绝对路径：`asset_create` 允许导入任意绝�
 可直接批量导入任意绝对路径的本地文件夹，不再要求用户在 AI 助手中弹窗确认（移除了 MCP elicitation）。
 相对路径一律拒绝（`IMAGE_PATH_NOT_READABLE`、`IMPORT_FOLDER_NOT_ABSOLUTE`）。
 导入仅限于支持的图片和视频格式，跳过符号链接，支持去重保护与批次上限（单次最多 1000 个文件），
-并且绝不改动源文件夹。17 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
-（仅 `asset_archive` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
+并且绝不改动源文件夹。24 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
+（`asset_archive`、`stack_remove_assets`、`stack_dissolve` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
 
 - `asset_create`、`asset_import_folder`、`asset_list`、`asset_get`
 - `asset_search`（文本与时间范围组合）、`asset_provenance_export`（导出脱敏 provenance bundle 与未签名的 C2PA assertion payload）
@@ -139,6 +139,7 @@ MCP 导入接受任意本地绝对路径：`asset_create` 允许导入任意绝�
 - `asset_version_create`、`asset_version_history`、`asset_recipe_history`
 - `generation_record`、`generation_list`
 - `generation_relation_record`、`generation_lineage`
+- `stack_create`、`stack_add_assets`、`stack_rename`、`stack_remove_assets`、`stack_dissolve`、`stack_get`、`stack_list`
 
 生成事件独立于去重后的 Asset：同一媒体内容可以对应多次生成事件。生成关系连接
 Generation Event，而不是复用 `parent_asset_id`。普通 HTTP/MCP 调用方只能声明

@@ -355,7 +355,7 @@ test("MCP refuses an env-configured directory without a library and reports the 
   assert.deepEqual(await readdir(emptyEnvDir), []);
 });
 
-const MCP_TOOL_COUNT = 17;
+const MCP_TOOL_COUNT = 24;
 
 /**
  * A server without a usable library still starts, lists every tool, and

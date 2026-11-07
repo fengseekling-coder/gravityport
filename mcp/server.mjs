@@ -6,6 +6,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path
 import { fileURLToPath } from "node:url";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { createAssetStore } from "../lib/asset-store.mjs";
+import { assetStoreError } from "../lib/asset-version-history.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
 import { createAssetViaGate, untrustedCreateSource } from "../lib/library-ingest.mjs";
@@ -224,6 +225,13 @@ const TOOL_GENERATION_RECORD = "generation_record";
 const TOOL_GENERATION_LIST = "generation_list";
 const TOOL_GENERATION_RELATION_RECORD = "generation_relation_record";
 const TOOL_GENERATION_LINEAGE = "generation_lineage";
+const TOOL_STACK_CREATE = "stack_create";
+const TOOL_STACK_ADD_ASSETS = "stack_add_assets";
+const TOOL_STACK_RENAME = "stack_rename";
+const TOOL_STACK_REMOVE_ASSETS = "stack_remove_assets";
+const TOOL_STACK_DISSOLVE = "stack_dissolve";
+const TOOL_STACK_GET = "stack_get";
+const TOOL_STACK_LIST = "stack_list";
 
 // Task 334: MCP tool annotations. Read tools never write; the only destructive
 // tool is asset_archive (soft-delete); nothing reaches out to other systems,
@@ -247,6 +255,13 @@ const TOOL_ANNOTATIONS = {
   [TOOL_GENERATION_LIST]: { readOnlyHint: true, destructiveHint: false },
   [TOOL_GENERATION_RELATION_RECORD]: { readOnlyHint: false, destructiveHint: false },
   [TOOL_GENERATION_LINEAGE]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_STACK_CREATE]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_STACK_ADD_ASSETS]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_STACK_RENAME]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_STACK_REMOVE_ASSETS]: { readOnlyHint: false, destructiveHint: true },
+  [TOOL_STACK_DISSOLVE]: { readOnlyHint: false, destructiveHint: true },
+  [TOOL_STACK_GET]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_STACK_LIST]: { readOnlyHint: true, destructiveHint: false },
 };
 
 // Folder import limits; the max-files override is a test knob.
@@ -348,7 +363,7 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_IMPORT_FOLDER,
-      description: "Import every image and video found in a local folder into the GravityPort library, applying the same projectId/prompt/sourceType/source to each file. Any local absolute folder path is accepted; relative paths are rejected. Symbolic links are skipped; with recursive: true subfolders are read up to 5 levels deep; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest.",
+      description: "Import every image and video found in a local folder into the GravityPort library, applying the same projectId/prompt/sourceType/source to each file. Any local absolute folder path is accepted; relative paths are rejected. Symbolic links are skipped; with recursive: true subfolders are read up to 5 levels deep; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest. Files already in the library are listed in duplicates with the existing assetId.",
       inputSchema: {
         type: "object",
         properties: {
@@ -608,6 +623,102 @@ function toolDefinitions() {
         additionalProperties: false,
       },
     },
+    {
+      name: TOOL_STACK_CREATE,
+      description: "Group two or more saved assets into a new stack, the same as stacking a selection in the GravityPort app. coverAssetId defaults to the first asset. name (optional, at most 80 characters) is the stack's display name. An asset can belong to only one stack: if any asset is already in a stack the call fails with ASSET_ALREADY_STACKED and nothing changes; take it out with stack_remove_assets first. To show the same image in several stacks, copy it with asset_duplicate and stack the copy. Archived assets cannot be stacked.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          assetIds: { type: "array", items: { type: "string" }, maxItems: 2000 },
+          coverAssetId: { type: "string" },
+          name: { type: "string", maxLength: 80 },
+        },
+        required: ["assetIds"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_ADD_ASSETS,
+      description: "Add saved assets to an existing stack, after its current members. Assets already in this stack are skipped and listed in alreadyInStack. If any asset belongs to a different stack the call fails with ASSET_ALREADY_STACKED and nothing changes.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          stackId: { type: "string" },
+          assetIds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 2000 },
+        },
+        required: ["stackId", "assetIds"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_RENAME,
+      description: "Set a stack's display name (trimmed, 1 to 80 characters). The name is kept even when the stack was created automatically from a conversation.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          stackId: { type: "string" },
+          name: { type: "string", minLength: 1, maxLength: 80 },
+        },
+        required: ["stackId", "name"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_REMOVE_ASSETS,
+      description: "Take assets out of a stack; the assets stay in the library. Every assetId must belong to this stack, otherwise the call fails with ASSET_NOT_IN_STACK and nothing changes. A stack left with one asset is dissolved (dissolved: true). Assets taken out are not stacked again automatically.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          stackId: { type: "string" },
+          assetIds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 2000 },
+        },
+        required: ["stackId", "assetIds"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_DISSOLVE,
+      description: "Dissolve a stack: its assets return to the library as separate assets; nothing is deleted or archived. They are not stacked again automatically.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          stackId: { type: "string" },
+        },
+        required: ["stackId"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_GET,
+      description: "Read one stack: its name, cover, member count, and member asset IDs in stack order. Members in Trash or archived are left out.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          stackId: { type: "string" },
+        },
+        required: ["stackId"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_LIST,
+      description: "List the stacks shown in the GravityPort library (two or more visible members), most recently updated first, optionally filtered by text in the stack name.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          query: { type: "string" },
+          limit: { type: "integer", minimum: 1, maximum: 200 },
+        },
+        additionalProperties: false,
+      },
+    },
   ];
 }
 
@@ -620,6 +731,57 @@ function mcpImportError(code, message) {
   error.code = code;
   error.statusCode = 400;
   return error;
+}
+
+function mcpToolError(code, message, statusCode = 400) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+}
+
+function assertStackSupport(store) {
+  if (
+    typeof store?.createAssetStack !== "function" ||
+    typeof store?.addAssetsToStack !== "function" ||
+    typeof store?.renameAssetStack !== "function" ||
+    typeof store?.removeAssetsFromStack !== "function" ||
+    typeof store?.dissolveAssetStack !== "function" ||
+    typeof store?.getAssetStack !== "function" ||
+    typeof store?.listAssetStackAssets !== "function" ||
+    typeof store?.getAssetStackMemberships !== "function" ||
+    typeof store?.listAssetStacks !== "function"
+  ) {
+    throw mcpToolError("ASSET_STACKS_UNAVAILABLE", "Asset stacks are unavailable.", 400);
+  }
+}
+
+async function attachStackToAssets(store, projectId, assets) {
+  const list = Array.isArray(assets) ? assets : (assets ? [assets] : []);
+  if (!list.length) return assets;
+  if (typeof store?.getAssetStackMemberships !== "function") {
+    for (const asset of list) {
+      if (asset) asset.stack = null;
+    }
+    return assets;
+  }
+  const assetIds = list.map((a) => a?.id).filter(Boolean);
+  const memberships = assetIds.length > 0 ? await store.getAssetStackMemberships(projectId, assetIds) : {};
+  for (const asset of list) {
+    if (!asset) continue;
+    const summary = memberships[asset.id];
+    if (summary) {
+      asset.stack = {
+        id: summary.id,
+        name: String(summary.name || ""),
+        count: Number(summary.count),
+        is_cover: summary.cover_asset_id === asset.id,
+      };
+    } else {
+      asset.stack = null;
+    }
+  }
+  return assets;
 }
 
 /**
@@ -691,11 +853,12 @@ async function importFolder(args) {
   if (files.length === 0) {
     return {
       content: [{ type: "text", text: `Nothing to import from ${folderPath}.` }],
-      structuredContent: { ...counts, assetIds: [], failures: [] },
+      structuredContent: { ...counts, assetIds: [], duplicates: [], failures: [] },
     };
   }
   const { source } = args;
   const assetIds = [];
+  const duplicates = [];
   const failures = [];
   for (const file of files) {
     const input = {
@@ -718,6 +881,7 @@ async function importFolder(args) {
         assetIds.push(created.asset.id);
       } else if (created.skipped.reason === "already-in-library") {
         counts.deduplicated += 1;
+        duplicates.push({ file: basename(file), assetId: created.skipped.existingAsset?.id || null });
       } else {
         throw created.error;
       }
@@ -729,7 +893,7 @@ async function importFolder(args) {
   const text = `Imported ${counts.imported} file(s) from ${folderPath}: ${counts.deduplicated} deduplicated, ${counts.skipped} skipped, ${counts.failed} failed.`;
   return {
     content: [{ type: "text", text }],
-    structuredContent: { ...counts, assetIds, failures },
+    structuredContent: { ...counts, assetIds, duplicates, failures },
   };
 }
 
@@ -794,16 +958,19 @@ async function handleToolCall(id, params) {
     return;
   }
   if (params?.name === TOOL_ASSET_LIST) {
+    const projectId = args.projectId || "default";
     const result = typeof store.listAssetPage === "function"
-      ? await store.listAssetPage({ projectId: args.projectId || "default", query: args.query || "", limit: args.limit, cursor: args.cursor })
-      : { assets: await store.listAssets({ projectId: args.projectId || "default", query: args.query || "" }), page: { nextCursor: null } };
+      ? await store.listAssetPage({ projectId, query: args.query || "", limit: args.limit, cursor: args.cursor })
+      : { assets: await store.listAssets({ projectId, query: args.query || "" }), page: { nextCursor: null } };
+    await attachStackToAssets(store, projectId, result.assets);
     sendResult(id, { content: [{ type: "text", text: `${result.assets.length} assets` }], structuredContent: result });
     return;
   }
   if (params?.name === TOOL_ASSET_SEARCH) {
+    const projectId = args.projectId || "default";
     const result = await searchMcpAssets({
       store,
-      projectId: args.projectId || "default",
+      projectId,
       query: args.query || "",
       createdAfter: args.createdAfter,
       createdBefore: args.createdBefore,
@@ -812,11 +979,15 @@ async function handleToolCall(id, params) {
       visual: args.visual === true,
       limit: args.limit,
     });
+    const assets = (result.results || []).map((entry) => entry.asset).filter(Boolean);
+    await attachStackToAssets(store, projectId, assets);
     sendResult(id, { content: [{ type: "text", text: `${result.results.length} matching assets` }], structuredContent: result });
     return;
   }
   if (params?.name === TOOL_ASSET_GET) {
-    const asset = await store.getAsset(args.projectId || "default", args.assetId);
+    const projectId = args.projectId || "default";
+    const asset = await store.getAsset(projectId, args.assetId);
+    await attachStackToAssets(store, projectId, [asset]);
     sendResult(id, { content: [{ type: "text", text: asset.prompt || `Asset ${asset.id}` }], structuredContent: { asset } });
     return;
   }
@@ -927,6 +1098,122 @@ async function handleToolCall(id, params) {
     if (typeof store.getGenerationLineage !== "function") throw new Error("Generation history is unavailable.");
     const lineage = await store.getGenerationLineage(args.projectId || "default", args.generationId);
     sendResult(id, { content: [{ type: "text", text: `${lineage.events.length} generation events in lineage` }], structuredContent: { lineage } });
+    return;
+  }
+  if (params?.name === TOOL_STACK_CREATE) {
+    assertStackSupport(store);
+    const projectId = args.projectId || "default";
+    if (args.name !== undefined) {
+      const trimmed = String(args.name).trim();
+      if (!trimmed) {
+        throw assetStoreError("STACK_NAME_EMPTY", "Stack name cannot be empty.");
+      }
+    }
+    let stack = await store.createAssetStack(projectId, args.assetIds, { coverAssetId: args.coverAssetId });
+    if (args.name !== undefined) {
+      const trimmed = String(args.name).trim();
+      if (trimmed) {
+        stack = await store.renameAssetStack(projectId, stack.id, trimmed);
+      }
+    }
+    sendResult(id, {
+      content: [{ type: "text", text: `Created stack ${stack.id} with ${stack.count} assets` }],
+      structuredContent: { stack },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_ADD_ASSETS) {
+    assertStackSupport(store);
+    const projectId = args.projectId || "default";
+    const memberships = await store.getAssetStackMemberships(projectId, args.assetIds);
+    const alreadyInStack = [];
+    const added = [];
+    for (const assetId of args.assetIds) {
+      if (memberships[assetId]?.id === args.stackId) {
+        if (!alreadyInStack.includes(assetId)) alreadyInStack.push(assetId);
+      } else {
+        if (!added.includes(assetId)) added.push(assetId);
+      }
+    }
+    const stack = await store.addAssetsToStack(projectId, args.stackId, args.assetIds);
+    sendResult(id, {
+      content: [{ type: "text", text: `Added ${added.length} asset(s) to stack ${stack.id}` }],
+      structuredContent: { stack, added, alreadyInStack },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_RENAME) {
+    assertStackSupport(store);
+    const projectId = args.projectId || "default";
+    const trimmed = String(args.name).trim();
+    if (!trimmed) {
+      throw assetStoreError("STACK_NAME_EMPTY", "Stack name cannot be empty.");
+    }
+    const stack = await store.renameAssetStack(projectId, args.stackId, trimmed);
+    sendResult(id, {
+      content: [{ type: "text", text: `Renamed stack ${stack.id} to "${stack.name}"` }],
+      structuredContent: { stack },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_REMOVE_ASSETS) {
+    assertStackSupport(store);
+    const projectId = args.projectId || "default";
+    await store.getAssetStack(projectId, args.stackId);
+    const memberships = await store.getAssetStackMemberships(projectId, args.assetIds);
+    for (const assetId of args.assetIds) {
+      if (memberships[assetId]?.id !== args.stackId) {
+        throw mcpToolError("ASSET_NOT_IN_STACK", `Asset ${assetId} does not belong to stack ${args.stackId}.`);
+      }
+    }
+    const outcome = await store.removeAssetsFromStack(projectId, args.stackId, args.assetIds);
+    const text = outcome.dissolved
+      ? `Removed ${args.assetIds.length} asset(s); dissolved stack ${args.stackId}`
+      : `Removed ${args.assetIds.length} asset(s) from stack ${args.stackId}`;
+    sendResult(id, {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        dissolved: Boolean(outcome.dissolved),
+        remainingAssetId: outcome.remainingAssetId || null,
+        stack: outcome.stack || null,
+      },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_DISSOLVE) {
+    assertStackSupport(store);
+    const projectId = args.projectId || "default";
+    const result = await store.dissolveAssetStack(projectId, args.stackId);
+    sendResult(id, {
+      content: [{ type: "text", text: `Dissolved stack ${result.id}` }],
+      structuredContent: {
+        id: result.id,
+        assetIds: result.assetIds,
+        dissolved: true,
+      },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_GET) {
+    assertStackSupport(store);
+    const projectId = args.projectId || "default";
+    const stack = await store.getAssetStack(projectId, args.stackId);
+    const page = await store.listAssetStackAssets(projectId, args.stackId);
+    const members = (page.assets || []).map((asset) => ({ id: asset.id, asset }));
+    sendResult(id, {
+      content: [{ type: "text", text: `Stack ${stack.id} has ${members.length} assets` }],
+      structuredContent: { stack, members },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_LIST) {
+    assertStackSupport(store);
+    const projectId = args.projectId || "default";
+    const result = await store.listAssetStacks(projectId, { query: args.query, limit: args.limit });
+    sendResult(id, {
+      content: [{ type: "text", text: `${result.stacks.length} stacks` }],
+      structuredContent: { stacks: result.stacks, truncated: Boolean(result.truncated) },
+    });
     return;
   }
 }
