@@ -30,18 +30,18 @@ const LABEL_BY_ID = { claudeDesktop: "Claude Desktop", claudeCode: "Claude Code"
 // The card's copy, pinned in both languages (zh source strings from
 // McpClientConfigCard.tsx, en from web/gravityport/src/i18n.ts).
 const ZH_HINTS = {
-  claudeDesktop: "粘贴到 claude_desktop_config.json（Claude 设置 → 开发者 → 编辑配置）。里面已有 mcpServers 的，只把 gravityport 这一段并进去。",
-  claudeCode: "在终端里运行这条命令。",
+  claudeDesktop: "粘贴到 claude_desktop_config.json（Claude 设置 > 开发者 > 编辑配置）。若文件中已有 mcpServers，仅合并 gravityport 这一段。",
+  claudeCode: "在终端中运行此命令。",
   codex: "粘贴到 ~/.codex/config.toml 末尾。",
 };
 const EN_HINTS = {
-  claudeDesktop: "Paste into claude_desktop_config.json (Claude Settings → Developer → Edit Config). If it already has mcpServers, add just the gravityport entry.",
+  claudeDesktop: "Paste into claude_desktop_config.json (Claude Settings > Developer > Edit Config). If mcpServers already exists, merge only the gravityport entry.",
   claudeCode: "Run this command in a terminal.",
-  codex: "Add this to the end of ~/.codex/config.toml.",
+  codex: "Paste at the end of ~/.codex/config.toml.",
 };
-const ZH_WARNING = "请先把 GravityPort 拖进「应用程序」文件夹再复制，不然这段路径会失效。";
-const ZH_NOTE = "挪了素材库也不用改配置，重启 AI 助手就会跟过去。GravityPort 不用开着。";
-const EN_NOTE = "Moved your library? No need to change this: restart the assistant and it follows. GravityPort doesn't need to be open.";
+const ZH_WARNING = "请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。";
+const ZH_NOTE = "更改存储位置后无需修改此配置，重启 AI 助手即可。GravityPort 无需保持打开。";
+const EN_NOTE = "After the storage location changes, this configuration stays valid; restart the assistant to apply it. GravityPort doesn’t need to be open.";
 
 export async function run(ctx) {
   await ctx.prepare();

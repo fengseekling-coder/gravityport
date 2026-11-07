@@ -4,7 +4,7 @@ import "../lib/apply-env-aliases.mjs";
 // Launch Services as a regular app. See desktop/quiet-test-mode.mjs.
 import "./quiet-test-mode.mjs";
 import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net, screen, session, shell, Notification } from "electron";
-import { isQuietQaRun, createScreenGuard } from "./quiet-qa-screen.mjs";
+import { evaluateQuietQaRunForElectronApp, createScreenGuard } from "./quiet-qa-screen.mjs";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
@@ -15,7 +15,8 @@ import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../li
 import { validateRuntimeIsolation } from "../lib/runtime-isolation-guard.mjs";
 import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
 import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../lib/import-staging.mjs";
-import { getDesktopText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getUpdateNotificationText } from "./notification-i18n.mjs";
+import { getDesktopText, getLibrarySchemaNewerDialogText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getStartupFailureText, getUpdateNotificationText } from "./notification-i18n.mjs";
+import { buildMenuTemplate } from "./menu-template.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
@@ -23,6 +24,7 @@ import { releaseManifestTrustSet } from "../lib/release-manifest-signature.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
 import { runStartupShutdownExit } from "./startup-shutdown.mjs";
+import { showLibrarySchemaNewerDialogThenShutdown, shouldHandleWindowAllClosed } from "./startup-failure-flow.mjs";
 import {
   failureCountFor,
   failureRecordFor,
@@ -141,7 +143,7 @@ function serviceOutboundFetch(url, init) {
 const desktopDataDir = app.getPath("userData");
 
 // Task 325: Early gate for quiet QA mode across all screen-suppressed operations.
-const quietQaRun = isQuietQaRun({ env: process.env, isPackaged: app.isPackaged });
+const quietQaRun = evaluateQuietQaRunForElectronApp(app).quiet;
 const quietTestApp = quietQaRun && process.platform === "darwin";
 const screenGuard = createScreenGuard({
   quiet: quietQaRun,
@@ -219,22 +221,18 @@ function recordLibraryLocationAfterSuccessfulOpen() {
 }
 
 // Locale at startup-failure time. The renderer has not run yet when the
-// library location is resolved below, so this stays the "zh" default here —
-// the same trade-off reportStartupFailure() makes. Declared above that
-// resolution because the error path reads it during module evaluation.
-let currentLocale = "zh"; // safe default matching original Chinese-only notifications
+// library location is resolved below, so this starts from the system locale
+// (任务 359：英文系统不再看到中文弹窗), and the renderer's set-locale still
+// overrides it as soon as the interface reports its language.
+let currentLocale = /^en\b/i.test(String(app.getLocale?.() || "")) ? "en" : "zh";
 
 function showLibraryLocationErrorAndExit(error) {
-  const english = currentLocale === "en";
-  const title = english ? "Can't open your library" : "无法打开素材库";
-  const body = error?.code === MOSA_LIBRARY_NOT_FOUND
-    ? (english
-      ? `Your library was last at ${error.libraryDir} and can't be found. If it's on an external drive, connect it and open the app again.`
-      : `上次使用的素材库在 ${error.libraryDir}，现在找不到了。如果它在外接硬盘上，请接好后重新打开。`)
-    : (english
-      ? `The file that records your library location can't be read: ${error.locationFile}. The app stopped so it doesn't create an empty library.`
-      : `记录素材库位置的文件读不出来：${error.locationFile}。为了不新建一个空库，App 已停止启动。`);
-  screenGuard.errorBox(title, body);
+  // 任务 359（NATIVE-01/02）：两条文字进 notification-i18n 表。
+  const key = error?.code === MOSA_LIBRARY_NOT_FOUND
+    ? { title: "libraryLocationMissingTitle", body: "libraryLocationMissingBody", dir: error?.libraryDir }
+    : { title: "libraryLocationFileUnreadableTitle", body: "libraryLocationFileUnreadableBody", dir: error?.locationFile };
+  const body = getDesktopText(key.body, currentLocale).replace(/\{libraryDir\}/g, String(key.dir || ""));
+  screenGuard.errorBox(getDesktopText(key.title, currentLocale), body);
   // Nothing has started yet, so exit synchronously: app.exit() does not halt
   // module evaluation, and a rethrow would surface a second "JavaScript error
   // in the main process" dialog on top of the one the user just dismissed.
@@ -285,8 +283,8 @@ const isolationContext = {
 const launchedFromMacosUpdate = Boolean(
   resolveMacosUpdateReadyFile(process.argv, join(desktopDataDir, "updates", "macos")),
 );
-// Task 229 / Task 325: quietTestApp is computed near the top of main.mjs using
-// isQuietQaRun({ env: process.env, isPackaged: app.isPackaged }) && process.platform === "darwin".
+// Task 229 / Task 325 / Task 346: quietTestApp is computed near the top of main.mjs using
+// evaluateQuietQaRunForElectronApp(app).quiet && process.platform === "darwin".
 const desktopStartupHandoffEnabled = process.platform === "darwin"
   && app.isPackaged
   && !isolationContext.qaRun
@@ -377,6 +375,10 @@ let mainWindow = null;
 let service = null;
 let rendererRecoveryAttempts = 0;
 let shuttingDown = false;
+// 任务 367：「库比 App 新」的框弹着期间为 true（showLibrarySchemaNewerDialog
+// ThenShutdown 调用前置位，它调 shutdown 时解除）；window-all-closed 据此不
+// 退出，Windows 用户关掉启动窗口不会连框一起带走。
+let startupFailureDialogOpen = false;
 let shutdownPromise = null;
 let windowPromise = null;
 let windowOpenRequested = false;
@@ -530,7 +532,9 @@ if (!app.requestSingleInstanceLock()) {
   // recovery intentionally destroys the last window before rebuilding it, so
   // Windows must not interpret that internal transition as a user quit.
   app.on("window-all-closed", () => {
-    if (runtimeRecoveryInProgress) return;
+    // 任务 367：「库比 App 新」的框弹着时不退出（Windows 关启动窗会连框带走），
+    // runtime 恢复中不退出的既有行为一并收进 shouldHandleWindowAllClosed。
+    if (!shouldHandleWindowAllClosed({ runtimeRecoveryInProgress, startupFailureDialogOpen })) return;
     desktopPlatform.onWindowAllClosed(app);
   });
 
@@ -606,74 +610,11 @@ function pruneInjectedMenuItems(menu) {
 }
 
 function buildMenu() {
-  const template = [
-    {
-      id: "mosa-menu-app",
-      label: app.name,
-      submenu: [
-        { id: "mosa-menu-about", role: "about", label: getDesktopText("menuAbout", currentLocale) },
-        { id: "mosa-menu-app-separator-1", type: "separator" },
-        { id: "mosa-menu-services", role: "services", label: getDesktopText("menuServices", currentLocale) },
-        { id: "mosa-menu-app-separator-2", type: "separator" },
-        { id: "mosa-menu-hide", role: "hide", label: getDesktopText("menuHide", currentLocale) },
-        { id: "mosa-menu-hide-others", role: "hideOthers", label: getDesktopText("menuHideOthers", currentLocale) },
-        { id: "mosa-menu-show-all", role: "unhide", label: getDesktopText("menuShowAll", currentLocale) },
-        { id: "mosa-menu-app-separator-3", type: "separator" },
-        { id: "mosa-menu-quit", role: "quit", label: getDesktopText("menuQuit", currentLocale) },
-      ],
-    },
-    {
-      id: "mosa-menu-file",
-      label: getDesktopText("menuFile", currentLocale),
-      submenu: [
-        { id: "mosa-menu-close", role: "close", label: getDesktopText("menuClose", currentLocale) },
-      ],
-    },
-    {
-      id: "mosa-menu-edit",
-      label: getDesktopText("menuEdit", currentLocale),
-      submenu: [
-        { id: "mosa-menu-undo", role: "undo", label: getDesktopText("menuUndo", currentLocale) },
-        { id: "mosa-menu-redo", role: "redo", label: getDesktopText("menuRedo", currentLocale) },
-        { id: "mosa-menu-edit-separator-1", type: "separator" },
-        { id: "mosa-menu-cut", role: "cut", label: getDesktopText("menuCut", currentLocale) },
-        { id: "mosa-menu-copy", role: "copy", label: getDesktopText("menuCopy", currentLocale) },
-        { id: "mosa-menu-paste", role: "paste", label: getDesktopText("menuPaste", currentLocale) },
-        { id: "mosa-menu-paste-match-style", role: "pasteAndMatchStyle", label: getDesktopText("menuPasteAndMatchStyle", currentLocale) },
-        { id: "mosa-menu-delete", role: "delete", label: getDesktopText("menuDelete", currentLocale) },
-        { id: "mosa-menu-select-all", role: "selectAll", label: getDesktopText("menuSelectAll", currentLocale) },
-      ],
-    },
-    {
-      id: "mosa-menu-view",
-      label: getDesktopText("menuView", currentLocale),
-      submenu: [
-        {
-          id: "mosa-menu-search",
-          label: getDesktopText("menuSearch", currentLocale),
-          accelerator: "CmdOrCtrl+F",
-          click: () => sendToWindow("menu-search"),
-        },
-        { id: "mosa-menu-view-separator-1", type: "separator" },
-        { id: "mosa-menu-reset-zoom", role: "resetZoom", label: getDesktopText("menuResetZoom", currentLocale) },
-        { id: "mosa-menu-zoom-in", role: "zoomIn", label: getDesktopText("menuZoomIn", currentLocale) },
-        { id: "mosa-menu-zoom-out", role: "zoomOut", label: getDesktopText("menuZoomOut", currentLocale) },
-        { id: "mosa-menu-view-separator-2", type: "separator" },
-        { id: "mosa-menu-toggle-fullscreen", role: "togglefullscreen", label: getDesktopText("menuToggleFullScreen", currentLocale) },
-      ],
-    },
-    {
-      id: "mosa-menu-window",
-      label: getDesktopText("menuWindow", currentLocale),
-      submenu: [
-        { id: "mosa-menu-minimize", role: "minimize", label: getDesktopText("menuMinimize", currentLocale) },
-        { id: "mosa-menu-window-zoom", role: "zoom", label: getDesktopText("menuZoom", currentLocale) },
-        { id: "mosa-menu-window-separator-1", type: "separator" },
-        { id: "mosa-menu-bring-all-to-front", role: "front", label: getDesktopText("menuBringAllToFront", currentLocale) },
-      ],
-    },
-  ];
-  const menu = Menu.buildFromTemplate(template);
+  const menu = Menu.buildFromTemplate(buildMenuTemplate({
+    platform: process.platform,
+    locale: currentLocale,
+    onSearch: () => sendToWindow("menu-search"),
+  }));
   Menu.setApplicationMenu(menu);
   if (desktopPlatform.capabilities.hideApplicationMenuBar && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setMenuBarVisibility(false);
@@ -1290,9 +1231,10 @@ function registerIPC() {
     if (process.env.MOSA_LIBRARY_DIR) return { ok: false, reason: "managed" };
     if (service?.mode !== "owned") return { ok: false, reason: "attached" };
 
+    // 任务 359（NATIVE-16）：选择器文字进 notification-i18n 表。
     const selection = await screenGuard.openDialog(mainWindow, {
-      title: currentLocale === "en" ? "Choose a new GravityPort library location" : "选择新的 GravityPort 素材库位置",
-      buttonLabel: currentLocale === "en" ? "Choose" : "选择",
+      title: getDesktopText("chooseLibraryLocationTitle", currentLocale),
+      buttonLabel: getDesktopText("chooseLibraryLocationButton", currentLocale),
       properties: ["openDirectory", "createDirectory"],
     });
     if (selection.canceled || !selection.filePaths?.[0]) return { ok: false, reason: "cancelled" };
@@ -1301,16 +1243,13 @@ function registerIPC() {
     const validation = await validateRelocationTarget({ currentLibraryDir: libraryDir, nextLibraryDir });
     if (!validation.ok) return { ok: false, reason: validation.reason };
 
+    // 任务 359（NATIVE-17）：确认框文字进 notification-i18n 表。
     const confirmation = await screenGuard.messageBox(mainWindow, {
       type: "question",
-      title: currentLocale === "en" ? "Move GravityPort Library" : "移动 GravityPort 素材库",
-      message: currentLocale === "en"
-        ? "Move the current library to the selected folder?"
-        : "将当前素材库移动到所选文件夹？",
-      detail: currentLocale === "en"
-        ? "GravityPort will close its local library service, copy all assets and metadata, then restart. The original is removed only after the copy succeeds."
-        : "GravityPort 会先关闭本地素材库服务，完整复制素材与元数据，然后自动重启。复制成功前不会删除原素材库。",
-      buttons: currentLocale === "en" ? ["Cancel", "Move and Restart"] : ["取消", "移动并重启"],
+      title: getDesktopText("moveLibraryTitle", currentLocale),
+      message: getDesktopText("moveLibraryMessage", currentLocale),
+      detail: getDesktopText("moveLibraryDetail", currentLocale),
+      buttons: [getDesktopText("moveLibraryCancel", currentLocale), getDesktopText("moveLibraryRestart", currentLocale)],
       defaultId: 1,
       cancelId: 0,
       noLink: true,
@@ -1683,11 +1622,12 @@ async function createMainWindow() {
         app.exit(1);
         return;
       }
+      // 任务 359（NATIVE-18）：崩溃框走 notification-i18n，补中文。
       void screenGuard.messageBox(mainWindow, {
         type: "error",
         title: "GravityPort",
-        message: "GravityPort's interface stopped unexpectedly and could not recover automatically.",
-        buttons: ["Restart GravityPort", "Close"],
+        message: getDesktopText("rendererCrashBody", currentLocale),
+        buttons: [getDesktopText("rendererCrashRestart", currentLocale), getDesktopText("rendererCrashClose", currentLocale)],
         defaultId: 0,
         cancelId: 1,
       }).then(({ response }) => {
@@ -2055,14 +1995,58 @@ function reportStartupFailure(error) {
     return;
   }
   // A broken library (missing mosa.db, incomplete state) gets its own dialog
-  // in the current language; everything else keeps the generic startup title
-  // with the raw error message.
+  // in the current language. 任务 359（NATIVE-03b）：其余失败不再把原始英文
+  // error.message 弹给用户，改用固定正文（细节只进日志）。
   const libraryFailure = getLibraryStartupFailureText(error, currentLocale);
-  screenGuard.errorBox(
-    libraryFailure ? libraryFailure.title : getDesktopText("startupErrorTitle", currentLocale),
-    libraryFailure ? libraryFailure.body : message,
-  );
+  // 任务 359（NATIVE-09c）：库比 App 新的框带「前往官网下载 / 取消」。
+  // 任务 359 返工 1：这个框必须等用户点完再关停退出。原来 `void` 丢掉
+  // messageBox 的 Promise 就直接走关停，框刚弹出进程就退了，按钮点不到。
+  // 父窗口固定传 null：此时主界面多半还没起来，启动页窗口在关停中可能被
+  // 销毁，带父窗口框会跟着消失。
+  if (error?.code === "MOSA_LIBRARY_SCHEMA_NEWER") {
+    const schemaNewerDialog = getLibrarySchemaNewerDialogText(currentLocale);
+    // 任务 367：框弹着的期间 window-all-closed 不退出（Windows 关启动窗会连
+    // 框带走）；beginStartupShutdown 一跑就解除。
+    startupFailureDialogOpen = true;
+    void showLibrarySchemaNewerDialogThenShutdown({
+      messageBox: (owner, options) => screenGuard.messageBox(owner, options),
+      openExternal: (url) => screenGuard.openExternal(url),
+      shutdown: beginStartupShutdown,
+      owner: null,
+      dialogOptions: {
+        type: "warning",
+        title: schemaNewerDialog.title,
+        message: schemaNewerDialog.body,
+        buttons: schemaNewerDialog.buttons,
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      },
+      downloadUrl: MOSA_DOWNLOAD_PAGE_URL,
+    });
+    return;
+  }
+  // 任务 367（NATIVE-03c~03i）：带启动错误码的失败按码选中英文，原始英文
+  // message 只进日志；未归类的照旧走 NATIVE-03b 兜底句。
+  const startupFailure = getStartupFailureText(error, currentLocale);
+  if (libraryFailure) {
+    screenGuard.errorBox(libraryFailure.title, libraryFailure.body);
+  } else if (startupFailure) {
+    console.error(`[MOSA] startup failure detail: ${error?.stack || message}`);
+    screenGuard.errorBox(startupFailure.title, startupFailure.body);
+  } else {
+    console.error(`[MOSA] startup failure detail: ${error?.stack || message}`);
+    screenGuard.errorBox(getDesktopText("startupErrorTitle", currentLocale), getDesktopText("startupErrorBody", currentLocale));
+  }
+  beginStartupShutdown();
+}
+
+// 任务 359 返工 1：关停序列从 reportStartupFailure 尾部提出——库比 App 新的
+// 分支要等用户点完框才调用它，另外两个分支行为不变（同步 errorBox 后立即
+// 关停）。
+function beginStartupShutdown() {
   shuttingDown = true;
+  startupFailureDialogOpen = false;
   stopBridgeNotificationPoll();
   // Task 341: both shutdown steps are bounded (5s each); a wedged runtime
   // stop no longer leaves the process — and its library lock — behind.

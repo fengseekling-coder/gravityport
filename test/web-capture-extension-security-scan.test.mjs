@@ -57,3 +57,17 @@ test("R2: MAIN-world page hooks never touch credentials or rewrite requests", ()
     }
   }
 });
+
+test("R3: no extension script hardcodes the legacy dev token as default or active token", () => {
+  for (const [file, text] of scriptTexts) {
+    assert.doesNotMatch(text, /mosaToken:\s*["']mosa-web-capture-dev["']/,
+      `${file} must not hardcode mosa-web-capture-dev as a token default`);
+  }
+});
+
+test("R4: video transfer does not retain monolithic in-memory chunk buffers across the extension", () => {
+  for (const [file, text] of scriptTexts) {
+    assert.doesNotMatch(text, /chunks:\s*new Array\(totalChunks\)/,
+      `${file} must not allocate monolithic video chunk arrays`);
+  }
+});

@@ -28,6 +28,7 @@ import { createServer } from "node:http";
 import { launchDesktopGui } from "./desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath, packagedExecutablePath } from "./desktop-runtime-paths.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
+import { qaFeedbackEnv } from "./qa-feedback-env.mjs";
 
 const __dirname = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const REPO_ROOT = resolve(__dirname, "..");
@@ -249,6 +250,7 @@ async function launchWeb(rootDir, libraryDir, userData, servicePort, cdpPort, no
     MOSA_USER_DATA: userData,
     MOSA_QA_RUN: "1",
     MOSA_DISABLE_BRIDGES: QA_DISABLED_BRIDGES,
+    ...qaFeedbackEnv(process.env),
   };
 
   console.log(`Launching Web QA (servicePort ${servicePort}, libraryDir ${libraryDir})`);
@@ -279,6 +281,7 @@ async function launchElectron(rootDir, libraryDir, userData, servicePort, cdpPor
     MOSA_USER_DATA: userData,
     MOSA_QA_RUN: "1",
     MOSA_DISABLE_BRIDGES: QA_DISABLED_BRIDGES,
+    ...qaFeedbackEnv(process.env),
   };
 
   const electronArgs = ["desktop/main.mjs"];
@@ -320,6 +323,7 @@ async function launchPackaged(rootDir, libraryDir, userData, servicePort, cdpPor
     MOSA_USER_DATA: userData,
     MOSA_QA_RUN: "1",
     MOSA_DISABLE_BRIDGES: QA_DISABLED_BRIDGES,
+    ...qaFeedbackEnv(process.env),
   };
 
   const appArgs = [];

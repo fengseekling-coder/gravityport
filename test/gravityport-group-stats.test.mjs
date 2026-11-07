@@ -124,8 +124,8 @@ describe("describeGroupStats — facets", () => {
 
   it("empty facets show emptyText", () => {
     const result = gs.describeGroupStats({});
-    assert.equal(result.facets[0].emptyText, "未记录");
-    assert.equal(result.facets[1].emptyText, "未记录");
+    assert.equal(result.facets[0].emptyText, "无");
+    assert.equal(result.facets[1].emptyText, "无");
     assert.equal(result.facets[0].entries.length, 0);
   });
 });

@@ -122,7 +122,7 @@ function pageSource({ coverId, groupName }) {
     };
     const key = (init) => document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }));
 
-    // Loading has ended (no 加载中) and the loaded count held steady, then two
+    // Loading has ended (no 正在加载…) and the loaded count held steady, then two
     // frames so layout and the virtual window settle before any read.
     async function settle(label) {
       let last = -1, stable = 0;

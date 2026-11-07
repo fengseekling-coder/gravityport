@@ -52,9 +52,9 @@ macOS Desktop 与 Web Capture 的后台监督服务共用同一资料库和本�
 
 ### 第一次打开
 
-当前桌面版是 Preview 版本：macOS 版还没有经过 Apple 公证，Windows 版还没有代码签名，所以第一次打开时系统会提示风险。
+Mac 版已通过 Apple 公证；Windows 版还没有代码签名，第一次运行安装程序时系统可能会提示风险。
 
-- **macOS**：先打开一次 GravityPort，看到「无法验证」的提示后点「完成」；然后打开「系统设置 → 隐私与安全性」，在「安全性」一栏找到 GravityPort，点「仍要打开」并确认。之后系统会记住这个选择。macOS 14 及更早版本也可以按住 Control 点按应用，选「打开」。
+- **macOS**：第一次打开 GravityPort 时，系统会询问是否打开从互联网下载的 App，点「打开」即可。之后不会再问。
 - **Windows**：如果 SmartScreen 提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。只在运行安装程序时出现一次。
 
 要用网页生图扩展的话，先打开桌面版再加载扩展，两者会自动配对。
@@ -260,7 +260,7 @@ GravityPort 自带 MCP 服务，通过 stdio 通信，不额外占用端口。AI
 - 在「设置 → 存储」里挪过素材库也不用改配置，重启 AI 助手就会跟过去。挪库时如果 AI 助手开着，它会提示素材库已移动、请重启。
 - GravityPort 不用开着；开着时两边同时读写同一个库也是安全的（SQLite WAL）。
 - macOS 上请先把 GravityPort 拖进「应用程序」文件夹再复制配置；从「下载」或磁盘映像里直接运行时路径是临时的，设置里会提醒。App 更新后路径不变，配置不用重新复制。
-- 记录的素材库找不到（例如外接硬盘没接）时，MCP 服务会在 stderr 写明原因后退出，不会新建一个空库。
+- 还没打开过 GravityPort、或记录的素材库找不到（例如外接硬盘没接）时，MCP 服务照常启动、能列出工具，调用工具时回复原因（`LIBRARY_NOT_FOUND`），不会新建一个空库。打开 GravityPort 或接上硬盘后再调用就能用，不用重启 AI 助手。
 
 ### 从源码运行
 
@@ -277,7 +277,7 @@ args = ["/absolute/path/to/gravityport/mcp/server.mjs"]
 - `GRAVITYPORT_LIBRARY_DIR`：素材库的绝对路径，优先级最高。
 - `GRAVITYPORT_LIBRARY_LOCATION_FILE`：桌面版的 `library-location.json`（macOS 在 `~/Library/Application Support/mosa/`），跟随桌面版里挪过的位置。
 
-导入规则（桌面版和从源码运行相同）：AI 助手可以直接导入 Codex 生成目录和素材库目录（库内 `assets/`、`imports/`）里的图；其他文件夹要用 `asset_import_folder` 整个导入，GravityPort 会在 AI 助手那边请你确认，助手不支持确认（或你拒绝、超时）时导不了。不在允许目录里的单张图会被 `asset_create` 拒绝（`IMAGE_PATH_NOT_READABLE`）。MCP 启动时所在的目录不算允许目录：从家目录启动助手，家目录里的文件也不会被静默导入。
+导入规则（桌面版和从源码运行相同）：AI 助手可以直接导入本地任意绝对路径下的单张图片（`asset_create`）或整个文件夹（`asset_import_folder`），无需在助手中弹窗确认；相对路径会被拒绝。只导入支持的图片和视频格式，跳过符号链接，支持去重保护；单次文件夹导入最多 1000 个文件，导入后源文件夹保持不变。
 
 MCP 工具包括：
 

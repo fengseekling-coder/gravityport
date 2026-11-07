@@ -110,7 +110,7 @@ function flowSource() {
     const confirmTrash = async () => {
       await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'batch delete confirm');
       const confirm = Array.from(document.querySelectorAll('[role="alertdialog"] button'))
-        .find((button) => button.textContent.trim() === '移至回收站');
+        .find((button) => button.textContent.trim() === '移到回收站');
       confirm.click();
     };
 
@@ -137,7 +137,7 @@ function flowSource() {
 
     // ── 1) Cross-page select-all picks up the whole 1001-asset result ──
     pressSelectAll();
-    await waitFor(() => toastText() === '已选 ' + TOTAL + ' 项', 'select-all announces the full result');
+    await waitFor(() => toastText() === '已选择 ' + TOTAL + ' 项', 'select-all announces the full result');
     const selectAll = window.__selectPages >= 5 && loadedCount() === PAGE_SIZE;
 
     // ── 2) Favorite: two chunks, every row confirmed server-side ──
@@ -150,8 +150,8 @@ function flowSource() {
     await waitFor(() => groupRow()?.getAttribute('aria-current') === 'page' && loadedCount() === PAGE_SIZE,
       'the group view loads');
     pressSelectAll();
-    await waitFor(() => toastText() === '已选 ' + TOTAL + ' 项', 'select-all inside the group view');
-    await openContextMenu('移除分组');
+    await waitFor(() => toastText() === '已选择 ' + TOTAL + ' 项', 'select-all inside the group view');
+    await openContextMenu('移出分组');
     await waitFor(() => groupRow()?.querySelector('small')?.textContent === '0', 'group drains to zero');
     const groupChunked = window.__batchPosts === 4;
 
@@ -160,12 +160,12 @@ function flowSource() {
       .find((button) => (button.textContent || '').includes('所有素材'))?.click();
     await waitFor(() => loadedCount() === PAGE_SIZE, 'back on the all-assets view');
     pressSelectAll();
-    await waitFor(() => toastText() === '已选 ' + TOTAL + ' 项', 'select-all before the partial trash');
+    await waitFor(() => toastText() === '已选择 ' + TOTAL + ' 项', 'select-all before the partial trash');
     window.__batchPosts = 0;
     window.__batchFailAt = 2;
-    await openContextMenu('移至回收站');
+    await openContextMenu('移到回收站');
     await confirmTrash();
-    await waitFor(() => toastText() === '已移至回收站 ' + (TOTAL - 1) + ' 项，1 项失败',
+    await waitFor(() => toastText() === '已将 ' + (TOTAL - 1) + ' 个素材移到回收站，1 个无法移动',
       'the partial result is announced with real counts');
     // Read the toast's action and the POST count right away (the toast times
     // out); the sidebar trash count arrives with the navigation refetch that
@@ -182,7 +182,7 @@ function flowSource() {
     // ── 5) Retry on the survivor: one chunk, the job finishes ──
     pressSelectAll();
     await sleep(300);
-    await openContextMenu('移至回收站');
+    await openContextMenu('移到回收站');
     await confirmTrash();
     await waitFor(() => navSmall('回收站') === String(TOTAL) && navSmall('所有素材') === '0',
       'the retry moves the last asset');

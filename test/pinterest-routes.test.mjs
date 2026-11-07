@@ -80,13 +80,13 @@ function codedError(code, message = "pinterest failed") {
   return Object.assign(new Error(message), { code });
 }
 
-async function call(method, path, { pinterest, port = PORT } = {}) {
+async function call(method, path, { pinterest, port = PORT, ipv6ListenState = "bound" } = {}) {
   const res = makeRes();
   const handled = await handlePinterestRoute({
     req: { method },
     res,
     url: new URL(`http://127.0.0.1${path}`),
-    context: { pinterest, port },
+    context: { pinterest, port, ipv6ListenState },
   });
   return { handled, res };
 }
@@ -169,7 +169,7 @@ test("GET /status returns pinterest.status() as-is with 200", async () => {
 
 // ── POST /connect ────────────────────────────────────────────────────────────
 
-test("POST /connect passes context.port to beginConnect and returns its result", async () => {
+test("POST /connect passes context.port and the [::1] state to beginConnect and returns its result", async () => {
   const beginConnectArgs = [];
   const pinterest = makePinterest({
     beginConnect(args) {
@@ -181,7 +181,7 @@ test("POST /connect passes context.port to beginConnect and returns its result",
   assert.equal(handled, true);
   assert.equal(res.statusCode, 200);
   assert.deepEqual(JSON.parse(res.endBody), { authorizeUrl: "https://www.pinterest.com/oauth/?state=xyz" });
-  assert.deepEqual(beginConnectArgs, [{ port: PORT }]);
+  assert.deepEqual(beginConnectArgs, [{ port: PORT, ipv6ListenState: "bound" }]);
 });
 
 test("POST /connect answers 409 on PINTEREST_PORT_MISMATCH", async () => {

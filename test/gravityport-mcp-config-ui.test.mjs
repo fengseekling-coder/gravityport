@@ -101,16 +101,16 @@ describe("MCP client config card", () => {
   it("uses the approved Chinese and English copy", () => {
     const zh = decode(render({}));
     assert.ok(zh.includes("AI 助手（MCP）"));
-    assert.ok(zh.includes("让 Claude、Codex 等 AI 助手直接搜索、查看和记录你的素材库。复制下面的配置，粘贴到对应 AI 助手里，再重启它。"));
-    assert.ok(zh.includes("挪了素材库也不用改配置，重启 AI 助手就会跟过去。GravityPort 不用开着。"));
+    assert.ok(zh.includes("让 Claude、Codex 等 AI 助手直接管理你的素材库资产。将下方配置粘贴到 AI 助手中，然后重启该助手。"));
+    assert.ok(zh.includes("更改存储位置后无需修改此配置，重启 AI 助手即可。GravityPort 无需保持打开。"));
     assert.ok(zh.includes(">复制</button>"));
     assert.ok(decode(render({ copied: true })).includes(">已复制</button>"));
 
     const en = decode(render({ language: "en", client: "codex" }));
     assert.ok(en.includes("AI assistants (MCP)"));
-    assert.ok(en.includes("Let AI assistants like Claude and Codex search, read, and add to your library. Copy the config below, paste it into the assistant, then restart it."));
-    assert.ok(en.includes("Add this to the end of ~/.codex/config.toml."));
-    assert.ok(en.includes("Moved your library? No need to change this: restart the assistant and it follows. GravityPort doesn't need to be open."));
+    assert.ok(en.includes("Let AI assistants such as Claude and Codex manage your library assets directly. Paste the configuration below into the assistant, then restart it."));
+    assert.ok(en.includes("Paste at the end of ~/.codex/config.toml."));
+    assert.ok(en.includes("After the storage location changes, this configuration stays valid; restart the assistant to apply it. GravityPort doesn’t need to be open."));
     assert.ok(en.includes(">Copy</button>"));
     assert.ok(decode(render({ language: "en", copied: true })).includes(">Copied</button>"));
     assert.doesNotMatch(en, /[一-鿿]/, "no Chinese left in the English card");
@@ -118,16 +118,16 @@ describe("MCP client config card", () => {
 
   it("warns before copying from an app outside Applications", () => {
     const html = decode(render({ config: { ...config, installWarning: "not-in-applications" } }));
-    assert.ok(html.includes("请先把 GravityPort 拖进「应用程序」文件夹再复制，不然这段路径会失效。"));
+    assert.ok(html.includes("请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。"));
     assert.ok(!decode(render({})).includes("应用程序」文件夹"));
     assert.ok(decode(render({ language: "en", config: { ...config, installWarning: "not-in-applications" } }))
-      .includes("Move GravityPort to your Applications folder before copying, or this path will stop working."));
+      .includes("Move GravityPort to the Applications folder before copying the configuration. Otherwise the path in it will stop working."));
   });
 
   it("points a plain browser at the guide and renders nothing extra while loading", () => {
     const browser = decode(render({ config: null }));
     assert.ok(browser.includes(card.MCP_GUIDE_URL));
-    assert.ok(browser.includes("从源码运行时的配置方法见使用指南。"));
+    assert.ok(browser.includes("当前环境无法自动生成配置，配置方法见使用指南。"));
     assert.ok(!browser.includes("<pre"));
     const loading = decode(render({ config: undefined }));
     assert.ok(!loading.includes("<pre"));

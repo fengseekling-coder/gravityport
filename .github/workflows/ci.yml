@@ -8,15 +8,38 @@ on:
   push:
     branches: [main]
 
+# The verify job only reads the checkout: no job here publishes, deploys, or
+# touches anything, so the workflow token stays read-only (352 建5).
+permissions:
+  contents: read
+
+# A new push to the same pull request supersedes its previous run. Main
+# pushes share the group but are not cancelled: cancel-in-progress only
+# turns on for pull_request events (352 建5).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Green runs land at ~3.5 min (run 41492235009: 3m34s); 15 leaves >4x
+    # headroom and still bounds a hung install or test run (352 建5).
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Cache Electron binaries
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
       - run: npm ci
       - run: npm run lint
       - run: npm run check

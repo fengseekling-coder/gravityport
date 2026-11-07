@@ -179,7 +179,7 @@ function pageSource(config) {
 
       const toast = await waitFor(() => {
         const text = document.querySelector('.toast')?.textContent || '';
-        return text.includes('已把 1 个素材移到堆叠「乙」') ? text : null;
+        return text.includes('已将 1 个素材移到堆叠「乙」') ? text : null;
       }, 'toast indicating moved 1 asset to stack 乙');
 
       // Check no English error on page
@@ -226,7 +226,7 @@ function pageSource(config) {
 
       const toast = await waitFor(() => {
         const text = document.querySelector('.toast')?.textContent || '';
-        return text.includes('已堆叠 2 项素材') ? text : null;
+        return text.includes('已堆叠 2 个素材') ? text : null;
       }, 'toast indicating 2 assets stacked');
 
       // Verify A lost a1
@@ -260,7 +260,7 @@ function pageSource(config) {
 
       await waitFor(() => {
         const text = document.querySelector('.toast')?.textContent || '';
-        return text.includes('已把 1 个素材移到堆叠「乙」') ? text : null;
+        return text.includes('已将 1 个素材移到堆叠「乙」') ? text : null;
       }, 'toast indicating moved to stack 乙');
 
       // Stack C should be dissolved (API returns 404 for stackCId)
@@ -315,8 +315,8 @@ function pageSource(config) {
 
       const toast = await waitFor(() => {
         const text = document.querySelector('.toast')?.textContent || '';
-        return text.includes('已向堆叠加入 1 项素材') ? text : null;
-      }, 'toast indicating 已向堆叠加入 1 项素材');
+        return text.includes('已将 1 个素材移到堆叠') ? text : null;
+      }, 'toast indicating 已将 1 个素材移到堆叠');
 
       // Check B has [b1, b2, q]
       await waitFor(async () => {

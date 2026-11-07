@@ -255,13 +255,13 @@ describe("promptNotice", () => {
       source: { type: "web-jimeng", provider: "jimeng", prompt_source: promptSource, prompt_status: promptStatus },
     });
     assert.deepEqual(inspectorInfoModule.promptNotice(asset("jimeng-submitted-prompt")), {
-      key: "jimengSubmittedPrompt", text: "即梦按原话提交，没有返回改写版",
+      key: "jimengSubmittedPrompt", text: "即梦按输入原文提交，未返回改写版本",
     });
     assert.deepEqual(inspectorInfoModule.promptNotice(asset("jimeng-agent-prompt", "generation-tool-prompt")), {
-      key: "jimengAgentPrompt", text: "即梦智能体交给模型的提示词",
+      key: "jimengAgentPrompt", text: "即梦智能体提交给模型的提示词",
     });
     assert.deepEqual(inspectorInfoModule.promptNotice(asset("")), {
-      key: "jimengVisiblePromptUnverified", text: "即梦页面可见提示词（未验证为实际生图提示词）",
+      key: "jimengVisiblePromptUnverified", text: "即梦页面显示的提示词，未验证为实际生成所用",
     });
     assert.equal(inspectorInfoModule.promptNotice({
       ...asset("jimeng-agent-prompt", "generation-tool-prompt"),
@@ -276,7 +276,7 @@ describe("promptNotice", () => {
     const result = inspectorInfoModule.promptNotice(asset);
     assert.notEqual(result, null);
     assert.equal(result.key, "webPromptUnavailable");
-    assert.equal(result.text, "网页来源未暴露原始生图提示词");
+    assert.equal(result.text, "该网页未提供原始提示词");
   });
 
   it("returns geminiVisibleUserPromptUnverified for Gemini provider-visible prompt", () => {

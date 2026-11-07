@@ -200,8 +200,8 @@ function versionHistorySource(config) {
       .find((heading) => heading.querySelector('span')?.textContent === '版本树');
     const roundsBadge = treeHeading().querySelector('.settings-badge')?.textContent || '';
 
-    // 查看 expands to every captured image of the conversation (4).
-    Array.from(treeHeading().querySelectorAll('.section-action')).find((button) => button.textContent.trim() === '查看').click();
+    // 展开 expands to every captured image of the conversation (4).
+    Array.from(treeHeading().querySelectorAll('.section-action')).find((button) => button.textContent.trim() === '展开').click();
     await waitFor(() => treeList().querySelectorAll('.related').length === 4, '版本树 expanded shows all 4 images');
     const roundsExpandedRows = treeList().querySelectorAll('.related').length;
 

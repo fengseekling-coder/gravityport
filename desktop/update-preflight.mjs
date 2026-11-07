@@ -62,7 +62,7 @@ export async function checkWindowsInstallDirWritable({
 function installDirPrefix(installDir) {
   const trimmed = String(installDir).replace(/[\\/]+$/, "");
   if (!/[\\/]/.test(trimmed)) {
-    throw new Error(`MOSA update requires a subdirectory install, not a drive root: ${installDir}`);
+    throw new Error(`GravityPort update requires a subdirectory install, not a drive root: ${installDir}`);
   }
   return `${trimmed}\\`;
 }

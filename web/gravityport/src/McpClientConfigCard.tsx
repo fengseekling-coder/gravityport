@@ -19,9 +19,9 @@ export const MCP_CLIENTS: ReadonlyArray<{ id: McpClientId; label: string; hint: 
   {
     id: "claudeDesktop",
     label: "Claude Desktop",
-    hint: "粘贴到 claude_desktop_config.json（Claude 设置 → 开发者 → 编辑配置）。里面已有 mcpServers 的，只把 gravityport 这一段并进去。",
+    hint: "粘贴到 claude_desktop_config.json（Claude 设置 > 开发者 > 编辑配置）。若文件中已有 mcpServers，仅合并 gravityport 这一段。",
   },
-  { id: "claudeCode", label: "Claude Code", hint: "在终端里运行这条命令。" },
+  { id: "claudeCode", label: "Claude Code", hint: "在终端中运行此命令。" },
   { id: "codex", label: "Codex", hint: "粘贴到 ~/.codex/config.toml 末尾。" },
 ]
 
@@ -48,14 +48,15 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
     <section className="mcp-config-card" aria-label={t("AI 助手（MCP）")}>
       <div className="mcp-config-copy">
         <strong>{t("AI 助手（MCP）")}</strong>
-        <p>{t("让 Claude、Codex 等 AI 助手直接搜索、查看和记录你的素材库。复制下面的配置，粘贴到对应 AI 助手里，再重启它。")}</p>
+        <p>{t("让 Claude、Codex 等 AI 助手直接管理你的素材库资产。将下方配置粘贴到 AI 助手中，然后重启该助手。")}</p>
       </div>
       {config === undefined ? null : config?.available ? (
         <>
           {config.installWarning === "not-in-applications" ? (
-            <p className="mcp-config-warning" role="alert">{t("请先把 GravityPort 拖进「应用程序」文件夹再复制，不然这段路径会失效。")}</p>
+            <p className="mcp-config-warning" role="alert">{t("请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。")}</p>
           ) : null}
-          <div className="segmented mcp-config-clients" role="group" aria-label={t("AI 助手（MCP）")}>
+          {/* 任务 359（SET-09c）：按钮组读屏名与卡片标题区分开。 */}
+          <div className="segmented mcp-config-clients" role="group" aria-label={t("AI 助手")}>
             {MCP_CLIENTS.map((entry) => (
               <button
                 key={entry.id}
@@ -75,11 +76,11 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
               {copied ? t("已复制") : t("复制")}
             </button>
           </div>
-          <p className="mcp-config-note">{t("挪了素材库也不用改配置，重启 AI 助手就会跟过去。GravityPort 不用开着。")}</p>
+          <p className="mcp-config-note">{t("更改存储位置后无需修改此配置，重启 AI 助手即可。GravityPort 无需保持打开。")}</p>
         </>
       ) : (
         <p className="mcp-config-note">
-          <a href={MCP_GUIDE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, MCP_GUIDE_URL)}>{t("从源码运行时的配置方法见使用指南。")}</a>
+          <a href={MCP_GUIDE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, MCP_GUIDE_URL)}>{t("当前环境无法自动生成配置，配置方法见使用指南。")}</a>
         </p>
       )}
     </section>

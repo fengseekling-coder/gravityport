@@ -272,7 +272,7 @@ export function windowsMoveDirectoryRetryScript() {
         $hresultHex = if ($exception) { "0x" + $exception.HResult.ToString("X8") } else { "unknown" }
         $nativeCode = if ($exception) { $exception.HResult -band 0xffff } else { "unknown" }
         $errorId = [string]$errorRecord.FullyQualifiedErrorId
-        $moveDiagnostic = "MOSA directory move failed: source=$LiteralPath; destination=$Destination; attempt=$attempt/$MaxAttempts; exceptionType=$exceptionType; hresult=$hresultHex; nativeCode=$nativeCode; errorId=$errorId"
+        $moveDiagnostic = "GravityPort directory move failed: source=$LiteralPath; destination=$Destination; attempt=$attempt/$MaxAttempts; exceptionType=$exceptionType; hresult=$hresultHex; nativeCode=$nativeCode; errorId=$errorId"
         if ($script:MosaLastMoveDiagnostic) {
           $script:MosaLastMoveDiagnostic += [Environment]::NewLine + $moveDiagnostic
         } else {
@@ -299,7 +299,7 @@ export function windowsInstallProcessDrainScript() {
     # A drive-root install (e.g. C:\) would make the prefix below match every
     # process on that drive and abort valid updates; MOSA ships as a
     # subdirectory layout, so fail closed with guidance instead.
-    throw "MOSA update requires a subdirectory install, not a drive root: $InstallDir"
+    throw "GravityPort update requires a subdirectory install, not a drive root: $InstallDir"
   }
   $prefix = $trimmed + [IO.Path]::DirectorySeparatorChar
   for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
@@ -310,7 +310,7 @@ export function windowsInstallProcessDrainScript() {
     if ($remaining.Count -eq 0) { return }
     if ($attempt -ge $MaxAttempts) {
       $ids = ($remaining | ForEach-Object { [string]$_.ProcessId }) -join ','
-      throw "MOSA processes still hold the install directory after shutdown: $ids"
+      throw "GravityPort processes still hold the install directory after shutdown: $ids"
     }
     Start-Sleep -Milliseconds 250
   }
@@ -438,23 +438,23 @@ try {
     $payloadDir = $nestedPayloadDir
     $payloadExe = $nestedPayloadExe
   } else {
-    throw "Downloaded MOSA package does not contain the expected executable."
+    throw "Downloaded GravityPort package does not contain the expected executable."
   }
   if ($ExpectedDistribution -eq 'production') {
     $signableFiles = @(Get-ChildItem -LiteralPath $payloadDir -Recurse -File | Where-Object { $_.Extension -in @('.exe', '.dll', '.node') })
     if ($signableFiles.Count -eq 0) {
-      throw "Downloaded MOSA package contains no signable executable payload."
+      throw "Downloaded GravityPort package contains no signable executable payload."
     }
     foreach ($file in $signableFiles) {
       $payloadSignature = Get-MosaSignatureInfo -LiteralPath $file.FullName
       if ($payloadSignature.Status -ne 'Valid' -or -not $payloadSignature.Thumbprint) {
-        throw "Downloaded MOSA payload contains an invalid Authenticode signature: $($file.FullName)"
+        throw "Downloaded GravityPort payload contains an invalid Authenticode signature: $($file.FullName)"
       }
       if ($payloadSignature.Thumbprint -ne $ExpectedSignerThumbprint) {
-        throw "Downloaded MOSA payload is signed by a different publisher: $($file.FullName)"
+        throw "Downloaded GravityPort payload is signed by a different publisher: $($file.FullName)"
       }
       if ($oldSignerSubject -and ([string]$payloadSignature.Subject -ne $oldSignerSubject)) {
-        throw "Downloaded MOSA payload publisher changed between releases: $($file.FullName)"
+        throw "Downloaded GravityPort payload publisher changed between releases: $($file.FullName)"
       }
     }
   }
@@ -475,7 +475,7 @@ try {
     Move-MosaDirectoryWithRetry -LiteralPath $payloadDir -Destination $InstallDir
     $newExe = Join-Path $InstallDir $CurrentExeName
     if (-not (Test-Path -LiteralPath $newExe -PathType Leaf)) {
-      throw "Updated MOSA executable is missing after replacement."
+      throw "Updated GravityPort executable is missing after replacement."
     }
     $script:MosaStep = "NEW_VERSION_FAILED"
     Remove-Item -LiteralPath $ReadyFile -Force -ErrorAction SilentlyContinue
@@ -491,22 +491,22 @@ try {
       if ($newProcess.HasExited) {
         # It may have written the ready file just before exiting.
         if (Test-Path -LiteralPath $ReadyFile -PathType Leaf) { break }
-        throw "Updated MOSA exited before reporting readiness."
+        throw "Updated GravityPort exited before reporting readiness."
       }
       Start-Sleep -Milliseconds 250
     }
     if (-not (Test-Path -LiteralPath $ReadyFile -PathType Leaf)) {
-      throw "Updated MOSA did not report readiness before the rollback deadline."
+      throw "Updated GravityPort did not report readiness before the rollback deadline."
     }
     $ready = Get-Content -LiteralPath $ReadyFile -Raw | ConvertFrom-Json
     if ([string]$ready.version -ne $ExpectedVersion -or
         [string]$ready.gitSha -ne $ExpectedGitSha -or
         [string]$ready.uiFingerprint -ne $ExpectedUiFingerprint -or
         [string]$ready.runtimeFingerprint -ne $ExpectedRuntimeFingerprint) {
-      throw "Updated MOSA readiness identity does not match the release manifest."
+      throw "Updated GravityPort readiness identity does not match the release manifest."
     }
     if ([string]$ready.distribution -ne $ExpectedDistribution) {
-      throw "Updated MOSA distribution does not match the release manifest."
+      throw "Updated GravityPort distribution does not match the release manifest."
     }
     # Keep $backupDir parked inside $transactionRoot. The updated app sweeps
     # stale .MOSA-update-* directories on a later boot, so a crash shortly

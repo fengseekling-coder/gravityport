@@ -67,10 +67,10 @@ function multiSelectSource() {
 
     // The context menu acts on the whole selection: one confirm, two rows trash.
     await contextMenuOn(plain()[1]);
-    menuLabel('移至回收站').click();
+    menuLabel('移到回收站').click();
     await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'batch delete confirm');
     const confirm = Array.from(document.querySelectorAll('[role="alertdialog"] button'))
-      .find((button) => button.textContent.trim() === '移至回收站');
+      .find((button) => button.textContent.trim() === '移到回收站');
     confirm.click();
     await waitFor(() => navSmall('回收站') === '2', 'batch trash count');
     const batchTrashMoved = Number(navSmall('回收站'));

@@ -18,6 +18,10 @@ test("allowlisted destinations open without a dialog", () => {
     "https://github.com/fengseekling-coder/gravityport/blob/main/docs/guide.zh-CN.md",
     "https://github.com/fengseekling-coder/gravityport/blob/main/docs/guide.zh-CN.md#mcp-与接口",
     "https://github.com:443/fengseekling-coder/gravityport",
+    // 任务 351:the one Discord invite linked from the About page. pathPrefix
+    // semantics (same as the GitHub entry) keep sub-paths open too.
+    "https://discord.gg/rArXAShSkQ",
+    "https://discord.gg/rArXAShSkQ/extra",
   ];
   for (const url of allowed) {
     const decision = externalLinkDecision(url);
@@ -37,6 +41,10 @@ test("everything else http/https asks for confirmation, including http to allowl
     "https://github.com/fengseekling-coder/other-repo",
     "https://gravityport.azhuilab.com:8443/",
     "https://example.com/",
+    // 任务 351:only the one invite code is allowlisted — every other Discord
+    // URL (other invites, other Discord hosts) still asks for confirmation.
+    "https://discord.gg/OtherInviteCode",
+    "https://discord.com/invite/rArXAShSkQ",
   ];
   for (const url of confirmed) {
     const decision = externalLinkDecision(url);

@@ -37,6 +37,9 @@ export interface ImportProgress {
 export interface ImportError {
   fileName: string
   reason: string
+  /** 任务 359：服务端/客户端错误码（有的话）。界面只把能按码翻译的原因填进
+   * {reason}，翻译不了的（纯英文服务端原文）按「缺省只显示前半句」丢弃。 */
+  code: string
 }
 
 /** A dropped file whose bytes the library already holds outside Trash (task 291). */
@@ -213,6 +216,7 @@ export async function runImport(
         result.errors.push({
           fileName: (r.error as Error & { fileName?: string }).fileName || batchFiles[i].name,
           reason: r.error instanceof Error ? r.error.message : String(r.error),
+          code: (r.error as { code?: string }).code || "",
         })
       }
     }
@@ -251,6 +255,7 @@ export async function runImport(
               skipped?: "already-in-library"
               existingAsset?: ImportExistingLocation
               error?: string
+              code?: string
             }>
         }
         const importResult = await requestJson<ImportBatchResponse>("/api/assets/import-batch", {
@@ -281,7 +286,11 @@ export async function runImport(
             failedPaths.push(stagedItems[i].path)
             result.errors.push({
               fileName: stagedItems[i].file.name,
-              reason: itemResult?.error || "Import failed",
+              reason: itemResult?.error || "",
+              // 任务 366：服务端逐条带回的错误码（如 IMAGE_CONTENT_NOT_MEDIA、
+              // SOURCE_CHANGED_DURING_IMPORT）要留下来走 messageForErrorCode；
+              // 没有码时维持旧约定：有英文原文给空码，啥都没有归 IMPORT_FAILED。
+              code: itemResult?.code || (itemResult?.error ? "" : "IMPORT_FAILED"),
             })
             batchFailed += 1
           }
@@ -301,6 +310,7 @@ export async function runImport(
           result.errors.push({
             fileName: item.file.name,
             reason: error instanceof Error ? error.message : String(error),
+            code: (error as { code?: string }).code || "",
           })
         }
         await cleanupPaths(stagedItems.map((s) => s.path))

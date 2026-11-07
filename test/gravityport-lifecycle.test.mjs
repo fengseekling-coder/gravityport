@@ -290,7 +290,9 @@ describe("buildUpdateText", () => {
     for (const state of states) {
       const text = `${state.badgeText} ${state.buttonLabel || ""} ${state.secondaryLabel || ""}`;
       assert.doesNotMatch(text, /\{[^}]+\}/);
-      assert.doesNotMatch(text, /[a-z][A-Z][a-zA-Z]+/);
+      // 任务 359（ABOUT-04b）：英文以产品名作主语（"GravityPort is up to
+      // date"），驼峰断言只拦「键漏翻」，不再拦含空格的自然句。
+      assert.doesNotMatch(text.replace(/GravityPort/g, ""), /\b[A-Z][a-z]+[A-Z][a-zA-Z]+\b/);
     }
   });
 
@@ -309,7 +311,8 @@ describe("buildUpdateText", () => {
 
   it("maps current, unavailable, error and unknown version text", () => {
     assert.equal(buildUpdateText("1.2.3", { phase: "current" }, 0, zh).badgeText, "v1.2.3 · 已是最新版本");
-    assert.match(buildUpdateText("1.2.3", { phase: "unavailable", reason: "install-location-unsupported" }, 0, zh).badgeText, /拖进/);
+    // 任务 359（ABOUT-09a）：『』改「」，App 写 GravityPort、动作写「移到」。
+    assert.match(buildUpdateText("1.2.3", { phase: "unavailable", reason: "install-location-unsupported" }, 0, zh).badgeText, /请先将 GravityPort 移到「应用程序」文件夹，再更新/);
     assert.equal(buildUpdateText("1.2.3", { phase: "error" }, 0, zh).buttonLabel, "检查更新");
     assert.equal(buildUpdateText("", { phase: "idle" }, 0, en).badgeText, "Version information unavailable");
   });
@@ -347,7 +350,7 @@ describe("createReadyGate", () => {
 
 describe("fill", () => {
   it("fills any named placeholder present in the values, including {count}", () => {
-    assert.equal(lifecycle.fill("已选 {count} 项", { count: 3 }), "已选 3 项");
+    assert.equal(lifecycle.fill("已选择 {count} 项", { count: 3 }), "已选择 3 项");
     assert.equal(lifecycle.fill("正在导入 {completed}/{total}", { completed: 2, total: 40 }), "正在导入 2/40");
     assert.equal(lifecycle.fill("可更新至 v{version}", { version: "1.2.3" }), "可更新至 v1.2.3");
   });
@@ -357,6 +360,6 @@ describe("fill", () => {
   });
 
   it("leaves placeholders without a value visible", () => {
-    assert.equal(lifecycle.fill("{count} 天后删除", {}), "{count} 天后删除");
+    assert.equal(lifecycle.fill("剩余 {count} 天", {}), "剩余 {count} 天");
   });
 });

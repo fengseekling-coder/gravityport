@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { deferTestPathRemoval } from "./test-cleanup.mjs";
+import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { deferTestPathRemoval, removeTestPath } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -24,11 +24,16 @@ import {
   desktopPackagingNodeError,
 } from "../scripts/check-desktop-package-node.mjs";
 import {
+  requiresMacDeveloperIdSigning,
+  requiresPlatformSigning,
+} from "../lib/release-distribution.mjs";
+import {
   MOSA_MAC_BUNDLE_ID,
   assertMacAppMetadata,
   macDmgArtifactName,
   macDmgOutputPath,
   macDmgReleaseCredentials,
+  makeMacosDmg,
 } from "../scripts/make-macos-dmg.mjs";
 
 const isIgnored = (path) => packageIgnorePatterns.some((pattern) => pattern.test(path));
@@ -116,15 +121,95 @@ test("macOS release DMG credentials fail closed", () => {
   assert.throws(() => macDmgReleaseCredentials({}), /MOSA DMG release requires/);
   assert.deepEqual(macDmgReleaseCredentials({
     MOSA_MACOS_SIGN_IDENTITY: "Developer ID Application: Example (TEAM123456)",
-    APPLE_ID: "release@example.com",
-    APPLE_APP_SPECIFIC_PASSWORD: "app-password",
+    MOSA_MACOS_SIGN_KEYCHAIN: "/Library/Keychains/custom.keychain",
     APPLE_TEAM_ID: "TEAM123456",
+    MOSA_NOTARY_KEYCHAIN_PROFILE: "notary-profile",
   }), {
     identity: "Developer ID Application: Example (TEAM123456)",
-    appleId: "release@example.com",
-    appleIdPassword: "app-password",
+    keychain: "/Library/Keychains/custom.keychain",
     teamId: "TEAM123456",
+    notaryProfile: "notary-profile",
   });
+});
+
+// The DMG script is macOS-only; platform is injected so Linux CI still checks the
+// notarytool arguments. Windows runners cannot create the /Applications symlink
+// the fake hdiutil mount needs, so the test skips there.
+test("make-macos-dmg notarizes with --keychain-profile and never passes --password or --apple-id", { skip: process.platform === "win32" && "needs POSIX symlinks for the fake DMG mount" }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-dmg-test-"));
+  try {
+    await writeFile(join(root, "package.json"), JSON.stringify({ version: "0.3.0" }));
+    const appDir = join(root, "out", "GravityPort-darwin-arm64", "GravityPort.app");
+    await mkdir(join(appDir, "Contents", "MacOS"), { recursive: true });
+    await writeFile(join(appDir, "Contents", "MacOS", "GravityPort"), "fake-exe");
+    await writeFile(join(appDir, "Contents", "Info.plist"), "fake-plist");
+
+    const commands = [];
+    const runner = async (cmd, args) => {
+      commands.push({ cmd, args });
+      if (cmd === "/usr/bin/plutil") {
+        const key = args[1];
+        if (key === "CFBundleIdentifier") return { stdout: "com.azhuilab.mosa\n", stderr: "" };
+        if (key === "CFBundleName") return { stdout: "GravityPort\n", stderr: "" };
+        if (key === "CFBundleExecutable") return { stdout: "GravityPort\n", stderr: "" };
+        if (key === "CFBundleShortVersionString") return { stdout: "0.3.0\n", stderr: "" };
+      }
+      if (cmd === "/usr/bin/codesign" && args.includes("-dv")) {
+        return {
+          stdout: "",
+          stderr: [
+            "Identifier=com.azhuilab.mosa",
+            "CodeDirectory v=20500 size=500 flags=0x10000(runtime) hashes=10+7 location=embedded",
+            "Authority=Developer ID Application: LIANGRUI FENG (B5ZJT8TRPN)",
+            "TeamIdentifier=B5ZJT8TRPN",
+          ].join("\n"),
+        };
+      }
+      if (cmd === "/usr/bin/hdiutil" && args[0] === "create") {
+        await writeFile(args.at(-1), "fake-dmg");
+      }
+      if (cmd === "/usr/bin/hdiutil" && args[0] === "attach") {
+        const mountPoint = args[args.indexOf("-mountpoint") + 1];
+        const mountedApp = join(mountPoint, "GravityPort.app");
+        await mkdir(join(mountedApp, "Contents"), { recursive: true });
+        await writeFile(join(mountedApp, "Contents", "Info.plist"), "fake-plist");
+        await symlink("/Applications", join(mountPoint, "Applications"));
+      }
+      return { stdout: "", stderr: "" };
+    };
+
+    const env = {
+      MOSA_RELEASE_DISTRIBUTION: "preview",
+      MOSA_MACOS_SIGN_IDENTITY: "Developer ID Application: LIANGRUI FENG (B5ZJT8TRPN)",
+      MOSA_MACOS_SIGN_KEYCHAIN: "/Library/Keychains/custom.keychain",
+      APPLE_TEAM_ID: "B5ZJT8TRPN",
+      MOSA_NOTARY_KEYCHAIN_PROFILE: "gravityport-notary",
+    };
+
+    await makeMacosDmg({
+      rootDir: root,
+      outDir: "out",
+      distribution: "preview",
+      env,
+      runner,
+      platform: "darwin",
+    });
+
+    const notaryCall = commands.find((c) => c.args.includes("notarytool"));
+    assert.ok(notaryCall, "notarytool must be called");
+    assert.ok(notaryCall.args.includes("--keychain-profile"));
+    assert.equal(notaryCall.args[notaryCall.args.indexOf("--keychain-profile") + 1], "gravityport-notary");
+    assert.ok(!notaryCall.args.includes("--password"), "notarytool must not receive --password");
+    assert.ok(!notaryCall.args.includes("--apple-id"), "notarytool must not receive --apple-id");
+    assert.ok(!notaryCall.args.includes("--team-id"), "notarytool must not receive --team-id when using keychain-profile");
+
+    const codesignDmgCall = commands.find((c) => c.cmd === "/usr/bin/codesign" && c.args.some((a) => a.endsWith(".dmg")));
+    assert.ok(codesignDmgCall, "codesign must be called for dmg");
+    assert.ok(codesignDmgCall.args.includes("--keychain"));
+    assert.equal(codesignDmgCall.args[codesignDmgCall.args.indexOf("--keychain") + 1], "/Library/Keychains/custom.keychain");
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
 });
 
 test("desktop packaging target resolution supports only the approved macOS and Windows targets", () => {
@@ -223,51 +308,66 @@ test("desktop icon source generates valid macOS and Windows icon containers", as
   assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
 });
 
+test("release distribution signing requirements differentiate mac and platform defaults", () => {
+  assert.equal(requiresMacDeveloperIdSigning("development"), false);
+  assert.equal(requiresMacDeveloperIdSigning("preview"), true);
+  assert.equal(requiresMacDeveloperIdSigning("production"), true);
+  assert.equal(requiresPlatformSigning("development"), false);
+  assert.equal(requiresPlatformSigning("preview"), false);
+  assert.equal(requiresPlatformSigning("production"), true);
+});
+
 test("release packaging fails closed when Apple signing credentials are incomplete", () => {
   assert.throws(
-    () => macReleasePackagingConfig({ MOSA_RELEASE_DISTRIBUTION: "production" }),
-    /MOSA release build requires: MOSA_MACOS_SIGN_IDENTITY, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID/,
+    () => macReleasePackagingConfig({ MOSA_RELEASE_DISTRIBUTION: "preview" }),
+    /^Error: MOSA release build requires: MOSA_MACOS_SIGN_IDENTITY, MOSA_MACOS_SIGN_KEYCHAIN, APPLE_TEAM_ID, MOSA_NOTARY_KEYCHAIN_PROFILE$/,
   );
   assert.throws(
     () => macReleasePackagingConfig({
-      MOSA_RELEASE_DISTRIBUTION: "production",
+      MOSA_RELEASE_DISTRIBUTION: "preview",
       MOSA_MACOS_SIGN_IDENTITY: "Developer ID Application: Example",
-      APPLE_ID: "release@example.com",
+      MOSA_MACOS_SIGN_KEYCHAIN: "/path/to/keychain",
       APPLE_TEAM_ID: "TEAM123456",
     }),
-    /APPLE_APP_SPECIFIC_PASSWORD/,
+    /^Error: MOSA release build requires: MOSA_NOTARY_KEYCHAIN_PROFILE$/,
+  );
+  assert.throws(
+    () => macReleasePackagingConfig({ MOSA_RELEASE_DISTRIBUTION: "production" }),
+    /^Error: MOSA release build requires: MOSA_MACOS_SIGN_IDENTITY, MOSA_MACOS_SIGN_KEYCHAIN, APPLE_TEAM_ID, MOSA_NOTARY_KEYCHAIN_PROFILE$/,
   );
 });
 
-test("release packaging enables Developer ID hardened signing and notarization", () => {
-  const config = macReleasePackagingConfig({
-    MOSA_RELEASE_DISTRIBUTION: "production",
-    MOSA_MACOS_SIGN_IDENTITY: "Developer ID Application: Example (TEAM123456)",
-    APPLE_ID: "release@example.com",
-    APPLE_APP_SPECIFIC_PASSWORD: "app-specific-password",
-    APPLE_TEAM_ID: "TEAM123456",
-  });
+test("release packaging enables Developer ID hardened signing and notarization in preview and production", () => {
+  for (const distribution of ["preview", "production"]) {
+    const config = macReleasePackagingConfig({
+      MOSA_RELEASE_DISTRIBUTION: distribution,
+      MOSA_MACOS_SIGN_IDENTITY: "Developer ID Application: Example (TEAM123456)",
+      MOSA_MACOS_SIGN_KEYCHAIN: "/Users/azhuilab/Library/Keychains/gravityport-signing.keychain-db",
+      APPLE_TEAM_ID: "TEAM123456",
+      MOSA_NOTARY_KEYCHAIN_PROFILE: "gravityport-notary",
+    });
 
-  assert.equal(config.osxSign.identity, "Developer ID Application: Example (TEAM123456)");
-  assert.equal(config.osxSign.identityValidation, true);
-  assert.equal(config.osxSign.preAutoEntitlements, true);
-  assert.equal(config.osxSign.strictVerify, true);
-  assert.equal(config.osxSign.continueOnError, false);
-  assert.deepEqual(config.osxSign.optionsForFile("/tmp/MOSA.app"), { hardenedRuntime: true });
-  assert.deepEqual(config.osxNotarize, {
-    appleId: "release@example.com",
-    appleIdPassword: "app-specific-password",
-    teamId: "TEAM123456",
-  });
-  assert.equal("tool" in config.osxNotarize, false, "Forge uses the current notarization credential shape");
+    assert.equal(config.osxSign.identity, "Developer ID Application: Example (TEAM123456)");
+    assert.equal(config.osxSign.keychain, "/Users/azhuilab/Library/Keychains/gravityport-signing.keychain-db");
+    assert.equal(config.osxSign.identityValidation, true);
+    assert.equal(config.osxSign.preAutoEntitlements, false);
+    assert.equal(config.osxSign.strictVerify, true);
+    assert.equal(config.osxSign.continueOnError, false);
+    const fileOpts = config.osxSign.optionsForFile("/tmp/MOSA.app");
+    assert.equal(fileOpts.hardenedRuntime, true);
+    assert.ok(fileOpts.entitlements.replaceAll("\\", "/").endsWith("desktop/entitlements.mac.plist"));
+    assert.deepEqual(config.osxNotarize, {
+      keychainProfile: "gravityport-notary",
+    });
+  }
 });
 
-test("preview packaging never requires platform signing credentials", () => {
-  const mac = macReleasePackagingConfig({ MOSA_RELEASE_DISTRIBUTION: "preview" });
+test("development packaging uses ad-hoc signing and never requires Apple credentials", () => {
+  const mac = macReleasePackagingConfig({ MOSA_RELEASE_DISTRIBUTION: "development" });
   assert.equal(mac.osxSign.identity, "-");
   assert.equal(mac.osxSign.identityValidation, false);
   assert.equal("osxNotarize" in mac, false);
-  assert.deepEqual(windowsReleasePackagingConfig({ MOSA_RELEASE_DISTRIBUTION: "preview" }), {});
+  assert.deepEqual(windowsReleasePackagingConfig({ MOSA_RELEASE_DISTRIBUTION: "development" }), {});
 });
 
 test("desktop package excludes every non-runtime project surface", () => {
@@ -472,7 +572,11 @@ test("keeps the desktop window single-instance and sandboxed", async () => {
   const source = await readFile(resolve(import.meta.dirname, "..", "desktop", "main.mjs"), "utf8");
   assert.match(source, /app\.requestSingleInstanceLock\(\)/);
   assert.match(source, /desktopPlatformAdapter\(\)/);
-  assert.match(source, /app\.on\("window-all-closed", \(\) => \{[\s\S]*?if \(runtimeRecoveryInProgress\) return;[\s\S]*?desktopPlatform\.onWindowAllClosed\(app\);[\s\S]*?\}\)/,
+  // 任务 367：判定收进 desktop/startup-failure-flow.mjs 的
+  // shouldHandleWindowAllClosed（runtime 恢复中、启动失败框弹着都不退出，
+  // 单测在那里）——这里钉 main.mjs 把两个豁免一起传给它，内部 runtime
+  // 恢复仍不能在 Windows 上伪装成用户退出。
+  assert.match(source, /app\.on\("window-all-closed", \(\) => \{[\s\S]*?shouldHandleWindowAllClosed\(\{ runtimeRecoveryInProgress, startupFailureDialogOpen \}\)[\s\S]*?desktopPlatform\.onWindowAllClosed\(app\);[\s\S]*?\}\)/,
     "internal runtime recovery must not look like a user quit on Windows");
   assert.match(source, /\.\.\.desktopPlatform\.windowOptions\(\)/);
   assert.match(source, /desktopPlatform\.capabilities\.hideApplicationMenuBar/);

@@ -65,16 +65,16 @@ function emptySource() {
   return `(async () => {
     ${helpers}
     await waitFor(() => document.querySelector('.app'), 'app shell');
-    await waitFor(() => emptyText().includes('素材库还是空的'), 'the empty library guidance');
-    const library = emptyText().includes('把图片、视频或文件夹拖进窗口');
+    await waitFor(() => emptyText().includes('素材库中没有素材'), 'the empty library guidance');
+    const library = emptyText().includes('将图片、视频或文件夹拖到窗口中');
 
     (await waitFor(() => navButton('收藏'), 'favorites nav')).click();
-    await waitFor(() => emptyText().includes('还没有收藏'), 'the empty favorites guidance');
+    await waitFor(() => emptyText().includes('没有收藏的素材'), 'the empty favorites guidance');
     const favorites = true;
 
     (await waitFor(() => navButton('回收站'), 'trash nav')).click();
-    await waitFor(() => emptyText().includes('回收站是空的'), 'the empty trash guidance');
-    const trash = emptyText().includes('90 天');
+    await waitFor(() => emptyText().includes('回收站中没有素材'), 'the empty trash guidance');
+    const trash = emptyText().includes('保留 90 天');
     return { library, favorites, trash };
   })()`;
 }

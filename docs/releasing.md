@@ -8,9 +8,28 @@ Packaging names follow the `MOSA_RELEASE_PRODUCT` switch in `scripts/release-pro
 
 ## Distribution tracks
 
-Desktop publishing has two explicit distribution tracks. `desktop:release` is an alias for the macOS **Preview/RC** path: it still requires clean/tagged/remote Git provenance, a pinned Ed25519 release-manifest trust root, structural package verification, packaged smoke, and a valid macOS code signature, but ad-hoc signing is allowed and Apple Developer/notarization credentials are not required. `desktop:release:production` is the separate production path; it requires Developer ID signing, Hardened Runtime, notarization, stapling, and Gatekeeper acceptance before the update ZIP or DMG is accepted. On Windows, `desktop:release:windows` is the unsigned-capable Preview path (update ZIP plus installer), while `desktop:release:windows:production` requires Authenticode configuration, verifies every executable/native payload signer, and signs and verifies the installer too. `desktop:make*` remains the ordinary local-development packaging path.
+Desktop publishing has two explicit distribution tracks. `desktop:release` is an alias for the macOS **Preview/RC** path: it requires clean/tagged/remote Git provenance, a pinned Ed25519 release-manifest trust root, structural package verification, packaged smoke, and a valid macOS code signature. On macOS, release builds (both Preview and Production) require Developer ID signing, Hardened Runtime, notarization, stapling, and Gatekeeper acceptance before the update ZIP or DMG is accepted. Only development packaging (`desktop:package`, `desktop:make`) remains on the ad-hoc signing path without credential requirements. On Windows, `desktop:release:windows` is the unsigned-capable Preview path (update ZIP plus installer), while `desktop:release:windows:production` requires Authenticode configuration, verifies every executable/native payload signer, and signs and verifies the installer too. `desktop:make*` remains the ordinary local-development packaging path.
 
-Windows Preview builds may remain unsigned and SmartScreen may warn about an unknown publisher. Production builds require `MOSA_WINDOWS_SIGNER_THUMBPRINT` (use the 40-hex SHA-1 thumbprint; the release manifest accepts only that form) plus a supported signing source (`WINDOWS_CERTIFICATE_FILE` + `WINDOWS_CERTIFICATE_PASSWORD`, `WINDOWS_SIGN_WITH_PARAMS`, or `WINDOWS_SIGN_HOOK_MODULE_PATH`; `WINDOWS_SIGNTOOL_PATH` optionally points at a specific `signtool`). macOS Preview DMGs use the ad-hoc signing path and are not notarized; only `desktop:release:production` requires Apple Developer credentials: `MOSA_MACOS_SIGN_IDENTITY` (a Developer ID Application identity), `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. Background login launch remains separate release work.
+Windows Preview builds may remain unsigned and SmartScreen may warn about an unknown publisher. Production builds require `MOSA_WINDOWS_SIGNER_THUMBPRINT` (use the 40-hex SHA-1 thumbprint; the release manifest accepts only that form) plus a supported signing source (`WINDOWS_CERTIFICATE_FILE` + `WINDOWS_CERTIFICATE_PASSWORD`, `WINDOWS_SIGN_WITH_PARAMS`, or `WINDOWS_SIGN_HOOK_MODULE_PATH`; `WINDOWS_SIGNTOOL_PATH` optionally points at a specific `signtool`).
+
+### macOS Signing and Notarization Credentials
+
+A local signed test build (an untagged commit, for checking signing or notarization) does not go through `desktop:release:preview`, because the provenance check refuses an untagged commit and has no bypass. Run the steps after it by hand with the same environment: `MOSA_RELEASE_DISTRIBUTION=preview npm run build`, `MOSA_RELEASE_DISTRIBUTION=preview npx electron-forge package --platform darwin --arch arm64`, `npm run verify:desktop:package`, then `MOSA_RELEASE_DISTRIBUTION=preview node scripts/verify-macos-release.mjs --staple`. Never publish such a build.
+
+macOS release packaging (`desktop:release:preview` and `desktop:release:production`) requires four environment variables:
+
+| Variable | Example / Description |
+|---|---|
+| `MOSA_MACOS_SIGN_IDENTITY` | `Developer ID Application: LIANGRUI FENG (B5ZJT8TRPN)` |
+| `MOSA_MACOS_SIGN_KEYCHAIN` | Path to the dedicated signing keychain, e.g. `/Users/azhuilab/Library/Keychains/gravityport-signing.keychain-db` |
+| `APPLE_TEAM_ID` | `B5ZJT8TRPN` |
+| `MOSA_NOTARY_KEYCHAIN_PROFILE` | Name of the stored notarytool keychain profile, e.g. `gravityport-notary` |
+
+**Keychain prerequisites:** Passwords and secrets must never enter command lines, environment variables, or repository files.
+- **Code Signing Keychain:** The Developer ID certificate and private key live in a dedicated packaging keychain (e.g. `gravityport-signing.keychain-db`), placed in the user's keychain search list and configured not to lock automatically, allowing background non-interactive codesigning without UI prompts.
+- **Notary Profile:** Apple notarization credentials are saved in the login keychain using `xcrun notarytool store-credentials --keychain-profile gravityport-notary`. Forge's `@electron/notarize` and `scripts/make-macos-dmg.mjs` pass `--keychain-profile` directly without exposing Apple account passwords.
+- **Notarization Duration:** Apple's notary service typically processes submissions within 2 to 10 minutes, but new developer accounts or busy Apple queues may take an hour or more. DMG and package submissions wait with `--timeout 6h` in the background; a single package must never be resubmitted while its audit remains In Progress.
+
 
 ## In-app updates
 

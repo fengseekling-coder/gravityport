@@ -120,7 +120,7 @@ function selectionScopeSource(config) {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
     await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'delete confirm opens');
     const confirm = Array.from(document.querySelectorAll('[role="alertdialog"] button'))
-      .find((button) => button.textContent.trim() === '移至回收站');
+      .find((button) => button.textContent.trim() === '移到回收站');
     confirm.click();
     await waitFor(() => !document.querySelector('[role="alertdialog"]')
       && plain().length === 0, 'needle left the narrowed view');

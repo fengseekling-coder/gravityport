@@ -128,8 +128,7 @@ class McpServerProcess {
     this.stderr = "";
     this.nextId = 1;
     // Ids this client sent; waitForResponse only ever matches these, so a
-    // server-initiated request (elicitation, id "gp-elicit-…") can never be
-    // mistaken for the answer to a client request.
+    // server-initiated request can never be mistaken for the answer to a client request.
     this.ownIds = new Set();
     let buffer = "";
     child.stdout.setEncoding("utf8");
@@ -165,7 +164,7 @@ class McpServerProcess {
     this.child.stdin.write(text);
   }
 
-  /** Reply to a server-initiated request (elicitation) like a real client. */
+  /** Reply to a server-initiated request like a real client. */
   respond(id, result) {
     this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
   }
@@ -204,8 +203,8 @@ class McpServerProcess {
   }
 
   /**
-   * Wait for a server-initiated request (a message carrying a method, such as
-   * elicitation/create). Returns the newest matching request so the test can
+   * Wait for a server-initiated request (a message carrying a method).
+   * Returns the newest matching request so the test can
    * inspect its params and answer via respond() with the request's own id;
    * pass minimumCount to wait for a later request when an earlier one was
    * already answered.

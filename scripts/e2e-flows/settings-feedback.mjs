@@ -101,7 +101,7 @@ export async function run(ctx) {
     // Round 2: rate limited, copy kept, draft survives close/reopen.
     collector.mode = { status: 429, body: { code: "FEEDBACK_RATE_LIMITED" } };
     const round2 = await ctx.runInPage(server, rateLimitedSource());
-    assertEqual(round2.errorText, "发送得太频繁了，请稍后再试。", "rate-limit copy shown");
+    assertEqual(round2.errorText, "无法发送反馈。发送过于频繁，请稍后重试。", "rate-limit copy shown");
     assertEqual(round2.messageKept, MESSAGE_TWO, "failed submit keeps the message");
     assertEqual(round2.draftAfterReopen, MESSAGE_TWO, "draft survives settings close/reopen");
     assertEqual(collector.requests.length, 2, "rate-limited round submitted once more");
@@ -225,7 +225,7 @@ function mainSource({ canary, homeDir, libraryDir }) {
     if (!checkbox.checked) throw new Error('diagnostics checkbox did not check');
     document.querySelector('.feedback-log-view-button').click();
     const logView = await waitFor(() => document.querySelector('.feedback-log-view'), 'log viewer opens');
-    await waitFor(() => logView.textContent.trim() !== '' && logView.textContent !== '加载中', 'log content settles');
+    await waitFor(() => logView.textContent.trim() !== '' && logView.textContent !== '正在加载…', 'log content settles');
     const shownLog = logView.textContent;
     const modalResizedByLogViewer = modal.offsetWidth !== modalBefore[0] || modal.offsetHeight !== modalBefore[1];
     const logLeaks = {

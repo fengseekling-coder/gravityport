@@ -4,7 +4,7 @@
 // box, provider-visible provenance line below it). Also checks the English
 // locale via the persisted language preference and measures how the header
 // line wraps at the narrowest inspector width.
-import { writeFile } from "node:fs/promises";
+import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const name = "inspector-header";
@@ -37,10 +37,10 @@ export async function run(ctx) {
     const d = await seed("header-local.png", [127, 74, 181], {
       prompt: "inspector header local import",
     });
-    // Video-shaped fixture bytes exercise the extension-based media kind
-    // without a decodable payload (same recipe as cache-semantics.test.mjs).
+    // 任务 366 后导入要看文件头，视频夹具用仓库里的真 mp4（与
+    // desktop-paste-import 同款做法），不再是不可解码的形状字节。
     const videoPath = join(ctx.fixturesDir, "header-clip.mp4");
-    await writeFile(videoPath, Buffer.from(Array.from({ length: 64 }, (_, index) => index)));
+    await copyFile(join(ctx.rootDir, "test", "fixtures", "video-first-frame.mp4"), videoPath);
     const e = await ctx.api(server.origin, "POST", "/api/assets/create", {
       projectId: "default",
       imagePath: videoPath,
@@ -102,10 +102,10 @@ function assertZhRound(result) {
   if (result?.lastTagA !== "海报参考") problems.push(`A last tag ${JSON.stringify(result?.lastTagA)}`);
   if (result?.provenanceA !== "") problems.push(`A showed provenance ${JSON.stringify(result?.provenanceA)}`);
   if (result?.tagsB?.length !== 4) problems.push(`B property tags ${JSON.stringify(result?.tagsB)}`);
-  if (result?.promptB !== "网页来源未暴露原始生图提示词") problems.push(`B prompt copy ${JSON.stringify(result?.promptB)}`);
+  if (result?.promptB !== "该网页未提供原始提示词") problems.push(`B prompt copy ${JSON.stringify(result?.promptB)}`);
   if (result?.noRecordLeakB !== false) problems.push("B showed 无提示词记录");
   if (!result?.headerC?.includes("Gemini 网页版")) problems.push(`C header ${JSON.stringify(result?.headerC)}`);
-  if (result?.provenanceC !== "Gemini 页面可见用户提示词（未验证为实际生图提示词）") problems.push(`C provenance ${JSON.stringify(result?.provenanceC)}`);
+  if (result?.provenanceC !== "Gemini 页面显示的提示词，未验证为实际生成所用") problems.push(`C provenance ${JSON.stringify(result?.provenanceC)}`);
   if (!result?.headerD?.includes("手动导入")) problems.push(`D header ${JSON.stringify(result?.headerD)}`);
   if (result?.provenanceD !== "") problems.push(`D showed provenance ${JSON.stringify(result?.provenanceD)}`);
   if (!result?.headerE?.startsWith("视频 · ")) problems.push(`E header ${JSON.stringify(result?.headerE)}`);
@@ -117,8 +117,8 @@ function assertZhRound(result) {
 
 function assertEnRound(result) {
   const problems = [];
-  if (result?.headerA !== `Image · ChatGPT Web · ${result?.dateA}`) problems.push(`A header ${JSON.stringify(result?.headerA)} (expected date ${JSON.stringify(result?.dateA)})`);
-  if (result?.promptB !== "The web source did not expose the original image-generation prompt") problems.push(`B prompt copy ${JSON.stringify(result?.promptB)}`);
+  if (result?.headerA !== `Image · ChatGPT (web) · ${result?.dateA}`) problems.push(`A header ${JSON.stringify(result?.headerA)} (expected date ${JSON.stringify(result?.dateA)})`);
+  if (result?.promptB !== "The web page didn’t provide the original prompt") problems.push(`B prompt copy ${JSON.stringify(result?.promptB)}`);
   if (problems.length) throw new Error(`Inspector header en round: ${problems.join("; ")}`);
 }
 
@@ -205,11 +205,11 @@ function enRoundSource(config) {
 ${PAGE_HELPERS}
     await waitFor(() => document.querySelector('.app') && cards().length === 5, 'five seeded cards');
 
-    await openCard(config.nameA, () => headerMuted().includes('ChatGPT Web'), 'asset A header (en)');
+    await openCard(config.nameA, () => headerMuted().includes('ChatGPT (web)'), 'asset A header (en)');
     const dateA = expectDate(config.createdAtA, 'en');
     const headerA = headerMuted();
 
-    await openCard(config.nameB, () => promptText().includes('The web source did not expose'), 'asset B prompt (en)');
+    await openCard(config.nameB, () => promptText().includes('The web page didn’t provide'), 'asset B prompt (en)');
     const promptB = promptText();
 
     // Back to Chinese for the wrap measurement round.

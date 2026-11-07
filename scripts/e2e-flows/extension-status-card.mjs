@@ -76,9 +76,9 @@ export async function run(ctx) {
     if (round?.retryBeforeRefresh !== false) problems.push("retry row visible before the extension reported a queue");
     if (round?.retryAfterRefresh !== true) problems.push("retry row missing after 刷新 with pending: 2");
     // The row's full text also contains the button label, hence startsWith.
-    if (!String(round?.pendingText || "").startsWith("等待重试 2 张")) problems.push(`pending text ${JSON.stringify(round?.pendingText)}`);
+    if (!String(round?.pendingText || "").startsWith("2 个素材等待重试")) problems.push(`pending text ${JSON.stringify(round?.pendingText)}`);
     if (round?.retryRequestIdBefore !== before) problems.push(`in-page retryRequestId ${round?.retryRequestIdBefore} != Node-side ${before}`);
-    if (round?.retriedShown !== true) problems.push("已让扩展重试 confirmation missing after the click");
+    if (round?.retriedShown !== true) problems.push("已请求重试 confirmation missing after the click");
     if (round?.retryRequestIdAfter !== before + 1) {
       problems.push(`retryRequestId after click ${round?.retryRequestIdAfter} != ${before + 1}`);
     }
@@ -162,7 +162,7 @@ async function runDesktopHintRound(ctx) {
 
     const hinted = await cdp.evaluate(desktopPageSource(CAPTURE_TOKEN, "hinted"));
     const problems = [];
-    if (hinted?.full !== true) problems.push("离线空间快满 hint missing");
+    if (hinted?.full !== true) problems.push("离线空间即将用尽 hint missing");
     if (hinted?.evicted !== true) problems.push("因离线空间不足 hint missing");
     if (hinted?.urlOnly !== true) problems.push("只存了网址 hint missing");
     if (problems.length) throw new Error(`extension-status-card desktop hints: ${problems.join("; ")}`);
@@ -233,21 +233,21 @@ function desktopPageSource(token, phase) {
       if (!nav) throw new Error('连接 nav missing: ' + Array.from(document.querySelectorAll('.settings-nav button')).map((b) => b.textContent.trim()).join('|'));
       nav.click();
       await waitFor(() => document.querySelector('.web-capture-status-card'), 'extension status card');
-      await waitFor(() => cardText().includes('离线空间快满'), 'nearly-full hint');
+      await waitFor(() => cardText().includes('离线空间即将用尽'), 'nearly-full hint');
       // Bring the card's hint lines into the viewport for the screenshot.
       document.querySelector('.web-capture-status-card').scrollIntoView({ block: 'start' });
       await sleep(300);
       return {
-        full: cardText().includes('扩展的离线空间快满了（已用 480MB / 512MB），打开 GravityPort 后会自动补收'),
-        evicted: cardText().includes('有 2 张因离线空间不足只保留了网址或被移除，网址过期后可能收不回来'),
-        urlOnly: cardText().includes('3 张只存了网址，网址过期后可能收不回来'),
+        full: cardText().includes('浏览器扩展的离线空间即将用尽（已用 480MB / 512MB）。GravityPort 打开后将自动收录暂存的素材。'),
+        evicted: cardText().includes('2 个素材因离线空间不足，仅保留了网址或已被移除。网址过期后可能无法收录。'),
+        urlOnly: cardText().includes('3 个素材仅保存了网址。网址过期后可能无法收录。'),
       };
     }
     await report(${JSON.stringify(CLEAN_QUEUE)});
     document.querySelector('.web-capture-status-card .web-capture-refresh').click();
-    await waitFor(() => !cardText().includes('离线空间快满')
+    await waitFor(() => !cardText().includes('离线空间即将用尽')
       && !cardText().includes('因离线空间不足')
-      && !cardText().includes('只存了网址'), 'storage hints gone after clean report');
+      && !cardText().includes('仅保存了网址'), 'storage hints gone after clean report');
     return { hintsGone: true };
   })()
   `;
@@ -324,16 +324,16 @@ function pageSource() {
     document.querySelector('.web-capture-status-card .web-capture-refresh').click();
     await waitFor(() => retryButton(), 'retry row after refresh');
     const cardText = () => document.querySelector('.web-capture-status-card').textContent;
-    await waitFor(() => cardText().includes('等待重试 2 张'), 'pending count row');
-    const pendingText = rows().find((text) => text.includes('等待重试')) || '';
+    await waitFor(() => cardText().includes('2 个素材等待重试'), 'pending count row');
+    const pendingText = rows().find((text) => text.includes('个素材等待重试')) || '';
     const requestIdAfterRefresh = Number((await bridgeStatus()).retryRequestId || 0);
     if (requestIdAfterRefresh !== requestIdBefore) {
       throw new Error('retryRequestId changed before the retry click: ' + requestIdAfterRefresh);
     }
 
     retryButton().click();
-    await waitFor(() => document.querySelector('.web-capture-status-card .web-capture-retried'), '已让扩展重试 confirmation');
-    const retriedShown = document.querySelector('.web-capture-status-card .web-capture-retried')?.textContent.trim() === '已让扩展重试';
+    await waitFor(() => document.querySelector('.web-capture-status-card .web-capture-retried'), '已请求重试 confirmation');
+    const retriedShown = document.querySelector('.web-capture-status-card .web-capture-retried')?.textContent.trim() === '已请求重试';
     await waitFor(async () => Number((await bridgeStatus()).retryRequestId || 0) === requestIdBefore + 1, 'server retryRequestId +1');
 
     return {

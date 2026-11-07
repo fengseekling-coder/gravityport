@@ -10,6 +10,7 @@ import {
   mosaDesktopStartupHandoffPath,
   probeMosaDesktopStartupHandoff,
 } from "../lib/runtime-handoff.mjs";
+import { readMosaRuntimeProcessIdentity } from "../lib/runtime-lock.js";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 
 test("desktop startup handoff is bound to PID/process identity and releases only its own marker", async (t) => {
@@ -39,6 +40,37 @@ test("desktop startup handoff is bound to PID/process identity and releases only
   assert.equal(await lease.release(), true);
   assert.equal(await lease.release(), false);
   await assert.rejects(access(mosaDesktopStartupHandoffPath(libraryDir)));
+});
+
+// 任务 367（NATIVE-03i）：另一个启动来认领时报错带码和 PID，桌面启动失败框
+// 按码选中英文；英文原句留在 message 里只进日志。走真实探针（marker 写本
+// 测试进程的 PID 和 ps 可见的启动身份），不改探针钩子。
+test("a second desktop startup claim rejects with the handoff-claimed code and owner pid", async (t) => {
+  const libraryDir = await mkdtemp(join(tmpdir(), "mosa-handoff-claimed-"));
+  deferTestPathRemoval(libraryDir, { recursive: true, force: true });
+  const identity = await readMosaRuntimeProcessIdentity(process.pid);
+  assert.ok(identity, "the test process exposes a ps start identity");
+  const lease = await createMosaDesktopStartupHandoff({
+    libraryDir,
+    pid: process.pid,
+    ttlMs: 30_000,
+    readProcessIdentity: async () => identity,
+  });
+  t.after(() => lease.release());
+  await assert.rejects(
+    createMosaDesktopStartupHandoff({
+      libraryDir,
+      pid: process.pid,
+      ttlMs: 30_000,
+      readProcessIdentity: async () => identity,
+    }),
+    (error) => {
+      assert.match(error.message, /already claiming this library/);
+      assert.equal(error.code, "MOSA_STARTUP_HANDOFF_CLAIMED");
+      assert.equal(error.pid, process.pid);
+      return true;
+    },
+  );
 });
 
 test("expired handoff markers are ignored and removed so background fallback can recover", async (t) => {

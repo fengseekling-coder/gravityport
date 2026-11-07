@@ -350,7 +350,7 @@ export function createStackUiFlowSource() {
 
   // Cut a member and paste it into stack B via the stacks move endpoint.
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', ctrlKey: true, bubbles: true }));
-  await waitFor(() => document.querySelector('.toast')?.textContent.includes('已剪切'), 'cut acknowledged');
+  await waitFor(() => (document.querySelector('.toast')?.textContent || '').includes('已剪切'), 'cut acknowledged'); // REVERT-359
   document.querySelector('.toolbar-left button').click();
   await waitFor(() => settled() && cardCount() === rootCountAfterStacks
     && document.querySelectorAll('.asset-card .stack-mark').length === 2, 'back at the root gallery');
@@ -428,11 +428,11 @@ export function createTrashUiFlowSource(config) {
     await waitFor(() => !document.querySelector('[role="alertdialog"]'), 'delete confirm closes');
     await sleep(200);
     const cancelTrashKeptAsset = rootCards() === before && Number(navSmallText('回收站')) === 0;
-    // 「不再提醒」persists like a preference (old confirm-trash-dont-ask contract).
+    // 「不再询问」persists like a preference (old confirm-trash-dont-ask contract).
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
     await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'confirm reopens for dont-ask');
     const dontAsk = document.querySelector('[role="alertdialog"] input[type="checkbox"]');
-    if (!dontAsk) throw new Error('missing 不再提醒 checkbox');
+    if (!dontAsk) throw new Error('missing 不再询问 checkbox');
     dontAsk.click();
     await sleep(150);
     const skipConfirmPersisted = localStorage.getItem('gravityport.skip-trash-confirm') === '1';
@@ -441,10 +441,10 @@ export function createTrashUiFlowSource(config) {
     clickLabel('取消', '.delete-modal');
     await waitFor(() => !document.querySelector('[role="alertdialog"]'), 'confirm closes after dont-ask probe');
 
-    // 2) Context menu -> 移至回收站 -> confirm.
-    await contextMenuOn(plainCard(), '移至回收站').then((item) => item.click());
+    // 2) Context menu -> 移到回收站 -> confirm.
+    await contextMenuOn(plainCard(), '移到回收站').then((item) => item.click());
     await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'delete confirm opens for menu trash');
-    clickLabel('移至回收站', '.delete-modal');
+    clickLabel('移到回收站', '.delete-modal');
     await waitFor(() => Number(navSmallText('回收站')) === 1, 'trash count increments');
     const moveToTrashWorked = Number(navSmallText('回收站')) === 1;
 

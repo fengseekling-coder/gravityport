@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>GravityPort 网页生图采集设置</title>
+    <title>GravityPort 浏览器扩展设置</title>
     <style>
       body {
         --mosa-error: #b91c1c;
@@ -64,29 +64,29 @@
     </style>
   </head>
   <body>
-    <h1>GravityPort 网页生图采集</h1>
-    <p>本地 AI 素材归档工具，支持 ChatGPT、Gemini、Flow、Google AI Studio、即梦（Jimeng）和 Midjourney 的图片与视频采集（视频限后四个网站）。</p>
+    <h1>GravityPort 浏览器扩展</h1>
+    <p>将 AI 生成的图片和视频连同提示词收录到本机 GravityPort。图片支持 ChatGPT、Gemini、Flow、Google AI Studio、即梦；视频支持 Flow、Google AI Studio、即梦。</p>
     <section style="padding:12px;border-radius:12px;background:#f8fafc;margin-bottom:16px">
-      <strong>工作流</strong>
-      <p style="margin:6px 0;color:#475569">自动发现生成图，或使用浏览器右键菜单快速保存。</p>
+      <strong>收录方式</strong>
+      <p style="margin:6px 0;color:#475569">自动收录新生成的图片和视频，也可通过右键菜单手动保存。</p>
     </section>
-    <p>GravityPort Desktop 会自动发现并完成本机配对。下面的地址和 Token 主要用于诊断或源码运行时的高级配置。</p>
+    <p>扩展会自动连接本机的 GravityPort。以下地址和令牌（Token）仅用于诊断或高级设置。</p>
 
     <label for="mosaBaseUrl">GravityPort 地址</label>
     <input id="mosaBaseUrl" type="url" placeholder="http://127.0.0.1:43517" />
 
-    <label for="mosaToken">Ingest Token</label>
-    <input id="mosaToken" type="password" autocomplete="off" placeholder="Desktop 自动配对，无需手填" />
+    <label for="mosaToken">访问令牌（Token）</label>
+    <input id="mosaToken" type="password" autocomplete="off" placeholder="自动连接，无需填写" />
 
     <div class="row">
       <input id="autoCapture" type="checkbox" />
-      <label for="autoCapture" style="margin: 0; font-weight: 500">发现新图时自动入库</label>
+      <label for="autoCapture" style="margin: 0; font-weight: 500">自动收录</label>
     </div>
     <p style="margin:8px 0 0;color:#475569;font-size:12px">
-      开启后，扩展仅在支持的网站中观察与生成媒体相关的页面数据，并把匹配到的媒体、Prompt 与来源发送到本机 GravityPort。默认关闭；不会上传到 GravityPort 云端。
+      开启后，扩展仅在支持的网站上读取与生成内容相关的页面数据，并将图片、视频、提示词和来源发送到本机的 GravityPort。默认关闭，不会上传到云端。
     </p>
 
-    <button id="save" type="button">保存设置</button>
+    <button id="save" type="button">保存</button>
     <button id="test" type="button" style="background: #334155; margin-left: 8px">测试连接</button>
     <div id="status" role="status" aria-live="polite"></div>
 

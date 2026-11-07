@@ -42,10 +42,11 @@ function buildIdentity(version) {
   };
 }
 
-function signingOptions(version) {
+function signingOptions(version, { macTeamIdentifier = "B5ZJT8TRPN" } = {}) {
   return {
     buildIdentity: buildIdentity(version),
     signingPrivateKey: RELEASE_KEYS.privateKey,
+    ...(macTeamIdentifier ? { macTeamIdentifier } : {}),
   };
 }
 
@@ -220,7 +221,7 @@ test("release manifest writes the GravityPort app name and its bound artifact fi
     });
     assert.equal(result.platforms.macos.appName, "GravityPort.app");
     assert.equal(result.platforms.macos.file, `GravityPort-darwin-arm64-${version}.zip`);
-    assert.equal(result.platforms.macos.teamIdentifier, undefined);
+    assert.equal(result.platforms.macos.teamIdentifier, "B5ZJT8TRPN");
     assert.equal(verifyReleaseManifestSignature(result, RELEASE_TRUST), true);
     const parsed = parseUpdateManifest(result);
     assert.equal(parsed.macArtifact.appName, "GravityPort.app");
@@ -238,7 +239,7 @@ test("release manifest requires and pins the production team identifier", async 
       prepareDesktopReleaseManifest({
         version,
         macArtifactPath: files.mac,
-        ...signingOptions(version),
+        ...signingOptions(version, { macTeamIdentifier: "" }),
         // build identity flipped to production for this call
         buildIdentity: { ...buildIdentity(version), distribution: "production" },
         signingPrivateKey: RELEASE_KEYS.privateKey,
@@ -283,6 +284,47 @@ test("release manifest requires and pins the production team identifier", async 
       }),
       /Invalid macOS release app name/,
     );
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+test("release manifest preview requires team identifier and validates against APPLE_TEAM_ID", async () => {
+  const version = "0.3.0";
+  const files = await fixtureArtifacts(version);
+  try {
+    await assert.rejects(
+      prepareDesktopReleaseManifest({
+        version,
+        macArtifactPath: files.mac,
+        ...signingOptions(version, { macTeamIdentifier: "" }),
+        publishedAt: "2026-10-09T01:00:00Z",
+        notes: { zh: "说明", en: "Notes" },
+      }),
+      /macOS releases require a platforms\.macos teamIdentifier/,
+    );
+
+    await assert.rejects(
+      prepareDesktopReleaseManifest({
+        version,
+        macArtifactPath: files.mac,
+        ...signingOptions(version, { macTeamIdentifier: "ABCD1234EF" }),
+        env: { APPLE_TEAM_ID: "B5ZJT8TRPN" },
+        publishedAt: "2026-10-09T01:00:00Z",
+        notes: { zh: "说明", en: "Notes" },
+      }),
+      /does not match APPLE_TEAM_ID B5ZJT8TRPN/,
+    );
+
+    const result = await prepareDesktopReleaseManifest({
+      version,
+      macArtifactPath: files.mac,
+      ...signingOptions(version, { macTeamIdentifier: "B5ZJT8TRPN" }),
+      env: { APPLE_TEAM_ID: "B5ZJT8TRPN" },
+      publishedAt: "2026-10-09T01:00:00Z",
+      notes: { zh: "说明", en: "Notes" },
+    });
+    assert.equal(result.platforms.macos.teamIdentifier, "B5ZJT8TRPN");
   } finally {
     await removeTestPath(files.root, { recursive: true, force: true });
   }

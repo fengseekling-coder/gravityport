@@ -897,12 +897,12 @@ test("a newer-schema library is refused before anything writes, with the right e
 
   const zh = getLibraryStartupFailureText({ code: "MOSA_LIBRARY_SCHEMA_NEWER" }, "zh");
   assert.equal(zh.title, "需要更新 GravityPort");
-  assert.match(zh.body, /请到官网下载最新版/);
-  assert.match(zh.body, /你的素材没有被改动/);
+  assert.match(zh.body, /请前往官网下载最新版本/);
+  assert.match(zh.body, /素材未被改动/);
   const en = getLibraryStartupFailureText({ code: "MOSA_LIBRARY_SCHEMA_NEWER" }, "en");
-  assert.match(en.title, /Update GravityPort/);
+  assert.match(en.title, /GravityPort update required/);
   assert.match(en.body, /latest version from the website/);
-  assert.match(en.body, /assets were not modified/);
+  assert.match(en.body, /No assets were modified/);
 });
 
 // --- 12: the notice endpoints (task 350 #2) -------------------------------------

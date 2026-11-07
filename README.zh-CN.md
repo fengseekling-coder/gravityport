@@ -6,14 +6,20 @@
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#下载)
 
-> **为 AI 创作留住本地视觉记忆。**
+> **让每一次 AI 创作，有迹可循**
 > 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
 
 GravityPort 是一个 AI 素材管理工具：把 ChatGPT、Gemini、Flow、Google AI Studio、Codex、Grok、即梦 生成的图片和视频，连同 Prompt、参考图和来源，自动收进你自己电脑上的素材库。
 
 ![GravityPort 画廊与检视器](docs/images/gravityport-app.webp)
 
-**本地优先 · Prompt 与来源 · 版本历史 · 无 GravityPort 云账户**
+- **自动收录**：生成的图片与视频直接收进素材库
+- **创作溯源**：同步保存提示词、参考图与来源
+- **版本树**：记录同一对话的多轮修改
+- **自动分组**：按生成来源与对话窗口归类同组素材
+- **本地存储**：所有素材与记录都保存在本地电脑
+- **GravityPort MCP**：让 AI 助手直接管理你的素材库资产
+- **免费下载**：macOS · Windows · gravityport.azhuilab.com
 
 [下载](#下载) · [第一次打开](#第一次打开) · [中文使用指南](docs/guide.zh-CN.md) · [隐私](PRIVACY.md) · [文档](#文档)
 
@@ -29,7 +35,7 @@ GravityPort 是一个 AI 素材管理工具：把 ChatGPT、Gemini、Flow、Goog
 
 ## 第一次打开
 
-- **macOS：** 打开「系统设置 → 隐私与安全性」，在 GravityPort 旁边点**仍要打开**。只需一次。
+- **macOS：** 第一次打开 GravityPort 时，系统会询问是否打开从互联网下载的 App，点**打开**。只需一次。
 - **Windows：** 安装程序还没有代码签名，SmartScreen 可能提示「Windows 已保护你的电脑」。点**更多信息 → 仍要运行**。只在安装时出现一次。
 
 ## 为什么需要 GravityPort
@@ -54,7 +60,7 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 
 ### 让 AI 代理检索你的素材库
 
-内置的 MCP 服务器让 Claude、Codex 等 MCP 客户端可以在同一个本地素材库里列出、搜索和记录素材、Prompt、版本与生成历史。`asset_search` 支持文本和时间范围。桌面版自带这个服务：在「设置 → 连接」里复制 Claude Desktop、Claude Code 或 Codex 的现成配置即可接入，不用装 Node.js，也不用下载源码；从源码运行用 `npm run mcp`。配置方法和工具清单见 [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口)。
+GravityPort MCP 让 Claude、Codex 等 MCP 客户端可以在同一个本地素材库里列出、搜索和记录素材、Prompt、版本与生成历史。`asset_search` 支持文本和时间范围。桌面版自带这个服务：在「设置 → 连接」里复制 Claude Desktop、Claude Code 或 Codex 的现成配置即可接入，不用装 Node.js，也不用下载源码；从源码运行用 `npm run mcp`。配置方法和工具清单见 [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口)。
 
 ### 找回误删的作品
 
@@ -119,6 +125,11 @@ npm run desktop:package:windows
 - 打包的桌面版通过发布更新元数据所用的同一个第一方端点，以无请求体的请求发送极少的安装 / 活跃元数据，以随机安装 ID 区分安装：只包含安装 ID、版本、平台、架构和首启 / 日活事件，绝不包含素材、Prompt 或本地路径。详见 [PRIVACY.md](PRIVACY.md)，其中也说明了如何关闭。
 
 完整的数据边界见[隐私政策](PRIVACY.md)，私密漏洞报告见[安全政策](SECURITY.md)。
+
+## 社区
+
+- [Discord](https://discord.gg/rArXAShSkQ)：聊天、提问、晒作品。
+- [GitHub 讨论区](https://github.com/fengseekling-coder/gravityport/discussions)：提问、提想法。
 
 ## 文档
 

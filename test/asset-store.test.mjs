@@ -8,6 +8,7 @@ import sharp from "sharp";
 import { createAssetStore, createJsonAssetStore } from "../lib/asset-store.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
+import { pngBytes } from "./helpers/managed-media.mjs";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "../lib/image-pixel-hash.js";
 
 // createAssetStore falls back to process.env.MOSA_LIBRARY_DIR, so path-selection
@@ -72,7 +73,7 @@ test("JSON group stats expose automatic source buckets for sidebar navigation", 
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createAssetStore({ projectRoot, managerDir });
 
   await store.createAsset({ assetId: "chatgpt-1", imagePath: sourcePath, sourceType: "web-chatgpt" });
@@ -111,7 +112,7 @@ test("JSON favorite toggle is serialized and does not create a recipe revision",
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "fixture.png");
   await mkdir(projectRoot, { recursive: true });
-  await writeFile(sourcePath, "fixture", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createAssetStore({ projectRoot, managerDir });
   const created = await store.createAsset({ assetId: "favorite-json", imagePath: sourcePath, favorite: false });
   const initialHistory = await store.getRecipeSnapshotHistory("default", created.id);
@@ -137,7 +138,7 @@ test("SQLite favorite toggle is atomic and leaves content revision metadata unto
   const libraryDir = join(root, "library");
   const sourcePath = join(projectRoot, "fixture.png");
   await mkdir(projectRoot, { recursive: true });
-  await writeFile(sourcePath, "fixture", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createSqliteAssetStore({ projectRoot, managerDir, libraryDir });
   t.after(() => store.close());
   const created = await store.createAsset({ assetId: "favorite-sqlite", imagePath: sourcePath, favorite: false });
@@ -297,7 +298,7 @@ test("imports a Codex default generated image and preserves its provenance", asy
   const taskId = "019f-codex-task";
   const sourcePath = join(codexImagesDir, taskId, "generated.png");
   await mkdir(join(codexImagesDir, taskId), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const projectRoot = join(root, "project");
   const managerDir = join(projectRoot, "mosa");
@@ -338,7 +339,7 @@ test("imports a Codex default generated image and preserves its provenance", asy
   const localImagesDir = join(projectRoot, "generated-images");
   const localPath = join(localImagesDir, "local.png");
   await mkdir(localImagesDir, { recursive: true });
-  await writeFile(localPath, "local fixture image", "utf8");
+  await writeFile(localPath, await pngBytes());
   await store.createAsset({ assetId: "local-fixture", imagePath: localPath });
 
   const codexOnly = await store.listAssets({ projectId: "default", source: "codex-generated" });
@@ -354,7 +355,7 @@ for (const kind of ["json", "sqlite"]) {
     const libraryDir = join(root, "library");
     const sourcePath = join(projectRoot, "generated-images", "delete-source.png");
     await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-    await writeFile(sourcePath, "delete fixture");
+    await writeFile(sourcePath, await pngBytes());
     const store = kind === "sqlite"
       ? createSqliteAssetStore({ projectRoot, managerDir, libraryDir })
       : createAssetStore({ projectRoot, managerDir });
@@ -399,7 +400,7 @@ test("JSON recipe snapshots change only with generation inputs and remain immuta
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "recipe fixture", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createAssetStore({ projectRoot, managerDir });
 
   const asset = await store.createAsset({
@@ -460,7 +461,7 @@ test("JSON history synthesizes an initial snapshot for legacy metadata", async (
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "legacy recipe fixture", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createAssetStore({ projectRoot, managerDir });
   const asset = await store.createAsset({ assetId: "legacy", imagePath: sourcePath, prompt: "Legacy prompt" });
   const metadataPath = join(managerDir, "assets", "default", "metadata", `${asset.id}.json`);
@@ -483,7 +484,7 @@ test("JSON pagination remains stable when the cursor asset is archived", async (
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   const createdAt = "2026-01-01T00:00:00.000Z";
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createAssetStore({ projectRoot, managerDir });
   for (const assetId of ["alpha", "bravo", "charlie"]) await store.createAsset({ assetId, imagePath: sourcePath, created_at: createdAt });
 
@@ -507,7 +508,7 @@ test("corrupt canonical JSON metadata cannot be hidden or overwritten", async (t
     mkdir(join(projectRoot, "generated-images"), { recursive: true }),
     store.ensureProject("default"),
   ]);
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const metadataPath = join(managerDir, "assets", "default", "metadata", "broken.json");
   const corruptMetadata = "{ not valid json\n";
   await writeFile(metadataPath, corruptMetadata, "utf8");
@@ -536,7 +537,7 @@ test("persists manually created groups, including empty groups", async (t) => {
 
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   await store.createAsset({ assetId: "grouped-fixture", imagePath: sourcePath, group: "Inspiration board" });
 
   await store.renameGroup("default", "Inspiration board", "Mood board");
@@ -555,7 +556,7 @@ test("JSON group deletion moves every asset in the group to Trash and keeps them
   const sourceDir = join(projectRoot, "generated-images");
   const sourcePath = join(sourceDir, "fixture.png");
   await mkdir(sourceDir, { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createAssetStore({ projectRoot, managerDir });
   await store.createGroup({ projectId: "default", name: "Disposable" });
   const first = await store.createAsset({ assetId: "group-delete-a", imagePath: sourcePath, group: "Disposable" });
@@ -582,7 +583,7 @@ test("JSON group deletion rolls metadata back when a later logical write fails",
   const sourceDir = join(projectRoot, "generated-images");
   const sourcePath = join(sourceDir, "fixture.png");
   await mkdir(sourceDir, { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createAssetStore({ projectRoot, managerDir });
   await store.createGroup({ projectId: "default", name: "Atomic" });
   const first = await store.createAsset({ assetId: "group-rollback-a", imagePath: sourcePath, group: "Atomic" });
@@ -678,7 +679,7 @@ test("continues to reject image paths outside approved source roots", async (t) 
 
   const outsidePath = join(root, "outside", "not-allowed.png");
   await mkdir(join(root, "outside"), { recursive: true });
-  await writeFile(outsidePath, "fixture image", "utf8");
+  await writeFile(outsidePath, await pngBytes());
 
   const store = createAssetStore({
     projectRoot: join(root, "project"),
@@ -699,7 +700,7 @@ test("rejects symbolic links even when their link path is inside an approved roo
   const linkedImagePath = join(projectRoot, "generated-images", "linked.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
   await mkdir(join(root, "outside"), { recursive: true });
-  await writeFile(outsidePath, "not an image", "utf8");
+  await writeFile(outsidePath, await pngBytes());
   await symlink(outsidePath, linkedImagePath);
 
   const store = createAssetStore({ projectRoot, managerDir });
@@ -732,7 +733,7 @@ test("imports Cowart page assets from the configured external canvas directory",
   const canvasDir = join(root, "cowart-data", "mosa");
   const sourcePath = join(canvasDir, "pages", "page", "assets", "cowart-bear.png");
   await mkdir(join(canvasDir, "pages", "page", "assets"), { recursive: true });
-  await writeFile(sourcePath, "fixture Cowart image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const store = createAssetStore({
     projectRoot,
@@ -760,7 +761,7 @@ test("JSON store listAssets combines multiple filters with AND semantics", async
   const store = createAssetStore({ projectRoot, managerDir });
 
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const now = new Date().toISOString();
   const longAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
@@ -857,7 +858,7 @@ test("JSON store recent filter excludes legacy assets with null, missing, or inv
   const store = createAssetStore({ projectRoot, managerDir });
 
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   // Create a valid recent asset through the normal path
   const recentNow = new Date().toISOString();
@@ -923,7 +924,7 @@ test("JSON store recent filter compares parsed timestamps, not raw created_at st
   const store = createAssetStore({ projectRoot, managerDir });
 
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const metadataDir = join(managerDir, "assets", "default", "metadata");
   const rewriteLegacyCreatedAt = async (assetId, mutate) => {
@@ -1041,7 +1042,7 @@ test("JSON store normalizes parseable created_at to ISO 8601 on write", async (t
   const store = createAssetStore({ projectRoot, managerDir });
 
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const metadataDir = join(managerDir, "assets", "default", "metadata");
   const storedCreatedAt = async (assetId) => JSON.parse(await readFile(join(metadataDir, `${assetId}.json`), "utf8")).created_at;
@@ -1103,7 +1104,7 @@ test("JSON store presents legacy created_at in canonical form without rewriting 
   const store = createAssetStore({ projectRoot, managerDir });
 
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   await store.createAsset({ assetId: "modern", imagePath: sourcePath, created_at: "2020-05-05T00:00:00.000Z" });
   await store.createAsset({ assetId: "ancient", imagePath: sourcePath, created_at: "2020-05-05T00:00:00.000Z" });
@@ -1156,7 +1157,7 @@ test("readProjectAssets warns again when corrupt content changes but size and mt
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const warnings = [];
   const store = createAssetStore({ projectRoot, managerDir, onWarning: (warning) => warnings.push(warning) });
@@ -1197,8 +1198,8 @@ test("JSON store looks assets up by content hash without listing the project", a
   const store = createAssetStore({ projectRoot, managerDir });
 
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
-  await writeFile(otherPath, "a different image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
+  await writeFile(otherPath, await pngBytes());
 
   // Duplicating an asset copies its bytes, so several records legitimately share one hash.
   const oldest = await store.createAsset({ assetId: "same-oldest", imagePath: sourcePath, created_at: "2026-01-01T00:00:00.000Z" });
@@ -1268,7 +1269,7 @@ test("readProjectAssets warns on corrupt JSON and still returns valid assets", a
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const warnings = [];
   const store = createAssetStore({
@@ -1309,7 +1310,7 @@ test("readProjectAssets warning does not leak corrupt file content", async (t) =
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const warnings = [];
   const store = createAssetStore({
@@ -1346,7 +1347,7 @@ test("readProjectAssets isolates synchronous and asynchronous warning sink failu
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const setupStore = createAssetStore({ projectRoot, managerDir });
   await setupStore.createAsset({ assetId: "valid-asset", imagePath: sourcePath });
@@ -1371,7 +1372,7 @@ test("readProjectAssets warns only once per corrupt file per scan", async (t) =>
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const warnings = [];
   const store = createAssetStore({
@@ -1425,7 +1426,7 @@ test("getAsset still throws on corrupt metadata when onWarning is configured", a
   const managerDir = join(projectRoot, "mosa");
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "fixture image", "utf8");
+  await writeFile(sourcePath, await pngBytes());
 
   const warnings = [];
   const store = createAssetStore({
@@ -1449,7 +1450,7 @@ test("SQLite store: excludeProjectRoot drops the working directory from the trus
   const libraryDir = join(root, "library");
   await mkdir(projectRoot, { recursive: true });
   const sourcePath = join(projectRoot, "fixture.png");
-  await writeFile(sourcePath, "fixture", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
   t.after(() => store.close());
 
@@ -1468,7 +1469,7 @@ test("JSON store: excludeProjectRoot drops the working directory from the truste
   const projectRoot = join(root, "project");
   await mkdir(projectRoot, { recursive: true });
   const sourcePath = join(projectRoot, "fixture.png");
-  await writeFile(sourcePath, "fixture", "utf8");
+  await writeFile(sourcePath, await pngBytes());
   const store = createJsonAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa") });
 
   await assert.rejects(

@@ -266,7 +266,8 @@ test("C2PA export refuses to overwrite the source or an existing destination", a
 });
 
 const REAL_C2PA_TOOL = resolveRealC2paTool();
-test("real c2patool development certificate embeds and re-reads the MOSA assertion", { skip: !REAL_C2PA_TOOL }, async () => {
+const C2PA_SKIP_REASON = "本机和 CI 都没装 c2patool，真签名路径不在自动测试里";
+test("real c2patool development certificate embeds and re-reads the MOSA assertion", { skip: REAL_C2PA_TOOL ? false : C2PA_SKIP_REASON }, async () => {
   const root = await mkdtemp(join(tmpdir(), "mosa-c2pa-real-"));
   const input = join(root, "input.jpg");
   const output = join(root, "signed.jpg");

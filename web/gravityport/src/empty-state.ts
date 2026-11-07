@@ -42,8 +42,8 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
   if (hasRefinements) {
     return {
       kind: "no-results",
-      title: "没有找到匹配的素材",
-      description: "试试别的搜索词，或清除筛选条件",
+      title: "没有匹配的素材",
+      description: "尝试其他搜索词，或清除筛选条件。",
       clearAction: true,
     };
   }
@@ -54,8 +54,8 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
   if (insideStack) {
     return {
       kind: "stack-empty",
-      title: "这个堆叠已经空了",
-      description: "里面的素材都移到了回收站，或者被移出了堆叠",
+      title: "堆叠中没有素材",
+      description: "其中的素材已移到回收站或移出堆叠。",
       clearAction: false,
     };
   }
@@ -64,8 +64,8 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
   if (active === "回收站") {
     return {
       kind: "trash-empty",
-      title: "回收站是空的",
-      description: "移到回收站的素材会在这里保留 90 天",
+      title: "回收站中没有素材",
+      description: "移到回收站的素材保留 90 天。",
       clearAction: false,
     };
   }
@@ -74,8 +74,8 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
   if (active === "收藏") {
     return {
       kind: "favorites-empty",
-      title: "还没有收藏",
-      description: "点素材详情里的心形，或在素材上右键「收藏」",
+      title: "没有收藏的素材",
+      description: "点击素材详情中的心形图标，或右键点击素材并选择「收藏」。",
       clearAction: false,
     };
   }
@@ -84,8 +84,8 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
   if (active === "待整理") {
     return {
       kind: "unorganized-empty",
-      title: "都整理好了",
-      description: "新收进来的素材会先放在这里。收藏、放进分组、加标签或标为已整理后，就会离开这里",
+      title: "没有待整理的素材",
+      description: "新增的素材先显示在这里。收藏、移到分组、添加标签或标为已整理后，素材将移出待整理。",
       clearAction: false,
     };
   }
@@ -94,8 +94,8 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
   if (active.startsWith("group:")) {
     return {
       kind: "group-empty",
-      title: "这个分组还没有素材",
-      description: "把图片拖到左侧的分组名上，或在素材上右键「添加分组」",
+      title: "分组中没有素材",
+      description: "将素材拖到侧栏中的分组名称上，或右键点击素材并选择「移到分组」。",
       clearAction: false,
     };
   }
@@ -104,17 +104,18 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
   if (active === "所有素材" && !insideStack && isZeroLibraryTotal(libraryTotal)) {
     return {
       kind: "library-empty",
-      title: "素材库还是空的",
-      description: "把图片、视频或文件夹拖进窗口，或直接粘贴剪贴板里的图片、视频即可导入",
+      title: "素材库中没有素材",
+      description: "将图片、视频或文件夹拖到窗口中，或粘贴剪贴板中的图片或视频，即可导入。",
       clearAction: false,
     };
   }
 
-  // 9. Fallback: no-results
+  // 9. Fallback: no refinements and no results (EMPTY-10: an empty smart
+  // group, say) — there is nothing to clear, so tell the user how it fills.
   return {
     kind: "no-results",
-    title: "没有找到匹配的素材",
-    description: "试试别的搜索词，或清除筛选条件",
+    title: "没有素材",
+    description: "新收录或导入的素材将显示在这里。",
     clearAction: false,
   };
 }

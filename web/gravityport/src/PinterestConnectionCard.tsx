@@ -54,7 +54,7 @@ export function PinterestConnectionCardView({
   const needsReconnect = status?.needsReconnect === true;
 
   let stateLine: string;
-  if (!status) stateLine = t("加载中");
+  if (!status) stateLine = t("正在加载…");
   else if (connected) {
     stateLine = status.username
       ? pinterestFormat("已连接 {username}", { username: `@${status.username}` }, language)
@@ -69,7 +69,7 @@ export function PinterestConnectionCardView({
       <div className="pinterest-connection-head">
         <div className="pinterest-connection-copy">
           <strong>{stateLine}</strong>
-          <p>{t("连接后，可以在侧栏浏览你自己的 Pinterest 画板和 Pin。内容只在这台电脑上实时显示，不会上传。")}</p>
+          <p>{t("在侧栏浏览 Pinterest 账号中的画板和 Pin。内容仅在此电脑上实时显示，不会存入素材库，也不会上传。")}</p>
           {connected && status?.quota ? (
             <small>
               {pinterestFormat(
@@ -79,8 +79,8 @@ export function PinterestConnectionCardView({
               )}
             </small>
           ) : null}
-          {connectionError ? <p className="pinterest-error-text">{connectionError}</p> : null}
-          {disconnectError ? <p className="pinterest-error-text">{disconnectError}</p> : null}
+          {connectionError ? <p className="pinterest-error-text">{t(connectionError)}</p> : null}
+          {disconnectError ? <p className="pinterest-error-text">{t(disconnectError)}</p> : null}
         </div>
         <div className="pinterest-connection-actions">
           {connected ? (
@@ -104,8 +104,10 @@ export function PinterestConnectionCardView({
             if (event.target === event.currentTarget) onCancelDisconnect();
           }}
         >
-          <div className="pinterest-confirm" role="dialog" aria-modal="true">
-            <p>{t("断开后，这台电脑上保存的 Pinterest 授权会被删除。")}</p>
+          <div className="pinterest-confirm" role="dialog" aria-modal="true" aria-label={t("断开 Pinterest？")}>
+            {/* 任务 359（DLG-22a）：确认框补标题。 */}
+            <h3>{t("断开 Pinterest？")}</h3>
+            <p>{t("此电脑上保存的 Pinterest 授权将被移除，需要时可重新连接。")}</p>
             <div className="pinterest-confirm-actions">
               <button type="button" className="pinterest-danger" onClick={onConfirmDisconnect} disabled={disconnecting}>
                 {t("断开")}
@@ -166,7 +168,8 @@ export function PinterestConnectionCard({ language, onStatusChange }: PinterestC
       onStatusChangeRef.current?.(next);
       setConfirmOpen(false);
     } catch (error) {
-      setDisconnectError(t(pinterestErrorMessage(error)));
+      // 任务 359（HC-20）：错误存码出的话，渲染时再翻译，切换语言跟着变。
+      setDisconnectError(pinterestErrorMessage(error));
     } finally {
       setDisconnecting(false);
     }
@@ -177,7 +180,7 @@ export function PinterestConnectionCard({ language, onStatusChange }: PinterestC
       language={language}
       status={status}
       connecting={connection.phase.kind === "connecting"}
-      connectionError={connection.phase.kind === "error" ? t(connection.phase.message) : ""}
+      connectionError={connection.phase.kind === "error" ? connection.phase.message : ""}
       disconnecting={disconnecting}
       disconnectError={disconnectError}
       confirmOpen={confirmOpen}

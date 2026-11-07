@@ -5,7 +5,8 @@
 
 import type { MosaAsset, MosaReference, MosaRecipeHistory } from "./mosa-api"
 
-const SOURCE_LABEL_MAP: Record<string, string> = {
+// 任务 359：导出给 App.tsx（分组统计「按来源」的原始码过显示名）。
+export const SOURCE_LABEL_MAP: Record<string, string> = {
   "codex-generated": "Codex",
   "cowart-generated": "Cowart",
   "grok-generated": "Grok",
@@ -49,21 +50,22 @@ type TrashReasonNotice = {
 } | null
 
 const TRASH_REASON_TEXTS: Record<string, TrashReasonNotice> = {
+  // 任务 359（MAIN-18q~t）：回收站原因行照定稿。
   "replaced-by-better-version": {
     key: "trashReplacedByBetterVersion",
-    text: "已被同一张图的更清晰版本替换",
+    text: "已被同一素材的更高分辨率版本替换",
   },
   "provider-deleted:jimeng": {
     key: "trashProviderDeletedJimeng",
-    text: "因在即梦网站中删除而移入回收站",
+    text: "已在即梦网站删除，同步移到回收站",
   },
   "duplicate-import:identical": {
     key: "trashDuplicateImportIdentical",
-    text: "导入时发现与库里的图完全相同，已移入回收站",
+    text: "导入时发现与素材库中的素材完全相同，已移到回收站",
   },
   "duplicate-import:user": {
     key: "trashDuplicateImportUser",
-    text: "导入后确认为重复，已移入回收站",
+    text: "导入后确认为重复，已移到回收站",
   },
 }
 
@@ -196,16 +198,16 @@ export function promptNotice(asset: MosaAsset): PromptNotice {
   if (!asset.prompt && promptUnavailable) {
     return {
       key: "webPromptUnavailable",
-      text: "网页来源未暴露原始生图提示词",
+      text: "该网页未提供原始提示词",
     }
   }
 
   if (asset.prompt && (provider === "jimeng" || sourceType === "web-jimeng")) {
     if (promptSource === "jimeng-agent-prompt" && promptStatus === "generation-tool-prompt") {
-      return { key: "jimengAgentPrompt", text: "即梦智能体交给模型的提示词" }
+      return { key: "jimengAgentPrompt", text: "即梦智能体提交给模型的提示词" }
     }
     if (promptSource === "jimeng-submitted-prompt" && promptStatus === "provider-visible-prompt") {
-      return { key: "jimengSubmittedPrompt", text: "即梦按原话提交，没有返回改写版" }
+      return { key: "jimengSubmittedPrompt", text: "即梦按输入原文提交，未返回改写版本" }
     }
   }
 
@@ -214,31 +216,31 @@ export function promptNotice(asset: MosaAsset): PromptNotice {
     if (provider === "gemini" || sourceType === "web-gemini") {
       return {
         key: "geminiVisibleUserPromptUnverified",
-        text: "Gemini 页面可见用户提示词（未验证为实际生图提示词）",
+        text: "Gemini 页面显示的提示词，未验证为实际生成所用",
       }
     }
     if (provider === "google-ai-studio" || sourceType === "web-google-ai-studio") {
       return {
         key: "googleAiStudioVisibleUserPromptUnverified",
-        text: "Google AI Studio 页面可见用户提示词（未验证为实际生图提示词）",
+        text: "Google AI Studio 页面显示的提示词，未验证为实际生成所用",
       }
     }
     if (provider === "flow" || sourceType === "web-flow") {
       return {
         key: "flowProviderVisiblePromptUnverified",
-        text: "Flow 页面可见提示词（未验证为实际生图提示词）",
+        text: "Flow 页面显示的提示词，未验证为实际生成所用",
       }
     }
     if (provider === "jimeng" || sourceType === "web-jimeng") {
       return {
         key: "jimengVisiblePromptUnverified",
-        text: "即梦页面可见提示词（未验证为实际生图提示词）",
+        text: "即梦页面显示的提示词，未验证为实际生成所用",
       }
     }
     if (provider === "midjourney" || sourceType === "web-midjourney") {
       return {
         key: "midjourneyVisiblePromptUnverified",
-        text: "Midjourney 页面可见提示词（未验证为实际生图提示词）",
+        text: "Midjourney 页面显示的提示词，未验证为实际生成所用",
       }
     }
   }

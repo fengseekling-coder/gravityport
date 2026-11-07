@@ -62,7 +62,11 @@ export async function migrateLegacyLibrary(options: { managerDir?: string; legac
     for (const record of inspection.records) {
       let existing: { id: string; image_path: string } | null = null; try { existing = await store.getAsset(record.projectId, record.metadata.id); } catch { existing = null; }
       if (existing) { const [sourceHash, storedHash] = await Promise.all([hashFile(record.imagePath), hashFile(existing.image_path)]); if (sourceHash !== storedHash) { report.issues.push({ kind: "resume-hash-mismatch", path: record.metadataPath, detail: `Existing SQLite asset ${record.metadata.id} differs from legacy image.` }); continue; } report.skipped += 1; report.verified += 1; continue; }
-      const asset = await store.createAsset({ ...record.metadata, projectId: record.projectId, assetId: record.metadata.id, imagePath: record.imagePath, sourceType: record.metadata.source?.type, source: record.metadata.source }, { allowMissingVersionChange: true });
+      // skipMediaSignature: migration moves data that predates the content
+      // gate (task 366); one odd legacy file must not stop the whole run.
+      // Every other path check (realpath, trusted roots, symlinks, extension)
+      // still applies.
+      const asset = await store.createAsset({ ...record.metadata, projectId: record.projectId, assetId: record.metadata.id, imagePath: record.imagePath, sourceType: record.metadata.source?.type, source: record.metadata.source }, { allowMissingVersionChange: true, skipMediaSignature: true });
       const [sourceHash, storedHash] = await Promise.all([hashFile(record.imagePath), hashFile(asset.image_path)]);
       if (sourceHash !== storedHash) { report.issues.push({ kind: "post-import-hash-mismatch", path: record.metadataPath, detail: `Imported SQLite asset ${asset.id} does not match legacy original.` }); continue; }
       report.imported += 1; report.verified += 1;

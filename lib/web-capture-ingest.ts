@@ -499,6 +499,19 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
   const normalizedPromptStatus = trustedGenerationPrompt || providerVisiblePrompt
     ? (prompt ? suppliedPromptStatus : "not-available")
     : promptStatus;
+  // Task 353 (user decision 2026-11-03): for ChatGPT captures with a trusted
+  // request prompt, the prompt the chat model sent to the image tool is what
+  // the inspector shows as 提示词1, and the model's caption of the finished
+  // image moves to source.model_caption (提示词2). The swap applies to the
+  // create path only — the gate's upgrade candidate below keeps the ORIGINAL
+  // page prompt, so an already-archived asset never has its prompt rewritten
+  // to the request prompt, and a user-edited prompt still wins.
+  const chatgptRequestPromptSwap = provider === "chatgpt" && Boolean(requestPrompt);
+  const assetPrompt = chatgptRequestPromptSwap ? requestPrompt : prompt;
+  const assetPromptStatus = chatgptRequestPromptSwap ? "generation-tool-prompt" : normalizedPromptStatus;
+  // A caption identical to the request prompt carries no second reading, and a
+  // placeholder-only capture (empty page prompt) has no caption at all.
+  const modelCaption = chatgptRequestPromptSwap && prompt && prompt !== requestPrompt ? prompt : "";
   const pixelHash = imageMetadata.pixelHash || "";
   const projectAssets = onceProjectListing(store, projectId);
   const pageUrl = String(input.pageUrl || input.page_url || "").trim(); const conversationId = String(input.conversationId || input.conversation_id || "").trim();
@@ -640,9 +653,9 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
         imagePath: tempPath,
         assetId: captureAssetId,
         fileName: tempName,
-        prompt,
+        prompt: assetPrompt,
         skill: providerConfig.skill,
-        theme: promptTheme(prompt, providerConfig.label),
+        theme: promptTheme(assetPrompt, providerConfig.label),
         tags: [provider, "web-capture", captureMode === "manual" ? "manual-capture" : "auto-archived"],
         category: "",
         references,
@@ -656,7 +669,7 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
           verification_level: "observed",
           is_reference: false,
           capture_channel: "chrome-extension",
-          prompt_status: normalizedPromptStatus,
+          prompt_status: assetPromptStatus,
           prompt_source: promptSource || null,
           prompt_priority: promptPriority || 0,
           prompt_scope: promptScope || null,
@@ -692,11 +705,12 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
           message_id: messageId || null,
           capture_session_id: captureSessionId || null,
           generation_batch_id: generationBatchId || null,
-          prompt_status: normalizedPromptStatus,
+          prompt_status: assetPromptStatus,
           prompt_source: promptSource || null,
           prompt_priority: promptPriority || 0,
           prompt_scope: promptScope || null,
           user_message: userMessage || null,
+          model_caption: modelCaption || null,
           generation_request_prompt: requestPrompt || null,
           captured_at: capturedAt,
           capture_extension_version: String(input.extensionVersion || input.extension_version || ""),
@@ -724,6 +738,9 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
       pixelHash,
       incomingOwner: `web:${provider}`,
       occurrence: captureOccurrence,
+      // The gate's upgrade candidate keeps the ORIGINAL page prompt: an
+      // already-archived asset is only ever upgraded by the values it would
+      // have received before the 353 swap, never by the request prompt.
       prompt: {
         prompt,
         promptStatus: normalizedPromptStatus,
@@ -759,8 +776,10 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
           generationBatchId,
           model,
           userMessage,
-          prompt,
-          promptStatus: normalizedPromptStatus,
+          // The event describes the asset just created, so it carries the same
+          // swapped prompt the asset stores (提示词1 = request prompt).
+          prompt: assetPrompt,
+          promptStatus: assetPromptStatus,
           promptScope,
           generationStatus,
           references: asset.references,
@@ -1509,8 +1528,11 @@ function referenceIdentityList(references: unknown): string {
 }
 
 // ChatGPT's live image tool call carries the Prompt the chat model wrote for
-// the image generator. It is kept beside the caption Prompt, never in place of
-// it, so it does not take part in Prompt ranking.
+// the image generator. Since task 353 (user decision 2026-11-03) NEW captures
+// store it as the asset prompt (提示词1) with the caption in
+// source.model_caption; on already-archived assets it is still only kept
+// beside the stored prompt (source.generation_request_prompt) and never
+// rewrites it.
 function requestPromptFor(provider: string, input: WebCaptureInput): string {
   if (provider !== "chatgpt") return "";
   const text = String(input.generation_request_prompt || input.generationRequestPrompt || "").trim();

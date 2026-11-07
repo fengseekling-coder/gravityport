@@ -389,10 +389,6 @@ test("real Electron preload smoke (opt-in)", { skip: process.env.MOSA_ELECTRON_P
   const userDataDir = await mkdtemp(join(tmpdir(), "mosa-preload-smoke-user-data-"));
   const assetsDir = join(libraryDir, "assets");
   await mkdir(assetsDir, { recursive: true });
-  // The import fixture is written only after the App is up: an image under
-  // assets/ with no mosa.db is a library that lost its database, which the
-  // App refuses to open (lib/asset-store.mjs). Starting empty is a first run.
-  const fixturePath = join(assetsDir, "preload-smoke.png");
 
   const [cdpPort, desktopPort] = await Promise.all([reserveFreePort(), reserveFreePort()]);
   const child = spawn(electronPath, [`--remote-debugging-port=${cdpPort}`, `--user-data-dir=${userDataDir}`, root], {
@@ -489,22 +485,30 @@ test("real Electron preload smoke (opt-in)", { skip: process.env.MOSA_ELECTRON_P
     assert.equal(response.status, 200, await response.text());
   };
   const cardCount = `document.querySelectorAll('.asset-card').length`;
-  await writeFile(fixturePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
-  await createFixture(fixturePath, "preload smoke fixture");
-  let cardReady = await waitForRendererValue(client, cardCount, (value) => Number(value) > 0);
-  if (!(Number(cardReady) > 0)) {
-    // The renderer does not refetch on its first library-events connection,
-    // so a create that lands before that stream opens is never announced. By
-    // now the stream has had 10s to open: a second create can only reach the
-    // gallery through the live refresh path, which is what this checks.
-    const secondFixturePath = join(assetsDir, "preload-smoke-2.png");
-    // A 2x2 red PNG: different bytes and pixels, so neither content nor pixel
-    // dedupe can fold it into the first fixture.
-    await writeFile(secondFixturePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWO4o6FxR0ODAUIBACOuBLGwh8F2AAAAAElFTkSuQmCC", "base64"));
-    await createFixture(secondFixturePath, "preload smoke fixture (after live sync opened)");
-    cardReady = await waitForRendererValue(client, cardCount, (value) => Number(value) > 0);
+  // The import fixture is written only after the App is up: an image under
+  // assets/ with no mosa.db is a library that lost its database, which the
+  // App refuses to open (lib/asset-store.mjs). Starting empty is a first run.
+  // Review 270 中-1 / task 352: one create that lands before the
+  // library-events stream opens is never announced, and on a slow runner the
+  // second create could still beat the stream, so both 10s waits expired and
+  // the assert below went red on healthy code. Retry the create+wait cycle
+  // with distinct fixtures — different bytes and pixels, so neither content
+  // nor pixel dedupe can fold one into another. Each round keeps the same
+  // 10s wait and the same assertion; only the trigger is re-issued.
+  const smokeFixtures = [
+    ["preload-smoke.png", "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "preload smoke fixture"],
+    ["preload-smoke-2.png", "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWO4o6FxR0ODAUIBACOuBLGwh8F2AAAAAElFTkSuQmCC", "preload smoke fixture (after live sync opened)"],
+    ["preload-smoke-3.png", "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGPgsjnxH4QZYAwAQxAINc327rcAAAAASUVORK5CYII=", "preload smoke fixture (third round)"],
+  ];
+  let cardReady = 0;
+  for (const [name, png, prompt] of smokeFixtures) {
+    const smokeFixturePath = join(assetsDir, name);
+    await writeFile(smokeFixturePath, Buffer.from(png, "base64"));
+    await createFixture(smokeFixturePath, prompt);
+    cardReady = Number(await waitForRendererValue(client, cardCount, (value) => Number(value) > 0));
+    if (cardReady > 0) break;
   }
-  assert.equal(Number(cardReady) > 0, true, "the created asset arrives through the live library refresh path");
+  assert.equal(cardReady > 0, true, "the created asset arrives through the live library refresh path");
   await evaluate(client, `document.querySelector('.asset-card')?.click(); true`);
   const actionState = JSON.parse(await waitForRendererValue(client, `JSON.stringify({
     finderButtons: document.querySelectorAll('[data-action="show-in-finder"]').length,

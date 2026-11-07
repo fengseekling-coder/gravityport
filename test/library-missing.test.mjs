@@ -355,19 +355,74 @@ test("MCP refuses an env-configured directory without a library and reports the 
   assert.deepEqual(await readdir(emptyEnvDir), []);
 });
 
+const MCP_TOOL_COUNT = 17;
+
+/**
+ * A server without a usable library still starts, lists every tool, and
+ * answers each tool call with the given error code and bilingual reason.
+ */
+async function assertServesWithoutLibrary(server, { code, patterns }) {
+  const init = await server.request("initialize", { protocolVersion: "2025-11-25" });
+  assert.equal(init.result.serverInfo.name, "GravityPort MCP");
+  assert.equal((await server.request("tools/list")).result.tools.length, MCP_TOOL_COUNT);
+  for (const name of ["asset_search", "asset_create"]) {
+    const result = await server.callTool(name, name === "asset_search" ? { query: "anything" } : { imagePath: "/nonexistent.png" });
+    assert.equal(result.isError, true, `${name} must refuse without a library`);
+    assert.equal(result.structuredContent.error.code, code);
+    for (const pattern of patterns) assert.match(result.content[0].text, pattern);
+  }
+  for (const pattern of patterns) assert.match(server.stderr, pattern);
+  assert.deepEqual((await server.request("ping")).result, {});
+  const exited = server.waitForExit();
+  server.child.kill("SIGTERM");
+  assert.equal((await exited).code, 0);
+}
+
 test("MCP refuses to create a library when only MOSA_LIBRARY_DIR points at an empty directory", async (t) => {
   const workspace = await createMcpWorkspace(t);
   // Empty the seeded library back out: env pointing at a directory without a
-  // library must fail instead of materializing a fresh one.
+  // library must not materialize a fresh one; the server stays up and says so.
   for (const entry of await readdir(workspace.libraryDir)) {
     await rm(join(workspace.libraryDir, entry), { recursive: true, force: true });
   }
 
   const server = startMcpServer(t, workspace);
-  const exit = await server.waitForExit();
-  assert.equal(exit.code, 1);
-  assert.match(server.stderr, /没有找到 GravityPort 素材库/);
-  assert.match(server.stderr, /No GravityPort library was found/);
+  await assertServesWithoutLibrary(server, {
+    code: "LIBRARY_NOT_FOUND",
+    patterns: [/没有找到 GravityPort 素材库/, /No GravityPort library was found/],
+  });
+  assert.deepEqual(await readdir(workspace.libraryDir), []);
+});
+
+test("MCP started before any library exists lists its tools and works once the App creates one", async (t) => {
+  const workspace = await createMcpWorkspace(t);
+  for (const entry of await readdir(workspace.libraryDir)) {
+    await rm(join(workspace.libraryDir, entry), { recursive: true, force: true });
+  }
+
+  const server = startMcpServer(t, workspace);
+  await server.request("initialize", { protocolVersion: "2025-11-25" });
+  assert.equal((await server.request("tools/list")).result.tools.length, MCP_TOOL_COUNT);
+  const before = await server.callTool("asset_search", { query: "harbor" });
+  assert.equal(before.structuredContent.error.code, "LIBRARY_NOT_FOUND");
+  assert.deepEqual(await readdir(workspace.libraryDir), [], "a refused call creates nothing");
+
+  // The user opens GravityPort: the App creates the library in that directory.
+  createAssetStore({
+    projectRoot: workspace.root,
+    managerDir: workspace.root,
+    libraryDir: workspace.libraryDir,
+    explicitLibraryDir: workspace.libraryDir,
+  }).close();
+
+  // The same connection now works without restarting the assistant.
+  const imagePath = await writePngFixture(join(workspace.imagesDir, "harbor.png"));
+  const created = await server.callToolStrict("asset_create", { assetId: "after-open", imagePath, prompt: "harbor after the App opened" });
+  assert.equal(created.structuredContent.asset.id, "after-open");
+  const found = await server.callToolStrict("asset_search", { query: "harbor" });
+  assert.deepEqual(found.structuredContent.results.map((entry) => entry.asset?.id ?? entry.id), ["after-open"]);
+  server.child.kill("SIGTERM");
+  await server.waitForExit();
 });
 
 test("MCP answers LIBRARY_DATABASE_CHANGED after the library directory is moved away", async (t) => {
@@ -507,7 +562,7 @@ test("the runtime without an explicit libraryDir reports the broken default inst
   assert.equal(existsSync(join(home, LIBRARY_DIR_NAME)), false);
 });
 
-test("MCP exits non-zero for an env-configured directory holding only managed media", async (t) => {
+test("MCP reports an env-configured directory holding only managed media as unavailable", async (t) => {
   const workspace = await createMcpWorkspace(t);
   // Reduce the seeded library to managed media only: no mosa.db, no marker.
   for (const entry of await readdir(workspace.libraryDir)) {
@@ -516,11 +571,11 @@ test("MCP exits non-zero for an env-configured directory holding only managed me
   await seedManagedImages(workspace.libraryDir);
 
   const server = startMcpServer(t, workspace);
-  const exit = await server.waitForExit();
-  assert.equal(exit.code, 1);
-  // The store's bilingual message reaches stderr; nothing was created.
-  assert.match(server.stderr, /素材库缺少数据库文件 mosa\.db/);
-  assert.match(server.stderr, /is missing its mosa\.db database/);
+  // The store's bilingual message reaches stderr and every tool call; nothing was created.
+  await assertServesWithoutLibrary(server, {
+    code: "LIBRARY_UNAVAILABLE",
+    patterns: [/素材库缺少数据库文件 mosa\.db/, /is missing its mosa\.db database/],
+  });
   assert.equal(existsSync(join(workspace.libraryDir, "mosa.db")), false);
 });
 

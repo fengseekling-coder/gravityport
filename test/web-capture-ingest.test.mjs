@@ -2618,7 +2618,7 @@ test("a capture with no conversation identifier links nothing", async (t) => {
   assert.deepEqual(created.references, [], "nothing ties a loose capture to a turn");
 });
 
-test("stores the ChatGPT image request Prompt beside the caption Prompt", async (t) => {
+test("stores the ChatGPT image request Prompt as 提示词1 and the caption in model_caption", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-web-request-prompt-"));
   deferTestPathRemoval(root, { recursive: true, force: true });
   const libraryDir = join(root, "library");
@@ -2645,7 +2645,9 @@ test("stores the ChatGPT image request Prompt beside the caption Prompt", async 
     },
   });
   assert.equal(first.status, "imported");
-  assert.equal(first.asset.prompt, caption);
+  assert.equal(first.asset.prompt, requestPrompt, "提示词1 is the prompt sent to the image tool");
+  assert.equal(first.asset.source?.prompt_status, "generation-tool-prompt");
+  assert.equal(first.asset.source?.model_caption, caption, "the caption is kept for 提示词2");
   assert.equal(first.asset.source?.generation_request_prompt, requestPrompt);
 
   const repeat = await ingestWebCapture({
@@ -2655,7 +2657,7 @@ test("stores the ChatGPT image request Prompt beside the caption Prompt", async 
     input: { provider: "chatgpt", generation_request_prompt: "A different later text", imageBase64: image, mimeType: "image/png" },
   });
   assert.equal(repeat.status, "skipped");
-  assert.equal(repeat.asset.prompt, caption);
+  assert.equal(repeat.asset.prompt, requestPrompt);
   assert.equal(repeat.asset.source?.generation_request_prompt, requestPrompt, "the first observed request Prompt is kept");
 
   const gemini = await ingestWebCapture({
@@ -2671,6 +2673,7 @@ test("stores the ChatGPT image request Prompt beside the caption Prompt", async 
   });
   assert.equal(gemini.status, "imported");
   assert.equal(gemini.asset.source?.generation_request_prompt, null);
+  assert.equal(gemini.asset.source?.model_caption ?? null, null);
 });
 
 test("adds a late ChatGPT request Prompt to an already archived capture", async (t) => {

@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import sharp from "sharp";
 import { createSqliteAssetStore, sqliteDatabasePath } from "../lib/sqlite-asset-store.mjs";
+import { mp4Bytes } from "./helpers/managed-media.mjs";
 import { processDerivativeJob } from "../lib/derivative-worker.js";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { removeTestPath } from "./test-cleanup.mjs";
@@ -189,7 +190,7 @@ test("a computed-but-empty palette ('[]') is never recomputed", async (t) => {
 test("video assets are never paletted, even with a readable thumbnail", async (t) => {
   const { root, store } = await createStore(t);
   const videoPath = join(root, "generated-images", "clip.mp4");
-  await writeFile(videoPath, Buffer.from("not really a video, but the extension decides"));
+  await writeFile(videoPath, mp4Bytes());
   await store.createAsset({ assetId: "clip", imagePath: videoPath, prompt: "prompt for clip" });
   // Give the video row everything ensureAssetPalette normally needs except
   // the media kind, so a failure here would compute a palette.

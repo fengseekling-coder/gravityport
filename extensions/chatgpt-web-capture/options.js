@@ -18,7 +18,7 @@ function normalizeBaseUrl(value) {
     throw new Error("GravityPort 地址无效。");
   }
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname) || url.username || url.password) {
-    throw new Error("GravityPort 地址必须是 http://127.0.0.1:端口 或 http://localhost:端口。");
+    throw new Error("地址必须是本机地址，例如 http://127.0.0.1:43517。");
   }
   return url.origin;
 }
@@ -45,14 +45,14 @@ async function load() {
     baseUrlEl.value = settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl;
     tokenEl.value = settings.mosaToken || "";
     autoCaptureEl.checked = settings.autoCapture !== false;
-    setStatus(`设置读取失败：${error instanceof Error ? error.message : String(error)}`, "error");
+    setStatus(`无法读取设置：${error instanceof Error ? error.message : String(error)}`, "error");
   }
 }
 
 document.getElementById("save").addEventListener("click", async () => {
   const token = tokenEl.value.trim();
   if (token === LEGACY_DEV_TOKEN) {
-    setStatus("旧开发 Token 已失效。请填写与当前 GravityPort 服务一致的新随机 Token。", "error");
+    setStatus("该开发用令牌（Token）已失效。清空此项以自动连接，或填写 GravityPort 当前使用的令牌。", "error");
     return;
   }
   let baseUrl;
@@ -67,7 +67,7 @@ document.getElementById("save").addEventListener("click", async () => {
     mosaToken: token,
     autoCapture: autoCaptureEl.checked,
   });
-  setStatus("已保存。请刷新支持的网页使内容脚本生效。", "success");
+  setStatus("已保存。刷新已打开的支持网站后生效。", "success");
 });
 
 // "未发现正在运行的 MOSA" lumps three very different failures together: the
@@ -79,12 +79,12 @@ async function diagnoseMosaConnection(baseUrl) {
   try {
     health = await fetchWithTimeout(`${baseUrl}/api/health`, { cache: "no-cache" }, 3000);
   } catch {
-    return `未检测到 GravityPort 服务：${baseUrl} 无法访问。请确认 GravityPort App 正在运行。`;
+    return `无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`;
   }
   let identity = null;
   try { identity = await health.json(); } catch { /* non-JSON responder */ }
   if (!health.ok || identity?.product !== "mosa") {
-    return `${baseUrl} 上运行的不是 GravityPort（HTTP ${health.status}）。请检查地址与端口。`;
+    return `${baseUrl} 上的服务不是 GravityPort（HTTP ${health.status}）。请检查地址和端口。`;
   }
   const version = String(identity?.productVersion || "").trim();
   try {
@@ -95,14 +95,14 @@ async function diagnoseMosaConnection(baseUrl) {
       cache: "no-cache",
     }, 3000);
     if (pair.status === 403) {
-      return `GravityPort 正在运行${version ? `（${version}）` : ""}，但拒绝配对本扩展（ID ${chrome.runtime.id} 不在信任列表）。请升级 GravityPort App 后重试。`;
+      return `GravityPort${version ? ` ${version}` : ""} 不接受此扩展（扩展 ID：${chrome.runtime.id}）。请将 GravityPort 更新到最新版本后重试。`;
     }
     if (pair.ok) {
       return `GravityPort 正在运行${version ? `（${version}）` : ""}，配对接口可用。请再点一次“测试连接”完成配对。`;
     }
-    return `GravityPort 正在运行${version ? `（${version}）` : ""}，但配对返回 HTTP ${pair.status}。`;
+    return `无法完成连接（HTTP ${pair.status}）。请重新启动 GravityPort 后重试。`;
   } catch {
-    return `GravityPort 正在运行${version ? `（${version}）` : ""}，但配对请求失败。`;
+    return "无法完成连接。请确认 GravityPort 正在运行，然后重试。";
   }
 }
 
@@ -121,7 +121,7 @@ async function probeIngestToken(baseUrl, token) {
 }
 
 document.getElementById("test").addEventListener("click", async () => {
-  setStatus("测试中…", "success");
+  setStatus("正在测试连接…", "success");
   let baseUrl;
   try {
     baseUrl = normalizeBaseUrl(baseUrlEl.value.trim() || DEFAULTS.mosaBaseUrl);
@@ -143,12 +143,12 @@ document.getElementById("test").addEventListener("click", async () => {
       tokenEl.value = token;
       baseUrlEl.value = baseUrl;
     } catch {
-      setStatus(await diagnoseMosaConnection(baseUrl).catch(() => "未发现正在运行的 GravityPort。请先打开 GravityPort App。"), "error");
+      setStatus(await diagnoseMosaConnection(baseUrl).catch(() => "无法找到正在运行的 GravityPort。请先打开 GravityPort。"), "error");
       return;
     }
   }
   if (token === LEGACY_DEV_TOKEN) {
-    setStatus("旧开发 Token 已失效。请填写与当前 GravityPort 服务一致的新随机 Token。", "error");
+    setStatus("该开发用令牌（Token）已失效。清空此项以自动连接，或填写 GravityPort 当前使用的令牌。", "error");
     return;
   }
   try {
@@ -164,26 +164,26 @@ document.getElementById("test").addEventListener("click", async () => {
         baseUrlEl.value = baseUrl;
         probe = await probeIngestToken(baseUrl, token);
         if (probe.status === 400 && probe.data.code === "WEB_CAPTURE_BAD_IMAGE") {
-          setStatus("已重新配对，连接和 Token 验证成功。", "success");
+          setStatus("已重新连接，连接测试通过。", "success");
           return;
         }
       }
     }
     if (probe.status === 400 && probe.data.code === "WEB_CAPTURE_BAD_IMAGE") {
-      setStatus("连接和 Token 验证成功。", "success");
+      setStatus("连接测试通过。", "success");
       return;
     }
     if (probe.status === 401 && probe.data.code === "WEB_CAPTURE_UNAUTHORIZED") {
-      setStatus("Token 不匹配。请填写当前 GravityPort 服务配置的 Token。", "error");
+      setStatus("令牌（Token）与 GravityPort 不一致。清空此项以自动连接，或填写 GravityPort 当前使用的令牌。", "error");
       return;
     }
     if (probe.status === 403) {
-      setStatus("扩展来源未获服务端批准。请检查 GRAVITYPORT_WEB_CAPTURE_ORIGINS。", "error");
+      setStatus("GravityPort 未允许此扩展连接。请将 GravityPort 和此扩展更新到最新版本。", "error");
       return;
     }
     throw new Error(probe.data.error || `HTTP ${probe.status}`);
   } catch (error) {
-    setStatus(`连接失败：${error instanceof Error ? error.message : String(error)}`, "error");
+    setStatus(`无法连接：${error instanceof Error ? error.message : String(error)}`, "error");
   }
 });
 

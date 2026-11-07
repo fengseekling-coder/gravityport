@@ -9,6 +9,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import sharp from "sharp";
 import { CURRENT_SCHEMA_VERSION, createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { mp4Bytes } from "./helpers/managed-media.mjs";
 import { processDerivativeJob } from "../lib/derivative-worker.js";
 import { computePerceptualHash, perceptualHammingDistance } from "../lib/perceptual-hash.js";
 import { importStagingDir } from "../lib/import-staging.mjs";
@@ -189,7 +190,7 @@ test("trash copy does not dedupe, archived copy does", async (t) => {
 
 test("videos only dedupe on identical bytes and never on similarity", async (t) => {
   const { store, sourcesDir } = await makeStore(t, "mosa-dedupe-video-");
-  const bytes = Buffer.from("not really a video, but the extension rules");
+  const bytes = mp4Bytes(7);
   const first = join(sourcesDir, "clip-one.mp4");
   const second = join(sourcesDir, "clip-two.mp4");
   await writeFile(first, bytes);

@@ -269,6 +269,32 @@ test("a refused connection maps to FEEDBACK_OFFLINE", async (t) => {
   }
 });
 
+// 任务 312：转发器带 redirect: "error"，收集服务回 302 时不许跟着跳，
+// 按「离线、稍后再发」处理，重定向目标收不到任何东西。
+test("a 302 from the collector is refused and maps to FEEDBACK_OFFLINE", async (t) => {
+  const target = await startFakeCollector((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, id: "fb_stolen" }));
+  });
+  const collector = await startFakeCollector((req, res) => {
+    res.writeHead(302, { location: target.url });
+    res.end();
+  });
+  const restore = setEnv({ MOSA_FEEDBACK_URL: collector.url });
+  try {
+    const runtime = await startFeedbackRuntime(t);
+    const response = await submit(runtime, { kind: "bug", message: "redirect", locale: "zh" });
+    assert.equal(response.status, 502);
+    assert.equal((await response.json()).code, "FEEDBACK_OFFLINE");
+    assert.equal(collector.requests.length, 1, "the payload reached the collector once");
+    assert.equal(target.requests.length, 0, "the redirect target never saw a request");
+  } finally {
+    restore();
+    await collector.close();
+    await target.close();
+  }
+});
+
 test("a slow collection service hits the timeout and maps to FEEDBACK_OFFLINE", async (t) => {
   const collector = await startFakeCollector((req, res) => {
     // Never answer inside the injected timeout window.

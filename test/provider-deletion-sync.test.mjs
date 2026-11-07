@@ -967,6 +967,9 @@ test("background: reportProviderDeletions posts to the app with the token, caps 
   });
   new vm.Script(providerPolicySource, { filename: "provider-policy.js" }).runInContext(context);
   const workerSource = backgroundSource.replace(/^import\s+".\/provider-policy.js";\s*$/m, "");
+  if (workerSource === backgroundSource) {
+    throw new Error("background.js must import ./provider-policy.js");
+  }
   new vm.Script(workerSource, { filename: "background.js" }).runInContext(context);
 
   const dispatchMessage = (message, sender) => new Promise((resolve, reject) => {
@@ -1021,9 +1024,6 @@ test("background: reportProviderDeletions posts to the app with the token, caps 
   }, { id: RUNTIME_ID, tab: { id: 12 }, url: "https://chatgpt.com/c/conv", frameId: 0 });
   assert.equal(chatgptResponse.ok, false);
 
-  // The wiring lines stay pinned: content script forwards the hook message,
-  // background gates it to jimeng pages.
+  // Content script forwards the hook message.
   assert.match(providerJimengSource, /message\?\.type === "jimeng-deletion-observed"/);
-  assert.match(backgroundSource, /message\.type === "mosa\.reportProviderDeletions"\) return context\.provider === "jimeng";/);
-  assert.match(backgroundSource, /\/api\/ingest\/web-capture-provider-deletions/);
 });

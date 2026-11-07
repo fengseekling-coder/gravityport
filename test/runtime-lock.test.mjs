@@ -14,9 +14,16 @@ test("permits only one MOSA bridge runtime for a library", async (t) => {
   deferTestPathRemoval(root, { recursive: true, force: true });
 
   const first = await acquireMosaRuntimeLock({ libraryDir });
+  // 任务 367（NATIVE-03h）：锁被占的错误带码和 PID，桌面启动失败框按码选
+  // 中英文；英文原句留在 message 里只进日志。
   await assert.rejects(
     acquireMosaRuntimeLock({ libraryDir }),
-    /GravityPort runtime already active for this library/,
+    (error) => {
+      assert.match(error.message, /GravityPort runtime already active for this library/);
+      assert.equal(error.code, "MOSA_STARTUP_LIBRARY_LOCKED");
+      assert.equal(error.pid, process.pid);
+      return true;
+    },
   );
   assert.equal(await first.release(), true);
 

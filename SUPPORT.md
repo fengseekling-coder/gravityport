@@ -3,6 +3,7 @@
 Use the channel that matches the request:
 
 - Questions and setup help: [GitHub Discussions Q&A](https://github.com/fengseekling-coder/gravityport/discussions/categories/q-a)
+- Quick questions and chat: [Discord](https://discord.gg/rArXAShSkQ)
 - Reproducible bugs: [Bug report](https://github.com/fengseekling-coder/gravityport/issues/new?template=bug_report.yml)
 - Feature ideas: [Feature request](https://github.com/fengseekling-coder/gravityport/issues/new?template=feature_request.yml)
 - Security vulnerabilities: follow [SECURITY.md](SECURITY.md) and do not open a public Issue

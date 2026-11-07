@@ -7,6 +7,7 @@
 
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { getUpdateReadyNotificationText } from "./notification-i18n.mjs";
 import { canInstallUpdateInApp } from "./update-service.mjs";
 
 export const UPDATE_FIRST_CHECK_DELAY_MS = 2 * 60 * 1000;
@@ -33,13 +34,11 @@ export function backgroundUpdateGatesPass({
   return true;
 }
 
-// The system notification for a verified staged package. It lives here because
-// desktop/notification-i18n.mjs only carries the pre-existing update copies.
+// The system notification for a verified staged package. 任务 367
+// （NOTIF-03a/03b）：中英文搬进 notification-i18n.mjs 统一维护（版本号带 v、
+// 正文不带句号），这里只保留原有的函数签名给调度器和测试用。
 export function updateReadyNotificationCopy(version, language = "zh") {
-  if (language === "en") {
-    return { title: `GravityPort ${version} is ready`, body: "Restart GravityPort to finish updating." };
-  }
-  return { title: `GravityPort ${version} 已准备好`, body: "重启 GravityPort 即可完成更新。" };
+  return getUpdateReadyNotificationText(version, language);
 }
 
 const MAX_NOTIFIED_VERSIONS = 20;

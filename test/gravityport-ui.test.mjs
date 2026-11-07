@@ -241,7 +241,8 @@ describe("batch mutations", () => {
       assert.deepEqual(bodies[1], ["id-1000"]);
       assert.equal(outcome.succeeded, 1000);
       assert.deepEqual(outcome.failedIds, ["id-1000"]);
-      assert.equal(outcome.firstError, "socket hung up");
+      // 任务 359（ERR-UNKNOWN）：未识别错误走 {detail} 兜底，不再裸露原文。
+      assert.equal(outcome.firstError, "无法完成操作（socket hung up）");
     } finally {
       globalThis.fetch = originalFetch;
     }

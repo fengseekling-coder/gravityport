@@ -44,7 +44,7 @@ User-initiated exports of group metadata (the sidebar group context-menu "Export
 
 ## AI assistant (MCP)
 
-The GravityPort MCP server does not run on its own: an AI assistant can connect to your library only after you paste the ready-made configuration from Settings → Connect into Claude Desktop, Claude Code, or Codex. A connected assistant can search and read assets — including Prompts, source and provenance details, and local file paths — and can add images to the library directly from Codex's generated-images folder and the library's own folders. Importing a folder from anywhere else on your machine requires you to confirm that import inside the assistant itself (MCP elicitation); GravityPort never shows a dialog or reads that folder without the confirmation. Once that content has been handed to the assistant, it is processed under that AI service's own privacy policy and may be sent to its servers. To keep an assistant from reading the library, remove the GravityPort entry from that assistant's MCP configuration.
+The GravityPort MCP server does not run on its own: an AI assistant can connect to your library only after you paste the ready-made configuration from Settings → Connect into Claude Desktop, Claude Code, or Codex. A connected assistant can search and read assets — including Prompts, source and provenance details, and local file paths — and can add images to the library from local absolute file and folder paths. Once that content has been handed to the assistant, it is processed under that AI service's own privacy policy and may be sent to its servers. To keep an assistant from reading the library, remove the GravityPort entry from that assistant's MCP configuration.
 
 ## Usage Metrics (Random Installation ID)
 

@@ -42,8 +42,8 @@ export async function run(ctx) {
       : ["new", "improved", "fixed", "other"].flatMap((key) => (Array.isArray(value?.[key]) ? value[key] : []));
     const zhUnreleased = flatLines(notes.unreleased.zh);
     const enUnreleased = flatLines(notes.unreleased.en);
-    const zhDevLines = zhUnreleased.length > 0 ? zhUnreleased : ["还没有记录"];
-    const enDevLines = enUnreleased.length > 0 ? enUnreleased : ["Nothing recorded yet"];
+    const zhDevLines = zhUnreleased.length > 0 ? zhUnreleased : ["暂无更新记录"];
+    const enDevLines = enUnreleased.length > 0 ? enUnreleased : ["No release notes"];
     const status = await ctx.api(server.origin, "GET", "/api/health");
     if (status.distribution !== "development") {
       throw new Error(`this flow asserts the development branch; dist was built as ${status.distribution} — run npm run build without MOSA_RELEASE_DISTRIBUTION first`);
@@ -85,7 +85,7 @@ export async function run(ctx) {
     // computed in-page with the same Intl options so the assertion holds in
     // every timezone.
     const updated = await runRound(ctx, server, fakeUpdateSource(), 'fake-update');
-    assertEqual(updated.titles, ["新版本 9.9.9 更新内容", "下个版本（开发中）"], "new-version block above the current one");
+    assertEqual(updated.titles, ["新版本 v9.9.9 更新内容", "下个版本（开发中）"], "new-version block above the current one");
     assertEqual(updated.firstGroups, [
       { heading: "", lines: ["第三行没有符号"] },
       { heading: "新增", lines: ["新版第一句"] },
