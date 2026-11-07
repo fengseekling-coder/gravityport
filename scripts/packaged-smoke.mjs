@@ -148,11 +148,14 @@ function assertQuietEvidence(launch, label) {
   if (!quietLine) {
     throw new Error(`[${label}] packaged quiet stderr evidence missing "QA_QUIET: packaged on".`);
   }
-  if (!showWindowLine) {
+  // Window suppression is macOS-only by design (desktop/main.mjs quietTestApp:
+  // quiet && darwin); Windows runs only on CI and keeps its window, so the
+  // showWindow line is required on macOS alone.
+  if (process.platform === "darwin" && !showWindowLine) {
     throw new Error(`[${label}] packaged quiet stderr evidence missing "QA_UI_SUPPRESSED: showWindow".`);
   }
   console.log(`QUIET_EVIDENCE ${label}: ${quietLine.trim()}`);
-  console.log(`QUIET_EVIDENCE ${label}: ${showWindowLine.trim()}`);
+  if (showWindowLine) console.log(`QUIET_EVIDENCE ${label}: ${showWindowLine.trim()}`);
 }
 
 // Corroborating per-launch Launch Services view; the per-sample activation

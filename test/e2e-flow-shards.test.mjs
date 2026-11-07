@@ -28,7 +28,11 @@ async function listFlows(extraArgs = []) {
     // MOSA_E2E_ONLY, and nothing here needs a QA runtime.
     env: { ...process.env, MOSA_E2E_ONLY: "", TMPDIR: tmpdir() },
   });
-  return stdout.trim().split("\n").filter(Boolean);
+  // Only flow names count: on a fresh checkout the electron package prints
+  // "Downloading Electron binary..." to stdout the first time the runner
+  // imports it (CI saw 74 = 73 flows + that line). Flow names are validated
+  // kebab-case by the runner itself.
+  return stdout.split("\n").map((line) => line.trim()).filter((line) => /^[a-z][a-z0-9-]*$/.test(line));
 }
 
 test("e2e shard 1/2 + 2/2 partition the flow set exactly", async () => {
