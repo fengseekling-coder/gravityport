@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { DISABLEABLE_BRIDGES } from "../lib/runtime-bridges.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
+import { mp4Bytes } from "./helpers/managed-media.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -97,7 +98,7 @@ test("static resource cache semantics: no-cache for UI files and immutable for l
     // The library route is shared by images and videos. A video-shaped fixture
     // exercises the extension/mime path without requiring a valid decoder payload.
     const fixtureVideoPath = join(root, "fixture-range.mp4");
-    const VIDEO_BYTES = Buffer.from(Array.from({ length: 64 }, (_, index) => index));
+    const VIDEO_BYTES = mp4Bytes(7, 64);
     await writeFile(fixtureVideoPath, VIDEO_BYTES);
 
     const createRes = await fetch(`${runtime.url}/api/assets/create`, {

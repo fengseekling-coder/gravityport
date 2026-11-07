@@ -8,6 +8,7 @@ import test from "node:test";
 import { createDerivativeProcessor, processDerivativeJob } from "../lib/derivative-worker.js";
 import { createSqliteAssetStore, sqliteDatabasePath } from "../lib/sqlite-asset-store.mjs";
 import { removeTestPath } from "./test-cleanup.mjs";
+import { brokenPngBytes, mp4Bytes } from "./helpers/managed-media.mjs";
 
 // Unit tests for enqueueMissingDerivatives modes: the metadata-only legacy
 // scan, the CLI "repair" mode that also checks the filesystem, the CLI
@@ -123,7 +124,7 @@ test("a failed job becomes claimable again after its retry delay, still newest-f
   const { libraryDir, store } = await createLibraryWithAssetsDated(t, []);
   // A file the processor cannot read → the job fails once.
   const brokenPath = join(store.projectRoot, "generated-images", "broken.png");
-  await writeFile(brokenPath, "text, not pixels");
+  await writeFile(brokenPath, await brokenPngBytes());
   await store.createAsset({ assetId: "broken", imagePath: brokenPath, created_at: "2026-01-01T00:00:05.000Z" });
   await store.enqueueMissingDerivatives({ mode: "rebuild" });
 
@@ -167,7 +168,7 @@ async function createLibraryWithAssetsDated(t, datedAssetIds) {
 test("video, archived, and deleted assets are never enqueued", async (t) => {
   const { store } = await createLibraryWithAssets(t, ["keeper", "trashed"]);
   const videoPath = join(store.projectRoot, "generated-images", "clip.mp4");
-  await writeFile(videoPath, Buffer.from("not really a video, but the extension decides"));
+  await writeFile(videoPath, mp4Bytes());
   await store.createAsset({ assetId: "clip", imagePath: videoPath, prompt: "prompt for clip" });
 
   // clip is a video: its metadata columns stay empty forever, yet it never
@@ -239,7 +240,7 @@ test("startup mode re-queues completed jobs when dimensions went missing and lea
 test("startup mode never enqueues videos, trashed, or archived assets", async (t) => {
   const { store, libraryDir } = await createLibraryWithAssets(t, ["keeper", "trashed"]);
   const videoPath = join(store.projectRoot, "generated-images", "clip.mp4");
-  await writeFile(videoPath, Buffer.from("not really a video, but the extension decides"));
+  await writeFile(videoPath, mp4Bytes());
   await store.createAsset({ assetId: "clip", imagePath: videoPath, prompt: "prompt for clip" });
 
   assert.equal(await store.enqueueMissingDerivatives({ mode: "startup" }), 2, "the video is excluded despite empty derivative columns");

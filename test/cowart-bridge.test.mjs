@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { pngBytes } from "./helpers/managed-media.mjs";
 import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,8 +20,8 @@ test("archives Cowart page assets once and keeps MOSA-origin images out", async 
   const canvasDir = join(root, "cowart-data", "mosa");
   const pageAssetsDir = join(canvasDir, "pages", "page", "assets");
   await mkdir(pageAssetsDir, { recursive: true });
-  await writeFile(join(pageAssetsDir, "bear.png"), "fixture Cowart image", "utf8");
-  await writeFile(join(pageAssetsDir, "from-library.png"), "fixture library image", "utf8");
+  await writeFile(join(pageAssetsDir, "bear.png"), await pngBytes());
+  await writeFile(join(pageAssetsDir, "from-library.png"), await pngBytes());
   await writeFile(join(canvasDir, "pages", "page", "cowart-canvas.json"), JSON.stringify({
     store: {
       "asset:bear": { id: "asset:bear", typeName: "asset", type: "image", props: { name: "bear.png", src: "/page-assets/page/bear.png" }, meta: {} },
@@ -52,7 +53,7 @@ test("skips unchanged Cowart candidates without re-querying the asset store", as
   const pageAssetsDir = join(pageDir, "assets");
   const imagePath = join(pageAssetsDir, "stable.png");
   await mkdir(pageAssetsDir, { recursive: true });
-  await writeFile(imagePath, "stable-cowart-bytes", "utf8");
+  await writeFile(imagePath, await pngBytes());
   await writeFile(join(pageDir, "cowart-canvas.json"), JSON.stringify({
     store: {
       "asset:stable": { id: "asset:stable", typeName: "asset", type: "image", props: { name: "stable.png", src: "/page-assets/page/stable.png" }, meta: {} },
@@ -88,7 +89,7 @@ test("deduplicates Cowart copies by content even when their page asset paths dif
   const pageDir = join(canvasDir, "pages", "page");
   const pageAssetsDir = join(pageDir, "assets");
   await mkdir(pageAssetsDir, { recursive: true });
-  const bytes = Buffer.from("same Cowart image bytes under two file names");
+  const bytes = await pngBytes();
   await writeFile(join(pageAssetsDir, "first.png"), bytes);
   await writeFile(join(pageAssetsDir, "renamed-copy.png"), bytes);
   await writeFile(join(pageDir, "cowart-canvas.json"), JSON.stringify({
@@ -153,8 +154,8 @@ test("continues Cowart reconciliation after one asset import fails", async (t) =
   const failedPath = join(pageAssetsDir, "a-fails.png");
   const succeedingPath = join(pageAssetsDir, "b-succeeds.png");
   await mkdir(pageAssetsDir, { recursive: true });
-  await writeFile(failedPath, "fixture failed Cowart image", "utf8");
-  await writeFile(succeedingPath, "fixture succeeding Cowart image", "utf8");
+  await writeFile(failedPath, await pngBytes());
+  await writeFile(succeedingPath, await pngBytes());
   await writeFile(join(pageDir, "cowart-canvas.json"), JSON.stringify({
     store: {
       "asset:a-fails": { id: "asset:a-fails", typeName: "asset", type: "image", props: { name: "a-fails.png", src: "/page-assets/page/a-fails.png" }, meta: {} },
@@ -196,8 +197,8 @@ test("skips a suppressed Cowart asset and continues to the next candidate", asyn
   const firstPath = join(pageAssetsDir, "a-suppressed.png");
   const secondPath = join(pageAssetsDir, "b-imported.png");
   await mkdir(pageAssetsDir, { recursive: true });
-  await writeFile(firstPath, "fixture suppressed Cowart image", "utf8");
-  await writeFile(secondPath, "fixture imported Cowart image", "utf8");
+  await writeFile(firstPath, await pngBytes());
+  await writeFile(secondPath, await pngBytes());
   await writeFile(join(pageDir, "cowart-canvas.json"), JSON.stringify({
     store: {
       "asset:a-suppressed": { id: "asset:a-suppressed", typeName: "asset", type: "image", props: { name: "a-suppressed.png", src: "/page-assets/page/a-suppressed.png" }, meta: {} },
@@ -244,7 +245,7 @@ test("watches a Cowart page directory and archives a later image", async (t) => 
   t.after(async () => { await bridge.stop(); await rm(root, { recursive: true, force: true }); });
   await bridge.start();
 
-  await writeFile(join(pageAssetsDir, "watch-bear.png"), "fixture watched Cowart image", "utf8");
+  await writeFile(join(pageAssetsDir, "watch-bear.png"), await pngBytes());
   await writeFile(join(pageDir, "cowart-canvas.json"), JSON.stringify({
     store: {
       "asset:watch-bear": { id: "asset:watch-bear", typeName: "asset", type: "image", props: { name: "watch-bear.png", src: "/page-assets/page/watch-bear.png" }, meta: {} },
@@ -277,7 +278,7 @@ test("waits for an active Cowart archive before cleanup", async (t) => {
   await writeFile(join(pageDir, "cowart-canvas.json"), JSON.stringify({ store: {} }), "utf8");
   await bridge.start();
 
-  await writeFile(join(pageAssetsDir, "stop-bear.png"), "fixture watched Cowart image", "utf8");
+  await writeFile(join(pageAssetsDir, "stop-bear.png"), await pngBytes());
   await writeFile(join(pageDir, "cowart-canvas.json"), JSON.stringify({
     store: {
       "asset:stop-bear": { id: "asset:stop-bear", typeName: "asset", type: "image", props: { name: "stop-bear.png", src: "/page-assets/page/stop-bear.png" }, meta: {} },
@@ -308,7 +309,7 @@ test("archives a registered external Cowart canvas through the SQLite store only
   const pageDir = join(canvasDir, "pages", "page");
   const imagePath = join(pageDir, "assets", "external.png");
   await mkdir(join(pageDir, "assets"), { recursive: true });
-  await writeFile(imagePath, "fixture external Cowart image", "utf8");
+  await writeFile(imagePath, await pngBytes());
   await writeFile(join(pageDir, "cowart-canvas.json"), JSON.stringify({
     store: {
       "asset:external": { id: "asset:external", typeName: "asset", type: "image", props: { name: "external.png", src: "/page-assets/page/external.png" }, meta: {} },

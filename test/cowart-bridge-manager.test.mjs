@@ -8,6 +8,7 @@ import test from "node:test";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { createCowartBridgeManager } from "../lib/cowart-bridge-manager.js";
 import { createCowartProjectRegistry } from "../lib/cowart-project-registry.js";
+import { pngBytes } from "./helpers/managed-media.mjs";
 
 test("archives registered project-local Cowart canvases", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-cowart-manager-"));
@@ -174,7 +175,7 @@ async function writeCowartImage(projectDir, fileName, altText) {
   await mkdir(assetsDir, { recursive: true });
   // A registered project must prove itself with a real Cowart canvas marker.
   await writeFile(join(projectDir, "canvas", "cowart-view-state.json"), "{}\n", "utf8");
-  await writeFile(join(assetsDir, fileName), `fixture ${fileName}`, "utf8");
+  await writeFile(join(assetsDir, fileName), await pngBytes());
   await writeFile(join(pageDir, "cowart-canvas.json"), JSON.stringify({
     store: {
       "asset:image": { id: "asset:image", typeName: "asset", type: "image", props: { name: fileName, src: `/page-assets/page/${fileName}` }, meta: {} },

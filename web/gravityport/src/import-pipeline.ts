@@ -255,6 +255,7 @@ export async function runImport(
               skipped?: "already-in-library"
               existingAsset?: ImportExistingLocation
               error?: string
+              code?: string
             }>
         }
         const importResult = await requestJson<ImportBatchResponse>("/api/assets/import-batch", {
@@ -286,7 +287,10 @@ export async function runImport(
             result.errors.push({
               fileName: stagedItems[i].file.name,
               reason: itemResult?.error || "",
-              code: itemResult?.error ? "" : "IMPORT_FAILED",
+              // 任务 366：服务端逐条带回的错误码（如 IMAGE_CONTENT_NOT_MEDIA、
+              // SOURCE_CHANGED_DURING_IMPORT）要留下来走 messageForErrorCode；
+              // 没有码时维持旧约定：有英文原文给空码，啥都没有归 IMPORT_FAILED。
+              code: itemResult?.code || (itemResult?.error ? "" : "IMPORT_FAILED"),
             })
             batchFailed += 1
           }

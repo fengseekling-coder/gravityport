@@ -25,7 +25,7 @@ test("archives Codex generated images with task metadata and avoids duplicates",
   const sessionPath = join(sessionsDir, "2026", "07", "18", `rollout-test-${taskId}.jsonl`);
   await mkdir(join(imagesDir, taskId), { recursive: true });
   await mkdir(join(sessionsDir, "2026", "07", "18"), { recursive: true });
-  await writeFile(imagePath, pngFixture(1024, 1536));
+  await writeFile(imagePath, await pngFixture(1024, 1536));
   const revisedPrompt = "Use case: stylized-concept\nAsset type: premium sci-fi keyframe, 2:3 portrait\nPrimary request: Build a luminous vertical megacity with rain and suspended transit rings.";
   await writeFile(sessionPath, `${JSON.stringify({
     type: "turn_context",
@@ -69,7 +69,7 @@ test("recovers an inline Codex image_generation_call result when generated_image
   const advertisedPath = join(imagesDir, taskId, `${callId}.png`);
   const sessionPath = join(sessionsDir, "2026", "09", "12", `rollout-test-${taskId}.jsonl`);
   const revisedPrompt = "A precise editorial still life with translucent glass forms.";
-  const result = pngFixture(640, 480).toString("base64");
+  const result = (await pngFixture(640, 480)).toString("base64");
   await mkdir(imagesDir, { recursive: true });
   await mkdir(join(sessionsDir, "2026", "09", "12"), { recursive: true });
   await writeFile(sessionPath, [
@@ -104,7 +104,7 @@ test("skips unchanged Codex candidates without touching the asset store twice", 
   const imagesDir = join(root, "generated_images");
   const imagePath = join(imagesDir, "task-a", "stable.png");
   await mkdir(join(imagesDir, "task-a"), { recursive: true });
-  await writeFile(imagePath, pngFixture(64, 64));
+  await writeFile(imagePath, await pngFixture(64, 64));
 
   let sourceLookups = 0;
   let listCalls = 0;
@@ -139,8 +139,8 @@ test("passes automatic ingest mode and continues after a suppressed Codex image"
   const secondPath = join(imagesDir, "task-b", "second.png");
   await mkdir(join(imagesDir, "task-a"), { recursive: true });
   await mkdir(join(imagesDir, "task-b"), { recursive: true });
-  await writeFile(firstPath, pngFixture(800, 800));
-  await writeFile(secondPath, pngFixture(640, 480));
+  await writeFile(firstPath, await pngFixture(800, 800));
+  await writeFile(secondPath, await pngFixture(640, 480));
 
   const calls = [];
   const store = {
@@ -169,7 +169,7 @@ test("retries a deterministic Codex asset id collision through automatic identit
   const imagesDir = join(root, "generated_images");
   const imagePath = join(imagesDir, "task-a", "same.png");
   await mkdir(join(imagesDir, "task-a"), { recursive: true });
-  await writeFile(imagePath, pngFixture(640, 480));
+  await writeFile(imagePath, await pngFixture(640, 480));
 
   const assetIds = [];
   const store = {
@@ -205,7 +205,7 @@ test("upgrades an archived task instruction to the matching image generation pro
   const sessionPath = join(sessionsDir, "2026", "07", "18", `rollout-test-${taskId}.jsonl`);
   await mkdir(join(imagesDir, taskId), { recursive: true });
   await mkdir(join(sessionsDir, "2026", "07", "18"), { recursive: true });
-  await writeFile(imagePath, pngFixture(768, 1024));
+  await writeFile(imagePath, await pngFixture(768, 1024));
   await writeFile(sessionPath, `${JSON.stringify({
     type: "response_item",
     payload: { type: "message", role: "user", content: [{ type: "input_text", text: "生成一张科幻图" }] },
@@ -245,7 +245,7 @@ test("does not downgrade revised prompt provenance when only task fallback remai
   const sessionPath = join(sessionsDir, `rollout-test-${taskId}.jsonl`);
   await mkdir(join(imagesDir, taskId), { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
-  await writeFile(imagePath, pngFixture(1024, 1024));
+  await writeFile(imagePath, await pngFixture(1024, 1024));
   await writeFile(sessionPath, `${JSON.stringify({
     type: "turn_context",
     payload: { model: "gpt-5.6-terra" },
@@ -289,7 +289,7 @@ test("archives Codex images with the user's message in source and business field
   const sessionPath = join(sessionsDir, `rollout-test-${taskId}.jsonl`);
   await mkdir(join(imagesDir, taskId), { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
-  await writeFile(imagePath, pngFixture(640, 960));
+  await writeFile(imagePath, await pngFixture(640, 960));
   await writeFile(sessionPath, [
     { type: "turn_context", payload: { model: "gpt-5.6-terra" } },
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "帮我做一张书封" }] } },
@@ -317,7 +317,7 @@ test("reprocesses an archived Codex image when the session gains a user message 
   const sessionPath = join(sessionsDir, `rollout-test-${taskId}.jsonl`);
   await mkdir(join(imagesDir, taskId), { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
-  await writeFile(imagePath, pngFixture(512, 512));
+  await writeFile(imagePath, await pngFixture(512, 512));
   const imageEvent = { type: "event_msg", timestamp: "2026-10-25T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "exec-backfill", saved_path: imagePath, revised_prompt: "Book cover, warm palette, bold serif title." } };
   await writeFile(sessionPath, `${JSON.stringify(imageEvent)}\n`);
 
@@ -351,7 +351,7 @@ test("does not guess a user message from the task fallback", async (t) => {
   const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f12";
   const imagePath = join(imagesDir, taskId, "exec-no-guess.png");
   await mkdir(join(imagesDir, taskId), { recursive: true });
-  await writeFile(imagePath, pngFixture(700, 500));
+  await writeFile(imagePath, await pngFixture(700, 500));
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
   await store.createAsset({ assetId: "no-guess", imagePath, prompt: "", sourceType: "codex-generated" });
@@ -380,7 +380,7 @@ test("archives Codex images from the thread-history database with the turn's use
   const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f14";
   const imagePath = join(imagesDir, taskId, "db-archive.png");
   await mkdir(join(imagesDir, taskId), { recursive: true });
-  await writeFile(imagePath, pngFixture(640, 960));
+  await writeFile(imagePath, await pngFixture(640, 960));
   const fixture = await createThreadHistoryDbFixture(root, taskId, [
     { savedPath: imagePath, itemId: "ig-db", revisedPrompt: "Book cover, warm palette, bold serif title.", userMessage: "帮我做一张书封" },
   ]);
@@ -408,7 +408,7 @@ test("upgrades an archived Codex image once the thread-history database appears"
   const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f15";
   const imagePath = join(imagesDir, taskId, "db-upgrade.png");
   await mkdir(join(imagesDir, taskId), { recursive: true });
-  await writeFile(imagePath, pngFixture(512, 512));
+  await writeFile(imagePath, await pngFixture(512, 512));
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
   const options = { store, imagesDir, sessionsDir, threadHistoryPath: join(root, "absent", "thread_history_1.sqlite") };
@@ -445,7 +445,7 @@ test("keeps an existing Codex user message even when the session has a newer one
   const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f13";
   const imagePath = join(imagesDir, taskId, "exec-keep-msg.png");
   await mkdir(join(imagesDir, taskId), { recursive: true });
-  await writeFile(imagePath, pngFixture(480, 480));
+  await writeFile(imagePath, await pngFixture(480, 480));
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
   await store.createAsset({
@@ -481,7 +481,7 @@ test("does not infer an unmatched image model from the task's final turn", async
   const sessionPath = join(sessionsDir, `rollout-test-${taskId}.jsonl`);
   await mkdir(join(imagesDir, taskId), { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
-  await writeFile(imagePath, pngFixture(800, 1200));
+  await writeFile(imagePath, await pngFixture(800, 1200));
   await writeFile(sessionPath, [
     { type: "turn_context", payload: { model: "first-model" } },
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "First turn" }] } },
@@ -509,7 +509,7 @@ test("watches a later Codex image and stores fallback metadata when no session i
   await bridge.start();
 
   await mkdir(join(imagesDir, taskId), { recursive: true });
-  await writeFile(join(imagesDir, taskId, "watch.png"), pngFixture(800, 800));
+  await writeFile(join(imagesDir, taskId, "watch.png"), await pngFixture(800, 800));
   await waitFor(() => bridge.status().totalImported === 1);
   const [asset] = await store.listAssets({ projectId: "default" });
   assert.equal(asset.source.codex_task_id, taskId);
@@ -528,7 +528,7 @@ test("bridge caches the session index but refreshes metadata after a matching se
   const unrelatedPath = join(sessionsDir, "unrelated.jsonl");
   await mkdir(join(imagesDir, taskId), { recursive: true });
   await mkdir(sessionsDir, { recursive: true });
-  await writeFile(imagePath, pngFixture(640, 480));
+  await writeFile(imagePath, await pngFixture(640, 480));
   await writeFile(sessionPath, `${JSON.stringify({
     type: "response_item",
     payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Fallback prompt" }] },
@@ -559,7 +559,7 @@ test("runtime handoff drains the current Codex import without starting the remai
   deferTestPathRemoval(root, { recursive: true, force: true });
   const imagesDir = join(root, "images");
   await mkdir(imagesDir);
-  for (let index = 0; index < 3; index += 1) await writeFile(join(imagesDir, `${index}.png`), pngFixture(40 + index, 30));
+  for (let index = 0; index < 3; index += 1) await writeFile(join(imagesDir, `${index}.png`), await pngFixture(40 + index, 30));
   const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
   const controller = new AbortController();
   const originalCreate = store.createAsset.bind(store);
@@ -581,12 +581,9 @@ test("runtime handoff drains the current Codex import without starting the remai
   assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
 });
 
-function pngFixture(width, height) {
-  const image = Buffer.alloc(24);
-  image.write("\x89PNG\r\n\x1a\n", 0, "binary");
-  image.writeUInt32BE(width, 16);
-  image.writeUInt32BE(height, 20);
-  return image;
+async function pngFixture(width, height) {
+  // Task 366: imports sniff the file head, so fixtures carry real PNG bytes.
+  return sharp({ create: { width, height, channels: 3, background: { r: 10, g: 20, b: 30 } } }).png().toBuffer();
 }
 
 async function createThreadHistoryDbFixture(dir, taskId, generations) {
@@ -651,8 +648,8 @@ test("keeps user-edited prompts across Codex reconciliation while untouched asse
   const pathB = join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f12", "kept.png");
   await mkdir(join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f11"), { recursive: true });
   await mkdir(join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f12"), { recursive: true });
-  await writeFile(pathA, pngFixture(1024, 1536));
-  await writeFile(pathB, pngFixture(800, 600));
+  await writeFile(pathA, await pngFixture(1024, 1536));
+  await writeFile(pathB, await pngFixture(800, 600));
   const promptA = "Use case: stylized-concept\nAsset type: premium sci-fi keyframe, 2:3 portrait\nPrimary request: original prompt for the edited image.";
   const promptB = "Use case: stylized-concept\nAsset type: premium sci-fi keyframe, 2:3 portrait\nPrimary request: original prompt for the untouched image.";
   await writeSession("019f776f-f6d5-7692-b9e5-dd280fc09f11", "call-edit", pathA, promptA);
@@ -692,7 +689,7 @@ test("a user-renamed Codex asset keeps its theme while its prompt still upgrades
 
   const imagePath = join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f13", "renamed.png");
   await mkdir(join(imagesDir, "019f776f-f6d5-7692-b9e5-dd280fc09f13"), { recursive: true });
-  await writeFile(imagePath, pngFixture(640, 480));
+  await writeFile(imagePath, await pngFixture(640, 480));
   const sessionPath = join(sessionsDir, "2026", "10", "28", "rollout-019f776f-f6d5-7692-b9e5-dd280fc09f13.jsonl");
   await mkdir(join(sessionsDir, "2026", "10", "28"), { recursive: true });
   const writeSession = (revisedPrompt) => writeFile(sessionPath, [
@@ -741,7 +738,7 @@ test("a Codex byte rematch of its own archived image upgrades it from the newer 
   await mkdir(join(imagesDir, taskB), { recursive: true });
 
   const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
-  await writeFile(imagePathA, pngFixture(512, 512));
+  await writeFile(imagePathA, await pngFixture(512, 512));
   const sessionA = join(sessionsDir, `rollout-test-${taskA}.jsonl`);
   await mkdir(sessionsDir, { recursive: true });
   await writeFile(sessionA, `${JSON.stringify({

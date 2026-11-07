@@ -318,7 +318,7 @@ function toolDefinitions() {
   return [
     {
       name: TOOL_ASSET_CREATE,
-      description: "Copy an image into the GravityPort library and save prompt recipe metadata. Any local absolute image path is accepted; relative paths are rejected. Symbolic links are skipped. Only supported image and video formats are imported. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
+      description: "Copy an image into the GravityPort library and save prompt recipe metadata. Any local absolute image path is accepted; relative paths are rejected. Symbolic links are rejected. Only supported image and video formats are imported. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
       inputSchema: {
         type: "object",
         properties: {

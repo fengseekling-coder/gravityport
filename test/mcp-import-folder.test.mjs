@@ -272,6 +272,20 @@ test("a failed file is reported and does not stop the rest", async (t) => {
   assert.ok(await readFile(readable));
 });
 
+// 任务 366：文本改名 .png 在文件头嗅探处失败，算一条 failed，不打断其余文件。
+test("a non-media file behind a media extension fails with IMAGE_CONTENT_NOT_MEDIA and does not stop the rest", async (t) => {
+  const { workspace, server } = await setupServer(t);
+  const folder = join(workspace.root, "mixed-content");
+  const real = await writePngFixture(join(folder, "real.png"), { color: "#7c318f" });
+  await writeFile(join(folder, "fake.png"), "plain text pretending to be a picture", "utf8");
+
+  const result = await server.callToolStrict("asset_import_folder", { folderPath: folder });
+  assert.equal(result.structuredContent.imported, 1);
+  assert.equal(result.structuredContent.failed, 1);
+  assert.deepEqual(result.structuredContent.failures, [{ file: "fake.png", code: "IMAGE_CONTENT_NOT_MEDIA" }]);
+  assert.ok(await readFile(real));
+});
+
 test("missing and non-directory folderPath fail with appropriate error", async (t) => {
   const { workspace, server } = await setupServer(t);
   const missing = await server.callTool("asset_import_folder", { folderPath: join(workspace.root, "nope") });

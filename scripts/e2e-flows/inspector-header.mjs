@@ -4,7 +4,7 @@
 // box, provider-visible provenance line below it). Also checks the English
 // locale via the persisted language preference and measures how the header
 // line wraps at the narrowest inspector width.
-import { writeFile } from "node:fs/promises";
+import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const name = "inspector-header";
@@ -37,10 +37,10 @@ export async function run(ctx) {
     const d = await seed("header-local.png", [127, 74, 181], {
       prompt: "inspector header local import",
     });
-    // Video-shaped fixture bytes exercise the extension-based media kind
-    // without a decodable payload (same recipe as cache-semantics.test.mjs).
+    // 任务 366 后导入要看文件头，视频夹具用仓库里的真 mp4（与
+    // desktop-paste-import 同款做法），不再是不可解码的形状字节。
     const videoPath = join(ctx.fixturesDir, "header-clip.mp4");
-    await writeFile(videoPath, Buffer.from(Array.from({ length: 64 }, (_, index) => index)));
+    await copyFile(join(ctx.rootDir, "test", "fixtures", "video-first-frame.mp4"), videoPath);
     const e = await ctx.api(server.origin, "POST", "/api/assets/create", {
       projectId: "default",
       imagePath: videoPath,

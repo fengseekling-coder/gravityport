@@ -25,6 +25,7 @@ import {
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { assetSortName } from "../lib/asset-sort.js";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
+import { brokenPngBytes } from "./helpers/managed-media.mjs";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 const CREATED = "2026-05-01T00:00:00.000Z";
@@ -657,7 +658,7 @@ test("a media replacement keeps fields fixed between its row read and its write"
   const sourcePath = join(projectRoot, "generated-images", "fixture.png");
   await writeFile(sourcePath, ONE_PIXEL_PNG);
   const replacementPath = join(projectRoot, "replacement.png");
-  await writeFile(replacementPath, Buffer.from("replacement-png-bytes"));
+  await writeFile(replacementPath, await brokenPngBytes());
   const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
   t.after(() => { try { store.close(); } catch { /* closed */ } });
   await store.createAsset({

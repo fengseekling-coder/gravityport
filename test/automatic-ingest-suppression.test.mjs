@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createJsonAssetStore } from "../lib/asset-store.mjs";
+import { brokenPngBytes } from "./helpers/managed-media.mjs";
 import { createSqliteAssetStore, sqliteDatabasePath } from "../lib/sqlite-asset-store.mjs";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "../lib/image-pixel-hash.js";
 import sharp from "sharp";
@@ -27,7 +28,7 @@ async function setupStore(t, kind) {
   const libraryDir = join(root, "library");
   const sourcePath = join(projectRoot, "generated-images", "original.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, "the original bytes", "utf8");
+  await writeFile(sourcePath, await brokenPngBytes(1));
   const store = kind.startsWith("sqlite")
     ? createSqliteAssetStore({ projectRoot, managerDir, libraryDir })
     : createJsonAssetStore({ projectRoot, managerDir });
@@ -108,7 +109,7 @@ for (const kind of ["json", "sqlite"]) {
       automaticInput(sourcePath, `${kind}-legacy-pixel`, { pixel_sha256: PIXEL_HASH }),
       { ingestMode: "automatic" },
     );
-    await writeFile(sourcePath, "different bytes with a deliberately reused test pixel hash", "utf8");
+    await writeFile(sourcePath, await brokenPngBytes(2));
     const current = await store.createAsset(
       automaticInput(sourcePath, `${kind}-current-pixel`, {
         pixel_sha256: PIXEL_HASH,
@@ -189,7 +190,7 @@ test("automatic suppression matches a re-encoded image only when the trusted pix
   );
   await store.deleteAsset("default", first.id);
 
-  await writeFile(sourcePath, "different encoded bytes", "utf8");
+  await writeFile(sourcePath, await brokenPngBytes(3));
   await assert.rejects(
     store.createAsset(automaticInput(sourcePath, "pixel-reencoded", { pixel_sha256: PIXEL_HASH }), { ingestMode: "automatic" }),
     (error) => error.code === "AUTOMATIC_IMPORT_SUPPRESSED",
@@ -267,7 +268,7 @@ test("same source URL with changed content remains eligible for automatic import
   );
   await store.deleteAsset("default", first.id);
 
-  await writeFile(sourcePath, "a genuinely new image", "utf8");
+  await writeFile(sourcePath, await brokenPngBytes(4));
   const next = await store.createAsset(
     automaticInput(sourcePath, "url-changed-content", { page_url: "https://example.test/image/1" }),
     { ingestMode: "automatic" },

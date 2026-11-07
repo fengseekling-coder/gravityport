@@ -3,7 +3,7 @@
 // with the EXIF orientation swap shared with the derivative write-back so a
 // card never changes ratio twice. Bad files must import exactly as before.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -97,23 +97,25 @@ test("caller-supplied dimensions are never overwritten", async (t) => {
   assert.deepEqual(dimensionsOf(asset), [111, 222]);
 });
 
-test("a text file with a .png extension imports as before — no new error, no dimensions", async (t) => {
+// 任务 366：假媒体在嗅探层就被拒（IMAGE_CONTENT_NOT_MEDIA），不再进库。
+test("a text file with a .png extension is rejected by the content sniff", async (t) => {
   const { imagesDir, store } = await createStore(t);
   const badPath = join(imagesDir, "not-an-image.png");
   await writeFile(badPath, "this is text, not an image");
 
-  const asset = await store.createAsset({ assetId: "bad-file", imagePath: badPath });
-  assert.equal(asset.id, "bad-file", "the import itself still succeeds");
-  assert.equal(asset.business_fields.width ?? null, null, "no width invented");
-  assert.equal(asset.business_fields.height ?? null, null, "no height invented");
+  await assert.rejects(store.createAsset({ assetId: "bad-file", imagePath: badPath }), (error) => {
+    assert.equal(error.code, "IMAGE_CONTENT_NOT_MEDIA");
+    return true;
+  });
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 0, "nothing is created for fake media");
 });
 
 test("a video import is untouched by the image dimension fill", async (t) => {
   const { imagesDir, store } = await createStore(t);
-  // A .webm container sharp cannot read: the video fill ignores it too, so
-  // the row simply carries no dimensions — same as before this task.
+  // A real WebM: the image dimension fill ignores videos, so the row simply
+  // carries no dimensions — same as before that task.
   const videoPath = join(imagesDir, "clip.webm");
-  await writeFile(videoPath, "not a real webm container");
+  await writeFile(videoPath, await readFile(join(import.meta.dirname, "fixtures", "media-signature", "sample.webm")));
 
   const asset = await store.createAsset({ assetId: "video-row", imagePath: videoPath });
   assert.equal(asset.business_fields.width ?? null, null);

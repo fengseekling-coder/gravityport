@@ -11,6 +11,7 @@ import { PIXEL_HASH_VERSION, safePixelDigest } from "../lib/image-pixel-hash.js"
 import { normalizeCreatedAt } from "../lib/recent-window.js";
 import { CURRENT_SCHEMA_VERSION, createSqliteAssetStore, sqliteDatabasePath } from "../lib/sqlite-asset-store.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
+import { brokenPngBytes } from "./helpers/managed-media.mjs";
 
 test("SQLite managed-file cleanup removes only stale unreferenced files", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-sqlite-orphan-cleanup-"));
@@ -1123,7 +1124,7 @@ test("failed derivative jobs retry with backoff and stop after three attempts", 
   const projectRoot = join(root, "project");
   const sourcePath = join(projectRoot, "generated-images", "broken.png");
   await mkdir(join(projectRoot, "generated-images"), { recursive: true });
-  await writeFile(sourcePath, Buffer.from("not-an-image"));
+  await writeFile(sourcePath, await brokenPngBytes());
   const libraryDir = join(root, "library");
   const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
   t.after(() => store.close());

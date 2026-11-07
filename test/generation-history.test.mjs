@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createJsonAssetStore } from "../lib/asset-store.mjs";
+import { pngBytes } from "./helpers/managed-media.mjs";
 import { resolveGenerationRelationCandidates } from "../lib/generation-history.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 
@@ -117,8 +118,8 @@ for (const [name, createStore] of [
     await mkdir(join(root, "input"), { recursive: true });
     const firstPath = join(root, "input", "replay-first.png");
     const secondPath = join(root, "input", "replay-second.png");
-    await writeFile(firstPath, Buffer.from("generation-replay-first-image"));
-    await writeFile(secondPath, Buffer.from("generation-replay-second-image"));
+    await writeFile(firstPath, await pngBytes());
+    await writeFile(secondPath, await pngBytes());
 
     store = createStore(root);
     await store.ensureProject("default");
@@ -282,8 +283,8 @@ for (const [name, createStore] of [
     await mkdir(join(root, "input"), { recursive: true });
     const firstPath = join(root, "input", "first.png");
     const secondPath = join(root, "input", "second.png");
-    await writeFile(firstPath, Buffer.from("generation-history-first-image"));
-    await writeFile(secondPath, Buffer.from("generation-history-second-image"));
+    await writeFile(firstPath, await pngBytes());
+    await writeFile(secondPath, await pngBytes());
 
     store = createStore(root);
     await store.ensureProject("default");

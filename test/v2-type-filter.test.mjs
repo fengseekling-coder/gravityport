@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createJsonAssetStore } from "../lib/asset-store.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { mp4Bytes } from "./helpers/managed-media.mjs";
 
 const ONE_PIXEL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3QAAAABJRU5ErkJggg==", "base64");
 
@@ -22,7 +23,7 @@ for (const kind of ["sqlite", "json"]) {
     const pngPath = join(mediaDir, "fixture.png");
     const mp4Path = join(mediaDir, "fixture.mp4");
     await writeFile(pngPath, ONE_PIXEL_PNG);
-    await writeFile(mp4Path, Buffer.from([0, 0, 0, 24]));
+    await writeFile(mp4Path, mp4Bytes());
     const store = kind === "sqlite"
       ? createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir: join(root, "library") })
       : createJsonAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa") });

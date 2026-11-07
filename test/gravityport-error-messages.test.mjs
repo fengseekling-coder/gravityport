@@ -76,6 +76,33 @@ test("each error code carries both a zh and an en sentence", () => {
   }
 });
 
+// 任务 366：导入与素材文件的四个码，中英都是审查表定稿句，一字不改。
+const TASK_366_CODES = {
+  STAGING_FILE_TOO_LARGE: {
+    zh: "无法导入。文件过大。",
+    en: "Couldn’t import. The file is too large.",
+  },
+  SOURCE_CHANGED_DURING_IMPORT: {
+    zh: "无法导入。文件在导入过程中被修改。",
+    en: "Couldn’t import. The file was modified during import.",
+  },
+  ASSET_FILE_BUSY: {
+    zh: "无法完成操作。素材文件正在使用中，请关闭后重试。",
+    en: "Couldn’t complete the action. The asset files are in use. Close them and try again.",
+  },
+  IMAGE_CONTENT_NOT_MEDIA: {
+    zh: "无法导入。文件不是支持的图片或视频。",
+    en: "Couldn’t import. The file isn’t a supported image or video.",
+  },
+};
+
+test("task 366 import and asset-file codes use the reviewed sentences verbatim", () => {
+  for (const [code, pack] of Object.entries(TASK_366_CODES)) {
+    assert.equal(errorMessagesModule.messageForErrorCode(code, "zh"), pack.zh, `${code} zh sentence must match the review table`);
+    assert.equal(errorMessagesModule.messageForErrorCode(code, "en"), pack.en, `${code} en sentence must match the review table`);
+  }
+});
+
 test("failureMessage in mosa-api maps recognized error codes to Chinese and falls back to error.message", async () => {
   const originalFetch = globalThis.fetch;
   try {

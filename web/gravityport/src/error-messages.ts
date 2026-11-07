@@ -90,6 +90,23 @@ const ERROR_CODE_MESSAGES: Record<string, MessagePack> = {
     zh: "无法完成操作。分组「{group}」已不存在。",
     en: "Couldn’t complete the action. Group “{group}” no longer exists.",
   },
+  // 服务端已有的导入/素材文件错误码，任务 366 按审查表定稿接上（原文照抄）：
+  STAGING_FILE_TOO_LARGE: {
+    zh: "无法导入。文件过大。",
+    en: "Couldn’t import. The file is too large.",
+  },
+  SOURCE_CHANGED_DURING_IMPORT: {
+    zh: "无法导入。文件在导入过程中被修改。",
+    en: "Couldn’t import. The file was modified during import.",
+  },
+  ASSET_FILE_BUSY: {
+    zh: "无法完成操作。素材文件正在使用中，请关闭后重试。",
+    en: "Couldn’t complete the action. The asset files are in use. Close them and try again.",
+  },
+  IMAGE_CONTENT_NOT_MEDIA: {
+    zh: "无法导入。文件不是支持的图片或视频。",
+    en: "Couldn’t import. The file isn’t a supported image or video.",
+  },
 };
 
 const UNKNOWN_MESSAGE: MessagePack = {

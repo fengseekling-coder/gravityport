@@ -182,15 +182,16 @@ describe("collectDroppedFiles fallback without webkitGetAsEntry", () => {
 
 describe("runImport with mocked fetch", () => {
   let runImport
+  let errorMessages
   const originalFetch = globalThis.fetch
 
   before(async () => {
     // Compile all three modules together
     tempRoot = await mkdtemp(join(tmpdir(), "mosa-gp-import-"))
-    
+
     // Create package.json to enable ESM module resolution
     await writeFile(join(tempRoot, "package.json"), JSON.stringify({ type: "module" }))
-    
+
     // Minimal globalThis stubs for mosa-api.ts compilation and runtime
     globalThis.window = globalThis.window || {}
     globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setItem: () => {}, removeItem: () => {} }
@@ -198,7 +199,7 @@ describe("runImport with mocked fetch", () => {
     globalThis.document = globalThis.document || { cookie: "" }
     globalThis.location = globalThis.location || { hash: "", pathname: "/", search: "" }
     globalThis.history = globalThis.history || { replaceState: () => {} }
-    
+
     execFileSync(join(repositoryRoot, "node_modules", ".bin", "tsc"), [
       join(uiRoot, "src", "mosa-api.ts"),
       join(uiRoot, "src", "collect-dropped-files.ts"),
@@ -209,11 +210,12 @@ describe("runImport with mocked fetch", () => {
       "--moduleResolution", "bundler",
       "--skipLibCheck",
     ], { stdio: "pipe" })
-    
+
     // Use file:// URL with cache-busting query to force fresh import
     const modPath = `file://${join(tempRoot, "import-pipeline.js")}?t=${Date.now()}`
     const mod = await import(modPath)
     runImport = mod.runImport
+    errorMessages = await import(`file://${join(tempRoot, "error-messages.js")}?t=${Date.now()}`)
   })
 
   after(async () => {
@@ -496,6 +498,54 @@ describe("runImport with mocked fetch", () => {
     assert.equal(result.skipped, 2, "2 unsupported files skipped")
     assert.equal(result.imported, 2, "2 supported files imported")
     assert.equal(stagingCalls.length, 2, "only supported files staged")
+  })
+
+  it("server error codes ride through staging 413 and per-item failures so the UI shows the reviewed sentence (task 366)", async () => {
+    // 1. Staging: 413 + STAGING_FILE_TOO_LARGE — the code must survive so
+    //    messageForErrorCode can translate the failure reason.
+    globalThis.fetch = async (url, init) => {
+      if (url === "/api/import/stage" && init?.method === "POST") {
+        const data = { error: "Selected file is too large to import.", code: "STAGING_FILE_TOO_LARGE" }
+        return { ok: false, status: 413, json: async () => data, text: async () => JSON.stringify(data) }
+      }
+      throw new Error(`Unexpected fetch call: ${url} ${init?.method}`)
+    }
+    const tooLarge = await runImport(
+      [new globalThis.File(["x"], "big.png", { type: "image/png" })],
+      { project: "default", isSupported: () => true },
+    )
+    assert.equal(tooLarge.failed, 1)
+    assert.equal(tooLarge.errors[0].code, "STAGING_FILE_TOO_LARGE")
+    assert.equal(errorMessages.messageForErrorCode(tooLarge.errors[0].code, "zh"), "无法导入。文件过大。")
+
+    // 2. Import batch: the per-item result carries the server code (here the
+    //    task 366 content sniff) instead of the old empty-code discard.
+    globalThis.fetch = async (url, init) => {
+      if (url === "/api/import/stage" && init?.method === "POST") {
+        const data = { path: "/staged/fake.png" }
+        return { ok: true, json: async () => data, text: async () => JSON.stringify(data) }
+      }
+      if (url === "/api/assets/import-batch") {
+        const data = {
+          imported: 0,
+          failed: 1,
+          results: [{ index: 0, ok: false, error: "File content is not a supported image or video: /staged/fake.png", code: "IMAGE_CONTENT_NOT_MEDIA" }],
+        }
+        return { ok: true, json: async () => data, text: async () => JSON.stringify(data) }
+      }
+      throw new Error(`Unexpected fetch call: ${url} ${init?.method}`)
+    }
+    const notMedia = await runImport(
+      [new globalThis.File(["fake"], "fake.png", { type: "image/png" })],
+      { project: "default", isSupported: () => true },
+    )
+    assert.equal(notMedia.failed, 1)
+    assert.equal(notMedia.errors[0].code, "IMAGE_CONTENT_NOT_MEDIA")
+    assert.equal(errorMessages.messageForErrorCode(notMedia.errors[0].code, "zh"), "无法导入。文件不是支持的图片或视频。")
+    assert.equal(
+      errorMessages.messageForErrorCode(notMedia.errors[0].code, "en"),
+      "Couldn’t import. The file isn’t a supported image or video.",
+    )
   })
 
   it("stackId is sent to server in request body", async () => {
