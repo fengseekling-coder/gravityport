@@ -86,6 +86,35 @@ test("plain text, empty files and 4-byte-truncated headers are rejected", async 
     assert.equal(error.code, "IMAGE_CONTENT_NOT_MEDIA");
     return true;
   });
+
+  // FF D8 FF 00 filler after SOI is junk, not a real JPEG marker (rework 1
+  // keeps the marker set tight; only COM/FE was added).
+  const junkJpeg = join(dir, "junk.jpg");
+  await writeFile(junkJpeg, Buffer.from([0xff, 0xd8, 0xff, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+  await assert.rejects(() => assertMediaSignature(junkJpeg, ".jpg"), (error) => {
+    assert.equal(error.code, "IMAGE_CONTENT_NOT_MEDIA");
+    return true;
+  });
+});
+
+// 任务 366 返工 1：新版 ffmpeg 的 MJPEG 在没有 JFIF 头时把 COM 注释段放在最前，
+// FF D8 FF FE 是真 JPEG，不许误拒。
+test("a real JPEG opening with a COM comment segment is accepted", async (t) => {
+  const dir = await makeSniffDir(t);
+  const base = await sharpBytes("jpeg"); // FF D8 (SOI) + FF DB (DQT) …
+  const comment = Buffer.from("Lavc62.28.100 encoded frame", "latin1");
+  const com = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.alloc(2), comment]);
+  com.writeUInt16BE(comment.length + 2, 2); // segment length counts its own two bytes
+  const comFirst = Buffer.concat([base.subarray(0, 2), com, base.subarray(2)]);
+
+  // The spliced file must be a legal JPEG first: sharp reads real dimensions.
+  const metadata = await sharp(comFirst).metadata();
+  assert.equal(metadata.width, 8);
+  assert.equal(metadata.height, 8);
+
+  const comPath = join(dir, "com-first.jpg");
+  await writeFile(comPath, comFirst);
+  await assert.doesNotReject(() => assertMediaSignature(comPath, ".jpg"), "COM-first JPEG must be accepted");
 });
 
 test("a class keeps its members: png bytes in .jpg pass, png bytes in .mp4 do not", async (t) => {
@@ -130,6 +159,9 @@ for (const kind of ["json", "sqlite"]) {
     await writeFile(fakePath, "not an image, just text with a media extension");
     await assert.rejects(store.createAsset({ imagePath: fakePath }), (error) => {
       assert.equal(error.code, "IMAGE_CONTENT_NOT_MEDIA");
+      // 任务 366 返工 1：内容不是媒体是客户端错误，必须回 400 而不是 500
+      //（扩展把 >=500 当可重试，会反复排队）。
+      assert.equal(error.statusCode, 400);
       assert.match(error.message, /fake\.png/);
       return true;
     });
@@ -140,5 +172,25 @@ for (const kind of ["json", "sqlite"]) {
     const created = await store.createAsset({ imagePath: realPath });
     assert.ok(created.id, "a real image must still import");
     assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
+  });
+
+  test(`${kind} store accepts a JPEG that opens with a COM comment segment`, async (t) => {
+    const { dir, projectRoot, generated } = await makeStoreWorkspace(t, `mosa-sniff-com-${kind}-`);
+    const store = kind === "sqlite"
+      ? createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir: join(dir, "library") })
+      : createJsonAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa") });
+    if (kind === "sqlite") t.after(() => store.close());
+
+    const base = await sharpBytes("jpeg");
+    const comment = Buffer.from("Lavc62.28.100 encoded frame", "latin1");
+    const com = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.alloc(2), comment]);
+    com.writeUInt16BE(comment.length + 2, 2);
+    const comFirst = Buffer.concat([base.subarray(0, 2), com, base.subarray(2)]);
+    assert.equal((await sharp(comFirst).metadata()).width, 8, "the spliced file is a legal JPEG");
+
+    const comPath = join(generated, "com-first.jpg");
+    await writeFile(comPath, comFirst);
+    const created = await store.createAsset({ imagePath: comPath });
+    assert.ok(created.id, "a COM-first JPEG must import through the real store");
   });
 }

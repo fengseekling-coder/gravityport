@@ -59,6 +59,52 @@ test("migration copies legacy JSON assets, preserves unknown fields, and verifie
   assert.equal(resumed.skippedGroups, 1);
 });
 
+// 任务 366 返工 1：迁移搬的是内容门槛（366）之前就存在的旧数据，旧库里一张
+// 「文本改名 .png」不许拦住整个迁移；假图照搬，和它在旧库里的状态一致。
+test("migration skips the content sniff and carries pre-gate fake media over", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-migrate-sniff-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const managerDir = join(root, "mosa");
+  const imageDir = join(managerDir, "assets", "default", "images");
+  const metadataDir = join(managerDir, "assets", "default", "metadata");
+  await mkdir(imageDir, { recursive: true });
+  await mkdir(metadataDir, { recursive: true });
+  await writeFile(join(imageDir, "real.png"), PNG);
+  await writeFile(join(metadataDir, "real.json"), JSON.stringify({ id: "real", asset: "real.png", project_id: "default" }));
+  await writeFile(join(imageDir, "old-fake.png"), "plain text that predates the content gate");
+  await writeFile(join(metadataDir, "old-fake.json"), JSON.stringify({ id: "old-fake", asset: "old-fake.png", project_id: "default" }));
+
+  const libraryDir = join(root, "library");
+  const report = await migrateLegacyLibrary({ managerDir, projectRoot: root, libraryDir });
+  assert.equal(report.completed, true);
+  assert.equal(report.imported, 2, "both the real image and the legacy fake migrate");
+  assert.equal(report.issues.length, 0);
+
+  const store = createSqliteAssetStore({ managerDir, projectRoot: root, libraryDir });
+  const migratedFake = await store.getAsset("default", "old-fake");
+  const storedBytes = await readFile(migratedFake.image_path);
+  store.close();
+  assert.equal(storedBytes.toString("utf8"), "plain text that predates the content gate", "the legacy file is carried over as it was");
+});
+
+test("without the migration flag the same fake media is still rejected by the sniff", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-migrate-noflag-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const managerDir = join(root, "mosa");
+  const libraryDir = join(root, "library");
+  const store = createSqliteAssetStore({ projectRoot: root, managerDir, libraryDir });
+  t.after(() => store.close());
+
+  const fakePath = join(root, "old-fake.png");
+  await writeFile(fakePath, "plain text that predates the content gate");
+  await assert.rejects(store.createAsset({ imagePath: fakePath }), (error) => {
+    assert.equal(error.code, "IMAGE_CONTENT_NOT_MEDIA");
+    assert.equal(error.statusCode, 400);
+    return true;
+  });
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 0);
+});
+
 test("completed migrations fail closed when mosa.db disappears instead of reopening stale JSON", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-migrate-missing-db-"));
   deferTestPathRemoval(root, { recursive: true, force: true });
