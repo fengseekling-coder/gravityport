@@ -137,7 +137,9 @@ export async function run(ctx) {
     const missingStage = zh.missingStage || {};
     expect(missingStage.shown === true, `viewer empty stage never appeared: ${JSON.stringify(missingStage)}`);
     expect(missingStage.text === "找不到原始文件", `empty stage copy is ${JSON.stringify(missingStage.text)}`);
-    expect(missingStage.buttonLabel === "在访达中显示", `empty stage button is ${JSON.stringify(missingStage.buttonLabel)}`);
+    // 359: the button names the platform's file manager (App.tsx isMacPlatform()).
+    const expectedRevealLabel = process.platform === "darwin" ? "在访达中显示" : "在文件资源管理器中显示";
+    expect(missingStage.buttonLabel === expectedRevealLabel, `empty stage button is ${JSON.stringify(missingStage.buttonLabel)}, expected ${JSON.stringify(expectedRevealLabel)}`);
     const errorState = zh.errorState || {};
     expect(errorState.treeShowsFailure === true, "版本树 list does not show 无法加载 on 500s");
     expect(errorState.versionSectionShowsFailure === true, "版本 section does not show 无法加载 on 500s");
