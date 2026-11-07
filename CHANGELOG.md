@@ -2,6 +2,23 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.10 — 2026-11-07 / Preview
+
+### Desktop
+
+- The Mac app is now signed with a Developer ID and notarized by Apple: download it and double-click to install.
+- Settings → About links to the community (Discord, GitHub Discussions).
+- ChatGPT web images: Prompt 1 now stores the prompt actually sent to the image tool; the model's description of the image moves to Prompt 2. Existing assets are unchanged.
+- Imports check file contents, so files that aren't really images or videos no longer enter the library; a failed import shows a single reason.
+- The MCP server lists its tools before GravityPort has been opened and asks for the app when a tool is called. `asset_import_folder` no longer asks for confirmation.
+- Startup failures explain the specific cause; interface wording is unified in Chinese and English, including the AI assistants card in Settings → Connect.
+- Fixes: English labels in Compare versions no longer break mid-word; the Windows menu and update errors no longer show the old name.
+- Outbound requests (feedback, Pinterest) are hardened: no redirects followed, and the Pinterest callback also binds `[::1]`.
+
+### Web Capture
+
+- Extension 0.15.46: ChatGPT images match their prompts again after the page is refreshed or the conversation is switched; the capture toast and settings page use plain wording.
+
 ## 0.3.9 — 2026-11-05 / Preview
 
 ### Desktop

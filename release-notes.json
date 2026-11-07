@@ -1,18 +1,58 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {
-      "improved": [
-        "还没打开过 GravityPort 时，AI 助手里也能看到 GravityPort 的 MCP 工具，调用时会提示先打开 GravityPort；打开后直接再试即可，不用重启 AI 助手。"
-      ]
-    },
-    "en": {
-      "improved": [
-        "Before GravityPort has been opened, AI assistants still see GravityPort's MCP tools; calling one asks you to open GravityPort first. After that, just try again, with no need to restart the assistant."
-      ]
-    }
+    "zh": {},
+    "en": {}
   },
   "releases": [
+    {
+      "version": "0.3.10",
+      "date": "2026-11-07",
+      "zh": {
+        "new": [
+          "Mac 版已通过 Apple 公证，下载后双击进行安装。",
+          "「设置 → 关于」新增社区入口（Discord、GitHub 讨论区）。"
+        ],
+        "improved": [
+          "ChatGPT 网页图片入库时，提示词 1 改为保存实际发给生图工具的提示词，模型看图写的描述移到提示词 2；已入库的图片不变。",
+          "导入时检查文件内容，实际不是图片或视频的文件（例如只改了扩展名）不再进入素材库。",
+          "导入失败时只显示一句原因，例如「导入失败，文件不是支持的格式。请检查文件格式再重新导入。」",
+          "还没打开过 GravityPort 时，AI 助手里也能看到 GravityPort 的 MCP 工具；调用时会提示先打开 GravityPort，打开后直接再试即可，不用重启 AI 助手。",
+          "AI 助手通过 MCP 导入本地文件夹时不再需要先确认。",
+          "启动失败时按具体原因显示说明。",
+          "统一界面中英文用语，「设置 → 连接」里 AI 助手卡片的说明同步更新。"
+        ],
+        "fixed": [
+          "修复了英文界面「版本对比」里标签在单词中间断行的问题。",
+          "修复了 Windows 菜单和更新出错提示里仍显示旧名称的问题。"
+        ],
+        "other": [
+          "加强反馈发送等对外连接的安全防护。"
+        ]
+      },
+      "en": {
+        "new": [
+          "The Mac app is now notarized by Apple: download it and double-click to install.",
+          "Added community links (Discord, GitHub Discussions) to Settings → About."
+        ],
+        "improved": [
+          "For ChatGPT web images, Prompt 1 now stores the prompt actually sent to the image tool; the model's own description of the image moves to Prompt 2. Images already in the library are unchanged.",
+          "Imports now check file contents: files that aren't really images or videos (for example, a renamed text file) no longer enter the library.",
+          "A failed import now shows a single reason, such as \"Import failed. The file format isn’t supported. Check the file format and import again.\"",
+          "Before GravityPort has been opened, AI assistants still see GravityPort's MCP tools; calling one asks to open GravityPort first. After that, just try again, with no need to restart the assistant.",
+          "Importing a local folder through MCP no longer asks for confirmation.",
+          "Startup failures now explain the specific cause.",
+          "Interface wording is unified in Chinese and English, including the description on the AI assistants card in Settings → Connect."
+        ],
+        "fixed": [
+          "Fixed English labels in Compare versions breaking in the middle of a word.",
+          "Fixed the old name still appearing in the Windows menu and in update error messages."
+        ],
+        "other": [
+          "Hardened outbound connections such as sending feedback."
+        ]
+      }
+    },
     {
       "version": "0.3.9",
       "date": "2026-11-05",
