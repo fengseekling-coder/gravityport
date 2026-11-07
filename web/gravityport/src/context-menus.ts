@@ -9,7 +9,7 @@
  */
 
 export type MenuEntry =
-  | { kind: "item"; id: string; label: string; enLabel?: string; icon?: string; danger?: boolean; disabled?: boolean; shortcut?: string; submenu?: MenuEntry[]; color?: string }
+  | { kind: "item"; id: string; label: string; enLabel?: string; icon?: string; danger?: boolean; disabled?: boolean; shortcut?: string; submenu?: MenuEntry[]; color?: string; raw?: boolean }
   | { kind: "separator" }
   | { kind: "heading"; label: string }
 
@@ -57,11 +57,15 @@ const groupSubmenu = (prefix: string, groups: MenuContext["groups"]): MenuEntry[
   ]
   if (groups.length) {
     entries.push({ kind: "separator" })
+    // 任务 359 返工 1（MENU-03b）：label 是用户自己起的分组名，不是界面文案。
+    // raw: true 让 translateMenuEntries 原样保留——不翻译（英文界面下叫
+    // 「收藏」的分组不能变成 Favorites）、不填 {count} 占位。
     entries.push(...groups.map(group => ({
       kind: "item" as const,
       id: `${prefix}:${group.name}`,
       label: group.name,
       color: group.color,
+      raw: true,
     })))
   }
   return entries

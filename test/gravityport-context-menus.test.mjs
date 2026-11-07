@@ -413,3 +413,36 @@ describe("buildGroupMenu (sidebar 我的分组)", () => {
     assert.equal(lone.find((e) => e.id === "group-export").disabled, true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 任务 359 返工 1（MENU-03b）：分组名是用户起的名字，条目必须带 raw: true，
+// translateMenuEntries 原样保留（不翻译、不填 {count}）。
+// ---------------------------------------------------------------------------
+
+describe("context-menus / raw group-name entries", () => {
+  it("group entries carry raw: true and keep the user's name verbatim (收藏, {count} 组)", () => {
+    const submenu = findItem(buildContextMenu(baseCtx({
+      groups: [{ name: "收藏", color: "#ff0000" }, { name: "{count} 组" }],
+    })), "add-to-group").submenu;
+
+    const favorite = findItem(submenu, "add-to-group:收藏");
+    assert.equal(favorite.raw, true, "「收藏」 is a user-chosen name, not a translation key");
+    assert.equal(favorite.label, "收藏", "label kept verbatim (would otherwise render Favorites)");
+    assert.equal(favorite.color, "#ff0000", "the color dot still rides along");
+
+    const countish = findItem(submenu, "add-to-group:{count} 组");
+    assert.equal(countish.raw, true, "「{count} 组」 must not get its placeholder filled");
+    assert.equal(countish.label, "{count} 组", "placeholder kept verbatim");
+
+    assert.notEqual(findItem(submenu, "add-to-group:create").raw, true, "fixed labels stay translatable");
+  });
+
+  it("the stack card 移到分组 submenu mirrors the same raw flag", () => {
+    const submenu = findItem(buildContextMenu(baseCtx({
+      target: "stack",
+      groups: [{ name: "收藏" }],
+    })), "stack-add-to-group").submenu;
+    assert.equal(findItem(submenu, "stack-add-to-group:收藏").raw, true);
+    assert.equal(findItem(submenu, "stack-add-to-group:收藏").label, "收藏");
+  });
+});

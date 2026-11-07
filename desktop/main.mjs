@@ -24,6 +24,7 @@ import { releaseManifestTrustSet } from "../lib/release-manifest-signature.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
 import { runStartupShutdownExit } from "./startup-shutdown.mjs";
+import { showLibrarySchemaNewerDialogThenShutdown } from "./startup-failure-flow.mjs";
 import {
   failureCountFor,
   failureRecordFor,
@@ -1992,25 +1993,43 @@ function reportStartupFailure(error) {
   // error.message 弹给用户，改用固定正文（细节只进日志）。
   const libraryFailure = getLibraryStartupFailureText(error, currentLocale);
   // 任务 359（NATIVE-09c）：库比 App 新的框带「前往官网下载 / 取消」。
+  // 任务 359 返工 1：这个框必须等用户点完再关停退出。原来 `void` 丢掉
+  // messageBox 的 Promise 就直接走关停，框刚弹出进程就退了，按钮点不到。
+  // 父窗口固定传 null：此时主界面多半还没起来，启动页窗口在关停中可能被
+  // 销毁，带父窗口框会跟着消失。
   if (error?.code === "MOSA_LIBRARY_SCHEMA_NEWER") {
     const schemaNewerDialog = getLibrarySchemaNewerDialogText(currentLocale);
-    void screenGuard.messageBox(mainWindow && !mainWindow.isDestroyed() ? mainWindow : null, {
-      type: "warning",
-      title: schemaNewerDialog.title,
-      message: schemaNewerDialog.body,
-      buttons: schemaNewerDialog.buttons,
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-    }).then(({ response }) => {
-      if (response === 0) void screenGuard.openExternal(MOSA_DOWNLOAD_PAGE_URL);
+    void showLibrarySchemaNewerDialogThenShutdown({
+      messageBox: (owner, options) => screenGuard.messageBox(owner, options),
+      openExternal: (url) => screenGuard.openExternal(url),
+      shutdown: beginStartupShutdown,
+      owner: null,
+      dialogOptions: {
+        type: "warning",
+        title: schemaNewerDialog.title,
+        message: schemaNewerDialog.body,
+        buttons: schemaNewerDialog.buttons,
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      },
+      downloadUrl: MOSA_DOWNLOAD_PAGE_URL,
     });
-  } else if (libraryFailure) {
+    return;
+  }
+  if (libraryFailure) {
     screenGuard.errorBox(libraryFailure.title, libraryFailure.body);
   } else {
     console.error(`[MOSA] startup failure detail: ${error?.stack || message}`);
     screenGuard.errorBox(getDesktopText("startupErrorTitle", currentLocale), getDesktopText("startupErrorBody", currentLocale));
   }
+  beginStartupShutdown();
+}
+
+// 任务 359 返工 1：关停序列从 reportStartupFailure 尾部提出——库比 App 新的
+// 分支要等用户点完框才调用它，另外两个分支行为不变（同步 errorBox 后立即
+// 关停）。
+function beginStartupShutdown() {
   shuttingDown = true;
   stopBridgeNotificationPoll();
   // Task 341: both shutdown steps are bounded (5s each); a wedged runtime

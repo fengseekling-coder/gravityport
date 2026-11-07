@@ -3593,9 +3593,13 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const translateMenuEntries = (entries: MenuEntry[], selectionCount: number): MenuEntry[] =>
     entries.map(entry => {
       if (entry.kind === "item") {
+        const submenu = entry.submenu ? translateMenuEntries(entry.submenu, selectionCount) : undefined
+        // 任务 359 返工 1（MENU-03b）：raw 条目的 label 是用户起的名字（分组名），
+        // 不是界面文案——不翻译、不填 {count}，原样保留。
+        if (entry.raw) return { ...entry, submenu }
         // 任务 359（MENU-02b/02d）：多选的英文用复数（enLabel），中文同文。
         const label = entry.enLabel && language === "en" ? entry.enLabel : entry.label
-        return { ...entry, label: fillNamed(label, { count: selectionCount }), submenu: entry.submenu ? translateMenuEntries(entry.submenu, selectionCount) : undefined }
+        return { ...entry, label: fillNamed(label, { count: selectionCount }), submenu }
       }
       if (entry.kind === "heading") return { ...entry, label: fillNamed(entry.label, { count: selectionCount }) }
       return entry

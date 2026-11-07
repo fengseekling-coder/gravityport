@@ -377,6 +377,14 @@ const english: Record<string, string> = {
   "存储位置仅可在桌面版中修改": "The storage location can be changed only in the desktop app",
   "已更改存储位置": "Storage location changed",
   "无法更改存储位置": "Couldn’t change storage location",
+  // 任务 359 返工 1（HC-06）：更改存储位置失败按原因各一句（app-lifecycle.ts
+  // 的 LIBRARY_LOCATION_FAILURE_TEXTS），中文是键、英文在这里。
+  "无法更改存储位置。请选择一个空文件夹。": "Couldn’t change storage location. Choose an empty folder.",
+  "无法更改存储位置。新位置不能位于当前素材库内，也不能包含当前素材库。": "Couldn’t change storage location. The new location can’t be inside the current library or contain it.",
+  "无法更改存储位置。无法访问所选文件夹。": "Couldn’t change storage location. The selected folder can’t be accessed.",
+  "无法更改存储位置。复制素材库时出错，原素材库未改动。": "Couldn’t change storage location. Copying the library failed. The original library was not changed.",
+  "无法更改存储位置。请退出其他正在运行的 GravityPort 后重试。": "Couldn’t change storage location. Quit any other running GravityPort and try again.",
+  "无法更改存储位置。素材库位置由启动设置指定。": "Couldn’t change storage location. The location is set by a launch setting.",
   "无法保存提示词": "Couldn’t save prompt",
   "已保存": "Saved",
   "后台收录": "Background capture",
