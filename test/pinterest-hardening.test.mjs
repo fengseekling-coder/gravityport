@@ -1,14 +1,20 @@
 // 任务 312 Pinterest App 侧加固：
-// 1. 授权链接和换令牌请求体的回调地址写死 127.0.0.1；
+// 1. 授权链接和换令牌请求体的回调地址写死 localhost（返工 1：Pinterest 后台
+//    不接受 127.0.0.1，::1 抢占风险改由 runtime 在 [::1] 同端口监听来堵）；
 // 2. 出站端点环境变量只认回环地址，其余一律回退内置默认；
 // 3. 五处出站请求都带 redirect: "error"，拒绝重定向按「连不上」处理，
 //    已存令牌不被清掉、不被覆盖。
+// 返工 1 新增：beginConnect 在 [::1] 监听状态为 "taken" 时拒绝发授权链接
+// （client 单元、真路由、真起 runtime 三层都有）；runtime 在 [::1] 上真听、
+// 关停后端口立刻可以让出来。
 // 全部走注入的 fetchImpl 或未监听的回环端口，不连线上接口。
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createServer, get as httpGetImpl } from "node:http";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   PINTEREST_REDIRECT_URI,
   getPinterestApiBase,
@@ -17,9 +23,14 @@ import {
 } from "../lib/pinterest/config.mjs";
 import { getFeedbackCollectUrl } from "../lib/feedback/config.mjs";
 import { createPinterestClient } from "../lib/pinterest/client.mjs";
+import { handlePinterestRoute } from "../lib/api/pinterest-routes.mjs";
+import { getIpv6LoopbackState, startMosaRuntime } from "../lib/mosa-runtime.mjs";
+import { deferTestPathRemoval } from "./test-cleanup.mjs";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const CALLBACK_URI = "http://127.0.0.1:43517/api/pinterest/callback";
+// 返工 1：Pinterest 开发者后台对 http 回调只收 localhost（127.0.0.1 会报
+// 「看起来不像有效的 OAuth 2.0 重定向 URI」），回调地址改回 localhost。
+const CALLBACK_URI = "http://localhost:43517/api/pinterest/callback";
 
 const BOARDS_BODY = {
   items: [{ id: "123", name: "Board", privacy: "PUBLIC", pin_count: 1, media: { image_cover_url: "https://i.pinimg.com/c.jpg" } }],
@@ -59,8 +70,8 @@ async function makeUserDataDir(t) {
   return userDataDir;
 }
 
-// 1. 回调地址：常量本身、授权链接、换令牌请求体三处一致。
-test("the authorize URL and the exchange body carry the 127.0.0.1 callback", async (t) => {
+// 1. 回调地址：常量本身、授权链接、换令牌请求体三处一致（返工 1：localhost）。
+test("the authorize URL and the exchange body carry the localhost callback", async (t) => {
   assert.equal(PINTEREST_REDIRECT_URI, CALLBACK_URI);
 
   const userDataDir = await makeUserDataDir(t);
@@ -87,6 +98,67 @@ test("the authorize URL and the exchange body carry the 127.0.0.1 callback", asy
   await client.completeConnect({ code: "c", state: params.get("state") });
   assert.equal(exchangeBodies.length, 1);
   assert.equal(exchangeBodies[0].redirect_uri, CALLBACK_URI);
+});
+
+// 1b. 返工 1：[::1] 副监听状态为 "taken" 时 beginConnect 抛出和端口不对一样的
+//     PINTEREST_PORT_MISMATCH；"bound" / "unavailable" 照常发授权链接。
+//     fetchImpl 一旦被调用就抛错，证明拒绝发生在任何出站请求之前。
+test("beginConnect refuses to authorize while the [::1] listener is taken", async (t) => {
+  const userDataDir = await makeUserDataDir(t);
+  const fetchImpl = async () => {
+    throw new Error("no outbound request may happen while refusing");
+  };
+  const client = createPinterestClient({ userDataDir, fetchImpl });
+
+  for (const state of ["bound", "unavailable"]) {
+    const { authorizeUrl } = client.beginConnect({ port: 43517, ipv6ListenState: state });
+    assert.ok(new URL(authorizeUrl), `${state} still returns an authorize URL`);
+    assert.equal(new URL(authorizeUrl).searchParams.get("redirect_uri"), CALLBACK_URI);
+  }
+  assert.throws(
+    () => client.beginConnect({ port: 43517, ipv6ListenState: "taken" }),
+    (error) => error.code === "PINTEREST_PORT_MISMATCH",
+    "taken must refuse with PINTEREST_PORT_MISMATCH"
+  );
+});
+
+// 1c. 返工 1：路由层用真 client（非手抄逻辑）：传 "taken" 时真 beginConnect
+//     同步抛错，路由回 409 {"code":"PINTEREST_PORT_MISMATCH"}；传 "bound"
+//     照常 200。res 用记录型假对象（同 pinterest-routes.test.mjs 的形状）。
+test("POST /api/pinterest/connect answers 409 while the [::1] listener is taken", async (t) => {
+  const userDataDir = await makeUserDataDir(t);
+  const fetchImpl = async () => {
+    throw new Error("no outbound request may happen in this test");
+  };
+  const pinterest = createPinterestClient({ userDataDir, fetchImpl });
+  const callRoute = async (ipv6ListenState) => {
+    const res = {
+      statusCode: undefined,
+      headers: {},
+      endBody: undefined,
+      setHeader(name, value) {
+        this.headers[name] = value;
+      },
+      end(body) {
+        this.endBody = body;
+      },
+    };
+    await handlePinterestRoute({
+      req: { method: "POST" },
+      res,
+      url: new URL("http://127.0.0.1/api/pinterest/connect"),
+      context: { pinterest, port: 43517, ipv6ListenState },
+    });
+    return res;
+  };
+
+  const taken = await callRoute("taken");
+  assert.equal(taken.statusCode, 409);
+  assert.deepEqual(JSON.parse(taken.endBody), { code: "PINTEREST_PORT_MISMATCH" });
+
+  const bound = await callRoute("bound");
+  assert.equal(bound.statusCode, 200);
+  assert.equal(new URL(JSON.parse(bound.endBody).authorizeUrl).searchParams.get("redirect_uri"), CALLBACK_URI);
 });
 
 // 2. 环境变量白名单：只有回环地址被采用。
@@ -238,4 +310,138 @@ test("a refused redirect during refresh keeps the stored token untouched", async
   const status = await client.status();
   assert.equal(status.connected, true);
   assert.equal(status.needsReconnect, false);
+});
+
+// ── 返工 1：真起 runtime 的 [::1] 副监听 ─────────────────────────────────────
+// 起法照 test/mosa-runtime.test.mjs 的 runtimeOptions：全部源目录指到临时根，
+// 不碰真实库。runtime 随机端口；assertion 用真 http.get / 真 server。
+
+const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+
+function runtimeOptions(root) {
+  const libraryDir = join(root, "library");
+  return {
+    port: 0,
+    projectRoot: root,
+    managerDir: repositoryRoot,
+    cowartProjectDir: join(root, "desktop-data"),
+    appDir: join(repositoryRoot, "web", "gravityport", "dist"),
+    libraryDir,
+    assetsRoot: join(libraryDir, "assets"),
+    generatedImagesDir: join(root, "generated-images"),
+    codexImagesDir: join(root, "codex-images"),
+    codexSessionsDir: join(root, "codex-sessions"),
+    grokSessionsDir: join(root, "grok-sessions"),
+    cowartCanvasDir: join(root, "cowart-canvas"),
+    cowartRegistryPath: join(root, "state", "cowart-projects.json"),
+  };
+}
+
+async function makeTemporaryRoot(t, prefix) {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  return root;
+}
+
+// 机器没开 IPv6 时 [::1] 根本绑不上，对应的断言只能 skip，不许假装通过。
+function canBindIpv6Loopback() {
+  return new Promise((resolveAvailable) => {
+    const probe = createServer();
+    probe.once("error", () => resolveAvailable(false));
+    probe.listen(0, "::1", () => probe.close(() => resolveAvailable(true)));
+  });
+}
+
+function httpGet(host, port, path) {
+  return new Promise((resolveGet, rejectGet) => {
+    httpGetImpl({ host, port, path }, (res) => {
+      let body = "";
+      res.on("data", (chunk) => { body += chunk; });
+      res.on("end", () => resolveGet({ status: res.statusCode, body }));
+    }).on("error", rejectGet);
+  });
+}
+
+function listenOn(serverInstance, host, port) {
+  return new Promise((resolveListen, rejectListen) => {
+    serverInstance.once("error", rejectListen);
+    serverInstance.listen(port, host, () => {
+      serverInstance.off("error", rejectListen);
+      resolveListen();
+    });
+  });
+}
+
+function closeServer2(serverInstance) {
+  if (!serverInstance.listening) return Promise.resolve();
+  return new Promise((resolveClose, rejectClose) => {
+    serverInstance.close((error) => (error ? rejectClose(error) : resolveClose()));
+  });
+}
+
+// 2a. [::1] 绑定成功：同一个端口上，::1 和 127.0.0.1 对同一接口给出同一响应。
+test("the runtime serves [::1] on the same port as 127.0.0.1", async (t) => {
+  if (!(await canBindIpv6Loopback())) {
+    t.skip("this machine has no IPv6 loopback; the [::1] side listener cannot bind here");
+    return;
+  }
+  const root = await makeTemporaryRoot(t, "pinterest-ipv6-");
+  const runtime = await startMosaRuntime(runtimeOptions(root));
+  t.after(() => runtime.stop());
+
+  assert.equal(getIpv6LoopbackState(), "bound");
+  const viaV4 = await httpGet("127.0.0.1", runtime.port, "/api/health");
+  const viaV6 = await httpGet("::1", runtime.port, "/api/health");
+  assert.equal(viaV4.status, 200, "127.0.0.1 answers 200");
+  assert.equal(viaV6.status, 200, "::1 answers 200 with the same handler");
+  assert.equal(viaV6.body, viaV4.body, "same health payload on both transports");
+
+  // 关停后 [::1]:<端口> 必须能立刻被新 server 占上（副 server 已关）。
+  await runtime.stop();
+  const reclaim = createServer();
+  try {
+    await listenOn(reclaim, "::1", runtime.port);
+    assert.ok(reclaim.listening, "a new server can bind [::1] right after shutdown");
+  } finally {
+    await closeServer2(reclaim);
+  }
+});
+
+// 2b. [::1] 被别的进程先占：runtime 照常起来、状态 "taken"、连接接口回 409。
+//     注：测试里 runtime 用随机高位端口，真 client 的端口闸（43517）先触发，
+//     409 由同一个 PINTEREST_PORT_MISMATCH 分支回出；"taken" 这条路本身由
+//     上面 1b/1c 两条在 43517 上钉住。状态断言用 getIpv6LoopbackState()。
+//     runtime 只在 actualUserData 存在时才建 pinterest client，所以要传
+//     userData（指向临时根，不碰真实 userData）。
+test("a squatted [::1] port leaves the runtime up with state taken and connect refused", async (t) => {
+  if (!(await canBindIpv6Loopback())) {
+    t.skip("this machine has no IPv6 loopback; the [::1] side listener cannot bind here");
+    return;
+  }
+  const squatter = createServer((_req, res) => res.end("squatter"));
+  await listenOn(squatter, "::1", 0);
+  t.after(() => closeServer2(squatter));
+  const squattedPort = squatter.address().port;
+
+  const root = await makeTemporaryRoot(t, "pinterest-ipv6-taken-");
+  const userDataDir = join(root, "user-data");
+  await mkdir(userDataDir, { recursive: true });
+  const runtime = await startMosaRuntime({
+    ...runtimeOptions(root),
+    port: squattedPort,
+    actualUserData: userDataDir,
+  });
+  t.after(() => runtime.stop());
+
+  assert.equal(runtime.port, squattedPort, "the main listener still binds 127.0.0.1 on the port");
+  assert.equal(getIpv6LoopbackState(), "taken");
+  const health = await httpGet("127.0.0.1", runtime.port, "/api/health");
+  assert.equal(health.status, 200, "the runtime is otherwise up");
+
+  const connect = await fetch(`http://127.0.0.1:${runtime.port}/api/pinterest/connect`, {
+    method: "POST",
+    headers: { "x-mosa-client-token": runtime.clientToken },
+  });
+  assert.equal(connect.status, 409);
+  assert.deepEqual(await connect.json(), { code: "PINTEREST_PORT_MISMATCH" });
 });
