@@ -37,8 +37,12 @@ test("e2e shard 1/2 + 2/2 partition the flow set exactly", async () => {
   const shard2 = await listFlows(["--shard", "2/2"]);
   assert.ok(full.length > 0, "the runner lists flows");
   assert.ok(shard1.length > 0 && shard2.length > 0, "both shards are non-empty");
+  const sharded = new Set([...shard1, ...shard2]);
+  const onlyInFull = full.filter((name) => !sharded.has(name));
+  const fullSet = new Set(full);
+  const onlyInShards = [...sharded].filter((name) => !fullSet.has(name));
   assert.equal(shard1.length + shard2.length, full.length,
-    `shard sizes (${shard1.length} + ${shard2.length}) must add up to the full set (${full.length})`);
+    `shard sizes (${shard1.length} + ${shard2.length}) must add up to the full set (${full.length}); only in full: ${JSON.stringify(onlyInFull)}; only in shards: ${JSON.stringify(onlyInShards)}`);
   const union = new Set([...shard1, ...shard2]);
   assert.equal(union.size, full.length, "shards must not overlap");
   for (const name of full) {
