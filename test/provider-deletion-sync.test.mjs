@@ -967,6 +967,9 @@ test("background: reportProviderDeletions posts to the app with the token, caps 
   });
   new vm.Script(providerPolicySource, { filename: "provider-policy.js" }).runInContext(context);
   const workerSource = backgroundSource.replace(/^import\s+".\/provider-policy.js";\s*$/m, "");
+  if (workerSource === backgroundSource) {
+    throw new Error("background.js must import ./provider-policy.js");
+  }
   new vm.Script(workerSource, { filename: "background.js" }).runInContext(context);
 
   const dispatchMessage = (message, sender) => new Promise((resolve, reject) => {

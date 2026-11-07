@@ -307,6 +307,7 @@ function createFetchHarness() {
       url: href,
       method: String(init.method || "GET"),
       headers: init.headers || {},
+      credentials: init.credentials,
       body: typeof init.body === "string" ? init.body : null,
     };
     if (loopback) {
@@ -318,6 +319,9 @@ function createFetchHarness() {
       if (parsed.pathname === "/api/web-capture/pair") return Promise.resolve(jsonResponse({ product: "mosa", token: "paired-token" }));
       if (parsed.pathname === "/api/ingest/web-capture-status") return Promise.resolve(jsonResponse({ retryRequestId: 0 }));
       if (parsed.pathname === "/api/ingest/web-capture") return Promise.resolve(jsonResponse({ ok: true, assetId: "asset-1" }));
+      if (parsed.pathname === "/api/ingest/web-capture-upload/begin") return Promise.resolve(jsonResponse({ ok: true, uploadId: "upload-1", chunkSize: 1024 * 1024 }));
+      if (parsed.pathname === "/api/ingest/web-capture-upload/chunk") return Promise.resolve(jsonResponse({ ok: true }));
+      if (parsed.pathname === "/api/ingest/web-capture-upload/commit") return Promise.resolve(jsonResponse({ ok: true, assetId: "asset-video-1" }));
       return Promise.resolve(jsonResponse({ ok: true }));
     }
     mediaRequests.push(record);
@@ -377,6 +381,9 @@ export async function createBackgroundHarness({
 
   new vm.Script(providerPolicySource, { filename: "provider-policy.js" }).runInContext(context);
   const workerSource = backgroundSource.replace(/^import\s+".\/provider-policy.js";\s*$/m, "");
+  if (workerSource === backgroundSource) {
+    throw new Error("background.js must import ./provider-policy.js");
+  }
   new vm.Script(workerSource, { filename: "background.js" }).runInContext(context);
 
   return {
@@ -406,19 +413,30 @@ export async function createBackgroundHarness({
       return new Promise((resolve, reject) => {
         const listener = chromeHarness.listeners.message[0];
         let settled = false;
+        let timer = null;
+        const cleanup = () => {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+        };
         const sendResponse = (response) => {
           if (settled) return;
           settled = true;
+          cleanup();
           resolve(response);
         };
         const keepOpen = listener(message, sender, sendResponse);
         if (keepOpen !== true && !settled) {
           settled = true;
+          cleanup();
           resolve(null);
+          return;
         }
-        setTimeout(() => {
+        timer = setTimeout(() => {
           if (!settled) {
             settled = true;
+            cleanup();
             reject(new Error("sendResponse was never called"));
           }
         }, 8_000);

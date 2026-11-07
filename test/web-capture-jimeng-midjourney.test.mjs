@@ -15,6 +15,9 @@ import {
   senderFor,
   fakeImageBase64,
   CHATGPT_TAB_URL,
+  GEMINI_TAB_URL,
+  FLOW_TAB_URL,
+  AI_STUDIO_TAB_URL,
   JIMENG_TAB_URL,
   MIDJOURNEY_TAB_URL,
 } from "./helpers/background-harness.mjs";
@@ -723,6 +726,58 @@ test("background gates the new providers and downloads Midjourney originals with
   assert.equal(ingestPayload.provider, "jimeng");
   assert.equal(ingestPayload.media_variant, "upscale");
 
+  // Midjourney and Gemini image ingest are accepted
+  const mjCapture = await harness.dispatchMessage({
+    type: "mosa.ingest",
+    payload: {
+      provider: "midjourney",
+      mediaKind: "image",
+      imageBase64: fakeImageBase64(128),
+      mediaVariant: "upscale",
+    },
+  }, midjourneySender);
+  assert.equal(mjCapture.ok, true);
+  assert.equal(ingestPayload.provider, "midjourney");
+
+  const geminiSender = senderFor(GEMINI_TAB_URL);
+  const geminiCapture = await harness.dispatchMessage({
+    type: "mosa.ingest",
+    payload: {
+      provider: "gemini",
+      mediaKind: "image",
+      imageBase64: fakeImageBase64(128),
+    },
+  }, geminiSender);
+  assert.equal(geminiCapture.ok, true);
+  assert.equal(ingestPayload.provider, "gemini");
+
+  // Video transfer sender allow-list covers flow, google-ai-studio, jimeng, midjourney
+  for (const [provider, tabUrl] of [
+    ["flow", FLOW_TAB_URL],
+    ["google-ai-studio", AI_STUDIO_TAB_URL],
+    ["jimeng", JIMENG_TAB_URL],
+    ["midjourney", MIDJOURNEY_TAB_URL],
+  ]) {
+    const sender = senderFor(tabUrl);
+    const transferRes = await harness.dispatchMessage({
+      type: "mosa.beginVideoTransfer",
+      transferId: `tx-${provider}`,
+      totalBytes: 2048,
+      totalChunks: 2,
+      payload: { provider },
+    }, sender);
+    assert.equal(transferRes.ok, true, `beginVideoTransfer must succeed for ${provider}`);
+  }
+
+  // WEB_VIDEO_PROVIDERS allow-list in ingestToMosa includes jimeng and midjourney
+  for (const provider of ["flow", "google-ai-studio", "jimeng", "midjourney"]) {
+    await assert.rejects(
+      harness.context.ingestToMosa({ provider, mediaKind: "video" }),
+      (err) => err.message !== "Unsupported web video provider.",
+      `video provider ${provider} must be supported in WEB_VIDEO_PROVIDERS`,
+    );
+  }
+
   // 4. Remote media allowed domains check in assertAllowedRemoteMediaUrl
   for (const trusted of [
     "https://cdn.midjourney.com/1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d/0_3.png",
@@ -732,7 +787,19 @@ test("background gates the new providers and downloads Midjourney originals with
   ]) {
     assert.doesNotThrow(() => harness.context.assertAllowedRemoteMediaUrl(trusted));
   }
-  assert.throws(() => harness.context.assertAllowedRemoteMediaUrl("https://evil.com/leak.png"), /Unsupported media host/);
+  for (const badHost of [
+    "https://evil.com/leak.png",
+    "https://evilbyteimg.com/x.png",
+    "https://evil-jimeng.com/x.png",
+    "https://evilvlabvod.com/x.mp4",
+    "https://cdn.midjourney.com.evil.com/x.png",
+  ]) {
+    assert.throws(
+      () => harness.context.assertAllowedRemoteMediaUrl(badHost),
+      /Unsupported media host/,
+      `${badHost} must be rejected as an unsupported media host`,
+    );
+  }
 });
 
 async function noiseImage(seed, width = 640, height = 900) {

@@ -338,6 +338,9 @@ async function createHarness({ appOnline = false } = {}) {
   // evaluation replaces.
   new vm.Script(providerPolicySource, { filename: "provider-policy.js" }).runInContext(context);
   const workerSource = backgroundSource.replace(/^import\s+".\/provider-policy.js";\s*$/m, "");
+  if (workerSource === backgroundSource) {
+    throw new Error("background.js must import ./provider-policy.js");
+  }
   new vm.Script(workerSource, { filename: "background.js" }).runInContext(context);
 
   return {
@@ -960,6 +963,52 @@ test("when no port answers, discovery runs one more full round 1.5 s later and t
   assert.equal(response?.settings?.mosaToken || "", "", "no Token is invented when nothing answers");
 });
 
+test("pairing requires product: mosa on both health check and pairing response", async () => {
+  const harness = await createHarness({ appOnline: true });
+  await sleep(20);
+
+  // 1. ensureMosaAvailable returns false for non-mosa identity
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/health") {
+      return jsonRoute({ product: "other" });
+    }
+    return null;
+  });
+  const available = await harness.context.ensureMosaAvailable("http://127.0.0.1:43517");
+  assert.equal(available, false, "ensureMosaAvailable rejects non-mosa products");
+
+  // 2. Health check returning non-mosa does not call pair endpoint and discovers nothing
+  harness.localStore.delete("mosaToken");
+  harness.localStore.delete("mosaBaseUrl");
+  let pairCalled = false;
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/health") {
+      return jsonRoute({ product: "other" });
+    }
+    if (url.pathname === "/api/web-capture/pair") {
+      pairCalled = true;
+      return jsonRoute({ product: "mosa", token: "evil-token" });
+    }
+    return null;
+  });
+  const discoveredNonMosa = await harness.context.discoverAndPairMosaOnce();
+  assert.equal(discoveredNonMosa, null, "discovery rejects health responses from non-mosa products");
+  assert.equal(pairCalled, false, "pairing route must not be probed when health check product is not mosa");
+
+  // 3. Health check returns mosa, but pair response is non-mosa -> token rejected
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/health") {
+      return jsonRoute({ product: "mosa" });
+    }
+    if (url.pathname === "/api/web-capture/pair") {
+      return jsonRoute({ product: "other", token: "evil-token" });
+    }
+    return null;
+  });
+  const discoveredBadPair = await harness.context.discoverAndPairMosaOnce();
+  assert.equal(discoveredBadPair, null, "discovery rejects pairing responses from non-mosa products");
+});
+
 test("a failed queue write while GravityPort is offline lets the page try again", async () => {
   const harness = await createHarness({ appOnline: false });
   // Browser media storage refuses writes: the ticket cannot be kept.
@@ -1177,6 +1226,40 @@ test("an offline remote video spools into IndexedDB and delivers after its URL e
     "the begin request carries the URL without its signature");
   assert.equal(metadata.finalMediaUrl, "https://storage.googleapis.com/bucket/gen-video.mp4?id=file_v1");
   assert.equal(harness.mediaEntries().length, 0, "the spool chunks are deleted after delivery");
+});
+
+test("live remote video streams chunks over an upload session rather than downloading monolithically", async () => {
+  const harness = await createHarness({ appOnline: true });
+  const videoUrl = "https://storage.googleapis.com/bucket/live-video.mp4";
+  harness.fetchHarness.setMediaHandler(() => videoResponse(64 * 1024));
+
+  const beginRequests = [];
+  const commitRequests = [];
+  harness.fetchHarness.setAppHandler((url, init) => {
+    if (url.pathname === "/api/ingest/web-capture-upload/begin") {
+      beginRequests.push(JSON.parse(init.body));
+      return jsonRoute({ uploadId: "upload-live-video" });
+    }
+    if (url.pathname === "/api/ingest/web-capture-upload/chunk") {
+      return jsonRoute({ ok: true });
+    }
+    if (url.pathname === "/api/ingest/web-capture-upload/commit") {
+      commitRequests.push(JSON.parse(init.body));
+      return jsonRoute({ ok: true, assetId: "video-asset-live-1" });
+    }
+    return null;
+  });
+
+  const res = await harness.context.ingestToMosa({
+    provider: "flow",
+    mediaKind: "video",
+    mediaUrl: videoUrl,
+    pageUrl: FLOW_TAB_URL,
+  });
+
+  assert.equal(beginRequests.length, 1, "must open an upload session via /begin");
+  assert.equal(commitRequests.length, 1, "must commit the upload session via /commit");
+  assert.equal(res.assetId, "video-asset-live-1");
 });
 
 test("a remote video whose download fails keeps a plain URL ticket and the page is told it was queued", async () => {

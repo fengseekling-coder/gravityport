@@ -323,6 +323,22 @@ test("defaults capture off and keeps Chrome permissions minimal", async () => {
   const harness = await createBackgroundHarness();
   await harness.triggerInstalled({ reason: "install" });
   assert.equal(harness.isOptionsPageOpened(), true, "extension install opens options page");
+
+  // Fresh install defaults with empty storage
+  const emptyHarness = await createBackgroundHarness({ emptyStorage: true });
+  const extSender = extensionPageSender();
+  const extSettings = await emptyHarness.dispatchMessage({ type: "mosa.getSettings" }, extSender);
+  assert.equal(extSettings.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(extSettings.settings)), {
+    mosaBaseUrl: "http://127.0.0.1:43517",
+    mosaToken: "",
+    autoCapture: false,
+  });
+
+  const pageSender = senderFor(CHATGPT_TAB_URL);
+  const pageSettings = await emptyHarness.dispatchMessage({ type: "mosa.getSettings" }, pageSender);
+  assert.equal(pageSettings.ok, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(pageSettings.settings)), { autoCapture: false });
 });
 
 test("manual fallback controls cover ChatGPT images and Google videos", () => {
@@ -617,12 +633,47 @@ test("captures an explicit provider generation-call id without promoting a gener
   assert.equal(generation.payload.providerGenerationCallId, "ig-web-explicit");
 });
 
-test("preserves event-scoped conversation and generation-call identity through extension ingest", () => {
+test("preserves event-scoped conversation and generation-call identity through extension ingest", async () => {
   assert.match(contentSource, /const transportConversationId = String\(item\.conversationId \|\| item\.conversation_id \|\| ""\)/);
   assert.match(contentSource, /conversationId: transportConversationId \|\| currentConversationId\(\)/);
   assert.match(contentSource, /providerGenerationCallId: String\(item\.providerGenerationCallId \|\| item\.provider_generation_call_id \|\| ""\)/);
   assert.match(contentSource, /conversationId: resolved\.conversationId \|\| currentConversationId\(\)/);
   assert.match(contentSource, /providerGenerationCallId: resolved\.providerGenerationCallId \|\| ""/);
+
+  // Background ingest forwards is_reference, generation_request_prompt, providerGenerationCallId, and trimmed title
+  const harness = await createBackgroundHarness({ appOnline: true });
+  let ingestBody = null;
+  harness.fetchHarness.setAppHandler((url, init) => {
+    if (url.pathname === "/api/ingest/web-capture") {
+      ingestBody = JSON.parse(init.body);
+      return new Response(JSON.stringify({ ok: true, assetId: "asset-1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return null;
+  });
+
+  const chatgptSender = senderFor(CHATGPT_TAB_URL);
+  const oversizedTitle = "   " + "T".repeat(300) + "   ";
+  const result = await harness.dispatchMessage({
+    type: "mosa.ingest",
+    payload: {
+      provider: "chatgpt",
+      imageBase64: fakeImageBase64(16),
+      isReference: true,
+      generationRequestPrompt: "prompt-request-123",
+      providerGenerationCallId: "call-xyz-456",
+      generationSessionTitle: oversizedTitle,
+    },
+  }, chatgptSender);
+
+  assert.equal(result.ok, true);
+  assert.ok(ingestBody, "ingest request must reach App");
+  assert.equal(ingestBody.is_reference, true, "is_reference must be forwarded as true");
+  assert.equal(ingestBody.generation_request_prompt, "prompt-request-123", "generation_request_prompt must be forwarded");
+  assert.equal(ingestBody.providerGenerationCallId, "call-xyz-456", "providerGenerationCallId must be forwarded");
+  assert.equal(ingestBody.generation_session_title, "T".repeat(200), "generation_session_title must be trimmed and capped at 200 chars");
 });
 
 test("accepts an assistant-owned image_gen result when ChatGPT does not use role=tool", async () => {
@@ -1209,6 +1260,38 @@ test("background limits generated video capture to Flow and Google AI Studio", a
   assert.equal(probed[0].headers.Range, "bytes=0-31");
   assert.equal(probed[0].credentials, "include");
 
+  // Path-based video detection: no content-type, but pathname includes /video/
+  harness.fetchHarness.setMediaHandler(() => {
+    const res = new Response(new Uint8Array(32), {
+      status: 206,
+      headers: { "content-range": "bytes 0-31/1000" },
+    });
+    Object.defineProperty(res, "url", { value: "https://flow-content.google/media/video/sample.mp4" });
+    return res;
+  });
+  const probeResVideoPath = await harness.dispatchMessage({
+    type: "mosa.probeFlowMedia",
+    url: "https://flow.google.com/api/trpc/media.getMediaUrlRedirect?name=sample-video-path",
+  }, flowSender);
+  assert.equal(probeResVideoPath.ok, true);
+  assert.equal(probeResVideoPath.result.mediaKind, "video", "path containing /video/ must classify as video even without content-type");
+
+  // Untrusted redirect destination is rejected
+  harness.fetchHarness.setMediaHandler(() => {
+    const res = new Response(new Uint8Array(32), {
+      status: 206,
+      headers: { "content-type": "video/mp4", "content-range": "bytes 0-31/1000" },
+    });
+    Object.defineProperty(res, "url", { value: "https://evil.example/video/sample.mp4" });
+    return res;
+  });
+  const badRedirectRes = await harness.dispatchMessage({
+    type: "mosa.probeFlowMedia",
+    url: "https://flow.google.com/api/trpc/media.getMediaUrlRedirect?name=sample-evil",
+  }, flowSender);
+  assert.equal(badRedirectRes.ok, false);
+  assert.match(badRedirectRes.error, /Flow media redirected to an unsupported host/);
+
   // 4. Video transfer chunking spools chunks into IndexedDB; sender mismatch is rejected
   const transferId = "test-tx-flow-1";
   const beginRes = await harness.dispatchMessage({
@@ -1242,6 +1325,32 @@ test("background limits generated video capture to Flow and Google AI Studio", a
   assert.match(hijackedRes.error, /Unknown or invalid video transfer chunk/);
 });
 
+test("non-public remote media downloads carry credentials: include on first attempt", async () => {
+  const harness = await createBackgroundHarness({ appOnline: true });
+  const capturedRequests = [];
+  harness.fetchHarness.setMediaHandler((url, init) => {
+    capturedRequests.push({ url: String(url), ...init });
+    return new Response(fakeImageBase64(64), {
+      status: 200,
+      headers: { "content-type": "image/png", "content-length": "64" },
+    });
+  });
+
+  const chatgptSender = senderFor(CHATGPT_TAB_URL);
+  const result = await harness.dispatchMessage({
+    type: "mosa.ingest",
+    payload: {
+      provider: "chatgpt",
+      mediaKind: "image",
+      imageUrl: "https://files.oaiusercontent.com/file-test-private.png",
+    },
+  }, chatgptSender);
+
+  assert.equal(result.ok, true);
+  assert.ok(capturedRequests.length >= 1, "must attempt remote media download");
+  assert.equal(capturedRequests[0].credentials, "include", "first download attempt for non-public media must include credentials");
+});
+
 test("background reports only bounded retry-queue diagnostics to the local task center", async () => {
   const harness = await createBackgroundHarness({ appOnline: true });
   const queue = Array.from({ length: 25 }, (_, i) => ({
@@ -1254,6 +1363,8 @@ test("background reports only bounded retry-queue diagnostics to the local task 
       prompt: `sensitive prompt text ${i}`,
       pageUrl: `https://chatgpt.com/c/secret-${i}`,
       imageUrl: `https://cdn.example.com/secret-${i}.png`,
+      mediaUrl: `https://cdn.example.com/secret-media-${i}.png`,
+      sourceMediaUrl: `https://cdn.example.com/secret-source-media-${i}.png`,
     },
     createdAt: Date.now(),
   }));
@@ -1269,6 +1380,8 @@ test("background reports only bounded retry-queue diagnostics to the local task 
   assert.equal(json.includes("sensitive prompt text"), false, "raw prompt text must not be in queue diagnostics");
   assert.equal(json.includes("https://chatgpt.com/c/secret"), false, "page URLs must not be in queue diagnostics");
   assert.equal(json.includes("https://cdn.example.com/secret"), false, "media URLs must not be in queue diagnostics");
+  assert.equal(json.includes("secret-media"), false, "media URLs must not be in queue diagnostics");
+  assert.equal(json.includes("secret-source-media"), false, "source media URLs must not be in queue diagnostics");
 
   let statusReport = null;
   harness.fetchHarness.setAppHandler((url, init) => {
@@ -1283,6 +1396,27 @@ test("background reports only bounded retry-queue diagnostics to the local task 
   assert.ok(statusReport);
   assert.equal(statusReport.headers.authorization, `Bearer ${PAIRING_TOKEN}`);
   assert.equal(statusReport.body.items.length, 20);
+});
+
+test("retryRequestId in status report triggers retry only once per request ID", async () => {
+  const harness = await createBackgroundHarness({ appOnline: true });
+  harness.fetchHarness.setAppHandler((url) => {
+    if (url.pathname === "/api/ingest/web-capture-status") {
+      return new Response(JSON.stringify({ retryRequestId: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return null;
+  });
+
+  const first = await harness.context.reportCaptureQueueStatus();
+  assert.equal(first.reported, true);
+  assert.equal(first.retryRequested, true, "first encounter of retryRequestId 1 triggers retryRequested");
+
+  const second = await harness.context.reportCaptureQueueStatus();
+  assert.equal(second.reported, true);
+  assert.equal(second.retryRequested, false, "repeated report with same retryRequestId must not trigger retryRequested again");
 });
 
 test("ChatGPT page bridge only trusts the first privately transferred port", () => {
@@ -1452,10 +1586,26 @@ test("provider content scripts only receive the autoCapture setting", async () =
   assert.equal(untrustedResponse.ok, false);
 });
 
-test("clears the legacy development Token and verifies the real ingest authorization path", () => {
+test("clears the legacy development Token and verifies the real ingest authorization path", async () => {
   assert.match(optionsSource, /authorization: `Bearer \$\{token\}`/);
   assert.match(optionsSource, /WEB_CAPTURE_BAD_IMAGE/);
   assert.match(optionsSource, /WEB_CAPTURE_UNAUTHORIZED/);
+
+  const harness = await createBackgroundHarness({
+    appOnline: true,
+    settings: { mosaToken: "mosa-web-capture-dev" },
+  });
+
+  const extSender = extensionPageSender();
+  const res = await harness.dispatchMessage({ type: "mosa.getSettings" }, extSender);
+  assert.equal(res.ok, true);
+  assert.notEqual(res.settings.mosaToken, "mosa-web-capture-dev", "legacy dev token must be cleared from settings");
+
+  await harness.context.reportCaptureQueueStatus();
+  for (const req of harness.fetchHarness.appRequests) {
+    const auth = String(req.headers?.authorization || req.headers?.Authorization || "");
+    assert.equal(auth.includes("mosa-web-capture-dev"), false, "no request must carry the legacy development token");
+  }
 });
 
 function loadImageLookupKeys() {
@@ -5226,6 +5376,10 @@ test("background opens a ChatGPT desktop conversation only when it holds a gener
   assert.deepEqual(acks.at(-1), { conversationId: "aaaaaaaa-0000-0000-0000-000000000002", outcome: "captured" });
   await harness.context.runDesktopSync(["aaaaaaaa-0000-0000-0000-000000000003"]);
   assert.equal(harness.createdWindows.length, 2);
+  assert.ok(
+    harness.fetchHarness.appRequests.every((req) => !req.body?.includes("session-bearer")),
+    "all non-ChatGPT requests must keep ChatGPT session tokens out of the body",
+  );
 });
 
 test("user message drops the image tool chip line but keeps the same words typed in the text", () => {
