@@ -35,7 +35,7 @@ Installed desktop apps check for updates themselves in **Settings → About**. T
 
 ## First launch
 
-- **macOS:** open System Settings → Privacy & Security and click **Open Anyway** next to GravityPort. Only once.
+- **macOS:** the first time you open GravityPort, macOS asks whether to open an app downloaded from the internet. Click **Open**. Only once.
 - **Windows:** the installer is not code-signed yet, so SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**. Only once, when you install.
 
 ## Why GravityPort

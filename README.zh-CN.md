@@ -35,7 +35,7 @@ GravityPort 是一个 AI 素材管理工具：把 ChatGPT、Gemini、Flow、Goog
 
 ## 第一次打开
 
-- **macOS：** 打开「系统设置 → 隐私与安全性」，在 GravityPort 旁边点**仍要打开**。只需一次。
+- **macOS：** 第一次打开 GravityPort 时，系统会询问是否打开从互联网下载的 App，点**打开**。只需一次。
 - **Windows：** 安装程序还没有代码签名，SmartScreen 可能提示「Windows 已保护你的电脑」。点**更多信息 → 仍要运行**。只在安装时出现一次。
 
 ## 为什么需要 GravityPort
