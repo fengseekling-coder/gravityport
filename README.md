@@ -13,7 +13,13 @@ GravityPort is an AI asset manager. It automatically collects the images and vid
 
 ![GravityPort gallery with the Inspector open](docs/images/gravityport-app.webp)
 
-**Local-first · Prompt & provenance · Version history · No GravityPort cloud account**
+- **Auto-Capture:** Saves generated images and videos straight to your library.
+- **Prompts & Context:** Keeps prompts, reference images, and sources with every asset.
+- **Version Tree:** Records every round of edits in a conversation.
+- **Smart Stacks:** Groups related assets by source and conversation.
+- **100% Local:** Stores all assets and records locally on your computer.
+- **GravityPort MCP:** Lets AI assistants manage your library assets directly.
+- **Free Download:** macOS · Windows · gravityport.azhuilab.com
 
 [Downloads](#downloads) · [First launch](#first-launch) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
 
@@ -54,7 +60,7 @@ The Inspector shows each asset's version tree, with generations from a ChatGPT c
 
 ### Let AI agents search your library
 
-The built-in MCP server lets Claude, Codex, and other MCP clients list, search, and record assets, Prompts, versions, and generation history in the same local library. `asset_search` combines text and a time range. The desktop app ships the server: copy a ready-made config for Claude Desktop, Claude Code, or Codex from Settings → Connect, with no Node.js or source checkout needed. From source, run `npm run mcp`. See [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口) for setup and the tool list.
+GravityPort MCP lets Claude, Codex, and other MCP clients list, search, and record assets, Prompts, versions, and generation history in the same local library. `asset_search` combines text and a time range. The desktop app ships the server: copy a ready-made config for Claude Desktop, Claude Code, or Codex from Settings → Connect, with no Node.js or source checkout needed. From source, run `npm run mcp`. See [MCP 与接口](docs/guide.zh-CN.md#mcp-与接口) for setup and the tool list.
 
 ### Recover deleted work
 
