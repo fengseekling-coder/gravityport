@@ -200,7 +200,7 @@ function contextMenusSource(config) {
     await step('stack card menu appears', async () => {
       const menu = await openMenu(cardFor(config.coverId));
       const labels = menuLabels();
-      for (const expected of ['打开堆叠', '添加分组', '移除分组', '重命名堆叠', '解散堆叠', '移至回收站']) {
+      for (const expected of ['打开堆叠', '移到分组', '移出分组', '重命名堆叠…', '解散堆叠', '移到回收站']) {
         if (!labels.includes(expected)) throw new Error('missing ' + expected + ' in ' + JSON.stringify(labels));
       }
       if (labels.includes('粘贴到此堆叠')) throw new Error('paste-into-stack shown without cut content');
@@ -215,8 +215,8 @@ function contextMenusSource(config) {
     // ── 3) Rename the stack; card and server agree ──
     await step('rename stack', async () => {
       await openMenu(cardFor(config.coverId));
-      await clickMenuItem('重命名堆叠');
-      await dialogSubmit(config.renamedStack, '保存');
+      await clickMenuItem('重命名堆叠…');
+      await dialogSubmit(config.renamedStack, '重命名');
       await waitFor(() => (activeStackCard()?.getAttribute('aria-label') || '').includes(config.renamedStack), 'card shows the new name');
       const annotated = await assetById(config.coverId);
       if (annotated?.stack?.name !== config.renamedStack) {
@@ -225,10 +225,10 @@ function contextMenusSource(config) {
       return annotated?.stack;
     });
 
-    // ── 4) Stack card -> 添加分组 ▸ seed group: members join server-side ──
+    // ── 4) Stack card -> 移到分组 ▸ seed group: members join server-side ──
     await step('stack to seed group via submenu', async () => {
       await openMenu(cardFor(config.coverId));
-      await openSubmenuAndClick('添加分组', config.seedGroup);
+      await openSubmenuAndClick('移到分组', config.seedGroup);
       const grouped = (await api('/api/assets?project=default&group=' + encodeURIComponent(config.seedGroup) + '&limit=250')).assets || [];
       const ids = grouped.map((asset) => asset.id).sort();
       const expected = [...config.memberIds, config.looseIds[3]].sort();
@@ -270,7 +270,7 @@ function contextMenusSource(config) {
       // Blank area inside the stack: 返回素材库 (+ rename/dissolve/select-all), no paste (cut consumed).
       const menu = await openBlankMenu();
       const labels = menuLabels();
-      for (const expected of ['返回素材库', '重命名堆叠', '解散堆叠', '全选', '刷新']) {
+      for (const expected of ['返回素材库', '重命名堆叠…', '解散堆叠', '全选', '刷新']) {
         if (!labels.includes(expected)) throw new Error('missing ' + expected + ' in ' + JSON.stringify(labels));
       }
       if (labels.includes('粘贴')) throw new Error('paste shown after the cut was consumed');
@@ -305,7 +305,7 @@ function contextMenusSource(config) {
         await clickMenuItem('复制图片');
         await waitFor(() => sent.files.length === 1, 'files sent');
         if (JSON.stringify(sent.files[0]) !== JSON.stringify(loosePaths)) throw new Error('multi files ' + JSON.stringify(sent.files[0]));
-        await waitFor(() => (document.querySelector('.toast')?.textContent || '').includes('已复制 2 张图片'), 'files toast');
+        await waitFor(() => (document.querySelector('.toast')?.textContent || '').includes('已复制 2 个素材'), 'files toast');
         await openMenu(cardFor(config.looseIds[1]));
         await clickMenuItem('复制路径');
         await waitFor(() => sent.text.length === 1, 'paths sent');
@@ -363,11 +363,11 @@ function contextMenusSource(config) {
       return annotated.stack;
     });
 
-    // ── 8) 新建分组并移入 on a loose asset ──
+    // ── 8) 用所选素材新建分组 on a loose asset ──
     await step('create group with selection', async () => {
       await openMenu(cardFor(config.looseIds[3]));
-      await openSubmenuAndClick('添加分组', '新建分组并移入');
-      await dialogSubmit(config.newGroup, '保存');
+      await openSubmenuAndClick('移到分组', '用所选素材新建分组…');
+      await dialogSubmit(config.newGroup, '新建');
       const grouped = (await api('/api/assets?project=default&group=' + encodeURIComponent(config.newGroup) + '&limit=250')).assets || [];
       if (!grouped.some((asset) => asset.id === config.looseIds[3])) {
         throw new Error('asset not in the new group: ' + JSON.stringify(grouped.map((asset) => asset.id)));
@@ -379,7 +379,7 @@ function contextMenusSource(config) {
     await step('dissolve stack', async () => {
       await openMenu(cardFor(config.coverId));
       await clickMenuItem('解散堆叠');
-      await confirmDialog('解散这个堆叠？', '解散堆叠');
+      await confirmDialog('解散堆叠？', '解散堆叠');
       await waitFor(() => cardFor(config.memberIds[1]) && !cardFor(config.memberIds[1]).querySelector('.stack-mark'), 'members are loose again');
       const annotated = await assetById(config.coverId);
       if (annotated?.stack) throw new Error('server still annotates the dissolved stack: ' + JSON.stringify(annotated.stack));
@@ -392,8 +392,8 @@ function contextMenusSource(config) {
         .find((card) => card.getAttribute('data-asset-id') === config.looseIds[1] && card.querySelector('.stack-mark'));
       if (!secondStackCard()) throw new Error('the stacked-selection card is not in the gallery');
       await openMenu(secondStackCard());
-      await clickMenuItem('移至回收站');
-      await confirmDialog('将这个堆叠移到回收站？', '移至回收站');
+      await clickMenuItem('移到回收站');
+      await confirmDialog('将堆叠移到回收站？', '移到回收站');
       await waitFor(() => !secondStackCard(), 'trashed stack card leaves the gallery');
       const trashedPage = (await api('/api/assets?project=default&trash=1&limit=250')).assets || [];
       const trashedIds = trashedPage.map((asset) => asset.id);

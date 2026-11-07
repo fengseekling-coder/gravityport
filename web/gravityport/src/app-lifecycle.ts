@@ -265,6 +265,16 @@ export function buildUpdateText(
     };
   }
 
+  // 任务 359（ABOUT-10b）：开发版根本不检查更新，与「检查失败」分开显示。
+  if (state.phase === "disabled") {
+    return {
+      badgeText: `${versionLabel} · ${t("开发版不检查更新")}`,
+      buttonLabel: t("检查更新"),
+      buttonDisabled: false,
+      downloadAndInstall: false,
+    };
+  }
+
   if (state.phase === "available") {
     const published = state.publishedAt
       ? ` · ${fill(t("发布于 {date}"), { date: readableDate(state.publishedAt, language) })}`
@@ -282,7 +292,7 @@ export function buildUpdateText(
 
   if (state.phase === "unavailable") {
     return {
-      badgeText: `${versionLabel} · ${t("请先把 App 拖进『应用程序』文件夹再更新")}`,
+      badgeText: `${versionLabel} · ${t("请先将 GravityPort 移到「应用程序」文件夹，再更新")}`,
       buttonLabel: null,
       buttonDisabled: false,
       downloadAndInstall: false,
@@ -290,9 +300,36 @@ export function buildUpdateText(
   }
 
   return {
-    badgeText: `${versionLabel} · ${t("暂时无法检查更新")}`,
+    badgeText: `${versionLabel} · ${t("无法检查更新")}`,
     buttonLabel: t("检查更新"),
     buttonDisabled: false,
     downloadAndInstall: false,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Library location change failures (task 359 / HC-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * 任务 359：桌面端 change-library-location 失败只返回 reason（cancelled /
+ * managed / attached / unavailable / 校验原因），从不返回 error。取消不算
+ * 失败（用户在选文件夹框点了取消），不提示。
+ * 任务 359 返工 1（HC-06）：每个已知原因一句自己的话（中文作键，英文在
+ * i18n.ts），不再把 not-empty 这类内部代号直接亮给用户；未知原因回退到带
+ * 原始代号的兜底句。返回 null 表示不提示。
+ */
+const LIBRARY_LOCATION_FAILURE_TEXTS: Record<string, string> = {
+  "not-empty": "无法更改存储位置。请选择一个空文件夹。",
+  "invalid": "无法更改存储位置。新位置不能位于当前素材库内，也不能包含当前素材库。",
+  "unavailable": "无法更改存储位置。无法访问所选文件夹。",
+  "copy-failed": "无法更改存储位置。复制素材库时出错，原素材库未改动。",
+  "attached": "无法更改存储位置。请退出其他正在运行的 GravityPort 后重试。",
+  "managed": "无法更改存储位置。素材库位置由启动设置指定。",
+};
+
+export function libraryLocationFailureText(reason: unknown, fillFn: (text: string, values: Record<string, string | number>) => string): string | null {
+  if (reason === "cancelled") return null;
+  const detail = typeof reason === "string" && reason.trim() ? reason.trim() : "unknown";
+  return LIBRARY_LOCATION_FAILURE_TEXTS[detail] ?? fillFn("无法更改存储位置（{reason}）。", { reason: detail });
 }

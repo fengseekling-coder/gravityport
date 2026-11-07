@@ -183,19 +183,19 @@ describe("deriveEmptyState — priority checks", () => {
 describe("deriveEmptyState — copy content", () => {
   it("no-results has correct title and description", () => {
     const result = es.deriveEmptyState(makeCtx({ query: "test" }));
-    assert.equal(result?.title, "没有找到匹配的素材");
-    assert.equal(result?.description, "试试别的搜索词，或清除筛选条件");
+    assert.equal(result?.title, "没有匹配的素材");
+    assert.equal(result?.description, "尝试其他搜索词，或清除筛选条件。");
   });
 
   it("trash-empty has correct copy", () => {
     const result = es.deriveEmptyState(makeCtx({ active: "回收站" }));
-    assert.equal(result?.title, "回收站是空的");
-    assert.equal(result?.description, "移到回收站的素材会在这里保留 90 天");
+    assert.equal(result?.title, "回收站中没有素材");
+    assert.equal(result?.description, "移到回收站的素材保留 90 天。");
   });
 
   it("library-empty has correct copy", () => {
     const result = es.deriveEmptyState(makeCtx({ active: "所有素材", libraryTotal: 0 }));
-    assert.equal(result?.title, "素材库还是空的");
-    assert.equal(result?.description, "把图片、视频或文件夹拖进窗口，或直接粘贴剪贴板里的图片、视频即可导入");
+    assert.equal(result?.title, "素材库中没有素材");
+    assert.equal(result?.description, "将图片、视频或文件夹拖到窗口中，或粘贴剪贴板中的图片或视频，即可导入。");
   });
 });

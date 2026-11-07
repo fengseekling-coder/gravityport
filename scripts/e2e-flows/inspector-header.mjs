@@ -102,10 +102,10 @@ function assertZhRound(result) {
   if (result?.lastTagA !== "海报参考") problems.push(`A last tag ${JSON.stringify(result?.lastTagA)}`);
   if (result?.provenanceA !== "") problems.push(`A showed provenance ${JSON.stringify(result?.provenanceA)}`);
   if (result?.tagsB?.length !== 4) problems.push(`B property tags ${JSON.stringify(result?.tagsB)}`);
-  if (result?.promptB !== "网页来源未暴露原始生图提示词") problems.push(`B prompt copy ${JSON.stringify(result?.promptB)}`);
+  if (result?.promptB !== "该网页未提供原始提示词") problems.push(`B prompt copy ${JSON.stringify(result?.promptB)}`);
   if (result?.noRecordLeakB !== false) problems.push("B showed 无提示词记录");
   if (!result?.headerC?.includes("Gemini 网页版")) problems.push(`C header ${JSON.stringify(result?.headerC)}`);
-  if (result?.provenanceC !== "Gemini 页面可见用户提示词（未验证为实际生图提示词）") problems.push(`C provenance ${JSON.stringify(result?.provenanceC)}`);
+  if (result?.provenanceC !== "Gemini 页面显示的提示词，未验证为实际生成所用") problems.push(`C provenance ${JSON.stringify(result?.provenanceC)}`);
   if (!result?.headerD?.includes("手动导入")) problems.push(`D header ${JSON.stringify(result?.headerD)}`);
   if (result?.provenanceD !== "") problems.push(`D showed provenance ${JSON.stringify(result?.provenanceD)}`);
   if (!result?.headerE?.startsWith("视频 · ")) problems.push(`E header ${JSON.stringify(result?.headerE)}`);
@@ -117,8 +117,8 @@ function assertZhRound(result) {
 
 function assertEnRound(result) {
   const problems = [];
-  if (result?.headerA !== `Image · ChatGPT Web · ${result?.dateA}`) problems.push(`A header ${JSON.stringify(result?.headerA)} (expected date ${JSON.stringify(result?.dateA)})`);
-  if (result?.promptB !== "The web source did not expose the original image-generation prompt") problems.push(`B prompt copy ${JSON.stringify(result?.promptB)}`);
+  if (result?.headerA !== `Image · ChatGPT (web) · ${result?.dateA}`) problems.push(`A header ${JSON.stringify(result?.headerA)} (expected date ${JSON.stringify(result?.dateA)})`);
+  if (result?.promptB !== "The web page didn’t provide the original prompt") problems.push(`B prompt copy ${JSON.stringify(result?.promptB)}`);
   if (problems.length) throw new Error(`Inspector header en round: ${problems.join("; ")}`);
 }
 
@@ -205,11 +205,11 @@ function enRoundSource(config) {
 ${PAGE_HELPERS}
     await waitFor(() => document.querySelector('.app') && cards().length === 5, 'five seeded cards');
 
-    await openCard(config.nameA, () => headerMuted().includes('ChatGPT Web'), 'asset A header (en)');
+    await openCard(config.nameA, () => headerMuted().includes('ChatGPT (web)'), 'asset A header (en)');
     const dateA = expectDate(config.createdAtA, 'en');
     const headerA = headerMuted();
 
-    await openCard(config.nameB, () => promptText().includes('The web source did not expose'), 'asset B prompt (en)');
+    await openCard(config.nameB, () => promptText().includes('The web page didn’t provide'), 'asset B prompt (en)');
     const promptB = promptText();
 
     // Back to Chinese for the wrap measurement round.

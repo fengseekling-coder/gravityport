@@ -1,8 +1,16 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {},
-    "en": {}
+    "zh": {
+      "improved": [
+        "还没打开过 GravityPort 时，AI 助手里也能看到 GravityPort 的 MCP 工具，调用时会提示先打开 GravityPort；打开后直接再试即可，不用重启 AI 助手。"
+      ]
+    },
+    "en": {
+      "improved": [
+        "Before GravityPort has been opened, AI assistants still see GravityPort's MCP tools; calling one asks you to open GravityPort first. After that, just try again, with no need to restart the assistant."
+      ]
+    }
   },
   "releases": [
     {

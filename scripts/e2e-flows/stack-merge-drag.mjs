@@ -155,7 +155,7 @@ function pageSource(config) {
       const merged = [...config.stackB, ...config.stackA];
       await waitFor(async () => same(await members(config.stackBId), merged), 'B holds its members then A in order');
       const toast = document.querySelector('.toast')?.textContent || '';
-      if (!toast.includes('已合并到堆叠「乙堆叠」，共 3 项')) throw new Error('toast: ' + toast);
+      if (!toast.includes('已将 3 个素材合并到堆叠「乙堆叠」')) throw new Error('toast: ' + toast);
       const all = await waitFor(async () => { const list = await stacks(); return list.some((s) => s.id === config.stackAId) ? null : list; }, 'stack A gone');
       const b = all.find((s) => s.id === config.stackBId);
       if (!b || b.cover !== config.stackB[0] || b.name !== '乙堆叠') throw new Error('B changed: ' + JSON.stringify(b));

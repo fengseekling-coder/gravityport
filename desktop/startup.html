@@ -93,9 +93,10 @@
       // 启动页拿不到 App 里的语言设置（不调 IPC），按系统语言选：中文系统
       // 显示中文，其余显示英文。秒数每秒更新，直到真正的界面换走启动页。
       const english = typeof navigator !== "undefined" && !/^zh\b/i.test(String(navigator.language || ""));
+      // 任务 359（START-01/03/04）：进行中写「正在 + 动作」；右栏叫素材详情。
       const TEXT = english
-        ? { starting: "GravityPort is starting", inspector: "Inspector", organizing: "Organizing your library…", elapsed: (seconds) => ` (${seconds}s so far)` }
-        : { starting: "GravityPort 正在启动", inspector: "资产检视器", organizing: "正在整理素材库…", elapsed: (seconds) => `（已用 ${seconds} 秒）` };
+        ? { starting: "Starting GravityPort", inspector: "Asset details", organizing: "Organizing the library…", elapsed: (seconds) => ` (${seconds}s elapsed)` }
+        : { starting: "正在启动 GravityPort", inspector: "素材详情", organizing: "正在整理素材库…", elapsed: (seconds) => `（已用 ${seconds} 秒）` };
       if (english) {
         document.documentElement.lang = "en";
         document.body.setAttribute("aria-label", TEXT.starting);

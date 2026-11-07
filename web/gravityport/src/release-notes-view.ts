@@ -105,11 +105,11 @@ function nextVersionBlock(
   t: (text: string) => string,
 ): ReleaseNoteBlock | null {
   if (updateState?.phase !== "available" && updateState?.phase !== "downloading") return null
-  const version = String(updateState.latestVersion ?? "").trim()
+  const version = String(updateState.latestVersion ?? "").trim().replace(/^v/i, "")
   const lines = manifestNoteLines(updateState.notes, language)
   if (!version || lines.length === 0) return null
   return {
-    title: fill(t("新版本 {version} 更新内容"), { version }),
+    title: fill(t("新版本 v{version} 更新内容"), { version }),
     date: formatDate(updateState.publishedAt ?? "", language),
     groups: groupsFromManifestLines(lines, t),
   }
@@ -133,15 +133,15 @@ function currentVersionBlock({
     return {
       title: t("下个版本（开发中）"),
       date: "",
-      groups: groups.length > 0 ? groups : [{ heading: "", lines: [t("还没有记录")] }],
+      groups: groups.length > 0 ? groups : [{ heading: "", lines: [t("暂无更新记录")] }],
     }
   }
-  const version = String(productVersion ?? "").trim()
+  const version = String(productVersion ?? "").trim().replace(/^v/i, "")
   const entry = findRelease(data, version)
   return {
-    title: fill(t("当前版本 {version} 更新内容"), { version: version || "—" }),
+    title: fill(t("当前版本 v{version} 更新内容"), { version: version || "—" }),
     date: entry?.date ? formatDate(entry.date, language) : "",
-    groups: entry ? entryGroups(entry, language, t) : [{ heading: "", lines: [t("这个版本没有更新说明")] }],
+    groups: entry ? entryGroups(entry, language, t) : [{ heading: "", lines: [t("此版本没有更新说明")] }],
   }
 }
 

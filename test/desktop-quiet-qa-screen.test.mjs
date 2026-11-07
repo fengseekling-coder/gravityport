@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import test from "node:test";
-import { isQuietQaRun, createScreenGuard } from "../desktop/quiet-qa-screen.mjs";
+import { isQuietQaRun, createScreenGuard, evaluateQuietQaRun, evaluateQuietQaRunForElectronApp, QUIET_QA_MARKER_FILENAME } from "../desktop/quiet-qa-screen.mjs";
+import { evaluateQuietWatchdogSample } from "../scripts/packaged-quiet-watchdog.mjs";
 
 test("isQuietQaRun: returns true only for unpackaged QA runs", () => {
   assert.equal(isQuietQaRun({ env: { MOSA_QA_RUN: "1" }, isPackaged: false }), true);
@@ -344,4 +345,214 @@ test("source nail: main.mjs routes all UI and window actions through screenGuard
     /(?<!screenGuard)\.focus\(/,
     "Direct window.focus() calls are forbidden in desktop/main.mjs (must use screenGuard.focusWindow)",
   );
+});
+
+// ---- Task 346: packaged quiet gate ----
+
+const TOKEN_A = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
+const TOKEN_B = "b1b2c3d4e5f60718293a4b5c6d7e8f90";
+const PACKAGED_UD = "/private/tmp/q/ud";
+const PRODUCTION_UD = "/Users/x/Library/Application Support/mosa";
+
+function packagedGateInputs(overrides = {}) {
+  return {
+    isPackaged: true,
+    env: { MOSA_QA_RUN: "1", MOSA_RUNTIME_MODE: "qa", MOSA_USER_DATA: PACKAGED_UD },
+    argv: ["/Applications/GravityPort.app/Contents/MacOS/GravityPort", `--gravityport-qa-quiet=${TOKEN_A}`],
+    actualUserData: PACKAGED_UD,
+    productionDefaultUserData: PRODUCTION_UD,
+    lstat: () => ({ isFile: () => true, isSymbolicLink: () => false, isDirectory: () => false, size: 25 }),
+    readFile: () => JSON.stringify({ token: TOKEN_A }),
+    canonicalize: (path) => String(path).replace(/\/+$/, "") || "/",
+    ...overrides,
+  };
+}
+
+test("task 346 case 1: packaged baseline (switch + marker + QA env + isolated userData) is quiet", () => {
+  assert.deepEqual(evaluateQuietQaRun(packagedGateInputs()), { quiet: true, rejectReason: null });
+});
+
+test("task 346 case 2: packaged without the switch is not quiet and not rejected", () => {
+  const result = evaluateQuietQaRun(packagedGateInputs({ argv: ["/Applications/GravityPort.app/Contents/MacOS/GravityPort"] }));
+  assert.deepEqual(result, { quiet: false, rejectReason: null });
+});
+
+test("task 346 case 3: packaged without switch, marker or env is not quiet and not rejected", () => {
+  const result = evaluateQuietQaRun(packagedGateInputs({
+    argv: ["/Applications/GravityPort.app/Contents/MacOS/GravityPort"],
+    env: {},
+    lstat: () => { throw new Error("ENOENT"); },
+  }));
+  assert.deepEqual(result, { quiet: false, rejectReason: null });
+});
+
+test("task 346 case 4: missing marker rejects marker-missing", () => {
+  const result = evaluateQuietQaRun(packagedGateInputs({ lstat: () => { throw new Error("ENOENT"); } }));
+  assert.deepEqual(result, { quiet: false, rejectReason: "marker-missing" });
+});
+
+test("task 346 case 5: marker with a different token rejects token-mismatch", () => {
+  const result = evaluateQuietQaRun(packagedGateInputs({ readFile: () => JSON.stringify({ token: TOKEN_B }) }));
+  assert.deepEqual(result, { quiet: false, rejectReason: "token-mismatch" });
+});
+
+test("task 346 case 6: symlink or directory marker rejects marker-not-file", () => {
+  const symlink = evaluateQuietQaRun(packagedGateInputs({
+    lstat: () => ({ isFile: () => false, isSymbolicLink: () => true, isDirectory: () => false, size: 25 }),
+  }));
+  assert.equal(symlink.rejectReason, "marker-not-file");
+  const directory = evaluateQuietQaRun(packagedGateInputs({
+    lstat: () => ({ isFile: () => false, isSymbolicLink: () => false, isDirectory: () => true, size: 64 }),
+  }));
+  assert.equal(directory.rejectReason, "marker-not-file");
+});
+
+test("task 346 case 7: oversized or non-JSON marker rejects marker-invalid", () => {
+  const oversized = evaluateQuietQaRun(packagedGateInputs({
+    lstat: () => ({ isFile: () => true, isSymbolicLink: () => false, isDirectory: () => false, size: 2048 }),
+  }));
+  assert.equal(oversized.rejectReason, "marker-invalid");
+  const notJson = evaluateQuietQaRun(packagedGateInputs({ readFile: () => "not json" }));
+  assert.equal(notJson.rejectReason, "marker-invalid");
+});
+
+test("task 346 case 8: production default userData rejects production-user-data (plain, trailing slashes, symlink alias)", () => {
+  const plain = evaluateQuietQaRun(packagedGateInputs({ actualUserData: PRODUCTION_UD }));
+  assert.equal(plain.rejectReason, "production-user-data");
+  const trailing = evaluateQuietQaRun(packagedGateInputs({ actualUserData: `${PRODUCTION_UD}///` }));
+  assert.equal(trailing.rejectReason, "production-user-data");
+  const symlinked = evaluateQuietQaRun(packagedGateInputs({
+    actualUserData: "/tmp/link-to-production",
+    canonicalize: (path) => (path === "/tmp/link-to-production" ? PRODUCTION_UD : path),
+  }));
+  assert.equal(symlinked.rejectReason, "production-user-data");
+});
+
+test("task 346 case 9: MOSA_USER_DATA mismatching actual userData rejects user-data-mismatch", () => {
+  const result = evaluateQuietQaRun(packagedGateInputs({
+    env: { MOSA_QA_RUN: "1", MOSA_RUNTIME_MODE: "qa", MOSA_USER_DATA: "/private/tmp/q/other" },
+  }));
+  assert.deepEqual(result, { quiet: false, rejectReason: "user-data-mismatch" });
+});
+
+test("task 346 case 10: missing or non-qa MOSA_RUNTIME_MODE rejects runtime-mode", () => {
+  const missing = evaluateQuietQaRun(packagedGateInputs({ env: { MOSA_QA_RUN: "1", MOSA_USER_DATA: PACKAGED_UD } }));
+  assert.equal(missing.rejectReason, "runtime-mode");
+  const testMode = evaluateQuietQaRun(packagedGateInputs({ env: { MOSA_QA_RUN: "1", MOSA_RUNTIME_MODE: "test", MOSA_USER_DATA: PACKAGED_UD } }));
+  assert.equal(testMode.rejectReason, "runtime-mode");
+});
+
+test("task 346 case 11: missing MOSA_QA_RUN rejects qa-run-missing", () => {
+  const result = evaluateQuietQaRun(packagedGateInputs({ env: { MOSA_RUNTIME_MODE: "qa", MOSA_USER_DATA: PACKAGED_UD } }));
+  assert.deepEqual(result, { quiet: false, rejectReason: "qa-run-missing" });
+});
+
+test("task 346 case 12: malformed switch values reject bad-flag", () => {
+  const short31 = evaluateQuietQaRun(packagedGateInputs({ argv: ["/app/GravityPort", `--gravityport-qa-quiet=${"a".repeat(31)}`] }));
+  assert.equal(short31.rejectReason, "bad-flag");
+  const uppercase = evaluateQuietQaRun(packagedGateInputs({ argv: ["/app/GravityPort", `--gravityport-qa-quiet=${TOKEN_A.toUpperCase()}`] }));
+  assert.equal(uppercase.rejectReason, "bad-flag");
+  const nonHex = evaluateQuietQaRun(packagedGateInputs({ argv: ["/app/GravityPort", "--gravityport-qa-quiet=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"] }));
+  assert.equal(nonHex.rejectReason, "bad-flag");
+  const twice = evaluateQuietQaRun(packagedGateInputs({
+    argv: ["/app/GravityPort", `--gravityport-qa-quiet=${TOKEN_A}`, `--gravityport-qa-quiet=${TOKEN_A}`],
+  }));
+  assert.equal(twice.rejectReason, "bad-flag");
+  const noValue = evaluateQuietQaRun(packagedGateInputs({ argv: ["/app/GravityPort", "--gravityport-qa-quiet"] }));
+  assert.equal(noValue.rejectReason, "bad-flag");
+});
+
+test("task 346 case 13: dev rule unchanged — MOSA_QA_RUN alone stays quiet, marker never read", () => {
+  const result = evaluateQuietQaRun(packagedGateInputs({
+    isPackaged: false,
+    env: { MOSA_QA_RUN: "1" },
+    argv: ["/Users/dev/gravityport/desktop/main.mjs"],
+    lstat: () => { throw new Error("dev quiet mode must not read the marker"); },
+  }));
+  assert.deepEqual(result, { quiet: true, rejectReason: null });
+});
+
+test("task 346 case 14: dev ignores the packaged switch entirely", () => {
+  const result = evaluateQuietQaRun(packagedGateInputs({ isPackaged: false, env: {} }));
+  assert.deepEqual(result, { quiet: false, rejectReason: null });
+});
+
+test("task 346: default canonicalization wiring keeps safeCanonical semantics", () => {
+  const result = evaluateQuietQaRun(packagedGateInputs({ canonicalize: undefined }));
+  assert.deepEqual(result, { quiet: true, rejectReason: null });
+});
+
+test("task 346: evaluateQuietQaRunForElectronApp feeds the shared gate from the Electron app", () => {
+  const fakeApp = {
+    isPackaged: true,
+    name: "mosa",
+    getPath: (key) => (key === "userData" ? PACKAGED_UD : "/Users/x/Library/Application Support"),
+  };
+  const lstatPaths = [];
+  const result = evaluateQuietQaRunForElectronApp(fakeApp, {
+    env: { MOSA_QA_RUN: "1", MOSA_RUNTIME_MODE: "qa", MOSA_USER_DATA: PACKAGED_UD },
+    argv: ["/app/GravityPort", `--gravityport-qa-quiet=${TOKEN_A}`],
+    lstat: (path) => {
+      lstatPaths.push(path);
+      return { isFile: () => true, isSymbolicLink: () => false, isDirectory: () => false, size: 25 };
+    },
+    readFile: () => JSON.stringify({ token: TOKEN_A }),
+    canonicalize: (path) => String(path).replace(/\/+$/, "") || "/",
+  });
+  assert.equal(result.quiet, true);
+  assert.deepEqual(lstatPaths, [join(PACKAGED_UD, QUIET_QA_MARKER_FILENAME)]);
+});
+
+test("task 346 contract: quiet-test-mode.mjs and main.mjs decide quiet mode through the shared gate only", () => {
+  const quietTestMode = stripComments(readFileSync(resolve(import.meta.dirname, "..", "desktop", "quiet-test-mode.mjs"), "utf8"));
+  const main = stripComments(readFileSync(resolve(import.meta.dirname, "..", "desktop", "main.mjs"), "utf8"));
+  assert.match(quietTestMode, /evaluateQuietQaRunForElectronApp\(app\)/);
+  assert.doesNotMatch(quietTestMode, /isQuietQaRun\b/);
+  assert.match(main, /const quietQaRun = evaluateQuietQaRunForElectronApp\(app\)\.quiet;/);
+  assert.doesNotMatch(main, /isQuietQaRun\b/);
+  // Neither entry point re-implements or re-spells the gate.
+  assert.doesNotMatch(quietTestMode, /gravityport-qa-quiet/);
+  assert.doesNotMatch(main, /gravityport-qa-quiet/);
+});
+
+test("task 346 contract: the quiet switch literal appears only in scripts/packaged-smoke.mjs and test/", () => {
+  const repoRoot = resolve(import.meta.dirname, "..");
+  const skipDirs = new Set(["node_modules", ".git", "out", "dist", "coverage"]);
+  const scannedExtensions = /\.(mjs|cjs|js|ts|tsx|json|md|html|css|sh|yml|yaml|swift)$/;
+  const offenders = [];
+  const walk = (relativeDir) => {
+    for (const entry of readdirSync(join(repoRoot, relativeDir), { withFileTypes: true })) {
+      const relative = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (!skipDirs.has(entry.name)) walk(relative);
+        continue;
+      }
+      if (relative === "scripts/packaged-smoke.mjs" || relative.startsWith("test/")) continue;
+      if (!scannedExtensions.test(entry.name)) continue;
+      if (readFileSync(join(repoRoot, relative), "utf8").includes("--gravityport-qa-quiet")) offenders.push(relative);
+    }
+  };
+  walk("");
+  assert.deepEqual(offenders, []);
+  assert.ok(
+    readFileSync(join(repoRoot, "scripts", "packaged-smoke.mjs"), "utf8").includes("--gravityport-qa-quiet="),
+    "scripts/packaged-smoke.mjs must keep sending the switch",
+  );
+});
+
+test("task 346: watchdog verdict flags an app window on screen and passes an empty screen", () => {
+  const dirty = evaluateQuietWatchdogSample({
+    windows: [{ pid: 4242, layer: 0, alpha: 1, bounds: { X: 40, Y: 40, Width: 800, Height: 600 } }],
+    frontPid: 999,
+    appPolicy: 1,
+    appPids: [4242, 4243],
+  });
+  assert.equal(dirty.ok, false);
+  assert.deepEqual(dirty.violations.map((violation) => violation.kind), ["visible-window"]);
+
+  const clean = evaluateQuietWatchdogSample({ windows: [], frontPid: 999, appPolicy: 1, appPids: [4242] });
+  assert.deepEqual(clean, { ok: true, violations: [] });
+
+  const steal = evaluateQuietWatchdogSample({ windows: [], frontPid: 4242, appPolicy: 1, appPids: [4242] });
+  assert.deepEqual(steal.violations.map((violation) => violation.kind), ["front-steal"]);
 });

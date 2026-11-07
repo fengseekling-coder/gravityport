@@ -330,8 +330,8 @@ test("defaults capture off and keeps Chrome permissions minimal", () => {
 });
 
 test("manual fallback controls cover ChatGPT images and Google videos", () => {
-  assert.match(contentSource, /data-action="save-visible">保存当前图</);
-  assert.match(contentSource, /data-action="save-all">保存全部大图</);
+  assert.match(contentSource, /data-action="save-visible">保存当前图片</);
+  assert.match(contentSource, /data-action="save-all">保存全部图片</);
   assert.match(backgroundSource, /id: "mosa-save-video"/);
   assert.match(backgroundSource, /contexts: \["video"\]/);
   assert.match(providerSource, /"mosa\.capture\.saveVideoWithPrompt"/);
@@ -345,7 +345,6 @@ test("ChatGPT hook stays dormant until capture is explicitly enabled", async () 
   await harness.harvest();
   assert.equal(hasImage(harness, "file-dormant"), false);
   await harness.socketFrame(JSON.stringify(payload));
-  await harness.refreshCurrentConversation();
   await harness.xhrLoad("https://chatgpt.com/backend-api/conversation/test", {
     responseText: JSON.stringify(payload),
   });
@@ -379,15 +378,20 @@ test("the page hook keeps generated image URLs on blob.core hosts and drops unkn
   assert.deepEqual(emittedUrls(blocked), []);
 });
 
-test("ChatGPT startup and SPA conversation changes proactively recover missed generation metadata", () => {
+test("ChatGPT startup and SPA conversation changes never re-read the conversation; persisted bindings hydrate instead", () => {
+  // Task 353: the cookie-only conversation re-read is gone — prompts exist
+  // only in the live push. Boot and SPA switches rehydrate the persisted
+  // file-id bindings instead of firing recovery requests.
   const bootStart = contentSource.indexOf("loadSettings().then(() => {");
   const intervalStart = contentSource.indexOf("autoScanInterval = setInterval", bootStart);
   const boot = contentSource.slice(bootStart, intervalStart);
   assert.ok(bootStart >= 0 && intervalStart > bootStart);
-  assert.match(boot, /requestCurrentConversationRefresh\(null\);[\s\S]*scheduleScan\(true\);/);
+  assert.match(boot, /hydratePersistedGenerationBindings\(\);[\s\S]*scheduleScan\(true\);/);
+  assert.doesNotMatch(boot, /requestCurrentConversationRefresh/);
   assert.match(contentSource, /const previousConversationId = activeConversationId;/);
   assert.match(contentSource, /adoptConversationId\(nextConversationId\);/);
-  assert.match(contentSource, /nextConversationId !== previousConversationId\) requestCurrentConversationRefresh\(null\);/);
+  assert.match(contentSource, /nextConversationId !== previousConversationId\) hydratePersistedGenerationBindings\(\);/);
+  assert.doesNotMatch(contentSource, /requestCurrentConversationRefresh/);
   assert.match(contentSource, /function scheduleGenerationEvidenceRecovery\(candidate\)/);
   assert.match(contentSource, /enqueueDomFallback\(candidate\)/);
 });
@@ -443,11 +447,11 @@ test("ChatGPT DOM hook reacts to both src and srcset changes", () => {
 
 test("oversized ChatGPT metadata fails visibly while DOM fallback remains available", () => {
   assert.match(contentSource, /data\.type === "harvest-skipped"/);
-  assert.match(contentSource, /会话元数据过大，已启用图片兜底/);
+  assert.match(contentSource, /对话信息过大，将先保存图片/);
   assert.match(contentSource, /function enqueueDomFallback\(candidate\)/);
 });
 
-test("the page hook skips oversized responses visibly, with a larger ceiling for conversation refresh", async () => {
+test("the page hook skips oversized buffered responses visibly", async () => {
   const big = { ...generatedPayload("file-big"), pad: "x".repeat(12_100_000) };
   const fetchHarness = createHookHarness(big);
   await fetchHarness.harvest();
@@ -457,19 +461,6 @@ test("the page hook skips oversized responses visibly, with a larger ceiling for
   assert.equal(fetchSkips[0].payload.via, "fetch");
   assert.ok(fetchSkips[0].payload.size > 12_000_000);
   assert.equal(hasImage(fetchHarness, "file-big"), false);
-
-  const refreshHarness = createHookHarness(big);
-  await refreshHarness.refreshCurrentConversation();
-  assert.equal(refreshHarness.events.filter((event) => event.type === "harvest-skipped").length, 0);
-  assert.equal(hasImage(refreshHarness, "file-big"), true);
-
-  const huge = { ...generatedPayload("file-huge"), pad: "x".repeat(32_100_000) };
-  const hugeHarness = createHookHarness(huge);
-  await hugeHarness.refreshCurrentConversation();
-  const hugeSkips = hugeHarness.events.filter((event) => event.type === "harvest-skipped");
-  assert.equal(hugeSkips.length, 1);
-  assert.equal(hugeSkips[0].payload.via, "conversation-refresh");
-  assert.equal(hasImage(hugeHarness, "file-huge"), false);
 });
 
 test("ChatGPT automatic capture work is limited to two concurrent tasks", async () => {
@@ -1289,7 +1280,7 @@ test("generation events travel only through the private port", async () => {
   }
 });
 
-test("forged window messages cannot enable capture or trigger a refresh", async () => {
+test("forged window messages cannot enable capture, and the deleted recovery channel answers nothing", async () => {
   const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} }, "conversation-test", { captureEnabled: false });
 
   // Old-format forgeries, with or without a channel field, must be inert.
@@ -1308,19 +1299,12 @@ test("forged window messages cannot enable capture or trigger a refresh", async 
   assert.equal(generationEvents(harness).length, 0, "a window message must not enable capture");
   assert.deepEqual(harness.requestedUrls.filter((url) => url.includes("/conversations/")), [], "a window message must not trigger a conversation refresh");
 
-  // The same commands through the real port keep working.
+  // The real port still carries set-capture-enabled; the removed recovery
+  // command is ignored even there, and no conversation request is fired.
   await harness.sendToPageHook({ source: "mosa-chatgpt-capture", type: "set-capture-enabled", payload: { enabled: true } });
-  harness.dispatchWindowMessage({
-    source: "mosa-chatgpt-capture",
-    type: "refresh-current-conversation",
-    payload: { conversationId: "conversation-test" },
-  });
-  await setImmediate();
-  assert.deepEqual(harness.requestedUrls.filter((url) => url.includes("/conversations/")), []);
-  await harness.refreshCurrentConversation();
-  assert.deepEqual(harness.requestedUrls.filter((url) => url.includes("/conversations/")), [
-    "https://chatgpt.com/backend-api/conversations/conversation-test",
-  ]);
+  await harness.sendToPageHook({ source: "mosa-chatgpt-capture", type: "refresh-current-conversation", payload: { conversationId: "conversation-test" } });
+  assert.deepEqual(harness.requestedUrls.filter((url) => url.includes("/conversations/")), [], "the deleted recovery channel must not fire any request");
+  assert.equal(harness.events.some((event) => event.type === "conversation-refresh-failed"), false, "the removed failure event no longer exists");
 });
 
 test("before confirmation a port request mints a replacement port", () => {
@@ -2441,7 +2425,7 @@ test("keeps a structured prompt ambiguous when it contains multiple different te
 
 test("keeps current tool output identity when ChatGPT omits its generation prompt", async () => {
   const harness = createHookHarness(currentChatGptConversation());
-  await harness.refreshCurrentConversation();
+  await harness.harvest(undefined, "https://chatgpt.com/backend-api/conversations/conversation-test");
   const output = harness.events.find((event) => event.type === "generation-meta" && event.payload.assetId === "file-current-output")?.payload;
   assert.ok(output);
   assert.equal(output.prompt, "");
@@ -2467,16 +2451,25 @@ test("plural response interception excludes sidebar, batch, and other conversati
   assert.equal(generationEvents(harness).length, 0);
 });
 
-test("falls back to the legacy conversation endpoint when the plural endpoint is unavailable", async () => {
-  const harness = createHookHarness(currentChatGptConversation(), "conversation-test", {
-    respond: (url) => url.includes("/conversations/") ? { ok: false, status: 404 } : null,
-  });
-  await harness.refreshCurrentConversation();
-  assert.deepEqual(harness.requestedUrls, [
-    "https://chatgpt.com/backend-api/conversations/conversation-test",
-    "https://chatgpt.com/backend-api/conversation/conversation-test",
-  ]);
-  assert.ok(harness.events.some((event) => event.payload?.isGeneration));
+test("the passive path binds images from the page's own conversation read", async () => {
+  // Task 353 kept the passive interceptor: when the PAGE fetches the
+  // conversation (plural or singular endpoint) the hook still binds images
+  // and titles from it — without issuing any request of its own.
+  const harness = createHookHarness(currentChatGptConversation());
+  await harness.harvest(undefined, "https://chatgpt.com/backend-api/conversations/conversation-test");
+  assert.ok(harness.events.some((event) => event.payload?.isGeneration), "the plural conversation read binds generation outputs");
+  assert.equal(hasImage(harness, "file-current-output"), true);
+
+  const legacyHarness = createHookHarness(currentChatGptConversation());
+  await legacyHarness.harvest(undefined, "https://chatgpt.com/backend-api/conversation/test");
+  assert.ok(legacyHarness.events.some((event) => event.payload?.isGeneration), "the legacy singular endpoint binds too");
+
+  // Another conversation's read is ignored by the interceptor, and an
+  // unstaged URL would answer 404 — the deleted cookie-only recovery
+  // channel could never do better than that.
+  const unstaged = createHookHarness(currentChatGptConversation());
+  await unstaged.harvest(undefined, "https://chatgpt.com/backend-api/conversations/some-other-conversation");
+  assert.equal(hasImage(unstaged, "file-current-output"), false);
 });
 
 function currentChatGptContentHarness() {
@@ -2528,7 +2521,7 @@ function currentChatGptContentHarness() {
 
 test("new blob previews preserve user input and output identity without inventing a prompt", async () => {
   const hook = createHookHarness(currentChatGptConversation());
-  await hook.refreshCurrentConversation();
+  await hook.harvest(undefined, "https://chatgpt.com/backend-api/conversations/conversation-test");
   const { context, registry, candidate, userNode } = currentChatGptContentHarness();
   for (const event of hook.events.filter((event) => event.type === "generation-meta")) registry.remember(event.payload);
   const resolved = context.resolvePrompt(candidate.imageUrl, candidate);
@@ -2544,7 +2537,7 @@ test("late generation metadata upgrades only the matching current blob message",
   const prompt = "Create blue metallic lettering on a red poster, with soft lighting.";
   const { context, registry, candidate, messageNode } = currentChatGptContentHarness();
   const hook = createHookHarness(currentChatGptConversation(prompt));
-  await hook.refreshCurrentConversation();
+  await hook.harvest(undefined, "https://chatgpt.com/backend-api/conversations/conversation-test");
   for (const event of generationEvents(hook)) registry.remember(event.payload);
   assert.equal(context.resolvePrompt(candidate.imageUrl, candidate).prompt, prompt);
   messageNode.getAttribute = () => "another-output";
@@ -2572,7 +2565,7 @@ test("an already saved blob is upgraded when its provider identity arrives late"
     .map((name) => new RegExp(`\\n {2}function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource)[0]).join("\n");
   vm.runInNewContext(source, context);
   const hook = createHookHarness(currentChatGptConversation("Create a poster with blue lettering and soft lighting."));
-  await hook.refreshCurrentConversation();
+  await hook.harvest(undefined, "https://chatgpt.com/backend-api/conversations/conversation-test");
   const meta = generationEvents(hook)[0].payload;
   registry.remember(meta);
   context.schedulePromptUpgrade(meta);
@@ -2583,14 +2576,16 @@ test("an already saved blob is upgraded when its provider identity arrives late"
   assert.equal(ingests[0].options.force, true);
 });
 
-test("keeps a same-message user instruction separate and retries for a late caption", () => {
+test("keeps a same-message user instruction separate and the DOM caption fallback available", () => {
   assert.doesNotMatch(contentSource, /allowUserMessageFallback/);
   assert.doesNotMatch(contentSource, /promptSource: "bound-user-message"/);
   assert.match(contentSource, /function domCandidateForImage\(imageUrl(?:, \{ manual = false \} = \{\})?\)/);
   assert.match(contentSource, /function enqueueDomCandidateForImage\(imageUrl, reason\)/);
-  assert.match(contentSource, /function schedulePromptRecovery\(candidate, \{ needPrompt = true, needTerminal = false \} = \{\}\)/);
   assert.match(contentSource, /function currentViewportCandidate\(candidates\)/);
-  assert.match(contentSource, /const delays = \[2_800, 7_200, 15_000\]/);
+  // Task 353 removed the conversation re-read retries; nothing in the script
+  // may schedule or await them.
+  assert.doesNotMatch(contentSource, /schedulePromptRecovery/);
+  assert.doesNotMatch(contentSource, /promptWaitMs/);
 });
 
 test("an orphaned content script explains itself instead of dying on sendMessage", () => {
@@ -2756,7 +2751,7 @@ test("an open page follows auto-capture changes from local storage only", () => 
   assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: true, scheduled: 1, titleReports: 1, status: "自动开" }));
 });
 
-test("refreshes only the active conversation to recover a late Model caption", async () => {
+test("the page's own conversation read still binds a late Model caption and title", async () => {
   const caption = "Model caption: A detailed retro travel poster for Nanjing, China, with cream paper, bold red Art Deco typography, city vignettes, and a screen-print editorial layout.";
   const harness = createHookHarness({
     conversation_id: "conversation-test",
@@ -2776,7 +2771,9 @@ test("refreshes only the active conversation to recover a late Model caption", a
     },
   });
 
-  await harness.refreshCurrentConversation();
+  // The page itself fetched the conversation (passive path); the extension
+  // made no request of its own.
+  await harness.harvest(undefined, "https://chatgpt.com/backend-api/conversations/conversation-test");
 
   assert.deepEqual(harness.requestedUrls, [
     "https://chatgpt.com/backend-api/conversations/conversation-test",
@@ -2785,10 +2782,12 @@ test("refreshes only the active conversation to recover a late Model caption", a
     imageKey: event.payload.imageKey,
     prompt: event.payload.prompt,
     promptStatus: event.payload.promptStatus,
+    imageGenTitle: event.payload.imageGenTitle,
   })), [{
     imageKey: "estuary:conversation-test:file-nanjing",
     prompt: caption,
     promptStatus: "visible-caption",
+    imageGenTitle: "",
   }]);
 });
 
@@ -2890,11 +2889,13 @@ test("binds a Model caption in the same tool message when dalle.prompt is blank"
   }]);
 });
 
-test("refreshes the active conversation without copying authentication headers", async () => {
+test("no extension-originated conversation request exists that could copy authentication headers", async () => {
+  // Task 353 deleted the cookie-only recovery request, so there is no
+  // extension-issued conversation fetch whose init could replay page headers.
   const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} });
 
-  // Even if the page makes an authenticated request, MOSA must not copy or
-  // replay any of those request headers into its recovery request.
+  // Even if the page makes an authenticated request, the hook only reads the
+  // response; it never issues a conversation request of its own.
   await harness.harvest({
     headers: {
       Authorization: "Bearer page-session-token",
@@ -2902,55 +2903,24 @@ test("refreshes the active conversation without copying authentication headers",
       "X-Unrelated-Secret": "must-not-be-copied",
     },
   });
-  await harness.refreshCurrentConversation();
+  await harness.socketFrame(JSON.stringify(generatedPayload("file-auth-check")));
 
-  const refreshIndex = harness.requestedUrls.indexOf("https://chatgpt.com/backend-api/conversations/conversation-test");
-  assert.ok(refreshIndex >= 0, "the refresh should reach the conversation endpoint");
-  const init = harness.requestedInits[refreshIndex] || {};
-  assert.equal(init.credentials, "include");
-  assert.equal(init.cache, "no-store");
-  assert.equal(Object.hasOwn(init, "headers"), false, "recovery must not replay page request headers");
+  assert.deepEqual(
+    harness.requestedUrls,
+    ["https://chatgpt.com/backend-api/conversation/test"],
+    "the only fetch is the one the test staged for the page",
+  );
+  assert.doesNotMatch(hookSource, /credentials:\s*"include"/);
 });
 
 test("does not capture page authentication headers", async () => {
   const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} });
   await harness.harvest({ headers: { Authorization: "Bearer page-session-token" } });
-  await harness.refreshCurrentConversation();
 
   const posted = JSON.stringify(harness.events);
   assert.equal(posted.includes("page-session-token"), false, "a page token must never be posted out of the page");
   assert.doesNotMatch(contentSource, /authorization/i);
-  const refreshIndex = harness.requestedUrls.indexOf("https://chatgpt.com/backend-api/conversations/conversation-test");
-  assert.ok(refreshIndex >= 0);
-  assert.equal(Object.hasOwn(harness.requestedInits[refreshIndex] || {}, "headers"), false);
-});
-
-test("reports a failed conversation refresh instead of losing it silently", async () => {
-  const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} }, "conversation-test", {
-    respond: () => ({ ok: false, status: 401, text: async () => "", clone: () => ({ text: async () => "" }) }),
-  });
-
-  await harness.refreshCurrentConversation();
-
-  const failure = harness.events.find((event) => event.type === "conversation-refresh-failed");
-  assert.ok(failure, "a rejected refresh must be reported");
-  assert.equal(failure.payload.status, 401);
-  assert.equal(Object.hasOwn(failure.payload, "authorized"), false);
-  assert.match(contentSource, /data\.type === "conversation-refresh-failed"/);
-});
-
-test("treats a missing conversation recovery endpoint as a soft failure", async () => {
-  const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} }, "conversation-test", {
-    respond: () => ({ ok: false, status: 404, text: async () => "", clone: () => ({ text: async () => "" }) }),
-  });
-
-  await harness.refreshCurrentConversation();
-
-  const failure = harness.events.find((event) => event.type === "conversation-refresh-failed");
-  assert.ok(failure);
-  assert.equal(failure.payload.status, 404);
-  assert.equal(failure.payload.soft, true);
-  assert.match(contentSource, /实时 Hook 正常 · 历史会话回读不可用/);
+  assert.doesNotMatch(hookSource, /authorization/i);
 });
 
 test("harvests a caption from the live WebSocket stream", async () => {
@@ -3746,6 +3716,8 @@ function currentChatGptAutoCaptureHarness() {
     "isSavedCandidate", "rememberSavedCandidate", "savedGenerationStatusForCandidate", "rememberSavedPrompt",
     "clearAutoStability", "scheduleAutoStabilityRetry", "autoCandidateReadiness",
     "isArchiveWorthyCandidate", "canAttempt", "noteAutomaticFailure", "enqueueAuto", "ingestCandidate", "findCandidateForMeta", "resolvePrompt",
+    // 任务 359：错误上屏前的统一映射（ingestCandidate 的 catch 会调用它）。
+    "friendlyCaptureError",
     "bytesFromUrlOrImg", "waitForRenderedCandidate", "renderedCandidateFor", "originalBytesFromUrl", "canvasBytesFromImage",
     "arrayBufferToBase64", "decodedImageDimensions",
     "userMessageForCandidate", "stripSystemHintLabelLines", "messageScopeForCandidate", "domCaptionForCandidate", "messageIdsForCandidate", "messageIdForCandidate",
@@ -3825,9 +3797,6 @@ function currentChatGptAutoCaptureHarness() {
     scheduleScan: () => {},
     scheduleGenerationEvidenceRecovery: () => {},
     schedulePromptUpgrade: () => {},
-    schedulePromptRecovery: () => {},
-    clearPromptRecovery: () => {},
-    requestCurrentConversationRefresh: () => false,
     stageGenerationReferences: async () => ({ generationContextId: "", stagedReferences: 0 }),
     withAutoCaptureSlot: async (task) => task(),
     setTimeout: (fn, ms) => { context.scheduledTimers.push({ fn, ms }); return 0; },
@@ -3881,6 +3850,36 @@ test("an unclicked proven gallery thumbnail is archived from its blob bytes with
   assert.equal(context.createImageBitmapCalls.length, 1, "the real size is decoded from the bytes");
   assert.equal(context.closedBitmaps, 1, "the decoded bitmap is released");
   assert.equal(context.scheduledTimers.length, 0, "archiving does not wait for the img to render");
+});
+
+test("a manual capture no longer schedules the deleted conversation re-read wait", async () => {
+  // Task 353: with the recovery channel gone the manual path must archive
+  // immediately — no 700 ms prompt wait, no 150 ms polling, no refresh call.
+  const { context, registry } = currentChatGptAutoCaptureHarness();
+  context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID });
+  registry.remember(galleryGenerationEvidence());
+  context.images.push(new context.HTMLImageElement({
+    src: GALLERY_BLOB_URL, complete: true, naturalWidth: 1024, naturalHeight: 1024, width: 680, height: 680,
+  }));
+
+  const candidate = context.domCandidateForImage(GALLERY_BLOB_URL, { manual: true });
+  assert.ok(candidate);
+  await context.ingestCandidate(candidate, { reason: "manual" });
+  await flushAutoCapture();
+
+  assert.equal(context.ingestMessages.length, 1, "the capture completed without waiting");
+  assert.equal(context.ingestMessages[0].payload.promptStatus, "visible-caption");
+  assert.equal(context.scheduledTimers.length, 0, "nothing polls in 150 ms steps for a prompt that cannot arrive");
+});
+
+test("the deleted recovery channel leaves no residue in the extension sources", () => {
+  assert.doesNotMatch(contentSource, /refresh-current-conversation/);
+  assert.doesNotMatch(contentSource, /conversation-refresh-failed/);
+  assert.doesNotMatch(contentSource, /requestCurrentConversationRefresh/);
+  assert.doesNotMatch(contentSource, /promptWaitMs/);
+  assert.doesNotMatch(hookSource, /refresh-current-conversation/);
+  assert.doesNotMatch(hookSource, /refreshCurrentConversation/);
+  assert.doesNotMatch(hookSource, /conversation-refresh-failed/);
 });
 
 test("a gallery thumbnail without a mapping or without generation evidence stays filtered", async () => {
@@ -5164,8 +5163,8 @@ test("conversation titles are reported only while automatic capture is on", asyn
   const source = await readFile(new URL("../extensions/chatgpt-web-capture/content.js", import.meta.url), "utf8");
   assert.match(source, /function reportSessionTitleNow\(\) \{\n {4}if \(!autoCapture \|\| contextLost \|\| !extensionAlive\(\)\) return;/);
   // Switching auto capture on (at boot or later) reports the open conversation once.
-  assert.match(source, /scheduleScan\(true\);\n {6}scheduleSessionTitleReport\(0\);\n {6}if \(desktopSyncRun\) startDesktopSyncWatch\(\);/);
-  assert.match(source, /requestCurrentConversationRefresh\(null\);\n {6}scheduleScan\(true\);\n {6}scheduleSessionTitleReport\(0\);\n {4}\} else \{/);
+  assert.match(source, /hydratePersistedGenerationBindings\(\);\n {4}if \(autoCapture\) \{\n {6}if \(document\.documentElement\) startObs\(\);/);
+  assert.match(source, /startObs\(\);\n {6}scheduleScan\(true\);\n {6}scheduleSessionTitleReport\(0\);\n {4}\} else \{/);
 });
 
 // Review 294 B/C: the page's hand-off rules for ChatGPT, on the gallery harness
@@ -5204,9 +5203,9 @@ test("ChatGPT: a queued capture is not sent again and says it is queued, not fai
   const { context, clock, attempt } = chatGptHandOffHarness({ ok: true, result: { status: "queued", reason: "mosa-unavailable" } });
   await attempt();
   assert.equal(context.ingestMessages.length, 1);
-  assert.equal(context.statusTexts.at(-1), "已排队 · GravityPort 打开后自动入库");
+  assert.equal(context.statusTexts.at(-1), "已暂存，打开 GravityPort 后自动收录");
   assert.equal(context.toasts.filter((toast) => toast.isError).length, 0, "a queued capture never shows an error");
-  const notices = context.toasts.filter((toast) => toast.message === "已排队 · GravityPort 打开后自动入库");
+  const notices = context.toasts.filter((toast) => toast.message === "已暂存，打开 GravityPort 后自动收录");
   assert.equal(notices.length, 1, "the queued notice shows once for this key");
 
   await attempt(180_000);
@@ -5235,4 +5234,27 @@ test("ChatGPT: a refused capture (not retryable) is never sent again automatical
   await attempt();
   await attempt(600_000);
   assert.equal(context.ingestMessages.length, 1);
+});
+
+// 任务 351:the capture confirmation must speak plainly — no internal
+// promptStatus codes on screen. The mapping (every lib/prompt-rank.mjs
+// PROMPT_STATUS_RANK value, plus the old display fallback) is locked here:
+//   没拿到提示词  → not-available, not-available-in-session,
+//                  image-generation-prompt-unavailable, and any empty prompt
+//   页面说明      → user-message, provider-visible-prompt, session-user-prompt,
+//                  task-user-prompt, canvas-alt-text-only, visible-caption
+//   生图提示词    → generation-tool-prompt, image-generation-revised-prompt,
+//                  user-edited (no suffix)
+test("the capture toast uses the 359 wording and never shows the promptStatus code", () => {
+  // 351 first replaced the raw promptStatus in this toast; 359 (EXT-34) then
+  // fixed the final wording: "已保存到 GravityPort" with or without a prompt.
+  const toastLine = contentSource.split("\n").find((line) => line.includes("showToast(resolved.prompt ?"));
+  assert.ok(toastLine, "the saved toast line exists");
+  assert.match(toastLine, /"已保存到 GravityPort"/);
+  assert.match(toastLine, /"已保存到 GravityPort，无提示词"/);
+  assert.doesNotMatch(toastLine, /promptStatus/, "the toast must not interpolate the internal status");
+  assert.doesNotMatch(contentSource, /入库 ✓/);
+  const statusLine = contentSource.split("\n").find((line) => line.includes("setStatus(`已保存 · 共"));
+  assert.ok(statusLine, "the saved status line exists");
+  assert.doesNotMatch(statusLine, /promptStatus|\$\{label\}/, "the status bar no longer shows the internal label");
 });

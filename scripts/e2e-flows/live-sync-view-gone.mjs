@@ -167,7 +167,7 @@ function viewGoneSource(stackA, stackACover, stackB, stackBCover, stackCCover, s
     await chooseToolbarOption('素材类型', '视频');
     await sleep(400);
     const emptyText = document.querySelector('.empty-state')?.textContent || '';
-    const filteredEmptyState = emptyText.includes('没有找到匹配的素材') && Boolean(document.querySelector('.empty-state button'));
+    const filteredEmptyState = emptyText.includes('没有匹配的素材') && Boolean(document.querySelector('.empty-state button'));
     return { dissolveExited, backSkipsDeadStack, emptiedStackExited, deletedGroupFellBack, backFromDeletedGroupLandsSafe, forwardAfterBackSafe, renamedGroupFollowed, filteredEmptyState };
 
   })()

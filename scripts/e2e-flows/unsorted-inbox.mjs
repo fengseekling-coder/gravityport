@@ -137,7 +137,7 @@ function unsortedSource() {
     menuButton('标为已整理').click();
     await waitFor(() => cards().length === 0 && document.querySelector('.empty-state'), 'inbox shows its empty state');
     const emptyText = document.querySelector('.empty-state')?.textContent || '';
-    const emptyStateCopy = emptyText.includes('都整理好了') && emptyText.includes('标为已整理');
+    const emptyStateCopy = emptyText.includes('没有待整理的素材') && emptyText.includes('标为已整理');
     const navAfterMulti = Number(navSmall('待整理'));
 
     return { inboxCards, inboxStacks, navBefore, inboxCardsAfterStack, inboxStacksAfterStack, navAfterStack, navAfterUndo, inboxStacksAfterUndo, navAfterMulti, emptyStateCopy };

@@ -520,7 +520,7 @@ test("expired URL tickets (403) give up after three attempts; 5xx keeps retrying
     return Number(current[0]?.attempts || 0) >= 1 ? current : null;
   }, { label: "first failure recorded" });
   assert.match(queue[0].lastError, /403/);
-  assert.match(queue[0].lastError, /网址已过期/);
+  assert.match(queue[0].lastError, /链接已过期，请刷新页面后重试/);
 
   harness.fireAlarm();
   queue = await waitFor(async () => {
@@ -552,7 +552,7 @@ test("503 URL downloads stay queued and keep retrying", async () => {
       return Number(current[0]?.attempts || 0) >= round ? current : null;
     }, { label: `attempt ${round} recorded` });
     assert.equal(queue.length, 1, "a 503 URL ticket is never removed");
-    assert.doesNotMatch(queue[0].lastError, /网址已过期/);
+    assert.doesNotMatch(queue[0].lastError, /链接已过期，请刷新页面后重试/);
     assert.match(queue[0].lastError, /503/);
   }
 });
@@ -1274,4 +1274,27 @@ test("offline deletion notices queue, dedupe, and flush in 200-item batches", as
   harness.fireAlarm();
   await waitFor(async () => (await readDeletionQueue()).length === 0, { label: "400 batch dropped, 50-batch delivered" });
   assert.deepEqual(deliveredBatches.slice(-1), [50], "only the 50-item tail batch delivered after the 400");
+});
+
+// 任务 359（第二节 1）：配对判定不再匹配「Token 未配置」文案，改为按错误上的
+// kind 标记——文案改成新说法后，判定仍然认得出「需要重新配对」。
+test("pairing classification keys off error.kind, not the message text", async () => {
+  const harness = await createHarness();
+  try {
+    const { context } = harness;
+    assert.equal(typeof context.classifyCaptureError, "function", "classifyCaptureError is reachable in the vm context");
+    const run = (source) => new vm.Script(source, { filename: "classify-check.js" }).runInContext(context);
+    // 新文字（「尚未连接 GravityPort…」）+ kind 标记 → 配对。
+    assert.equal(
+      run(`classifyCaptureError({ kind: "pairing", message: "尚未连接 GravityPort。请先打开 GravityPort。" })`),
+      "pairing",
+    );
+    // 兜底不再按文字匹配：任何消息文字本身都不触发 pairing。
+    assert.equal(run(`classifyCaptureError({ message: "Web Capture Token 未配置。" })`), "transient");
+    assert.equal(run(`classifyCaptureError(new Error("Failed to fetch"))`), "transient");
+    // 源码里不再有按文案判断的正则。
+    assert.doesNotMatch(backgroundSource, /Token 未配置/);
+  } finally {
+    harness.chrome.alarms.onAlarm.clear?.();
+  }
 });

@@ -27,7 +27,64 @@ const onlyFlows = new Set(String(process.env.MOSA_E2E_ONLY || "").split(",").map
 // Optional verdict sink for long native CI/local runs whose process output
 // cannot always be retained by the remote runner. Unset in ordinary CI.
 const resultFile = process.env.MOSA_E2E_RESULT_FILE || "";
-const selected = (name) => !onlyFlows.size || onlyFlows.has(name);
+// 352: `--shard k/n` splits the flow set for CI: every selectable flow name
+// (built-ins and plugin flows alike) goes onto one shard by its position in
+// the alphabetically sorted name list, so the split is a pure function of the
+// name set and the union of the shards is exactly the unsharded set. On the
+// 72-flow set the halves measure within ~20% of each other (green run
+// 41523626448: 447s+electron+stack vs 513s+web+trash). `--shard` without
+// `--list` runs that shard; `--list` prints the names the current flags
+// select, one per line, and exits before any setup (the shard-equality test
+// drives it instead of a full run).
+const BUILTIN_FLOW_NAMES = ["web", "electron", "stack", "trash"];
+function parseShard(argv) {
+  const index = argv.indexOf("--shard");
+  if (index === -1) return null;
+  const value = argv[index + 1];
+  if (!value || !/^\d+\/\d+$/.test(value)) {
+    throw new Error(`--shard expects "<k>/<n>" with 1 <= k <= n, got ${JSON.stringify(value ?? "")}`);
+  }
+  const [k, n] = value.split("/").map(Number);
+  if (k < 1 || k > n || n < 1) throw new Error(`--shard expects 1 <= k <= n, got ${value}`);
+  return { k, n };
+}
+const shard = parseShard(process.argv);
+const wantsList = process.argv.includes("--list");
+{
+  const known = new Set(["--list"]);
+  if (shard) known.add("--shard").add(`${shard.k}/${shard.n}`);
+  const unknown = process.argv.slice(2).filter((arg) => !known.has(arg));
+  if (unknown.length) throw new Error(`unknown argument(s) ${unknown.join(", ")}; supported: --shard <k>/<n>, --list`);
+}
+// Same validation as runPluginFlows so --list and shard mapping fail on the
+// same malformed flow files a real run would refuse.
+async function collectSelectableFlowNames() {
+  const files = (await readdir(flowsDir).catch(() => []))
+    .filter((file) => file.endsWith(".mjs") && !file.startsWith("_"))
+    .sort();
+  const names = new Set();
+  for (const file of files) {
+    const flow = await import(pathToFileURL(join(flowsDir, file)).href);
+    if (typeof flow.name !== "string" || !/^[a-z][a-z0-9-]*$/.test(flow.name) || typeof flow.run !== "function") {
+      throw new Error(`E2E flow ${file} must export a kebab-case name and an async run(ctx)`);
+    }
+    if (names.has(flow.name) || BUILTIN_FLOW_NAMES.includes(flow.name)) {
+      throw new Error(`Duplicate E2E flow name: ${flow.name}`);
+    }
+    names.add(flow.name);
+  }
+  return [...names];
+}
+const sortedSelectableNames = [...BUILTIN_FLOW_NAMES, ...(await collectSelectableFlowNames())].sort();
+const selected = (name) => {
+  if (onlyFlows.size && !onlyFlows.has(name)) return false;
+  if (!shard) return true;
+  return sortedSelectableNames.indexOf(name) % shard.n === shard.k - 1;
+};
+if (wantsList) {
+  for (const name of sortedSelectableNames.filter(selected)) console.log(name);
+  process.exit(0);
+}
 const ELECTRON_QA_FLAGS = process.platform === "win32" ? ["--disable-gpu"] : [];
 const QA_CLIENT_TOKEN = "mosa_e2e_client_token_0123456789abcdefghijklmnop";
 
@@ -143,7 +200,7 @@ async function runPluginFlows() {
     if (typeof flow.name !== "string" || !/^[a-z][a-z0-9-]*$/.test(flow.name) || typeof flow.run !== "function") {
       throw new Error(`E2E flow ${file} must export a kebab-case name and an async run(ctx)`);
     }
-    if (names.has(flow.name) || ["web", "electron", "stack", "trash"].includes(flow.name)) {
+    if (names.has(flow.name) || BUILTIN_FLOW_NAMES.includes(flow.name)) {
       throw new Error(`Duplicate E2E flow name: ${flow.name}`);
     }
     names.add(flow.name);

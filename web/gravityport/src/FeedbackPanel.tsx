@@ -192,13 +192,13 @@ export function FeedbackPanel({ language }: { language: Language }) {
         className="feedback-message"
         value={message}
         maxLength={MESSAGE_LIMIT}
-        placeholder={tr("遇到了什么问题，或者希望加什么功能？")}
+        placeholder={tr("描述遇到的问题或希望增加的功能")}
         aria-label={tr("反馈内容")}
         onChange={(event) => { setMessage(event.target.value); setSent(false) }}
       />
       <div className="feedback-message-foot">
         {message.length >= COUNTER_VISIBLE_AT && (
-          <span className="feedback-counter">{tr("已写 {count} / 5000").replace("{count}", String(message.length))}</span>
+          <span className="feedback-counter">{tr("{count} / 5000").replace("{count}", String(message.length))}</span>
         )}
       </div>
       <input
@@ -206,7 +206,7 @@ export function FeedbackPanel({ language }: { language: Language }) {
         type="text"
         value={contact}
         maxLength={CONTACT_LIMIT}
-        placeholder={tr("邮箱或其他联系方式（可选），方便我们回复你")}
+        placeholder={tr("邮箱或其他联系方式（可选），用于回复反馈")}
         aria-label={tr("联系方式")}
         onChange={(event) => { setContact(event.target.value); setSent(false) }}
       />
@@ -221,13 +221,13 @@ export function FeedbackPanel({ language }: { language: Language }) {
       </div>
       {showLog && (
         <pre className="feedback-log-view">
-          {logState === "loading" ? tr("加载中")
-            : logState === "error" ? tr("加载失败")
-            : logText || tr("暂时没有日志")}
+          {logState === "loading" ? tr("正在加载…")
+            : logState === "error" ? tr("无法加载")
+            : logText || tr("暂无诊断日志")}
         </pre>
       )}
-      {autoSummary ? <p className="feedback-auto-note">{tr("同时会附上：{summary}").replace("{summary}", autoSummary)}</p> : null}
-      {sent ? <p className="feedback-status feedback-success" role="status">{tr("已收到，谢谢你的反馈。")}</p> : null}
+      {autoSummary ? <p className="feedback-auto-note">{tr("将自动附上：{summary}").replace("{summary}", autoSummary)}</p> : null}
+      {sent ? <p className="feedback-status feedback-success" role="status">{tr("已发送反馈")}</p> : null}
       {error ? <p className="feedback-status feedback-error" role="alert">{tr(error)}</p> : null}
       <div className="feedback-actions">
         <button type="button" className="neutral-button feedback-send" disabled={submitDisabled} onClick={() => void onSubmit()}>

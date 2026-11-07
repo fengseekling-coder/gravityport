@@ -31,7 +31,8 @@ import "./pinterest.css";
 type BoardsPager = ReturnType<typeof createPinterestPager<PinterestBoard>>;
 type PinsPager = ReturnType<typeof createPinterestPager<PinterestPin>>;
 
-const QUOTA_LOW_TEXT = "今天的 Pinterest 浏览额度快用完了，明天再来看看";
+// 任务 359（SET-07o）：额度提示照定稿。
+const QUOTA_LOW_TEXT = "今日 Pinterest 浏览额度即将用完，明天恢复。";
 
 function errorCode(error: unknown): string {
   const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
@@ -64,13 +65,14 @@ export function PinterestGuide({
   const t = (text: string) => pinterestText(text, language);
   return (
     <div className="pinterest-guide">
-      <h2>{needsReconnect ? t("Pinterest 授权已失效，请重新连接") : t("连接 Pinterest")}</h2>
-      <p>{t("连接后，可以在这里浏览你自己的画板和 Pin。内容只在这台电脑上实时显示，不会存进素材库。")}</p>
+      {/* 任务 359（MAIN-32d）：引导页标题用名词短语，错误行另用带指令的整句。 */}
+      <h2>{needsReconnect ? t("Pinterest 授权已失效") : t("连接 Pinterest")}</h2>
+      <p>{t("连接后可在此浏览 Pinterest 账号中的画板和 Pin。内容仅在此电脑上实时显示，不会存入素材库，也不会上传。")}</p>
       {error ? <p className="pinterest-error-text">{error}</p> : null}
       <div className="pinterest-guide-actions">
         {connecting ? (
           <>
-            <button type="button" className="pinterest-primary" disabled>{t("等待浏览器授权…")}</button>
+            <button type="button" className="pinterest-primary" disabled>{t("正在等待浏览器授权…")}</button>
             <button type="button" className="pinterest-secondary" onClick={onCancel}>{t("取消")}</button>
           </>
         ) : (
@@ -111,7 +113,7 @@ export function PinterestBoardGrid({
   const t = (text: string) => pinterestText(text, language);
   if (boards.length === 0) {
     if (loading) {
-      return <div className="pinterest-inline-state" role="status">{t("加载中")}</div>;
+      return <div className="pinterest-inline-state" role="status">{t("正在加载…")}</div>;
     }
     if (error) {
       return (
@@ -121,7 +123,7 @@ export function PinterestBoardGrid({
         </div>
       );
     }
-    return <div className="pinterest-inline-state">{t("你的 Pinterest 账号里还没有画板")}</div>;
+    return <div className="pinterest-inline-state">{t("Pinterest 账号中没有画板。在 Pinterest 创建画板后将显示在此处。")}</div>;
   }
   return (
     <div className="pinterest-board-grid">
@@ -215,7 +217,7 @@ export function PinterestPinGrid({
   const total = columns.reduce((sum, column) => sum + column.length, 0);
   if (total === 0) {
     if (loading) {
-      return <div className="pinterest-inline-state" role="status">{t("加载中")}</div>;
+      return <div className="pinterest-inline-state" role="status">{t("正在加载…")}</div>;
     }
     if (error) {
       return (
@@ -225,7 +227,7 @@ export function PinterestPinGrid({
         </div>
       );
     }
-    return <div className="pinterest-inline-state">{t("这个画板里还没有 Pin")}</div>;
+    return <div className="pinterest-inline-state">{t("此画板中没有 Pin。在 Pinterest 保存 Pin 后将显示在此处。")}</div>;
   }
   return (
     <div className="pinterest-pin-flow">
@@ -527,7 +529,8 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
 
   let body: ReactNode;
   if (statusPhase === "loading") {
-    body = <div className="pinterest-inline-state" role="status">{t("正在连接 Pinterest…")}</div>;
+    // 任务 359（MAIN-32a）：此刻只是读状态，不显示「正在连接」。
+    body = <div className="pinterest-inline-state" role="status">{t("正在加载…")}</div>;
   } else if (statusPhase === "error") {
     body = (
       <div className="pinterest-inline-state">

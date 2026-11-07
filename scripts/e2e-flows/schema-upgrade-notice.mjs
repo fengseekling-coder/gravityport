@@ -4,7 +4,7 @@
 // - seeded failed record -> the dialog appears after the first screen with
 //   the agreed copy, the reveal button hits /api/open-folder with a path
 //   inside .schema-backups (intercepted in-page, no real Finder), clicking
-//   the backdrop does nothing, 知道了 latches the dismissal (GET says no
+//   the backdrop does nothing, 好 latches the dismissal (GET says no
 //   after a service restart);
 // - a check that FAILS WHILE THE APP IS OPEN (test-only verify delay) opens
 //   the dialog without a restart, via the library-backfilled announcement;
@@ -20,7 +20,7 @@ import { createSqliteAssetStore } from "../../lib/sqlite-asset-store.mjs";
 
 export const name = "schema-upgrade-notice";
 export const description =
-  "task 350 dialog: seeded failed verdict shows the dialog after the first screen (copy, reveal -> /api/open-folder intercepted, backdrop keeps it, 知道了 latches across restart) -> a live failed check opens it without a restart -> zh/en desktop screenshots";
+  "task 350 dialog: seeded failed verdict shows the dialog after the first screen (copy, reveal -> /api/open-folder intercepted, backdrop keeps it, 好 latches across restart) -> a live failed check opens it without a restart -> zh/en desktop screenshots";
 
 // Screenshots live in the run's temp root (wiped when the runner exits); a
 // report consumer names a surviving copy directory with MOSA_E2E_SHOT_COPY_TO,
@@ -127,8 +127,8 @@ export async function run(ctx) {
     const result = await ctx.runInPage(server, pageSource());
     if (result?.__pageError) throw new Error(`schema-upgrade-notice page error: ${result.__pageError}`);
     if (result.shown !== true) throw new Error(`the dialog did not appear: ${JSON.stringify(result)}`);
-    if (!result.title.includes("素材库检查发现问题")) throw new Error(`wrong dialog title: ${result.title}`);
-    if (!result.body.includes("请别删它") || !result.body.includes("设置的「反馈」")) {
+    if (!result.title.includes("素材库升级检查未通过")) throw new Error(`wrong dialog title: ${result.title}`);
+    if (!result.body.includes("备份已保留，请勿删除") || !result.body.includes("「设置 > 反馈」")) {
       throw new Error(`wrong dialog body: ${result.body}`);
     }
     if (result.revealCalled !== true) throw new Error("the reveal-copy button did not call /api/open-folder");
@@ -137,7 +137,7 @@ export async function run(ctx) {
     }
     if (result.reveal !== true) throw new Error("the reveal call did not pass reveal: true");
     if (result.backdropStillOpen !== true) throw new Error("clicking the backdrop closed the dialog");
-    if (result.ackClosed !== true) throw new Error("知道了 did not close the dialog");
+    if (result.ackClosed !== true) throw new Error("好 did not close the dialog");
 
     // The acknowledgement latched on the record (same live server).
     const noticeAfter = await ctx.api(server.origin, "GET", "/api/schema-upgrade-notice");
@@ -264,7 +264,7 @@ function pageSource({ expectDialog = true, liveWait = false } = {}) {
     };
     const revealButton = Array.from(dialog().querySelectorAll('button'))
       // macOS says 访达 (Finder), Windows says 资源管理器 (File Explorer).
-      .find((node) => ['在访达中显示拷贝', '在资源管理器中显示拷贝'].some((label) => node.textContent.includes(label)));
+      .find((node) => ['在访达中显示备份', '在文件资源管理器中显示备份'].some((label) => node.textContent.includes(label)));
     if (!revealButton) throw new Error('reveal button missing: ' + dialog().textContent.slice(0, 200));
     revealButton.click();
     await sleep(600);
@@ -274,10 +274,10 @@ function pageSource({ expectDialog = true, liveWait = false } = {}) {
     layer.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await sleep(300);
     result.backdropStillOpen = Boolean(dialog());
-    // 知道了 closes it and latches the acknowledgement.
+    // 好 closes it and latches the acknowledgement.
     const ackButton = Array.from(dialog().querySelectorAll('button'))
-      .find((node) => node.textContent.trim() === '知道了');
-    if (!ackButton) throw new Error('知道了 button missing');
+      .find((node) => node.textContent.trim() === '好');
+    if (!ackButton) throw new Error('好 button missing');
     ackButton.click();
     await sleep(400);
     result.ackClosed = !dialog();
@@ -343,7 +343,7 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
       cdp.evaluate("location.reload()").catch(() => {});
       await waitForExpression(cdp, "Boolean(document.querySelector('.app'))", "app shell after reload");
     }
-    const titleWait = language === "en" ? "Library check found a problem" : "素材库检查发现问题";
+    const titleWait = language === "en" ? "Library upgrade check failed" : "素材库升级检查未通过";
     await waitForExpression(
       cdp,
       `Boolean(Array.from(document.querySelectorAll('.delete-modal h3')).find((node) => node.textContent === ${JSON.stringify(titleWait)}))`,

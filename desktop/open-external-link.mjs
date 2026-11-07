@@ -52,6 +52,12 @@ const EXTERNAL_LINK_ALLOWLIST = [
     hosts: ["github.com"],
     pathPrefix: "/fengseekling-coder/gravityport",
   },
+  {
+    // 任务 351:the single Discord invite linked from the About settings page —
+    // the pathPrefix keeps every other invite code on the confirm dialog.
+    hosts: ["discord.gg"],
+    pathPrefix: "/rArXAShSkQ",
+  },
 ];
 
 function allowlistMatch(parsed) {

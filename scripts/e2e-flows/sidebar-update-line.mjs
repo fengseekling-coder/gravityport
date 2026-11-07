@@ -1,5 +1,5 @@
 // sidebar-update-line.mjs — task 253: the sidebar update reminder is one
-// polished single-line button ABOVE the 用户中心 button.
+// polished single-line button ABOVE the 设置 button.
 //
 // The App subscribes to getUpdateReady/onUpdateReady exactly once on mount,
 // and the real preload defines window.electronAPI as a non-configurable
@@ -23,7 +23,7 @@ import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 
 export const name = "sidebar-update-line";
 export const description =
-  "sidebar update-ready line: single-row reminder above 用户中心 (position, 32px, one line, zh/en copy) -> click restarts (install called once, disabled, 正在更新…) -> dialog-already-shown install result re-enables without a toast, generic failure keeps 更新失败 -> null config renders nothing";
+  "sidebar update-ready line: single-row reminder above 设置 (position, 32px, one line, zh/en copy) -> click restarts (install called once, disabled, 正在更新…) -> dialog-already-shown install result re-enables without a toast, generic failure keeps 无法更新。请稍后重试。 -> null config renders nothing";
 
 // desktop/main.mjs, the first line inside the get-update-ready handler body
 // (0-based for Debugger.setBreakpointByUrl, i.e. the handler line + 1): the
@@ -113,17 +113,17 @@ export async function run(ctx) {
     // to query the doubles.
     await reloadAndSettle(cdp);
 
-    // Round 1 (zh): the row exists, sits above 用户中心, is a 32px single
+    // Round 1 (zh): the row exists, sits above 设置, is a 32px single
     // line with a 6px dot, and the sidebar gains no horizontal scrollbar.
     await waitForExpression(cdp, "Boolean(document.querySelector('.update-ready-line'))", "update-ready line");
     const zh = await cdp.evaluate(inspectLine());
     assertOk(zh.present, "update-ready line present");
-    assertOk(zh.userTop !== null && zh.top < zh.userTop, `line above 用户中心 (top ${zh.top} < 用户中心 ${zh.userTop})`);
+    assertOk(zh.userTop !== null && zh.top < zh.userTop, `line above 设置 (top ${zh.top} < 设置 ${zh.userTop})`);
     assertOk(Math.abs(zh.height - 32) <= 1, `line height 32±1 (got ${zh.height})`);
     assertOk(zh.oneLine, `label stays on one line (scrollHeight ${zh.labelScroll} <= clientHeight ${zh.labelClient})`);
     assertOk(zh.sidebarScrollWidth <= zh.sidebarClientWidth, `sidebar has no horizontal scrollbar (${zh.sidebarScrollWidth} > ${zh.sidebarClientWidth})`);
-    assertEqual(zh.text, "新版本 9.9.9", "zh label");
-    assertEqual(zh.action, "重启更新", "zh action");
+    assertEqual(zh.text, "v9.9.9 已就绪", "zh label");
+    assertEqual(zh.action, "重启并更新", "zh action");
     assertEqual(zh.title, "重启并更新到 v9.9.9", "zh title");
     assertEqual(zh.ariaLabel, "重启并更新到 v9.9.9", "zh aria-label");
     assertEqual(zh.disabled, false, "line enabled before click");
@@ -134,8 +134,8 @@ export async function run(ctx) {
     await switchLanguage(cdp, "en");
     const en = await cdp.evaluate(inspectLine());
     assertEqual(en.text, "v9.9.9 ready", "en label");
-    assertEqual(en.action, "Restart", "en action");
-    assertEqual(en.title, "Restart to update to v9.9.9", "en title");
+    assertEqual(en.action, "Restart to update", "en action");
+    assertEqual(en.title, "Restart and update to v9.9.9", "en title");
     await switchLanguage(cdp, "zh");
 
     // Screenshots for the task report (dark + light), row still idle.
@@ -161,7 +161,7 @@ export async function run(ctx) {
     // Rounds 3b/3c (task 302): an install result whose system dialog the main
     // process already raised (UPDATE_FAILED_TWICE) must re-enable the row with
     // NO extra renderer toast; a generic failure (MACOS_UPDATE_FAILED) keeps
-    // the 更新失败 toast. The previous round left the row disabled with
+    // the 无法更新 toast. The previous round left the row disabled with
     // restartPending set, so a fresh mount (reload) resets it first.
     await main.evaluate(`globalThis.__e2eUpdateLine.result = { status: "error", code: "UPDATE_FAILED_TWICE" }`);
     await reloadAndSettle(cdp);
@@ -174,8 +174,8 @@ export async function run(ctx) {
       "row re-enabled after UPDATE_FAILED_TWICE",
     );
     await sleep(1000);
-    const silentToasts = await cdp.evaluate(`window.__e2eUpdateToasts.filter((t) => t.includes('更新失败'))`);
-    assertOk(silentToasts.length === 0, `no 更新失败 toast after UPDATE_FAILED_TWICE (got ${JSON.stringify(silentToasts)})`);
+    const silentToasts = await cdp.evaluate(`window.__e2eUpdateToasts.filter((t) => t.includes('无法更新。请稍后重试。'))`);
+    assertOk(silentToasts.length === 0, `no 无法更新 toast after UPDATE_FAILED_TWICE (got ${JSON.stringify(silentToasts)})`);
 
     await main.evaluate(`globalThis.__e2eUpdateLine.result = { status: "error", code: "MACOS_UPDATE_FAILED" }`);
     await cdp.evaluate(`window.__e2eUpdateToasts.length = 0`);
@@ -186,8 +186,8 @@ export async function run(ctx) {
       "row re-enabled after MACOS_UPDATE_FAILED",
     );
     await sleep(1000);
-    const failedToasts = await cdp.evaluate(`window.__e2eUpdateToasts.filter((t) => t.includes('更新失败'))`);
-    assertOk(failedToasts.some((t) => t.includes("更新失败，请稍后重试")), `更新失败 toast after MACOS_UPDATE_FAILED (got ${JSON.stringify(failedToasts)})`);
+    const failedToasts = await cdp.evaluate(`window.__e2eUpdateToasts.filter((t) => t.includes('无法更新。请稍后重试。'))`);
+    assertOk(failedToasts.some((t) => t.includes("无法更新。请稍后重试。")), `无法更新 toast after MACOS_UPDATE_FAILED (got ${JSON.stringify(failedToasts)})`);
     const installsAfterResults = await main.evaluate(`globalThis.__e2eUpdateLine.installs`);
     assertEqual(installsAfterResults, 3, `downloadAndInstallUpdate called three times total (got ${installsAfterResults})`);
 
@@ -311,7 +311,7 @@ async function installToastRecorder(cdp) {
   })()`);
 }
 
-// Open the settings dialog from the 用户中心 button, flip the language on the
+// Open the settings dialog from the 设置 button, flip the language on the
 // 常规 page, and close the dialog with Escape — the same path a user takes.
 async function switchLanguage(cdp, target) {
   await cdp.evaluate(`document.querySelector('.user-button').click()`);

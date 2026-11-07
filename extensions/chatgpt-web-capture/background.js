@@ -66,6 +66,13 @@ function captureQueueMaxBytes() {
   return override > 0 ? override : CAPTURE_QUEUE_MAX_BYTES;
 }
 
+// Task 353: ChatGPT content scripts mirror live generation bindings (prompt
+// texts keyed by provider file id) into chrome.storage.session so a refresh,
+// a conversation switch or another tab can still match the image. Session
+// storage is trusted-context-only by default; open it to content scripts once
+// per worker start. No new permission — "storage" already covers this API.
+chrome.storage.session?.setAccessLevel?.({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" }).catch?.(() => {});
+
 function openCaptureMediaDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(CAPTURE_MEDIA_DB, 1);
@@ -1016,7 +1023,8 @@ function mediaDownloadError(message, status) {
   error.status = Number(status) || 0;
   error.source = "media";
   error.retryable = ![403, 404, 410].includes(error.status);
-  if (!error.retryable) error.message = `${message}（网址已过期）`;
+  // 任务 359（EXT-45e）：403/404/410 的原始英文只进诊断，上屏由显示层统一。
+  if (!error.retryable) error.message = `${message}（链接已过期，请刷新页面后重试）`;
   return error;
 }
 
@@ -1036,7 +1044,8 @@ function captureSizeLimitError(label) {
 // - permanent: the content itself was refused. Drop the ticket.
 function classifyCaptureError(error) {
   if (error?.code === "MOSA_UNAVAILABLE") return "transient";
-  if (error?.kind === "pairing" || /Token 未配置/.test(String(error?.message || ""))) return "pairing";
+  // 任务 359：配对判定按错误上的 kind 标记，不再匹配文案（文案改了判断不能失效）。
+  if (error?.kind === "pairing") return "pairing";
   if (error?.retryable === false) return "permanent";
   return "transient";
 }
@@ -2021,10 +2030,14 @@ async function uploadConnection() {
   const settings = await getSettings();
   let baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
   let token = String(settings.mosaToken || "").trim();
-  if (!token) throw new Error("Web Capture Token 未配置。");
+  if (!token) {
+    const error = new Error("尚未连接 GravityPort。请先打开 GravityPort。");
+    error.kind = "pairing";
+    throw error;
+  }
   if (!await ensureMosaAvailable(baseUrl)) {
     const repaired = await repairPairing().catch(() => null);
-    if (!repaired) throw mosaUnavailableError(`无法连接 GravityPort (${baseUrl})。请确认 GravityPort App 正在运行。`);
+    if (!repaired) throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
     baseUrl = repaired.baseUrl;
     token = repaired.token;
   }
@@ -2203,7 +2216,11 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
   const settings = await getSettings();
   let baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
   let token = String(settings.mosaToken || "").trim();
-  if (!token) throw new Error("Web Capture Token 未配置。请在扩展选项中填写与 GravityPort 服务相同的随机 Token。");
+  if (!token) {
+    const error = new Error("尚未连接 GravityPort。请先打开 GravityPort；仍无法连接时，在扩展设置中检查令牌（Token）。");
+    error.kind = "pairing";
+    throw error;
+  }
 
   const mediaKind = payload.mediaKind === "video" ? "video" : "image";
   let mediaBase64 = mediaKind === "video" ? payload.mediaBase64 : payload.imageBase64;
@@ -2219,7 +2236,7 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
   if (!mediaBase64 && !mediaBinaryParts && mediaUrl) {
     if (!await ensureMosaAvailable(baseUrl)) {
       const repaired = await repairPairing().catch(() => null);
-      if (!repaired) throw mosaUnavailableError(`无法连接 GravityPort (${baseUrl})。请确认 GravityPort App 正在运行。`);
+      if (!repaired) throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
       baseUrl = repaired.baseUrl;
       token = repaired.token;
     }
@@ -2262,7 +2279,8 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
     const repaired = await repairPairing().catch(() => null);
     if (!repaired) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw mosaUnavailableError(`无法连接 GravityPort (${baseUrl})：${msg}。请确认 GravityPort App 正在运行。`);
+      // 任务 359（EXT-45b）：浏览器英文原句（Failed to fetch 等）不再拼进中文提示。
+      throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
     }
     baseUrl = repaired.baseUrl;
     token = repaired.token;
@@ -2270,7 +2288,8 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
       response = await requestIngest();
     } catch (retryError) {
       const msg = retryError instanceof Error ? retryError.message : String(retryError);
-      throw mosaUnavailableError(`无法连接 GravityPort (${baseUrl})：${msg}。请确认 GravityPort App 正在运行。`);
+      // 任务 359（EXT-45b）：浏览器英文原句（Failed to fetch 等）不再拼进中文提示。
+      throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
     }
   }
 

@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresPlatformSigning } from "../lib/release-distribution.mjs";
+import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresMacDeveloperIdSigning } from "../lib/release-distribution.mjs";
 import { resolveReleaseProductNames } from "./release-product.mjs";
 
 export const MOSA_RELEASE_BUNDLE_ID = "com.azhuilab.mosa";
@@ -100,7 +100,7 @@ export async function verifyMacosReleaseApp({
   await runner("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", resolvedAppPath]);
   const detailsResult = await runner("/usr/bin/codesign", ["-dv", "--verbose=4", resolvedAppPath]);
   const details = parseCodesignDetails(`${detailsResult.stdout || ""}\n${detailsResult.stderr || ""}`);
-  if (!requiresPlatformSigning(normalizedDistribution)) {
+  if (!requiresMacDeveloperIdSigning(normalizedDistribution)) {
     assertMacosPreviewSignature(details);
     return { appPath: resolvedAppPath, distribution: normalizedDistribution, bundleId: details.Identifier };
   }
@@ -108,7 +108,7 @@ export async function verifyMacosReleaseApp({
   const teamId = nonEmpty(env.APPLE_TEAM_ID);
   const identity = nonEmpty(env.MOSA_MACOS_SIGN_IDENTITY);
   if (!teamId || !identity) {
-    throw new Error("macOS production verification requires APPLE_TEAM_ID and MOSA_MACOS_SIGN_IDENTITY.");
+    throw new Error("macOS release verification requires APPLE_TEAM_ID and MOSA_MACOS_SIGN_IDENTITY.");
   }
   assertMacosReleaseSignature(details, { teamId, identity });
 

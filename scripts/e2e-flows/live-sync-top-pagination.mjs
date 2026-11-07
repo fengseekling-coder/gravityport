@@ -91,32 +91,67 @@ function topPaginationSource(targetCardId) {
     await sleep(300);
 
     // 4. 收藏首张素材，统计期间 gallery-rows 请求数
-    // The seeded cards queue thumbnail work that journals its own library
-    // changes, and each derivative flush fetches gallery rows too. On a slow
-    // runner (Windows CI) that work is still draining here, so count only once
-    // the library has gone quiet — same rule as live-sync-incremental.
-    const waitQuiet = async (label) => {
-      const deadline = Date.now() + 90000;
-      let last = null;
-      let stableSince = Date.now();
-      while (Date.now() < deadline) {
-        const { revision } = await api('/api/library-revision?project=default');
-        if (revision !== last) { last = revision; stableSince = Date.now(); }
-        else if (Date.now() - stableSince >= 1500) {
-          await sleep(300);
-          return;
+    // The seeded cards queue derivative work that journals its own library
+    // changes, and each derivative flush fetches gallery rows too. Revision
+    // stability alone proved too weak on Windows CI (352): with 2 concurrent
+    // worker jobs a >1.5s gap between two completions — or a claim backoff
+    // after SQLITE_BUSY — reads as quiet while jobs remain, and the next
+    // completion lands inside the measurement window (rowsOnFavorite 2-3).
+    // So gate on the real end state: a derivative job writes width/height,
+    // preview and thumbnail in ONE update, so every seeded asset carrying
+    // dimensions plus preview_ready/thumbnail_ready means the queue is fully
+    // drained. The stable revision on top covers anything the API cannot see.
+    const countUnsettled = async () => {
+      let cursor = '';
+      let count = 0;
+      let unsettled = 0;
+      do {
+        const data = await api('/api/assets?project=default&limit=250' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
+        for (const asset of data.assets || []) {
+          const width = Number(asset.business_fields?.width) || 0;
+          const height = Number(asset.business_fields?.height) || 0;
+          if (!(width > 0 && height > 0) || asset.thumbnail_ready !== true || asset.preview_ready !== true) unsettled += 1;
+          count += 1;
         }
+        cursor = data.page?.nextCursor || '';
+      } while (cursor);
+      return { count, unsettled };
+    };
+    const waitAllSettled = async () => {
+      const startedAt = Date.now();
+      const deadline = startedAt + 120000;
+      let lastRevision = null;
+      let stableSince = startedAt;
+      for (;;) {
+        if (Date.now() >= deadline) {
+          const snapshot = await countUnsettled().catch(() => ({ count: -1, unsettled: -1 }));
+          throw new Error('library never settled before favorite (waited ' + (Date.now() - startedAt) + 'ms): '
+            + 'assets=' + snapshot.count + ', missing dimensions/derivatives=' + snapshot.unsettled
+            + ', revision=' + JSON.stringify(lastRevision));
+        }
+        const settledSnapshot = await countUnsettled();
+        const settled = settledSnapshot.unsettled === 0 && settledSnapshot.count >= ${SEED_TOTAL};
+        const { revision } = await api('/api/library-revision?project=default');
+        if (revision !== lastRevision) { lastRevision = revision; stableSince = Date.now(); }
+        if (settled && Date.now() - stableSince >= 1500) break;
         await sleep(250);
       }
-      throw new Error('Timed out waiting for the library to go quiet before ' + label);
+      await sleep(300);
     };
-    await waitQuiet('favorite');
+    await waitAllSettled();
     const beforeRows = deltaCalls('/api/gallery-rows');
+    const beforeChanges = deltaCalls('/api/library-changes');
     await api('/api/assets/default/' + ${JSON.stringify(targetCardId)} + '/favorite', 'POST');
     await waitFor(() => document.querySelector('.asset-card[data-asset-id="' + ${JSON.stringify(targetCardId)} + '"] .favorite-mark'), 'favorite mark displayed');
     await sleep(400);
 
     const rowsOnFavorite = deltaCalls('/api/gallery-rows') - beforeRows;
+    // 352 diagnostics carried on the result line: changesOnFavorite === 0
+    // with rowsOnFavorite > 1 would mean the app re-rows without any journal
+    // change; unsettledAfterMeasurement > 0 would mean background derivative
+    // churn leaked past the settle gate into the window.
+    const changesOnFavorite = deltaCalls('/api/library-changes') - beforeChanges;
+    const unsettledAfterMeasurement = (await countUnsettled()).unsettled;
 
     // 5. 再次滚到底部，验证翻页机制未卡死，能正常继续向下翻页加载
     const loadedBeforeScroll = loadedCount();
@@ -132,6 +167,8 @@ function topPaginationSource(targetCardId) {
     return {
       topLoaded,
       rowsOnFavorite,
+      changesOnFavorite,
+      unsettledAfterMeasurement,
       loadedBeforeScroll,
       finalLoaded,
       paginationContinued,

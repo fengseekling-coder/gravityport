@@ -29,6 +29,12 @@ jobs:
   build-windows-preview:
     name: Build Preview ZIP and installer on windows-2022
     runs-on: windows-2022
+    # Manual release builds only; the packaging work this job does mirrors the
+    # ~4-minute desktop-windows package path plus the ZIP/identity
+    # verification, so 30 leaves generous headroom while still bounding a
+    # hung release build (352 建5). No green-run history exists yet; revisit
+    # after the first few releases.
+    timeout-minutes: 30
     defaults:
       run:
         shell: pwsh
@@ -42,10 +48,11 @@ jobs:
           if (@('MOSA', 'GravityPort') -notcontains $env:RELEASE_PRODUCT) { throw "Unexpected product: $env:RELEASE_PRODUCT" }
 
       - name: Check out the release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Assert release provenance
         run: |
@@ -59,10 +66,17 @@ jobs:
           "RELEASE_VERSION=$($env:RELEASE_TAG.Substring(1))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
+
+      - name: Cache Electron binaries
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~\AppData\Local\electron\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
 
       - name: Install immutable dependencies
         run: npm ci
@@ -146,7 +160,7 @@ jobs:
           "INSTALLER_PATH=$installer" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Upload the Windows Preview artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ inputs.product }}-${{ inputs.tag }}-windows-preview-x64
           if-no-files-found: error

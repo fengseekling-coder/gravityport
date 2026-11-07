@@ -12,7 +12,9 @@ export interface GroupStatsFacet {
 }
 
 export interface GroupStatsOverview {
+  /** 任务 359（DLG-09d）：「版本」在统计里要用复数英文名，与素材详情的 Version 区分。 */
   label: string;
+  enLabel?: string
   value: number;
 }
 
@@ -49,12 +51,12 @@ function toFinite(value: unknown): number {
 
 function buildOverview(raw: RawGroupStats): GroupStatsOverview[] {
   return [
-    { label: "素材总数", value: toFinite(raw.total) },
-    { label: "收藏", value: toFinite(raw.favorites) },
-    { label: "图片", value: toFinite(raw.images) },
-    { label: "视频", value: toFinite(raw.videos) },
-    { label: "版本条目", value: toFinite(raw.versionChildren) },
-    { label: "回收站中", value: toFinite(raw.trashed) },
+    { label: "素材总数", enLabel: "Assets", value: toFinite(raw.total) },
+    { label: "收藏", enLabel: "Favorites", value: toFinite(raw.favorites) },
+    { label: "图片", enLabel: "Images", value: toFinite(raw.images) },
+    { label: "视频", enLabel: "Videos", value: toFinite(raw.videos) },
+    { label: "版本", enLabel: "Versions", value: toFinite(raw.versionChildren) },
+    { label: "回收站中", enLabel: "In Trash", value: toFinite(raw.trashed) },
   ];
 }
 
@@ -63,8 +65,8 @@ function buildFacets(raw: RawGroupStats): GroupStatsFacet[] {
   const sources = parseFacet(raw.sources);
 
   return [
-    { title: "按分类", entries: categories, emptyText: "未记录" },
-    { title: "按来源", entries: sources, emptyText: "未记录" },
+    { title: "按分类", entries: categories, emptyText: "无" },
+    { title: "按来源", entries: sources, emptyText: "无" },
   ];
 }
 

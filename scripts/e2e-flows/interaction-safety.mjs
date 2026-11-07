@@ -184,10 +184,10 @@ function interactionSafetySource(config) {
     clickCard(cardA(), { ctrlKey: true });
     await waitFor(() => rings().length === 1 && rings()[0].getAttribute('data-asset-id') === config.betaId,
       'modifier click on A leaves only B');
-    (await menuOn(cardB(), '移至回收站')).click();
+    (await menuOn(cardB(), '移到回收站')).click();
     await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'single trash confirm');
     Array.from(document.querySelectorAll('[role="alertdialog"] button'))
-      .find((button) => button.textContent.trim() === '移至回收站').click();
+      .find((button) => button.textContent.trim() === '移到回收站').click();
     await waitFor(() => Number(navSmall('回收站')) === 1, 'exactly the modifier-picked card was trashed');
     const keptA = Boolean(cardFor(config.alphaId));
     navButton('回收站').click();
@@ -220,7 +220,7 @@ function interactionSafetySource(config) {
     clickCard(cardB(), { ctrlKey: true });
     await waitFor(() => rings().length === 2, 'two rings before the cut');
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', ctrlKey: true, bubbles: true, cancelable: true }));
-    await waitFor(() => document.querySelector('.toast')?.textContent.includes('已剪切'), 'cut acknowledged');
+    await waitFor(() => /已剪切 [0-9]+ 个素材/.test(document.querySelector('.toast')?.textContent || ''), 'cut acknowledged');
     const stackNode = Array.from(document.querySelectorAll('.asset-card'))
       .find((card) => card.querySelector('.stack-mark') && card.getAttribute('data-asset-id') === config.stackCoverId);
     if (!stackNode) throw new Error('stack node missing');

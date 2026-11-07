@@ -181,22 +181,22 @@ function selectAllSource({ cards: cardTotal, total, allGroup }) {
 
     // 1. ⌘A picks every card of the result, stacks included.
     pressSelectAll();
-    await waitFor(() => toastText().includes('已选 ${cardTotal} 项'), '⌘A selects all ${cardTotal} cards');
+    await waitFor(() => toastText().includes('已选择 ${cardTotal} 项'), '⌘A selects all ${cardTotal} cards');
     const selectedToast = true;
 
     // 2. Drag the selection onto a sidebar group: every stack moves whole.
     await waitFor(() => groupRow(${JSON.stringify(allGroup)}), 'group row');
     await dragTo(selected()[0], groupRow(${JSON.stringify(allGroup)}));
-    await waitFor(() => toastText().includes('已把 ${cardTotal} 项移到'), 'group drop of the whole selection');
+    await waitFor(() => toastText().includes('已将 ${cardTotal} 项移到'), 'group drop of the whole selection');
     const groupToast = true;
     await sleep(600);
 
     // 3. ⌘A again, Delete: every stack member goes to the trash; undo.
     pressSelectAll();
-    await waitFor(() => toastText().includes('已选 ${cardTotal} 项'), 'second ⌘A');
+    await waitFor(() => toastText().includes('已选择 ${cardTotal} 项'), 'second ⌘A');
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
     await waitFor(() => document.querySelector('[role="alertdialog"]'), 'batch delete confirm');
-    Array.from(document.querySelectorAll('[role="alertdialog"] button')).find((button) => button.textContent.trim() === '移至回收站').click();
+    Array.from(document.querySelectorAll('[role="alertdialog"] button')).find((button) => button.textContent.trim() === '移到回收站').click();
     await waitFor(() => navSmall('回收站') === '${total}', 'every stack member in the trash', 45000);
     const trashed = Number(navSmall('回收站'));
     const undo = await waitFor(() => document.querySelector('.toast .toast-action'), 'undo action');
@@ -239,7 +239,7 @@ function dragSource({ cards: cardTotal, stacks, dragGroup }) {
     const groupIds = groupCards.map(idOf);
     await selectCards(groupCards);
     await dragTo(groupCards[0], groupRow(${JSON.stringify(dragGroup)}));
-    await waitFor(() => toastText().includes('已把 3 项移到'), 'group drop of stacks + plain');
+    await waitFor(() => toastText().includes('已将 3 项移到'), 'group drop of stacks + plain');
     const groupToast = true;
     await sleep(600);
 

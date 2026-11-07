@@ -250,9 +250,9 @@ function trashUndoImportSource(config) {
       ids.forEach((id, index) => clickCard(id, index ? { ctrlKey: true } : {}));
       await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === ids.length,
         'selection rings for ' + ids.length + ' cards');
-      await contextMenuOn(card(ids[ids.length - 1]), '移至回收站').then((item) => item.click());
+      await contextMenuOn(card(ids[ids.length - 1]), '移到回收站').then((item) => item.click());
       await waitFor(() => document.querySelector('[role="alertdialog"]'), 'trash confirm dialog');
-      clickLabel('移至回收站', '.delete-modal');
+      clickLabel('移到回收站', '.delete-modal');
       await waitFor(() => toastAction() && toastAction().textContent.trim() === '撤销', 'undo toast action');
     }
     const stackMembersProbe = { last: '(never polled)' };
@@ -293,7 +293,7 @@ function trashUndoImportSource(config) {
       clickLabel('回收站', '.main-nav');
       await waitFor(() => settled() && cardCount() === 3, 'trash view shows three cards');
       const badges = Array.from(document.querySelectorAll('.asset-card .trash-countdown')).map((node) => node.textContent.trim());
-      if (badges.length !== 3 || badges.some((text) => !text.includes('90 天后删除'))) {
+      if (badges.length !== 3 || badges.some((text) => !text.includes('剩余 90'))) {
         throw new Error('trash countdown badges wrong: ' + JSON.stringify(badges));
       }
       const victim = card(expireTrio[0]);

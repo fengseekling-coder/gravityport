@@ -2,12 +2,11 @@ import "../lib/apply-env-aliases.mjs";
 import readline from "node:readline";
 import { homedir } from "node:os";
 import { statSync } from "node:fs";
-import { basename, extname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
-import { isPathInsideOrEqual } from "../lib/path-safety.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
 import { createAssetViaGate, untrustedCreateSource } from "../lib/library-ingest.mjs";
 import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
@@ -66,17 +65,20 @@ function describeLibraryStartupError(error) {
   }
   return null;
 }
+// A missing or unreadable library no longer stops the server (task 362): it
+// still answers initialize and tools/list, so an assistant can see the tools
+// before GravityPort has ever been opened, and every tool call retries the
+// library first. Until one opens, calls answer LIBRARY_NOT_FOUND or
+// LIBRARY_UNAVAILABLE with the same bilingual reason stderr gets; nothing is
+// created anywhere. All of the state below stays unset until openLibrary()
+// succeeds.
 let libraryDir;
-try {
-  libraryDir = resolveCurrentLibraryDir();
-} catch (error) {
-  const described = describeLibraryStartupError(error);
-  if (described) {
-    process.stderr.write(`${described}\n`);
-    process.exit(1);
-  }
-  throw error;
-}
+let store = null;
+let databasePath = "";
+let databaseIdentity = null;
+let directStoreLease = null;
+let directStoreClosed = false;
+let openingLibrary = null;
 // Task 315: one redacted stderr line per uncaught crash, then Node's default
 // exit. stdout must stay protocol-only. No unhandledRejection listener: Node's
 // default mode raises unhandled rejections as uncaught exceptions, and
@@ -93,74 +95,116 @@ process.on("uncaughtExceptionMonitor", (error) => {
 // from the desktop app (or following its location file), MCP uses the same library
 // layout as the desktop runtime.
 const desktopMode = Boolean(process.versions.electron || locationFile);
-const explicitLibraryDir = desktopMode || process.env.MOSA_LIBRARY_DIR ? libraryDir : null;
-let store;
-try {
-  store = createAssetStore({
-    projectRoot,
-    managerDir,
-    libraryDir,
-    explicitLibraryDir,
-    ...(desktopMode ? { assetsRoot: join(libraryDir, "assets"), generatedImagesDir: join(libraryDir, "imports") } : {}),
-  });
-} catch (error) {
-  // A configured directory that holds a broken library (managed media without
-  // mosa.db, a database that never completed) must stop the server with the
-  // store's bilingual message — never fall through to any other location.
-  if (error?.code === "MOSA_LIBRARY_DATABASE_MISSING" || error?.code === "MOSA_LIBRARY_STATE_INVALID"
-    || error?.code === "SQLITE_LIBRARY_MISSING") {
-    process.stderr.write(`${error.message}\n`);
-    process.exit(1);
+const STORE_UNAVAILABLE_CODES = new Set([
+  "MOSA_LIBRARY_DATABASE_MISSING",
+  "MOSA_LIBRARY_STATE_INVALID",
+  "SQLITE_LIBRARY_MISSING",
+]);
+
+/**
+ * Returns null once the library is open, or { code, message } when it is
+ * missing (LIBRARY_NOT_FOUND) or present but unusable (LIBRARY_UNAVAILABLE).
+ * Any other error still throws: an unexpected failure is not a missing library.
+ */
+async function openLibrary() {
+  if (store) return null;
+  let resolvedDir;
+  try {
+    resolvedDir = resolveCurrentLibraryDir();
+  } catch (error) {
+    const described = describeLibraryStartupError(error);
+    if (!described) throw error;
+    const code = error.code === MOSA_LIBRARY_NOT_FOUND ? "LIBRARY_NOT_FOUND" : "LIBRARY_UNAVAILABLE";
+    return { code, message: described };
   }
-  throw error;
+  const explicitLibraryDir = desktopMode || process.env.MOSA_LIBRARY_DIR ? resolvedDir : null;
+  let opened;
+  try {
+    opened = createAssetStore({
+      projectRoot,
+      managerDir,
+      libraryDir: resolvedDir,
+      explicitLibraryDir,
+      ...(desktopMode ? { assetsRoot: join(resolvedDir, "assets"), generatedImagesDir: join(resolvedDir, "imports") } : {}),
+    });
+  } catch (error) {
+    // A configured directory that holds a broken library (managed media without
+    // mosa.db, a database that never completed) is reported with the store's
+    // bilingual message — never fall through to any other location.
+    if (STORE_UNAVAILABLE_CODES.has(error?.code)) return { code: "LIBRARY_UNAVAILABLE", message: error.message };
+    throw error;
+  }
+  // SQLite uses WAL plus insert-only managed filenames for safe App+MCP coexistence.
+  //
+  // SQLite WAL mode lets one writer and many readers operate concurrently against
+  // the same database file. Each connection holds an independent WAL snapshot,
+  // so the App (HTTP UI) and the MCP stdio server can be running at the same time
+  // without blocking each other. The store is configured with:
+  //   journal_mode = WAL
+  //   busy_timeout = 5000   (5s wait for the writer lock before failing)
+  //   cache_size = -20000   (20 MB page cache)
+  //   temp_store = MEMORY   (temp tables never touch disk)
+  //   foreign_keys = ON
+  // A writer commit waits at most 5 s for any active reader snapshot, which is
+  // well below the typical interactive request budget.
+  //
+  // Originals are managed as insert-only content-hash filenames inside the
+  // library directory, so the filesystem never mutates a file in place. The
+  // SQLite store is therefore authoritative for metadata; concurrent writers
+  // from MCP and App only ever produce additive metadata rows. That is what
+  // makes the JSON fallback (which has no cross-process transaction support)
+  // unable to share the same contract.
+  //
+  // The legacy JSON backend has no cross-process metadata transaction, so it
+  // must share the runtime's exclusive lease instead of allowing two writers
+  // to race over JSON files. JSON mode therefore *cannot* coexist with an
+  // active App or another MCP writer; the lock below makes that explicit.
+  let lease = null;
+  if (opened.storageKind === "json") {
+    try {
+      lease = await acquireMosaRuntimeLock({ libraryDir: resolvedDir });
+    } catch (error) {
+      opened.close?.();
+      throw error;
+    }
+  }
+  // Record the mosa.db file identity (device + inode) the store was opened
+  // against. A later move or deletion of the library changes or removes that
+  // file; every tool call re-stats it so no write can land in a library that is
+  // no longer the one this server opened. The legacy JSON backend has no
+  // mosa.db to watch; its moves are covered by the location-file check below.
+  const openedDatabasePath = join(resolvedDir, LIBRARY_DATABASE_FILE);
+  let identity = null;
+  try {
+    const databaseInfo = statSync(openedDatabasePath);
+    if (databaseInfo.isFile()) identity = { dev: databaseInfo.dev, ino: databaseInfo.ino };
+  } catch {
+    identity = null;
+  }
+  libraryDir = resolvedDir;
+  databasePath = openedDatabasePath;
+  databaseIdentity = identity;
+  directStoreLease = lease;
+  store = opened;
+  return null;
 }
-// Record the mosa.db file identity (device + inode) the store was opened
-// against. A later move or deletion of the library changes or removes that
-// file; every tool call re-stats it so no write can land in a library that is
-// no longer the one this server opened. The legacy JSON backend has no
-// mosa.db to watch; its moves are covered by the location-file check below.
-const databasePath = join(libraryDir, LIBRARY_DATABASE_FILE);
-let databaseIdentity = null;
-try {
-  const databaseInfo = statSync(databasePath);
-  if (databaseInfo.isFile()) databaseIdentity = { dev: databaseInfo.dev, ino: databaseInfo.ino };
-} catch {
-  databaseIdentity = null;
+
+/** One open attempt at a time: concurrent tool calls share it. */
+function ensureLibraryOpen() {
+  if (store) return Promise.resolve(null);
+  if (!openingLibrary) {
+    openingLibrary = openLibrary().finally(() => { openingLibrary = null; });
+  }
+  return openingLibrary;
 }
-// SQLite uses WAL plus insert-only managed filenames for safe App+MCP coexistence.
-//
-// SQLite WAL mode lets one writer and many readers operate concurrently against
-// the same database file. Each connection holds an independent WAL snapshot,
-// so the App (HTTP UI) and the MCP stdio server can be running at the same time
-// without blocking each other. The store is configured with:
-//   journal_mode = WAL
-//   busy_timeout = 5000   (5s wait for the writer lock before failing)
-//   cache_size = -20000   (20 MB page cache)
-//   temp_store = MEMORY   (temp tables never touch disk)
-//   foreign_keys = ON
-// A writer commit waits at most 5 s for any active reader snapshot, which is
-// well below the typical interactive request budget.
-//
-// Originals are managed as insert-only content-hash filenames inside the
-// library directory, so the filesystem never mutates a file in place. The
-// SQLite store is therefore authoritative for metadata; concurrent writers
-// from MCP and App only ever produce additive metadata rows. That is what
-// makes the JSON fallback (which has no cross-process transaction support)
-// unable to share the same contract.
-//
-// The legacy JSON backend has no cross-process metadata transaction, so it
-// must share the runtime's exclusive lease instead of allowing two writers
-// to race over JSON files. JSON mode therefore *cannot* coexist with an
-// active App or another MCP writer; the lock below makes that explicit.
-const directStoreLease = store.storageKind === "json"
-  ? await acquireMosaRuntimeLock({ libraryDir })
-  : null;
-let directStoreClosed = false;
+
+const startupFailure = await ensureLibraryOpen();
+if (startupFailure) process.stderr.write(`${startupFailure.message}\n`);
 
 async function closeDirectStore() {
   if (directStoreClosed) return;
   directStoreClosed = true;
-  try { store.close?.(); } finally { await directStoreLease?.release().catch(() => {}); }
+  try { store?.close?.(); } finally { await directStoreLease?.release().catch(() => {}); }
 }
 
 const TOOL_ASSET_CREATE = "asset_create";
@@ -205,23 +249,7 @@ const TOOL_ANNOTATIONS = {
   [TOOL_GENERATION_LINEAGE]: { readOnlyHint: true, destructiveHint: false },
 };
 
-// Task 334: importing from folders outside the trusted roots (Codex's
-// generated_images, the library's own folders) needs the user's confirmation,
-// and MCP elicits it from the AI assistant itself — GravityPort shows no
-// dialog for this. Clients advertise support by declaring an `elicitation`
-// object in initialize; servers advertise it the same way below.
-let clientSupportsElicitation = false;
-const pendingElicitations = new Map();
-let elicitationCounter = 0;
-const ELICITATION_ID_PREFIX = "gp-elicit-";
-// 50 s of user thinking, 10 s of margin before Codex's default 60 s per-tool
-// timeout (tool_timeout_sec, config reference; verified 2026-11-02). The env
-// override is a test knob, not a user setting.
-function elicitTimeoutMs() {
-  const parsed = Number.parseInt(process.env.MOSA_MCP_ELICIT_TIMEOUT_MS || "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 50_000;
-}
-// Folder import limits; the max-files override is a test knob too.
+// Folder import limits; the max-files override is a test knob.
 function importFolderMaxFiles() {
   const parsed = Number.parseInt(process.env.MOSA_MCP_IMPORT_FOLDER_MAX_FILES || "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1000;
@@ -290,7 +318,7 @@ function toolDefinitions() {
   return [
     {
       name: TOOL_ASSET_CREATE,
-      description: "Copy a generated image into the GravityPort library and save prompt recipe metadata. Codex's <CODEX_HOME>/generated_images task folders are supported and recorded as the source; CODEX_HOME defaults to the user's .codex directory. Imports are restricted to trusted roots: Codex's generated_images folder (<CODEX_HOME>/generated_images, or the directory named by CODEX_GENERATED_IMAGES_DIR) and the GravityPort library's own folders (assets/ and imports/ inside the library directory). The assistant's own working directory is not a trusted root. An imagePath anywhere else, such as a project, home, or Downloads folder, is rejected with IMAGE_PATH_NOT_READABLE; to import from such a folder use the asset_import_folder tool (the user is asked to confirm there), or ask the user to drag the image into GravityPort. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
+      description: "Copy an image into the GravityPort library and save prompt recipe metadata. Any local absolute image path is accepted; relative paths are rejected. Symbolic links are skipped. Only supported image and video formats are imported. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
       inputSchema: {
         type: "object",
         properties: {
@@ -320,7 +348,7 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_IMPORT_FOLDER,
-      description: "Import every image and video found in a local folder into the GravityPort library, applying the same projectId/prompt/sourceType/source to each file. Folders already inside the trusted roots (Codex's generated_images folder, the GravityPort library's own folders) import directly. Any other folder needs the user's confirmation, which GravityPort asks for inside this assistant (MCP elicitation): nothing imports when the client cannot ask, the user declines, or the request times out. Symbolic links are skipped; with recursive: true subfolders are read up to 5 levels deep; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest.",
+      description: "Import every image and video found in a local folder into the GravityPort library, applying the same projectId/prompt/sourceType/source to each file. Any local absolute folder path is accepted; relative paths are rejected. Symbolic links are skipped; with recursive: true subfolders are read up to 5 levels deep; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest.",
       inputSchema: {
         type: "object",
         properties: {
@@ -594,37 +622,13 @@ function mcpImportError(code, message) {
   return error;
 }
 
-// The roots asset_import_folder may read without asking. This is the same
-// list the stores guard single-image imports with (assertWithinReadableProject),
-// minus the working directory (task 334); deriving it from the store keeps one
-// copy of the truth.
-function trustedImportRoots() {
-  return [
-    store.codexImagesDir,
-    store.assetsRoot,
-    store.generatedImagesDir,
-    store.cowartPageAssetsDir,
-    store.legacyAssetsRoot,
-  ].filter((root) => typeof root === "string" && root);
-}
-
-async function folderIsWithinTrustedRoots(folderRealPath) {
-  const roots = (await Promise.all(trustedImportRoots().map(async (root) => {
-    try { return await realpath(root); } catch (error) {
-      if (error?.code === "ENOENT") return null;
-      throw error;
-    }
-  }))).filter(Boolean);
-  return roots.some((root) => isPathInsideOrEqual(root, folderRealPath));
-}
-
 /**
  * Walk one folder for importable media. The folder's own contents are layer 1;
  * with recursive: true subfolders are read up to IMPORT_FOLDER_MAX_DEPTH layers
  * deep. Plain files with a MEDIA_EXTENSIONS suffix are the import candidates;
  * every other entry seen (symbolic links, files of other types) counts as
  * skipped. Throws IMPORT_FOLDER_TOO_LARGE as soon as one more file would break
- * the cap, so nothing imports and no confirmation is asked for.
+ * the cap, so nothing imports.
  */
 async function scanImportFolder(folderRealPath, recursive) {
   const files = [];
@@ -660,58 +664,13 @@ async function scanImportFolder(folderRealPath, recursive) {
   return { files, skipped };
 }
 
-function buildImportConfirmationMessage(folderPath, count, skippedCount, recursive) {
-  let message = `要从 ${folderPath} 导入 ${count} 张图片和视频到 GravityPort 素材库吗？`;
-  if (recursive) message += "（含子文件夹）";
-  if (skippedCount > 0) message += ` 另有 ${skippedCount} 个文件会跳过。`;
-  return message;
-}
-
-/**
- * Ask the user for permission through the AI assistant (MCP elicitation, form
- * mode). Resolves true only for a reply with action "accept" and allow: true;
- * decline, cancel, errors, malformed replies and the timeout all resolve false.
- * The request id carries the gp-elicit- prefix so the reply channel can tell
- * server-initiated requests apart from the client's own (numeric) ids.
- */
-function requestImportConfirmation(message) {
-  const elicitationId = `${ELICITATION_ID_PREFIX}${++elicitationCounter}`;
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pendingElicitations.delete(elicitationId);
-      resolve(false);
-    }, elicitTimeoutMs());
-    pendingElicitations.set(elicitationId, {
-      resolve: (reply) => {
-        clearTimeout(timer);
-        resolve(reply?.result?.action === "accept" && reply?.result?.content?.allow === true);
-      },
-    });
-    send({
-      jsonrpc: "2.0",
-      id: elicitationId,
-      method: "elicitation/create",
-      params: {
-        message,
-        requestedSchema: {
-          type: "object",
-          properties: { allow: { type: "boolean", title: "允许导入" } },
-          required: ["allow"],
-        },
-      },
-    });
-  });
-}
-
 /**
  * The asset_import_folder handler. Scan first (fail fast on a missing folder
- * or an oversized batch, answer empty folders without asking), confirm with
- * the user through the assistant unless the whole folder sits inside the
- * trusted roots, then import the scanned files one by one — a failed file is
- * recorded and never stops the rest, matching how manual imports behave.
- * The confirmation only ever covers this one call and this one folder.
+ * or an oversized batch, answer empty folders directly), then import the
+ * scanned files one by one with trustedSourceRoots: [folderRealPath] — a failed
+ * file is recorded and never stops the rest, matching how manual imports behave.
  */
-async function importFolderWithConfirmation(args) {
+async function importFolder(args) {
   const folderPath = args.folderPath;
   if (typeof folderPath !== "string" || !isAbsolute(folderPath)) {
     throw mcpImportError("IMPORT_FOLDER_NOT_ABSOLUTE", `folderPath must be an absolute path: ${folderPath}`);
@@ -735,18 +694,6 @@ async function importFolderWithConfirmation(args) {
       structuredContent: { ...counts, assetIds: [], failures: [] },
     };
   }
-  if (!await folderIsWithinTrustedRoots(folderRealPath)) {
-    // Show the resolved path: the folder actually read, not a `..` or
-    // symlinked spelling of it.
-    const confirmed = clientSupportsElicitation
-      && await requestImportConfirmation(buildImportConfirmationMessage(folderRealPath, files.length, skipped, recursive));
-    if (!confirmed) {
-      throw mcpImportError(
-        "IMPORT_NOT_CONFIRMED",
-        `The user has not confirmed importing from ${folderPath} (the assistant cannot ask for confirmation, the user declined, or the request timed out); nothing was imported. Ask the user to drag the images into GravityPort instead.`,
-      );
-    }
-  }
   const { source } = args;
   const assetIds = [];
   const failures = [];
@@ -760,7 +707,7 @@ async function importFolderWithConfirmation(args) {
     };
     try {
       // skipIdenticalBytes matches asset_create. trustedSourceRoots covers
-      // exactly the confirmed folder for this one call; it is never remembered.
+      // exactly the imported folder for this one call; it is never remembered.
       const created = await createAssetViaGate(store, input, {
         skipIdenticalBytes: true,
         trustedSourceRoots: [folderRealPath],
@@ -804,22 +751,28 @@ async function handleToolCall(id, params) {
     // ARCHITECTURE.md §8): identical bytes already in the library (outside
     // Trash) answer with the stored asset instead of a copy, and hashes the
     // caller claims in `source` are never trusted — the store recomputes them.
-    // excludeProjectRoot keeps the assistant's working directory out of the
-    // trusted roots (task 334): single-image imports never elicit, so a path
-    // outside the trusted roots is rejected with guidance instead.
+    // Absolute image paths anywhere on the local filesystem are accepted
+    // by scoping trustedSourceRoots to the file's parent directory for this
+    // single call. Relative paths are rejected by the store (IMAGE_PATH_NOT_READABLE).
     const { source, ...rest } = args;
     const input = source && typeof source === "object" && !Array.isArray(source)
       ? { ...rest, source: untrustedCreateSource(source) }
       : args;
-    let created;
-    try {
-      created = await createAssetViaGate(store, input, { skipIdenticalBytes: true, excludeProjectRoot: true });
-    } catch (error) {
-      if (error?.code === "IMAGE_PATH_NOT_READABLE") {
-        error.message = `${error.message} To import from that folder, use the asset_import_folder tool (the user will be asked to confirm), or ask the user to drag the image into GravityPort.`;
+    let trustedSourceRoots;
+    if (typeof input.imagePath === "string" && isAbsolute(input.imagePath)) {
+      try {
+        const realFile = await realpath(input.imagePath);
+        trustedSourceRoots = [dirname(realFile)];
+      } catch {
+        // Missing files or broken paths fail inside createAssetViaGate with
+        // the existing store error (e.g. IMAGE_PATH_NOT_FOUND).
       }
-      throw error;
     }
+    const created = await createAssetViaGate(store, input, {
+      skipIdenticalBytes: true,
+      excludeProjectRoot: true,
+      ...(trustedSourceRoots ? { trustedSourceRoots } : {}),
+    });
     if (!created.ok) {
       if (created.skipped.reason !== "already-in-library") throw created.error;
       const located = created.skipped.existingAsset?.id
@@ -837,7 +790,7 @@ async function handleToolCall(id, params) {
     return;
   }
   if (params?.name === TOOL_ASSET_IMPORT_FOLDER) {
-    sendResult(id, await importFolderWithConfirmation(args));
+    sendResult(id, await importFolder(args));
     return;
   }
   if (params?.name === TOOL_ASSET_LIST) {
@@ -1080,18 +1033,9 @@ async function handleRequest(message) {
   // get a response; none of them needs handling here.
   if (!Object.hasOwn(message, "id")) return;
   if (method === "initialize") {
-    // The client advertises elicitation support with an `elicitation` object
-    // ({} or one carrying form/url both count). Task 284 sampled this from
-    // Codex 0.146.0 and Claude Code 2.1.309; Claude Code probes
-    // server/discover first and falls back to initialize after -32601, which
-    // the fallthrough below keeps answering the same way.
-    clientSupportsElicitation = Boolean(
-      params?.capabilities?.elicitation
-      && typeof params.capabilities.elicitation === "object",
-    );
     sendResult(id, {
       protocolVersion: params?.protocolVersion || "2025-11-25",
-      capabilities: { tools: {}, elicitation: {} },
+      capabilities: { tools: {} },
       serverInfo: { name: "GravityPort MCP", version: MCP_SERVER_VERSION },
       instructions: "Save generated images with the effective prompt, distinct user prompt when available, negative constraints, reference hashes, and generation provenance. GravityPort records immutable recipe snapshots automatically. Use generation_record for each distinct generation occurrence, even when its output asset was deduplicated; use generation_relation_record only for evidence-backed parent relationships, and generation_lineage to read the resulting graph. provider_verified is reserved for trusted GravityPort provider integrations and cannot be asserted by ordinary MCP callers. Use asset_version_create only for explicit asset-version workflows."
     });
@@ -1106,6 +1050,23 @@ async function handleRequest(message) {
     return;
   }
   if (method === "tools/call") {
+    // No library yet (GravityPort never opened, drive unplugged): try again on
+    // every call, so opening the App is enough and the assistant need not restart.
+    let unavailable;
+    try {
+      unavailable = await ensureLibraryOpen();
+    } catch (error) {
+      sendError(id, -32603, error.message);
+      return;
+    }
+    if (unavailable) {
+      sendResult(id, {
+        content: [{ type: "text", text: unavailable.message }],
+        isError: true,
+        structuredContent: { error: { code: unavailable.code, message: unavailable.message } },
+      });
+      return;
+    }
     // Moving the library in the desktop copies it and deletes the original.
     // This process still holds the old location, so refuse instead of
     // reading or writing a library that is gone; a restart follows the move.
@@ -1157,20 +1118,6 @@ async function handleRequest(message) {
     }
     return;
   }
-  // Replies to server-initiated requests (elicitation) arrive as messages with
-  // an id but no method — the shape that used to fall through to "Method not
-  // found". Hand the reply to the waiting tool call, or drop it silently when
-  // nobody waits anymore (a late reply after the timeout).
-  if (method === undefined) {
-    if (typeof id === "string" && id.startsWith(ELICITATION_ID_PREFIX)) {
-      const pending = pendingElicitations.get(id);
-      if (pending) {
-        pendingElicitations.delete(id);
-        pending.resolve(message);
-      }
-      return;
-    }
-  }
   sendError(id, -32601, `Method not found: ${method}`);
 }
 
@@ -1196,13 +1143,6 @@ async function handleLine(line) {
   }
 }
 rl.on("close", () => {
-  // stdin is gone: no elicitation reply can ever arrive. Settle the waiting
-  // tool calls now (they answer IMPORT_NOT_CONFIRMED) instead of letting them
-  // hold the process open until the timeout.
-  for (const [elicitationId, pending] of pendingElicitations) {
-    pendingElicitations.delete(elicitationId);
-    pending.resolve(null);
-  }
   void Promise.allSettled([...inFlightRequests]).then(() => closeDirectStore());
 });
 for (const signal of ["SIGINT", "SIGTERM"]) {

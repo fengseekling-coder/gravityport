@@ -94,9 +94,9 @@ describe("trashReasonNotice (inspector-info)", () => {
 
   it("maps the two known codes to their notice text", () => {
     const replaced = inspectorInfoModule.trashReasonNotice(assetWith({ trash_reason: { code: "replaced-by-better-version", at: "2026-10-28T10:00:00.000Z" } }));
-    assert.equal(replaced?.text, "已被同一张图的更清晰版本替换");
+    assert.equal(replaced?.text, "已被同一素材的更高分辨率版本替换");
     const jimeng = inspectorInfoModule.trashReasonNotice(assetWith({ trash_reason: { code: "provider-deleted:jimeng", at: "2026-10-28T10:00:00.000Z" } }));
-    assert.equal(jimeng?.text, "因在即梦网站中删除而移入回收站");
+    assert.equal(jimeng?.text, "已在即梦网站删除，同步移到回收站");
   });
 
   it("stays silent for unknown codes and live assets", () => {

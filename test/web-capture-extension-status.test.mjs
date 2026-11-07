@@ -217,18 +217,18 @@ test("version compare: lower, equal, higher, missing, non-numeric", () => {
   assert.equal(card.compareExtensionVersions("0.15.37-beta", "0.15.37"), null);
 });
 
-test("loading state shows 加载中 and neither verdict", () => {
+test("loading state shows 正在加载… and neither verdict", () => {
   const html = renderCard({ status: undefined });
-  assert.match(html, /加载中/);
+  assert.match(html, /正在加载…/);
   assert.doesNotMatch(html, /已连接/);
-  assert.doesNotMatch(html, /没有连接/);
+  assert.doesNotMatch(html, /未连接/);
 });
 
 test("not connected shows the verdict, the install guidance, and the download link", () => {
   const html = renderCard({ active: false });
-  assert.match(html, /没有连接/);
-  assert.match(html, /去官网安装浏览器扩展/);
-  assert.match(html, /发现新图时自动入库/);
+  assert.match(html, /未连接/);
+  assert.match(html, /前往官网安装浏览器扩展/);
+  assert.match(html, /「自动收录」/);
   assert.match(html, new RegExp(String.raw`href="${card.DOWNLOAD_PAGE_URL.replace(/[/.#]/g, "\\$&")}"`));
   assert.doesNotMatch(html, /扩展版本/);
 });
@@ -264,8 +264,8 @@ test("equal or newer extension versions, a missing bundled version, or a missing
   for (const html of renders) {
     assert.doesNotMatch(html, /有新版扩展/);
   }
-  // A connected extension that never sent a version shows 未记录, no hint.
-  assert.match(renders[3], /未记录/);
+  // A connected extension that never sent a version shows 未知, no hint.
+  assert.match(renders[3], /未知/);
 });
 
 test("the version row hides again once the extension is no longer active", () => {
@@ -273,7 +273,7 @@ test("the version row hides again once the extension is no longer active", () =>
     active: false,
     status: bridgeStatus({ lastExtensionVersion: "0.15.36", lastIngestAt: "2026-10-23T10:00:00.000Z" }),
   });
-  assert.match(html, /没有连接/);
+  assert.match(html, /未连接/);
   assert.doesNotMatch(html, /扩展版本/);
 });
 
@@ -282,9 +282,9 @@ test("pending > 0 shows the count and the retry button; pending 0 shows neither"
     active: true,
     status: bridgeStatus({ queue: { reportedAt: "2026-10-23T11:59:00.000Z", pending: 2, failed: 0, items: [] } }),
   });
-  assert.match(withPending, /等待重试 2 张/);
+  assert.match(withPending, /2 个素材等待重试/);
   assert.match(withPending, />重试</);
-  assert.doesNotMatch(withPending, /已让扩展重试/);
+  assert.doesNotMatch(withPending, /已请求重试/);
 
   const withoutPending = renderCard({
     active: true,
@@ -299,7 +299,7 @@ test("a completed retry shows the confirmation", () => {
     retried: true,
     status: bridgeStatus({ queue: { reportedAt: "2026-10-23T11:59:00.000Z", pending: 2, failed: 0, items: [] } }),
   });
-  assert.match(html, /已让扩展重试/);
+  assert.match(html, /已请求重试/);
 });
 
 test("lastError is shown once, capped at 120 characters", () => {
@@ -337,9 +337,9 @@ test("English rendering contains no Chinese characters in any state", () => {
   assert.match(pieces[2], /Connected/);
   assert.match(pieces[2], /Extension version/);
   assert.match(pieces[2], /A newer extension is available/);
-  assert.match(pieces[2], /2 waiting to retry/);
+  assert.match(pieces[2], /2 assets waiting to retry/);
   assert.match(pieces[2], /Last error/);
-  assert.match(pieces[3], /Asked the extension to retry/);
+  assert.match(pieces[3], /Retry requested/);
 });
 
 test("refresh stays enabled after the promise settles (no stuck disabled state)", async () => {
@@ -353,12 +353,12 @@ test("refresh stays enabled after the promise settles (no stuck disabled state)"
 test("the deletion sync switch renders loaded, unknown and failing states (task 258)", () => {
   // Loaded: the shared settings switch, on, with the exact task copy and the keep note.
   const enabled = renderCard({});
-  assert.match(enabled, /即梦站内删除作品时，同步移进回收站/);
-  assert.match(enabled, /在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动/);
+  assert.match(enabled, /同步即梦中的删除/);
+  assert.match(enabled, /在即梦网站中删除的作品，对应素材将移到回收站。在 GravityPort 中收藏、评分、分组或加了标签的素材不会被移动。/);
   assert.match(enabled, /class="settings-switch enabled"/);
   assert.match(enabled, /role="switch"/);
   assert.match(enabled, /aria-checked="true"/);
-  assert.doesNotMatch(enabled, /同步设置保存失败/);
+  assert.doesNotMatch(enabled, /无法保存同步设置/);
 
   // Still loading: the switch is visible but disabled and off — it decides
   // trash moves, so it must never show a guessed state.
@@ -372,12 +372,12 @@ test("the deletion sync switch renders loaded, unknown and failing states (task 
   assert.match(saving, /aria-checked="true"/);
 
   // A failed save surfaces the error line next to the switch.
-  assert.match(renderCard({ deletionSyncError: true }), /同步设置保存失败/);
+  assert.match(renderCard({ deletionSyncError: true }), /无法保存同步设置/);
 
   // English rendering of the new copy.
   const english = renderCard({ language: "en" });
-  assert.match(english, /Move Jimeng deletions to Trash/);
-  assert.match(english, /Assets you favorited, rated, grouped, or tagged in GravityPort are not moved\./);
+  assert.match(english, /Sync Jimeng deletions/);
+  assert.match(english, /Assets deleted on the Jimeng website are moved to Trash. Assets favorited, rated, grouped, or tagged in GravityPort are not moved./);
 });
 
 // ---- Task 310: offline-queue storage diagnostics ----
@@ -465,9 +465,9 @@ test("the three storage hints appear only when their condition holds", () => {
 
   // Nearly full (>= 90%), evicted and url-only each show their own line.
   const withHints = full();
-  assert.match(withHints, /扩展的离线空间快满了（已用 480MB \/ 512MB），打开 GravityPort 后会自动补收/);
-  assert.match(withHints, /有 2 张因离线空间不足只保留了网址或被移除，网址过期后可能收不回来/);
-  assert.match(withHints, /3 张只存了网址，网址过期后可能收不回来/);
+  assert.match(withHints, /浏览器扩展的离线空间即将用尽（已用 480MB \/ 512MB）。GravityPort 打开后将自动收录暂存的素材。/);
+  assert.match(withHints, /2 个素材因离线空间不足，仅保留了网址或已被移除。网址过期后可能无法收录。/);
+  assert.match(withHints, /3 个素材仅保存了网址。网址过期后可能无法收录。/);
 
   // Under 90% the fullness line hides; zero counters hide their lines.
   const calm = full({ storageBytes: 100 * 1024 * 1024, evicted: 0, urlOnly: 0 });
@@ -477,7 +477,7 @@ test("the three storage hints appear only when their condition holds", () => {
 
   // Exactly at 90% counts as nearly full.
   const exact = full({ storageBytes: Math.round(512 * 1024 * 1024 * 0.9) });
-  assert.match(exact, /离线空间快满了（已用 461MB \/ 512MB）/);
+  assert.match(exact, /离线空间即将用尽（已用 461MB \/ 512MB）/);
 
   // Rounding: 0.4MB up and 0.4MB down both show as whole MB.
   const rounding = full({ storageBytes: 512 * 1024 * 1024 - 419 * 1024 });
@@ -506,8 +506,8 @@ test("the storage hints render in English without leaking Chinese", () => {
     status: bridgeStatus({ queue: QUEUE_WITH_HINTS }),
   });
   // React escapes the apostrophe in static markup (\&#x27;).
-  assert.match(html, /The extension&#x27;s offline storage is nearly full \(using 480MB \/ 512MB\)/);
-  assert.match(html, /2 captures kept only their URL or were dropped because offline storage ran out/);
-  assert.match(html, /3 captures stored only a URL/);
+  assert.match(html, /The extension’s offline storage is almost full \(480MB of 512MB used\)/);
+  assert.match(html, /2 captures were kept as URLs only or removed because offline storage ran out./);
+  assert.match(html, /3 captures were saved as URLs only./);
   assert.doesNotMatch(html, /[一-鿿]/, `Chinese leaked into EN render: ${html.slice(0, 400)}`);
 });

@@ -157,11 +157,67 @@ export async function run(ctx) {
       if (!layout.sidebarScroll) throw new Error("sidebar did not overflow; the fixture no longer reproduces the squeeze");
     });
 
+    // The 40-group setup above journals ~80 library changes; while that
+    // stream is still arriving the sidebar re-renders continuously, and a
+    // trusted click measured mid-stream can land on a node that a re-render
+    // replaces before mouseReleased (352: this step lost its click on macOS
+    // and Windows CI in the same run, then every later step passed). Wait for
+    // the library to go quiet first, then retry the trusted click the way the
+    // sort-menu step below does — the assertions themselves never move.
+    const waitForLibraryQuiet = async (label) => {
+      const deadline = Date.now() + 30000;
+      let lastRevision = null;
+      let stableSince = Date.now();
+      for (;;) {
+        if (Date.now() >= deadline) throw new Error(`library never went quiet before ${label}`);
+        const { revision } = await ctx.api(origin, "GET", "/api/library-revision?project=default");
+        if (revision !== lastRevision) { lastRevision = revision; stableSince = Date.now(); }
+        else if (Date.now() - stableSince >= 1500) { await sleep(300); return; }
+        await sleep(250);
+      }
+    };
+    const trustedClickWithRetry = async (elementExpression, waitExpression, label) => {
+      let lastError = null;
+      for (let round = 1; round <= 4; round += 1) {
+        try {
+          await clickCenter(cdp, elementExpression);
+          await waitFor(cdp, waitExpression, label, 2500);
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      // 352 diagnostics on the final failure: a lost click shows as few or no
+      // trusted click events and/or another element under the measured point;
+      // a delivered click that changes nothing points at the app instead.
+      const point = await centerOf(cdp, elementExpression).catch(() => null);
+      const probeExpression = "(() => {"
+        + " const nav = document.querySelector('.nav-row[aria-current=\"page\"]');"
+        + " const rect = nav ? nav.getBoundingClientRect() : null;"
+        + " const el = document.elementFromPoint(" + (point ? `${point.x}, ${point.y}` : "-1, -1") + ");"
+        + " const trusted = {};"
+        + " for (const e of window.__inputLog) { if (e.trusted) trusted[e.type] = (trusted[e.type] || 0) + 1; }"
+        + " return JSON.stringify({"
+        + " active: nav ? nav.getAttribute('aria-label') : 'none',"
+        + " navRect: rect ? [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)] : null,"
+        + " elementAtPoint: el ? (el.className || el.tagName) : 'none',"
+        + " trustedEvents: trusted,"
+        + " });"
+        + "})()";
+      const probe = await cdp.evaluate(probeExpression).catch(() => "probe failed");
+      throw new Error(`${label} after 4 trusted-click rounds: ${lastError?.message || "unknown"}; probe=${probe}`);
+    };
+
     await step("trusted click switches nav to 收藏 and back to 所有素材", trusted(async () => {
-      await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="收藏"]')`);
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '收藏'`, "nav 收藏 active");
-      await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="所有素材"]')`);
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "nav 所有素材 active");
+      await waitForLibraryQuiet("the trusted nav click");
+      await trustedClickWithRetry(
+        `document.querySelector('.nav-row[aria-label="收藏"]')`,
+        `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '收藏'`,
+        "nav 收藏 active");
+      await trustedClickWithRetry(
+        `document.querySelector('.nav-row[aria-label="所有素材"]')`,
+        `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`,
+        "nav 所有素材 active");
     }));
 
     await step("trusted click selects a card and updates the inspector", trusted(async () => {

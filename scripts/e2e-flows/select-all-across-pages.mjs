@@ -90,14 +90,14 @@ function selectAllSource() {
     await sleep(1800);
     // Cancel means the batch commit never happened: at most the design's
     // implicit single-card ring remains (a background SSE refresh re-lands
-    // it), and no "已选 N 项" announcement is ever made.
+    // it), and no "已选择 {count} 项" announcement is ever made.
     await waitFor(() => selectedCount() <= 1 && loadedCount() === ${PAGE_SIZE}
-      && !(document.querySelector('.toast')?.textContent || '').includes('已选'), 'cancel kept the batch from committing');
+      && !(document.querySelector('.toast')?.textContent || '').includes('已选择'), 'cancel kept the batch from committing');
     const cancelKeptEmpty = selectedCount() <= 1;
 
     // ── 2) Real cross-page select-all over 340 assets ──
     pressSelectAll();
-    await waitFor(() => (document.querySelector('.toast')?.textContent || '').trim() === '已选 ${TOTAL} 项',
+    await waitFor(() => (document.querySelector('.toast')?.textContent || '').trim() === '已选择 ${TOTAL} 项',
       'select-all announces the full result');
     const allSelected = selectedCount() > 0
       && selectedCount() === mountedCards().length
@@ -122,7 +122,7 @@ function selectAllSource() {
       }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     pressSelectAll();
-    await waitFor(() => (document.querySelector('.toast')?.textContent || '').trim() === '结果过大，已选前 50000 项',
+    await waitFor(() => (document.querySelector('.toast')?.textContent || '').trim() === '已选择前 50000 项。已达选择上限。',
       'the page cap announces a truncated selection instead of a completed select-all');
     window.fetch = window.__origFetch;
     const capTruncationAnnounced = true;
@@ -144,7 +144,7 @@ function selectAllSource() {
     const tokenHeaders = { 'x-mosa-client-token': sessionStorage.getItem('mosa.client-token') || '' };
     const probe = await window.__origFetch('/api/assets?project=default&limit=1', { headers: tokenHeaders }).then((r) => r.json());
     await window.__origFetch('/api/assets/default/' + probe.assets[0].id + '/favorite', { method: 'POST', headers: tokenHeaders });
-    await waitFor(() => (document.querySelector('.toast')?.textContent || '').trim() === '已选 ${TOTAL} 项',
+    await waitFor(() => (document.querySelector('.toast')?.textContent || '').trim() === '已选择 ${TOTAL} 项',
       'select-all survives a background refresh mid-flight');
     window.fetch = window.__origFetch;
     await sleep(400);
@@ -153,12 +153,12 @@ function selectAllSource() {
     mountedCards()[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 600, clientY: 400 }));
     await waitFor(() => document.querySelector('.context-menu'), 'context menu on the selection');
     const item = Array.from(document.querySelectorAll('.context-menu button'))
-      .find((entry) => entry.textContent.trim() === '移至回收站');
+      .find((entry) => entry.textContent.trim() === '移到回收站');
     if (!item) throw new Error('missing batch trash menu item');
     item.click();
     await waitFor(() => Boolean(document.querySelector('[role="alertdialog"]')), 'batch delete confirm');
     const confirm = Array.from(document.querySelectorAll('[role="alertdialog"] button'))
-      .find((button) => button.textContent.trim() === '移至回收站');
+      .find((button) => button.textContent.trim() === '移到回收站');
     confirm.click();
     await waitFor(() => navSmall('回收站') === String(${TOTAL}), 'batch trash count reaches the server');
 

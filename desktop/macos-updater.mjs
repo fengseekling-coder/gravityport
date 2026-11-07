@@ -342,17 +342,22 @@ EXECUTABLE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PAYLO
 [ "$EXECUTABLE_NAME" = "$EXEC_NAME" ]
 "$CODESIGN_BIN" --verify --deep --strict "$PAYLOAD_APP"
 PAYLOAD_CODESIGN=$("$CODESIGN_BIN" -dv --verbose=4 "$PAYLOAD_APP" 2>&1)
-if [ "$EXPECTED_DISTRIBUTION" = "production" ]; then
-  OLD_TEAM=$("$CODESIGN_BIN" -dv --verbose=4 "$INSTALL_APP" 2>&1 | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)
-  if [ "$OLD_TEAM" = "not set" ]; then OLD_TEAM=""; fi
-  NEW_TEAM=$(printf '%s\n' "$PAYLOAD_CODESIGN" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)
+OLD_TEAM=$("$CODESIGN_BIN" -dv --verbose=4 "$INSTALL_APP" 2>&1 | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)
+if [ "$OLD_TEAM" = "not set" ]; then OLD_TEAM=""; fi
+NEW_TEAM=$(printf '%s\n' "$PAYLOAD_CODESIGN" | /usr/bin/sed -n 's/^TeamIdentifier=//p' | /usr/bin/head -n 1)
+if [ "$NEW_TEAM" = "not set" ]; then NEW_TEAM=""; fi
+
+if [ -n "$OLD_TEAM" ]; then
   [ -n "$EXPECTED_TEAM_IDENTIFIER" ]
+  [ "$NEW_TEAM" = "$OLD_TEAM" ]
+fi
+
+if [ -n "$EXPECTED_TEAM_IDENTIFIER" ]; then
   [ "$NEW_TEAM" = "$EXPECTED_TEAM_IDENTIFIER" ]
-  if [ -n "$OLD_TEAM" ]; then
-    [ "$NEW_TEAM" = "$OLD_TEAM" ]
-  fi
   printf '%s\n' "$PAYLOAD_CODESIGN" | /usr/bin/grep -q 'flags=.*runtime'
   "$SPCTL_BIN" -a -vv --type execute "$PAYLOAD_APP"
+elif [ "$EXPECTED_DISTRIBUTION" = "production" ]; then
+  false
 else
   [ "$EXPECTED_DISTRIBUTION" = "preview" ]
 fi

@@ -444,6 +444,38 @@
     return !response || (response.ok === false && response.retryable === true);
   }
 
+
+// 任务 359（EXT-43/46）：后台与服务端的英文原文只进诊断；上屏前按已知原句
+// 映射成统一文案，认不出的原样返回。与 content.js 的同名函数保持一致。
+function friendlyCaptureError(message) {
+  const text = String(message || "");
+  const rules = [
+    [/\(网址已过期\)|链接已过期/, "无法下载：链接已过期，请刷新页面后重试"],
+    [/blob\/img fetch failed|Image download failed|Failed to download image|Downloaded image empty\/too small/, "无法保存图片：下载未完成"],
+    [/Failed to download video|Downloaded video empty\/too small|Recorded media empty\/too small/, "无法保存视频：下载未完成"],
+    [/exceeds GravityPort capture size limit|exceeds the supported size limit/, "无法保存：文件超过 GravityPort 的大小上限"],
+    [/Unsupported media host|Unsupported media URL protocol|Invalid media URL/, "无法保存：不支持该网站的媒体链接"],
+    [/Unsupported web (image|video) provider|Unsupported web capture provider/, "无法保存：不支持此网站"],
+    [/Capture metadata is too large|request body exceeds|media exceeds/, "无法保存：附带信息过大"],
+    [/Midjourney original/, "无法保存：未获取到原图"],
+    [/Unauthorized web capture token/, "无法保存：与 GravityPort 的连接已失效，请重新打开 GravityPort 后重试"],
+    [/Web capture is disabled until/, "无法保存：GravityPort 未启用浏览器扩展收录"],
+    [/Image exceeds 15 MiB limit/, "无法保存：图片超过 15 MB 上限"],
+    [/Video exceeds 96 MiB limit/, "无法保存：视频超过 96 MB 上限"],
+    [/Image exceeds \d+ pixel limit/, "无法保存：图片尺寸超过上限"],
+    [/Image bytes are invalid/, "无法保存：图片数据无效或不完整"],
+    [/Web capture is busy/, "GravityPort 正忙，请稍后重试"],
+    [/GravityPort returned non-JSON \((\d+)\)/, "无法保存：GravityPort 返回了无法识别的内容（HTTP $1）。请更新 GravityPort 后重试。"],
+    [/GravityPort ingest failed \((\d+)\)/, "无法保存：GravityPort 返回错误（HTTP $1）"],
+    [/Canvas encoding failed/, "无法保存：无法处理该图片"],
+    [/Unsupported data URL/, "无法保存：不支持的图片格式"],
+    [/Unknown extension error/, "无法保存：扩展出现未知错误"],
+  ];
+  for (const [pattern, replacement] of rules) {
+    if (pattern.test(text)) return text.replace(pattern, replacement);
+  }
+  return text;
+}
   function showToast(message, isError = false, durationMs = 3600) {
     let toast = document.getElementById("mosa-provider-capture-toast");
     if (!toast) {
@@ -486,7 +518,7 @@
     scanTimer = null;
     if (scanInterval) clearInterval(scanInterval);
     scanInterval = null;
-    showToast("GravityPort 扩展已更新，请刷新此网页恢复自动收录。", true, 0);
+    showToast("扩展已更新，请刷新此页面以继续收录", true, 0);
   }
 
   async function withCaptureSlot(task) {
@@ -921,7 +953,7 @@
           });
           if (learned?.record?.referenceUrls?.length) await captureRecordReferences(learned.record);
           const response = await sendIngest(payload);
-          showToast(response?.ok ? "已保存到 GravityPort" : (response?.error || "保存失败"), !response?.ok);
+          showToast(response?.ok ? "已保存到 GravityPort" : friendlyCaptureError(response?.error || "无法保存"), !response?.ok);
           sendResponse(response || { ok: false });
           return;
         }
@@ -945,19 +977,19 @@
           payload.localMediaIdentity = blobUrl;
           payload.durationSeconds = Number.isFinite(Number(blobVideo.duration)) ? Number(blobVideo.duration) : null;
           const result = await sendChunkedVideo(payload, blob);
-          showToast(result?.ok ? "已保存到 GravityPort" : (result?.error || "保存失败"), !result?.ok);
+          showToast(result?.ok ? "已保存到 GravityPort" : friendlyCaptureError(result?.error || "无法保存"), !result?.ok);
           sendResponse(result || { ok: false });
           return;
         }
-        showToast("请选择支持站点中的生成视频。", true);
-        sendResponse({ ok: false, error: "请选择支持站点中的生成视频。" });
+        showToast("无法保存：请在支持的网站上选择生成的视频", true);
+        sendResponse({ ok: false, error: "无法保存：请在支持的网站上选择生成的视频" });
         return;
       }
       const learned = learnedVariantFor("image", clickedUrl);
       const info = mediaUrlInfo(clickedUrl);
       if (!learned && !info) {
-        showToast("请选择支持站点中的生成图片。", true);
-        sendResponse({ ok: false, error: "请选择支持站点中的生成图片。" });
+        showToast("无法保存：请在支持的网站上选择生成的图片", true);
+        sendResponse({ ok: false, error: "无法保存：请在支持的网站上选择生成的图片" });
         return;
       }
       const mediaUrl = learned?.candidate?.url || info.url;
@@ -973,10 +1005,10 @@
       });
       if (learned?.record?.referenceUrls?.length) await captureRecordReferences(learned.record);
       const response = await sendIngest(payload);
-      showToast(response?.ok ? "已保存到 GravityPort" : (response?.error || "保存失败"), !response?.ok);
+      showToast(response?.ok ? "已保存到 GravityPort" : friendlyCaptureError(response?.error || "无法保存"), !response?.ok);
       sendResponse(response || { ok: false });
     })().catch((error) => {
-      const errorText = error instanceof Error ? error.message : String(error);
+      const errorText = friendlyCaptureError(error instanceof Error ? error.message : String(error));
       showToast(errorText, true);
       sendResponse({ ok: false, error: errorText });
     });

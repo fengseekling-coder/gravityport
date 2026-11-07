@@ -1025,6 +1025,9 @@ img.black-image {
 .version-compare-fields > div { display: grid; grid-template-columns: 55px 1fr 1fr; gap: 5px; padding: 6px 0; border-bottom: 1px solid var(--ui-line); word-break: break-word; }
 .version-compare-fields > div.changed { border-left: 2px solid var(--ui-accent); padding-left: 5px; }
 .version-compare-fields strong, .version-compare-fields span { font-size: 11px; font-weight: 400; }
+/* 任务 363：英文标签比中文长，55px 会把 Dimensions、User instruction 从词中间拆开（Dimension / s、instructio / n）。
+   英文界面标签列放宽到 68px，放得下最长的单词，长标签在空格处折行；中文界面不变。 */
+html[lang="en"] .version-compare-fields > div { grid-template-columns: 68px 1fr 1fr; }
 .app .asset-card::after {
   content: "";
   position: absolute;

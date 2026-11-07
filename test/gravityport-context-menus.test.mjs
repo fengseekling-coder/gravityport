@@ -75,6 +75,15 @@ function assertNoBadSeparators(entries, label) {
 // Asset menu
 // ---------------------------------------------------------------------------
 
+  it("export item: single keeps 导出…, multi-select hides it (task 359)", () => {
+    const single = buildContextMenu(baseCtx({ selectionCount: 1 }));
+    const renamed = findItem(single, "export");
+    assert.ok(renamed, "single selection keeps the export item");
+    assert.equal(renamed.label, "导出…");
+    const multi = buildContextMenu(baseCtx({ selectionCount: 2 }));
+    assert.ok(!itemIds(multi).includes("export"), "multi-selection hides the export item");
+  });
+
 describe("context-menus / asset menu", () => {
   it("single asset: exact entry order and separator positions", () => {
     const entries = buildContextMenu(baseCtx());
@@ -89,7 +98,7 @@ describe("context-menus / asset menu", () => {
       "|",
       "move-to-trash",
     ]);
-    // 「在查看器中打开」 carries the Enter icon and 「移至回收站」 the danger
+    // 「在查看器中打开」 carries the Enter icon and 「移到回收站」 the danger
     // styling, same as the menu it replaces.
     const viewer = findItem(entries, "open-viewer");
     assert.equal(viewer.icon, "external");
@@ -106,12 +115,12 @@ describe("context-menus / asset menu", () => {
   it("multi-select: heading first, no open section, copy section copies files and paths", () => {
     const entries = buildContextMenu(baseCtx({ selectionCount: 3 }));
     const ids = idList(entries);
-    assert.equal(ids[0], "HEAD:已选 {count} 项", "heading with {count} placeholder comes first");
+    assert.equal(ids[0], "HEAD:已选择 {count} 项", "heading with {count} placeholder comes first");
     assert.equal(ids[1], "|", "one separator after the heading");
     assert.ok(!ids.includes("open-viewer"), "multi-select has no viewer section");
     assert.deepEqual(ids.slice(2, 6), ["copy-image", "cut", "copy-path", "|"],
       "multi-select copy section: 复制图片, 剪切, 复制路径 (no 复制提示词)");
-    assert.ok(ids.includes("HEAD:已选 {count} 项"));
+    assert.ok(ids.includes("HEAD:已选择 {count} 项"));
   });
 
   it("multi-select with stacks keeps 复制图片 and 复制路径 (stacks expand to members)", () => {
@@ -158,28 +167,28 @@ describe("context-menus / asset menu", () => {
     assert.notEqual(findItem(plain, "cut").disabled, true);
   });
 
-  it("移除分组 greys out without grouped assets and enables with one", () => {
+  it("移出分组 greys out without grouped assets and enables with one", () => {
     const disabled = findItem(buildContextMenu(baseCtx({ anyGrouped: false })), "remove-from-group");
     assert.equal(disabled.disabled, true);
     const enabled = findItem(buildContextMenu(baseCtx({ anyGrouped: true })), "remove-from-group");
     assert.notEqual(enabled.disabled, true);
   });
 
-  it("添加分组 submenu: 新建分组并移入 first, then every group; no groups → only the create entry", () => {
+  it("移到分组 submenu: 用所选素材新建分组 first, then every group; no groups → only the create entry", () => {
     const withGroups = findItem(buildContextMenu(baseCtx({
       groups: [{ name: "Group A", color: "#ff0000" }, { name: "Group B" }],
     })), "add-to-group");
     assert.ok(withGroups.submenu, "add-to-group carries a submenu");
     const submenuIds = idList(withGroups.submenu);
     assert.deepEqual(submenuIds, ["add-to-group:create", "|", "add-to-group:Group A", "add-to-group:Group B"]);
-    assert.equal(withGroups.submenu[0].label, "新建分组并移入");
+    assert.equal(withGroups.submenu[0].label, "用所选素材新建分组…");
     assert.equal(withGroups.submenu[2].label, "Group A");
     assert.equal(withGroups.submenu[2].color, "#ff0000", "group entries carry the color for the dot");
     assert.equal(withGroups.submenu[3].color, undefined, "uncolored groups leave the color empty (UI picks the fallback)");
 
     const withoutGroups = findItem(buildContextMenu(baseCtx()), "add-to-group");
     assert.deepEqual(idList(withoutGroups.submenu), ["add-to-group:create"]);
-    assert.equal(withoutGroups.submenu[0].label, "新建分组并移入");
+    assert.equal(withoutGroups.submenu[0].label, "用所选素材新建分组…");
   });
 
   it("select-all shortcut follows the platform and greys out on an empty page", () => {
@@ -233,7 +242,7 @@ describe("context-menus / stack card menu", () => {
   it("stack group submenu mirrors the asset one", () => {
     const addGroup = findItem(entries({ groups: [{ name: "G1" }] }), "stack-add-to-group");
     assert.deepEqual(idList(addGroup.submenu), ["stack-add-to-group:create", "|", "stack-add-to-group:G1"]);
-    assert.equal(addGroup.submenu[0].label, "新建分组并移入");
+    assert.equal(addGroup.submenu[0].label, "用所选素材新建分组…");
   });
 });
 
@@ -309,7 +318,7 @@ describe("context-menus / trash scope", () => {
   it("multi-select: heading with {count}, no 在查看器中打开, counted labels", () => {
     const entries = buildContextMenu(trashCtx({ selectionCount: 2 }));
     const ids = idList(entries);
-    assert.equal(ids[0], "HEAD:已选 {count} 项", "heading comes first");
+    assert.equal(ids[0], "HEAD:已选择 {count} 项", "heading comes first");
     assert.equal(ids[1], "|", "one separator after the heading");
     assert.ok(!ids.includes("open-viewer"), "multi-select has no viewer entry");
     assert.equal(findItem(entries, "restore-selection").label, "恢复 {count} 个素材");
@@ -402,5 +411,38 @@ describe("buildGroupMenu (sidebar 我的分组)", () => {
     const lone = buildGroupMenu(groupCtx({ index: 0, groupCount: 1, exporting: true }));
     assert.ok(!itemIds(lone).includes("group-merge"));
     assert.equal(lone.find((e) => e.id === "group-export").disabled, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 任务 359 返工 1（MENU-03b）：分组名是用户起的名字，条目必须带 raw: true，
+// translateMenuEntries 原样保留（不翻译、不填 {count}）。
+// ---------------------------------------------------------------------------
+
+describe("context-menus / raw group-name entries", () => {
+  it("group entries carry raw: true and keep the user's name verbatim (收藏, {count} 组)", () => {
+    const submenu = findItem(buildContextMenu(baseCtx({
+      groups: [{ name: "收藏", color: "#ff0000" }, { name: "{count} 组" }],
+    })), "add-to-group").submenu;
+
+    const favorite = findItem(submenu, "add-to-group:收藏");
+    assert.equal(favorite.raw, true, "「收藏」 is a user-chosen name, not a translation key");
+    assert.equal(favorite.label, "收藏", "label kept verbatim (would otherwise render Favorites)");
+    assert.equal(favorite.color, "#ff0000", "the color dot still rides along");
+
+    const countish = findItem(submenu, "add-to-group:{count} 组");
+    assert.equal(countish.raw, true, "「{count} 组」 must not get its placeholder filled");
+    assert.equal(countish.label, "{count} 组", "placeholder kept verbatim");
+
+    assert.notEqual(findItem(submenu, "add-to-group:create").raw, true, "fixed labels stay translatable");
+  });
+
+  it("the stack card 移到分组 submenu mirrors the same raw flag", () => {
+    const submenu = findItem(buildContextMenu(baseCtx({
+      target: "stack",
+      groups: [{ name: "收藏" }],
+    })), "stack-add-to-group").submenu;
+    assert.equal(findItem(submenu, "stack-add-to-group:收藏").raw, true);
+    assert.equal(findItem(submenu, "stack-add-to-group:收藏").label, "收藏");
   });
 });

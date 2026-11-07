@@ -1,8 +1,13 @@
 name: Desktop packaging
 
-# Slow macOS / Windows jobs (e2e, packaging, installer rehearsal; ~10 and ~22 min).
-# They run only when packaging-related files change, nightly on main,
+# Slow macOS / Windows jobs (e2e, packaging, installer rehearsal). They run
+# only when packaging-related files change, nightly on main,
 # or by hand before a release. They are not required for merging.
+# 352: e2e runs as two name-sharded jobs per platform
+# (`node scripts/e2e-critical-flows.mjs --shard k/2`, split documented there);
+# packaging, packaged smoke, and the installer rehearsal still run once per
+# platform. Failed runs upload their logs, the e2e verdict JSON, and the
+# flow screenshots for 7 days.
 
 on:
   pull_request:
@@ -47,46 +52,229 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch:
 
+# Jobs here upload artifacts and run packaged apps but never write back to
+# the repository, so the workflow token stays read-only (352 建5).
+permissions:
+  contents: read
+
+# A new push to the same pull request supersedes its previous run. Main
+# pushes, the nightly schedule, and manual runs are not cancelled
+# (352 建5): cancel-in-progress only turns on for pull_request events.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  desktop-macos:
+  desktop-macos-e2e:
+    name: desktop-macos e2e (shard ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/2", "2/2"]
     runs-on: macos-15
+    # The full e2e set measured 11m36s green (run 41523626448) and ~10m on a
+    # faster day; each shard carries about half of it, so 25 leaves >2x
+    # headroom over the slowest observed pace (352 建5).
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Cache Electron binaries
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
       - run: npm ci
       - run: node -e "require('electron')"
       - run: node -e "if (process.arch !== 'arm64') throw new Error('Expected arm64 macOS runner')"
-      - run: node --test test/desktop-packaging.test.mjs test/electron-preload-runtime-contract.test.mjs
+      - name: Run e2e shard ${{ matrix.shard }}
         env:
-          MOSA_ELECTRON_PRELOAD_SMOKE: "1"
-      - run: npm run test:e2e
-      - run: npm run desktop:package
-      - run: codesign --verify --deep --strict --verbose=2 out/GravityPort-darwin-arm64/GravityPort.app
-      - run: npm run qa:packaged:smoke
+          MOSA_E2E_RESULT_FILE: ${{ github.workspace }}/e2e-verdict.json
+        run: |
+          set -o pipefail
+          npm run test:e2e -- --shard ${{ matrix.shard }} 2>&1 | tee e2e-output.log
+      - name: Collect e2e failure artifacts
+        if: failure()
+        run: |
+          mkdir -p ci-artifacts/screenshots
+          cp e2e-output.log ci-artifacts/ 2>/dev/null || true
+          cp e2e-verdict.json ci-artifacts/ 2>/dev/null || true
+          if [ -d ../tasks/logs ]; then cp -R ../tasks/logs/. ci-artifacts/screenshots/ 2>/dev/null || true; fi
+      - name: Upload e2e failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-macos-${{ matrix.shard }}
+          path: ci-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
 
-  desktop-windows:
+  desktop-windows-e2e:
+    name: desktop-windows e2e (shard ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/2", "2/2"]
     runs-on: windows-2022
+    # The full e2e set measured 17m green on the slowest observed runner
+    # (run 41523626448) and ~10m on a faster one (41643259289); each shard
+    # carries about half of it, so 30 leaves >2x headroom over the slowest
+    # observed pace (352 建5).
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Cache Electron binaries
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~\AppData\Local\electron\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
       - run: npm ci
       - run: node -e "require('electron')"
       - run: node -e "if (process.arch !== 'x64') throw new Error('Expected x64 Windows runner')"
+      - name: Run e2e shard ${{ matrix.shard }}
+        env:
+          MOSA_E2E_RESULT_FILE: ${{ github.workspace }}/e2e-verdict.json
+        shell: pwsh
+        run: |
+          npm run test:e2e -- --shard ${{ matrix.shard }} 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath e2e-output.log
+          exit $LASTEXITCODE
+      - name: Collect e2e failure artifacts
+        if: failure()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ci-artifacts/screenshots | Out-Null
+          foreach ($name in 'e2e-output.log', 'e2e-verdict.json') {
+            if (Test-Path $name) { Copy-Item $name ci-artifacts/ }
+          }
+          if (Test-Path '../tasks/logs') {
+            Copy-Item '../tasks/logs/*' ci-artifacts/screenshots/ -Recurse -ErrorAction SilentlyContinue
+          }
+      - name: Upload e2e failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-windows-${{ matrix.shard }}
+          path: ci-artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  desktop-macos-package:
+    runs-on: macos-15
+    # Green work inside this job is ~1.5 min (npm ci 10s + contract tests 6s
+    # + package 41s + smoke 10s, run 41523626448); 15 leaves ~10x headroom
+    # over that while still bounding a hung packaging run (352 建5).
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Cache Electron binaries
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+      - run: npm ci
+      - run: node -e "require('electron')"
+      - run: node --test test/desktop-packaging.test.mjs test/electron-preload-runtime-contract.test.mjs
+        env:
+          MOSA_ELECTRON_PRELOAD_SMOKE: "1"
+      - name: Package the macOS app
+        run: |
+          set -o pipefail
+          npm run desktop:package 2>&1 | tee package-output.log
+      - run: codesign --verify --deep --strict --verbose=2 out/GravityPort-darwin-arm64/GravityPort.app
+      - name: Packaged smoke
+        run: |
+          set -o pipefail
+          npm run qa:packaged:smoke 2>&1 | tee packaged-smoke-output.log
+      - name: Upload packaging failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-macos
+          path: |
+            package-output.log
+            packaged-smoke-output.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  desktop-windows-package:
+    runs-on: windows-2022
+    # Green work inside this job is ~7 min (npm ci 1m10 + contract tests 17s
+    # + package 38s + smoke 19s + installer 3m34s + rehearsal 44s, run
+    # 41523626448); 20 leaves ~3x headroom (352 建5).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Cache Electron binaries
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~\AppData\Local\electron\Cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+      - run: npm ci
+      - run: node -e "require('electron')"
       - run: node --test test/desktop-packaging.test.mjs test/desktop-platform-adapter.test.mjs test/desktop-runtime-paths.test.mjs test/electron-preload-runtime-contract.test.mjs test/path-safety.test.mjs test/source-locations.test.mjs test/windows-updater.test.mjs test/windows-updater-install-rehearsal.test.mjs test/windows-installer.test.mjs
         env:
           MOSA_ELECTRON_PRELOAD_SMOKE: "1"
-      - run: npm run test:e2e
-      - run: npm run desktop:package:windows
-      - run: npm run qa:packaged:smoke
-      - run: npm run desktop:installer:windows
+      - name: Package the Windows app
+        shell: pwsh
+        run: |
+          npm run desktop:package:windows 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath package-output.log
+          exit $LASTEXITCODE
+      - name: Packaged smoke
+        shell: pwsh
+        run: |
+          npm run qa:packaged:smoke 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath packaged-smoke-output.log
+          exit $LASTEXITCODE
+      - name: Build the Windows installer
+        shell: pwsh
+        run: |
+          npm run desktop:installer:windows 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath installer-output.log
+          exit $LASTEXITCODE
       # Installs the installer just built for the runner's user, then upgrades
-      # and uninstalls it.
-      - run: node --test test/windows-installer-rehearsal.test.mjs
+      # and uninstalls it. The rehearsal captures the installer's own output
+      # and, on a failed install, prints what it left behind (352 中40).
+      - name: Installer rehearsal
+        shell: pwsh
+        run: |
+          node --test test/windows-installer-rehearsal.test.mjs 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath installer-rehearsal-output.log
+          exit $LASTEXITCODE
         env:
           MOSA_WINDOWS_INSTALLER_REHEARSAL: "1"
+      - name: Upload packaging failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-windows
+          path: |
+            package-output.log
+            packaged-smoke-output.log
+            installer-output.log
+            installer-rehearsal-output.log
+          retention-days: 7
+          if-no-files-found: ignore

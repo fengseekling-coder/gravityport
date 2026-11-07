@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -132,12 +133,15 @@ test("a config that still uses the legacy MOSA_LIBRARY_LOCATION_FILE name is hon
     cwd: fixture.clientCwd,
     env: { ...process.env, HOME: fixture.home, MOSA_LIBRARY_LOCATION_FILE: fixture.locationFile },
   });
-  const exit = await server.waitForExit();
-  assert.equal(exit.code, 1);
+  await server.request("initialize", { protocolVersion: "2025-11-25" });
+  const refused = await server.callTool("asset_search", { query: "anything" });
+  assert.equal(refused.structuredContent.error.code, "LIBRARY_NOT_FOUND");
+  assert.match(refused.content[0].text, /No GravityPort library was found at .*Legacy Drive/);
   assert.match(server.stderr, /No GravityPort library was found at .*Legacy Drive/);
+  assert.equal((await stop(server)).code, 0);
 });
 
-test("a location file naming a missing library fails on stderr and keeps stdout clean", async (t) => {
+test("a location file naming a missing library keeps the server up, explains why, and recovers when the drive returns", async (t) => {
   const fixture = await desktopLikeHome(t);
   const missing = join(fixture.root, "Unplugged Drive", "Art Library");
   await writeFile(fixture.locationFile, `${JSON.stringify({ path: missing })}\n`);
@@ -145,12 +149,26 @@ test("a location file naming a missing library fails on stderr and keeps stdout 
   const server = startAsClient(t, fixture);
   let stdout = "";
   server.child.stdout.on("data", (chunk) => { stdout += chunk; });
-  const exit = await server.waitForExit();
-  assert.equal(exit.code, 1);
+  await server.request("initialize", { protocolVersion: "2025-11-25" });
+  assert.equal((await server.request("tools/list")).result.tools.length, TOOL_COUNT);
+  const refused = await server.callTool("asset_search", { query: "lighthouse" });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.structuredContent.error.code, "LIBRARY_NOT_FOUND");
+  assert.match(refused.content[0].text, /没有找到 GravityPort 素材库/);
   assert.match(server.stderr, /No GravityPort library was found at .*Unplugged Drive/);
   assert.match(server.stderr, /没有找到 GravityPort 素材库/);
-  assert.equal(stdout, "");
-  assert.deepEqual(server.responses, []);
+  // stdout carries only protocol messages, and nothing was created at the missing path.
+  for (const line of stdout.split("\n").filter(Boolean)) assert.equal(JSON.parse(line).jsonrpc, "2.0");
+  assert.equal(existsSync(missing), false);
+
+  // The drive is plugged back in: the recorded library is there again and the
+  // same connection uses it without restarting the assistant.
+  await mkdir(missing, { recursive: true });
+  await copyLibraryForRelocation({ sourceLibraryDir: fixture.defaultLibrary, destinationLibraryDir: missing });
+  const imagePath = await writePngFixture(join(missing, "imports", "back.png"), { color: "#305070" });
+  await server.callToolStrict("asset_create", { assetId: "drive-back", imagePath, prompt: "lighthouse after the drive returned" });
+  assert.deepEqual(await searchIds(server, "lighthouse"), ["drive-back"]);
+  assert.equal((await stop(server)).code, 0);
 });
 
 test("an unreadable location file fails closed instead of opening a fresh library", async (t) => {
@@ -158,8 +176,11 @@ test("an unreadable location file fails closed instead of opening a fresh librar
   await writeFile(fixture.locationFile, "not json");
 
   const server = startAsClient(t, fixture);
-  const exit = await server.waitForExit();
-  assert.equal(exit.code, 1);
+  await server.request("initialize", { protocolVersion: "2025-11-25" });
+  const refused = await server.callTool("asset_search", { query: "anything" });
+  assert.equal(refused.isError, true);
+  assert.equal(refused.structuredContent.error.code, "LIBRARY_UNAVAILABLE");
+  assert.match(refused.content[0].text, /could not read its library location file/);
   assert.match(server.stderr, /could not read its library location file/);
-  assert.deepEqual(server.responses, []);
+  assert.equal((await stop(server)).code, 0);
 });

@@ -324,16 +324,16 @@ describe("Error response handling", () => {
 describe("pinterestErrorMessage — code mapping", () => {
   const testCases = [
     ["PINTEREST_NOT_CONNECTED", "尚未连接 Pinterest"],
-    ["PINTEREST_RECONNECT_REQUIRED", "Pinterest 授权已失效，请重新连接"],
-    ["PINTEREST_QUOTA_LOW", "今天的 Pinterest 浏览额度快用完了，明天再来看看"],
-    ["PINTEREST_RATE_LIMITED", "Pinterest 请求太频繁，请稍后再试"],
-    ["PINTEREST_PORT_MISMATCH", "本机服务端口被占用，暂时无法连接 Pinterest"],
-    ["PINTEREST_UNAVAILABLE", "Pinterest 连接服务不可用"],
-    ["PINTEREST_UNREACHABLE", "暂时连不上 Pinterest，请检查网络"],
-    ["PINTEREST_BAD_ID", "画板地址无效"],
-    ["PINTEREST_BAD_AUTHORIZE_URL", "无法打开 Pinterest 授权页"],
-    ["PINTEREST_OPEN_FAILED", "无法打开 Pinterest 授权页"],
-    ["PINTEREST_CONNECT_TIMEOUT", "没等到 Pinterest 授权完成，请重试"],
+    ["PINTEREST_RECONNECT_REQUIRED", "Pinterest 授权已失效。请重新连接。"],
+    ["PINTEREST_QUOTA_LOW", "今日 Pinterest 浏览额度即将用完，明天恢复。"],
+    ["PINTEREST_RATE_LIMITED", "Pinterest 请求过于频繁，请稍后重试。"],
+    ["PINTEREST_PORT_MISMATCH", "无法连接 Pinterest。本机服务所用的端口已被占用。"],
+    ["PINTEREST_UNAVAILABLE", "无法连接 Pinterest。连接服务暂不可用，请稍后重试。"],
+    ["PINTEREST_UNREACHABLE", "无法连接 Pinterest。请检查网络连接。"],
+    ["PINTEREST_BAD_ID", "无法打开画板。画板链接无效。"],
+    ["PINTEREST_BAD_AUTHORIZE_URL", "无法打开 Pinterest 授权页面。"],
+    ["PINTEREST_OPEN_FAILED", "无法打开 Pinterest 授权页面。"],
+    ["PINTEREST_CONNECT_TIMEOUT", "Pinterest 授权超时，请重试。"],
   ];
 
   testCases.forEach(([code, expected]) => {
@@ -347,11 +347,11 @@ describe("pinterestErrorMessage — code mapping", () => {
   it("returns generic message for unknown code", () => {
     const error = new Error("test");
     error.code = "UNKNOWN_CODE";
-    assert.equal(pinterestApi.pinterestErrorMessage(error), "加载 Pinterest 内容失败");
+    assert.equal(pinterestApi.pinterestErrorMessage(error), "无法加载 Pinterest 内容。");
   });
 
   it("returns generic message for non-Error", () => {
-    assert.equal(pinterestApi.pinterestErrorMessage("not an error"), "加载 Pinterest 内容失败");
+    assert.equal(pinterestApi.pinterestErrorMessage("not an error"), "无法加载 Pinterest 内容。");
   });
 
   it("returns empty string for AbortError", () => {
@@ -701,12 +701,12 @@ describe("createPinterestPager — loadFirst fetches page one", () => {
 describe("pinterestErrorMessage — non-Error inputs", () => {
   it("falls back instead of throwing for null, undefined and strings", () => {
     for (const value of [null, undefined, "boom", 42]) {
-      assert.equal(pinterestApi.pinterestErrorMessage(value), "加载 Pinterest 内容失败");
+      assert.equal(pinterestApi.pinterestErrorMessage(value), "无法加载 Pinterest 内容。");
     }
   });
 
   it("ignores inherited object keys as codes", () => {
-    assert.equal(pinterestApi.pinterestErrorMessage({ code: "toString" }), "加载 Pinterest 内容失败");
+    assert.equal(pinterestApi.pinterestErrorMessage({ code: "toString" }), "无法加载 Pinterest 内容。");
   });
 });
 

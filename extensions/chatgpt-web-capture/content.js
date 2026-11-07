@@ -66,7 +66,6 @@
    */
   const failedNetworkIdentityKeys = new Set();
   const promptUpgradeInFlight = new Set();
-  const promptRecoveryTimers = new Map();
   const generationEvidenceRecoveryTimers = new Map();
   const autoStabilityStates = new Map();
   const autoStabilityTimers = new Map();
@@ -90,10 +89,6 @@
   const queuedToastKeys = new Set(); // keys whose "queued" notice already showed
   const errorToastKeys = new Set(); // "key message" pairs whose error already showed
   const sizeFailureStates = new Map(); // stable image identity -> bounded small-file retry state
-  // The conversation endpoint is enough to recover a caption that was rendered
-  // from ChatGPT's cache, but was never seen by the page network hook.
-  const conversationRefreshRequestedAt = new Map();
-  const CONVERSATION_REFRESH_COOLDOWN_MS = 2_500;
   let toastTimer = null;
   let autoCapture = false;
   let scanTimer = null;
@@ -196,11 +191,6 @@
     imagePromptMap.clear();
     generationRegistry?.clear?.();
     capturedCandidates.clear();
-    conversationRefreshRequestedAt.clear();
-    for (const timers of promptRecoveryTimers.values()) {
-      for (const timer of timers) clearTimeout(timer);
-    }
-    promptRecoveryTimers.clear();
     for (const timers of generationEvidenceRecoveryTimers.values()) {
       for (const timer of timers) clearTimeout(timer);
     }
@@ -215,6 +205,39 @@
     failedNetworkIdentityKeys.clear();
     failedAt.clear();
     sizeFailureStates.clear();
+  }
+
+// 任务 359（EXT-43/46）：后台与服务端的英文原文只进诊断；上屏前按已知
+// 原句映射成统一文案，认不出的原样返回（多为中文或已处理过的句子）。
+  function friendlyCaptureError(message) {
+    const text = String(message || "");
+    if (/too small|IMAGE_TOO_SMALL|logo/i.test(text)) return text; // 静默跳过判定依赖原句，原样透传
+    const rules = [
+      [/\(网址已过期\)|链接已过期/, "无法下载：链接已过期，请刷新页面后重试"],
+      [/blob\/img fetch failed|Image download failed|Failed to download image|Downloaded image empty\/too small/, "无法保存图片：下载未完成"],
+      [/Failed to download video|Downloaded video empty\/too small|Recorded media empty\/too small/, "无法保存视频：下载未完成"],
+      [/exceeds GravityPort capture size limit|exceeds the supported size limit/, "无法保存：文件超过 GravityPort 的大小上限"],
+      [/Unsupported media host|Unsupported media URL protocol|Invalid media URL/, "无法保存：不支持该网站的媒体链接"],
+      [/Unsupported web (image|video) provider|Unsupported web capture provider/, "无法保存：不支持此网站"],
+      [/Capture metadata is too large|request body exceeds|media exceeds/, "无法保存：附带信息过大"],
+      [/Midjourney original/, "无法保存：未获取到原图"],
+      [/Unauthorized web capture token/, "无法保存：与 GravityPort 的连接已失效，请重新打开 GravityPort 后重试"],
+      [/Web capture is disabled until/, "无法保存：GravityPort 未启用浏览器扩展收录"],
+      [/Image exceeds 15 MiB limit/, "无法保存：图片超过 15 MB 上限"],
+      [/Video exceeds 96 MiB limit/, "无法保存：视频超过 96 MB 上限"],
+      [/Image exceeds \d+ pixel limit/, "无法保存：图片尺寸超过上限"],
+      [/Image bytes are invalid/, "无法保存：图片数据无效或不完整"],
+      [/Web capture is busy/, "GravityPort 正忙，请稍后重试"],
+      [/GravityPort returned non-JSON \((\d+)\)/, "无法保存：GravityPort 返回了无法识别的内容（HTTP $1）。请更新 GravityPort 后重试。"],
+      [/GravityPort ingest failed \((\d+)\)/, "无法保存：GravityPort 返回错误（HTTP $1）"],
+      [/Canvas encoding failed/, "无法保存：无法处理该图片"],
+      [/Unsupported data URL/, "无法保存：不支持的图片格式"],
+      [/Unknown extension error/, "无法保存：扩展出现未知错误"],
+    ];
+    for (const [pattern, replacement] of rules) {
+      if (pattern.test(text)) return text.replace(pattern, replacement);
+    }
+    return text;
   }
 
   function showToast(message, isError = false) {
@@ -695,7 +718,7 @@
     return false;
   }
 
-  const CONTEXT_LOST_MESSAGE = "GravityPort 扩展已更新或重载，本页脚本已失联：请按 Cmd+Shift+R 硬刷新本页恢复捕获";
+  const CONTEXT_LOST_MESSAGE = "扩展已更新，请刷新此页面以继续收录";
 
   function extensionAlive() {
     try {
@@ -718,10 +741,6 @@
     if (scanTimer) clearTimeout(scanTimer);
     if (manualHookDisableTimer) clearTimeout(manualHookDisableTimer);
     observer?.disconnect();
-    for (const timers of promptRecoveryTimers.values()) {
-      for (const timer of timers) clearTimeout(timer);
-    }
-    promptRecoveryTimers.clear();
     for (const timers of generationEvidenceRecoveryTimers.values()) {
       for (const timer of timers) clearTimeout(timer);
     }
@@ -730,7 +749,7 @@
     autoStabilityTimers.clear();
     autoStabilityStates.clear();
     setStatus(CONTEXT_LOST_MESSAGE, true);
-    showToast(CONTEXT_LOST_MESSAGE, true);
+    showToast("扩展已更新，请刷新此页面以继续收录", true);
   }
 
   async function runtimeSend(message) {
@@ -744,7 +763,7 @@
         throw new Error(chrome.runtime.lastError.message);
       }
       if (response === undefined) {
-        throw new Error("扩展后台无响应：请到 chrome://extensions 刷新 GravityPort 扩展，再 Cmd+Shift+R 刷新本页");
+        throw new Error("无法连接扩展，请在 chrome://extensions 中重新加载 GravityPort，然后刷新此页面");
       }
       return response;
     } catch (error) {
@@ -754,7 +773,7 @@
         throw new Error(CONTEXT_LOST_MESSAGE);
       }
       if (/Receiving end does not exist|Could not establish connection/i.test(msg)) {
-        throw new Error("扩展后台未连接：请在 chrome://extensions 打开 GravityPort 并点刷新，再硬刷新本页");
+        throw new Error("无法连接扩展，请在 chrome://extensions 中重新加载 GravityPort，然后刷新此页面");
       }
       throw error instanceof Error ? error : new Error(msg);
     }
@@ -867,6 +886,148 @@
       }
     }
     return entry;
+  }
+
+  // ---- Persisted generation bindings (task 353, user decision 2026-11-03) ----
+  //
+  // A ChatGPT image's prompt texts exist only in the real-time push. They used
+  // to live solely in this script's memory, so a page refresh, a conversation
+  // switch or a second tab lost them before the image surfaced. Every push
+  // with a provider file id is therefore mirrored into chrome.storage.session
+  // (the same store the background already uses for the desktop-sync job; the
+  // existing "storage" permission covers it), keyed by that file id, so the
+  // registry can be rehydrated wherever the image later appears. Session
+  // storage dies with the browser session — the same lifetime the push itself
+  // has. One storage key per file id: concurrent tabs never overwrite each
+  // other's records.
+  const GENERATION_BINDING_KEY_PREFIX = "mosaGenerationBinding:";
+  const GENERATION_BINDINGS_MAX = 200;
+  const GENERATION_BINDINGS_TTL_MS = 24 * 60 * 60 * 1000;
+  // Re-runnable: a switch back to a conversation must see records that were
+  // persisted after boot, so hydration only guards against overlapping runs.
+  let generationBindingsHydration = null;
+
+  function generationBindingRecord(meta) {
+    const assetId = normalizeAssetId(meta?.assetId);
+    if (!assetId) return null;
+    const record = {
+      assetId,
+      prompt: cleanPromptText(meta?.prompt),
+      promptStatus: String(meta?.promptStatus || meta?.prompt_status || ""),
+      promptSource: String(meta?.promptSource || meta?.prompt_source || ""),
+      promptPriority: Number(meta?.promptPriority || meta?.prompt_priority) || 0,
+      promptScope: String(meta?.promptScope || meta?.prompt_scope || ""),
+      generationRequestPrompt: String(meta?.generationRequestPrompt || meta?.generation_request_prompt || ""),
+      imageGenTitle: String(meta?.imageGenTitle || meta?.image_gen_title || ""),
+      conversationId: String(meta?.conversationId || meta?.conversation_id || ""),
+      messageId: String(meta?.messageId || meta?.message_id || ""),
+      generationContextId: String(meta?.generationContextId || meta?.generation_context_id || ""),
+      providerToolCallId: String(meta?.providerToolCallId || meta?.provider_tool_call_id || ""),
+      providerGenerationCallId: String(meta?.providerGenerationCallId || meta?.provider_generation_call_id || ""),
+      providerResponseId: String(meta?.providerResponseId || meta?.provider_response_id || ""),
+      generationStatus: normalizeGenerationStatus(meta?.generationStatus || meta?.generation_status),
+      model: String(meta?.model || ""),
+      isGeneration: Boolean(meta?.isGeneration),
+      capturedAt: String(meta?.capturedAt || new Date().toISOString()),
+    };
+    if (!record.prompt && !record.generationRequestPrompt && !record.isGeneration) return null;
+    return record;
+  }
+
+  function generationBindingEntry(record) {
+    // Feed the record through the same shape rememberMeta gives the registry.
+    return {
+      ...record,
+      imageUrl: "",
+      imageKey: `asset:${record.assetId}`,
+      bound: Boolean(record.prompt),
+    };
+  }
+
+  async function persistGenerationBinding(meta) {
+    const record = generationBindingRecord(meta);
+    if (!record) return;
+    const key = `${GENERATION_BINDING_KEY_PREFIX}${record.assetId}`;
+    try {
+      const stored = await chrome.storage?.session?.get?.(key);
+      const existing = stored?.[key];
+      await chrome.storage?.session?.set?.({
+        [key]: existing && typeof existing === "object"
+          ? mergeGenerationBindingRecords(existing, record)
+          : record,
+      });
+    } catch {
+      // Session storage may be unavailable (access level not granted yet);
+      // the in-memory registry still carries the binding for this page.
+    }
+  }
+
+  // Several pushes describe the same file (placeholder, caption, final
+  // status). Keep the best text per field instead of letting the latest
+  // placeholder erase the caption that arrived earlier.
+  function mergeGenerationBindingRecords(existing, incoming) {
+    const winner = metaPromptQuality(incoming) >= metaPromptQuality(existing) ? incoming : existing;
+    const other = winner === incoming ? existing : incoming;
+    return {
+      ...other,
+      ...winner,
+      generationRequestPrompt: winner.generationRequestPrompt || other.generationRequestPrompt || "",
+      imageGenTitle: winner.imageGenTitle || other.imageGenTitle || "",
+      conversationId: winner.conversationId || other.conversationId || "",
+      messageId: winner.messageId || other.messageId || "",
+      generationContextId: winner.generationContextId || other.generationContextId || "",
+      providerToolCallId: winner.providerToolCallId || other.providerToolCallId || "",
+      providerGenerationCallId: winner.providerGenerationCallId || other.providerGenerationCallId || "",
+      providerResponseId: winner.providerResponseId || other.providerResponseId || "",
+      model: winner.model || other.model || "",
+      generationStatus: winner.generationStatus !== "unknown" ? winner.generationStatus : other.generationStatus,
+      isGeneration: Boolean(winner.isGeneration || other.isGeneration),
+      capturedAt: String(winner.capturedAt || "") >= String(other.capturedAt || "")
+        ? winner.capturedAt
+        : other.capturedAt,
+    };
+  }
+
+  async function hydratePersistedGenerationBindings() {
+    if (generationBindingsHydration) return generationBindingsHydration;
+    generationBindingsHydration = (async () => {
+      let stored;
+      try {
+        stored = await chrome.storage?.session?.get?.(null);
+      } catch {
+        return;
+      }
+      const records = Object.entries(stored || {})
+        .filter(([key]) => key.startsWith(GENERATION_BINDING_KEY_PREFIX))
+        .map(([, value]) => value)
+        .filter((value) => value && typeof value === "object" && normalizeAssetId(value.assetId));
+      if (!records.length) return;
+
+      // Bound both the count and the age: a hint store must never grow
+      // without limits, and a binding older than the push itself is worthless.
+      const now = Date.now();
+      const fresh = records
+        .filter((record) => {
+          const at = Date.parse(record.capturedAt || "");
+          return Number.isFinite(at) && now - at <= GENERATION_BINDINGS_TTL_MS;
+        })
+        .sort((left, right) => String(left.capturedAt || "").localeCompare(String(right.capturedAt || "")))
+        .slice(-GENERATION_BINDINGS_MAX);
+      const staleKeys = records
+        .filter((record) => !fresh.includes(record))
+        .map((record) => `${GENERATION_BINDING_KEY_PREFIX}${normalizeAssetId(record.assetId)}`);
+      if (staleKeys.length) {
+        chrome.storage?.session?.remove?.(staleKeys).catch?.(() => {});
+      }
+
+      const registry = generationRegistryForPage();
+      if (!registry) return;
+      for (const record of fresh) registry.remember(generationBindingEntry(record));
+      scheduleScan(true);
+    })().finally(() => {
+      generationBindingsHydration = null;
+    });
+    return generationBindingsHydration;
   }
 
   /**
@@ -1170,7 +1331,6 @@
 
     const age = now - state.firstSeenAt;
     if (status === "in_progress") {
-      requestCurrentConversationRefresh(candidate);
       if (!pixelSignature) {
         scheduleAutoStabilityRetry(candidate, reason, 1_200);
         return { ready: false, forceTerminalRefresh: false };
@@ -1188,7 +1348,6 @@
     }
 
     if (status === "partial") {
-      requestCurrentConversationRefresh(candidate);
       if (!pixelSignature) {
         scheduleAutoStabilityRetry(candidate, reason, 1_500);
         return { ready: false, forceTerminalRefresh: false };
@@ -1268,7 +1427,6 @@
       if (savedRank < 0 || savedRank >= nextRank) continue;
       const candidateKey = candidateOperationKey(candidate) || candidate.key || candidate.imageUrl;
       if (!candidateKey || promptUpgradeInFlight.has(candidateKey)) continue;
-      clearPromptRecovery(candidate.key || candidate.imageUrl || candidateKey);
 
       promptUpgradeInFlight.add(candidateKey);
       withAutoCaptureSlot(() => ingestCandidate(candidate, {
@@ -1279,38 +1437,6 @@
         .catch(() => {})
         .finally(() => promptUpgradeInFlight.delete(candidateKey));
     }
-  }
-
-  function clearPromptRecovery(candidateKey) {
-    const timers = promptRecoveryTimers.get(candidateKey);
-    if (timers) {
-      for (const timer of timers) clearTimeout(timer);
-      promptRecoveryTimers.delete(candidateKey);
-    }
-  }
-
-  function schedulePromptRecovery(candidate, { needPrompt = true, needTerminal = false } = {}) {
-    const candidateKey = candidate?.key || candidate?.imageUrl;
-    const imageRef = candidate?.imageUrl || candidateKey || "";
-    if (!candidateKey || !imageRef || promptRecoveryTimers.has(candidateKey)) return;
-
-    // The image can become visible before ChatGPT stores its tool caption.
-    // Re-read the active conversation on the same bounded schedule used by
-    // generation-evidence recovery; the context registry can then bind a late
-    // prompt even after the image was already archived.
-    const delays = [2_800, 7_200, 15_000];
-    const timers = delays.map((delay, index) => setTimeout(() => {
-      const bound = findGenerationEvidenceForCandidate(candidate) || findBoundPromptForImage(imageRef);
-      const promptReady = !needPrompt || Boolean(bound?.prompt);
-      const terminalReady = !needTerminal || isTerminalGenerationStatus(bound?.generationStatus);
-      if (promptReady && terminalReady) {
-        clearPromptRecovery(candidateKey);
-        return;
-      }
-      requestCurrentConversationRefresh(candidate);
-      if (index === delays.length - 1) promptRecoveryTimers.delete(candidateKey);
-    }, delay));
-    promptRecoveryTimers.set(candidateKey, timers);
   }
 
   function enqueueDomFallback(candidate) {
@@ -1326,7 +1452,6 @@
     if (!autoCapture || !isRecoverableGenerationCandidate(candidate)) return;
     const candidateKey = candidateLookupKeys(candidate)[0] || candidate?.key || candidate?.imageUrl || "";
     if (!candidateKey || generationEvidenceRecoveryTimers.has(candidateKey)) return;
-    requestCurrentConversationRefresh(candidate);
     const timers = GENERATION_EVIDENCE_RECOVERY_DELAYS.map((delay, index) => setTimeout(() => {
       if (findGenerationEvidenceForCandidate(candidate)) {
         const activeTimers = generationEvidenceRecoveryTimers.get(candidateKey) || [];
@@ -1335,7 +1460,6 @@
         enqueueAuto(candidate, "evidence-recovered");
         return;
       }
-      requestCurrentConversationRefresh(candidate);
       if (index !== GENERATION_EVIDENCE_RECOVERY_DELAYS.length - 1) return;
       generationEvidenceRecoveryTimers.delete(candidateKey);
       enqueueDomFallback(candidate);
@@ -1475,30 +1599,11 @@
     return ids.length === 1 ? ids[0] : "";
   }
 
-  function requestCurrentConversationRefresh(candidate) {
-    const conversationId = conversationIdFromUrl();
-    if (!conversationId) return false;
-
-    const imageRef = candidate?.imageUrl || candidate?.key || "";
-    const proxy = chatGptImageProxyInfo(imageRef);
-    // Do not ask the page hook to inspect the active conversation for an image
-    // from a different ChatGPT conversation.
-    if (proxy?.conversationId && proxy.conversationId !== conversationId) return false;
-
-    const now = Date.now();
-    const lastRequested = conversationRefreshRequestedAt.get(conversationId) || 0;
-    if (now - lastRequested < CONVERSATION_REFRESH_COOLDOWN_MS) return false;
-    conversationRefreshRequestedAt.set(conversationId, now);
-    if (conversationRefreshRequestedAt.size > 20) {
-      for (const [id, at] of conversationRefreshRequestedAt) {
-        if (now - at > CONVERSATION_REFRESH_COOLDOWN_MS * 4) conversationRefreshRequestedAt.delete(id);
-      }
-    }
-
-    // page-hook.js derives the endpoint from its own location; the content
-    // script never supplies a URL or any credential-bearing request detail.
-    return postToPageHook("refresh-current-conversation", { conversationId });
-  }
+  // Task 353 (2026-11-03): there is no "ask the page hook to re-read the
+  // conversation" recovery anymore — the endpoints answered 404 and the
+  // page's own conversation reads carry no prompt. Prompts live only in the
+  // real-time push, which the hook binds while it arrives; persisted
+  // bindings (chrome.storage.session) carry them across refreshes/tabs.
 
   function resolvePrompt(imageUrl, candidate) {
     const userMessage = userMessageForCandidate(candidate);
@@ -1618,7 +1723,7 @@
   }
 
   async function originalBytesFromUrl(url) {
-    if (!url) throw new Error("未能读取图片字节（下载失败或跨域）");
+    if (!url) throw new Error("无法保存图片：下载未完成或网站限制访问");
     if (url.startsWith("blob:")) {
       // A blob handle only resolves inside the page, not in the service worker.
       const response = await fetch(url);
@@ -1634,13 +1739,13 @@
 
   async function canvasBytesFromImage(el) {
     if (!(el instanceof HTMLImageElement) || !el.complete || !el.naturalWidth) {
-      throw new Error("未能读取图片字节（下载失败或跨域）");
+      throw new Error("无法保存图片：下载未完成或网站限制访问");
     }
     const canvas = document.createElement("canvas");
     canvas.width = el.naturalWidth;
     canvas.height = el.naturalHeight;
     const context = canvas.getContext("2d");
-    if (!context) throw new Error("未能读取图片字节（下载失败或跨域）");
+    if (!context) throw new Error("无法保存图片：下载未完成或网站限制访问");
     context.drawImage(el, 0, 0);
     const blob = await new Promise((resolve, reject) => {
       canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Canvas encoding failed")), "image/png");
@@ -1805,8 +1910,9 @@
     if (!canAttempt(candidate, { force: manual || reference || force })) {
       if (!silentSkip) {
         const saved = isSavedCandidate(candidate);
-        showToast(saved ? "这张已处理过（或已入库）" : "请稍后再试（冷却中）", true);
-        setStatus(saved ? "已处理过" : "冷却中");
+        // 任务 359（EXT-30）：信息类不用错误色。
+        showToast(saved ? "该图片已收录" : "请稍后再试", false);
+        setStatus(saved ? "已收录" : "冷却中");
       }
       return null;
     }
@@ -1815,30 +1921,23 @@
         if (hasObservedGenerationEvidence(candidate) || isRecoverableGenerationCandidate(candidate)) markSizeFailure(candidate);
         else rememberSet(savedKeys, key);
       }
-      if (!silentSkip) showToast("已跳过：不像生成大图（logo/小图）", true);
-      setStatus("跳过小图/logo");
+      if (!silentSkip) showToast("已跳过：该图片不是生成的大图", false);
+      setStatus("已跳过：不是生成的大图");
       return null;
     }
     inFlight.add(key);
     setStatus(`保存中… (${reason})`);
 
     try {
-      // Ask the MAIN-world hook to re-read only the active conversation before
-      // waiting. Cached ChatGPT pages otherwise render the image without
-      // replaying the conversation response through the fetch/XHR interceptors.
+      // There is no conversation re-read to wait for (task 353): the prompt
+      // either arrived with the live push (bound in the registry) or it is
+      // not recoverable at this moment at all.
       const imageRef = candidate.imageUrl || key;
-      const refreshRequested = !findBoundPromptForImage(imageRef)
-        && requestCurrentConversationRefresh(candidate);
-      const promptWaitMs = manual ? 700 : refreshRequested ? 450 : 0;
-      const promptWaitDeadline = Date.now() + promptWaitMs;
-      while (Date.now() < promptWaitDeadline && !findBoundPromptForImage(imageRef)) {
-        await new Promise((r) => setTimeout(r, 150));
-      }
       if (taskConversationEpoch !== conversationEpoch) return null;
       const resolved = resolvePrompt(imageRef, candidate);
       const { mimeType, imageBase64 } = await bytesFromUrlOrImg(candidate);
       if (taskConversationEpoch !== conversationEpoch) return null;
-      if (!imageBase64) throw new Error("未能读取图片字节（下载失败或跨域）");
+      if (!imageBase64) throw new Error("无法保存图片：下载未完成或网站限制访问");
 
       // Approximate decoded size from base64.
       const approxBytes = Math.floor((imageBase64.length || 0) * 0.75);
@@ -1847,7 +1946,7 @@
           if (hasObservedGenerationEvidence(candidate) || isRecoverableGenerationCandidate(candidate)) markSizeFailure(candidate);
           else rememberSet(savedKeys, key);
         }
-        if (!silentSkip) showToast(`已跳过小文件 ${(approxBytes / 1024).toFixed(0)}KB（logo）`, true);
+        if (!silentSkip) showToast(`已跳过：图片过小（${(approxBytes / 1024).toFixed(0)} KB）`, false);
         setStatus("跳过小文件");
         return null;
       }
@@ -1919,34 +2018,24 @@
       // downloading, after resolvePrompt had already returned no prompt.
       const lateBound = findGenerationEvidenceForCandidate(candidate) || findBoundPromptForImage(imageRef);
       if (lateBound?.prompt) schedulePromptUpgrade(lateBound);
-      const needsPromptRecovery = !lateBound?.prompt
-        && !["visible-caption", "generation-tool-prompt"].includes(resolved.promptStatus);
-      const latestStatus = normalizeGenerationStatus(lateBound?.generationStatus || resolved.generationStatus);
-      const needsTerminalRecovery = !isTerminalGenerationStatus(latestStatus);
-      if (needsPromptRecovery || needsTerminalRecovery) {
-        schedulePromptRecovery(candidate, {
-          needPrompt: needsPromptRecovery,
-          needTerminal: needsTerminalRecovery,
-        });
-      }
 
       if (result.status === "queued") {
         // The background keeps the capture until GravityPort is open again, so
         // the page does not send it again. Say so once, without an error tone.
-        setStatus("已排队 · GravityPort 打开后自动入库");
+        setStatus("已暂存，打开 GravityPort 后自动收录");
         if (!queuedToastKeys.has(key)) {
           rememberSet(queuedToastKeys, key);
-          showToast("已排队 · GravityPort 打开后自动入库");
+          showToast("已暂存，打开 GravityPort 后自动收录");
         }
       } else if (result.status === "imported") {
-        const label = resolved.prompt ? resolved.promptStatus : "no-caption";
-        showToast(`GravityPort 入库 ✓ ${label}`);
-        setStatus(`已入库 · ${label} · 共${savedKeys.size}`);
+        // 任务 359（EXT-34）：内部枚举不再上屏；无提示词时单独说明。
+        showToast(resolved.prompt ? "已保存到 GravityPort" : "已保存到 GravityPort，无提示词");
+        setStatus(`已保存 · 共${savedKeys.size}`);
       } else if (result.upgraded) {
-        showToast("GravityPort 已升级提示词");
-        setStatus(`提示词已升级 · 共${savedKeys.size}`);
+        showToast("已更新提示词");
+        setStatus(`已更新提示词 · 共${savedKeys.size}`);
       } else if (!silentSkip) {
-        showToast("GravityPort 已存在相同图片");
+        showToast("素材库中已有相同图片");
         setStatus(`已存在 · 共${savedKeys.size}`);
       } else {
         setStatus(`已同步(跳过) · 共${savedKeys.size}`);
@@ -1974,10 +2063,10 @@
       const showError = !silentSkip || (!optionalReferenceFailure && !/too small|IMAGE_TOO_SMALL/i.test(msg));
       if (showError && (manual || !errorToastKeys.has(errorToastKey))) {
         rememberSet(errorToastKeys, errorToastKey);
-        showToast(msg, true);
+        showToast(friendlyCaptureError(msg), true);
       }
       if (optionalReferenceFailure) setStatus(`参考图跳过: ${msg.slice(0, 60)}`);
-      else setStatus(`失败: ${msg.slice(0, 120)}`, true);
+      else setStatus(friendlyCaptureError(msg).slice(0, 120), true);
       throw error;
     } finally {
       inFlight.delete(key);
@@ -2055,23 +2144,23 @@
     const toggle = panel.querySelector('[data-action="toggle-auto"]');
 
     if (mode) {
-      mode.textContent = state.autoCapture ? "运行中" : "已关闭";
+      mode.textContent = state.autoCapture ? "已开启" : "已关闭";
       mode.classList.toggle("is-off", !state.autoCapture);
     }
     if (connection) {
       connection.textContent = state.contextLost
-        ? "页面脚本需刷新"
+        ? "需要刷新页面"
         : state.hookReady
-          ? "Hook 已连接"
-          : "Hook 连接中";
+          ? "页面已连接"
+          : "正在连接页面";
       connection.classList.toggle("is-error", Boolean(state.contextLost || state.error));
     }
     if (detail) {
       detail.textContent = state.error
         ? state.error
         : state.autoCapture
-          ? "正在监听当前会话中的生成图片"
-          : "自动入库已暂停，不会处理新图片";
+          ? "正在检测此对话中新生成的图片"
+          : "自动收录已关闭，不会收录新生成的图片";
       detail.setAttribute("role", state.error ? "alert" : "status");
       detail.setAttribute("aria-live", state.error ? "assertive" : "polite");
     }
@@ -2083,7 +2172,7 @@
         : "暂无捕获事件";
     }
     if (toggle) {
-      toggle.textContent = state.autoCapture ? "关闭自动入库" : "启动自动入库";
+      toggle.textContent = state.autoCapture ? "关闭自动收录" : "开启自动收录";
       toggle.classList.toggle("is-off", !state.autoCapture);
       toggle.setAttribute("aria-pressed", String(state.autoCapture));
     }
@@ -2151,8 +2240,8 @@
     if (action === "toggle-auto") {
       autoCapture = !autoCapture;
       await chrome.storage?.local?.set?.({ autoCapture });
-      setStatus(autoCapture ? "自动入库已开启" : "自动入库已关闭");
-      showToast(autoCapture ? "GravityPort 自动入库已开启" : "GravityPort 自动入库已关闭");
+      setStatus(autoCapture ? "已开启自动收录" : "已关闭自动收录");
+      showToast(autoCapture ? "已开启自动收录" : "已关闭自动收录");
       if (autoCapture) scheduleScan(true);
       renderControlPanel();
       return;
@@ -2187,7 +2276,7 @@
         state: pageState(),
       }, null, 2);
       await navigator.clipboard?.writeText?.(diagnostics);
-      showToast("GravityPort 捕获诊断已复制");
+      showToast("已复制诊断信息");
     }
   }
 
@@ -2204,18 +2293,18 @@
     const panel = document.createElement("section");
     panel.id = "mosa-capture-panel";
     panel.setAttribute("role", "dialog");
-    panel.setAttribute("aria-label", "GravityPort Capture 控制台");
+    panel.setAttribute("aria-label", "GravityPort 面板");
     panel.setAttribute("aria-modal", "false");
     panel.innerHTML = `
       <header class="mosa-panel-header" data-drag-handle>
         <div class="mosa-panel-brand">
           <span class="mosa-panel-logo" aria-hidden="true">M</span>
           <span>
-            <strong>GravityPort Capture</strong>
-            <small>ChatGPT Web Capture</small>
+            <strong>GravityPort</strong>
+            <small>浏览器扩展</small>
           </span>
         </div>
-        <button type="button" class="mosa-panel-icon-button" data-action="close" aria-label="关闭 GravityPort 控制台">
+        <button type="button" class="mosa-panel-icon-button" data-action="close" aria-label="关闭面板">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </header>
@@ -2223,29 +2312,29 @@
         <section class="mosa-panel-status-card">
           <div class="mosa-panel-status-row">
             <span>
-              <small>自动入库</small>
-              <strong data-role="connection">Hook 连接中</strong>
+              <small>自动收录</small>
+              <strong data-role="connection">正在连接页面</strong>
             </span>
-            <span class="mosa-panel-mode" data-role="mode">运行中</span>
+            <span class="mosa-panel-mode" data-role="mode">已开启</span>
           </div>
-          <p data-role="detail" role="status" aria-live="polite">正在读取当前页面状态</p>
+          <p data-role="detail" role="status" aria-live="polite">正在读取页面状态…</p>
         </section>
         <div class="mosa-panel-metrics">
-          <span><small>当前页面已存</small><strong data-role="saved-count">0</strong></span>
-          <span><small>Prompt 缓存</small><strong data-role="prompt-count">0</strong></span>
+          <span><small>本页已保存</small><strong data-role="saved-count">0</strong></span>
+          <span><small>已读取提示词</small><strong data-role="prompt-count">0</strong></span>
         </div>
         <details class="mosa-panel-debug">
-          <summary>捕获诊断（不含 Prompt 正文）</summary>
-          <pre data-role="debug">暂无捕获事件</pre>
-          <button type="button" class="mosa-panel-secondary" data-action="copy-debug">复制诊断</button>
+          <summary>诊断信息（不含提示词内容）</summary>
+          <pre data-role="debug">暂无记录</pre>
+          <button type="button" class="mosa-panel-secondary" data-action="copy-debug">复制诊断信息</button>
         </details>
         <button type="button" class="mosa-panel-primary" data-action="toggle-auto" aria-pressed="true">
-          关闭自动入库
+          关闭自动收录
         </button>
-        <button type="button" class="mosa-panel-secondary" data-action="save-visible">保存当前图</button>
-        <button type="button" class="mosa-panel-secondary" data-action="save-all">保存全部大图</button>
+        <button type="button" class="mosa-panel-secondary" data-action="save-visible">保存当前图片</button>
+        <button type="button" class="mosa-panel-secondary" data-action="save-all">保存全部图片</button>
         <button type="button" class="mosa-panel-secondary" data-action="open-settings">打开设置</button>
-        <footer>拖动顶部移动 · Esc 关闭</footer>
+        <footer>拖动顶部可移动 · 按 Esc 关闭</footer>
       </div>
     `;
     panel.addEventListener("click", handleControlPanelClick);
@@ -2288,13 +2377,13 @@
     if (!candidates.length && !target) {
       const message = "没找到可保存的大图：请等图片加载完成后再试";
       showToast(message, true);
-      setStatus("未找到图片", true);
+      setStatus("未找到可保存的图片", true);
       throw new Error(message);
     }
 
     if (action === "save-image" || action === "save-image-with-prompt") {
       if (!target) target = currentViewportCandidate(candidates);
-      if (!target) throw new Error("未找到当前可见图片");
+      if (!target) throw new Error("无法保存：未找到当前可见的图片");
       const { generationContextId } = await stageGenerationReferences(target);
       const result = await ingestCandidate(target, { reason: "manual-context", generationContextId });
       return {
@@ -2308,7 +2397,7 @@
 
     if (action === "save-visible") {
       const current = target || currentViewportCandidate(candidates);
-      if (!current) throw new Error("未找到当前可见图片");
+      if (!current) throw new Error("无法保存：未找到当前可见的图片");
       const { generationContextId } = await stageGenerationReferences(current);
       const result = await ingestCandidate(current, { reason: "manual-popup", generationContextId });
       return {
@@ -2396,7 +2485,7 @@
         if (nextConversationId) {
           const previousConversationId = activeConversationId;
           adoptConversationId(nextConversationId);
-          if (autoCapture && nextConversationId !== previousConversationId) requestCurrentConversationRefresh(null);
+          if (nextConversationId !== previousConversationId) hydratePersistedGenerationBindings();
         } else if (activeConversationId) {
           // Leaving a named conversation for a true new-chat/non-conversation
           // route is a real boundary. The reverse transition (empty -> assigned
@@ -2470,6 +2559,10 @@
         setStatus(`${autoCapture ? "自动开" : "自动关"} · hook✓`);
         return;
       }
+      // Persist BEFORE the conversation-identity gate: a push that arrives
+      // while another conversation is open is exactly the one whose image has
+      // not surfaced yet, and the file-id record is conversation-agnostic.
+      persistGenerationBinding(data.payload);
       if (data.payload.prompt || data.payload.imageUrl || data.payload.imageKey) {
         const meta = rememberMeta(data.payload);
         if (!meta) return;
@@ -2504,7 +2597,6 @@
         if (pageHookSyncTimer) clearTimeout(pageHookSyncTimer);
         pageHookSyncTimer = null;
         if (desired) {
-          requestCurrentConversationRefresh(null);
           if (autoCapture) scheduleScan(true);
         }
       } else {
@@ -2513,25 +2605,8 @@
       return;
     }
 
-    // A failed recovery used to be invisible, so captures kept landing without
-    // a caption and nothing on screen said why.
-    if (data.type === "conversation-refresh-failed") {
-      const status = Number(data.payload?.status) || 0;
-      if (data.payload?.soft) {
-        setStatus(
-          `实时 Hook 正常 · 历史会话回读不可用${status ? ` (${status})` : ""}`,
-        );
-        return;
-      }
-      setStatus(
-        `会话元数据读取失败${status ? ` (${status})` : ""}，提示词可能缺失`,
-        true,
-      );
-      return;
-    }
-
     if (data.type === "harvest-skipped") {
-      setStatus("会话元数据过大，已启用图片兜底，提示词可能延后", true);
+      setStatus("对话信息过大，将先保存图片，提示词可能稍后补充", false);
       return;
     }
 
@@ -2719,10 +2794,10 @@
   // Boot. page-hook.js is a document_start MAIN-world content script.
   loadSettings().then(() => {
     syncPageHookCaptureEnabled();
+    hydratePersistedGenerationBindings();
     if (autoCapture) {
       if (document.documentElement) startObs();
       else document.addEventListener("DOMContentLoaded", startObs, { once: true });
-      requestCurrentConversationRefresh(null);
       scheduleScan(true);
       scheduleSessionTitleReport(0);
       if (desktopSyncRun) startDesktopSyncWatch();
@@ -2772,7 +2847,6 @@
     setStatus(autoCapture ? "自动开" : "自动关");
     if (autoCapture) {
       startObs();
-      requestCurrentConversationRefresh(null);
       scheduleScan(true);
       scheduleSessionTitleReport(0);
     } else {

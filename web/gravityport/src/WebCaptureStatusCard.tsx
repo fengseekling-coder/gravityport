@@ -130,7 +130,7 @@ export function WebCaptureStatusCardView({
         <div className="web-capture-status-title">
           <strong>{t("浏览器扩展")}</strong>
           <p className="web-capture-state">
-            {loading ? t("加载中") : active ? t("已连接") : t("没有连接")}
+            {loading ? t("正在加载…") : active ? t("已连接") : t("未连接")}
           </p>
         </div>
         <button
@@ -144,13 +144,14 @@ export function WebCaptureStatusCardView({
       </div>
       {!loading && !active ? (
         <p className="web-capture-note">
-          {t("去官网安装浏览器扩展，并在扩展设置里打开「发现新图时自动入库」。")}{" "}
+          {t("前往官网安装浏览器扩展，并在扩展设置中开启「自动收录」。")}{" "}
           <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a>
         </p>
       ) : null}
+      {/* 任务 359（SET-10h）：标签 + 数值不写冒号。 */}
       {!loading && active ? (
         <p className="web-capture-row">
-          {t("扩展版本")}：{extensionVersion || t("未记录")}
+          {t("扩展版本")} {extensionVersion || t("未知")}
         </p>
       ) : null}
       {outdated ? (
@@ -160,7 +161,9 @@ export function WebCaptureStatusCardView({
       ) : null}
       {!loading && pending > 0 ? (
         <p className="web-capture-row">
-          {t("等待重试 {count} 张").replace("{count}", String(pending))}
+          {pending === 1
+            ? t("1 个素材等待重试")
+            : t("{count} 个素材等待重试").replace("{count}", String(pending))}
           {" "}
           <button
             type="button"
@@ -170,42 +173,45 @@ export function WebCaptureStatusCardView({
           >
             {t("重试")}
           </button>
-          {retried ? <span className="web-capture-retried">{t("已让扩展重试")}</span> : null}
+          {retried ? <span className="web-capture-retried">{t("已请求重试")}</span> : null}
         </p>
       ) : null}
       {!loading && active && storageNearlyFull ? (
         <p className="web-capture-note">
-          {t("扩展的离线空间快满了（已用 {used} / {limit}），打开 GravityPort 后会自动补收")
+          {t("浏览器扩展的离线空间即将用尽（已用 {used} / {limit}）。GravityPort 打开后将自动收录暂存的素材。")
             .replace("{used}", formatMb(storageBytes))
             .replace("{limit}", formatMb(storageLimitBytes))}
         </p>
       ) : null}
       {!loading && active && evicted > 0 ? (
         <p className="web-capture-error">
-          {t("有 {count} 张因离线空间不足只保留了网址或被移除，网址过期后可能收不回来")
-            .replace("{count}", String(evicted))}
+          {evicted === 1
+            ? t("1 个素材因离线空间不足，仅保留了网址或已被移除。网址过期后可能无法收录。")
+            : t("{count} 个素材因离线空间不足，仅保留了网址或已被移除。网址过期后可能无法收录。").replace("{count}", String(evicted))}
         </p>
       ) : null}
       {!loading && active && urlOnly > 0 ? (
         <p className="web-capture-error">
-          {t("{count} 张只存了网址，网址过期后可能收不回来")
-            .replace("{count}", String(urlOnly))}
+          {urlOnly === 1
+            ? t("1 个素材仅保存了网址。网址过期后可能无法收录。")
+            : t("{count} 个素材仅保存了网址。网址过期后可能无法收录。").replace("{count}", String(urlOnly))}
         </p>
       ) : null}
+      {/* 任务 359（TOAST-38p）：冒号随语言进翻译表。 */}
       {lastError ? (
         <p className="web-capture-error">
-          {t("最近一次错误")}：{lastError}
+          {t("最近一次错误：{error}").replace("{error}", lastError)}
         </p>
       ) : null}
       <div className="web-capture-toggle">
         <div className="web-capture-toggle-row">
-          <span>{t("即梦站内删除作品时，同步移进回收站")}</span>
+          <span>{t("同步即梦中的删除")}</span>
           <button
             type="button"
             className={`settings-switch ${deletionSyncEnabled === true ? "enabled" : ""}`}
             role="switch"
             aria-checked={deletionSyncEnabled === true}
-            aria-label={t("即梦站内删除作品时，同步移进回收站")}
+            aria-label={t("同步即梦中的删除")}
             disabled={deletionSyncEnabled === undefined || deletionSyncSaving}
             onClick={() => onDeletionSyncChange(deletionSyncEnabled !== true)}
           >
@@ -213,9 +219,9 @@ export function WebCaptureStatusCardView({
           </button>
         </div>
         <p className="web-capture-toggle-note">
-          {t("在 GravityPort 里收藏、打分、分组或加了标签的素材不会被移动")}
+          {t("在即梦网站中删除的作品，对应素材将移到回收站。在 GravityPort 中收藏、评分、分组或加了标签的素材不会被移动。")}
         </p>
-        {deletionSyncError ? <p className="web-capture-error">{t("同步设置保存失败")}</p> : null}
+        {deletionSyncError ? <p className="web-capture-error">{t("无法保存同步设置")}</p> : null}
       </div>
     </section>
   )

@@ -54,10 +54,10 @@ export function feedbackErrorMessage(error: unknown): string {
   if (error instanceof DOMException && error.name === "AbortError") return ""
   const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined
   switch (code) {
-    case "FEEDBACK_OFFLINE": return "发送失败：连不上服务器，请检查网络后重试。"
-    case "FEEDBACK_RATE_LIMITED": return "发送得太频繁了，请稍后再试。"
-    case "FEEDBACK_TOO_LARGE": return "内容太长了，请去掉诊断日志或删减内容后重试。"
-    case "FEEDBACK_INVALID": return "内容不符合要求，请检查后重试。"
-    default: return "发送失败，请稍后再试。"
+    case "FEEDBACK_OFFLINE": return "无法发送反馈。请检查网络连接后重试。"
+    case "FEEDBACK_RATE_LIMITED": return "无法发送反馈。发送过于频繁，请稍后重试。"
+    case "FEEDBACK_TOO_LARGE": return "无法发送反馈。内容过长，请取消附加诊断日志或删减内容后重试。"
+    case "FEEDBACK_INVALID": return "无法发送反馈。内容不符合要求，请检查后重试。"
+    default: return "无法发送反馈。请稍后重试。"
   }
 }

@@ -215,7 +215,7 @@ describe("pinterestText — table coverage", () => {
     // Read the compiled pinterest-api.js (the real source of truth, not a
     // hand-copied list) and require an English entry for each message.
     const apiSource = readFileSync(join(compileRoot, "pinterest-api.js"), "utf8");
-    const messages = new Set(["加载 Pinterest 内容失败"]);
+    const messages = new Set(["无法加载 Pinterest 内容。"]);
     for (const match of apiSource.matchAll(/PINTEREST_[A-Z_]+: "([^"]+)"/g)) {
       messages.add(match[1]);
     }
@@ -268,14 +268,14 @@ describe("PinterestGuide", () => {
     const html = renderStatic(React.createElement(view.PinterestGuide, guideBase));
     assert.match(html, /连接 Pinterest/);
     assert.doesNotMatch(html, /重新连接/);
-    assert.match(html, /连接后，可以在这里浏览你自己的画板和 Pin/);
+    assert.match(html, /连接后可在此浏览 Pinterest 账号中的画板和 Pin/);
   });
 
   it("switches to Reconnect copy when reconnection is required", () => {
     const html = renderStatic(
       React.createElement(view.PinterestGuide, { ...guideBase, needsReconnect: true })
     );
-    assert.match(html, /Pinterest 授权已失效，请重新连接/);
+    assert.match(html, /Pinterest 授权已失效/);
     assert.match(html, /重新连接/);
   });
 
@@ -292,7 +292,7 @@ describe("PinterestGuide", () => {
     const html = renderStatic(
       React.createElement(view.PinterestGuide, { ...guideBase, connecting: true })
     );
-    assert.match(html, /等待浏览器授权…/);
+    assert.match(html, /正在等待浏览器授权…/);
     assert.match(html, /取消/);
   });
 });
@@ -328,14 +328,14 @@ describe("PinterestBoardGrid", () => {
     const html = renderStatic(
       React.createElement(view.PinterestBoardGrid, { ...boardBase, boards: [] })
     );
-    assert.match(html, /你的 Pinterest 账号里还没有画板/);
+    assert.match(html, /Pinterest 账号中没有画板。在 Pinterest 创建画板后将显示在此处/);
   });
 
   it("shows loading before the first page and an error with retry", () => {
     const loading = renderStatic(
       React.createElement(view.PinterestBoardGrid, { ...boardBase, boards: [], loading: true })
     );
-    assert.match(loading, /加载中/);
+    assert.match(loading, /正在加载…/);
     const failed = renderStatic(
       React.createElement(view.PinterestBoardGrid, { ...boardBase, boards: [], error: "暂时连不上 Pinterest，请检查网络。" })
     );
@@ -401,7 +401,7 @@ describe("PinterestPinGrid", () => {
     const html = renderStatic(
       React.createElement(view.PinterestPinGrid, { ...gridBase, columns: [[]] })
     );
-    assert.match(html, /这个画板里还没有 Pin/);
+    assert.match(html, /此画板中没有 Pin。在 Pinterest 保存 Pin 后将显示在此处/);
   });
 
   it("shows pin titles below the card", () => {
@@ -460,7 +460,7 @@ describe("PinterestConnectionCardView", () => {
         confirmOpen: true,
       })
     );
-    assert.match(html, /断开后，这台电脑上保存的 Pinterest 授权会被删除。/);
+    assert.match(html, /此电脑上保存的 Pinterest 授权将被移除，需要时可重新连接。/);
     assert.match(html, /取消/);
   });
 
@@ -638,7 +638,7 @@ describe("createPinterestConnectionFlow", () => {
     await flush();
     await flush();
     assert.equal(message, apiModule.pinterestErrorMessage({ code: "PINTEREST_CONNECT_TIMEOUT" }));
-    assert.match(message, /没等到 Pinterest 授权完成/);
+    assert.match(message, /Pinterest 授权超时，请重试。/);
     assert.equal(sawConnected, false);
   });
 
