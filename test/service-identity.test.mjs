@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import net from "node:net";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -525,8 +526,19 @@ test("verifyMosaServiceIdentity resolves true/false without leaking the credenti
     false,
     "a different token cannot verify",
   );
+  // 任务 367：空端口不再用 runtime.port + 1 —— 全量并行时别的测试起的服务
+  // 可能正好占住那个端口且用同一测试凭据，偶发 true !== false。先 listen(0)
+  // 向系统要一个确定没人监听的端口，关掉再用。
+  const idlePort = await new Promise((resolveIdle, rejectIdle) => {
+    const server = net.createServer();
+    server.once("error", rejectIdle);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => resolveIdle(port));
+    });
+  });
   assert.equal(
-    await verifyMosaServiceIdentity({ port: runtime.port + 1, clientToken: runtime.clientToken }),
+    await verifyMosaServiceIdentity({ port: idlePort, clientToken: runtime.clientToken }),
     false,
     "nothing listens there",
   );

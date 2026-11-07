@@ -315,7 +315,10 @@ export async function startMosaService(options = {}) {
   }
 
   if (lastConflict) throw lastConflict;
-  throw new MosaServiceConflictError("No GravityPort desktop discovery port is available.");
+  // 任务 367（NATIVE-03g）：无可用端口单独一个码，桌面启动失败框选中英文。
+  const noPortError = new MosaServiceConflictError("No GravityPort desktop discovery port is available.");
+  noPortError.code = "MOSA_STARTUP_NO_PORT";
+  throw noPortError;
 }
 
 export async function probeMosaService(options = {}) {
@@ -340,10 +343,10 @@ export async function probeMosaService(options = {}) {
     } else if (response.status === 404) {
       health = await probeLegacyMosaIdentity({ url, fetchImpl, signal: controller.signal });
     } else {
-      return conflict(`Port ${port} is occupied by a service that is not a healthy GravityPort runtime.`, null, { retryable: true });
+      return conflict(`Port ${port} is occupied by a service that is not a healthy GravityPort runtime.`, null, { retryable: true, port });
     }
     if (health?.product !== "mosa") {
-      return conflict(`Port ${port} is occupied by a service that is not GravityPort.`);
+      return conflict(`Port ${port} is occupied by a service that is not GravityPort.`, null, { port });
     }
     // Task 314: health no longer carries the library path. The running
     // service publishes libraryDigest — an HMAC keyed by the library's own
@@ -381,7 +384,7 @@ export async function probeMosaService(options = {}) {
         };
       }
     } else {
-      return conflict(`Port ${port} is occupied by a service that is not GravityPort.`);
+      return conflict(`Port ${port} is occupied by a service that is not GravityPort.`, null, { port });
     }
     return {
       state: "attached",
@@ -401,7 +404,7 @@ export async function probeMosaService(options = {}) {
     const reason = error?.name === "AbortError"
       ? `Port ${port} did not respond before the GravityPort probe timed out.`
       : `Port ${port} is occupied but could not be verified as GravityPort.`;
-    return conflict(reason, error, { retryable: true });
+    return conflict(reason, error, { retryable: true, port });
   } finally {
     clearTimeout(timer);
   }
@@ -668,8 +671,14 @@ function ownedService(runtime) {
   };
 }
 
-function conflict(message, cause, { retryable = false } = {}) {
-  return { state: "conflict", error: new MosaServiceConflictError(message, { cause }), retryable };
+// 任务 367（NATIVE-03f）：conflict() 的四个调用点（343/346/384/402-403）对
+// 用户是同一件事——端口被别的程序占了，统一一个错误码让启动失败框选中英文；
+// 英文原句留在 message 里只进日志。port 挂在错误对象上，正文用 {port} 填。
+function conflict(message, cause, { retryable = false, port } = {}) {
+  const error = new MosaServiceConflictError(message, { cause });
+  error.code = "MOSA_STARTUP_PORT_OCCUPIED";
+  if (port !== undefined) error.port = port;
+  return { state: "conflict", error, retryable };
 }
 
 function serviceIdentityConflict(details, expectedIdentity) {

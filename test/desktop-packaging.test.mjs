@@ -572,7 +572,11 @@ test("keeps the desktop window single-instance and sandboxed", async () => {
   const source = await readFile(resolve(import.meta.dirname, "..", "desktop", "main.mjs"), "utf8");
   assert.match(source, /app\.requestSingleInstanceLock\(\)/);
   assert.match(source, /desktopPlatformAdapter\(\)/);
-  assert.match(source, /app\.on\("window-all-closed", \(\) => \{[\s\S]*?if \(runtimeRecoveryInProgress\) return;[\s\S]*?desktopPlatform\.onWindowAllClosed\(app\);[\s\S]*?\}\)/,
+  // 任务 367：判定收进 desktop/startup-failure-flow.mjs 的
+  // shouldHandleWindowAllClosed（runtime 恢复中、启动失败框弹着都不退出，
+  // 单测在那里）——这里钉 main.mjs 把两个豁免一起传给它，内部 runtime
+  // 恢复仍不能在 Windows 上伪装成用户退出。
+  assert.match(source, /app\.on\("window-all-closed", \(\) => \{[\s\S]*?shouldHandleWindowAllClosed\(\{ runtimeRecoveryInProgress, startupFailureDialogOpen \}\)[\s\S]*?desktopPlatform\.onWindowAllClosed\(app\);[\s\S]*?\}\)/,
     "internal runtime recovery must not look like a user quit on Windows");
   assert.match(source, /\.\.\.desktopPlatform\.windowOptions\(\)/);
   assert.match(source, /desktopPlatform\.capabilities\.hideApplicationMenuBar/);

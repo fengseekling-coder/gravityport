@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { showLibrarySchemaNewerDialogThenShutdown } from "../desktop/startup-failure-flow.mjs";
+import { shouldHandleWindowAllClosed, showLibrarySchemaNewerDialogThenShutdown } from "../desktop/startup-failure-flow.mjs";
 
 const DIALOG_OPTIONS = {
   type: "warning",
@@ -77,4 +77,26 @@ test("messageBox itself rejecting still shuts the process down (fail-safe, no li
 
   assert.equal(shutdowns, 1, "shutdown runs when the dialog never appears");
   assert.equal(opens, 0, "no download-page open without a user answer");
+});
+
+// 任务 367：window-all-closed 的判定收进纯函数——启动失败框弹着期间不退出
+// （Windows 用户关掉启动窗口不能连框一起带走），runtime 恢复中的既有豁免
+// 一并在这里断言。
+test("shouldHandleWindowAllClosed: the startup failure dialog keeps the app alive", () => {
+  assert.equal(shouldHandleWindowAllClosed({}), true, "normal case hands over to the platform quit");
+  assert.equal(
+    shouldHandleWindowAllClosed({ startupFailureDialogOpen: true }),
+    false,
+    "while the schema-newer dialog is open the app must not quit",
+  );
+  assert.equal(
+    shouldHandleWindowAllClosed({ runtimeRecoveryInProgress: true }),
+    false,
+    "the pre-existing runtime-recovery exemption keeps holding",
+  );
+  assert.equal(
+    shouldHandleWindowAllClosed({ runtimeRecoveryInProgress: true, startupFailureDialogOpen: true }),
+    false,
+    "both exemptions together still keep the app alive",
+  );
 });

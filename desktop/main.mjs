@@ -15,7 +15,7 @@ import { DEFAULT_MOSA_DESKTOP_PORT, MOSA_RESERVED_PRODUCTION_PORTS } from "../li
 import { validateRuntimeIsolation } from "../lib/runtime-isolation-guard.mjs";
 import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
 import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../lib/import-staging.mjs";
-import { getDesktopText, getLibrarySchemaNewerDialogText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getUpdateNotificationText } from "./notification-i18n.mjs";
+import { getDesktopText, getLibrarySchemaNewerDialogText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getStartupFailureText, getUpdateNotificationText } from "./notification-i18n.mjs";
 import { buildMenuTemplate } from "./menu-template.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
@@ -24,7 +24,7 @@ import { releaseManifestTrustSet } from "../lib/release-manifest-signature.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
 import { runStartupShutdownExit } from "./startup-shutdown.mjs";
-import { showLibrarySchemaNewerDialogThenShutdown } from "./startup-failure-flow.mjs";
+import { showLibrarySchemaNewerDialogThenShutdown, shouldHandleWindowAllClosed } from "./startup-failure-flow.mjs";
 import {
   failureCountFor,
   failureRecordFor,
@@ -375,6 +375,10 @@ let mainWindow = null;
 let service = null;
 let rendererRecoveryAttempts = 0;
 let shuttingDown = false;
+// 任务 367：「库比 App 新」的框弹着期间为 true（showLibrarySchemaNewerDialog
+// ThenShutdown 调用前置位，它调 shutdown 时解除）；window-all-closed 据此不
+// 退出，Windows 用户关掉启动窗口不会连框一起带走。
+let startupFailureDialogOpen = false;
 let shutdownPromise = null;
 let windowPromise = null;
 let windowOpenRequested = false;
@@ -528,7 +532,9 @@ if (!app.requestSingleInstanceLock()) {
   // recovery intentionally destroys the last window before rebuilding it, so
   // Windows must not interpret that internal transition as a user quit.
   app.on("window-all-closed", () => {
-    if (runtimeRecoveryInProgress) return;
+    // 任务 367：「库比 App 新」的框弹着时不退出（Windows 关启动窗会连框带走），
+    // runtime 恢复中不退出的既有行为一并收进 shouldHandleWindowAllClosed。
+    if (!shouldHandleWindowAllClosed({ runtimeRecoveryInProgress, startupFailureDialogOpen })) return;
     desktopPlatform.onWindowAllClosed(app);
   });
 
@@ -1999,6 +2005,9 @@ function reportStartupFailure(error) {
   // 销毁，带父窗口框会跟着消失。
   if (error?.code === "MOSA_LIBRARY_SCHEMA_NEWER") {
     const schemaNewerDialog = getLibrarySchemaNewerDialogText(currentLocale);
+    // 任务 367：框弹着的期间 window-all-closed 不退出（Windows 关启动窗会连
+    // 框带走）；beginStartupShutdown 一跑就解除。
+    startupFailureDialogOpen = true;
     void showLibrarySchemaNewerDialogThenShutdown({
       messageBox: (owner, options) => screenGuard.messageBox(owner, options),
       openExternal: (url) => screenGuard.openExternal(url),
@@ -2017,8 +2026,14 @@ function reportStartupFailure(error) {
     });
     return;
   }
+  // 任务 367（NATIVE-03c~03i）：带启动错误码的失败按码选中英文，原始英文
+  // message 只进日志；未归类的照旧走 NATIVE-03b 兜底句。
+  const startupFailure = getStartupFailureText(error, currentLocale);
   if (libraryFailure) {
     screenGuard.errorBox(libraryFailure.title, libraryFailure.body);
+  } else if (startupFailure) {
+    console.error(`[MOSA] startup failure detail: ${error?.stack || message}`);
+    screenGuard.errorBox(startupFailure.title, startupFailure.body);
   } else {
     console.error(`[MOSA] startup failure detail: ${error?.stack || message}`);
     screenGuard.errorBox(getDesktopText("startupErrorTitle", currentLocale), getDesktopText("startupErrorBody", currentLocale));
@@ -2031,6 +2046,7 @@ function reportStartupFailure(error) {
 // 关停）。
 function beginStartupShutdown() {
   shuttingDown = true;
+  startupFailureDialogOpen = false;
   stopBridgeNotificationPoll();
   // Task 341: both shutdown steps are bounded (5s each); a wedged runtime
   // stop no longer leaves the process — and its library lock — behind.

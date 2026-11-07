@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { getLibraryStartupFailureText, getNotificationTextForAssetsImported } from "../desktop/notification-i18n.mjs";
+import { getLibraryStartupFailureText, getNotificationTextForAssetsImported, getStartupFailureText, getUpdateReadyNotificationText } from "../desktop/notification-i18n.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -138,10 +138,51 @@ test("getLibraryStartupFailureText returns null for unrelated errors", () => {
   assert.equal(getLibraryStartupFailureText(null, "zh"), null);
 });
 
+// 任务 367（NATIVE-03c~03i）：启动失败按错误码分类——七个码每个中英各一句，
+// {port}/{pid} 由错误对象字段填，标题统一 NATIVE-03a。
+test("getStartupFailureText covers every classified startup code in zh and en", () => {
+  const cases = [
+    [{ code: "MOSA_SERVICE_BUILD_MISMATCH" }, "另一个版本的 GravityPort 正在使用此素材库。请退出它，然后重新打开 GravityPort。", "Another version of GravityPort is using this library. Quit it, then open GravityPort again."],
+    [{ code: "MOSA_SERVICE_LIBRARY_MISMATCH", port: 43517 }, "另一个 GravityPort 正在使用其他素材库（端口 43517）。请先退出它，再打开此素材库。", "Another GravityPort is using a different library (port 43517). Quit it, then open this library."],
+    [{ code: "MOSA_SERVICE_UNVERIFIED", port: 43517 }, "无法确认端口 43517 上的服务是 GravityPort。请退出占用该端口的程序，然后重新打开 GravityPort。", "Couldn’t confirm that the service on port 43517 is GravityPort. Quit the program using that port, then open GravityPort again."],
+    [{ code: "MOSA_STARTUP_PORT_OCCUPIED", port: 6453 }, "端口 6453 被其他程序占用。请退出该程序，然后重新打开 GravityPort。", "Port 6453 is in use by another program. Quit it, then open GravityPort again."],
+    [{ code: "MOSA_STARTUP_NO_PORT" }, "无法找到可用的本地端口。请重新启动电脑后再试。", "Couldn’t find an available local port. Restart the computer and try again."],
+    [{ code: "MOSA_STARTUP_LIBRARY_LOCKED", pid: 4242 }, "此素材库已被另一个 GravityPort 打开（PID 4242）。请退出它，然后重新打开。", "This library is already open in another GravityPort (PID 4242). Quit it, then open GravityPort again."],
+    [{ code: "MOSA_STARTUP_HANDOFF_CLAIMED", pid: 4242 }, "另一个 GravityPort 正在启动并使用此素材库（PID 4242）。请稍后再试。", "Another GravityPort is starting and using this library (PID 4242). Try again shortly."],
+  ];
+  for (const [error, zh, en] of cases) {
+    const zhText = getStartupFailureText(error, "zh");
+    assert.equal(zhText.title, "GravityPort 无法启动", `${error.code} zh title`);
+    assert.equal(zhText.body, zh, `${error.code} zh body`);
+    assert.doesNotMatch(zhText.body, /\{port\}|\{pid\}/, `${error.code} zh placeholder filled`);
+    const enText = getStartupFailureText(error, "en");
+    assert.equal(enText.title, "GravityPort couldn’t start", `${error.code} en title`);
+    assert.equal(enText.body, en, `${error.code} en body`);
+  }
+});
+
+test("getStartupFailureText returns null for unmapped errors and fills unknown for missing fields", () => {
+  assert.equal(getStartupFailureText(new Error("boom"), "zh"), null);
+  assert.equal(getStartupFailureText({ code: "MOSA_LIBRARY_SCHEMA_NEWER" }, "en"), null, "schema-newer keeps its own dialog");
+  assert.equal(getStartupFailureText(null, "zh"), null);
+  const noFields = getStartupFailureText({ code: "MOSA_STARTUP_PORT_OCCUPIED" }, "en");
+  assert.match(noFields.body, /Port unknown is in use/);
+});
+
+// 任务 367（NOTIF-03a/03b）：更新就绪通知文字进表；版本号带 v，正文不带句号。
+test("getUpdateReadyNotificationText uses the reviewed copy with a v-prefixed version", () => {
+  assert.deepEqual(getUpdateReadyNotificationText("0.3.9", "zh"), { title: "GravityPort v0.3.9 更新已就绪", body: "重启 GravityPort 以完成更新" });
+  assert.deepEqual(getUpdateReadyNotificationText("0.3.9", "en"), { title: "GravityPort v0.3.9 update is ready", body: "Restart GravityPort to finish updating" });
+  assert.deepEqual(getUpdateReadyNotificationText("v0.3.9", "zh"), { title: "GravityPort v0.3.9 更新已就绪", body: "重启 GravityPort 以完成更新" }, "a leading v is not doubled");
+  assert.deepEqual(getUpdateReadyNotificationText("0.3.9", "ja"), { title: "GravityPort v0.3.9 更新已就绪", body: "重启 GravityPort 以完成更新" }, "unknown locale falls back to zh");
+});
+
 test("reportStartupFailure shows the library dialog through the i18n table", async () => {
   const source = await readFile(resolve(repositoryRoot, "desktop/main.mjs"), "utf8");
   // 任务 359（NATIVE-03b/09c）：固定正文兜底、细节进日志；库比 App 新带两个按钮。
   assert.match(source, /getLibraryStartupFailureText\(error,\s*currentLocale\)/);
   assert.match(source, /getLibrarySchemaNewerDialogText\(currentLocale\)/);
   assert.match(source, /getDesktopText\("startupErrorBody", currentLocale\)/);
+  // 任务 367（NATIVE-03c~03i）：分类启动失败走 getStartupFailureText。
+  assert.match(source, /getStartupFailureText\(error,\s*currentLocale\)/);
 });

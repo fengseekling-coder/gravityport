@@ -13,12 +13,20 @@ const translations = {
     assetsImported: "已导入 {count} 个新素材",
     updateAvailableTitle: "GravityPort {version} 可用",
     updateAvailableBody: "点击查看更新内容",
+    // 任务 367（NOTIF-03a/03b）：更新就绪通知文字从 update-scheduler.mjs 搬进
+    // 本表；版本号统一带 v，通知正文不带句号。
+    updateReadyTitle: "GravityPort v{version} 更新已就绪",
+    updateReadyBody: "重启 GravityPort 以完成更新",
   },
   en: {
     assetsImported: "Imported {count} new assets",
     assetsImportedSingular: "Imported 1 new asset",
     updateAvailableTitle: "GravityPort {version} is available",
     updateAvailableBody: "Click to view what’s new",
+    // Task 367 (NOTIF-03a/03b): update-ready copy moved here from
+    // update-scheduler.mjs; the version is v-prefixed, the body has no period.
+    updateReadyTitle: "GravityPort v{version} update is ready",
+    updateReadyBody: "Restart GravityPort to finish updating",
   },
 };
 
@@ -75,6 +83,16 @@ const desktopTranslations = {
     librarySchemaNewerBody: "此素材库已由更新版本的 GravityPort 打开过，当前版本无法打开。请前往官网下载最新版本。素材未被改动。",
     librarySchemaNewerDownload: "前往官网下载",
     librarySchemaNewerCancel: "取消",
+    // 任务 367（NATIVE-03c~03i）：启动失败按错误码分类——service-manager /
+    // runtime-lock / runtime-handoff 抛 MOSA_* 码，这里按码选正文（标题统一
+    // 用 NATIVE-03a 的 startupErrorTitle）；英文原句留在 message 里只进日志。
+    startupOtherBuildBody: "另一个版本的 GravityPort 正在使用此素材库。请退出它，然后重新打开 GravityPort。",
+    startupPortOtherLibraryBody: "另一个 GravityPort 正在使用其他素材库（端口 {port}）。请先退出它，再打开此素材库。",
+    startupPortUnverifiedBody: "无法确认端口 {port} 上的服务是 GravityPort。请退出占用该端口的程序，然后重新打开 GravityPort。",
+    startupPortOccupiedBody: "端口 {port} 被其他程序占用。请退出该程序，然后重新打开 GravityPort。",
+    startupNoPortBody: "无法找到可用的本地端口。请重新启动电脑后再试。",
+    startupLibraryLockedBody: "此素材库已被另一个 GravityPort 打开（PID {pid}）。请退出它，然后重新打开。",
+    startupHandoffClaimedBody: "另一个 GravityPort 正在启动并使用此素材库（PID {pid}）。请稍后再试。",
     // 更新安装失败与安装前检查（NATIVE-10~14）。
     updateFailedOnceTitle: "无法安装 GravityPort v{version}",
     updateFailedOnceBody: "{reason}已恢复为 v{currentVersion}，下次启动 GravityPort 时将再次尝试。",
@@ -170,6 +188,15 @@ const desktopTranslations = {
     librarySchemaNewerBody: "This library was last opened by a newer version of GravityPort, so this version can’t open it. Download the latest version from the website. No assets were modified.",
     librarySchemaNewerDownload: "Download from website",
     librarySchemaNewerCancel: "Cancel",
+    // Task 367 (NATIVE-03c~03i): startup failures by error code — see the zh
+    // block above. The English originals stay in error.message for the log.
+    startupOtherBuildBody: "Another version of GravityPort is using this library. Quit it, then open GravityPort again.",
+    startupPortOtherLibraryBody: "Another GravityPort is using a different library (port {port}). Quit it, then open this library.",
+    startupPortUnverifiedBody: "Couldn’t confirm that the service on port {port} is GravityPort. Quit the program using that port, then open GravityPort again.",
+    startupPortOccupiedBody: "Port {port} is in use by another program. Quit it, then open GravityPort again.",
+    startupNoPortBody: "Couldn’t find an available local port. Restart the computer and try again.",
+    startupLibraryLockedBody: "This library is already open in another GravityPort (PID {pid}). Quit it, then open GravityPort again.",
+    startupHandoffClaimedBody: "Another GravityPort is starting and using this library (PID {pid}). Try again shortly.",
     // Update install failures and install preflight (NATIVE-10~14).
     updateFailedOnceTitle: "Couldn’t install GravityPort v{version}",
     updateFailedOnceBody: "{reason} GravityPort has been restored to v{currentVersion}. Another attempt will be made the next time it opens.",
@@ -271,6 +298,41 @@ export function getLibrarySchemaNewerDialogText(locale) {
   };
 }
 
+// 任务 367（NATIVE-03c~03i）：启动失败错误码 → desktopTranslations 里的正文
+// 键。标题统一 startupErrorTitle（NATIVE-03a，定稿「不改」）。未列出的码
+// 返回 null，reportStartupFailure 照旧走 NATIVE-03b 兜底句。
+const STARTUP_FAILURE_BODY_KEYS = {
+  MOSA_SERVICE_BUILD_MISMATCH: "startupOtherBuildBody",
+  MOSA_SERVICE_LIBRARY_MISMATCH: "startupPortOtherLibraryBody",
+  MOSA_SERVICE_UNVERIFIED: "startupPortUnverifiedBody",
+  MOSA_STARTUP_PORT_OCCUPIED: "startupPortOccupiedBody",
+  MOSA_STARTUP_NO_PORT: "startupNoPortBody",
+  MOSA_STARTUP_LIBRARY_LOCKED: "startupLibraryLockedBody",
+  MOSA_STARTUP_HANDOFF_CLAIMED: "startupHandoffClaimedBody",
+};
+
+/**
+ * Startup-failure dialog text for a classified startup error, in one
+ * language. Returns null for anything unmapped so the NATIVE-03b fallback
+ * stays in charge. {port}/{pid} come from the error object's fields; the
+ * English originals in error.message only ever reach the log.
+ */
+export function getStartupFailureText(error, locale) {
+  const bodyKey = error && STARTUP_FAILURE_BODY_KEYS[error.code];
+  if (!bodyKey) return null;
+  const fieldText = (value) => {
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (typeof value === "string" && value.trim()) return value.trim();
+    return "unknown";
+  };
+  return {
+    title: getDesktopText("startupErrorTitle", locale),
+    body: getDesktopText(bodyKey, locale)
+      .replace(/\{port\}/g, fieldText(error.port))
+      .replace(/\{pid\}/g, fieldText(error.pid)),
+  };
+}
+
 /**
  * Get the final text for the assets-imported notification, replacing the count.
  * English uses the singular form for exactly one imported asset.
@@ -293,5 +355,18 @@ export function getUpdateNotificationText(version, locale) {
   return {
     title: translations[lang].updateAvailableTitle.replace(/\{version\}/g, `v${String(version || "").replace(/^v/i, "")}`),
     body: translations[lang].updateAvailableBody,
+  };
+}
+
+/**
+ * 任务 367（NOTIF-03a/03b）：更新就绪通知的中英文（update-scheduler.mjs 搬
+ * 进本表）。模板里 v 已写死（定稿「GravityPort v{version} 更新已就绪」），
+ * 这里只归一化传入的版本号（剥掉可能带的 v），不再补 v；通知正文不带句号。
+ */
+export function getUpdateReadyNotificationText(version, locale) {
+  const lang = (locale === "zh" || locale === "en") ? locale : "zh";
+  return {
+    title: translations[lang].updateReadyTitle.replace(/\{version\}/g, String(version || "").replace(/^v/i, "")),
+    body: translations[lang].updateReadyBody,
   };
 }

@@ -385,6 +385,8 @@ const english: Record<string, string> = {
   "无法更改存储位置。复制素材库时出错，原素材库未改动。": "Couldn’t change storage location. Copying the library failed. The original library was not changed.",
   "无法更改存储位置。请退出其他正在运行的 GravityPort 后重试。": "Couldn’t change storage location. Quit any other running GravityPort and try again.",
   "无法更改存储位置。素材库位置由启动设置指定。": "Couldn’t change storage location. The location is set by a launch setting.",
+  // 任务 367：未知原因的兜底句也翻（App.tsx 传 fillNamed 先 tr 再填）。
+  "无法更改存储位置（{reason}）。": "Couldn’t change storage location ({reason}).",
   "无法保存提示词": "Couldn’t save prompt",
   "已保存": "Saved",
   "后台收录": "Background capture",

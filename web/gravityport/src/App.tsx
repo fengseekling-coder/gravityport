@@ -4096,8 +4096,10 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       const result = await api.changeLibraryLocation()
       // 任务 359（HC-06）：桥接只返回 reason，不返回 error。用户在选文件夹
       // 时点「取消」不算失败、不提示；其余原因按 SET-05 统一句加括号原因。
+      // 任务 367：兜底句也走 fillNamed（先 tr 再填），未知原因在英文界面下
+      // 出 i18n.ts 里的英文整句，不再亮中文。
       if (result && result.ok === false) {
-        const failureText = libraryLocationFailureText(result.reason, fill)
+        const failureText = libraryLocationFailureText(result.reason, fillNamed)
         if (failureText === null) return
         notify(failureText)
         return

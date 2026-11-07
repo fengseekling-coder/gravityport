@@ -85,8 +85,10 @@ test("background update gates refuse unpackaged, QA, untrusted and unsupported-l
 });
 
 test("update-ready notification copy exists for both languages", () => {
-  assert.deepEqual(updateReadyNotificationCopy("0.3.5", "zh"), { title: "GravityPort 0.3.5 已准备好", body: "重启 GravityPort 即可完成更新。" });
-  assert.deepEqual(updateReadyNotificationCopy("0.3.5", "en"), { title: "GravityPort 0.3.5 is ready", body: "Restart GravityPort to finish updating." });
+  // 任务 367（NOTIF-03a/03b）：定稿文案——版本号带 v、说清是「更新」已就绪、
+  // 通知正文不带句号；文字本体在 notification-i18n.mjs（getUpdateReadyNotificationText）。
+  assert.deepEqual(updateReadyNotificationCopy("0.3.5", "zh"), { title: "GravityPort v0.3.5 更新已就绪", body: "重启 GravityPort 以完成更新" });
+  assert.deepEqual(updateReadyNotificationCopy("0.3.5", "en"), { title: "GravityPort v0.3.5 update is ready", body: "Restart GravityPort to finish updating" });
 });
 
 test("gated builds never schedule a check or touch the manifest", async (t) => {

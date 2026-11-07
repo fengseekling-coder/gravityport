@@ -147,5 +147,11 @@ export async function readMosaRuntimeProcessIdentity(pid: number): Promise<strin
 }
 
 function activeRuntimeError(lockPath: string, owner: LockOwner): Error {
-  return new Error(`GravityPort runtime already active for this library (PID ${owner.pid}; lock ${lockPath}). Stop that runtime or choose a different GRAVITYPORT_LIBRARY_DIR.`);
+  // 任务 367（NATIVE-03h）：桌面启动失败框按错误码选中英文；英文原句留在
+  // message 里只进日志。PID 供排查挂到错误对象上，锁文件路径与环境变量名
+  // 不给普通用户看。
+  const error: Error & { code?: string; pid?: number } = new Error(`GravityPort runtime already active for this library (PID ${owner.pid}; lock ${lockPath}). Stop that runtime or choose a different GRAVITYPORT_LIBRARY_DIR.`);
+  error.code = "MOSA_STARTUP_LIBRARY_LOCKED";
+  error.pid = owner.pid;
+  return error;
 }

@@ -59,6 +59,20 @@ test("an unknown reason falls back to the sentence carrying the raw code", () =>
   assert.equal(lifecycle.libraryLocationFailureText("weird", fill), "无法更改存储位置（weird）。");
 });
 
+// 任务 367：兜底句在英文界面下也翻——调用方（App.tsx）传 fillNamed（先 tr
+// 再填），i18n.ts 里「无法更改存储位置（{reason}）。」有英文整句。
+test("an unknown reason translates before filling, so the en UI shows the English fallback", () => {
+  const fillNamedEn = (text, values) => fill(translate(text, "en"), values);
+  assert.equal(
+    lifecycle.libraryLocationFailureText("weird", fillNamedEn),
+    "Couldn’t change storage location (weird).",
+  );
+  assert.equal(
+    lifecycle.libraryLocationFailureText(undefined, fillNamedEn),
+    "Couldn’t change storage location (unknown).",
+  );
+});
+
 test("a missing or empty reason falls back to (unknown)", () => {
   assert.equal(lifecycle.libraryLocationFailureText(undefined, fill), "无法更改存储位置（unknown）。");
   assert.equal(lifecycle.libraryLocationFailureText("", fill), "无法更改存储位置（unknown）。");

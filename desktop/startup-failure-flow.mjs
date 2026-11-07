@@ -36,3 +36,17 @@ export async function showLibrarySchemaNewerDialogThenShutdown({
   }
   shutdown();
 }
+
+/**
+ * 任务 367：`window-all-closed` 是否交给平台的退出处理。启动失败框弹着的
+ * 期间（showLibrarySchemaNewerDialogThenShutdown 调用前到它调 shutdown 为
+ * 止）不退出——否则 Windows 用户关掉启动窗口会连框一起带走；框关掉后照原
+ * 流程走。runtime 恢复中不退出是既有行为（内部重建窗口不算用户退出），
+ * 一并收进这个纯函数便于测试。
+ */
+export function shouldHandleWindowAllClosed({
+  runtimeRecoveryInProgress = false,
+  startupFailureDialogOpen = false,
+} = {}) {
+  return !runtimeRecoveryInProgress && !startupFailureDialogOpen;
+}
