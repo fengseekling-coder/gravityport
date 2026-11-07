@@ -3697,7 +3697,7 @@ function currentChatGptAutoCaptureHarness() {
     "MAX_BLOB_ASSETS", "SESSION_CACHE_MAX", "SIZE_FAILURE_LIMIT", "SIZE_FAILURE_BACKOFF_MS",
     "AUTO_STABILITY_DELAY_MS", "AUTO_IN_PROGRESS_STALE_MS", "AUTO_PARTIAL_FALLBACK_MS", "DOM_MEDIA_GRACE_MS",
     "SESSION_TITLE_MAX_LENGTH", "SESSION_TITLE_PLACEHOLDERS", "SYSTEM_HINT_LABEL_LINES",
-    "DELIVERY_RETRY_MAX", "DELIVERY_RETRY_GAP_MS", "PAGE_READ_ATTEMPTS_MAX",
+    "DELIVERY_RETRY_MAX", "DELIVERY_RETRY_GAP_MS", "PAGE_READ_ATTEMPTS_MAX", "GENERATION_PROMPT_STATUSES",
   ].map((name) => new RegExp(`const ${name} = [^;]+;`).exec(contentSource)?.[0]);
   assert.ok(constants.every(Boolean), "auto-capture constants should be extractable from content.js");
 
@@ -3720,7 +3720,7 @@ function currentChatGptAutoCaptureHarness() {
     "arrayBufferToBase64", "decodedImageDimensions",
     "userMessageForCandidate", "stripSystemHintLabelLines", "messageScopeForCandidate", "domCaptionForCandidate", "messageIdsForCandidate", "messageIdForCandidate",
     "buildStoredPrompt", "cleanPromptText", "extractPlaceHints", "promptMentionsPlace", "looksLikeGenerationCaption", "isWeakChatPrompt",
-    "scorePromptText", "promptQuality", "metaPromptQuality",
+    "scorePromptText", "promptQuality", "metaPromptQuality", "importPromptNote",
   ];
   const source = names.map((name) => {
     const match = new RegExp(`\\n {2}(?:async )?function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource);
