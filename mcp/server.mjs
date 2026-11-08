@@ -12,6 +12,7 @@ import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
 import { createAssetViaGate, untrustedCreateSource } from "../lib/library-ingest.mjs";
 import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
+import { MAX_DERIVATIVE_INPUT_PIXELS } from "../lib/derivative-limits.js";
 import { buildAssetProvenanceBundle } from "../lib/provenance-bundle.mjs";
 import {
   desktopDefaultLocationFilePath,
@@ -357,7 +358,7 @@ function toolDefinitions() {
           rating: { type: "integer", minimum: 0, maximum: 5, description: "Star rating from 0 (unrated) to 5." },
           parent_asset_id: { type: "string" },
           version_change: { type: "string" },
-          sourceType: { type: "string", description: "Optional source type. Defaults to codex-generated for images under <CODEX_HOME>/generated_images (normally the user's .codex/generated_images)." },
+          sourceType: { type: "string", description: "Optional source type. Defaults to codex-generated for images under <CODEX_HOME>/generated_images (normally the user's .codex/generated_images), and to mcp-agent (an image saved by an AI assistant, shown as \"AI 助手\" in the App) for everything else." },
           source: {
             type: "object",
             description: "Optional generation provenance, such as generation_tool, model, codex_session_id, or codex_thread_id. The original image path and Codex task ID are detected automatically.",
@@ -370,12 +371,12 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_IMPORT_FOLDER,
-      description: "Import every image and video found in a local folder into the GravityPort library, applying the same prompt/sourceType/source to each file. The folder path must be an absolute path on this machine. Symbolic links are skipped; with recursive: true subfolders are read up to 5 levels deep; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest. Files already in the library are listed in duplicates with the existing assetId.",
+      description: "Import every image and video found in a local folder into the GravityPort library, applying the same prompt/sourceType/source to each file. The folder path must be an absolute path on this machine. Symbolic links are skipped; with recursive: true the folder itself is level 1 and its contents are read down to level 5 (at most four subfolder levels below it), and deeper subfolders are skipped; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest. Files already in the library are listed in duplicates with the existing assetId.",
       inputSchema: {
         type: "object",
         properties: {
           folderPath: { type: "string", description: "Absolute path of the folder to import." },
-          recursive: { type: "boolean", description: "Also read subfolders (default false; at most 5 levels deep)." },
+          recursive: { type: "boolean", description: "Also read subfolders (default false; the folder itself is level 1, contents are read down to level 5, deeper subfolders are skipped)." },
           prompt: { type: "string" },
           sourceType: { type: "string" },
           source: {
@@ -399,13 +400,13 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_SEARCH,
-      description: "Search GravityPort visual memory using lexical search and explicit creation-time bounds. Returns compact per-asset summaries with the total match count (20 per page by default, at most 100; pass `cursor` to page further); use asset_get for an asset's full recipe and metadata.",
+      description: "Search GravityPort visual memory using lexical search and explicit creation-time bounds. Multiple query words are combined with AND: every word must appear for an asset to match; OR is not supported. Returns compact per-asset summaries with the total match count (20 per page by default, at most 100; pass `cursor` to page further); use asset_get for an asset's full recipe and metadata.",
       inputSchema: {
         type: "object",
         properties: {
-          query: { type: "string" },
-          createdAfter: { type: "string", description: "Inclusive ISO-8601 lower creation-time bound." },
-          createdBefore: { type: "string", description: "Inclusive ISO-8601 upper creation-time bound." },
+          query: { type: "string", description: "Space-separated words; every word must appear (AND). OR is not supported." },
+          createdAfter: { type: "string", description: "Inclusive lower creation-time bound. A date-only value (\"2026-11-07\") means local midnight of that day on this machine; a value with Z or a ±hh:mm offset keeps its explicit zone." },
+          createdBefore: { type: "string", description: "Inclusive upper creation-time bound. A date-only value (\"2026-11-07\") means local midnight of that day, so the bound is \"before Nov 7 starts\" — assets created on Nov 7 itself are outside. A value with Z or a ±hh:mm offset keeps its explicit zone." },
           // Deprecated: local visual retrieval was removed. Both properties stay
           // declared so clients with a cached older schema may still send
           // `visual` / `minScore`; they are accepted and ignored (lexical search runs).
@@ -611,13 +612,13 @@ function toolDefinitions() {
     },
     {
       name: TOOL_GENERATION_RELATION_RECORD,
-      description: "Record an explicit generation-to-generation relationship such as edited_from or variant_of. Do not infer a parent unless the evidence supports it.",
+      description: "Record an explicit generation-to-generation relationship such as edited_from or variant_of. Do not infer a parent unless the evidence supports it. When verificationLevel is omitted the relation is recorded as user_confirmed (you are asserting it on the user's behalf); pass \"observed\" or \"inferred\" to record a weaker evidence level.",
       inputSchema: {
         type: "object",
         properties: {
           childGenerationId: { type: "string" },
           parentGenerationId: { type: "string" },
-          relationType: { enum: ["edited_from", "variant_of", "derived_from", "based_on"] },
+          relationType: { enum: ["edited_from", "variant_of", "derived_from", "based_on"], default: "derived_from", description: "How the child relates to the parent; defaults to derived_from when omitted." },
           verificationLevel: EXTERNAL_VERIFICATION_SCHEMA,
           evidence: { type: "object", additionalProperties: true },
           createdAt: { type: "string" },
@@ -873,6 +874,84 @@ async function vetImagePath(imagePath) {
   return [dirname(realFile)];
 }
 
+// Task 377: images an AI saves through MCP are not manual imports. When the
+// caller passes neither sourceType nor source.type, and the file does not sit
+// in the Codex output directory (the store still stamps codex-generated
+// there), the MCP layer passes sourceType: "mcp-agent" so the App shows the
+// existing "AI 助手" label instead of "手动导入". Already-archived images are
+// never relabeled, and callers who name a source keep theirs.
+const MCP_AGENT_SOURCE_TYPE = "mcp-agent";
+
+/**
+ * Decides whether MCP should stamp its own default source type onto a create
+ * input, and does so in place. `realPath` may carry the file's already
+ * resolved path; without it the file is resolved here. Returns the stamped
+ * source type (or undefined when the caller's value stands or the store will
+ * stamp codex-generated itself).
+ */
+async function applyMcpDefaultSourceType(input, realPath = null) {
+  const declared = (typeof input.sourceType === "string" && input.sourceType.trim())
+    || (input.source && typeof input.source === "object" && !Array.isArray(input.source)
+      ? String(input.source.type || "").trim()
+      : "");
+  if (declared) return undefined;
+  const realFile = realPath
+    || (typeof input.imagePath === "string" && input.imagePath.trim() ? await realpath(input.imagePath).catch(() => null) : null);
+  if (!realFile) return undefined; // Unresolvable files fail in the store (IMAGE_PATH_NOT_FOUND).
+  const codexRoot = store?.codexImagesDir ? await realpath(store.codexImagesDir).catch(() => null) : null;
+  if (codexRoot && isWithinDir(realFile, codexRoot)) return undefined;
+  input.sourceType = MCP_AGENT_SOURCE_TYPE;
+  return MCP_AGENT_SOURCE_TYPE;
+}
+
+// Task 377: business fields the store records itself — media shape read from
+// the bytes (width/height/file_bytes/duration_seconds/media_kind/mime_type)
+// and status the App's pipelines own (prompt_status via the edit markers,
+// auto_archived). mergeBusinessFieldsPatch is shared with the App's editor,
+// so it cannot refuse these; the MCP layer drops them before the patch
+// leaves this process and reports what it dropped.
+const SYSTEM_BUSINESS_FIELD_KEYS = new Set([
+  "width",
+  "height",
+  "file_bytes",
+  "duration_seconds",
+  "media_kind",
+  "mime_type",
+  "prompt_status",
+  "auto_archived",
+]);
+
+function stripSystemBusinessFields(businessFields) {
+  if (!businessFields || typeof businessFields !== "object" || Array.isArray(businessFields)) {
+    return { fields: businessFields, ignored: [] };
+  }
+  const ignored = Object.keys(businessFields).filter((key) => SYSTEM_BUSINESS_FIELD_KEYS.has(key));
+  if (!ignored.length) return { fields: businessFields, ignored };
+  const fields = { ...businessFields };
+  for (const key of ignored) delete fields[key];
+  return { fields, ignored };
+}
+
+function systemFieldsNotice(ignored) {
+  const fieldsText = ignored.join(", ");
+  return `这次传的 ${fieldsText} 是系统记录的，没有改。/ ${fieldsText} are recorded by GravityPort and were not changed.`;
+}
+
+// Task 377: asset ids are machine names. The store's sanitizeId reads and
+// writes shared rows, so it rewrites a Chinese id instead of refusing it —
+// two different calls could collapse onto the same mangled id. The MCP layer
+// rejects non-conforming ids before the store sees them; the three checked
+// tools are the ones that mint or rename an asset.
+const MCP_ASSET_ID_PATTERN = /^[A-Za-z0-9_-]{1,96}$/;
+const INVALID_ASSET_ID_MESSAGE = "名字只能用英文字母、数字、下划线和连字符，最长 96 个字；不传的话会自动起名。\nAsset ids may only use letters, digits, underscores and hyphens (up to 96 characters); omit it to get one generated.";
+
+function assertMcpAssetId(value) {
+  if (value === undefined || value === null || value === "") return;
+  if (typeof value !== "string" || !MCP_ASSET_ID_PATTERN.test(value)) {
+    throw mcpToolError("INVALID_ASSET_ID", INVALID_ASSET_ID_MESSAGE);
+  }
+}
+
 // Task 375: store error messages stay English (tests and clients match on the
 // exact sentence); the MCP layer prepends the Chinese reason by error code.
 // structuredContent.error.code and the English message never change. Codes
@@ -886,6 +965,7 @@ const TOOL_ERROR_TEXT_ZH = new Map([
   ["IMAGE_PATH_NOT_READABLE", "读不到这个文件，请确认文件存在、路径完整。"],
   ["IMAGE_PATH_UNSUPPORTED_TYPE", "不支持这种文件类型，请换成图片或视频文件。"],
   ["IMAGE_CONTENT_NOT_MEDIA", "这个文件的内容不是图片或视频，可能只是改了扩展名，请换一张真正的图片。"],
+  ["IMAGE_FILE_INCOMPLETE", "这张图的文件不完整，可能下载或复制时断了，请换一份完整的文件。"],
   ["INVALID_VERSION_CHANGE", "请写一句版本改动说明（version_change），不能只留空白。"],
   ["VERSION_CYCLE", "这样会造成版本循环，请换一个父版本。"],
   ["VERSION_PARENT_HAS_CHILDREN", "这张图是版本树里的父版本，还有子版本依赖它，不能移进回收站或彻底删除；请先处理它的子版本。"],
@@ -1109,6 +1189,12 @@ async function importFolder(args) {
   await assertImportFolderOutsideLibrary(folderRealPath);
   const recursive = args.recursive === true;
   const { files, skipped } = await scanImportFolder(folderRealPath, recursive);
+  // Task 377: an AI importing a folder without naming a source saves its
+  // files as mcp-agent; a folder inside the Codex output directory keeps the
+  // store's codex-generated stamp. The scanned files all live under the
+  // already-real folder path, so one decision covers the batch.
+  const folderSourceInput = { sourceType: args.sourceType, source: args.source };
+  await applyMcpDefaultSourceType(folderSourceInput, folderRealPath);
   const counts = { imported: 0, deduplicated: 0, skipped, failed: 0 };
   if (files.length === 0) {
     return {
@@ -1124,7 +1210,7 @@ async function importFolder(args) {
     const input = {
       project_id: "default",
       prompt: args.prompt,
-      sourceType: args.sourceType,
+      sourceType: folderSourceInput.sourceType,
       imagePath: file,
       ...(source && typeof source === "object" && !Array.isArray(source) ? { source: untrustedCreateSource(source) } : {}),
     };
@@ -1188,6 +1274,10 @@ async function handleToolCall(id, params) {
     sendError(id, -32602, validationError);
     return;
   }
+  // Task 377: reject non-conforming ids for the tools that mint or rename an
+  // asset before anything reaches the store.
+  if (params?.name === TOOL_ASSET_CREATE) assertMcpAssetId(args.assetId);
+  if (params?.name === TOOL_ASSET_DUPLICATE || params?.name === TOOL_ASSET_VERSION_CREATE) assertMcpAssetId(args.assetIdNew);
   if (params?.name === TOOL_ASSET_CREATE) {
     // Creation goes through the shared ingest gate (lib/library-ingest.mjs,
     // ARCHITECTURE.md §8): identical bytes already in the library (outside
@@ -1197,14 +1287,23 @@ async function handleToolCall(id, params) {
     // by scoping trustedSourceRoots to the file's parent directory for this
     // single call; task 375 vets the path shape (spaces, file://, ~,
     // relative), library-internal paths and folders here in the MCP layer.
-    const { source, ...rest } = args;
-    const input = source && typeof source === "object" && !Array.isArray(source)
-      ? { ...rest, source: untrustedCreateSource(source) }
-      : args;
+    const { source } = args;
+    // Always a copy: the mcp-agent default below stamps `input`, and the
+    // deduplicated path reports the caller's original args verbatim.
+    const input = { ...args };
+    if (source && typeof source === "object" && !Array.isArray(source)) {
+      input.source = untrustedCreateSource(source);
+    }
+    // Task 377: system-recorded business fields never enter a create call.
+    const systemFields = stripSystemBusinessFields(input.business_fields);
+    if (systemFields.ignored.length) input.business_fields = systemFields.fields;
     let trustedSourceRoots;
     if (typeof input.imagePath === "string") {
       trustedSourceRoots = await vetImagePath(input.imagePath);
     }
+    // Task 377: default the source type to mcp-agent for AI saves (Codex
+    // output keeps codex-generated; caller-named sources are kept).
+    const defaultedSourceType = await applyMcpDefaultSourceType(input);
     const created = await createAssetViaGate(store, input, {
       skipIdenticalBytes: true,
       excludeProjectRoot: true,
@@ -1220,7 +1319,27 @@ async function handleToolCall(id, params) {
       return;
     }
     const asset = created.asset;
-    sendResult(id, { content: [{ type: "text", text: `Saved asset ${asset.id} at ${asset.image_path}` }], structuredContent: { asset } });
+    // Task 377: an image beyond the derivative pixel ceiling never gets a
+    // thumbnail or preview in the App; warn the caller instead of failing.
+    const width = Number(asset.business_fields?.width);
+    const height = Number(asset.business_fields?.height);
+    const tooLarge = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+      && width * height > MAX_DERIVATIVE_INPUT_PIXELS;
+    let text = `Saved asset ${asset.id} at ${asset.image_path}`;
+    if (tooLarge) {
+      text += "\n这张图超过 4000 万像素，App 里不会生成缩略图和预览。/ This image exceeds 40 megapixels; the App will not generate a thumbnail or preview for it.";
+    }
+    if (systemFields.ignored.length) {
+      text += `\n${systemFieldsNotice(systemFields.ignored)}`;
+    }
+    sendResult(id, {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        asset,
+        ...(tooLarge ? { warnings: ["IMAGE_TOO_LARGE_FOR_PREVIEW"] } : {}),
+        ...(systemFields.ignored.length ? { ignored_fields: systemFields.ignored } : {}),
+      },
+    });
     return;
   }
   if (params?.name === TOOL_ASSET_IMPORT_FOLDER) {
@@ -1289,11 +1408,22 @@ async function handleToolCall(id, params) {
   }
   if (params?.name === TOOL_ASSET_UPDATE_METADATA) {
     const { assetId, ...patch } = args;
+    // Task 377: system-recorded business fields are dropped before the patch
+    // reaches the marker writer — withUserEditMarkers stamps its own
+    // business_fields.prompt_status on a prompt change, which must survive.
+    const systemFields = stripSystemBusinessFields(patch.business_fields);
+    if (systemFields.ignored.length) patch.business_fields = systemFields.fields;
     // AI assistants edit on the user's behalf, so this counts as a human edit:
     // stamp markers so automatic prompt/theme writers keep their hands off.
     const current = await store.getAsset("default", assetId);
     const asset = await store.updateMetadata("default", assetId, withUserEditMarkers(current, patch));
-    sendResult(id, { content: [{ type: "text", text: `Updated asset ${asset.id}` }], structuredContent: { asset } });
+    let text = `Updated asset ${asset.id}`;
+    const structuredContent = { asset };
+    if (systemFields.ignored.length) {
+      text += `\n${systemFieldsNotice(systemFields.ignored)}`;
+      structuredContent.ignored_fields = systemFields.ignored;
+    }
+    sendResult(id, { content: [{ type: "text", text }], structuredContent });
     return;
   }
   if (params?.name === TOOL_ASSET_ATTACH_PROMPT) {
@@ -1343,6 +1473,9 @@ async function handleToolCall(id, params) {
   }
   if (params?.name === TOOL_ASSET_VERSION_CREATE) {
     const { assetId, assetIdNew, ...input } = args;
+    // Task 377: system-recorded business fields never enter a version call either.
+    const systemFields = stripSystemBusinessFields(input.business_fields);
+    if (systemFields.ignored.length) input.business_fields = systemFields.fields;
     // Task 375: the version tool now accepts replacement images from any local
     // absolute path, exactly like asset_create — trustedSourceRoots is scoped
     // to the file's parent directory for this single call, and the same
@@ -1358,7 +1491,12 @@ async function handleToolCall(id, params) {
         { ...input, assetId: assetIdNew },
         { excludeProjectRoot: true, ...(trustedSourceRoots ? { trustedSourceRoots } : {}) },
       );
-      sendResult(id, { content: [{ type: "text", text: `Created version ${asset.id} from ${assetId}` }], structuredContent: { asset } });
+      let text = `Created version ${asset.id} from ${assetId}`;
+      if (systemFields.ignored.length) text += `\n${systemFieldsNotice(systemFields.ignored)}`;
+      sendResult(id, {
+        content: [{ type: "text", text }],
+        structuredContent: { asset, ...(systemFields.ignored.length ? { ignored_fields: systemFields.ignored } : {}) },
+      });
     } catch (error) {
       if (error?.code === "ALREADY_IN_LIBRARY" && error.existingAsset?.id) {
         const located = await store.getAsset("default", error.existingAsset.id).catch(() => null);
@@ -1405,6 +1543,22 @@ async function handleToolCall(id, params) {
       evidence: args.evidence,
       created_at: args.createdAt,
     });
+    // Task 377 (375-acceptance gap): the user's own words rode the generation
+    // record only, so they were neither searchable nor visible in the App's
+    // 用户指令 row. When the output asset carries no wording anywhere and
+    // this record does, fill the empty slot once — later records never
+    // overwrite the first wording. Deliberately without withUserEditMarkers:
+    // an agent recording a generation is not a human editing the asset.
+    const recordUserPrompt = typeof args.userPrompt === "string" ? args.userPrompt.trim() : "";
+    if (recordUserPrompt && event.output_asset_id) {
+      const outputAsset = await store.getAsset("default", event.output_asset_id).catch(() => null);
+      const existingWording = [outputAsset?.user_prompt, outputAsset?.source?.user_message, outputAsset?.business_fields?.user_message]
+        .map((value) => String(value || "").trim())
+        .find(Boolean);
+      if (outputAsset && !existingWording) {
+        await store.updateMetadata("default", event.output_asset_id, { user_prompt: args.userPrompt });
+      }
+    }
     sendResult(id, { content: [{ type: "text", text: `Recorded generation ${event.id} for asset ${event.output_asset_id}` }], structuredContent: { event } });
     return;
   }

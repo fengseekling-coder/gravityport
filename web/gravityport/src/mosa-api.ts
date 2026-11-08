@@ -347,7 +347,9 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     image_path: path,
     prompt: String(input.prompt || ""),
     prompt2,
-    user_instruction: String(source.user_message || fields.user_message || ""),
+    // 任务 377：AI 用 asset_create 带上的 user_prompt 也算「用户指令」，
+    // 详情页原来看不到它。
+    user_instruction: String(source.user_message || fields.user_message || input.user_prompt || ""),
     introduction: String(fields.introduction || fields.description || input.description || ""),
     tags: asStringArray(input.tags),
     palette: asStringArray(input.palette),

@@ -192,6 +192,24 @@ describe("describeSource", () => {
     assert.equal(result.sourceLabel, "Codex");
   });
 
+  // 任务 377：AI 存进来的图（MCP 默认 mcp-agent）显示「AI 助手」，
+  // 不再落进「手动导入」。
+  it("labels mcp-agent saves as AI 助手 (task 377)", () => {
+    assert.equal(inspectorInfoModule.SOURCE_LABEL_MAP["mcp-agent"], "AI 助手");
+    const asset = {
+      mediaKind: "image",
+      source: { type: "mcp-agent" },
+      created_at: "2026-11-08T10:30:00Z",
+      group: "",
+    };
+    const zh = inspectorInfoModule.describeSource(asset, "zh");
+    assert.equal(zh.sourceLabel, "AI 助手");
+    // describeSource hands back the map value verbatim; the App's tr() turns
+    // "AI 助手" into "AI assistant" for English UI (i18n.ts already has the key).
+    const en = inspectorInfoModule.describeSource(asset, "en");
+    assert.equal(en.sourceLabel, "AI 助手");
+  });
+
   it("handles invalid date", () => {
     const asset = {
       mediaKind: "image",

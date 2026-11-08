@@ -10,13 +10,14 @@ import {
   publishDerivativeFile,
   removeStaleDerivativeTempFiles,
 } from "./derivative-temp-file.js";
+import { MAX_DERIVATIVE_INPUT_PIXELS } from "./derivative-limits.js";
+
+export { MAX_DERIVATIVE_INPUT_PIXELS };
 
 // This file IS the disposable image process (task 341): sharp already runs
 // outside the MOSA runtime here, so its palette/perceptual-hash calls must
 // decode in-process instead of forking a decoder grandchild.
 useInProcessImageDecoder();
-
-const MAX_DERIVATIVE_INPUT_PIXELS = 40_000_000;
 
 interface DerivativeProcessorJob {
   original_path: string;

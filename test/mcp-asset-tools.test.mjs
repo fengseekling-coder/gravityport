@@ -331,24 +331,40 @@ test("asset_get and asset_provenance_export carry the stored content and pixel h
   assert.notEqual(bundleAsset.pixel_sha256, "");
 });
 
-test("asset_update_metadata merges business_fields keys, so a partial write keeps recorded dimensions", async (t) => {
+// Task 377 reworked the contract this test used to pin: system-recorded
+// business fields (width/height/file_bytes/…/auto_archived) are dropped at
+// the MCP layer instead of being written, and the answer reports them. The
+// merge semantics for ordinary keys are unchanged and still pinned here.
+test("asset_update_metadata merges business_fields keys; system-recorded fields are refused", async (t) => {
   const { imagePath, server } = await setupServerWithFixture(t);
-  await server.callToolStrict("asset_create", {
+  const created = await server.callToolStrict("asset_create", {
     assetId: "dims-keeper",
     imagePath,
     prompt: "partial business fields",
-    business_fields: { width: 1024, height: 768, file_bytes: 12345, auto_archived: true },
+    business_fields: { width: 1024, height: 768, file_bytes: 12345, auto_archived: true, note: "kept" },
   });
+  assert.deepEqual(created.structuredContent.ignored_fields, ["width", "height", "file_bytes", "auto_archived"]);
+  const createdFields = created.structuredContent.asset.business_fields;
+  assert.notEqual(createdFields.width, 1024, "the file's real width wins over a claimed one");
+  assert.notEqual(createdFields.file_bytes, 12345, "the store records the real file size");
+  assert.equal(createdFields.auto_archived, undefined, "auto_archived is not writable from MCP");
+  assert.equal(createdFields.note, "kept", "ordinary keys are written as before");
 
   const updated = await server.callToolStrict("asset_update_metadata", {
     assetId: "dims-keeper",
-    business_fields: { auto_archived: false },
+    business_fields: { note: "renamed" },
   });
   const fields = updated.structuredContent.asset.business_fields;
-  assert.equal(fields.auto_archived, false, "the named key updates");
-  assert.equal(fields.width, 1024, "a partial write keeps the recorded width");
-  assert.equal(fields.height, 768, "a partial write keeps the recorded height");
-  assert.equal(fields.file_bytes, 12345, "a partial write keeps file_bytes");
+  assert.equal(fields.note, "renamed", "a partial write keeps the other keys");
+  assert.equal(fields.width, createdFields.width, "a partial write keeps the recorded width");
+  assert.equal(fields.height, createdFields.height, "a partial write keeps the recorded height");
+  assert.equal(fields.file_bytes, createdFields.file_bytes, "a partial write keeps file_bytes");
+
+  const refused = await server.callToolStrict("asset_update_metadata", {
+    assetId: "dims-keeper",
+    business_fields: { auto_archived: false },
+  });
+  assert.deepEqual(refused.structuredContent.ignored_fields, ["auto_archived"], "auto_archived is refused and reported");
 
   const removed = await server.callToolStrict("asset_update_metadata", {
     assetId: "dims-keeper",
@@ -360,7 +376,7 @@ test("asset_update_metadata merges business_fields keys, so a partial write keep
     business_fields: { some_key: null },
   });
   assert.equal(Object.hasOwn(deleted.structuredContent.asset.business_fields, "some_key"), false, "a null value deletes its key");
-  assert.equal(deleted.structuredContent.asset.business_fields.width, 1024, "the deletion leaves the dimensions alone");
+  assert.equal(deleted.structuredContent.asset.business_fields.width, createdFields.width, "the deletion leaves the dimensions alone");
 });
 
 test("asset_create returns the stored asset for identical bytes and rebuilds after trash", async (t) => {

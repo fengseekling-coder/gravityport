@@ -311,11 +311,11 @@ stack_get
 stack_list
 ```
 
-`asset_list` 和 `GET /api/assets` 支持 `limit` 与 `cursor` 分页，默认 100 条、最大 250 条；`GET /api/assets` 还可用 `createdAfter` / `createdBefore` 传入 ISO-8601 时间做包含边界的创建时间过滤。
+`asset_list` 和 `GET /api/assets` 支持 `limit` 与 `cursor` 分页，默认 100 条、最大 250 条；`GET /api/assets` 还可用 `createdAfter` / `createdBefore` 传入 ISO-8601 时间做包含边界的创建时间过滤。只写日期（如 `2026-11-07`）按本机那天零点算：`createdBefore: 2026-11-07` 即「7 号开始之前」，7 号当天创建的素材不含在内；带 `Z` 或 `±hh:mm` 的按其时区原样算，不带时区的日期时间也按本机时区算。
 
 MCP 的 `asset_list` 和 `asset_search` 每张素材只返回精简摘要：固定字段 `id`、`file_name`、`media_kind`、`width`、`height`、`prompt_excerpt`（提示词前 80 个字，超出加 `…`）、`group`、`tags`、`rating`、`favorite`、`created_at`、`stack`（只有 `{ id, name }`，不在堆叠里就没有这个键）、`image_path`，素材上没有的值不出现这个键；返回顶层带 `total` 和 `next_cursor`（`asset_search` 也支持 `cursor` 翻页），`asset_search` 的查询回显最多 200 个字。`content` 文本第一行是可读汇总（共多少张、这页多少张，还有下一页时提示传 `cursor`），下面每张一行 `<id> · <file_name>`。`asset_list` 默认 20 条、最大 100 条。要看某张素材的完整资料（配方快照、调色板等）用 `asset_get`。
 
-`asset_search` 面向 AI agent 的“视觉记忆”检索：可组合文本查询与 `createdAfter` / `createdBefore` 时间范围，按文字与创建时间检索素材。本地视觉检索已移除；老客户端缓存的旧 schema 仍可能传 `visual: true`，这一参数会被接受并忽略，照常返回文本/时间检索结果，不会报错。
+`asset_search` 面向 AI agent 的“视觉记忆”检索：可组合文本查询与 `createdAfter` / `createdBefore` 时间范围，按文字与创建时间检索素材。多个词是「且」的关系，命中素材要同时含有每个词，不支持 OR。本地视觉检索已移除；老客户端缓存的旧 schema 仍可能传 `visual: true`，这一参数会被接受并忽略，照常返回文本/时间检索结果，不会报错。
 
 `asset_provenance_export` 导出 `mosa.provenance.bundle/1`，包含经过字段白名单/敏感字段清理的素材身份、内容摘要、Recipe 历史、Generation Events/Relations 和 verification level；同时生成一个 `com.azhuilab.mosa.provenance` C2PA assertion payload。导出的来源记录默认不包含提示词与用户原话（只有在调用时显式指定 `includePrompts: true` 才会包含，且提示词中若出现本机路径或操作系统用户名会被替换为 `[redacted]`）；任何情况下均不会带出本机文件路径和操作系统用户名。该 payload 明确标记为 `signed: false`：它只是交给 C2PA SDK/签名器的可移植声明数据，**不是**已经签名的 Content Credential，GravityPort 不会把未签名记录描述成经过 C2PA 验证的来源证明。
 

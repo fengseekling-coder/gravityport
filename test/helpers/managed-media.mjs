@@ -37,12 +37,16 @@ export function mp4Bytes(seedByte = 7, size = 96 * 1024) {
 }
 
 /**
- * A real PNG header followed by junk: the sniff accepts it, sharp cannot
+ * A real PNG header, junk in the middle, and a real IEND trailer: the sniff
+ * accepts it (task 377's tail check sees a closed PNG stream), sharp cannot
  * decode it. Undecodable fixtures keep the legacy behaviour of imports whose
- * pixel digest cannot be recomputed (claimed hashes pass through unchanged).
- * Distinct seeds keep content hashes apart, like the old throwaway text bytes.
+ * pixel digest cannot be recomputed (claimed hashes pass through unchanged)
+ * and keep the derivative-failure tests failing for real. Distinct seeds keep
+ * content hashes apart, like the old throwaway text bytes.
  */
 export async function brokenPngBytes(seed = 0) {
-  const head = await pngBytes(0);
-  return Buffer.concat([head.subarray(0, 16), Buffer.from(`corrupt payload after a real PNG header (seed ${seed})`)]);
+  const whole = await pngBytes(0);
+  const header = whole.subarray(0, 33); // signature + complete IHDR chunk
+  const iend = whole.subarray(whole.length - 12); // length 0 + "IEND" + CRC
+  return Buffer.concat([header, Buffer.from(`corrupt payload after a real PNG header (seed ${seed})`), iend]);
 }

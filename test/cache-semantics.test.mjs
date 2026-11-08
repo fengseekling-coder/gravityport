@@ -71,11 +71,14 @@ test("static resource cache semantics: no-cache for UI files and immutable for l
   await t.test("library images use immutable long-term cache when served", async () => {
     // Create the fixture image and import it through the runtime's own API so
     // the asset is served by the same store instance that backs /library/*.
+    // Task 377: the hex string this used to hand-roll was one nibble short of
+    // a whole file (odd length), so Buffer.from chopped the IEND CRC's last
+    // byte — the head-only sniff tolerated it, the PNG tail check correctly
+    // refuses it. A real 1×1 PNG keeps the test's intent.
     const fixtureImagePath = join(root, "fixture-cache.png");
     const TINY_PNG = Buffer.from(
-      "89504e470d0a1a0a0000000d49484452000000010000000108020000009001" +
-      "2e00000000c494441547801636000020000000500010d0a2db40000000049454e44ae426082",
-      "hex",
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==",
+      "base64",
     );
     await writeFile(fixtureImagePath, TINY_PNG);
 

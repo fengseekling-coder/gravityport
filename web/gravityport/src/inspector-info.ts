@@ -16,6 +16,7 @@ export const SOURCE_LABEL_MAP: Record<string, string> = {
   "web-google-ai-studio": "Google AI Studio 网页版",
   "web-jimeng": "即梦网页版",
   "web-midjourney": "Midjourney 网页版",
+  "mcp-agent": "AI 助手",
   "local-file": "手动导入",
 }
 

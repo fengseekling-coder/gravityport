@@ -646,7 +646,7 @@ flowchart TD
 | Grok Build CLI | 来源路径 → 字节 → 像素 | 会话工具调用参数 | 不写 | 已接入总入口；字节/像素命中自己的图会升级提示词和出处字段（另一路径的同字节文件记 `grok_alternate_paths`），命中别家收的图只记一次出现，不改提示词、用户指令、`generation_tool`、`model`、`prompt_status` |
 | Cowart | 来源路径 → 字节 → 像素 | 画布 alt text | 不写 | 已接入总入口；命中后从不升级元数据，只记一次出现；同一路径字节变了就新建一张 |
 | 手动导入（拖、选文件、粘贴） | — | 无 | 不写 | 已接入总入口（字节相同跳过、显示像素相同的新图进回收站、感知相似的进清单让用户选，#314） |
-| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。接受任意本地绝对路径，路径形状（相对、`file://`、`~`、首尾空格）在 MCP 层拒绝（`INVALID_PATH`），库内部路径拒绝（`LIBRARY_INTERNAL_PATH`）；不再在助手那边弹确认（#364，取代 #334 的受信根加确认） |
+| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传；调用方没传 `sourceType` / `source.type` 时按 `mcp-agent` 记（App 显示「AI 助手」；Codex 出图目录里照旧 `codex-generated`） | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。接受任意本地绝对路径，路径形状（相对、`file://`、`~`、首尾空格）在 MCP 层拒绝（`INVALID_PATH`），库内部路径拒绝（`LIBRARY_INTERNAL_PATH`）；不再在助手那边弹确认（#364，取代 #334 的受信根加确认）；系统记录的业务字段（宽高、文件大小等）和不符合 `[A-Za-z0-9_-]{1,96}` 的素材 id 也在 MCP 层挡下（#377） |
 
 写生成记录在总入口里是固定位置的调用方钩子；当前只有网页收录（图片和视频）在用，
 Codex、Grok、Cowart 和手动导入不写。
