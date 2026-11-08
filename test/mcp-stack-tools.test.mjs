@@ -179,7 +179,16 @@ test("8. stack_create with archived asset fails STACK_ASSET_ARCHIVED, missing as
 
   const a = await createFixtureAsset(server, workspace);
   const b = await createFixtureAsset(server, workspace);
-  await server.callToolStrict("asset_archive", { assetId: b.id });
+  const directStore = createAssetStore({
+    projectRoot: workspace.root,
+    managerDir: workspace.root,
+    libraryDir: workspace.libraryDir,
+    explicitLibraryDir: workspace.libraryDir,
+    assetsRoot: join(workspace.libraryDir, "assets"),
+    generatedImagesDir: join(workspace.libraryDir, "imports"),
+  });
+  await directStore.archiveAsset("default", b.id);
+  directStore.close();
 
   const resArchived = await server.callTool("stack_create", { assetIds: [a.id, b.id] });
   assert.equal(resArchived.isError, true);

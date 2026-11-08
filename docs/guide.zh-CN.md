@@ -290,7 +290,8 @@ asset_get
 asset_provenance_export
 asset_update_metadata
 asset_attach_prompt
-asset_archive
+asset_trash
+asset_restore
 asset_duplicate
 asset_version_create
 asset_version_history
@@ -313,6 +314,8 @@ stack_list
 `asset_search` 面向 AI agent 的“视觉记忆”检索：可组合文本查询与 `createdAfter` / `createdBefore` 时间范围，按文字与创建时间检索素材。本地视觉检索已移除；老客户端缓存的旧 schema 仍可能传 `visual: true`，这一参数会被接受并忽略，照常返回文本/时间检索结果，不会报错。
 
 `asset_provenance_export` 导出 `mosa.provenance.bundle/1`，包含经过字段白名单/敏感字段清理的素材身份、内容摘要、Recipe 历史、Generation Events/Relations 和 verification level；同时生成一个 `com.azhuilab.mosa.provenance` C2PA assertion payload。该 payload 明确标记为 `signed: false`：它只是交给 C2PA SDK/签名器的可移植声明数据，**不是**已经签名的 Content Credential，GravityPort 不会把未签名记录描述成经过 C2PA 验证的来源证明。
+
+素材删除与恢复：`asset_trash` 将素材移入 App 的回收站（可在 90 天内通过 `asset_restore` 或在 App 回收站里恢复，90 天后自动清除），AI 助手在用户要求删除时使用；`asset_restore` 从回收站中恢复素材回图库。
 
 后端 `c2pa-export` 已提供真正的签名导出链路：它把上述 provenance 组装成 `c2pa.actions.v2` + GravityPort 自定义 assertion，通过外部 `c2patool` 写入**新的导出副本**，然后重新读取结果确认 GravityPort assertion 确实存在。开发测试模式可使用 c2patool 自带测试证书；生产模式禁止把私钥塞进 manifest 或环境变量，必须配置独立 subprocess signer。当前这仍是后端能力，尚未接入桌面 UI。
 

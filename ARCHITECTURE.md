@@ -129,13 +129,13 @@ MCP 导入接受任意本地绝对路径：`asset_create` 允许导入任意绝�
 可直接批量导入任意绝对路径的本地文件夹，不再要求用户在 AI 助手中弹窗确认（移除了 MCP elicitation）。
 相对路径一律拒绝（`IMAGE_PATH_NOT_READABLE`、`IMPORT_FOLDER_NOT_ABSOLUTE`）。
 导入仅限于支持的图片和视频格式，跳过符号链接，支持去重保护与批次上限（单次最多 1000 个文件），
-并且绝不改动源文件夹。24 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
-（`asset_archive`、`stack_remove_assets`、`stack_dissolve` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
+并且绝不改动源文件夹。25 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
+（`asset_trash`、`stack_remove_assets`、`stack_dissolve` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
 
 - `asset_create`、`asset_import_folder`、`asset_list`、`asset_get`
 - `asset_search`（文本与时间范围组合）、`asset_provenance_export`（导出脱敏 provenance bundle 与未签名的 C2PA assertion payload）
 - `asset_update_metadata`、`asset_attach_prompt`
-- `asset_archive`、`asset_duplicate`
+- `asset_trash`、`asset_restore`、`asset_duplicate`
 - `asset_version_create`、`asset_version_history`、`asset_recipe_history`
 - `generation_record`、`generation_list`
 - `generation_relation_record`、`generation_lineage`
@@ -727,7 +727,7 @@ image」），只跟着真升级的提示词重算，且永不覆盖用户改过
 | 收藏 | `favorite = 1` 或 `rating > 0` | 手动心形；打分只有 MCP 能写 | — |
 | 标签 | `tags` / `asset_tags` | 手动；系统标签隐藏 | 多个 |
 | 版本树 | 对话轮次（推算）、确认关系 `generation_relations`、候选关系、版本历史 `parent_asset_id` | 手动确认 / 自动猜 / MCP 与 HTTP | 多对多（现状） |
-| 归档 | `assets.archived = 1`，归档时移出堆叠 | 只有 MCP `asset_archive` 与 HTTP | 界面没有入口和视图（现状） |
+| 归档 | `assets.archived = 1`（历史残留，373 后由一次性修复挪进回收站） | 历史 MCP 与 HTTP | 界面没有入口和视图 |
 | 项目 | `project_id` | MCP / HTTP | 一张图 1 个 |
 
 侧栏计数按张数，网格按卡片数（一个堆叠算一张）。
@@ -756,8 +756,7 @@ image」），只跟着真升级的提示词重算，且永不覆盖用户改过
 - **有子版本的父版本**：移回收站和永久删除都会被拒（`VERSION_PARENT_HAS_CHILDREN`）。
 - **即梦站内删除同步**（#307）：默认开；整理过的不动（同 8.4 清单）；有副本或
   派生版本的整组不动；进回收站标 `provider-deleted:jimeng`。
-- **MCP**：没有删除工具；唯一让图消失的是 `asset_archive`，进的不是回收站
-  （见 8.4 归档）。
+- **MCP**：提供 `asset_trash` 移进回收站，提供 `asset_restore` 恢复（见 8.5）。
 - **在 Finder 里删素材文件**：库不监视目录，记录还在，原图打不开没有提示（现状）。
 - **删除分组**：只清 `group_name`，图留着；「连素材一起删」的路也会留下
   `group_name`，恢复任一张时分组会自己出现。

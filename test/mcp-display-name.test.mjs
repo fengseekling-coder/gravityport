@@ -5,6 +5,7 @@ import { createMcpWorkspace, startMcpServer } from "./helpers/mcp-server-harness
 
 // Verbatim list of MCP tool names from before the GravityPort display-name
 // rename. Tool names are part of the agent-facing contract and must not drift.
+// 373：asset_archive 改为 asset_trash，并新增 asset_restore
 const LEGACY_TOOL_NAMES = [
   "asset_create",
   "asset_import_folder",
@@ -12,7 +13,8 @@ const LEGACY_TOOL_NAMES = [
   "asset_search",
   "asset_get",
   "asset_provenance_export",
-  "asset_archive",
+  "asset_trash",
+  "asset_restore",
   "asset_duplicate",
   "asset_version_create",
   "asset_version_history",

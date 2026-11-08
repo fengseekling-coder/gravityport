@@ -6,6 +6,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path
 import { fileURLToPath } from "node:url";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { createAssetStore } from "../lib/asset-store.mjs";
+import { TRASH_RETENTION_MS } from "../lib/sqlite-asset-store.mjs";
 import { assetStoreError } from "../lib/asset-version-history.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
@@ -216,7 +217,8 @@ const TOOL_ASSET_GET = "asset_get";
 const TOOL_ASSET_PROVENANCE_EXPORT = "asset_provenance_export";
 const TOOL_ASSET_UPDATE_METADATA = "asset_update_metadata";
 const TOOL_ASSET_ATTACH_PROMPT = "asset_attach_prompt";
-const TOOL_ASSET_ARCHIVE = "asset_archive";
+const TOOL_ASSET_TRASH = "asset_trash";
+const TOOL_ASSET_RESTORE = "asset_restore";
 const TOOL_ASSET_DUPLICATE = "asset_duplicate";
 const TOOL_ASSET_VERSION_CREATE = "asset_version_create";
 const TOOL_ASSET_VERSION_HISTORY = "asset_version_history";
@@ -234,7 +236,7 @@ const TOOL_STACK_GET = "stack_get";
 const TOOL_STACK_LIST = "stack_list";
 
 // Task 334: MCP tool annotations. Read tools never write; the only destructive
-// tool is asset_archive (soft-delete); nothing reaches out to other systems,
+// tool is asset_trash (moves to Trash); nothing reaches out to other systems,
 // so every tool declares openWorldHint: false. destructiveHint is spelled out
 // everywhere because the MCP default for a missing hint is true.
 const TOOL_ANNOTATIONS = {
@@ -246,7 +248,8 @@ const TOOL_ANNOTATIONS = {
   [TOOL_ASSET_PROVENANCE_EXPORT]: { readOnlyHint: true, destructiveHint: false },
   [TOOL_ASSET_UPDATE_METADATA]: { readOnlyHint: false, destructiveHint: false },
   [TOOL_ASSET_ATTACH_PROMPT]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_ASSET_ARCHIVE]: { readOnlyHint: false, destructiveHint: true },
+  [TOOL_ASSET_TRASH]: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  [TOOL_ASSET_RESTORE]: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   [TOOL_ASSET_DUPLICATE]: { readOnlyHint: false, destructiveHint: false },
   [TOOL_ASSET_VERSION_CREATE]: { readOnlyHint: false, destructiveHint: false },
   [TOOL_ASSET_VERSION_HISTORY]: { readOnlyHint: true, destructiveHint: false },
@@ -436,8 +439,18 @@ function toolDefinitions() {
       },
     },
     {
-      name: TOOL_ASSET_ARCHIVE,
-      description: "Soft-delete an asset from active GravityPort results while preserving its provenance and original file.",
+      name: TOOL_ASSET_TRASH,
+      description: "Move an asset to Trash. Trashed assets can be restored with asset_restore or inside the GravityPort app, and are permanently purged after 90 days. Use this when the user asks to delete or remove an asset. Do NOT use this when the user asks to archive or stash an asset.",
+      inputSchema: {
+        type: "object",
+        properties: { projectId: { type: "string" }, assetId: { type: "string" } },
+        required: ["assetId"],
+        additionalProperties: false
+      }
+    },
+    {
+      name: TOOL_ASSET_RESTORE,
+      description: "Restore an asset from Trash back to the active library.",
       inputSchema: {
         type: "object",
         properties: { projectId: { type: "string" }, assetId: { type: "string" } },
@@ -897,6 +910,21 @@ async function importFolder(args) {
   };
 }
 
+function deduplicatedAssetResult(existingAsset, args) {
+  const NON_METADATA_KEYS = new Set(["projectId", "imagePath", "assetId", "assetIdNew"]);
+  const ignored_fields = Object.keys(args).filter(
+    (key) => !NON_METADATA_KEYS.has(key) && args[key] !== undefined,
+  );
+  const structuredContent = { asset: existingAsset, deduplicated: true };
+  let text = `Asset already in library: ${existingAsset.id} (identical bytes); returned the existing asset.`;
+  if (ignored_fields.length > 0) {
+    structuredContent.ignored_fields = ignored_fields;
+    const fieldsText = ignored_fields.join(", ");
+    text += ` 这次传的 ${fieldsText} 没有写入；要改用 asset_update_metadata。/ The ${fieldsText} in this request were not saved; use asset_update_metadata to change them.`;
+  }
+  return { content: [{ type: "text", text }], structuredContent };
+}
+
 async function handleToolCall(id, params) {
   const args = params?.arguments || {};
   const definition = toolDefinitions().find((tool) => tool.name === params?.name);
@@ -943,10 +971,7 @@ async function handleToolCall(id, params) {
         ? await store.getAsset(projectId, created.skipped.existingAsset.id).catch(() => null)
         : null;
       const asset = located || created.skipped.existingAsset;
-      sendResult(id, {
-        content: [{ type: "text", text: `Asset already in library: ${asset.id} (identical bytes); returned the existing asset.` }],
-        structuredContent: { asset, deduplicated: true },
-      });
+      sendResult(id, deduplicatedAssetResult(asset, args));
       return;
     }
     const asset = created.asset;
@@ -1014,9 +1039,40 @@ async function handleToolCall(id, params) {
     sendResult(id, { content: [{ type: "text", text: `Attached prompt to ${asset.id}` }], structuredContent: { asset } });
     return;
   }
-  if (params?.name === TOOL_ASSET_ARCHIVE) {
-    const asset = await store.archiveAsset(args.projectId || "default", args.assetId);
-    sendResult(id, { content: [{ type: "text", text: `Archived asset ${asset.id}` }], structuredContent: { asset } });
+  if (params?.name === TOOL_ASSET_TRASH) {
+    const projectId = args.projectId || "default";
+    const result = await store.deleteAsset(projectId, args.assetId, { reason: "mcp" });
+    const purgeAfter = new Date(new Date(result.deleted_at).getTime() + TRASH_RETENTION_MS).toISOString();
+    sendResult(id, {
+      content: [{
+        type: "text",
+        text: `已移到回收站，可恢复，90 天后自动清除。/ Moved to Trash; restorable for 90 days. (${args.assetId})`,
+      }],
+      structuredContent: {
+        asset_id: args.assetId,
+        trashed: true,
+        deleted_at: result.deleted_at,
+        purge_after: purgeAfter,
+      },
+    });
+    return;
+  }
+  if (params?.name === TOOL_ASSET_RESTORE) {
+    const projectId = args.projectId || "default";
+    const current = await store.getAsset(projectId, args.assetId);
+    if (!current.deleted_at) {
+      const error = assetStoreError(
+        "ASSET_NOT_IN_TRASH",
+        `这张图不在回收站里。/ Asset ${args.assetId} is not in Trash.`,
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+    const asset = await store.restoreAsset(projectId, args.assetId);
+    sendResult(id, {
+      content: [{ type: "text", text: `已从回收站恢复。/ Restored from Trash. (${asset.id})` }],
+      structuredContent: { asset },
+    });
     return;
   }
   if (params?.name === TOOL_ASSET_DUPLICATE) {
@@ -1026,8 +1082,18 @@ async function handleToolCall(id, params) {
   }
   if (params?.name === TOOL_ASSET_VERSION_CREATE) {
     const { projectId = "default", assetId, assetIdNew, ...input } = args;
-    const asset = await store.createAssetVersion(projectId, assetId, { ...input, assetId: assetIdNew }, { excludeProjectRoot: true });
-    sendResult(id, { content: [{ type: "text", text: `Created version ${asset.id} from ${assetId}` }], structuredContent: { asset } });
+    try {
+      const asset = await store.createAssetVersion(projectId, assetId, { ...input, assetId: assetIdNew }, { excludeProjectRoot: true });
+      sendResult(id, { content: [{ type: "text", text: `Created version ${asset.id} from ${assetId}` }], structuredContent: { asset } });
+    } catch (error) {
+      if (error?.code === "ALREADY_IN_LIBRARY" && error.existingAsset?.id) {
+        const located = await store.getAsset(projectId, error.existingAsset.id).catch(() => null);
+        const asset = located || error.existingAsset;
+        sendResult(id, deduplicatedAssetResult(asset, args));
+        return;
+      }
+      throw error;
+    }
     return;
   }
   if (params?.name === TOOL_ASSET_VERSION_HISTORY) {
