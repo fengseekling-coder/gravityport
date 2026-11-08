@@ -478,7 +478,7 @@ test("the background verification never stalls the main thread", async (t) => {
   // main-thread cost that this test must not fold into the check's budget.
   for (const key of [
     "derived:created_at_epoch", "derived:sort_name", "derived:stack_sort_columns", "derived:stack_sort_created_at",
-    "search_scope_v3", "repair_capture_user_message_v1", "generation_message_backfill_v1",
+    "search_scope_v4", "repair_capture_user_message_v1", "generation_message_backfill_v1",
     "repair_cleared_capture_prompt_v1", "video_metadata_backfill_v1", "file_bytes_backfill_v1",
     "fts_trash_row_cleanup_v1",
   ]) {
@@ -558,9 +558,9 @@ test("the batched search-scope rebuild produces exactly the whole-table rebuild'
   // A: the deferred batched driver.
   const aStore = createSqliteAssetStore({ projectRoot: aProject, managerDir: join(aProject, "mosa"), libraryDir: aLibrary });
   t.after(() => { try { aStore.close(); } catch { /* already closed */ } });
-  assert.equal(markerValue(aLibrary, "search_scope_v3"), null, "the open no longer rebuilds");
+  assert.equal(markerValue(aLibrary, "search_scope_v4"), null, "the open no longer rebuilds");
   await aStore.startDeferredMaintenance();
-  assert.ok(markerValue(aLibrary, "search_scope_v3"), "the deferred run writes the marker");
+  assert.ok(markerValue(aLibrary, "search_scope_v4"), "the deferred run writes the marker");
 
   // B: the whole-table original with the store's own helpers.
   const bStore = createSqliteAssetStore({ projectRoot: bProject, managerDir: join(bProject, "mosa"), libraryDir: bLibrary });
@@ -608,11 +608,11 @@ test("a SIGKILL mid-rebuild resumes on the next open and converges on the same r
   child.stderr.on("data", (chunk) => { childStderr += String(chunk); });
   const exit = await new Promise((resolveExit) => child.once("exit", (code, signal) => resolveExit({ code, signal })));
   assert.equal(exit.signal, "SIGKILL", `the test hook killed the child after three batches (code ${exit?.code}) ${childStderr}`);
-  assert.equal(markerValue(libraryDir, "search_scope_v3"), null, "the killed run wrote no marker");
+  assert.equal(markerValue(libraryDir, "search_scope_v4"), null, "the killed run wrote no marker");
 
   const { store } = openStoreWithWarnCapture(t, projectRoot, libraryDir);
   await store.startDeferredMaintenance();
-  assert.ok(markerValue(libraryDir, "search_scope_v3"), "the resumed run completes the marker");
+  assert.ok(markerValue(libraryDir, "search_scope_v4"), "the resumed run completes the marker");
   assert.deepEqual(searchScopeSnapshot(libraryDir), referenceSnapshot, "the resumed result equals an uninterrupted run");
   assert.equal(withRawDatabase(libraryDir, (database) => database.pragma("integrity_check", { simple: true })), "ok", "the killed library stays integral");
 });

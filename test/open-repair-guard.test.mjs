@@ -226,7 +226,7 @@ test("a BUSY failure in the one-time repair transaction is one warning and the o
   assert.ok(store, "createSqliteAssetStore returned despite the BUSY repair");
   assert.equal(store.storageKind, "sqlite");
   // The failed repair logs exactly one skip line; the deferred chain's other
-  // passes may add unrelated progress lines (search_scope_v3 counts), which
+  // passes may add unrelated progress lines (search_scope_v4 counts), which
   // are filtered out here.
   const skipWarns = warns.filter((line) => line.includes("skipped"));
   assert.equal(skipWarns.length, 1, "exactly one skip warning line");

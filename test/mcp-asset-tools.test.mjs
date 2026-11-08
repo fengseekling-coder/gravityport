@@ -277,7 +277,7 @@ test("asset_duplicate creates an independent copy and leaves the original untouc
   assert.equal(origin.structuredContent.asset.image_path, originalPath);
   assert.deepEqual(await readFile(originalPath), originalBytes, "the original media file was not modified");
 
-  const both = await server.callToolStrict("asset_list", { projectId: "default" });
+  const both = await server.callToolStrict("asset_list", {});
   assert.deepEqual(both.structuredContent.assets.map((asset) => asset.id).sort(), ["copy-one", "origin"]);
 
   const missing = await server.callTool("asset_duplicate", { assetId: "ghost" });
@@ -375,7 +375,7 @@ test("asset_create returns the stored asset for identical bytes and rebuilds aft
     second.content[0].text,
     "Asset already in library: dedupe-one (identical bytes); returned the existing asset.",
   );
-  const listed = await server.callToolStrict("asset_list", { projectId: "default" });
+  const listed = await server.callToolStrict("asset_list", {});
   assert.equal(listed.structuredContent.assets.length, 1, "no second copy enters the library");
 
   // Trash the stored copy through the App's own trash path; the same bytes

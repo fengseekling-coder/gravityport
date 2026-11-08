@@ -127,7 +127,12 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 
 MCP 导入接受任意本地绝对路径：`asset_create` 允许导入任意绝对路径的单张图片；`asset_import_folder`
 可直接批量导入任意绝对路径的本地文件夹，不再要求用户在 AI 助手中弹窗确认（移除了 MCP elicitation）。
-相对路径一律拒绝（`IMAGE_PATH_NOT_READABLE`、`IMPORT_FOLDER_NOT_ABSOLUTE`）。
+路径参数在 MCP 层先做形状检查：相对路径、`file://`、`~` 开头、首尾空格一律拒绝（`INVALID_PATH`，带
+`reason`），收到文件夹报 `PATH_IS_FOLDER`、`asset_import_folder` 收到文件报 `PATH_IS_FILE`；素材库
+目录内部（以及把素材库整个包住的文件夹）拒绝导入（`LIBRARY_INTERNAL_PATH`，#375），唯一的例外是存储层
+自己的出图暂存根 `generatedImagesDir`（桌面版就是 `<库>/imports`，AI 出图落在这里再入库是正常流程）。
+`projectId` 不再是
+工具参数：传 `default`（不分大小写）或空值按没传处理，其他值回 `PROJECT_ID_NOT_SUPPORTED`（#375）。
 导入仅限于支持的图片和视频格式，跳过符号链接，支持去重保护与批次上限（单次最多 1000 个文件），
 并且绝不改动源文件夹。25 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
 （`asset_trash`、`stack_remove_assets`、`stack_dissolve` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
@@ -633,7 +638,7 @@ flowchart TD
 | Grok Build CLI | 来源路径 → 字节 → 像素 | 会话工具调用参数 | 不写 | 已接入总入口；字节/像素命中自己的图会升级提示词和出处字段（另一路径的同字节文件记 `grok_alternate_paths`），命中别家收的图只记一次出现，不改提示词、用户指令、`generation_tool`、`model`、`prompt_status` |
 | Cowart | 来源路径 → 字节 → 像素 | 画布 alt text | 不写 | 已接入总入口；命中后从不升级元数据，只记一次出现；同一路径字节变了就新建一张 |
 | 手动导入（拖、选文件、粘贴） | — | 无 | 不写 | 已接入总入口（字节相同跳过、显示像素相同的新图进回收站、感知相似的进清单让用户选，#314） |
-| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。接受任意本地绝对路径，相对路径拒绝；不再在助手那边弹确认（#364，取代 #334 的受信根加确认） |
+| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。接受任意本地绝对路径，路径形状（相对、`file://`、`~`、首尾空格）在 MCP 层拒绝（`INVALID_PATH`），库内部路径拒绝（`LIBRARY_INTERNAL_PATH`）；不再在助手那边弹确认（#364，取代 #334 的受信根加确认） |
 
 写生成记录在总入口里是固定位置的调用方钩子；当前只有网页收录（图片和视频）在用，
 Codex、Grok、Cowart 和手动导入不写。

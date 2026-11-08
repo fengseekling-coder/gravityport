@@ -277,7 +277,9 @@ args = ["/absolute/path/to/gravityport/mcp/server.mjs"]
 - `GRAVITYPORT_LIBRARY_DIR`：素材库的绝对路径，优先级最高。
 - `GRAVITYPORT_LIBRARY_LOCATION_FILE`：桌面版的 `library-location.json`（macOS 在 `~/Library/Application Support/mosa/`），跟随桌面版里挪过的位置。
 
-导入规则（桌面版和从源码运行相同）：AI 助手可以直接导入本地任意绝对路径下的单张图片（`asset_create`）或整个文件夹（`asset_import_folder`），无需在助手中弹窗确认；相对路径会被拒绝。只导入支持的图片和视频格式，跳过符号链接，支持去重保护；单次文件夹导入最多 1000 个文件，导入后源文件夹保持不变。
+导入规则（桌面版和从源码运行相同）：AI 助手可以直接导入本地任意绝对路径下的单张图片（`asset_create`）或整个文件夹（`asset_import_folder`），无需在助手中弹窗确认；路径参数必须是本机绝对路径，相对路径、`file://`、`~` 开头和首尾带空格的路径会被拒绝并提示，素材库自己的文件夹和里面的文件也不能再导进来（`LIBRARY_INTERNAL_PATH`；唯一的例外是 AI 出图暂存文件夹，桌面版就是素材库里的 `imports/`，从那里导入是正常流程）。只导入支持的图片和视频格式，跳过符号链接，支持去重保护；单次文件夹导入最多 1000 个文件，导入后源文件夹保持不变。
+
+MCP 工具都不再接受 `projectId` 参数：GravityPort 只有一个素材库，传 `default`（不分大小写）或空值时按没传处理，传别的值会收到 `PROJECT_ID_NOT_SUPPORTED` 提示；要分类请用分组（`group`）和标签（`tags`）。
 
 MCP 工具包括：
 
@@ -319,7 +321,7 @@ stack_list
 
 后端 `c2pa-export` 已提供真正的签名导出链路：它把上述 provenance 组装成 `c2pa.actions.v2` + GravityPort 自定义 assertion，通过外部 `c2patool` 写入**新的导出副本**，然后重新读取结果确认 GravityPort assertion 确实存在。开发测试模式可使用 c2patool 自带测试证书；生产模式禁止把私钥塞进 manifest 或环境变量，必须配置独立 subprocess signer。当前这仍是后端能力，尚未接入桌面 UI。
 
-创建子版本时，使用 `asset_version_create` 并传入非空的 `version_change`；有新图时传入 `imagePath`，不传则复制父图作为配方快照；需要读取某个素材的不可变配方快照历史时，使用 `asset_recipe_history`。
+创建子版本时，使用 `asset_version_create` 并传入非空的 `version_change`；有新图时传入 `imagePath`（本机任意绝对路径都可以，和 `asset_create` 一样），不传则复制父图作为配方快照；需要读取某个素材的不可变配方快照历史时，使用 `asset_recipe_history`。
 
 生成历史与素材版本是两套关系。`generation_record` 记录一次独立生成，即使输出图片已经被内容去重；`generation_relation_record` 只在有明确证据时记录 `edited_from`、`variant_of`、`derived_from` 或 `based_on`；`generation_lineage` 读取相连的生成图。普通 MCP 调用方不能把记录标成 `provider_verified`，该等级只保留给 GravityPort 直接接入并验证 provider 响应的受信集成。
 

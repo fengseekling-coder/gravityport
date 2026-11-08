@@ -120,19 +120,22 @@ test("relative paths for folder and single image are rejected and library remain
   });
   await server.request("initialize", {});
 
-  // Single image relative path rejected with IMAGE_PATH_NOT_READABLE
+  // Single image relative path rejected with INVALID_PATH (task 375: the MCP
+  // layer answers before the store resolves it against the working directory).
   const singleResult = await server.callTool("asset_create", {
     assetId: "stray",
     imagePath: "stray.png",
     prompt: "must not import",
   });
-  assertImportError(singleResult, "IMAGE_PATH_NOT_READABLE");
+  assertImportError(singleResult, "INVALID_PATH");
+  assert.equal(singleResult.structuredContent.error.reason, "relative");
 
-  // Folder relative path rejected with IMPORT_FOLDER_NOT_ABSOLUTE
+  // Folder relative path rejected with INVALID_PATH for the same reason.
   const folderResult = await server.callTool("asset_import_folder", {
     folderPath: "relative/folder",
   });
-  assertImportError(folderResult, "IMPORT_FOLDER_NOT_ABSOLUTE");
+  assertImportError(folderResult, "INVALID_PATH");
+  assert.equal(folderResult.structuredContent.error.reason, "relative");
 
   // Library remains completely empty
   const list = await server.callToolStrict("asset_list", {});
@@ -294,9 +297,11 @@ test("missing and non-directory folderPath fail with appropriate error", async (
   assertImportError(missing, "IMPORT_FOLDER_NOT_FOUND");
   const file = await writePngFixture(join(workspace.imagesDir, "plain.png"));
   const notDirectory = await server.callTool("asset_import_folder", { folderPath: file });
-  assertImportError(notDirectory, "IMPORT_FOLDER_NOT_DIRECTORY");
+  // Task 375: a file where a folder is expected answers PATH_IS_FILE.
+  assertImportError(notDirectory, "PATH_IS_FILE");
   const relativePath = await server.callTool("asset_import_folder", { folderPath: "some/relative/folder" });
-  assertImportError(relativePath, "IMPORT_FOLDER_NOT_ABSOLUTE");
+  assertImportError(relativePath, "INVALID_PATH");
+  assert.equal(relativePath.structuredContent.error.reason, "relative");
   assert.equal(server.responses.some((message) => typeof message.method === "string"), false);
 });
 
@@ -314,34 +319,36 @@ test("folder path with symlink resolves target directory and imports directly", 
   assert.equal(result.structuredContent.failed, 0);
 });
 
-test("asset_version_create cannot pull a replacement image from the working directory", async (t) => {
+test("asset_version_create accepts a replacement image from any local absolute folder (task 375)", async (t) => {
   const { workspace, server } = await setupServer(t);
   const rootImage = await writePngFixture(join(workspace.imagesDir, "root.png"), { color: "#314f6f" });
   await server.callToolStrict("asset_create", { assetId: "root", imagePath: rootImage });
+  // Task 4: the version tool now follows asset_create's rule — any local
+  // absolute path is trusted for this one call, not only the Codex output root.
   const outside = await writePngFixture(join(workspace.root, "outside.png"), { color: "#6f314f" });
 
-  const result = await server.callTool("asset_version_create", {
+  const okVersion = await server.callToolStrict("asset_version_create", {
     assetId: "root",
     imagePath: outside,
-    version_change: "swap from an untrusted folder",
+    version_change: "swap from an ordinary local folder",
   });
-  assertImportError(result, "IMAGE_PATH_NOT_READABLE");
+  assert.equal(okVersion.structuredContent.asset.parent_asset_id, "root");
 
   const allowed = await writePngFixture(join(workspace.imagesDir, "replacement.png"), { color: "#4f6f31" });
-  const okVersion = await server.callToolStrict("asset_version_create", {
+  const codexVersion = await server.callToolStrict("asset_version_create", {
     assetId: "root",
     imagePath: allowed,
     version_change: "swap from the Codex root",
   });
-  assert.equal(okVersion.structuredContent.asset.parent_asset_id, "root");
+  assert.equal(codexVersion.structuredContent.asset.parent_asset_id, "root");
 });
 
-test("a folder inside the library's own assets root imports directly", async (t) => {
+test("a folder inside the library's own assets root refuses with LIBRARY_INTERNAL_PATH (task 375)", async (t) => {
   const { workspace, server } = await setupServer(t);
   const folder = join(workspace.libraryDir, "assets", "handoff");
   await writePngFixture(join(folder, "staged.png"), { color: "#3f3f8f" });
 
-  const result = await server.callToolStrict("asset_import_folder", { folderPath: folder });
-  assert.equal(result.structuredContent.imported, 1);
+  const result = await server.callTool("asset_import_folder", { folderPath: folder });
+  assertImportError(result, "LIBRARY_INTERNAL_PATH");
   assert.equal(server.responses.some((message) => typeof message.method === "string"), false);
 });

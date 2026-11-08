@@ -41,7 +41,7 @@ const OLD_SEARCH_TERMS_DDL = `
 `;
 const ONE_TIME_MARKERS = [
   "derived:created_at_epoch", "derived:sort_name", "derived:stack_sort_columns", "derived:stack_sort_created_at",
-  "search_scope_v3", "repair_capture_user_message_v1", "generation_message_backfill_v1",
+  "search_scope_v4", "repair_capture_user_message_v1", "generation_message_backfill_v1",
   "repair_cleared_capture_prompt_v1", "video_metadata_backfill_v1", "file_bytes_backfill_v1",
   "fts_trash_row_cleanup_v1", "reference_hardlink_migration_v1",
 ];
@@ -668,7 +668,7 @@ test("348 rebuild: the exported helpers match the whole-table rebuildSearchScope
   // The seed's rebuild marker is cleared so the pass actually runs here.
   withRawDatabase(libraryDir, (db) => {
     db.transaction(() => {
-      db.prepare("DELETE FROM library_meta WHERE key = 'search_scope_v3'").run();
+      db.prepare("DELETE FROM library_meta WHERE key = 'search_scope_v4'").run();
       const docId = db.prepare("INSERT INTO asset_search_docs (project_id, asset_id) VALUES ('default', 'legacy-probe')").run().lastInsertRowid;
       db.prepare(`
         INSERT INTO assets (project_id, id, asset, original_path, content_sha256, prompt, skill, style, ratio, business_fields_json, theme,
@@ -698,6 +698,6 @@ test("348 rebuild: the exported helpers match the whole-table rebuildSearchScope
   const probe = searchRowsForAsset(libraryDir, "default", "legacy-probe");
   assert.deepEqual(probe.terms, [], "the legacy CJK terms are gone");
   assert.ok(probe.fts[0] && !probe.fts[0].content.includes("zqx7"), "the FTS row holds the rebuilt text");
-  assert.equal(markerValue(libraryDir, "search_scope_v3") != null, true, "the marker is written");
+  assert.equal(markerValue(libraryDir, "search_scope_v4") != null, true, "the marker is written");
   store.close();
 });
