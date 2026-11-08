@@ -6,6 +6,56 @@
   },
   "releases": [
     {
+      "version": "0.3.11",
+      "date": "2026-11-08",
+      "zh": {
+        "new": [
+          "浏览器扩展可以跟随 App 自动更新：在「设置 → 连接」按引导加载一次，之后扩展随 App 一起更新。",
+          "浏览器扩展第一次连接 GravityPort 时，需要在 App 里点「允许连接」。",
+          "AI 助手可以通过 MCP 新建和整理堆叠：命名、设封面、加入或移出素材、解散堆叠。",
+          "AI 助手可以把素材移到回收站，也可以从回收站恢复。"
+        ],
+        "improved": [
+          "AI 助手存入的素材，详情里的来源显示为「AI 助手」。",
+          "AI 助手保存的用户原话可以搜索，并显示在详情的「用户指令」里。",
+          "AI 助手列出和搜索素材时结果更精简，显示总数，可以翻页。",
+          "按日期查找素材时，按本机时间计算。",
+          "AI 助手收到的出错提示改为中英文，并说明具体原因和改法。",
+          "来源导出默认不包含提示词，也不包含电脑上的文件路径和用户名。"
+        ],
+        "fixed": [
+          "修复了不完整的 PNG 图片可以导入素材库的问题。",
+          "修复了 AI 助手可以把素材库自己的文件夹当作新图导入的问题。",
+          "修复了 AI 助手使用不完整的文件位置时导错文件的问题。",
+          "修复了 AI 助手给素材存新版本时，下载、桌面等文件夹里的图片无法使用的问题。",
+          "修复了 AI 助手可以改动图片尺寸等系统记录信息的问题。"
+        ]
+      },
+      "en": {
+        "new": [
+          "The browser extension can now update with the app: load it once by following the steps in Settings → Connect, and it updates together with GravityPort from then on.",
+          "The first time the browser extension connects, GravityPort asks to Allow Connection.",
+          "AI assistants can create and organize stacks through MCP: name them, set the cover, add or remove assets, and dissolve stacks.",
+          "AI assistants can move assets to the Trash and restore them."
+        ],
+        "improved": [
+          "Assets saved by an AI assistant show \"AI assistant\" as their source.",
+          "The user's own wording saved by an AI assistant is searchable and appears under User instruction.",
+          "When AI assistants list or search assets, results are more compact, include a total, and can be paged.",
+          "Date filters use the computer's local time.",
+          "Error messages for AI assistants are now in Chinese and English and explain the cause and the fix.",
+          "Provenance exports leave out prompts by default and never include file paths or user names from the computer."
+        ],
+        "fixed": [
+          "Fixed incomplete PNG files being imported into the library.",
+          "Fixed AI assistants being able to import the library's own folders as new images.",
+          "Fixed AI assistants importing the wrong file when given an incomplete file location.",
+          "Fixed AI assistants being unable to use images in folders such as Downloads or Desktop when saving a new version.",
+          "Fixed AI assistants being able to change system-recorded details such as image dimensions."
+        ]
+      }
+    },
+    {
       "version": "0.3.10",
       "date": "2026-11-07",
       "zh": {

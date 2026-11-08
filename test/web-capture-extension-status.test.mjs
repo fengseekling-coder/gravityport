@@ -266,7 +266,7 @@ test("connected managed extension shows automatic update status", () => {
     lastExtensionVersion: "0.15.45",
     managedExtension: { available: true, path: "/private/test/chrome", version: "0.15.46", installId: "abc", extensionManaged: true },
   }) });
-  assert.match(html, /跟着 App 自动更新/);
+  assert.match(html, /跟随 App 自动更新/);
   assert.match(html, /正在更新扩展/);
   assert.doesNotMatch(html, /有新版扩展/);
 });

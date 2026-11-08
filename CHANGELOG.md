@@ -2,6 +2,22 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.11 — 2026-11-08 / Preview
+
+### Desktop
+
+- The installer bundles the browser extension: load it once from the folder shown in Settings → Connect and it updates with the app. Settings → Connect also guides a switch from a manually updated install and reports updating / update-failed states.
+- The first time the browser extension connects, GravityPort shows an authorization dialog (focus on Don't Allow).
+- MCP: stack tools (create, rename, set cover, add, remove, dissolve, membership in lookups); `asset_trash` / `asset_restore` replace `asset_archive` (legacy archived assets move to Trash); `projectId` removed from every tool; relative, `~`, `file://` and padded paths refused, library-internal paths refused; bilingual (zh/en) error text; `asset_version_create` accepts any local absolute path; `asset_list` / `asset_search` return compact assets with `total` and cursor paging.
+- MCP: AI-saved assets get source type `mcp-agent` (shown as "AI assistant"); `generation_record` back-fills an empty `user_prompt`; system-recorded `business_fields` are read-only; non-ASCII asset ids are refused; images over 40 megapixels save with a preview warning.
+- `user_prompt` and `negative_prompt` are searchable (one-time search-scope rebuild); date-only filters mean local midnight.
+- Provenance exports use an allowlist, leave out prompts by default and never include local paths or user names.
+- Fixes: incomplete (truncated) PNG files are refused on import.
+
+### Web Capture
+
+- Extension 0.15.47: pairing must be allowed in the App and the extension verifies the service identity before sending its token; when the App can't be reached captures wait offline instead of re-pairing (only a 401 re-pairs, at most once every 10 minutes); an App-managed install reloads itself when the App ships a newer copy.
+
 ## 0.3.10 — 2026-11-07 / Preview
 
 ### Desktop

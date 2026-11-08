@@ -197,7 +197,7 @@ export function WebCaptureStatusCardView({
       </div>
       {!loading && !active && available ? (
         <div className="web-capture-note">
-          <p>{t("安装浏览器扩展（装一次，以后跟着 App 自动更新）：")}</p>
+          <p>{t("安装浏览器扩展（装一次，以后跟随 App 自动更新）：")}</p>
           {installationSteps}
           <small>{t("也可以去官网下载")} <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a></small>
         </div>
@@ -212,12 +212,12 @@ export function WebCaptureStatusCardView({
       {!loading && active ? (
         <p className="web-capture-row">
           {t("扩展版本")} {extensionVersion || t("未知")}
-          {extensionManaged ? t("（跟着 App 自动更新）") : null}
+          {extensionManaged ? t("（跟随 App 自动更新）") : null}
         </p>
       ) : null}
       {migrate ? (
         <div className="web-capture-note">
-          <p>{t("扩展现在需要手动更新。改成跟着 App 自动更新：")}</p>
+          <p>{t("扩展现在需要手动更新。改成跟随 App 自动更新：")}</p>
           {installationSteps}
           <p>{t("不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。")}</p>
         </div>
