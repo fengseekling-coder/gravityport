@@ -313,7 +313,7 @@ stack_list
 
 `asset_search` 面向 AI agent 的“视觉记忆”检索：可组合文本查询与 `createdAfter` / `createdBefore` 时间范围，按文字与创建时间检索素材。本地视觉检索已移除；老客户端缓存的旧 schema 仍可能传 `visual: true`，这一参数会被接受并忽略，照常返回文本/时间检索结果，不会报错。
 
-`asset_provenance_export` 导出 `mosa.provenance.bundle/1`，包含经过字段白名单/敏感字段清理的素材身份、内容摘要、Recipe 历史、Generation Events/Relations 和 verification level；同时生成一个 `com.azhuilab.mosa.provenance` C2PA assertion payload。该 payload 明确标记为 `signed: false`：它只是交给 C2PA SDK/签名器的可移植声明数据，**不是**已经签名的 Content Credential，GravityPort 不会把未签名记录描述成经过 C2PA 验证的来源证明。
+`asset_provenance_export` 导出 `mosa.provenance.bundle/1`，包含经过字段白名单/敏感字段清理的素材身份、内容摘要、Recipe 历史、Generation Events/Relations 和 verification level；同时生成一个 `com.azhuilab.mosa.provenance` C2PA assertion payload。导出的来源记录默认不包含提示词与用户原话（只有在调用时显式指定 `includePrompts: true` 才会包含，且提示词中若出现本机路径或操作系统用户名会被替换为 `[redacted]`）；任何情况下均不会带出本机文件路径和操作系统用户名。该 payload 明确标记为 `signed: false`：它只是交给 C2PA SDK/签名器的可移植声明数据，**不是**已经签名的 Content Credential，GravityPort 不会把未签名记录描述成经过 C2PA 验证的来源证明。
 
 素材删除与恢复：`asset_trash` 将素材移入 App 的回收站（可在 90 天内通过 `asset_restore` 或在 App 回收站里恢复，90 天后自动清除），AI 助手在用户要求删除时使用；`asset_restore` 从回收站中恢复素材回图库。
 

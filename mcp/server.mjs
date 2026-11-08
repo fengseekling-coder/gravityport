@@ -426,13 +426,16 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_PROVENANCE_EXPORT,
-      description: "Export a portable GravityPort provenance bundle plus an unsigned C2PA assertion payload. This does not create a signed Content Credential; a C2PA signer must bind and sign the assertion separately.",
+      description: "Export a portable GravityPort provenance bundle plus an unsigned C2PA assertion payload. Prompts and user messages are excluded by default; pass includePrompts: true only when the user explicitly asks to include prompts. Local filesystem paths and usernames are never exported under any circumstances. This does not create a signed Content Credential; a C2PA signer must bind and sign the assertion separately.",
       inputSchema: {
         type: "object",
         properties: {
           projectId: { type: "string" },
           assetId: { type: "string" },
-          includePrompts: { type: "boolean" },
+          includePrompts: {
+            type: "boolean",
+            description: "Whether to include prompts and user messages. Defaults to false; pass true only when the user explicitly requests prompts. Local filesystem paths and usernames are never exported under any circumstances.",
+          },
         },
         required: ["assetId"],
         additionalProperties: false,
@@ -1018,7 +1021,7 @@ async function handleToolCall(id, params) {
   }
   if (params?.name === TOOL_ASSET_PROVENANCE_EXPORT) {
     const result = await buildAssetProvenanceBundle(store, args.projectId || "default", args.assetId, {
-      includePrompts: args.includePrompts !== false,
+      includePrompts: args.includePrompts === true,
     });
     sendResult(id, { content: [{ type: "text", text: `Exported provenance for ${args.assetId}` }], structuredContent: result });
     return;
