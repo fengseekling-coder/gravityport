@@ -6,3 +6,4 @@
 # 例外清单：一行一个，必须写原因。路径以 "/" 结尾表示整个文件夹。能改成占位写法或挪出仓库就别加例外。
 
 test/c2pa-production-signer.test.mjs | secret | Fake private-key header with the body "leak", used to prove the signer preflight rejects leaked key material.
+test/desktop-quiet-qa-screen.test.mjs | secret | Fixed hex strings used as fake tokens in the packaged-quiet gate test; they are not real credentials.

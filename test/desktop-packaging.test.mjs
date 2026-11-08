@@ -366,13 +366,13 @@ test("release packaging enables Developer ID hardened signing and notarization i
     const config = macReleasePackagingConfig({
       MOSA_RELEASE_DISTRIBUTION: distribution,
       MOSA_MACOS_SIGN_IDENTITY: "Developer ID Application: Example (TEAM123456)",
-      MOSA_MACOS_SIGN_KEYCHAIN: "/Users/azhuilab/Library/Keychains/gravityport-signing.keychain-db",
+      MOSA_MACOS_SIGN_KEYCHAIN: "/Users/example/Library/Keychains/gravityport-signing.keychain-db",
       APPLE_TEAM_ID: "TEAM123456",
       MOSA_NOTARY_KEYCHAIN_PROFILE: "gravityport-notary",
     });
 
     assert.equal(config.osxSign.identity, "Developer ID Application: Example (TEAM123456)");
-    assert.equal(config.osxSign.keychain, "/Users/azhuilab/Library/Keychains/gravityport-signing.keychain-db");
+    assert.equal(config.osxSign.keychain, "/Users/example/Library/Keychains/gravityport-signing.keychain-db");
     assert.equal(config.osxSign.identityValidation, true);
     assert.equal(config.osxSign.preAutoEntitlements, false);
     assert.equal(config.osxSign.strictVerify, true);
