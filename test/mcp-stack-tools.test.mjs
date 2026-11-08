@@ -316,7 +316,7 @@ test("12. stack_dissolve dissolves stack, members stay active with stack null, s
   assert.equal(list.structuredContent.stacks.some((s) => s.id === stackId), false);
 });
 
-test("13. stack field in asset_list and asset_search: cover is_cover true, member false, unstacked null", async (t) => {
+test("13. stack field in asset_list and asset_search: slim { id, name } with unstacked key dropped; asset_get keeps the full shape", async (t) => {
   const workspace = await createMcpWorkspace(t);
   const server = startMcpServer(t, workspace);
 
@@ -333,17 +333,26 @@ test("13. stack field in asset_list and asset_search: cover is_cover true, membe
 
   const listRes = await server.callToolStrict("asset_list", {});
   const listMap = new Map(listRes.structuredContent.assets.map((item) => [item.id, item]));
-  assert.deepEqual(listMap.get(a.id).stack, { id: stackId, name: "Cats Stack", count: 2, is_cover: true });
-  assert.deepEqual(listMap.get(b.id).stack, { id: stackId, name: "Cats Stack", count: 2, is_cover: false });
-  assert.equal(listMap.get(c.id).stack, null);
+  // Task 376: list/search summaries keep only { id, name } on the stack.
+  assert.deepEqual(listMap.get(a.id).stack, { id: stackId, name: "Cats Stack" });
+  assert.deepEqual(listMap.get(b.id).stack, { id: stackId, name: "Cats Stack" });
+  assert.equal("stack" in listMap.get(c.id), false);
 
   const searchCats = await server.callToolStrict("asset_search", { query: "cat" });
   const searchMap = new Map(searchCats.structuredContent.results.map((entry) => [entry.asset.id, entry.asset]));
-  assert.deepEqual(searchMap.get(a.id).stack, { id: stackId, name: "Cats Stack", count: 2, is_cover: true });
-  assert.deepEqual(searchMap.get(b.id).stack, { id: stackId, name: "Cats Stack", count: 2, is_cover: false });
+  assert.deepEqual(searchMap.get(a.id).stack, { id: stackId, name: "Cats Stack" });
+  assert.deepEqual(searchMap.get(b.id).stack, { id: stackId, name: "Cats Stack" });
 
   const searchDog = await server.callToolStrict("asset_search", { query: "dog" });
-  assert.equal(searchDog.structuredContent.results[0].asset.stack, null);
+  assert.equal("stack" in searchDog.structuredContent.results[0].asset, false);
+
+  // The full stack summary (count, is_cover, unstacked null) stays on asset_get.
+  const coverGet = await server.callToolStrict("asset_get", { assetId: a.id });
+  assert.deepEqual(coverGet.structuredContent.asset.stack, { id: stackId, name: "Cats Stack", count: 2, is_cover: true });
+  const memberGet = await server.callToolStrict("asset_get", { assetId: b.id });
+  assert.deepEqual(memberGet.structuredContent.asset.stack, { id: stackId, name: "Cats Stack", count: 2, is_cover: false });
+  const unstackedGet = await server.callToolStrict("asset_get", { assetId: c.id });
+  assert.equal(unstackedGet.structuredContent.asset.stack, null);
 });
 
 test("14. stack_list filters by query with character escaping and orders properly", async (t) => {

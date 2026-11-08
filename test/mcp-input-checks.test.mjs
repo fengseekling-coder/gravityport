@@ -64,8 +64,9 @@ async function createFixtureAsset(server, workspace, { prompt = "fixture image",
 }
 
 async function libraryAssetCount(server) {
-  const listed = await server.callToolStrict("asset_list", { limit: 250 });
-  return listed.structuredContent.page?.total ?? listed.structuredContent.assets.length;
+  // Task 376: asset_list caps at 100 per page and reports the total at the top level.
+  const listed = await server.callToolStrict("asset_list", { limit: 100 });
+  return listed.structuredContent.total ?? listed.structuredContent.assets.length;
 }
 
 test("1. no tool declares projectId in its input schema", async (t) => {

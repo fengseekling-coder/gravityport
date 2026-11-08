@@ -146,6 +146,14 @@ MCP 导入接受任意本地绝对路径：`asset_create` 允许导入任意绝�
 - `generation_relation_record`、`generation_lineage`
 - `stack_create`、`stack_add_assets`、`stack_rename`、`stack_remove_assets`、`stack_dissolve`、`stack_get`、`stack_list`
 
+`asset_list` 与 `asset_search` 的返回在 MCP 输出层瘦身（#376）：每张素材只带固定字段的精简摘要
+（`id`、`file_name`、`media_kind`、`width`、`height`、`prompt_excerpt`（前 80 字）、`group`、
+`tags`、`rating`、`favorite`、`created_at`、`stack`（只留 `{ id, name }`，不在堆叠里就没有这个键）、
+`image_path`，值缺失的键不出现），顶层带 `total` 与 `next_cursor`，`asset_search` 同样接受
+`cursor` 翻页、查询回显截断到 200 字；`content` 文本给出可读汇总与每张一行的 `<id> · <file_name>`。
+完整资料（配方快照、调色板等）仍走 `asset_get`；存储层的 `listAssetPage` / `rowToAsset` 与 HTTP
+接口不变。`asset_list` 默认 20 条、最大 100 条（原 250）。
+
 生成事件独立于去重后的 Asset：同一媒体内容可以对应多次生成事件。生成关系连接
 Generation Event，而不是复用 `parent_asset_id`。普通 HTTP/MCP 调用方只能声明
 `user_confirmed`、`observed` 或 `inferred`；`provider_verified` 保留给 GravityPort 直接

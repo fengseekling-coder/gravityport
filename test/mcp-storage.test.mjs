@@ -42,7 +42,8 @@ test("two MCP servers can interleave writes into the same SQLite library and rea
 
   const expectedIds = ["a-one", "a-two", "a-three", "b-one", "b-two", "b-three"].sort();
   for (const server of [first, second]) {
-    const list = await server.callToolStrict("asset_list", { projectId: "default", limit: 250 });
+    // Task 376: asset_list caps at 100 per page.
+    const list = await server.callToolStrict("asset_list", { projectId: "default", limit: 100 });
     assert.deepEqual(list.structuredContent.assets.map((asset) => asset.id).sort(), expectedIds);
     const crossRead = await server.callToolStrict("asset_get", { assetId: "b-one" });
     assert.equal(crossRead.structuredContent.asset.prompt, "prompt for b-one");
