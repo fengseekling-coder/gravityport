@@ -161,6 +161,9 @@ test("ingestOwnerOf maps source types to the six owners", () => {
   assert.equal(ingestOwnerOf({ source_type: "codex-generated" }), "codex");
   assert.equal(ingestOwnerOf({ source: { type: "grok-generated" } }), "grok");
   assert.equal(ingestOwnerOf({ source: { type: "cowart-generated" } }), "cowart");
+  // 任务 377：AI 通过 MCP 存的图与手动导入同权，否则同一张图之后被 Codex
+  // 或网页采集再命中时 canUpgradeMetadata 会挡掉元数据升级。
+  assert.equal(ingestOwnerOf({ source: { type: "mcp-agent" } }), "manual");
   assert.equal(ingestOwnerOf({ source: { type: "local-file" } }), "manual");
   assert.equal(ingestOwnerOf({ source: { type: "something-else" } }), "other");
   assert.equal(ingestOwnerOf({}), "other");
@@ -175,6 +178,9 @@ test("canUpgradeMetadata lets only the owning channel upgrade, manual imports ar
   assert.equal(canUpgradeMetadata(manualAsset, "web:chatgpt"), true, "a local import carries no provenance, any channel may refill it");
   assert.equal(canUpgradeMetadata(manualAsset, "codex"), true);
   assert.equal(canUpgradeMetadata({ source: { type: "codex-generated" } }, "codex"), true);
+  // 任务 377：mcp-agent 素材允许任意渠道补元数据。
+  assert.equal(canUpgradeMetadata({ source: { type: "mcp-agent" } }, "codex"), true);
+  assert.equal(canUpgradeMetadata({ source: { type: "mcp-agent" } }, "web:chatgpt"), true);
 });
 
 test("createAssetViaGate translates the store's dedupe outcomes into skipped results", async (t) => {

@@ -28,6 +28,27 @@ const DELETION_BATCH_MAX_ITEMS = 200;
 const CAPTURE_MEDIA_DB = "mosa-web-capture-media-v1";
 const CAPTURE_MEDIA_STORE = "media";
 const LEGACY_DEV_TOKEN = "mosa-web-capture-dev";
+// Task 333 — pairing needs the user's approval in GravityPort: POST /pair
+// answers 202 with a request id, and the worker polls every 2 s for at most
+// the server-side TTL (120 s) instead of holding one fetch open. The whole
+// discover+confirm flow runs once at a time (module promise); if the service
+// worker is reaped mid-wait, the next getSettings() merges into the same
+// server-side request, so no dialog spam.
+const MOSA_PAIR_POLL_INTERVAL_MS = 2_000;
+const MOSA_PAIR_WAIT_MS = 120_000;
+// Before the token leaves the worker, the service must prove it holds the
+// paired secret (HMAC challenge on /api/web-capture/identity). A verified
+// baseUrl is remembered for 10 minutes in worker memory only.
+const MOSA_IDENTITY_TTL_MS = 10 * 60 * 1000;
+const MOSA_IDENTITY_PROOF_PREFIX = "gravityport-web-capture-identity\0";
+// A 401 may mean GravityPort re-paired; auto-repair at most once per 10
+// minutes (timestamp in chrome.storage.local) so a stuck mismatch cannot
+// reopen the confirmation dialog on every drain.
+const MOSA_AUTO_REPAIR_KEY = "mosaAutoRepairAtV1";
+const MOSA_AUTO_REPAIR_MIN_INTERVAL_MS = 10 * 60 * 1000;
+const serviceIdentityVerifiedUntil = new Map();
+let serviceIdentityState = "unknown";
+let pairingFlowPromise = null;
 const WEB_IMAGE_PROVIDERS = new Set(["chatgpt", "gemini", "flow", "google-ai-studio", "jimeng", "midjourney"]);
 const WEB_VIDEO_PROVIDERS = new Set(["flow", "google-ai-studio", "jimeng", "midjourney"]);
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -49,6 +70,7 @@ let settingsMigration;
 let queueDrainPromise;
 let queueMutationPromise = Promise.resolve();
 let queueStatusReportPromise;
+let managedReloadPromise;
 let lastSeenRetryRequestId = 0;
 // Queue tickets whose live POST is still running. The minute drain skips them,
 // so one capture is never posted twice at the same time (review 294 A.5).
@@ -504,6 +526,68 @@ async function captureQueueStatusSnapshot() {
   };
 }
 
+async function readManagedInstall() {
+  try {
+    const response = await fetch(chrome.runtime.getURL("gravityport-managed.json"), { cache: "no-store" });
+    if (!response.ok) return null;
+    const marker = await response.json();
+    if (!marker || marker.schema !== 1 || typeof marker.installId !== "string"
+      || !marker.installId.trim() || marker.installId.length > 64) return null;
+    return { installId: marker.installId, version: marker.version };
+  } catch {
+    return null;
+  }
+}
+
+// A malformed version never authorizes a reload; compare numeric segments,
+// not strings (0.15.10 is newer than 0.15.9).
+function compareManagedExtensionVersions(left, right) {
+  const parse = (value) => {
+    const parts = String(value || "").trim().split(".");
+    if (!parts.length || !parts.every((part) => /^\d+$/.test(part))) return null;
+    return parts.map(Number);
+  };
+  const leftParts = parse(left);
+  const rightParts = parse(right);
+  if (!leftParts || !rightParts) return null;
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const diff = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (diff) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function maybeReloadForManagedUpdate(instruction) {
+  if (managedReloadPromise) return managedReloadPromise;
+  managedReloadPromise = (async () => {
+    if (!instruction || typeof instruction !== "object" || Array.isArray(instruction)
+      || typeof instruction.version !== "string" || !instruction.version.trim()
+      || typeof instruction.installId !== "string" || !instruction.installId.trim()) return;
+
+    const managed = await readManagedInstall();
+    if (!managed || managed.installId !== instruction.installId) return;
+    if (compareManagedExtensionVersions(instruction.version, chrome.runtime.getManifest().version) !== 1) return;
+
+    const diskResponse = await fetch(chrome.runtime.getURL("manifest.json"), { cache: "no-store" });
+    if (!diskResponse.ok || (await diskResponse.json())?.version !== instruction.version) return;
+    if (queueDrainPromise || liveDeliveryIds.size || pendingEnqueueIds.size
+      || chunkedVideoTransfers.size || pendingSpoolTransferIds.size
+      || await readDesktopSyncJob()) return;
+
+    const key = "mosaManagedReloadV1";
+    const stored = (await chrome.storage.local.get(key))?.[key];
+    const sameVersion = stored?.version === instruction.version;
+    const attempts = sameVersion && Number.isInteger(stored.attempts) && stored.attempts >= 0 ? stored.attempts : 0;
+    const now = Date.now();
+    if (sameVersion && (attempts >= 3 || now - Number(stored.lastAt || 0) < 10 * 60 * 1000)) return;
+    await chrome.storage.local.set({
+      [key]: { version: instruction.version, attempts: attempts + 1, lastAt: now },
+    });
+    chrome.runtime.reload();
+  })().catch(() => {}).finally(() => { managedReloadPromise = undefined; });
+  return managedReloadPromise;
+}
+
 function reportCaptureQueueStatus() {
   if (queueStatusReportPromise) return queueStatusReportPromise;
   queueStatusReportPromise = (async () => {
@@ -511,6 +595,10 @@ function reportCaptureQueueStatus() {
     const token = String(settings.mosaToken || "").trim();
     if (!token) return { reported: false, retryRequested: false };
     const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
+    // Task 333: the status loop carries the bearer token every beat — it does
+    // not go to a service that failed the identity challenge.
+    if (await verifyServiceIdentity(baseUrl, token) !== "ok") return { reported: false, retryRequested: false };
+    const managedInstall = await readManagedInstall();
     const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-status`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
@@ -519,11 +607,14 @@ function reportCaptureQueueStatus() {
       body: JSON.stringify({
         ...(await captureQueueStatusSnapshot()),
         desktopSync: settings.autoCapture === true && !(await readDesktopSyncJob()),
+        extensionId: chrome.runtime.id,
+        managedInstall: managedInstall ? { installId: managedInstall.installId } : null,
       }),
       cache: "no-cache",
     }, 3_000);
     if (!response.ok) return { reported: false, retryRequested: false };
     const body = await response.json().catch(() => ({}));
+    void maybeReloadForManagedUpdate(body?.extensionReload);
     const desktopConversations = Array.isArray(body?.chatgptDesktopConversations) ? body.chatgptDesktopConversations : [];
     if (desktopConversations.length && settings.autoCapture === true) void runDesktopSync(desktopConversations);
     const retryRequestId = Math.max(0, Number(body?.retryRequestId || 0));
@@ -555,6 +646,7 @@ async function reportSessionTitleOnce(payload = {}) {
   const token = String(settings.mosaToken || "").trim();
   if (!token) return { reported: false, reason: "no-token" };
   const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
+  if (await verifyServiceIdentity(baseUrl, token) !== "ok") return { reported: false, reason: "identity" };
   reportedSessionTitles.add(key);
   try {
     const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-session-title`, {
@@ -613,6 +705,7 @@ async function reportConversationTurnsOnce(payload = {}) {
   const token = String(settings.mosaToken || "").trim();
   if (!token) return { reported: false, reason: "no-token" };
   const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
+  if (await verifyServiceIdentity(baseUrl, token) !== "ok") return { reported: false, reason: "identity" };
   const response = await fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-turn-bindings`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
@@ -711,6 +804,7 @@ async function flushProviderDeletionQueue() {
   } catch {
     return { delivered: 0, pending: queue.length };
   }
+  if (await verifyServiceIdentity(baseUrl, token) !== "ok") return { delivered: 0, pending: queue.length };
   const settled = new Set();
   let delivered = 0;
   for (let start = 0; start < queue.length; start += DELETION_BATCH_MAX_ITEMS) {
@@ -1001,6 +1095,113 @@ function mosaUnavailableError(message) {
   return error;
 }
 
+function serviceIdentityMismatchError(outdatedApp) {
+  const error = new Error(outdatedApp
+    ? "GravityPort 版本太旧，请更新到最新版。"
+    : "连接到的不是你的 GravityPort，已暂停发送。如果刚重装过 GravityPort，请在扩展选项里点「重新配对」。");
+  error.code = outdatedApp ? "MOSA_IDENTITY_OUTDATED" : "MOSA_IDENTITY_MISMATCH";
+  error.kind = "identity";
+  // The ticket stays in the offline queue (transient): the next drain
+  // re-challenges, so a reinstalled GravityPort recovers without losing work.
+  error.retryable = true;
+  return error;
+}
+
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index]);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// Same message the server signs (lib/server-security.ts webCaptureIdentityProof):
+// "gravityport-web-capture-identity\0" + port + "\0" + nonce, base64url.
+async function webCaptureIdentityProof(token, port, nonce) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw", encoder.encode(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const parts = [encoder.encode(MOSA_IDENTITY_PROOF_PREFIX), encoder.encode(port), new Uint8Array([0]), encoder.encode(nonce)];
+  const message = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    message.set(part, offset);
+    offset += part.length;
+  }
+  const signature = await crypto.subtle.sign("HMAC", key, message);
+  return bytesToBase64Url(new Uint8Array(signature));
+}
+
+function proofMatches(expected, provided) {
+  if (expected.length !== provided.length) return false;
+  let mismatch = 0;
+  for (let index = 0; index < expected.length; index += 1) {
+    mismatch |= expected.charCodeAt(index) ^ provided.charCodeAt(index);
+  }
+  return mismatch === 0;
+}
+
+// Verdicts: "ok" (challenge passed, or a still-fresh verification is cached),
+// "offline" (network-level failure — the ordinary App-not-running path, so
+// callers keep their existing unavailable handling), "mismatch" (something
+// answered but is not our GravityPort) and "outdated" (no challenge route —
+// pre-3-3 App). Failures are never cached: the next send re-challenges, so a
+// reinstalled GravityPort recovers without a worker restart.
+async function verifyServiceIdentity(baseUrl, token) {
+  if (Date.now() < (serviceIdentityVerifiedUntil.get(baseUrl) || 0)) {
+    serviceIdentityState = "ok";
+    return "ok";
+  }
+  let port = "";
+  try {
+    port = new URL(baseUrl).port || "80";
+  } catch {
+    serviceIdentityState = "mismatch";
+    return "mismatch";
+  }
+  const nonceBytes = new Uint8Array(32);
+  crypto.getRandomValues(nonceBytes);
+  const nonce = bytesToBase64Url(nonceBytes);
+  let response;
+  try {
+    response = await fetchWithTimeout(`${baseUrl}/api/web-capture/identity`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ nonce }),
+      cache: "no-cache",
+    }, MOSA_PROBE_TIMEOUT_MS);
+  } catch {
+    return "offline";
+  }
+  if (response.status === 404) {
+    serviceIdentityState = "outdated";
+    return "outdated";
+  }
+  const body = await response.json().catch(() => null);
+  const proof = String(body?.proof || "");
+  if (!response.ok || !proof) {
+    serviceIdentityState = "mismatch";
+    return "mismatch";
+  }
+  const expected = await webCaptureIdentityProof(token, port, nonce).catch(() => "");
+  if (!expected || !proofMatches(expected, proof)) {
+    serviceIdentityState = "mismatch";
+    return "mismatch";
+  }
+  serviceIdentityVerifiedUntil.set(baseUrl, Date.now() + MOSA_IDENTITY_TTL_MS);
+  serviceIdentityState = "ok";
+  return "ok";
+}
+
+// The three-way gate shared by every token-bearing send site.
+async function assertVerifiedServiceIdentity(baseUrl, token) {
+  const verdict = await verifyServiceIdentity(baseUrl, token);
+  if (verdict === "offline") {
+    throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
+  }
+  if (verdict === "mismatch") throw serviceIdentityMismatchError(false);
+  if (verdict === "outdated") throw serviceIdentityMismatchError(true);
+}
+
 function ingestResponseError(message, status) {
   const error = new Error(message);
   error.status = Number(status) || 0;
@@ -1152,6 +1353,9 @@ function drainCaptureQueue() {
       } catch (error) {
         await markQueuedCaptureFailure(item.id, error);
         if (error?.code === "MOSA_UNAVAILABLE") break;
+        // Identity failures would fail every remaining ticket too; stop the
+        // drain so each round challenges the service once, not per ticket.
+        if (error?.kind === "identity") break;
         if (classifyCaptureError(error) === "permanent" && Number(item.attempts || 0) + 1 >= CAPTURE_QUEUE_MAX_ATTEMPTS) {
           await removeQueuedCapture(item.id);
         }
@@ -1504,6 +1708,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     getSettings()
       .then((settings) => sendResponse({
         ok: true,
+        // Task 333: the options page surfaces the service identity verdict
+        // ("unknown" | "ok" | "mismatch" | "outdated") next to the settings.
+        serviceIdentity: serviceIdentityState,
         settings: extensionPageSender(sender)
           ? settings
           : { autoCapture: settings.autoCapture },
@@ -1563,7 +1770,16 @@ async function getSettings() {
   return settings;
 }
 
+// Only one pairing flow at a time for the whole extension: a second caller
+// awaits the same promise instead of opening a second confirmation request.
 async function discoverAndPairMosa() {
+  if (!pairingFlowPromise) {
+    pairingFlowPromise = runDiscoverAndPairMosa().finally(() => { pairingFlowPromise = null; });
+  }
+  return pairingFlowPromise;
+}
+
+async function runDiscoverAndPairMosa() {
   const first = await discoverAndPairMosaOnce();
   if (first) return first;
   // A cold-started GravityPort (Windows) can take longer than one probe round
@@ -1581,16 +1797,27 @@ async function discoverAndPairMosaOnce() {
       const identity = await health.json();
       if (identity?.product !== "mosa") continue;
 
+      // Task 333: the App asks the user to confirm this extension. A 202
+      // starts (or merges into) a pending request; denied and busy answers
+      // stop the whole attempt — retrying would only fight the user.
       const pair = await fetchWithTimeout(`${baseUrl}/api/web-capture/pair`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: "{}",
+        body: JSON.stringify({ extensionVersion: chrome.runtime.getManifest().version }),
         cache: "no-cache",
       }, MOSA_PROBE_TIMEOUT_MS);
+      if (pair.status === 403 || pair.status === 429) return null;
       if (!pair.ok) continue;
-      const body = await pair.json();
-      const token = String(body?.token || "").trim();
-      if (body?.product !== "mosa" || !token) continue;
+      const pairBody = await pair.json();
+      if (pairBody?.product !== "mosa") continue;
+      // A one-shot approval (decide()) lets an older, non-polling worker
+      // collect the token straight from POST /pair; current workers see 202.
+      const directToken = String(pairBody?.token || "").trim();
+      if (directToken) return { baseUrl, token: directToken };
+      const requestId = String(pairBody?.requestId || "");
+      if (pair.status !== 202 || !requestId) continue;
+      const token = await pollPairingDecision(baseUrl, requestId);
+      if (!token) return null;
       return { baseUrl, token };
     } catch {
       // Try the next local discovery port.
@@ -1599,11 +1826,51 @@ async function discoverAndPairMosaOnce() {
   return null;
 }
 
+// Polls GET /pair/<id> until the user answers in GravityPort, the request
+// expires, or the App goes away. Each poll is one short fetch; the wait comes
+// from the interval, never from a long-held connection.
+async function pollPairingDecision(baseUrl, requestId) {
+  const deadline = Date.now() + MOSA_PAIR_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, MOSA_PAIR_POLL_INTERVAL_MS));
+    let response;
+    try {
+      response = await fetchWithTimeout(`${baseUrl}/api/web-capture/pair/${encodeURIComponent(requestId)}`, {
+        cache: "no-cache",
+      }, MOSA_PROBE_TIMEOUT_MS);
+    } catch {
+      return null;
+    }
+    if (response.status === 404 || !response.ok) return null;
+    const body = await response.json().catch(() => null);
+    if (body?.status === "approved") {
+      const token = String(body?.token || "").trim();
+      return body?.product === "mosa" && token ? token : null;
+    }
+    if (body?.status !== "pending") return null; // denied or expired
+  }
+  return null;
+}
+
 async function repairPairing() {
   const paired = await discoverAndPairMosa();
   if (!paired) return null;
+  // A new pairing may have landed on a different service; every previous
+  // identity verification is void.
+  serviceIdentityVerifiedUntil.clear();
+  serviceIdentityState = "unknown";
   await chrome.storage.local.set({ mosaBaseUrl: paired.baseUrl, mosaToken: paired.token });
   return paired;
+}
+
+// Automatic re-pairing (401 only) is throttled to one attempt per 10 minutes;
+// a user-initiated repair from the options page is not throttled.
+async function autoRepairPairingThrottled() {
+  const stored = await chrome.storage.local.get({ [MOSA_AUTO_REPAIR_KEY]: 0 });
+  const last = Number(stored[MOSA_AUTO_REPAIR_KEY] || 0);
+  if (Date.now() - last < MOSA_AUTO_REPAIR_MIN_INTERVAL_MS) return null;
+  await chrome.storage.local.set({ [MOSA_AUTO_REPAIR_KEY]: Date.now() });
+  return repairPairing();
 }
 
 async function ensureMosaAvailable(baseUrl) {
@@ -2028,19 +2295,20 @@ async function upgradeMetadataToMosa(payload = {}) {
 
 async function uploadConnection() {
   const settings = await getSettings();
-  let baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
-  let token = String(settings.mosaToken || "").trim();
+  const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
+  const token = String(settings.mosaToken || "").trim();
   if (!token) {
     const error = new Error("尚未连接 GravityPort。请先打开 GravityPort。");
     error.kind = "pairing";
     throw error;
   }
+  // Task 333: an unreachable App goes to the offline queue (the caller's
+  // error path); it no longer re-pairs behind the user's back. The service
+  // must also prove its identity before the token is sent.
   if (!await ensureMosaAvailable(baseUrl)) {
-    const repaired = await repairPairing().catch(() => null);
-    if (!repaired) throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
-    baseUrl = repaired.baseUrl;
-    token = repaired.token;
+    throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
   }
+  await assertVerifiedServiceIdentity(baseUrl, token);
   return { baseUrl, token };
 }
 
@@ -2234,12 +2502,14 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
   const mediaUrl = mediaKind === "video" ? payload.mediaUrl : payload.imageUrl;
   let finalMediaUrl = mediaUrl || "";
   if (!mediaBase64 && !mediaBinaryParts && mediaUrl) {
+    // Task 333: an unreachable App keeps the work in the offline queue; no
+    // silent re-pairing while the user is not looking.
     if (!await ensureMosaAvailable(baseUrl)) {
-      const repaired = await repairPairing().catch(() => null);
-      if (!repaired) throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
-      baseUrl = repaired.baseUrl;
-      token = repaired.token;
+      throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
     }
+    // The video stream sends the token itself — verify before handing the
+    // connection over, exactly like the direct ingest below.
+    await assertVerifiedServiceIdentity(baseUrl, token);
     if (mediaKind === "video") {
       return streamRemoteVideoToMosa(payload, mediaUrl, { baseUrl, token });
     }
@@ -2250,6 +2520,9 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
     finalMediaUrl = fetched.finalUrl || mediaUrl;
   }
   if (!mediaBase64 && !mediaBinaryParts) throw new Error(`No ${mediaKind} bytes to ingest.`);
+  // Captures that already carry local bytes skip the availability probe; the
+  // identity challenge doubles as the reachability check here.
+  await assertVerifiedServiceIdentity(baseUrl, token);
   const requestPayload = captureRequestPayload(payload, { mediaKind, mimeType, mediaUrl, finalMediaUrl, provider });
   const requestIngest = () => mediaBinaryParts
     ? fetchWithTimeout(`${baseUrl}/api/ingest/web-capture-binary`, {
@@ -2275,22 +2548,11 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
   let response;
   try {
     response = await requestIngest();
-  } catch (error) {
-    const repaired = await repairPairing().catch(() => null);
-    if (!repaired) {
-      const msg = error instanceof Error ? error.message : String(error);
-      // 任务 359（EXT-45b）：浏览器英文原句（Failed to fetch 等）不再拼进中文提示。
-      throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
-    }
-    baseUrl = repaired.baseUrl;
-    token = repaired.token;
-    try {
-      response = await requestIngest();
-    } catch (retryError) {
-      const msg = retryError instanceof Error ? retryError.message : String(retryError);
-      // 任务 359（EXT-45b）：浏览器英文原句（Failed to fetch 等）不再拼进中文提示。
-      throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
-    }
+  } catch {
+    // Task 333: a network failure keeps the ticket in the offline queue for
+    // the next drain — it never re-pairs on its own.
+    // 任务 359（EXT-45b）：浏览器英文原句（Failed to fetch 等）不再拼进中文提示。
+    throw mosaUnavailableError(`无法连接 GravityPort（${baseUrl}）。请确认 GravityPort 正在运行。`);
   }
 
   // Task 314: the JSON ingest entry no longer carries big media (videos most
@@ -2307,24 +2569,12 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
     }
   }
 
-  // Discard a failed body only when a repaired pairing replaces the response.
-  // Otherwise it is read below, so the user sees MOSA's own error and status.
-  if (response.status === 401 || response.status === 403) {
-    const repaired = await repairPairing().catch(() => null);
-    if (repaired && (repaired.baseUrl !== baseUrl || repaired.token !== token)) {
-      await response.arrayBuffer().catch(() => {});
-      baseUrl = repaired.baseUrl;
-      token = repaired.token;
-      response = await requestIngest();
-    }
-  }
-
-  // A cached discovery port may later be occupied by another local service,
-  // or an older MOSA runtime may no longer expose the ingest route. Repair the
-  // pairing once for endpoint-level failures, but never retry normal 4xx media
-  // validation errors because those belong to the current capture itself.
-  if ([404, 405, 500, 502, 503, 504].includes(response.status)) {
-    const repaired = await repairPairing().catch(() => null);
+  // A 401 means the saved token was rejected — usually GravityPort re-paired.
+  // Auto-repair, but at most once per 10 minutes (it opens the App's pairing
+  // confirmation); every other status belongs to this capture and is reported
+  // as-is instead of re-pairing behind the user's back (task 333).
+  if (response.status === 401) {
+    const repaired = await autoRepairPairingThrottled().catch(() => null);
     if (repaired && (repaired.baseUrl !== baseUrl || repaired.token !== token)) {
       await response.arrayBuffer().catch(() => {});
       baseUrl = repaired.baseUrl;

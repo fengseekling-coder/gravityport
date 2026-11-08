@@ -347,7 +347,9 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     image_path: path,
     prompt: String(input.prompt || ""),
     prompt2,
-    user_instruction: String(source.user_message || fields.user_message || ""),
+    // 任务 377：AI 用 asset_create 带上的 user_prompt 也算「用户指令」，
+    // 详情页原来看不到它。
+    user_instruction: String(source.user_message || fields.user_message || input.user_prompt || ""),
     introduction: String(fields.introduction || fields.description || input.description || ""),
     tags: asStringArray(input.tags),
     palette: asStringArray(input.palette),
@@ -494,6 +496,15 @@ export type MosaWebCaptureStatus = {
   tokenConfigured: boolean
   lastIngestAt: string | null
   lastExtensionVersion: string
+  lastExtensionId: string
+  lastManagedInstallId: string
+  managedExtension: {
+    available: boolean
+    path?: string
+    version?: string
+    installId?: string
+    extensionManaged?: boolean
+  }
   totalImported: number
   lastError: string | null
   // storageBytes/storageLimitBytes/urlOnly/evicted come from the extension's
@@ -512,7 +523,7 @@ export type MosaWebCaptureStatus = {
   retryRequestId: number
 }
 
-function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
+function normalizeWebCaptureStatus(input: JsonValue, managedExtension: JsonValue = {}): MosaWebCaptureStatus {
   const queue = (input.queue && typeof input.queue === "object" ? input.queue : {}) as JsonValue
   const items = Array.isArray(queue.items) ? queue.items : []
   const serverTime = (value: unknown): string | null =>
@@ -523,6 +534,12 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
     tokenConfigured: input.tokenConfigured === true,
     lastIngestAt: serverTime(input.lastIngestAt),
     lastExtensionVersion: String(input.lastExtensionVersion || ""),
+    lastExtensionId: String(input.lastExtensionId || ""),
+    lastManagedInstallId: String(input.lastManagedInstallId || ""),
+    managedExtension: managedExtension.available === true
+      ? { available: true, path: String(managedExtension.path || ""), version: String(managedExtension.version || ""),
+          installId: String(managedExtension.installId || ""), extensionManaged: managedExtension.extensionManaged === true }
+      : { available: false },
     totalImported: Math.max(0, Number(input.totalImported || 0)),
     lastError: typeof input.lastError === "string" && input.lastError ? input.lastError : null,
     queue: {
@@ -551,8 +568,8 @@ function normalizeWebCaptureStatus(input: JsonValue): MosaWebCaptureStatus {
 }
 
 export async function fetchWebCaptureStatus(signal?: AbortSignal): Promise<MosaWebCaptureStatus> {
-  const data = await requestJson<{ bridge?: JsonValue }>("/api/web-capture", { signal })
-  return normalizeWebCaptureStatus(data.bridge || {})
+  const data = await requestJson<{ bridge?: JsonValue; managedExtension?: JsonValue }>("/api/web-capture", { signal })
+  return normalizeWebCaptureStatus(data.bridge || {}, data.managedExtension || {})
 }
 
 /** POST /api/web-capture/retry — asks the paired extension to replay its
@@ -560,6 +577,44 @@ export async function fetchWebCaptureStatus(signal?: AbortSignal): Promise<MosaW
 export async function requestWebCaptureRetry(): Promise<number> {
   const data = await requestJson<{ retryRequestId?: number }>("/api/web-capture/retry", { method: "POST" })
   return Math.max(0, Number(data.retryRequestId || 0))
+}
+
+// Task 333 — pairing requests awaiting the user's decision. The server never
+// includes the token or the raw extension origin in these rows.
+export type MosaWebCapturePairRequest = {
+  id: string
+  extensionId: string
+  extensionVersion: string
+  knownExtension: boolean
+  createdAt: number
+  expiresAt: number
+}
+
+/** GET /api/web-capture/pair-requests — the client-authenticated pairing
+ * queue. The list is authoritative; SSE only signals "refetch". */
+export async function fetchWebCapturePairRequests(signal?: AbortSignal): Promise<MosaWebCapturePairRequest[]> {
+  const data = await requestJson<{ requests?: JsonValue }>("/api/web-capture/pair-requests", { signal })
+  const rows = Array.isArray(data.requests) ? data.requests : []
+  return rows
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    .map(row => ({
+      id: String(row.id || ""),
+      extensionId: String(row.extensionId || ""),
+      extensionVersion: String(row.extensionVersion || ""),
+      knownExtension: row.knownExtension === true,
+      createdAt: Number(row.createdAt || 0),
+      expiresAt: Number(row.expiresAt || 0),
+    }))
+    .filter(row => row.id)
+}
+
+/** POST /api/web-capture/pair-requests/<id>/decision — allow or deny one
+ * pending pairing request. Unknown/expired ids answer 404. */
+export async function decideWebCapturePairRequest(id: string, allow: boolean): Promise<void> {
+  await requestJson(`/api/web-capture/pair-requests/${encodeURIComponent(id)}/decision`, {
+    method: "POST",
+    body: { allow },
+  })
 }
 
 export type MosaProviderDeletionSettings = {

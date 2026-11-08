@@ -96,6 +96,33 @@ export function isAuthorizedMosaServiceIdentityProof(
   return providedBytes.length === expectedBytes.length && timingSafeEqual(providedBytes, expectedBytes);
 }
 
+// Task 333 — the same challenge for the browser extension, keyed by the Web
+// Capture token instead of the client token: before sending the token to a
+// discovered baseUrl, the extension verifies the service actually holds the
+// token paired with it, so an impostor squatting on the port cannot harvest
+// captures. Message binds the bound port exactly like mosaServiceIdentityProof.
+const WEB_CAPTURE_IDENTITY_PROOF_PREFIX = "gravityport-web-capture-identity\0";
+
+export function webCaptureIdentityProof(
+  token: unknown,
+  { port, nonce }: { port: unknown; nonce: unknown },
+): string {
+  let key = "";
+  try {
+    key = normalizeMosaClientToken(token);
+  } catch {
+    return "";
+  }
+  const normalizedPort = normalizeBrowserClientPort(port);
+  if (!key || !normalizedPort || !isMosaServiceIdentityNonce(nonce)) return "";
+  return createHmac("sha256", key)
+    .update(WEB_CAPTURE_IDENTITY_PROOF_PREFIX)
+    .update(normalizedPort)
+    .update("\0")
+    .update(nonce)
+    .digest("base64url");
+}
+
 function cookieValue(cookieHeader: unknown, name: string): string {
   if (!name) return "";
   const header = String(cookieHeader || "");

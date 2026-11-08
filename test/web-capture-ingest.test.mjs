@@ -2037,14 +2037,26 @@ test("HTTP ingest endpoint accepts chrome-extension origin with token", async (t
   assert.equal(blockedPairing.status, 403);
   await blockedPairing.arrayBuffer();
 
+  // Task 333: the approved origin no longer receives the token at once — the
+  // POST opens a pending request the App user must confirm.
   const paired = await fetch(`http://127.0.0.1:${port}/api/web-capture/pair`, {
     method: "POST",
     headers: { origin: "chrome-extension://abc123", "content-type": "application/json" },
     body: "{}",
   });
-  assert.equal(paired.status, 200);
+  assert.equal(paired.status, 202);
   assert.equal(paired.headers.get("access-control-allow-origin"), "chrome-extension://abc123");
-  assert.deepEqual(await paired.json(), { product: "mosa", token: "test-token" });
+  const pairBody = await paired.json();
+  assert.equal(pairBody.product, "mosa");
+  assert.equal(pairBody.status, "pending");
+  assert.ok(pairBody.requestId);
+  assert.equal(JSON.stringify(pairBody).includes("test-token"), false, "the pending answer carries no token");
+
+  const pendingPoll = await fetch(`http://127.0.0.1:${port}/api/web-capture/pair/${pairBody.requestId}`, {
+    headers: { origin: "chrome-extension://abc123" },
+  });
+  assert.equal(pendingPoll.status, 200);
+  assert.deepEqual(await pendingPoll.json(), { status: "pending" });
 
   const imported = await fetch(`http://127.0.0.1:${port}/api/ingest/web-capture`, {
     method: "POST",

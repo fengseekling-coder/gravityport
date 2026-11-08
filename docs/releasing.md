@@ -21,7 +21,7 @@ macOS release packaging (`desktop:release:preview` and `desktop:release:producti
 | Variable | Example / Description |
 |---|---|
 | `MOSA_MACOS_SIGN_IDENTITY` | `Developer ID Application: LIANGRUI FENG (B5ZJT8TRPN)` |
-| `MOSA_MACOS_SIGN_KEYCHAIN` | Path to the dedicated signing keychain, e.g. `/Users/azhuilab/Library/Keychains/gravityport-signing.keychain-db` |
+| `MOSA_MACOS_SIGN_KEYCHAIN` | Path to the dedicated signing keychain, e.g. `/Users/example/Library/Keychains/gravityport-signing.keychain-db` |
 | `APPLE_TEAM_ID` | `B5ZJT8TRPN` |
 | `MOSA_NOTARY_KEYCHAIN_PROFILE` | Name of the stored notarytool keychain profile, e.g. `gravityport-notary` |
 

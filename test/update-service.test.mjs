@@ -39,6 +39,7 @@ test("0.3.0 release candidates outrank the occupied 0.2.1 line", () => {
   assert.equal(compareVersions("0.3.8", "0.3.7"), 1);
   assert.equal(compareVersions("0.3.9", "0.3.8"), 1);
   assert.equal(compareVersions("0.3.10", "0.3.9"), 1);
+  assert.equal(compareVersions("0.3.11", "0.3.10"), 1);
 });
 
 test("update manifest keeps only bounded release metadata", () => {

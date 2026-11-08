@@ -66,7 +66,6 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     params: {
       name: "asset_version_create",
       arguments: {
-        projectId: "default",
         assetId: "root",
         assetIdNew: "child",
         imagePath: replacementPath,
@@ -90,7 +89,7 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     jsonrpc: "2.0",
     id: 3,
     method: "tools/call",
-    params: { name: "asset_version_history", arguments: { projectId: "default", assetId: "child" } },
+    params: { name: "asset_version_history", arguments: { assetId: "child" } },
   });
   assert.equal(history.error, undefined);
   assert.deepEqual(history.result.structuredContent.history.versions.map((asset) => asset.id), ["root", "child"]);
@@ -99,7 +98,7 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     jsonrpc: "2.0",
     id: 4,
     method: "tools/call",
-    params: { name: "asset_recipe_history", arguments: { projectId: "default", assetId: "child" } },
+    params: { name: "asset_recipe_history", arguments: { assetId: "child" } },
   });
   assert.equal(recipeHistory.error, undefined);
   assert.equal(recipeHistory.result.structuredContent.history.snapshots.length, 1);
@@ -115,7 +114,7 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     method: "tools/call",
     params: {
       name: "asset_search",
-      arguments: { projectId: "default", query: "updated prompt", visual: false, limit: 10 },
+      arguments: { query: "updated prompt", visual: false, limit: 10 },
     },
   });
   assert.equal(search.error, undefined);
@@ -129,7 +128,7 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     method: "tools/call",
     params: {
       name: "asset_search",
-      arguments: { projectId: "default", query: "updated prompt", visual: true, minScore: 0.2, limit: 10 },
+      arguments: { query: "updated prompt", visual: true, minScore: 0.2, limit: 10 },
     },
   });
   assert.equal(legacyVisual.error, undefined);
@@ -142,7 +141,7 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     method: "tools/call",
     params: {
       name: "asset_provenance_export",
-      arguments: { projectId: "default", assetId: "child" },
+      arguments: { assetId: "child" },
     },
   });
   assert.equal(provenance.error, undefined);
@@ -155,7 +154,7 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     jsonrpc: "2.0",
     id: 5,
     method: "tools/call",
-    params: { name: "asset_version_create", arguments: { projectId: "default", assetId: "root", version_change: " " } },
+    params: { name: "asset_version_create", arguments: { assetId: "root", version_change: " " } },
   });
   assert.equal(invalid.error, undefined);
   assert.equal(invalid.result.isError, true);
@@ -167,7 +166,7 @@ test("MCP exposes recipe version creation, history, and structured errors", asyn
     method: "tools/call",
     params: {
       name: "asset_create",
-      arguments: { projectId: "default", assetId: "bypass", imagePath: bypassPath, parent_asset_id: "root" },
+      arguments: { assetId: "bypass", imagePath: bypassPath, parent_asset_id: "root" },
     },
   });
   assert.equal(bypass.error, undefined);

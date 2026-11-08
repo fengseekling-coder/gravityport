@@ -109,6 +109,8 @@ export interface SqliteAssetStore {
   listAssets(filters: AssetListFilters): Promise<StoredAsset[]>;
   listAssetPage(filters: AssetListFilters): Promise<AssetPage>;
   getAssetStack(projectId: string, stackId: string): Promise<AssetStackSummary>;
+  getAssetStackMemberships(projectId: string, assetIds: string[]): Promise<Record<string, AssetStackSummary>>;
+  listAssetStacks(projectId: string, options?: { query?: string; limit?: number }): Promise<{ stacks: AssetStackSummary[]; truncated: boolean }>;
   listAssetStackAssets(projectId: string, stackId: string, filters?: AssetListFilters): Promise<{ stack: AssetStackSummary; assets: StoredAsset[]; page: { total: number | null; nextCursor: string | null; limit: number; sort: string } }>;
   createAssetStack(projectId: string, assetIds: string[], options?: { coverAssetId?: string }): Promise<AssetStackSummary>;
   addAssetsToStack(projectId: string, stackId: string, assetIds: string[]): Promise<AssetStackSummary>;

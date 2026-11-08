@@ -7,7 +7,7 @@ import sharp from "sharp";
 import { MCP_SERVER_VERSION } from "../lib/version-identities.mjs";
 import { createMcpWorkspace, startMcpServer } from "./helpers/mcp-server-harness.mjs";
 
-// The 17 tool names must stay in lockstep with the TOOL_* constants in
+// The 25 tool names must stay in lockstep with the TOOL_* constants in
 // mcp/server.mjs. A tool added or removed there has to update this list.
 const EXPECTED_TOOL_NAMES = [
   "asset_create",
@@ -18,7 +18,8 @@ const EXPECTED_TOOL_NAMES = [
   "asset_provenance_export",
   "asset_update_metadata",
   "asset_attach_prompt",
-  "asset_archive",
+  "asset_trash",
+  "asset_restore",
   "asset_duplicate",
   "asset_version_create",
   "asset_version_history",
@@ -27,6 +28,13 @@ const EXPECTED_TOOL_NAMES = [
   "generation_list",
   "generation_relation_record",
   "generation_lineage",
+  "stack_create",
+  "stack_add_assets",
+  "stack_rename",
+  "stack_remove_assets",
+  "stack_dissolve",
+  "stack_get",
+  "stack_list",
 ];
 
 const READ_ONLY_TOOLS = new Set([
@@ -38,6 +46,14 @@ const READ_ONLY_TOOLS = new Set([
   "asset_recipe_history",
   "generation_list",
   "generation_lineage",
+  "stack_get",
+  "stack_list",
+]);
+
+const DESTRUCTIVE_TOOLS = new Set([
+  "asset_trash",
+  "stack_remove_assets",
+  "stack_dissolve",
 ]);
 
 test("initialize echoes the client protocol version, or the default when none is sent", async (t) => {
@@ -62,7 +78,7 @@ test("ping answers with an empty result object", async (t) => {
   assert.equal(response.error, undefined);
 });
 
-test("tools/list exposes exactly the 17 registered tools with usable schemas", async (t) => {
+test("tools/list exposes exactly the 25 registered tools with usable schemas", async (t) => {
   const workspace = await createMcpWorkspace(t);
   const server = startMcpServer(t, workspace);
 
@@ -74,12 +90,12 @@ test("tools/list exposes exactly the 17 registered tools with usable schemas", a
     assert.ok(tool.description?.trim().length > 0, `tool ${tool.name} has a non-empty description`);
     assert.equal(tool.inputSchema.type, "object", `tool ${tool.name} accepts an object inputSchema`);
     // Task 334: every tool carries annotations. Read tools never write; the
-    // only destructive tool is asset_archive; nothing reaches beyond this
+    // only destructive tool is asset_trash; nothing reaches beyond this
     // machine (openWorldHint: false).
     const annotations = tool.annotations;
     assert.ok(annotations, `tool ${tool.name} carries annotations`);
     assert.equal(annotations.openWorldHint, false, `tool ${tool.name} declares openWorldHint: false`);
-    assert.equal(annotations.destructiveHint, tool.name === "asset_archive", `tool ${tool.name} destructiveHint matches the write table`);
+    assert.equal(annotations.destructiveHint, DESTRUCTIVE_TOOLS.has(tool.name), `tool ${tool.name} destructiveHint matches the write table`);
     if (READ_ONLY_TOOLS.has(tool.name)) {
       assert.equal(annotations.readOnlyHint, true, `tool ${tool.name} is marked read-only`);
     } else {
@@ -174,7 +190,7 @@ test("requests fired in parallel are each answered with their own id", async (t)
     const response = responses[index];
     assert.equal(response.id, entry.id);
     if (entry.expect === "ping") assert.deepEqual(response.result, {});
-    if (entry.expect === "tools") assert.equal(response.result.tools.length, 17);
+    if (entry.expect === "tools") assert.equal(response.result.tools.length, EXPECTED_TOOL_NAMES.length);
     if (entry.expect === "asset_list") assert.deepEqual(response.result.structuredContent.assets, []);
     if (entry.expect === "error") assert.equal(response.error.code, -32601);
   }
@@ -192,13 +208,13 @@ test("business failures surface as isError tool results, not JSON-RPC errors", a
   assert.equal(missingGet.result.isError, true);
   assert.equal(missingGet.result.structuredContent.error.code, "ASSET_NOT_FOUND");
 
-  const missingArchive = await server.request("tools/call", {
-    name: "asset_archive",
+  const missingTrash = await server.request("tools/call", {
+    name: "asset_trash",
     arguments: { assetId: "does-not-exist" },
   });
-  assert.equal(missingArchive.error, undefined);
-  assert.equal(missingArchive.result.isError, true);
-  assert.equal(missingArchive.result.structuredContent.error.code, "ASSET_NOT_FOUND");
+  assert.equal(missingTrash.error, undefined);
+  assert.equal(missingTrash.result.isError, true);
+  assert.equal(missingTrash.result.structuredContent.error.code, "ASSET_NOT_FOUND");
 });
 
 test("closing stdin mid-write lets the in-flight request finish before the store closes", async (t) => {

@@ -173,7 +173,7 @@ test("an aborted background maintenance stops between batches and the next open 
     await settled;
     const stopMs = performance.now() - abortStarted;
     assert.ok(stopMs < 1500, `the stop must land between two batches (took ${stopMs.toFixed(0)}ms)`);
-    assert.equal(markerValue(a.libraryDir, "search_scope_v3"), null, "the interrupted run wrote no completion marker");
+    assert.equal(markerValue(a.libraryDir, "search_scope_v4"), null, "the interrupted run wrote no completion marker");
     store.close();
 
     // Reference: the same library, uninterrupted.
@@ -185,7 +185,7 @@ test("an aborted background maintenance stops between batches and the next open 
     const resumed = createSqliteAssetStore({ projectRoot: a.projectRoot, managerDir: join(a.projectRoot, "mosa"), libraryDir: a.libraryDir });
     await resumed.startDeferredMaintenance();
     resumed.close();
-    assert.ok(markerValue(a.libraryDir, "search_scope_v3"), "the resumed run completes the marker");
+    assert.ok(markerValue(a.libraryDir, "search_scope_v4"), "the resumed run completes the marker");
     assert.deepEqual(searchScopeSnapshot(a.libraryDir), searchScopeSnapshot(b.libraryDir),
       "the interrupted-then-resumed result equals an uninterrupted run");
   } finally {
@@ -217,12 +217,12 @@ test("runtime stop interrupts the background sweep instead of hanging exit", asy
   // The maintenance chain starts ~1.8s after listen; by 2.4s the search-scope
   // sweep (8000 rows, marker absent) is mid-flight.
   await new Promise((resolveWait) => setTimeout(resolveWait, 2400));
-  assert.equal(markerValue(libraryDir, "search_scope_v3"), null, "the sweep is still running when stop arrives");
+  assert.equal(markerValue(libraryDir, "search_scope_v4"), null, "the sweep is still running when stop arrives");
   const started = performance.now();
   await runtime.stop();
   const stopMs = performance.now() - started;
   assert.ok(stopMs < 3000, `stop must only wait out the batch in flight (took ${stopMs.toFixed(0)}ms; an uninterrupted sweep of this library takes many seconds)`);
-  assert.equal(markerValue(libraryDir, "search_scope_v3"), null, "the sweep did not finish before exit");
+  assert.equal(markerValue(libraryDir, "search_scope_v4"), null, "the sweep did not finish before exit");
 });
 
 // --- 2: the upgrade-verify record is reliable ------------------------------------

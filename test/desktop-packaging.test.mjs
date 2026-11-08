@@ -6,6 +6,8 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import forgeConfig, {
   createForgeConfig,
+  desktopBrowserExtensionOutputDir,
+  prepareBundledBrowserExtension,
   macReleasePackagingConfig,
   packageIgnorePatterns,
   packageIgnorePatternsForTarget,
@@ -19,6 +21,21 @@ import {
   generateDesktopIcons,
 } from "../desktop/icon-assets.mjs";
 import { desktopLicensesOutputDir } from "../scripts/third-party-licenses.mjs";
+import { WEB_CAPTURE_RUNTIME_FILES } from "../scripts/web-capture-runtime-files.mjs";
+
+test("packaged browser extension keeps its pinned key and exact runtime manifest files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-packaged-extension-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const outDir = desktopBrowserExtensionOutputDir({ projectRoot: root });
+  const config = createForgeConfig({ env: { MOSA_FORGE_OUT_DIR: join(root, "out") } });
+  assert.ok(config.packagerConfig.extraResource.some((path) => path.endsWith(join(".desktop-browser-extension", "browser-extension"))));
+  const { chromeDir, files } = await prepareBundledBrowserExtension({ outputDir: outDir });
+  const sourceManifest = JSON.parse(await readFile(resolve(import.meta.dirname, "../extensions/chatgpt-web-capture/manifest.json"), "utf8"));
+  const packagedManifest = JSON.parse(await readFile(join(chromeDir, "manifest.json"), "utf8"));
+  assert.ok(packagedManifest.key);
+  assert.equal(packagedManifest.key, sourceManifest.key);
+  assert.deepEqual(files, [...new Set(["manifest.json", ...WEB_CAPTURE_RUNTIME_FILES])].sort());
+});
 import {
   assertDesktopPackagingNode,
   desktopPackagingNodeError,
@@ -223,14 +240,21 @@ test("desktop packaging target resolution supports only the approved macOS and W
   );
 });
 
-test("both targets copy the generated license folder into Resources", () => {
+test("both targets copy the generated license and browser extension folders into Resources", () => {
   for (const platform of ["darwin", "win32"]) {
     const target = resolveDesktopPackagingTarget({ platform, env: {}, argv: [] });
     const config = createForgeConfig({ target, env: {} });
-    assert.deepEqual(config.packagerConfig.extraResource, [desktopLicensesOutputDir({ outDir: "out" })]);
+    assert.deepEqual(config.packagerConfig.extraResource, [
+      desktopLicensesOutputDir({ outDir: "out" }),
+      desktopBrowserExtensionOutputDir({ outDir: "out" }),
+    ]);
     assert.match(config.packagerConfig.extraResource[0], /[\\/]out[\\/]\.desktop-licenses[\\/]licenses$/);
+    assert.match(config.packagerConfig.extraResource[1], /[\\/]out[\\/]\.desktop-browser-extension[\\/]browser-extension$/);
     const routed = createForgeConfig({ target, env: { MOSA_FORGE_OUT_DIR: "qa-out" } });
-    assert.deepEqual(routed.packagerConfig.extraResource, [desktopLicensesOutputDir({ outDir: "qa-out" })]);
+    assert.deepEqual(routed.packagerConfig.extraResource, [
+      desktopLicensesOutputDir({ outDir: "qa-out" }),
+      desktopBrowserExtensionOutputDir({ outDir: "qa-out" }),
+    ]);
     assert.ok(target.libvipsPackage, `${target.id} names its libvips package`);
   }
   assert.equal(resolveDesktopPackagingTarget({ platform: "darwin", env: {}, argv: [] }).libvipsPackage, "sharp-libvips-darwin-arm64");
@@ -342,13 +366,13 @@ test("release packaging enables Developer ID hardened signing and notarization i
     const config = macReleasePackagingConfig({
       MOSA_RELEASE_DISTRIBUTION: distribution,
       MOSA_MACOS_SIGN_IDENTITY: "Developer ID Application: Example (TEAM123456)",
-      MOSA_MACOS_SIGN_KEYCHAIN: "/Users/azhuilab/Library/Keychains/gravityport-signing.keychain-db",
+      MOSA_MACOS_SIGN_KEYCHAIN: "/Users/example/Library/Keychains/gravityport-signing.keychain-db",
       APPLE_TEAM_ID: "TEAM123456",
       MOSA_NOTARY_KEYCHAIN_PROFILE: "gravityport-notary",
     });
 
     assert.equal(config.osxSign.identity, "Developer ID Application: Example (TEAM123456)");
-    assert.equal(config.osxSign.keychain, "/Users/azhuilab/Library/Keychains/gravityport-signing.keychain-db");
+    assert.equal(config.osxSign.keychain, "/Users/example/Library/Keychains/gravityport-signing.keychain-db");
     assert.equal(config.osxSign.identityValidation, true);
     assert.equal(config.osxSign.preAutoEntitlements, false);
     assert.equal(config.osxSign.strictVerify, true);
@@ -721,7 +745,8 @@ test("retired show-in-folder IPC stays removed without expanding renderer author
   // origin 上的主框架回答），23 → 24。任务 318：user-profile 通道删除（安装 ID
   // 不再暴露给界面），24 → 23。
   // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 25, "no invoke channel beyond the currently approved narrow requests");
+  // 任务 340：在访达显示扩展文件夹，25 → 26。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 26, "no invoke channel beyond the currently approved narrow requests");
   assert.doesNotMatch(preload, /shell\s*[:.]/, "shell is never exposed to the renderer");
   assert.doesNotMatch(preload, /exec\(|spawn\(|execFile\(/, "no arbitrary command execution");
 

@@ -5,6 +5,8 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "../lib/image-pixel-hash.js";
 import { createAssetStore } from "../lib/asset-store.mjs";
+import { TRASH_RETENTION_MS } from "../lib/sqlite-asset-store.mjs";
+import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { createMcpWorkspace, startMcpServer, writePngFixture } from "./helpers/mcp-server-harness.mjs";
 
 async function setupServerWithFixture(t, fixtureName = "fixture.png") {
@@ -87,28 +89,168 @@ test("asset_attach_prompt writes and replaces the full recipe of an asset", asyn
   assertBusinessError(missing, "ASSET_NOT_FOUND");
 });
 
-test("asset_archive hides the asset from asset_list while keeping it and its file retrievable", async (t) => {
+test("asset_trash moves asset to Trash, calculates purge_after, and asset_restore brings it back", async (t) => {
   const { workspace, imagePath, server } = await setupServerWithFixture(t);
-  // Distinct bytes: asset_create skips identical bytes already in the library
-  // (outside Trash) and answers with the stored asset, so a second archive
-  // target needs its own fixture.
-  const secondPath = await writePngFixture(join(workspace.imagesDir, "tossme.png"), { color: "#513a2a" });
-  await server.callToolStrict("asset_create", { assetId: "keepme", imagePath });
-  const tossed = await server.callToolStrict("asset_create", { assetId: "tossme", imagePath: secondPath });
+  const runtime = await startMosaRuntime({
+    port: 0,
+    projectRoot: workspace.root,
+    libraryDir: workspace.libraryDir,
+    assetsRoot: join(workspace.libraryDir, "assets"),
+    generatedImagesDir: workspace.imagesDir,
+  });
+  t.after(() => runtime.stop());
 
-  const archived = await server.callToolStrict("asset_archive", { assetId: "tossme" });
-  assert.equal(archived.structuredContent.asset.archived, true);
+  await server.callToolStrict("asset_create", { assetId: "trashme", imagePath });
 
-  const list = await server.callToolStrict("asset_list", { projectId: "default" });
-  const listedIds = list.structuredContent.assets.map((asset) => asset.id);
-  assert.deepEqual(listedIds, ["keepme"], "the archived asset left the active list");
+  // 1. asset_trash
+  const trashed = await server.callToolStrict("asset_trash", { assetId: "trashme" });
+  assert.equal(trashed.structuredContent.asset_id, "trashme");
+  assert.equal(trashed.structuredContent.trashed, true);
+  assert.ok(trashed.structuredContent.deleted_at);
+  const expectedPurgeAfter = new Date(new Date(trashed.structuredContent.deleted_at).getTime() + TRASH_RETENTION_MS).toISOString();
+  assert.equal(trashed.structuredContent.purge_after, expectedPurgeAfter);
+  assert.match(trashed.content[0].text, /已移到回收站，可恢复，90 天后自动清除。\/ Moved to Trash; restorable for 90 days\./);
 
-  const stillThere = await server.callToolStrict("asset_get", { assetId: "tossme" });
-  assert.equal(stillThere.structuredContent.asset.archived, true);
-  await access(tossed.structuredContent.asset.image_path); // soft delete keeps the original file
+  // HTTP GET /api/assets has no trashme
+  const activeRes = await fetch(`${runtime.url}/api/assets?project=default&limit=100`);
+  const active = await activeRes.json();
+  assert.equal(active.assets.some((a) => a.id === "trashme"), false);
 
-  const missing = await server.callTool("asset_archive", { assetId: "ghost" });
+  // HTTP GET /api/assets?trash=1 has trashme
+  const trashRes = await fetch(`${runtime.url}/api/assets?project=default&trash=1&limit=100`);
+  const trash = await trashRes.json();
+  assert.equal(trash.assets.some((a) => a.id === "trashme"), true);
+
+  // 2. asset_restore
+  const restored = await server.callToolStrict("asset_restore", { assetId: "trashme" });
+  assert.equal(restored.structuredContent.asset.id, "trashme");
+  assert.equal(restored.structuredContent.asset.archived, false);
+  assert.equal(restored.structuredContent.asset.deleted_at, null);
+  assert.match(restored.content[0].text, /已从回收站恢复。\/ Restored from Trash\./);
+
+  // GET /api/assets has it again
+  const activeRes2 = await fetch(`${runtime.url}/api/assets?project=default&limit=100`);
+  const active2 = await activeRes2.json();
+  assert.equal(active2.assets.some((a) => a.id === "trashme"), true);
+
+  // 3. asset_restore on asset not in trash -> ASSET_NOT_IN_TRASH
+  const notInTrash = await server.callTool("asset_restore", { assetId: "trashme" });
+  assert.equal(notInTrash.isError, true);
+  assert.equal(notInTrash.structuredContent.error.code, "ASSET_NOT_IN_TRASH");
+  assert.match(notInTrash.content[0].text, /这张图不在回收站里。\/ Asset trashme is not in Trash\./);
+
+  // Non-existent id -> ASSET_NOT_FOUND
+  const missing = await server.callTool("asset_restore", { assetId: "ghost" });
   assertBusinessError(missing, "ASSET_NOT_FOUND");
+});
+
+test("asset_trash removes asset from stack membership", async (t) => {
+  const { workspace, imagePath, server } = await setupServerWithFixture(t);
+  const secondPath = await writePngFixture(join(workspace.imagesDir, "second.png"), { color: "#513a2a" });
+  await server.callToolStrict("asset_create", { assetId: "member-1", imagePath });
+  await server.callToolStrict("asset_create", { assetId: "member-2", imagePath: secondPath });
+
+  const stack = await server.callToolStrict("stack_create", {
+    assetIds: ["member-1", "member-2"],
+    name: "stack-to-trash",
+  });
+  const stackId = stack.structuredContent.stack.id;
+
+  const before = await server.callToolStrict("stack_get", { stackId });
+  assert.equal(before.structuredContent.members.length, 2);
+
+  await server.callToolStrict("asset_trash", { assetId: "member-1" });
+
+  const after = await server.callToolStrict("stack_get", { stackId });
+  assert.equal(after.structuredContent.members.length, 1);
+  assert.equal(after.structuredContent.members[0].id, "member-2");
+});
+
+test("asset_trash followed by asset_create of identical bytes creates new id and keeps trashed asset", async (t) => {
+  const { workspace, imagePath, server } = await setupServerWithFixture(t);
+  const runtime = await startMosaRuntime({
+    port: 0,
+    projectRoot: workspace.root,
+    libraryDir: workspace.libraryDir,
+    assetsRoot: join(workspace.libraryDir, "assets"),
+    generatedImagesDir: workspace.imagesDir,
+  });
+  t.after(() => runtime.stop());
+
+  await server.callToolStrict("asset_create", { assetId: "first-copy", imagePath });
+  await server.callToolStrict("asset_trash", { assetId: "first-copy" });
+
+  const recreated = await server.callToolStrict("asset_create", { assetId: "second-copy", imagePath });
+  assert.equal(recreated.structuredContent.asset.id, "second-copy");
+  assert.equal(recreated.structuredContent.deduplicated, undefined);
+
+  // Both exist: second-copy in active library, first-copy in trash
+  const activeRes = await fetch(`${runtime.url}/api/assets?project=default&limit=100`);
+  const active = await activeRes.json();
+  assert.equal(active.assets.some((a) => a.id === "second-copy"), true);
+
+  const trashRes = await fetch(`${runtime.url}/api/assets?project=default&trash=1&limit=100`);
+  const trash = await trashRes.json();
+  assert.equal(trash.assets.some((a) => a.id === "first-copy"), true);
+});
+
+test("tools/list contains asset_trash and asset_restore with proper annotations, and no asset_archive", async (t) => {
+  const { server } = await setupServerWithFixture(t);
+  const response = await server.request("tools/list");
+  const tools = response.result.tools;
+  const toolNames = tools.map((tool) => tool.name);
+
+  assert.equal(toolNames.includes("asset_archive"), false, "asset_archive must not exist");
+  assert.equal(toolNames.includes("asset_trash"), true, "asset_trash must exist");
+  assert.equal(toolNames.includes("asset_restore"), true, "asset_restore must exist");
+
+  const trashTool = tools.find((tool) => tool.name === "asset_trash");
+  assert.deepEqual(trashTool.annotations, {
+    openWorldHint: false,
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+  });
+
+  const restoreTool = tools.find((tool) => tool.name === "asset_restore");
+  assert.deepEqual(restoreTool.annotations, {
+    openWorldHint: false,
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+  });
+});
+
+test("HTTP batch action archive moves assets to Trash", async (t) => {
+  const { workspace, imagePath, server } = await setupServerWithFixture(t);
+  const runtime = await startMosaRuntime({
+    port: 0,
+    projectRoot: workspace.root,
+    libraryDir: workspace.libraryDir,
+    assetsRoot: join(workspace.libraryDir, "assets"),
+    generatedImagesDir: workspace.imagesDir,
+  });
+  t.after(() => runtime.stop());
+
+  await server.callToolStrict("asset_create", { assetId: "batch-target", imagePath });
+
+  const batchRes = await fetch(`${runtime.url}/api/assets/batch`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "archive", projectId: "default", assetIds: ["batch-target"] }),
+  });
+  assert.equal(batchRes.status, 200);
+  const batch = await batchRes.json();
+  assert.equal(batch.partial, false);
+  assert.deepEqual(batch.results, [{ id: "batch-target", trashed: true }]);
+
+  const activeRes = await fetch(`${runtime.url}/api/assets?project=default&limit=100`);
+  const active = await activeRes.json();
+  assert.equal(active.assets.some((a) => a.id === "batch-target"), false);
+
+  const trashRes = await fetch(`${runtime.url}/api/assets?project=default&trash=1&limit=100`);
+  const trash = await trashRes.json();
+  assert.equal(trash.assets.some((a) => a.id === "batch-target"), true);
 });
 
 test("asset_duplicate creates an independent copy and leaves the original untouched", async (t) => {
@@ -135,7 +277,7 @@ test("asset_duplicate creates an independent copy and leaves the original untouc
   assert.equal(origin.structuredContent.asset.image_path, originalPath);
   assert.deepEqual(await readFile(originalPath), originalBytes, "the original media file was not modified");
 
-  const both = await server.callToolStrict("asset_list", { projectId: "default" });
+  const both = await server.callToolStrict("asset_list", {});
   assert.deepEqual(both.structuredContent.assets.map((asset) => asset.id).sort(), ["copy-one", "origin"]);
 
   const missing = await server.callTool("asset_duplicate", { assetId: "ghost" });
@@ -189,24 +331,40 @@ test("asset_get and asset_provenance_export carry the stored content and pixel h
   assert.notEqual(bundleAsset.pixel_sha256, "");
 });
 
-test("asset_update_metadata merges business_fields keys, so a partial write keeps recorded dimensions", async (t) => {
+// Task 377 reworked the contract this test used to pin: system-recorded
+// business fields (width/height/file_bytes/…/auto_archived) are dropped at
+// the MCP layer instead of being written, and the answer reports them. The
+// merge semantics for ordinary keys are unchanged and still pinned here.
+test("asset_update_metadata merges business_fields keys; system-recorded fields are refused", async (t) => {
   const { imagePath, server } = await setupServerWithFixture(t);
-  await server.callToolStrict("asset_create", {
+  const created = await server.callToolStrict("asset_create", {
     assetId: "dims-keeper",
     imagePath,
     prompt: "partial business fields",
-    business_fields: { width: 1024, height: 768, file_bytes: 12345, auto_archived: true },
+    business_fields: { width: 1024, height: 768, file_bytes: 12345, auto_archived: true, note: "kept" },
   });
+  assert.deepEqual(created.structuredContent.ignored_fields, ["width", "height", "file_bytes", "auto_archived"]);
+  const createdFields = created.structuredContent.asset.business_fields;
+  assert.notEqual(createdFields.width, 1024, "the file's real width wins over a claimed one");
+  assert.notEqual(createdFields.file_bytes, 12345, "the store records the real file size");
+  assert.equal(createdFields.auto_archived, undefined, "auto_archived is not writable from MCP");
+  assert.equal(createdFields.note, "kept", "ordinary keys are written as before");
 
   const updated = await server.callToolStrict("asset_update_metadata", {
     assetId: "dims-keeper",
-    business_fields: { auto_archived: false },
+    business_fields: { note: "renamed" },
   });
   const fields = updated.structuredContent.asset.business_fields;
-  assert.equal(fields.auto_archived, false, "the named key updates");
-  assert.equal(fields.width, 1024, "a partial write keeps the recorded width");
-  assert.equal(fields.height, 768, "a partial write keeps the recorded height");
-  assert.equal(fields.file_bytes, 12345, "a partial write keeps file_bytes");
+  assert.equal(fields.note, "renamed", "a partial write keeps the other keys");
+  assert.equal(fields.width, createdFields.width, "a partial write keeps the recorded width");
+  assert.equal(fields.height, createdFields.height, "a partial write keeps the recorded height");
+  assert.equal(fields.file_bytes, createdFields.file_bytes, "a partial write keeps file_bytes");
+
+  const refused = await server.callToolStrict("asset_update_metadata", {
+    assetId: "dims-keeper",
+    business_fields: { auto_archived: false },
+  });
+  assert.deepEqual(refused.structuredContent.ignored_fields, ["auto_archived"], "auto_archived is refused and reported");
 
   const removed = await server.callToolStrict("asset_update_metadata", {
     assetId: "dims-keeper",
@@ -218,7 +376,7 @@ test("asset_update_metadata merges business_fields keys, so a partial write keep
     business_fields: { some_key: null },
   });
   assert.equal(Object.hasOwn(deleted.structuredContent.asset.business_fields, "some_key"), false, "a null value deletes its key");
-  assert.equal(deleted.structuredContent.asset.business_fields.width, 1024, "the deletion leaves the dimensions alone");
+  assert.equal(deleted.structuredContent.asset.business_fields.width, createdFields.width, "the deletion leaves the dimensions alone");
 });
 
 test("asset_create returns the stored asset for identical bytes and rebuilds after trash", async (t) => {
@@ -226,14 +384,14 @@ test("asset_create returns the stored asset for identical bytes and rebuilds aft
   const first = await server.callToolStrict("asset_create", { assetId: "dedupe-one", imagePath, prompt: "first copy" });
   assert.equal(first.structuredContent.deduplicated, undefined);
 
-  const second = await server.callToolStrict("asset_create", { assetId: "dedupe-two", imagePath, prompt: "second copy" });
+  const second = await server.callToolStrict("asset_create", { assetId: "dedupe-two", imagePath });
   assert.equal(second.structuredContent.asset.id, "dedupe-one", "the stored asset is returned instead of a copy");
   assert.equal(second.structuredContent.deduplicated, true);
   assert.equal(
     second.content[0].text,
     "Asset already in library: dedupe-one (identical bytes); returned the existing asset.",
   );
-  const listed = await server.callToolStrict("asset_list", { projectId: "default" });
+  const listed = await server.callToolStrict("asset_list", {});
   assert.equal(listed.structuredContent.assets.length, 1, "no second copy enters the library");
 
   // Trash the stored copy through the App's own trash path; the same bytes
@@ -252,6 +410,35 @@ test("asset_create returns the stored asset for identical bytes and rebuilds aft
   const third = await server.callToolStrict("asset_create", { assetId: "dedupe-three", imagePath, prompt: "after trash" });
   assert.equal(third.structuredContent.asset.id, "dedupe-three");
   assert.equal(third.structuredContent.deduplicated, undefined);
+});
+
+test("deduplicated asset_create reports ignored_fields without overwriting stored prompt or tags", async (t) => {
+  const { imagePath, server } = await setupServerWithFixture(t);
+  await server.callToolStrict("asset_create", {
+    assetId: "dedupe-original",
+    imagePath,
+    prompt: "original prompt",
+    tags: ["original-tag"],
+  });
+
+  const dupResult = await server.callToolStrict("asset_create", {
+    assetId: "dedupe-attempt",
+    imagePath,
+    prompt: "new prompt",
+    tags: ["new-tag"],
+  });
+
+  assert.equal(dupResult.structuredContent.deduplicated, true);
+  assert.equal(dupResult.structuredContent.asset.id, "dedupe-original");
+  assert.deepEqual(dupResult.structuredContent.ignored_fields, ["prompt", "tags"]);
+  assert.equal(
+    dupResult.content[0].text,
+    "Asset already in library: dedupe-original (identical bytes); returned the existing asset. 这次传的 prompt, tags 没有写入；要改用 asset_update_metadata。/ The prompt, tags in this request were not saved; use asset_update_metadata to change them.",
+  );
+
+  const verified = await server.callToolStrict("asset_get", { assetId: "dedupe-original" });
+  assert.equal(verified.structuredContent.asset.prompt, "original prompt");
+  assert.deepEqual(verified.structuredContent.asset.tags, ["original-tag"]);
 });
 
 test("asset_create ignores hashes the caller claims in source", async (t) => {

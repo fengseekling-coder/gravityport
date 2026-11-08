@@ -127,18 +127,32 @@ Host（DNS rebinding）与 loopback origin 检查、管理请求的 client token
 
 MCP 导入接受任意本地绝对路径：`asset_create` 允许导入任意绝对路径的单张图片；`asset_import_folder`
 可直接批量导入任意绝对路径的本地文件夹，不再要求用户在 AI 助手中弹窗确认（移除了 MCP elicitation）。
-相对路径一律拒绝（`IMAGE_PATH_NOT_READABLE`、`IMPORT_FOLDER_NOT_ABSOLUTE`）。
+路径参数在 MCP 层先做形状检查：相对路径、`file://`、`~` 开头、首尾空格一律拒绝（`INVALID_PATH`，带
+`reason`），收到文件夹报 `PATH_IS_FOLDER`、`asset_import_folder` 收到文件报 `PATH_IS_FILE`；素材库
+目录内部（以及把素材库整个包住的文件夹）拒绝导入（`LIBRARY_INTERNAL_PATH`，#375），唯一的例外是存储层
+自己的出图暂存根 `generatedImagesDir`（桌面版就是 `<库>/imports`，AI 出图落在这里再入库是正常流程）。
+`projectId` 不再是
+工具参数：传 `default`（不分大小写）或空值按没传处理，其他值回 `PROJECT_ID_NOT_SUPPORTED`（#375）。
 导入仅限于支持的图片和视频格式，跳过符号链接，支持去重保护与批次上限（单次最多 1000 个文件），
-并且绝不改动源文件夹。17 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
-（仅 `asset_archive` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
+并且绝不改动源文件夹。25 个工具都带 annotations：读工具 `readOnlyHint: true`，写工具 `readOnlyHint: false`
+（`asset_trash`、`stack_remove_assets`、`stack_dissolve` 另标 `destructiveHint: true`），全部 `openWorldHint: false`。当前工具覆盖：
 
 - `asset_create`、`asset_import_folder`、`asset_list`、`asset_get`
 - `asset_search`（文本与时间范围组合）、`asset_provenance_export`（导出脱敏 provenance bundle 与未签名的 C2PA assertion payload）
 - `asset_update_metadata`、`asset_attach_prompt`
-- `asset_archive`、`asset_duplicate`
+- `asset_trash`、`asset_restore`、`asset_duplicate`
 - `asset_version_create`、`asset_version_history`、`asset_recipe_history`
 - `generation_record`、`generation_list`
 - `generation_relation_record`、`generation_lineage`
+- `stack_create`、`stack_add_assets`、`stack_rename`、`stack_remove_assets`、`stack_dissolve`、`stack_get`、`stack_list`
+
+`asset_list` 与 `asset_search` 的返回在 MCP 输出层瘦身（#376）：每张素材只带固定字段的精简摘要
+（`id`、`file_name`、`media_kind`、`width`、`height`、`prompt_excerpt`（前 80 字）、`group`、
+`tags`、`rating`、`favorite`、`created_at`、`stack`（只留 `{ id, name }`，不在堆叠里就没有这个键）、
+`image_path`，值缺失的键不出现），顶层带 `total` 与 `next_cursor`，`asset_search` 同样接受
+`cursor` 翻页、查询回显截断到 200 字；`content` 文本给出可读汇总与每张一行的 `<id> · <file_name>`。
+完整资料（配方快照、调色板等）仍走 `asset_get`；存储层的 `listAssetPage` / `rowToAsset` 与 HTTP
+接口不变。`asset_list` 默认 20 条、最大 100 条（原 250）。
 
 生成事件独立于去重后的 Asset：同一媒体内容可以对应多次生成事件。生成关系连接
 Generation Event，而不是复用 `parent_asset_id`。普通 HTTP/MCP 调用方只能声明
@@ -632,7 +646,7 @@ flowchart TD
 | Grok Build CLI | 来源路径 → 字节 → 像素 | 会话工具调用参数 | 不写 | 已接入总入口；字节/像素命中自己的图会升级提示词和出处字段（另一路径的同字节文件记 `grok_alternate_paths`），命中别家收的图只记一次出现，不改提示词、用户指令、`generation_tool`、`model`、`prompt_status` |
 | Cowart | 来源路径 → 字节 → 像素 | 画布 alt text | 不写 | 已接入总入口；命中后从不升级元数据，只记一次出现；同一路径字节变了就新建一张 |
 | 手动导入（拖、选文件、粘贴） | — | 无 | 不写 | 已接入总入口（字节相同跳过、显示像素相同的新图进回收站、感知相似的进清单让用户选，#314） |
-| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传 | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。接受任意本地绝对路径，相对路径拒绝；不再在助手那边弹确认（#364，取代 #334 的受信根加确认） |
+| MCP `asset_create` / `asset_import_folder` | 调用方 | 调用方传；调用方没传 `sourceType` / `source.type` 时按 `mcp-agent` 记（App 显示「AI 助手」；Codex 出图目录里照旧 `codex-generated`） | `generation_record` 单独写 | 已接入总入口；库里有相同字节（回收站外）就返回已有那张（`deduplicated: true`），不再多存一份；调用方在 `source` 里声称的哈希不采信，由存储层自己算。接受任意本地绝对路径，路径形状（相对、`file://`、`~`、首尾空格）在 MCP 层拒绝（`INVALID_PATH`），库内部路径拒绝（`LIBRARY_INTERNAL_PATH`）；不再在助手那边弹确认（#364，取代 #334 的受信根加确认）；系统记录的业务字段（宽高、文件大小等）和不符合 `[A-Za-z0-9_-]{1,96}` 的素材 id 也在 MCP 层挡下（#377） |
 
 写生成记录在总入口里是固定位置的调用方钩子；当前只有网页收录（图片和视频）在用，
 Codex、Grok、Cowart 和手动导入不写。
@@ -726,7 +740,7 @@ image」），只跟着真升级的提示词重算，且永不覆盖用户改过
 | 收藏 | `favorite = 1` 或 `rating > 0` | 手动心形；打分只有 MCP 能写 | — |
 | 标签 | `tags` / `asset_tags` | 手动；系统标签隐藏 | 多个 |
 | 版本树 | 对话轮次（推算）、确认关系 `generation_relations`、候选关系、版本历史 `parent_asset_id` | 手动确认 / 自动猜 / MCP 与 HTTP | 多对多（现状） |
-| 归档 | `assets.archived = 1`，归档时移出堆叠 | 只有 MCP `asset_archive` 与 HTTP | 界面没有入口和视图（现状） |
+| 归档 | `assets.archived = 1`（历史残留，373 后由一次性修复挪进回收站） | 历史 MCP 与 HTTP | 界面没有入口和视图 |
 | 项目 | `project_id` | MCP / HTTP | 一张图 1 个 |
 
 侧栏计数按张数，网格按卡片数（一个堆叠算一张）。
@@ -755,8 +769,7 @@ image」），只跟着真升级的提示词重算，且永不覆盖用户改过
 - **有子版本的父版本**：移回收站和永久删除都会被拒（`VERSION_PARENT_HAS_CHILDREN`）。
 - **即梦站内删除同步**（#307）：默认开；整理过的不动（同 8.4 清单）；有副本或
   派生版本的整组不动；进回收站标 `provider-deleted:jimeng`。
-- **MCP**：没有删除工具；唯一让图消失的是 `asset_archive`，进的不是回收站
-  （见 8.4 归档）。
+- **MCP**：提供 `asset_trash` 移进回收站，提供 `asset_restore` 恢复（见 8.5）。
 - **在 Finder 里删素材文件**：库不监视目录，记录还在，原图打不开没有提示（现状）。
 - **删除分组**：只清 `group_name`，图留着；「连素材一起删」的路也会留下
   `group_name`，恢复任一张时分组会自己出现。

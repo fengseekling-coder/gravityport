@@ -238,7 +238,7 @@ test("MCP exposes generation recording, relation, and lineage tools with the sam
     params: { name: "asset_list", arguments: { limit: 999 } },
   });
   assert.equal(invalidList.error.code, -32602);
-  assert.match(invalidList.error.message, /arguments\.limit must be <= 250/);
+  assert.match(invalidList.error.message, /arguments\.limit must be <= 100/);
 
   const emptyVersionChange = await callMcp(server, {
     jsonrpc: "2.0",

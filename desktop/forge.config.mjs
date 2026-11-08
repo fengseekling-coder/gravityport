@@ -2,13 +2,14 @@ import { MakerZIP } from "@electron-forge/maker-zip";
 import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
-import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { desktopDistributionFromEnvironment, requiresMacDeveloperIdSigning, requiresPlatformSigning } from "../lib/release-distribution.mjs";
 import { resolveReleaseProduct } from "../scripts/release-product.mjs";
 import { desktopLicensesOutputDir, writeDesktopLicenses } from "../scripts/third-party-licenses.mjs";
 import { windowsSignOptionsFromEnvironment } from "../scripts/windows-signing.mjs";
+import { WEB_CAPTURE_RUNTIME_FILES } from "../scripts/web-capture-runtime-files.mjs";
 import {
   desktopIconBasePath,
   desktopIconOutputDir,
@@ -25,6 +26,58 @@ const PACKAGED_MANIFEST_KEYS = [
   "engines",
   "dependencies",
 ];
+
+const DESKTOP_PROJECT_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const BROWSER_EXTENSION_SOURCE = join(DESKTOP_PROJECT_ROOT, "extensions", "chatgpt-web-capture");
+
+export function desktopBrowserExtensionOutputDir({ outDir = "out", projectRoot = DESKTOP_PROJECT_ROOT } = {}) {
+  return resolve(projectRoot, outDir, ".desktop-browser-extension", "browser-extension");
+}
+
+// Unlike the Store ZIP, this local copy keeps the pinned extension ID.
+export async function prepareBundledBrowserExtension({
+  sourceDir = BROWSER_EXTENSION_SOURCE,
+  outputDir = desktopBrowserExtensionOutputDir(),
+} = {}) {
+  const manifest = JSON.parse(await readFile(join(sourceDir, "manifest.json"), "utf8"));
+  if (typeof manifest.key !== "string" || !manifest.key.trim()) {
+    throw new Error("Desktop browser extension manifest must retain its pinned key");
+  }
+  const icons = (value) => typeof value === "string"
+    ? [value]
+    : value && typeof value === "object" ? Object.values(value) : [];
+  const files = new Set([
+    "manifest.json",
+    ...WEB_CAPTURE_RUNTIME_FILES,
+    manifest.background?.service_worker,
+    manifest.options_page,
+    manifest.options_ui?.page,
+    manifest.action?.default_popup,
+    manifest.side_panel?.default_path,
+    ...icons(manifest.icons),
+    ...icons(manifest.action?.default_icon),
+    ...(manifest.content_scripts || []).flatMap((entry) => [...(entry.js || []), ...(entry.css || [])]),
+  ].filter(Boolean));
+  for (const file of files) {
+    if (typeof file !== "string" || isAbsolute(file) || file.split(/[\\/]/).some((part) => !part || part === "." || part === "..")) {
+      throw new Error(`Unsafe desktop browser extension path: ${file}`);
+    }
+    await access(join(sourceDir, file)).catch(() => {
+      throw new Error(`Desktop browser extension is missing manifest/runtime file: ${file}`);
+    });
+  }
+  // Only generated build output is replaced. The user's fixed folder is never deleted.
+  await rm(outputDir, { recursive: true, force: true });
+  const chromeDir = join(outputDir, "chrome");
+  await mkdir(chromeDir, { recursive: true });
+  for (const file of files) {
+    await mkdir(dirname(join(chromeDir, file)), { recursive: true });
+    await copyFile(join(sourceDir, file), join(chromeDir, file));
+  }
+  const copied = JSON.parse(await readFile(join(chromeDir, "manifest.json"), "utf8"));
+  if (copied.key !== manifest.key) throw new Error("Desktop browser extension manifest key changed");
+  return { chromeDir, files: [...files].sort() };
+}
 
 const COMMON_BUILD_ONLY_RUNTIME_PATHS = [
   "node_modules/better-sqlite3/binding.gyp",
@@ -284,6 +337,7 @@ export function createForgeConfig({ target = activeTarget, env = process.env } =
   const iconOutputDir = desktopIconOutputDir({ outDir });
   const icon = desktopIconBasePath({ outDir });
   const licensesDir = desktopLicensesOutputDir({ outDir });
+  const browserExtensionDir = desktopBrowserExtensionOutputDir({ outDir });
   return {
   // Forge normally writes to repository-local out/. QA environments may route
   // generated packages elsewhere without changing the release layout.
@@ -296,7 +350,7 @@ export function createForgeConfig({ target = activeTarget, env = process.env } =
     ...windowsPackaging,
     ignore,
     // Copied into Resources/ after packageAfterPrune writes it and before signing.
-    extraResource: [licensesDir],
+    extraResource: [licensesDir, browserExtensionDir],
     asar: {
       // Sharp's target package contains native siblings that must stay outside
       // app.asar. The exact package differs between macOS and Windows.
@@ -315,6 +369,7 @@ export function createForgeConfig({ target = activeTarget, env = process.env } =
     packageAfterPrune: async (_config, buildPath, _electronVersion, platform, arch) => {
       const hookTarget = resolveDesktopPackagingTarget({ platform, arch, env: {}, argv: [] });
       await finalizePrunedApp(buildPath, hookTarget, { licensesDir });
+      await prepareBundledBrowserExtension({ outputDir: browserExtensionDir });
     },
   },
   plugins: [

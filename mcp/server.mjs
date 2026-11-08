@@ -2,14 +2,17 @@ import "../lib/apply-env-aliases.mjs";
 import readline from "node:readline";
 import { homedir } from "node:os";
 import { statSync } from "node:fs";
-import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { createAssetStore } from "../lib/asset-store.mjs";
+import { TRASH_RETENTION_MS } from "../lib/sqlite-asset-store.mjs";
+import { assetStoreError } from "../lib/asset-version-history.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
 import { createAssetViaGate, untrustedCreateSource } from "../lib/library-ingest.mjs";
 import { withUserEditMarkers } from "../lib/user-edit-marker.mjs";
+import { MAX_DERIVATIVE_INPUT_PIXELS } from "../lib/derivative-limits.js";
 import { buildAssetProvenanceBundle } from "../lib/provenance-bundle.mjs";
 import {
   desktopDefaultLocationFilePath,
@@ -215,7 +218,8 @@ const TOOL_ASSET_GET = "asset_get";
 const TOOL_ASSET_PROVENANCE_EXPORT = "asset_provenance_export";
 const TOOL_ASSET_UPDATE_METADATA = "asset_update_metadata";
 const TOOL_ASSET_ATTACH_PROMPT = "asset_attach_prompt";
-const TOOL_ASSET_ARCHIVE = "asset_archive";
+const TOOL_ASSET_TRASH = "asset_trash";
+const TOOL_ASSET_RESTORE = "asset_restore";
 const TOOL_ASSET_DUPLICATE = "asset_duplicate";
 const TOOL_ASSET_VERSION_CREATE = "asset_version_create";
 const TOOL_ASSET_VERSION_HISTORY = "asset_version_history";
@@ -224,9 +228,16 @@ const TOOL_GENERATION_RECORD = "generation_record";
 const TOOL_GENERATION_LIST = "generation_list";
 const TOOL_GENERATION_RELATION_RECORD = "generation_relation_record";
 const TOOL_GENERATION_LINEAGE = "generation_lineage";
+const TOOL_STACK_CREATE = "stack_create";
+const TOOL_STACK_ADD_ASSETS = "stack_add_assets";
+const TOOL_STACK_RENAME = "stack_rename";
+const TOOL_STACK_REMOVE_ASSETS = "stack_remove_assets";
+const TOOL_STACK_DISSOLVE = "stack_dissolve";
+const TOOL_STACK_GET = "stack_get";
+const TOOL_STACK_LIST = "stack_list";
 
 // Task 334: MCP tool annotations. Read tools never write; the only destructive
-// tool is asset_archive (soft-delete); nothing reaches out to other systems,
+// tool is asset_trash (moves to Trash); nothing reaches out to other systems,
 // so every tool declares openWorldHint: false. destructiveHint is spelled out
 // everywhere because the MCP default for a missing hint is true.
 const TOOL_ANNOTATIONS = {
@@ -238,7 +249,8 @@ const TOOL_ANNOTATIONS = {
   [TOOL_ASSET_PROVENANCE_EXPORT]: { readOnlyHint: true, destructiveHint: false },
   [TOOL_ASSET_UPDATE_METADATA]: { readOnlyHint: false, destructiveHint: false },
   [TOOL_ASSET_ATTACH_PROMPT]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_ASSET_ARCHIVE]: { readOnlyHint: false, destructiveHint: true },
+  [TOOL_ASSET_TRASH]: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  [TOOL_ASSET_RESTORE]: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   [TOOL_ASSET_DUPLICATE]: { readOnlyHint: false, destructiveHint: false },
   [TOOL_ASSET_VERSION_CREATE]: { readOnlyHint: false, destructiveHint: false },
   [TOOL_ASSET_VERSION_HISTORY]: { readOnlyHint: true, destructiveHint: false },
@@ -247,6 +259,13 @@ const TOOL_ANNOTATIONS = {
   [TOOL_GENERATION_LIST]: { readOnlyHint: true, destructiveHint: false },
   [TOOL_GENERATION_RELATION_RECORD]: { readOnlyHint: false, destructiveHint: false },
   [TOOL_GENERATION_LINEAGE]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_STACK_CREATE]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_STACK_ADD_ASSETS]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_STACK_RENAME]: { readOnlyHint: false, destructiveHint: false },
+  [TOOL_STACK_REMOVE_ASSETS]: { readOnlyHint: false, destructiveHint: true },
+  [TOOL_STACK_DISSOLVE]: { readOnlyHint: false, destructiveHint: true },
+  [TOOL_STACK_GET]: { readOnlyHint: true, destructiveHint: false },
+  [TOOL_STACK_LIST]: { readOnlyHint: true, destructiveHint: false },
 };
 
 // Folder import limits; the max-files override is a test knob.
@@ -318,12 +337,11 @@ function toolDefinitions() {
   return [
     {
       name: TOOL_ASSET_CREATE,
-      description: "Copy an image into the GravityPort library and save prompt recipe metadata. Any local absolute image path is accepted; relative paths are rejected. Symbolic links are rejected. Only supported image and video formats are imported. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
+      description: "Copy an image into the GravityPort library and save prompt recipe metadata. The image path must be an absolute path on this machine. Symbolic links are rejected. Only supported image and video formats are imported. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string" },
-          imagePath: { type: "string" },
+          imagePath: { type: "string", description: "Absolute path of the image on this machine." },
           prompt: { type: "string" },
           user_prompt: { type: "string", description: "Optional user request kept separately from the effective generation prompt." },
           negative_prompt: { type: "string" },
@@ -333,9 +351,14 @@ function toolDefinitions() {
           ratio: { type: "string" },
           theme: { type: "string" },
           business_fields: { type: "object", description: "Stored with the asset but not searchable; put anything that should be findable via search into tags instead." },
+          tags: { type: "array", items: { type: "string" }, description: "Tags saved with the asset; searchable." },
+          favorite: { type: "boolean", description: "Mark the asset as a favorite." },
+          group: { type: "string", description: "Group the asset is filed under; grouping, not a project." },
+          category: { type: "string", description: "Category label shown in the app." },
+          rating: { type: "integer", minimum: 0, maximum: 5, description: "Star rating from 0 (unrated) to 5." },
           parent_asset_id: { type: "string" },
           version_change: { type: "string" },
-          sourceType: { type: "string", description: "Optional source type. Defaults to codex-generated for images under <CODEX_HOME>/generated_images (normally the user's .codex/generated_images)." },
+          sourceType: { type: "string", description: "Optional source type. Defaults to codex-generated for images under <CODEX_HOME>/generated_images (normally the user's .codex/generated_images), and to mcp-agent (an image saved by an AI assistant, shown as \"AI 助手\" in the App) for everything else." },
           source: {
             type: "object",
             description: "Optional generation provenance, such as generation_tool, model, codex_session_id, or codex_thread_id. The original image path and Codex task ID are detected automatically.",
@@ -348,13 +371,12 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_IMPORT_FOLDER,
-      description: "Import every image and video found in a local folder into the GravityPort library, applying the same projectId/prompt/sourceType/source to each file. Any local absolute folder path is accepted; relative paths are rejected. Symbolic links are skipped; with recursive: true subfolders are read up to 5 levels deep; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest.",
+      description: "Import every image and video found in a local folder into the GravityPort library, applying the same prompt/sourceType/source to each file. The folder path must be an absolute path on this machine. Symbolic links are skipped; with recursive: true the folder itself is level 1 and its contents are read down to level 5 (at most four subfolder levels below it), and deeper subfolders are skipped; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest. Files already in the library are listed in duplicates with the existing assetId.",
       inputSchema: {
         type: "object",
         properties: {
           folderPath: { type: "string", description: "Absolute path of the folder to import." },
-          recursive: { type: "boolean", description: "Also read subfolders (default false; at most 5 levels deep)." },
-          projectId: { type: "string" },
+          recursive: { type: "boolean", description: "Also read subfolders (default false; the folder itself is level 1, contents are read down to level 5, deeper subfolders are skipped)." },
           prompt: { type: "string" },
           sourceType: { type: "string" },
           source: {
@@ -369,63 +391,75 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_LIST,
-      description: "List saved GravityPort assets for a project, optionally filtered by search text.",
+      description: "List saved GravityPort assets for a project, optionally filtered by search text. Returns compact per-asset summaries with the total count (20 per page by default, at most 100; pass `cursor` to page further); use asset_get for an asset's full recipe and metadata.",
       inputSchema: {
         type: "object",
-        properties: { projectId: { type: "string" }, query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 250 }, cursor: { type: "string" } },
+        properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100, default: 20 }, cursor: { type: "string" } },
         additionalProperties: false
       }
     },
     {
       name: TOOL_ASSET_SEARCH,
-      description: "Search GravityPort visual memory using lexical search and explicit creation-time bounds.",
+      description: "Search GravityPort visual memory using lexical search and explicit creation-time bounds. Multiple query words are combined with AND: every word must appear for an asset to match; OR is not supported. Returns compact per-asset summaries with the total match count (20 per page by default, at most 100; pass `cursor` to page further); use asset_get for an asset's full recipe and metadata.",
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string" },
-          query: { type: "string" },
-          createdAfter: { type: "string", description: "Inclusive ISO-8601 lower creation-time bound." },
-          createdBefore: { type: "string", description: "Inclusive ISO-8601 upper creation-time bound." },
+          query: { type: "string", description: "Space-separated words; every word must appear (AND). OR is not supported." },
+          createdAfter: { type: "string", description: "Inclusive lower creation-time bound. A date-only value (\"2026-11-07\") means local midnight of that day on this machine; a value with Z or a ±hh:mm offset keeps its explicit zone." },
+          createdBefore: { type: "string", description: "Inclusive upper creation-time bound. A date-only value (\"2026-11-07\") means local midnight of that day, so the bound is \"before Nov 7 starts\" — assets created on Nov 7 itself are outside. A value with Z or a ±hh:mm offset keeps its explicit zone." },
           // Deprecated: local visual retrieval was removed. Both properties stay
           // declared so clients with a cached older schema may still send
           // `visual` / `minScore`; they are accepted and ignored (lexical search runs).
           visual: { type: "boolean", description: "Deprecated and ignored." },
           minScore: { type: "number", description: "Deprecated and ignored." },
           limit: { type: "integer", minimum: 1, maximum: 100 },
+          cursor: { type: "string" },
         },
         additionalProperties: false,
       },
     },
     {
       name: TOOL_ASSET_GET,
-      description: "Get one saved asset and its full prompt recipe.",
+      description: "Get one saved asset and its full prompt recipe. asset_list and asset_search return only compact summaries; call this for the full recipe and metadata.",
       inputSchema: {
         type: "object",
-        properties: { projectId: { type: "string" }, assetId: { type: "string" } },
+        properties: { assetId: { type: "string" } },
         required: ["assetId"],
         additionalProperties: false
       }
     },
     {
       name: TOOL_ASSET_PROVENANCE_EXPORT,
-      description: "Export a portable GravityPort provenance bundle plus an unsigned C2PA assertion payload. This does not create a signed Content Credential; a C2PA signer must bind and sign the assertion separately.",
+      description: "Export a portable GravityPort provenance bundle plus an unsigned C2PA assertion payload. Prompts and user messages are excluded by default; pass includePrompts: true only when the user explicitly asks to include prompts. Local filesystem paths and usernames are never exported under any circumstances. This does not create a signed Content Credential; a C2PA signer must bind and sign the assertion separately.",
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string" },
           assetId: { type: "string" },
-          includePrompts: { type: "boolean" },
+          includePrompts: {
+            type: "boolean",
+            description: "Whether to include prompts and user messages. Defaults to false; pass true only when the user explicitly requests prompts. Local filesystem paths and usernames are never exported under any circumstances.",
+          },
         },
         required: ["assetId"],
         additionalProperties: false,
       },
     },
     {
-      name: TOOL_ASSET_ARCHIVE,
-      description: "Soft-delete an asset from active GravityPort results while preserving its provenance and original file.",
+      name: TOOL_ASSET_TRASH,
+      description: "Move an asset to Trash. Trashed assets can be restored with asset_restore or inside the GravityPort app, and are permanently purged after 90 days. Use this when the user asks to delete or remove an asset. Do NOT use this when the user asks to archive or stash an asset.",
       inputSchema: {
         type: "object",
-        properties: { projectId: { type: "string" }, assetId: { type: "string" } },
+        properties: { assetId: { type: "string" } },
+        required: ["assetId"],
+        additionalProperties: false
+      }
+    },
+    {
+      name: TOOL_ASSET_RESTORE,
+      description: "Restore an asset from Trash back to the active library.",
+      inputSchema: {
+        type: "object",
+        properties: { assetId: { type: "string" } },
         required: ["assetId"],
         additionalProperties: false
       }
@@ -435,7 +469,7 @@ function toolDefinitions() {
       description: "Create an independent editable copy that starts a new version root while retaining duplicate provenance.",
       inputSchema: {
         type: "object",
-        properties: { projectId: { type: "string" }, assetId: { type: "string" }, assetIdNew: { type: "string" } },
+        properties: { assetId: { type: "string" }, assetIdNew: { type: "string" } },
         required: ["assetId"],
         additionalProperties: false
       }
@@ -446,10 +480,9 @@ function toolDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string" },
           assetId: { type: "string", description: "Existing parent asset ID." },
           assetIdNew: { type: "string", description: "Optional ID for the new version." },
-          imagePath: { type: "string", description: "Optional new image path. When omitted, the parent image is copied for a recipe-only version." },
+          imagePath: { type: "string", description: "Optional new image path; must be an absolute path on this machine (any local folder is accepted, same as asset_create). When omitted, the parent image is copied for a recipe-only version." },
           version_change: { type: "string", minLength: 1, description: "Required summary of what changed from the parent." },
           prompt: { type: "string" },
           user_prompt: { type: "string", description: "Optional user request kept separately from the effective generation prompt." },
@@ -481,7 +514,7 @@ function toolDefinitions() {
       description: "Read the complete root-to-descendant recipe version tree for an asset, including archived versions.",
       inputSchema: {
         type: "object",
-        properties: { projectId: { type: "string" }, assetId: { type: "string" } },
+        properties: { assetId: { type: "string" } },
         required: ["assetId"],
         additionalProperties: false
       }
@@ -491,18 +524,17 @@ function toolDefinitions() {
       description: "Read immutable generation recipe snapshots for one asset and identify the currently active snapshot.",
       inputSchema: {
         type: "object",
-        properties: { projectId: { type: "string" }, assetId: { type: "string" } },
+        properties: { assetId: { type: "string" } },
         required: ["assetId"],
         additionalProperties: false
       }
     },
     {
       name: TOOL_ASSET_UPDATE_METADATA,
-      description: "Update metadata fields for a saved asset. Pass `references` to record reference rights and permitted uses for an already-archived asset; that annotation is not a generation input, so it refreshes the existing recipe snapshot rather than appending a new one.",
+      description: "Update metadata fields for a saved asset. Pass `references` to record reference rights and permitted uses for a saved asset; that annotation is not a generation input, so it appends a new recipe snapshot.",
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string" },
           assetId: { type: "string" },
           prompt: { type: "string" },
           user_prompt: { type: "string" },
@@ -529,7 +561,7 @@ function toolDefinitions() {
       description: "Attach or replace the full prompt recipe for a saved asset.",
       inputSchema: {
         type: "object",
-        properties: { projectId: { type: "string" }, assetId: { type: "string" }, prompt: { type: "string" } },
+        properties: { assetId: { type: "string" }, prompt: { type: "string" } },
         required: ["assetId", "prompt"],
         additionalProperties: false
       }
@@ -540,7 +572,6 @@ function toolDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string" },
           outputAssetId: { type: "string", description: "Existing GravityPort asset produced by this generation." },
           provider: { type: "string" },
           captureContextId: { type: "string", description: "GravityPort/local observation context. This is not a provider generation-call ID." },
@@ -571,7 +602,6 @@ function toolDefinitions() {
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string" },
           assetId: { type: "string" },
           captureContextId: { type: "string" },
           providerToolCallId: { type: "string" },
@@ -582,14 +612,13 @@ function toolDefinitions() {
     },
     {
       name: TOOL_GENERATION_RELATION_RECORD,
-      description: "Record an explicit generation-to-generation relationship such as edited_from or variant_of. Do not infer a parent unless the evidence supports it.",
+      description: "Record an explicit generation-to-generation relationship such as edited_from or variant_of. Do not infer a parent unless the evidence supports it. When verificationLevel is omitted the relation is recorded as user_confirmed (you are asserting it on the user's behalf); pass \"observed\" or \"inferred\" to record a weaker evidence level.",
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string" },
           childGenerationId: { type: "string" },
           parentGenerationId: { type: "string" },
-          relationType: { enum: ["edited_from", "variant_of", "derived_from", "based_on"] },
+          relationType: { enum: ["edited_from", "variant_of", "derived_from", "based_on"], default: "derived_from", description: "How the child relates to the parent; defaults to derived_from when omitted." },
           verificationLevel: EXTERNAL_VERIFICATION_SCHEMA,
           evidence: { type: "object", additionalProperties: true },
           createdAt: { type: "string" },
@@ -603,8 +632,97 @@ function toolDefinitions() {
       description: "Read the connected generation lineage graph around one generation event, including parent/child IDs and evidence-bearing relations.",
       inputSchema: {
         type: "object",
-        properties: { projectId: { type: "string" }, generationId: { type: "string" } },
+        properties: { generationId: { type: "string" } },
         required: ["generationId"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_CREATE,
+      description: "Group two or more saved assets into a new stack, the same as stacking a selection in the GravityPort app. coverAssetId defaults to the first asset. name (optional, at most 80 characters) is the stack's display name. An asset can belong to only one stack: if any asset is already in a stack the call fails with ASSET_ALREADY_STACKED and nothing changes; take it out with stack_remove_assets first. To show the same image in several stacks, copy it with asset_duplicate and stack the copy. Archived assets cannot be stacked.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          assetIds: { type: "array", items: { type: "string" }, maxItems: 2000 },
+          coverAssetId: { type: "string" },
+          name: { type: "string", maxLength: 80 },
+        },
+        required: ["assetIds"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_ADD_ASSETS,
+      description: "Add saved assets to an existing stack, after its current members. Assets already in this stack are skipped and listed in alreadyInStack. If any asset belongs to a different stack the call fails with ASSET_ALREADY_STACKED and nothing changes.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          stackId: { type: "string" },
+          assetIds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 2000 },
+        },
+        required: ["stackId", "assetIds"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_RENAME,
+      description: "Set a stack's display name (trimmed, 1 to 80 characters). The name is kept even when the stack was created automatically from a conversation.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          stackId: { type: "string" },
+          name: { type: "string", minLength: 1, maxLength: 80 },
+        },
+        required: ["stackId", "name"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_REMOVE_ASSETS,
+      description: "Take assets out of a stack; the assets stay in the library. Every assetId must belong to this stack, otherwise the call fails with ASSET_NOT_IN_STACK and nothing changes. A stack left with one asset is dissolved (dissolved: true). Assets taken out are not stacked again automatically.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          stackId: { type: "string" },
+          assetIds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 2000 },
+        },
+        required: ["stackId", "assetIds"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_DISSOLVE,
+      description: "Dissolve a stack: its assets return to the library as separate assets; nothing is deleted or archived. They are not stacked again automatically.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          stackId: { type: "string" },
+        },
+        required: ["stackId"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_GET,
+      description: "Read one stack: its name, cover, member count, and member asset IDs in stack order. Members in Trash or archived are left out.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          stackId: { type: "string" },
+        },
+        required: ["stackId"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: TOOL_STACK_LIST,
+      description: "List the stacks shown in the GravityPort library (two or more visible members), most recently updated first, optionally filtered by text in the stack name.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          limit: { type: "integer", minimum: 1, maximum: 200 },
+        },
         additionalProperties: false,
       },
     },
@@ -620,6 +738,383 @@ function mcpImportError(code, message) {
   error.code = code;
   error.statusCode = 400;
   return error;
+}
+
+function mcpToolError(code, message, statusCode = 400) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+}
+
+// Task 375: GravityPort keeps a single library, so projectId is no longer a
+// tool argument — every call runs against "default". Assistants may still send
+// it out of habit or from a cached schema: an empty value or a
+// case-insensitive "default" is treated as absent, anything else is refused
+// before schema validation so the answer is the same for every tool
+// (additionalProperties varies per schema, so the schema alone cannot enforce
+// this). Grouping keeps working through `group` / `tags`.
+const PROJECT_ID_NOT_SUPPORTED_MESSAGE = "GravityPort 只有一个素材库，不用传 projectId；要分类请用 group 或 tags。/ GravityPort has a single library; omit projectId and use group or tags to organize.";
+
+function normalizeProjectIdArgument(args) {
+  if (!args || typeof args !== "object" || !Object.hasOwn(args, "projectId")) return;
+  const value = args.projectId;
+  if (value === undefined || value === null || value === "" || (typeof value === "string" && value.toLowerCase() === "default")) {
+    delete args.projectId;
+    return;
+  }
+  throw mcpToolError("PROJECT_ID_NOT_SUPPORTED", PROJECT_ID_NOT_SUPPORTED_MESSAGE);
+}
+
+// Task 375: path arguments are vetted here, before anything reaches the store,
+// so the answer never depends on the MCP process's working directory. The four
+// rejections share the INVALID_PATH code with a machine-readable reason; the
+// text is Chinese first, original English second. Windows drive paths count as
+// absolute too (win32.isAbsolute), so a config moved to Windows behaves the
+// same way as on macOS.
+const PATH_ERROR_TEXTS = {
+  whitespace: ["路径开头或末尾有空格，请去掉。", "The path has leading or trailing spaces; remove them."],
+  file_url: ["请去掉 file://，直接用完整路径。", "Drop the file:// prefix and pass a plain absolute path."],
+  tilde: ["不支持 ~，请写出完整路径（如 /Users/…）。", "~ is not expanded; pass the full absolute path."],
+  relative: ["请用完整（绝对）路径。", "Use an absolute path."],
+};
+
+function invalidPathError(reason) {
+  const [zh, en] = PATH_ERROR_TEXTS[reason];
+  const error = mcpToolError("INVALID_PATH", `${zh}\n${en}`);
+  error.reason = reason;
+  return error;
+}
+
+function assertLocalAbsolutePath(value) {
+  if (typeof value !== "string") return;
+  if (value !== value.trim()) throw invalidPathError("whitespace");
+  if (value.startsWith("file://")) throw invalidPathError("file_url");
+  if (value.startsWith("~")) throw invalidPathError("tilde");
+  if (!isAbsolute(value) && !win32.isAbsolute(value)) throw invalidPathError("relative");
+}
+
+// The library directory comes from the same resolution openLibrary() used —
+// never recomputed here. Both sides go through realpath so symlinked parents
+// (macOS /var → /private/var) compare equal.
+function isWithinDir(child, parent) {
+  return child === parent || child.startsWith(parent + sep);
+}
+
+async function assertPathOutsideLibrary(realPath) {
+  // The library's own staged-images drop area stays importable: the desktop
+  // App points generatedImagesDir at <library>/imports (desktop/main.mjs), and
+  // the store already trusts that root. Everything ELSE inside the library
+  // (assets/, thumbnails, previews, the database) refuses.
+  const staging = store?.generatedImagesDir;
+  if (staging) {
+    const stagingReal = await realpath(staging).catch(() => null);
+    if (stagingReal && isWithinDir(realPath, stagingReal)) return;
+  }
+  let libraryReal;
+  try {
+    libraryReal = await realpath(libraryDir);
+  } catch {
+    libraryReal = libraryDir;
+  }
+  if (isWithinDir(realPath, libraryReal)) {
+    throw mcpToolError(
+      "LIBRARY_INTERNAL_PATH",
+      "这是素材库自己的文件夹，不能再导进来。/ This path is inside the GravityPort library and cannot be imported.",
+    );
+  }
+}
+
+async function assertImportFolderOutsideLibrary(folderRealPath) {
+  // Same staged-images exemption as assertPathOutsideLibrary.
+  const staging = store?.generatedImagesDir;
+  if (staging) {
+    const stagingReal = await realpath(staging).catch(() => null);
+    if (stagingReal && isWithinDir(folderRealPath, stagingReal)) return;
+  }
+  let libraryReal;
+  try {
+    libraryReal = await realpath(libraryDir);
+  } catch {
+    libraryReal = libraryDir;
+  }
+  // Both directions: the folder sits inside the library (its thumbnails and
+  // previews would re-import as new assets), or the library sits inside the
+  // folder (a recursive scan would sweep the library in).
+  if (isWithinDir(folderRealPath, libraryReal) || isWithinDir(libraryReal, folderRealPath)) {
+    throw mcpToolError(
+      "LIBRARY_INTERNAL_PATH",
+      "这是素材库自己的文件夹，不能再导进来。/ This path is inside the GravityPort library and cannot be imported.",
+    );
+  }
+}
+
+/**
+ * Task 375: MCP-level path vetting shared by asset_create and
+ * asset_version_create. Returns the realpath-based trustedSourceRoots for this
+ * one store call (the file's parent directory — same rule asset_create already
+ * used), or undefined when the file cannot be resolved yet, in which case the
+ * store answers with its own error (e.g. IMAGE_PATH_NOT_FOUND). A folder where
+ * a file is expected answers PATH_IS_FOLDER here instead of the store's
+ * generic unsupported-media message.
+ */
+async function vetImagePath(imagePath) {
+  assertLocalAbsolutePath(imagePath);
+  let realFile;
+  try {
+    realFile = await realpath(imagePath);
+  } catch {
+    return undefined;
+  }
+  await assertPathOutsideLibrary(realFile);
+  const pathStat = await stat(realFile).catch(() => null);
+  if (pathStat?.isDirectory()) {
+    throw mcpToolError("PATH_IS_FOLDER", "这是文件夹，请用 asset_import_folder。/ This is a folder; use asset_import_folder.");
+  }
+  return [dirname(realFile)];
+}
+
+// Task 377: images an AI saves through MCP are not manual imports. When the
+// caller passes neither sourceType nor source.type, and the file does not sit
+// in the Codex output directory (the store still stamps codex-generated
+// there), the MCP layer passes sourceType: "mcp-agent" so the App shows the
+// existing "AI 助手" label instead of "手动导入". Already-archived images are
+// never relabeled, and callers who name a source keep theirs.
+const MCP_AGENT_SOURCE_TYPE = "mcp-agent";
+
+/**
+ * Decides whether MCP should stamp its own default source type onto a create
+ * input, and does so in place. `realPath` may carry the file's already
+ * resolved path; without it the file is resolved here. Returns the stamped
+ * source type (or undefined when the caller's value stands or the store will
+ * stamp codex-generated itself).
+ */
+async function applyMcpDefaultSourceType(input, realPath = null) {
+  const declared = (typeof input.sourceType === "string" && input.sourceType.trim())
+    || (input.source && typeof input.source === "object" && !Array.isArray(input.source)
+      ? String(input.source.type || "").trim()
+      : "");
+  if (declared) return undefined;
+  const realFile = realPath
+    || (typeof input.imagePath === "string" && input.imagePath.trim() ? await realpath(input.imagePath).catch(() => null) : null);
+  if (!realFile) return undefined; // Unresolvable files fail in the store (IMAGE_PATH_NOT_FOUND).
+  const codexRoot = store?.codexImagesDir ? await realpath(store.codexImagesDir).catch(() => null) : null;
+  if (codexRoot && isWithinDir(realFile, codexRoot)) return undefined;
+  input.sourceType = MCP_AGENT_SOURCE_TYPE;
+  return MCP_AGENT_SOURCE_TYPE;
+}
+
+// Task 377: business fields the store records itself — media shape read from
+// the bytes (width/height/file_bytes/duration_seconds/media_kind/mime_type)
+// and status the App's pipelines own (prompt_status via the edit markers,
+// auto_archived). mergeBusinessFieldsPatch is shared with the App's editor,
+// so it cannot refuse these; the MCP layer drops them before the patch
+// leaves this process and reports what it dropped.
+const SYSTEM_BUSINESS_FIELD_KEYS = new Set([
+  "width",
+  "height",
+  "file_bytes",
+  "duration_seconds",
+  "media_kind",
+  "mime_type",
+  "prompt_status",
+  "auto_archived",
+]);
+
+function stripSystemBusinessFields(businessFields) {
+  if (!businessFields || typeof businessFields !== "object" || Array.isArray(businessFields)) {
+    return { fields: businessFields, ignored: [] };
+  }
+  const ignored = Object.keys(businessFields).filter((key) => SYSTEM_BUSINESS_FIELD_KEYS.has(key));
+  if (!ignored.length) return { fields: businessFields, ignored };
+  const fields = { ...businessFields };
+  for (const key of ignored) delete fields[key];
+  return { fields, ignored };
+}
+
+function systemFieldsNotice(ignored) {
+  const fieldsText = ignored.join(", ");
+  return `这次传的 ${fieldsText} 是系统记录的，没有改。/ ${fieldsText} are recorded by GravityPort and were not changed.`;
+}
+
+// Task 377: asset ids are machine names. The store's sanitizeId reads and
+// writes shared rows, so it rewrites a Chinese id instead of refusing it —
+// two different calls could collapse onto the same mangled id. The MCP layer
+// rejects non-conforming ids before the store sees them; the three checked
+// tools are the ones that mint or rename an asset.
+const MCP_ASSET_ID_PATTERN = /^[A-Za-z0-9_-]{1,96}$/;
+const INVALID_ASSET_ID_MESSAGE = "名字只能用英文字母、数字、下划线和连字符，最长 96 个字；不传的话会自动起名。\nAsset ids may only use letters, digits, underscores and hyphens (up to 96 characters); omit it to get one generated.";
+
+function assertMcpAssetId(value) {
+  if (value === undefined || value === null || value === "") return;
+  if (typeof value !== "string" || !MCP_ASSET_ID_PATTERN.test(value)) {
+    throw mcpToolError("INVALID_ASSET_ID", INVALID_ASSET_ID_MESSAGE);
+  }
+}
+
+// Task 375: store error messages stay English (tests and clients match on the
+// exact sentence); the MCP layer prepends the Chinese reason by error code.
+// structuredContent.error.code and the English message never change. Codes
+// that are already bilingual (LIBRARY_NOT_FOUND, ASSET_NOT_IN_TRASH, …) and
+// codes not listed here pass through untouched.
+const TOOL_ERROR_TEXT_ZH = new Map([
+  ["ASSET_NOT_FOUND", "找不到这张素材，请核对 assetId 后重试。"],
+  ["ASSET_ALREADY_EXISTS", "这个素材 ID 已经被占用，请换一个 assetId。"],
+  ["IMAGE_PATH_REQUIRED", "缺少文件路径，请补上 imagePath。"],
+  ["IMAGE_PATH_NOT_FOUND", "找不到这个文件，请确认路径写对了。"],
+  ["IMAGE_PATH_NOT_READABLE", "读不到这个文件，请确认文件存在、路径完整。"],
+  ["IMAGE_PATH_UNSUPPORTED_TYPE", "不支持这种文件类型，请换成图片或视频文件。"],
+  ["IMAGE_CONTENT_NOT_MEDIA", "这个文件的内容不是图片或视频，可能只是改了扩展名，请换一张真正的图片。"],
+  ["IMAGE_FILE_INCOMPLETE", "这张图的文件不完整，可能下载或复制时断了，请换一份完整的文件。"],
+  ["INVALID_VERSION_CHANGE", "请写一句版本改动说明（version_change），不能只留空白。"],
+  ["VERSION_CYCLE", "这样会造成版本循环，请换一个父版本。"],
+  ["VERSION_PARENT_HAS_CHILDREN", "这张图是版本树里的父版本，还有子版本依赖它，不能移进回收站或彻底删除；请先处理它的子版本。"],
+  ["ASSET_TRASHED", "这张图已经在回收站里，先恢复后才能这样做。"],
+  ["ASSET_NOT_TRASHED", "这张图不在回收站里，不能这样做。"],
+  ["ASSET_NOT_IN_STACK", "这张图不在指定的堆叠里，请核对 stackId 和 assetId。"],
+  ["ASSET_ALREADY_STACKED", "这张图已经在别的堆叠里；请先用 stack_remove_assets 取出，再重新堆叠。"],
+  ["STACK_NOT_FOUND", "找不到这个堆叠，请核对 stackId。"],
+  ["STACK_NEEDS_MULTIPLE_ASSETS", "建堆叠至少要两张图。"],
+  ["STACK_COVER_NOT_MEMBER", "封面必须是堆叠成员之一。"],
+  ["MCP_ASSET_SEARCH_EMPTY", "请提供搜索词或时间范围，至少一项。"],
+  ["INVALID_ASSET_CURSOR", "翻页标记无效，请从头重新翻页。"],
+  ["INVALID_STACK_CURSOR", "堆叠翻页标记无效，请从头重新翻页。"],
+  ["IMPORT_FOLDER_NOT_FOUND", "找不到这个文件夹，请确认路径存在。"],
+  ["IMPORT_FOLDER_NOT_DIRECTORY", "这不是文件夹，请用 asset_create 导入单个文件。"],
+  ["IMPORT_FOLDER_TOO_LARGE", "这个文件夹里可导入的文件太多，请分批导入（比如按子文件夹拆开）。"],
+]);
+
+// Matches any CJK ideograph: already-bilingual messages keep their text.
+const CONTAINS_CJK = /[\u3400-\u4dbf\u4e00-\u9fff]/;
+
+function localizeToolErrorText(error) {
+  const zh = TOOL_ERROR_TEXT_ZH.get(error.code);
+  if (!zh) return error.message;
+  if (CONTAINS_CJK.test(error.message)) return error.message;
+  return `${zh}\n${error.message}`;
+}
+
+function assertStackSupport(store) {
+  if (
+    typeof store?.createAssetStack !== "function" ||
+    typeof store?.addAssetsToStack !== "function" ||
+    typeof store?.renameAssetStack !== "function" ||
+    typeof store?.removeAssetsFromStack !== "function" ||
+    typeof store?.dissolveAssetStack !== "function" ||
+    typeof store?.getAssetStack !== "function" ||
+    typeof store?.listAssetStackAssets !== "function" ||
+    typeof store?.getAssetStackMemberships !== "function" ||
+    typeof store?.listAssetStacks !== "function"
+  ) {
+    throw mcpToolError("ASSET_STACKS_UNAVAILABLE", "Asset stacks are unavailable.", 400);
+  }
+}
+
+// Task 376: asset_list / asset_search answers carry a fixed slim field set
+// instead of the full rowToAsset payload (recipe snapshots, palette, runtime
+// URLs and paths made a 100-asset page ~220KB). Full detail stays on
+// asset_get. Field sources (mirroring rowToAsset in lib/sqlite-asset-store.mjs
+// and the shared mediaKindOf rule at lib/sqlite-asset-store.mjs:109):
+//   id ← asset.id; file_name ← asset.asset (the managed file name, the same
+//   key provenance-bundle.mjs exports as file_name); media_kind ← the shared
+//   mediaKindOf rule (source.media_kind || business_fields.media_kind, then
+//   the file extension); width/height ← business_fields.width/height;
+//   prompt_excerpt ← prompt (first 80 characters, "…" when cut, "" when the
+//   asset has no prompt); group ← asset.group; tags/rating/favorite/
+//   created_at/image_path carry over; stack ← the attachStackToAssets summary
+//   reduced to { id, name }, the key dropped when the asset is unstacked.
+// A field whose value is missing on the asset (a video without dimensions, an
+// empty tag list, rating 0, favorite false) is omitted, never placeholdered.
+const PROMPT_EXCERPT_CHARACTERS = 80;
+const COMPACT_QUERY_ECHO_CHARACTERS = 200;
+const COMPACT_LIST_DEFAULT_LIMIT = 20;
+const COMPACT_LIST_MAX_LIMIT = 100;
+const COMPACT_MEDIA_IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"]);
+const COMPACT_MEDIA_VIDEO_EXTENSIONS = new Set([".m4v", ".mov", ".mp4", ".webm"]);
+
+function excerptCharacters(value, maxCharacters) {
+  const text = typeof value === "string" ? value : "";
+  const chars = Array.from(text);
+  return chars.length > maxCharacters ? `${chars.slice(0, maxCharacters).join("")}…` : text;
+}
+
+function compactMediaKind(asset) {
+  const kind = asset?.source?.media_kind || asset?.business_fields?.media_kind;
+  if (kind === "video" || kind === "image") return kind;
+  const match = /\.([a-z0-9]+)(?:$|\?)/i.exec(String(asset?.image_path || ""));
+  const ext = match ? `.${match[1].toLowerCase()}` : "";
+  if (COMPACT_MEDIA_VIDEO_EXTENSIONS.has(ext)) return "video";
+  if (COMPACT_MEDIA_IMAGE_EXTENSIONS.has(ext)) return "image";
+  return "unknown";
+}
+
+function compactAsset(asset) {
+  if (!asset || typeof asset !== "object") return asset;
+  const compact = { id: asset.id };
+  if (asset.asset) compact.file_name = asset.asset;
+  compact.media_kind = compactMediaKind(asset);
+  const width = Number(asset.business_fields?.width);
+  if (Number.isFinite(width) && width > 0) compact.width = width;
+  const height = Number(asset.business_fields?.height);
+  if (Number.isFinite(height) && height > 0) compact.height = height;
+  compact.prompt_excerpt = excerptCharacters(asset.prompt, PROMPT_EXCERPT_CHARACTERS);
+  if (asset.group) compact.group = asset.group;
+  if (Array.isArray(asset.tags) && asset.tags.length) compact.tags = [...asset.tags];
+  const rating = Number(asset.rating);
+  if (Number.isFinite(rating) && rating > 0) compact.rating = rating;
+  if (asset.favorite === true) compact.favorite = true;
+  compact.created_at = asset.created_at;
+  if (asset.stack && typeof asset.stack === "object") {
+    compact.stack = { id: asset.stack.id, name: asset.stack.name };
+  }
+  if (asset.image_path) compact.image_path = asset.image_path;
+  return compact;
+}
+
+function compactListLimit(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return COMPACT_LIST_DEFAULT_LIMIT;
+  return Math.min(Math.floor(parsed), COMPACT_LIST_MAX_LIMIT);
+}
+
+// Task 376: the readable content text leads with the bilingual summary (and,
+// when a next page exists, the paging hint on the same line), then one line
+// per asset on this page: `<id> · <file_name>`.
+function compactResultText({ search, total, count, nextCursor, assets }) {
+  const summary = search
+    ? `找到 ${total} 张，这页 ${count} 张。/ ${total} matches, ${count} on this page.`
+    : `共 ${total} 张，这页 ${count} 张。/ ${total} assets, ${count} on this page.`;
+  const more = nextCursor ? " 还有更多，传 cursor 翻页。/ More results: pass cursor." : "";
+  const lines = [`${summary}${more}`, ...assets.map((asset) => `${asset?.id} · ${asset?.file_name ?? ""}`)];
+  return lines.join("\n");
+}
+
+async function attachStackToAssets(store, project, assets) {
+  const list = Array.isArray(assets) ? assets : (assets ? [assets] : []);
+  if (!list.length) return assets;
+  if (typeof store?.getAssetStackMemberships !== "function") {
+    for (const asset of list) {
+      if (asset) asset.stack = null;
+    }
+    return assets;
+  }
+  const assetIds = list.map((a) => a?.id).filter(Boolean);
+  const memberships = assetIds.length > 0 ? await store.getAssetStackMemberships(project, assetIds) : {};
+  for (const asset of list) {
+    if (!asset) continue;
+    const summary = memberships[asset.id];
+    if (summary) {
+      asset.stack = {
+        id: summary.id,
+        name: String(summary.name || ""),
+        count: Number(summary.count),
+        is_cover: summary.cover_asset_id === asset.id,
+      };
+    } else {
+      asset.stack = null;
+    }
+  }
+  return assets;
 }
 
 /**
@@ -672,6 +1167,9 @@ async function scanImportFolder(folderRealPath, recursive) {
  */
 async function importFolder(args) {
   const folderPath = args.folderPath;
+  // Task 375: the four path-shape rejections answer here, before the store
+  // sees the value; the old absolute-path guard below stays as a type defense.
+  if (typeof folderPath === "string") assertLocalAbsolutePath(folderPath);
   if (typeof folderPath !== "string" || !isAbsolute(folderPath)) {
     throw mcpImportError("IMPORT_FOLDER_NOT_ABSOLUTE", `folderPath must be an absolute path: ${folderPath}`);
   }
@@ -682,26 +1180,37 @@ async function importFolder(args) {
     throw mcpImportError("IMPORT_FOLDER_NOT_FOUND", `Folder does not exist: ${folderPath}`);
   }
   const folderStat = await stat(folderRealPath).catch(() => null);
+  if (folderStat?.isFile()) {
+    throw mcpImportError("PATH_IS_FILE", "这是文件，请用 asset_create。/ This is a file; use asset_create.");
+  }
   if (!folderStat?.isDirectory()) {
     throw mcpImportError("IMPORT_FOLDER_NOT_DIRECTORY", `Not a folder: ${folderPath}`);
   }
+  await assertImportFolderOutsideLibrary(folderRealPath);
   const recursive = args.recursive === true;
   const { files, skipped } = await scanImportFolder(folderRealPath, recursive);
+  // Task 377: an AI importing a folder without naming a source saves its
+  // files as mcp-agent; a folder inside the Codex output directory keeps the
+  // store's codex-generated stamp. The scanned files all live under the
+  // already-real folder path, so one decision covers the batch.
+  const folderSourceInput = { sourceType: args.sourceType, source: args.source };
+  await applyMcpDefaultSourceType(folderSourceInput, folderRealPath);
   const counts = { imported: 0, deduplicated: 0, skipped, failed: 0 };
   if (files.length === 0) {
     return {
       content: [{ type: "text", text: `Nothing to import from ${folderPath}.` }],
-      structuredContent: { ...counts, assetIds: [], failures: [] },
+      structuredContent: { ...counts, assetIds: [], duplicates: [], failures: [] },
     };
   }
   const { source } = args;
   const assetIds = [];
+  const duplicates = [];
   const failures = [];
   for (const file of files) {
     const input = {
-      projectId: args.projectId || "default",
+      project_id: "default",
       prompt: args.prompt,
-      sourceType: args.sourceType,
+      sourceType: folderSourceInput.sourceType,
       imagePath: file,
       ...(source && typeof source === "object" && !Array.isArray(source) ? { source: untrustedCreateSource(source) } : {}),
     };
@@ -718,6 +1227,7 @@ async function importFolder(args) {
         assetIds.push(created.asset.id);
       } else if (created.skipped.reason === "already-in-library") {
         counts.deduplicated += 1;
+        duplicates.push({ file: basename(file), assetId: created.skipped.existingAsset?.id || null });
       } else {
         throw created.error;
       }
@@ -729,8 +1239,23 @@ async function importFolder(args) {
   const text = `Imported ${counts.imported} file(s) from ${folderPath}: ${counts.deduplicated} deduplicated, ${counts.skipped} skipped, ${counts.failed} failed.`;
   return {
     content: [{ type: "text", text }],
-    structuredContent: { ...counts, assetIds, failures },
+    structuredContent: { ...counts, assetIds, duplicates, failures },
   };
+}
+
+function deduplicatedAssetResult(existingAsset, args) {
+  const NON_METADATA_KEYS = new Set(["imagePath", "assetId", "assetIdNew"]);
+  const ignored_fields = Object.keys(args).filter(
+    (key) => !NON_METADATA_KEYS.has(key) && args[key] !== undefined,
+  );
+  const structuredContent = { asset: existingAsset, deduplicated: true };
+  let text = `Asset already in library: ${existingAsset.id} (identical bytes); returned the existing asset.`;
+  if (ignored_fields.length > 0) {
+    structuredContent.ignored_fields = ignored_fields;
+    const fieldsText = ignored_fields.join(", ");
+    text += ` 这次传的 ${fieldsText} 没有写入；要改用 asset_update_metadata。/ The ${fieldsText} in this request were not saved; use asset_update_metadata to change them.`;
+  }
+  return { content: [{ type: "text", text }], structuredContent };
 }
 
 async function handleToolCall(id, params) {
@@ -740,34 +1265,45 @@ async function handleToolCall(id, params) {
     sendError(id, -32602, `Unknown tool: ${params?.name || ""}`);
     return;
   }
+  // Task 375: the projectId gate runs before schema validation so every tool
+  // answers PROJECT_ID_NOT_SUPPORTED identically, regardless of whether its
+  // schema allows additional properties.
+  normalizeProjectIdArgument(args);
   const validationError = validateSchema(definition.inputSchema, args, "arguments");
   if (validationError) {
     sendError(id, -32602, validationError);
     return;
   }
+  // Task 377: reject non-conforming ids for the tools that mint or rename an
+  // asset before anything reaches the store.
+  if (params?.name === TOOL_ASSET_CREATE) assertMcpAssetId(args.assetId);
+  if (params?.name === TOOL_ASSET_DUPLICATE || params?.name === TOOL_ASSET_VERSION_CREATE) assertMcpAssetId(args.assetIdNew);
   if (params?.name === TOOL_ASSET_CREATE) {
-    const projectId = args.projectId || "default";
     // Creation goes through the shared ingest gate (lib/library-ingest.mjs,
     // ARCHITECTURE.md §8): identical bytes already in the library (outside
     // Trash) answer with the stored asset instead of a copy, and hashes the
     // caller claims in `source` are never trusted — the store recomputes them.
     // Absolute image paths anywhere on the local filesystem are accepted
     // by scoping trustedSourceRoots to the file's parent directory for this
-    // single call. Relative paths are rejected by the store (IMAGE_PATH_NOT_READABLE).
-    const { source, ...rest } = args;
-    const input = source && typeof source === "object" && !Array.isArray(source)
-      ? { ...rest, source: untrustedCreateSource(source) }
-      : args;
-    let trustedSourceRoots;
-    if (typeof input.imagePath === "string" && isAbsolute(input.imagePath)) {
-      try {
-        const realFile = await realpath(input.imagePath);
-        trustedSourceRoots = [dirname(realFile)];
-      } catch {
-        // Missing files or broken paths fail inside createAssetViaGate with
-        // the existing store error (e.g. IMAGE_PATH_NOT_FOUND).
-      }
+    // single call; task 375 vets the path shape (spaces, file://, ~,
+    // relative), library-internal paths and folders here in the MCP layer.
+    const { source } = args;
+    // Always a copy: the mcp-agent default below stamps `input`, and the
+    // deduplicated path reports the caller's original args verbatim.
+    const input = { ...args };
+    if (source && typeof source === "object" && !Array.isArray(source)) {
+      input.source = untrustedCreateSource(source);
     }
+    // Task 377: system-recorded business fields never enter a create call.
+    const systemFields = stripSystemBusinessFields(input.business_fields);
+    if (systemFields.ignored.length) input.business_fields = systemFields.fields;
+    let trustedSourceRoots;
+    if (typeof input.imagePath === "string") {
+      trustedSourceRoots = await vetImagePath(input.imagePath);
+    }
+    // Task 377: default the source type to mcp-agent for AI saves (Codex
+    // output keeps codex-generated; caller-named sources are kept).
+    const defaultedSourceType = await applyMcpDefaultSourceType(input);
     const created = await createAssetViaGate(store, input, {
       skipIdenticalBytes: true,
       excludeProjectRoot: true,
@@ -776,17 +1312,34 @@ async function handleToolCall(id, params) {
     if (!created.ok) {
       if (created.skipped.reason !== "already-in-library") throw created.error;
       const located = created.skipped.existingAsset?.id
-        ? await store.getAsset(projectId, created.skipped.existingAsset.id).catch(() => null)
+        ? await store.getAsset("default", created.skipped.existingAsset.id).catch(() => null)
         : null;
       const asset = located || created.skipped.existingAsset;
-      sendResult(id, {
-        content: [{ type: "text", text: `Asset already in library: ${asset.id} (identical bytes); returned the existing asset.` }],
-        structuredContent: { asset, deduplicated: true },
-      });
+      sendResult(id, deduplicatedAssetResult(asset, args));
       return;
     }
     const asset = created.asset;
-    sendResult(id, { content: [{ type: "text", text: `Saved asset ${asset.id} at ${asset.image_path}` }], structuredContent: { asset } });
+    // Task 377: an image beyond the derivative pixel ceiling never gets a
+    // thumbnail or preview in the App; warn the caller instead of failing.
+    const width = Number(asset.business_fields?.width);
+    const height = Number(asset.business_fields?.height);
+    const tooLarge = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+      && width * height > MAX_DERIVATIVE_INPUT_PIXELS;
+    let text = `Saved asset ${asset.id} at ${asset.image_path}`;
+    if (tooLarge) {
+      text += "\n这张图超过 4000 万像素，App 里不会生成缩略图和预览。/ This image exceeds 40 megapixels; the App will not generate a thumbnail or preview for it.";
+    }
+    if (systemFields.ignored.length) {
+      text += `\n${systemFieldsNotice(systemFields.ignored)}`;
+    }
+    sendResult(id, {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        asset,
+        ...(tooLarge ? { warnings: ["IMAGE_TOO_LARGE_FOR_PREVIEW"] } : {}),
+        ...(systemFields.ignored.length ? { ignored_fields: systemFields.ignored } : {}),
+      },
+    });
     return;
   }
   if (params?.name === TOOL_ASSET_IMPORT_FOLDER) {
@@ -794,78 +1347,174 @@ async function handleToolCall(id, params) {
     return;
   }
   if (params?.name === TOOL_ASSET_LIST) {
+    // Task 376: slim per-asset summaries with top-level total/next_cursor for
+    // paging; `page` from the store is not passed through, and full per-asset
+    // detail stays on asset_get.
     const result = typeof store.listAssetPage === "function"
-      ? await store.listAssetPage({ projectId: args.projectId || "default", query: args.query || "", limit: args.limit, cursor: args.cursor })
-      : { assets: await store.listAssets({ projectId: args.projectId || "default", query: args.query || "" }), page: { nextCursor: null } };
-    sendResult(id, { content: [{ type: "text", text: `${result.assets.length} assets` }], structuredContent: result });
+      ? await store.listAssetPage({
+        projectId: "default",
+        query: args.query || "",
+        limit: compactListLimit(args.limit),
+        cursor: args.cursor,
+        includeTotal: true,
+      })
+      : { assets: await store.listAssets({ projectId: "default", query: args.query || "" }), page: { total: null, nextCursor: null } };
+    await attachStackToAssets(store, "default", result.assets);
+    const assets = (result.assets || []).map(compactAsset);
+    const total = Number.isFinite(result.page?.total) ? result.page.total : assets.length;
+    const nextCursor = result.page?.nextCursor ?? null;
+    sendResult(id, {
+      content: [{ type: "text", text: compactResultText({ search: false, total, count: assets.length, nextCursor, assets }) }],
+      structuredContent: { assets, total, next_cursor: nextCursor },
+    });
     return;
   }
   if (params?.name === TOOL_ASSET_SEARCH) {
     const result = await searchMcpAssets({
       store,
-      projectId: args.projectId || "default",
+      projectId: "default",
       query: args.query || "",
       createdAfter: args.createdAfter,
       createdBefore: args.createdBefore,
       // Legacy clients with a cached schema may still send visual: it is
       // accepted and ignored so they keep getting lexical results.
       visual: args.visual === true,
+      cursor: args.cursor,
       limit: args.limit,
     });
-    sendResult(id, { content: [{ type: "text", text: `${result.results.length} matching assets` }], structuredContent: result });
+    const assets = (result.results || []).map((entry) => entry.asset).filter(Boolean);
+    await attachStackToAssets(store, "default", assets);
+    // Task 376: each result keeps its `match` scoring layer, with the slim
+    // asset swapped in; totals and the paging cursor ride at the top level.
+    const results = (result.results || []).map((entry) => (entry?.asset ? { ...entry, asset: compactAsset(entry.asset) } : entry));
+    sendResult(id, {
+      content: [{ type: "text", text: compactResultText({ search: true, total: result.total, count: results.length, nextCursor: result.next_cursor, assets: results.map((entry) => entry.asset) }) }],
+      structuredContent: { ...result, results },
+    });
     return;
   }
   if (params?.name === TOOL_ASSET_GET) {
-    const asset = await store.getAsset(args.projectId || "default", args.assetId);
+    const asset = await store.getAsset("default", args.assetId);
+    await attachStackToAssets(store, "default", [asset]);
     sendResult(id, { content: [{ type: "text", text: asset.prompt || `Asset ${asset.id}` }], structuredContent: { asset } });
     return;
   }
   if (params?.name === TOOL_ASSET_PROVENANCE_EXPORT) {
-    const result = await buildAssetProvenanceBundle(store, args.projectId || "default", args.assetId, {
-      includePrompts: args.includePrompts !== false,
+    const result = await buildAssetProvenanceBundle(store, "default", args.assetId, {
+      includePrompts: args.includePrompts === true,
     });
     sendResult(id, { content: [{ type: "text", text: `Exported provenance for ${args.assetId}` }], structuredContent: result });
     return;
   }
   if (params?.name === TOOL_ASSET_UPDATE_METADATA) {
-    const { projectId = "default", assetId, ...patch } = args;
+    const { assetId, ...patch } = args;
+    // Task 377: system-recorded business fields are dropped before the patch
+    // reaches the marker writer — withUserEditMarkers stamps its own
+    // business_fields.prompt_status on a prompt change, which must survive.
+    const systemFields = stripSystemBusinessFields(patch.business_fields);
+    if (systemFields.ignored.length) patch.business_fields = systemFields.fields;
     // AI assistants edit on the user's behalf, so this counts as a human edit:
     // stamp markers so automatic prompt/theme writers keep their hands off.
-    const current = await store.getAsset(projectId, assetId);
-    const asset = await store.updateMetadata(projectId, assetId, withUserEditMarkers(current, patch));
-    sendResult(id, { content: [{ type: "text", text: `Updated asset ${asset.id}` }], structuredContent: { asset } });
+    const current = await store.getAsset("default", assetId);
+    const asset = await store.updateMetadata("default", assetId, withUserEditMarkers(current, patch));
+    let text = `Updated asset ${asset.id}`;
+    const structuredContent = { asset };
+    if (systemFields.ignored.length) {
+      text += `\n${systemFieldsNotice(systemFields.ignored)}`;
+      structuredContent.ignored_fields = systemFields.ignored;
+    }
+    sendResult(id, { content: [{ type: "text", text }], structuredContent });
     return;
   }
   if (params?.name === TOOL_ASSET_ATTACH_PROMPT) {
-    const projectId = args.projectId || "default";
-    const current = await store.getAsset(projectId, args.assetId);
-    const asset = await store.updateMetadata(projectId, args.assetId, withUserEditMarkers(current, { prompt: args.prompt }));
+    const current = await store.getAsset("default", args.assetId);
+    const asset = await store.updateMetadata("default", args.assetId, withUserEditMarkers(current, { prompt: args.prompt }));
     sendResult(id, { content: [{ type: "text", text: `Attached prompt to ${asset.id}` }], structuredContent: { asset } });
     return;
   }
-  if (params?.name === TOOL_ASSET_ARCHIVE) {
-    const asset = await store.archiveAsset(args.projectId || "default", args.assetId);
-    sendResult(id, { content: [{ type: "text", text: `Archived asset ${asset.id}` }], structuredContent: { asset } });
+  if (params?.name === TOOL_ASSET_TRASH) {
+    const result = await store.deleteAsset("default", args.assetId, { reason: "mcp" });
+    const purgeAfter = new Date(new Date(result.deleted_at).getTime() + TRASH_RETENTION_MS).toISOString();
+    sendResult(id, {
+      content: [{
+        type: "text",
+        text: `已移到回收站，可恢复，90 天后自动清除。/ Moved to Trash; restorable for 90 days. (${args.assetId})`,
+      }],
+      structuredContent: {
+        asset_id: args.assetId,
+        trashed: true,
+        deleted_at: result.deleted_at,
+        purge_after: purgeAfter,
+      },
+    });
+    return;
+  }
+  if (params?.name === TOOL_ASSET_RESTORE) {
+    const current = await store.getAsset("default", args.assetId);
+    if (!current.deleted_at) {
+      const error = assetStoreError(
+        "ASSET_NOT_IN_TRASH",
+        `这张图不在回收站里。/ Asset ${args.assetId} is not in Trash.`,
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+    const asset = await store.restoreAsset("default", args.assetId);
+    sendResult(id, {
+      content: [{ type: "text", text: `已从回收站恢复。/ Restored from Trash. (${asset.id})` }],
+      structuredContent: { asset },
+    });
     return;
   }
   if (params?.name === TOOL_ASSET_DUPLICATE) {
-    const asset = await store.duplicateAsset(args.projectId || "default", args.assetId, { assetId: args.assetIdNew });
+    const asset = await store.duplicateAsset("default", args.assetId, { assetId: args.assetIdNew });
     sendResult(id, { content: [{ type: "text", text: `Duplicated asset ${asset.id}` }], structuredContent: { asset } });
     return;
   }
   if (params?.name === TOOL_ASSET_VERSION_CREATE) {
-    const { projectId = "default", assetId, assetIdNew, ...input } = args;
-    const asset = await store.createAssetVersion(projectId, assetId, { ...input, assetId: assetIdNew }, { excludeProjectRoot: true });
-    sendResult(id, { content: [{ type: "text", text: `Created version ${asset.id} from ${assetId}` }], structuredContent: { asset } });
+    const { assetId, assetIdNew, ...input } = args;
+    // Task 377: system-recorded business fields never enter a version call either.
+    const systemFields = stripSystemBusinessFields(input.business_fields);
+    if (systemFields.ignored.length) input.business_fields = systemFields.fields;
+    // Task 375: the version tool now accepts replacement images from any local
+    // absolute path, exactly like asset_create — trustedSourceRoots is scoped
+    // to the file's parent directory for this single call, and the same
+    // MCP-layer path vetting applies.
+    let trustedSourceRoots;
+    if (typeof args.imagePath === "string") {
+      trustedSourceRoots = await vetImagePath(args.imagePath);
+    }
+    try {
+      const asset = await store.createAssetVersion(
+        "default",
+        assetId,
+        { ...input, assetId: assetIdNew },
+        { excludeProjectRoot: true, ...(trustedSourceRoots ? { trustedSourceRoots } : {}) },
+      );
+      let text = `Created version ${asset.id} from ${assetId}`;
+      if (systemFields.ignored.length) text += `\n${systemFieldsNotice(systemFields.ignored)}`;
+      sendResult(id, {
+        content: [{ type: "text", text }],
+        structuredContent: { asset, ...(systemFields.ignored.length ? { ignored_fields: systemFields.ignored } : {}) },
+      });
+    } catch (error) {
+      if (error?.code === "ALREADY_IN_LIBRARY" && error.existingAsset?.id) {
+        const located = await store.getAsset("default", error.existingAsset.id).catch(() => null);
+        const asset = located || error.existingAsset;
+        sendResult(id, deduplicatedAssetResult(asset, args));
+        return;
+      }
+      throw error;
+    }
     return;
   }
   if (params?.name === TOOL_ASSET_VERSION_HISTORY) {
-    const history = await store.getAssetVersionHistory(args.projectId || "default", args.assetId);
+    const history = await store.getAssetVersionHistory("default", args.assetId);
     sendResult(id, { content: [{ type: "text", text: `${history.versions.length} versions rooted at ${history.root_asset_id}` }], structuredContent: { history } });
     return;
   }
   if (params?.name === TOOL_ASSET_RECIPE_HISTORY) {
-    const history = await store.getRecipeSnapshotHistory(args.projectId || "default", args.assetId);
+    const history = await store.getRecipeSnapshotHistory("default", args.assetId);
     sendResult(id, { content: [{ type: "text", text: `${history.snapshots.length} recipe snapshots for ${history.asset_id}` }], structuredContent: { history } });
     return;
   }
@@ -873,7 +1522,7 @@ async function handleToolCall(id, params) {
     if (typeof store.recordGenerationEvent !== "function") throw new Error("Generation history is unavailable.");
     assertExternalVerificationLevel(args.verificationLevel);
     const event = await store.recordGenerationEvent({
-      project_id: args.projectId || "default",
+      project_id: "default",
       output_asset_id: args.outputAssetId,
       provider: args.provider,
       capture_context_id: args.captureContextId,
@@ -894,12 +1543,28 @@ async function handleToolCall(id, params) {
       evidence: args.evidence,
       created_at: args.createdAt,
     });
+    // Task 377 (375-acceptance gap): the user's own words rode the generation
+    // record only, so they were neither searchable nor visible in the App's
+    // 用户指令 row. When the output asset carries no wording anywhere and
+    // this record does, fill the empty slot once — later records never
+    // overwrite the first wording. Deliberately without withUserEditMarkers:
+    // an agent recording a generation is not a human editing the asset.
+    const recordUserPrompt = typeof args.userPrompt === "string" ? args.userPrompt.trim() : "";
+    if (recordUserPrompt && event.output_asset_id) {
+      const outputAsset = await store.getAsset("default", event.output_asset_id).catch(() => null);
+      const existingWording = [outputAsset?.user_prompt, outputAsset?.source?.user_message, outputAsset?.business_fields?.user_message]
+        .map((value) => String(value || "").trim())
+        .find(Boolean);
+      if (outputAsset && !existingWording) {
+        await store.updateMetadata("default", event.output_asset_id, { user_prompt: args.userPrompt });
+      }
+    }
     sendResult(id, { content: [{ type: "text", text: `Recorded generation ${event.id} for asset ${event.output_asset_id}` }], structuredContent: { event } });
     return;
   }
   if (params?.name === TOOL_GENERATION_LIST) {
     if (typeof store.listGenerationEvents !== "function") throw new Error("Generation history is unavailable.");
-    const events = await store.listGenerationEvents(args.projectId || "default", {
+    const events = await store.listGenerationEvents("default", {
       assetId: args.assetId,
       captureContextId: args.captureContextId,
       providerToolCallId: args.providerToolCallId,
@@ -912,7 +1577,7 @@ async function handleToolCall(id, params) {
     if (typeof store.recordGenerationRelation !== "function") throw new Error("Generation history is unavailable.");
     assertExternalVerificationLevel(args.verificationLevel);
     const relation = await store.recordGenerationRelation({
-      project_id: args.projectId || "default",
+      project_id: "default",
       child_generation_id: args.childGenerationId,
       parent_generation_id: args.parentGenerationId,
       relation_type: args.relationType,
@@ -925,8 +1590,117 @@ async function handleToolCall(id, params) {
   }
   if (params?.name === TOOL_GENERATION_LINEAGE) {
     if (typeof store.getGenerationLineage !== "function") throw new Error("Generation history is unavailable.");
-    const lineage = await store.getGenerationLineage(args.projectId || "default", args.generationId);
+    const lineage = await store.getGenerationLineage("default", args.generationId);
     sendResult(id, { content: [{ type: "text", text: `${lineage.events.length} generation events in lineage` }], structuredContent: { lineage } });
+    return;
+  }
+  if (params?.name === TOOL_STACK_CREATE) {
+    assertStackSupport(store);
+    if (args.name !== undefined) {
+      const trimmed = String(args.name).trim();
+      if (!trimmed) {
+        throw assetStoreError("STACK_NAME_EMPTY", "Stack name cannot be empty.");
+      }
+    }
+    let stack = await store.createAssetStack("default", args.assetIds, { coverAssetId: args.coverAssetId });
+    if (args.name !== undefined) {
+      const trimmed = String(args.name).trim();
+      if (trimmed) {
+        stack = await store.renameAssetStack("default", stack.id, trimmed);
+      }
+    }
+    sendResult(id, {
+      content: [{ type: "text", text: `Created stack ${stack.id} with ${stack.count} assets` }],
+      structuredContent: { stack },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_ADD_ASSETS) {
+    assertStackSupport(store);
+    const memberships = await store.getAssetStackMemberships("default", args.assetIds);
+    const alreadyInStack = [];
+    const added = [];
+    for (const assetId of args.assetIds) {
+      if (memberships[assetId]?.id === args.stackId) {
+        if (!alreadyInStack.includes(assetId)) alreadyInStack.push(assetId);
+      } else {
+        if (!added.includes(assetId)) added.push(assetId);
+      }
+    }
+    const stack = await store.addAssetsToStack("default", args.stackId, args.assetIds);
+    sendResult(id, {
+      content: [{ type: "text", text: `Added ${added.length} asset(s) to stack ${stack.id}` }],
+      structuredContent: { stack, added, alreadyInStack },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_RENAME) {
+    assertStackSupport(store);
+    const trimmed = String(args.name).trim();
+    if (!trimmed) {
+      throw assetStoreError("STACK_NAME_EMPTY", "Stack name cannot be empty.");
+    }
+    const stack = await store.renameAssetStack("default", args.stackId, trimmed);
+    sendResult(id, {
+      content: [{ type: "text", text: `Renamed stack ${stack.id} to "${stack.name}"` }],
+      structuredContent: { stack },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_REMOVE_ASSETS) {
+    assertStackSupport(store);
+    await store.getAssetStack("default", args.stackId);
+    const memberships = await store.getAssetStackMemberships("default", args.assetIds);
+    for (const assetId of args.assetIds) {
+      if (memberships[assetId]?.id !== args.stackId) {
+        throw mcpToolError("ASSET_NOT_IN_STACK", `Asset ${assetId} does not belong to stack ${args.stackId}.`);
+      }
+    }
+    const outcome = await store.removeAssetsFromStack("default", args.stackId, args.assetIds);
+    const text = outcome.dissolved
+      ? `Removed ${args.assetIds.length} asset(s); dissolved stack ${args.stackId}`
+      : `Removed ${args.assetIds.length} asset(s) from stack ${args.stackId}`;
+    sendResult(id, {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        dissolved: Boolean(outcome.dissolved),
+        remainingAssetId: outcome.remainingAssetId || null,
+        stack: outcome.stack || null,
+      },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_DISSOLVE) {
+    assertStackSupport(store);
+    const result = await store.dissolveAssetStack("default", args.stackId);
+    sendResult(id, {
+      content: [{ type: "text", text: `Dissolved stack ${result.id}` }],
+      structuredContent: {
+        id: result.id,
+        assetIds: result.assetIds,
+        dissolved: true,
+      },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_GET) {
+    assertStackSupport(store);
+    const stack = await store.getAssetStack("default", args.stackId);
+    const page = await store.listAssetStackAssets("default", args.stackId);
+    const members = (page.assets || []).map((asset) => ({ id: asset.id, asset }));
+    sendResult(id, {
+      content: [{ type: "text", text: `Stack ${stack.id} has ${members.length} assets` }],
+      structuredContent: { stack, members },
+    });
+    return;
+  }
+  if (params?.name === TOOL_STACK_LIST) {
+    assertStackSupport(store);
+    const result = await store.listAssetStacks("default", { query: args.query, limit: args.limit });
+    sendResult(id, {
+      content: [{ type: "text", text: `${result.stacks.length} stacks` }],
+      structuredContent: { stacks: result.stacks, truncated: Boolean(result.truncated) },
+    });
     return;
   }
 }
@@ -1109,10 +1883,13 @@ async function handleRequest(message) {
       await handleToolCall(id, params);
     } catch (error) {
       if (error?.statusCode && error?.code) {
+        // Task 375: the MCP layer prepends the Chinese reason (see
+        // TOOL_ERROR_TEXT_ZH); the English message and the machine-readable
+        // code stay untouched. Path-shape errors also carry error.reason.
         sendResult(id, {
-          content: [{ type: "text", text: error.message }],
+          content: [{ type: "text", text: localizeToolErrorText(error) }],
           isError: true,
-          structuredContent: { error: { code: error.code, message: error.message } },
+          structuredContent: { error: { code: error.code, message: error.message, ...(error.reason ? { reason: error.reason } : {}) } },
         });
       } else sendError(id, -32603, error.message);
     }

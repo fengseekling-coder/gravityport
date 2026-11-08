@@ -47,6 +47,15 @@
   text-decoration: underline;
 }
 
+.web-capture-note code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.web-capture-note p {
+  margin: var(--space-1) 0;
+}
+
 .web-capture-row {
   margin: 0;
   color: var(--ui-secondary);

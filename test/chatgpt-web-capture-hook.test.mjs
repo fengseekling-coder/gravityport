@@ -76,7 +76,7 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.46");
+  assert.equal(manifest.version, "0.15.47");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -277,19 +277,27 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.46");
+  assert.equal(manifest.version, "0.15.47");
   assert.match(optionsSource, /identity\?\.product !== "mosa"/);
 });
 
 test("surfaces MOSA's own ingest error when pairing repair keeps the same connection", async () => {
+  // Task 333: only a 401 may auto-repair (throttled); every other status is
+  // reported as-is, and an unchanged connection must not resend the capture.
   const connection = { baseUrl: "http://127.0.0.1:43517", token: "token-test" };
   const harness = await createBackgroundHarness({
     appOnline: true,
     settings: { mosaBaseUrl: connection.baseUrl, mosaToken: connection.token },
   });
 
-  for (const [status, error] of [[401, "Web Capture Token 无效"], [404, "Web Capture 路由不存在"], [500, "MOSA 内部错误"]]) {
+  for (const [status, error, expectedRepairs] of [
+    [401, "Web Capture Token 无效", 1],
+    [403, "扩展来源未获批准", 0],
+    [404, "Web Capture 路由不存在", 0],
+    [500, "MOSA 内部错误", 0],
+  ]) {
     let requests = 0;
+    let repairs = 0;
     harness.fetchHarness.setAppHandler((url) => {
       if (url.pathname === "/api/ingest/web-capture") {
         requests += 1;
@@ -299,6 +307,7 @@ test("surfaces MOSA's own ingest error when pairing repair keeps the same connec
         return new Response(JSON.stringify({ product: "mosa" }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (url.pathname === "/api/web-capture/pair") {
+        repairs += 1;
         return new Response(JSON.stringify({ product: "mosa", token: connection.token }), { status: 200, headers: { "content-type": "application/json" } });
       }
       return null;
@@ -309,6 +318,9 @@ test("surfaces MOSA's own ingest error when pairing repair keeps the same connec
       (thrown) => thrown.message === error && thrown.status === status,
     );
     assert.equal(requests, 1, "an unchanged pairing must not resend the capture");
+    assert.equal(repairs, expectedRepairs, status === 401
+      ? "only a 401 may auto-repair"
+      : `${status} belongs to this capture and must never re-pair`);
   }
 });
 
@@ -2145,7 +2157,7 @@ test("binds prompt and asset when one image call splits them across nested reque
 });
 
 test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.46");
+  assert.equal(manifest.version, "0.15.47");
   assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
   assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
   assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);

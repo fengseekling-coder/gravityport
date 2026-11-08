@@ -7,6 +7,7 @@
 // {"item_id_list_map":{"<recordId>":["<itemId>",…]}} and the success reply is
 // {"ret":"0",…} over HTTP 200. Values below are synthetic but byte-shaped.
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -948,6 +949,18 @@ test("background: reportProviderDeletions posts to the app with the token, caps 
     if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") {
       appRequests.push(record);
       if (parsed.pathname === "/api/health") return Promise.resolve(new Response(JSON.stringify({ product: "mosa" })));
+      // Task 333: answer the identity challenge with a proof over the harness
+      // token so the deletion flush's verification passes like a real App.
+      if (parsed.pathname === "/api/web-capture/identity") {
+        const nonce = JSON.parse(typeof init.body === "string" ? init.body : "{}").nonce;
+        const proof = createHmac("sha256", TOKEN)
+          .update("gravityport-web-capture-identity\0")
+          .update(parsed.port || "80")
+          .update("\0")
+          .update(String(nonce || ""))
+          .digest("base64url");
+        return Promise.resolve(new Response(JSON.stringify({ proof })));
+      }
       if (parsed.pathname === "/api/ingest/web-capture-status") return Promise.resolve(new Response(JSON.stringify({ retryRequestId: 0 })));
       return Promise.resolve(new Response(JSON.stringify({ trashed: 0, kept: 0, notFound: 0 })));
     }
@@ -960,6 +973,9 @@ test("background: reportProviderDeletions posts to the app with the token, caps 
     URLSearchParams,
     AbortController,
     TextEncoder,
+    crypto,
+    atob,
+    btoa,
     setTimeout,
     clearTimeout,
     queueMicrotask,

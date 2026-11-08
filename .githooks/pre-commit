@@ -1,0 +1,3 @@
+#!/bin/sh
+# Repo hygiene gate. Enable once per clone: git config core.hooksPath .githooks
+exec node "$(git rev-parse --show-toplevel)/scripts/check-repo-hygiene.mjs" --staged

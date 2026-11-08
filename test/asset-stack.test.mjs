@@ -9,6 +9,11 @@ import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 
 const ONE_PIXEL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==", "base64");
 
+async function nextMillisecond() {
+  const start = Date.now();
+  while (Date.now() === start) await new Promise((resolve) => setTimeout(resolve, 1));
+}
+
 async function createFixtureStore(t) {
   const root = await mkdtemp(join(tmpdir(), "mosa-asset-stack-"));
   deferTestPathRemoval(root, { recursive: true, force: true });
@@ -425,4 +430,63 @@ test("permanently deleting every trashed member leaves no orphan stack rows or g
   const restacked = await store.createAssetStack("default", ["c", "d"], { coverAssetId: "c" });
   assert.equal(restacked.count, 2);
   assert.equal(restacked.cover_asset_id, "c");
+});
+
+test("getAssetStackMemberships reports membership for stacked assets and empty for non-members or empty input", async (t) => {
+  const store = await createFixtureStore(t);
+  const stack = await store.createAssetStack("default", ["a", "b"], { coverAssetId: "a" });
+
+  const emptyResult = await store.getAssetStackMemberships("default", []);
+  assert.deepEqual(emptyResult, {});
+
+  const memberships = await store.getAssetStackMemberships("default", ["a", "b", "c", "nonexistent"]);
+  assert.equal(memberships.a?.id, stack.id);
+  assert.equal(memberships.a?.count, 2);
+  assert.equal(memberships.b?.id, stack.id);
+  assert.equal(memberships.c, undefined);
+  assert.equal(memberships.nonexistent, undefined);
+});
+
+test("listAssetStacks respects count >= 2, query escaping, ordering, limit and truncation", async (t) => {
+  const store = await createFixtureStore(t);
+  const existingA = await store.getAsset("default", "a");
+  await store.createAsset({ assetId: "e", imagePath: existingA.image_path, prompt: "stack fixture e", created_at: "2026-08-29T12:04:00.000Z", source: { type: "local-file" } });
+  await store.createAsset({ assetId: "f", imagePath: existingA.image_path, prompt: "stack fixture f", created_at: "2026-08-29T12:05:00.000Z", source: { type: "local-file" } });
+  await store.createAsset({ assetId: "g", imagePath: existingA.image_path, prompt: "stack fixture g", created_at: "2026-08-29T12:06:00.000Z", source: { type: "local-file" } });
+
+  // updated_at has millisecond precision and ties fall back to the random
+  // stack id, so each stack must land in a later millisecond than the last.
+  const stack1 = await store.createAssetStack("default", ["a", "b"], { coverAssetId: "a" });
+  await store.renameAssetStack("default", stack1.id, "Stack 100%");
+  await nextMillisecond();
+
+  const stack2 = await store.createAssetStack("default", ["c", "d", "e"], { coverAssetId: "c" });
+  await store.renameAssetStack("default", stack2.id, "Special_Stack");
+  await nextMillisecond();
+
+  const stack3 = await store.createAssetStack("default", ["f", "g"], { coverAssetId: "f" });
+  await store.renameAssetStack("default", stack3.id, "Other Stack");
+
+  const all = await store.listAssetStacks("default");
+  assert.equal(all.stacks.length, 3);
+  assert.equal(all.truncated, false);
+  assert.deepEqual(all.stacks.map((s) => s.id), [stack3.id, stack2.id, stack1.id]);
+
+  const limited = await store.listAssetStacks("default", { limit: 2 });
+  assert.equal(limited.stacks.length, 2);
+  assert.equal(limited.truncated, true);
+  assert.deepEqual(limited.stacks.map((s) => s.id), [stack3.id, stack2.id]);
+
+  const pctSearch = await store.listAssetStacks("default", { query: "%" });
+  assert.equal(pctSearch.stacks.length, 1);
+  assert.equal(pctSearch.stacks[0].id, stack1.id);
+
+  const underscoreSearch = await store.listAssetStacks("default", { query: "_" });
+  assert.equal(underscoreSearch.stacks.length, 1);
+  assert.equal(underscoreSearch.stacks[0].id, stack2.id);
+
+  await store.deleteAsset("default", "c");
+  await store.deleteAsset("default", "d");
+  const afterDelete = await store.listAssetStacks("default");
+  assert.equal(afterDelete.stacks.some((s) => s.id === stack2.id), false, "stack with only 1 visible member does not appear in listAssetStacks");
 });

@@ -4,6 +4,7 @@
  * an in-memory IndexedDB, and a programmable fetch.
  */
 
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
@@ -288,7 +289,7 @@ function createChromeHarness() {
   };
 }
 
-function createFetchHarness() {
+function createFetchHarness({ getServiceToken = () => PAIRING_TOKEN } = {}) {
   const appRequests = [];
   const mediaRequests = [];
   let appOnline = false;
@@ -317,6 +318,19 @@ function createFetchHarness() {
       if (!appOnline) return Promise.reject(new realmError(`connection refused: ${href}`));
       if (parsed.pathname === "/api/health") return Promise.resolve(jsonResponse({ product: "mosa" }));
       if (parsed.pathname === "/api/web-capture/pair") return Promise.resolve(jsonResponse({ product: "mosa", token: "paired-token" }));
+      // Task 333: the identity challenge verifies against the token the worker
+      // holds, so the worker's proof check passes like a real GravityPort. A
+      // test that wants a failing challenge overrides this with setAppHandler.
+      if (parsed.pathname === "/api/web-capture/identity") {
+        const nonce = JSON.parse(typeof init.body === "string" ? init.body : "{}").nonce;
+        const proof = createHmac("sha256", String(getServiceToken() || ""))
+          .update("gravityport-web-capture-identity\0")
+          .update(parsed.port || "80")
+          .update("\0")
+          .update(String(nonce || ""))
+          .digest("base64url");
+        return Promise.resolve(jsonResponse({ proof }));
+      }
       if (parsed.pathname === "/api/ingest/web-capture-status") return Promise.resolve(jsonResponse({ retryRequestId: 0 }));
       if (parsed.pathname === "/api/ingest/web-capture") return Promise.resolve(jsonResponse({ ok: true, assetId: "asset-1" }));
       if (parsed.pathname === "/api/ingest/web-capture-upload/begin") return Promise.resolve(jsonResponse({ ok: true, uploadId: "upload-1", chunkSize: 1024 * 1024 }));
@@ -352,7 +366,7 @@ export async function createBackgroundHarness({
     chromeHarness.localStore.set("mosaToken", settings.mosaToken !== undefined ? settings.mosaToken : PAIRING_TOKEN);
     chromeHarness.localStore.set("autoCapture", settings.autoCapture !== undefined ? settings.autoCapture : false);
   }
-  const fetchHarness = createFetchHarness();
+  const fetchHarness = createFetchHarness({ getServiceToken: () => chromeHarness.localStore.get("mosaToken") });
   fetchHarness.setAppOnline(appOnline);
   const indexedDb = createFakeIndexedDb();
 
@@ -365,6 +379,8 @@ export async function createBackgroundHarness({
     Blob,
     AbortController,
     TextEncoder,
+    // Task 333: the identity challenge signs with WebCrypto.
+    crypto,
     atob,
     btoa,
     setTimeout: fastTimers

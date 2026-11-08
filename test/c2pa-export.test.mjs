@@ -82,7 +82,7 @@ test("provenance bundle strips signing keys, API credentials, local paths, and U
           api_key: "never-export-this-either",
           source_url: "https://signed.example.invalid/private",
           source_path: "/private/source/file.jpg",
-          provider_asset_id: "safe-provider-id",
+          provider: "safe-provider-id",
         },
       };
     },

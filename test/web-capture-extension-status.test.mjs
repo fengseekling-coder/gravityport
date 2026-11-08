@@ -78,6 +78,13 @@ test("an accepted capture records the extension version and status serves it", a
     assert.equal(capture.status().lastExtensionVersion, "0.15.38");
     capture.updateClientStatus({ pending: 0, items: [] }, "test-token");
     assert.equal(capture.status().lastExtensionVersion, "0.15.38");
+    capture.updateClientStatus({
+      extensionId: "e".repeat(80), managedInstall: { installId: "m".repeat(80) },
+    }, "test-token");
+    assert.equal(capture.status().lastExtensionId, "e".repeat(64));
+    assert.equal(capture.status().lastManagedInstallId, "m".repeat(64));
+    capture.updateClientStatus({ managedInstall: null }, "test-token");
+    assert.equal(capture.status().lastManagedInstallId, "");
   } finally {
     store.close?.();
     await rm(root, { recursive: true, force: true });
@@ -231,6 +238,37 @@ test("not connected shows the verdict, the install guidance, and the download li
   assert.match(html, /「自动收录」/);
   assert.match(html, new RegExp(String.raw`href="${card.DOWNLOAD_PAGE_URL.replace(/[/.#]/g, "\\$&")}"`));
   assert.doesNotMatch(html, /扩展版本/);
+});
+
+test("managed folder when disconnected shows one-time loading instructions", () => {
+  const html = renderCard({ status: bridgeStatus({ managedExtension: {
+    available: true, path: "/private/test/chrome", version: "0.15.46", installId: "abc", extensionManaged: false,
+  } }) });
+  assert.match(html, /复制位置/);
+  assert.match(html, /加载已解压的扩展程序/);
+  assert.doesNotMatch(html, /有新版扩展/);
+});
+
+test("connected unmanaged developer extension is guided without deleting queued data", () => {
+  const managedExtension = { available: true, path: "/private/test/chrome", version: "0.15.46", installId: "abc", extensionManaged: false };
+  const html = renderCard({ active: true, bundledVersion: "0.15.47",
+    status: bridgeStatus({ lastExtensionId: "hjcildpmialbefmcdpdooenlojecjpli", lastExtensionVersion: "0.15.45", managedExtension }) });
+  assert.match(html, /不要先移除旧扩展/);
+  assert.doesNotMatch(html, /有新版扩展/);
+  const store = renderCard({ active: true, status: bridgeStatus({
+    lastExtensionId: "bhjibabaiccjjfcdbimeeaoaikhcfncc", lastExtensionVersion: "0.15.45", managedExtension,
+  }) });
+  assert.doesNotMatch(store, /不要先移除旧扩展/);
+});
+
+test("connected managed extension shows automatic update status", () => {
+  const html = renderCard({ active: true, status: bridgeStatus({
+    lastExtensionVersion: "0.15.45",
+    managedExtension: { available: true, path: "/private/test/chrome", version: "0.15.46", installId: "abc", extensionManaged: true },
+  }) });
+  assert.match(html, /跟随 App 自动更新/);
+  assert.match(html, /正在更新扩展/);
+  assert.doesNotMatch(html, /有新版扩展/);
 });
 
 test("connected shows the verdict and the version row", () => {
