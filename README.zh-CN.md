@@ -68,6 +68,41 @@ GravityPort MCP 让 Claude、Codex 等 MCP 客户端可以在同一个本地素�
 
 设置 → 反馈可以发送 bug 报告和建议，可以选择附上一份先脱敏、发送前可完整查看的诊断日志。Pinterest 入口已经在应用里显示，等 Pinterest 批准正式接口后开放。
 
+## MCP 接入
+
+GravityPort MCP 是桌面版自带的本地 stdio 服务，不占端口，不用装 Node.js，也不用装 npm 包。
+
+1. 安装 GravityPort，并打开一次。
+2. 打开「设置 → 连接 → AI 助手（MCP）」，选 Claude Desktop、Claude Code 或 Codex，点「复制」。
+3. 粘贴到对应客户端的配置里，重启它。
+
+macOS 上的配置长这样。Windows 的路径取决于安装位置，请直接用设置里的「复制」。
+
+```json
+{
+  "mcpServers": {
+    "gravityport": {
+      "command": "/Applications/GravityPort.app/Contents/MacOS/GravityPort",
+      "args": ["/Applications/GravityPort.app/Contents/Resources/app.asar/mcp/server.mjs"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
+    }
+  }
+}
+```
+
+## 工具
+
+GravityPort MCP 共 25 个工具：
+
+- **检索：** `asset_search`（按文字和时间搜索）、`asset_list`、`asset_get`
+- **入库：** `asset_create`、`asset_import_folder`
+- **整理：** `asset_update_metadata`、`asset_attach_prompt`、`asset_duplicate`
+- **回收站：** `asset_trash`（移进回收站）、`asset_restore`（从回收站恢复）
+- **堆叠：** `stack_list`、`stack_get`、`stack_create`、`stack_rename`、`stack_add_assets`、`stack_remove_assets`、`stack_dissolve`
+- **版本：** `asset_version_create`、`asset_version_history`、`asset_recipe_history`
+- **生成记录：** `generation_record`、`generation_list`、`generation_relation_record`、`generation_lineage`
+- **导出：** `asset_provenance_export`（导出来源记录，不带文件路径和用户名）
+
 ## 融入你的工作流
 
 | 你在哪里创作 | GravityPort 收进什么 |
