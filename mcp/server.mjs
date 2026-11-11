@@ -574,7 +574,7 @@ function toolDefinitions() {
         properties: {
           outputAssetId: { type: "string", description: "Existing GravityPort asset produced by this generation." },
           provider: { type: "string" },
-          captureContextId: { type: "string", description: "GravityPort/local observation context. This is not a provider generation-call ID." },
+          captureContextId: { type: "string", description: "GravityPort/local observation context. This is not a provider generation-call ID. Several generations in one capture context are told apart by providerToolCallId." },
           providerToolCallId: { type: "string", description: "Provider/runtime tool-call identifier when observed." },
           providerGenerationCallId: { type: "string", description: "Provider generation-call identifier only when actually supplied by the provider integration." },
           providerResponseId: { type: "string" },
@@ -1327,7 +1327,7 @@ async function handleToolCall(id, params) {
       && width * height > MAX_DERIVATIVE_INPUT_PIXELS;
     let text = `Saved asset ${asset.id} at ${asset.image_path}`;
     if (tooLarge) {
-      text += "\n这张图超过 4000 万像素，App 里不会生成缩略图和预览。/ This image exceeds 40 megapixels; the App will not generate a thumbnail or preview for it.";
+      text += "\n这张图超过 2.68 亿像素，App 里不会生成缩略图和预览。/ This image exceeds 268 megapixels; the App will not generate a thumbnail or preview for it.";
     }
     if (systemFields.ignored.length) {
       text += `\n${systemFieldsNotice(systemFields.ignored)}`;

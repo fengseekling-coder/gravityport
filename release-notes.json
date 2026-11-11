@@ -1,8 +1,22 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {},
-    "en": {}
+    "zh": {
+      "improved": [
+        "超大图片（最多约 2.68 亿像素）也能生成缩略图和预览。"
+      ],
+      "fixed": [
+        "修复了 AI 助手在同一个对话里记录多次生成时，几次生成被合成一条记录的问题。"
+      ]
+    },
+    "en": {
+      "improved": [
+        "Very large images (up to about 268 megapixels) now get thumbnails and previews."
+      ],
+      "fixed": [
+        "Fixed an issue where several generations an AI assistant recorded in one conversation were merged into a single record."
+      ]
+    }
   },
   "releases": [
     {

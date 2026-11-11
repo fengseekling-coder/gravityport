@@ -2,6 +2,7 @@
 // created — read from the file header only (no pixel decode, no pixel limit),
 // with the EXIF orientation swap shared with the derivative write-back so a
 // card never changes ratio twice. Bad files must import exactly as before.
+import { crc32 } from "node:zlib";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -66,13 +67,17 @@ test("PNG, JPEG (EXIF orientation 6) and WebP get dimensions at createAsset; der
   assert.deepEqual(dimensionsOf(await store.getAsset("default", "webp-tall")), [640, 1136], "WebP ratio unchanged after derivatives");
 });
 
-test("an 8000x5500 image beyond the 40MP derivative limit still gets dimensions; its derivative job still fails", async (t) => {
+test("a 16500x16500 image beyond the 268MP derivative limit still gets dimensions; its derivative job still fails", async (t) => {
   const { imagesDir, store } = await createStore(t);
   const bigPath = join(imagesDir, "huge.png");
-  await sharp({ create: { width: 8000, height: 5500, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toFile(bigPath);
+  const bigBuf = await sharp({ create: { width: 16, height: 16, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toBuffer();
+  bigBuf.writeUInt32BE(16500, 16);
+  bigBuf.writeUInt32BE(16500, 20);
+  bigBuf.writeUInt32BE(crc32(bigBuf.subarray(12, 29)), 29);
+  await writeFile(bigPath, bigBuf);
 
-  const asset = await store.createAsset({ assetId: "big-44mp", imagePath: bigPath });
-  assert.deepEqual(dimensionsOf(asset), [8000, 5500], "header read has no pixel limit");
+  const asset = await store.createAsset({ assetId: "big-272mp", imagePath: bigPath });
+  assert.deepEqual(dimensionsOf(asset), [16500, 16500], "header read has no pixel limit");
 
   const processor = createDerivativeProcessor();
   t.after(() => processor.close());
@@ -82,7 +87,7 @@ test("an 8000x5500 image beyond the 40MP derivative limit still gets dimensions;
   assert.equal(outcome.ok, false, "the derivative job still fails past the pixel limit (unchanged)");
   assert.match(String(outcome.error || ""), /pixel limit|exceeds/i);
   // The imported dimensions survive the failed job.
-  assert.deepEqual(dimensionsOf(await store.getAsset("default", "big-44mp")), [8000, 5500]);
+  assert.deepEqual(dimensionsOf(await store.getAsset("default", "big-272mp")), [16500, 16500]);
 });
 
 test("caller-supplied dimensions are never overwritten", async (t) => {

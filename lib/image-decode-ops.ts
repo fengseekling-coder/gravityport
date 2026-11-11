@@ -22,7 +22,7 @@ type DecodeInput = Buffer | string;
 
 export interface MetadataOptions {
   failOn?: "none" | "truncated" | "error" | "warning";
-  limitInputPixels?: number;
+  limitInputPixels?: number | boolean;
 }
 
 export interface PosterOptions {

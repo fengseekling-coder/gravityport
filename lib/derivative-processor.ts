@@ -69,7 +69,7 @@ async function generateDerivatives(job: DerivativeProcessorJob) {
     targets.map((target) => dirname(target.finalPath)),
     targets.map((target) => basename(target.finalPath)),
   );
-  const sharpInputOptions = { animated: false, limitInputPixels: MAX_DERIVATIVE_INPUT_PIXELS } as const;
+  const sharpInputOptions = { animated: false, limitInputPixels: MAX_DERIVATIVE_INPUT_PIXELS, sequentialRead: true } as const;
   const metadata = await sharp(job.original_path, sharpInputOptions).metadata();
   // Task 292: createAsset reads the same dimensions at import time through
   // this shared helper; both write-backs must agree or each card would jump
