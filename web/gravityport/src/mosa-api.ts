@@ -333,7 +333,7 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
   return {
     id: String(input.id || ""),
     project_id: String(input.project_id || project),
-    name: String(input.name || input.title || path.split(/[\\/]/).pop() || input.id || ""),
+    name: String(input.name || input.title || input.display_name || path.split(/[\\/]/).pop() || input.id || ""),
     favorite: input.favorite === true,
     width, height,
     mediaKind: kind === "video" || (/\.(?:mp4|mov|webm|m4v)$/i.test(path) && kind !== "image") ? "video" : "image",

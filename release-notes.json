@@ -9,7 +9,8 @@
         "超大图片（最多约 2.68 亿像素）也能生成缩略图和预览。"
       ],
       "fixed": [
-        "修复了 AI 助手在同一个对话里记录多次生成时，几次生成被合成一条记录的问题。"
+        "修复了 AI 助手在同一个对话里记录多次生成时，几次生成被合成一条记录的问题。",
+        "修复了中文文件名的图片导入后名字变成一串编号的问题：卡片、检视器和导出的文件都保留中文原名，也能按中文名搜索，单个字也能搜到。"
       ]
     },
     "en": {
@@ -20,7 +21,8 @@
         "Very large images (up to about 268 megapixels) now get thumbnails and previews."
       ],
       "fixed": [
-        "Fixed an issue where several generations an AI assistant recorded in one conversation were merged into a single record."
+        "Fixed an issue where several generations an AI assistant recorded in one conversation were merged into a single record.",
+        "Fixed images with Chinese file names losing their names after import. Cards, the inspector and exported files now keep the original name, and you can search by it, even by a single character."
       ]
     }
   },
