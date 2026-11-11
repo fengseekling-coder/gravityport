@@ -1,0 +1,29 @@
+{
+  "name": "gravityport-mcp",
+  "version": "0.3.11",
+  "type": "module",
+  "bin": {
+    "gravityport-mcp": "bin/gravityport-mcp.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "PolyForm-Shield-1.0.0",
+  "mcpName": "io.github.fengseekling-coder/gravityport",
+  "files": [
+    "bin",
+    "lib",
+    "tools.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "homepage": "https://gravityport.azhuilab.com/en/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fengseekling-coder/gravityport.git",
+    "directory": "packages/gravityport-mcp"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

@@ -90,6 +90,19 @@ On macOS the config looks like this. On Windows the paths depend on where the ap
 }
 ```
 
+With Node.js 18 or newer installed, `npx -y gravityport-mcp` also works: the package finds the installed app automatically, and when the app is missing it tells your AI assistant to install GravityPort first.
+
+```json
+{
+  "mcpServers": {
+    "gravityport": {
+      "command": "npx",
+      "args": ["-y", "gravityport-mcp"]
+    }
+  }
+}
+```
+
 ## Tools
 
 GravityPort MCP provides 25 tools:

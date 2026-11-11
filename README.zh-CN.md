@@ -90,6 +90,19 @@ macOS 上的配置长这样。Windows 的路径取决于安装位置，请直接
 }
 ```
 
+装有 Node.js 18 或更新版本时，也可以用 `npx -y gravityport-mcp` 接入：这个包会自动找到已安装的 App；没装 App 时，它会告诉 AI 助手先安装 GravityPort。
+
+```json
+{
+  "mcpServers": {
+    "gravityport": {
+      "command": "npx",
+      "args": ["-y", "gravityport-mcp"]
+    }
+  }
+}
+```
+
 ## 工具
 
 GravityPort MCP 共 25 个工具：
