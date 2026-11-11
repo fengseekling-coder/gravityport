@@ -112,6 +112,7 @@
 | 开关 | `button.settings-switch` + `.enabled` | 36×20，开时 `--ui-accent`，`role="switch"` |
 | 搜索框 | `label.search` | 240×32，`--ui-inset` 底，输入时 `--ui-raised` 加 2px 焦点框 |
 | 工具栏下拉 | `ToolbarSelect.tsx` | 列表 `.toolbar-select-menu` 最窄 176px，选项 32px 高，已选项打 `--ui-accent` 勾 |
+| 回收站可腾空间 | `.trash-reclaimable` | 回收站有素材时，「清空回收站」按钮左边 12px `--ui-muted` 一行「清空可腾出约 {size}」，只算非硬链接的原图大小；清空能腾出 0 时也显示（`0 KB`）；不可点、无图标无提示框，回收站空了或后端没给这个字段就不显示 |
 | 列数 | `ColumnControl.tsx` | 弹层 192px，滑杆 + 2/3/4/5/6/8 刻度 |
 | 侧栏 | `.sidebar`、`.nav-row`、`.section-toggle` | 行高 36px，当前项 `--ui-selected` 底加 `aria-current="page"`。正在看的堆叠没了自动退回进堆叠前的视图，分组被删退回「所有素材」，分组被改名跟到新名字；都替换当前历史条目，后退不会回到已经不存在的视图 |
 | 侧栏更新提醒 | `.update-ready-slot`、`.update-ready-line` | 更新包下好后的单行提醒，在「用户中心」上方：高 32px、12px 字、`--radius-control`，`--ui-hover` 底悬停加深到 `--ui-selected`；左侧 6px `--ui-accent` 圆点，文字 `--ui-secondary`（版本号 `--ui-text` 字重 500）超长省略号截断，右侧「重启更新」`--ui-text` 保持完整；点击整行即重启更新，更新中禁用并显示「正在更新…」，`title`/`aria-label` 保留完整句子；同一版本装失败两次后不再显示，改由系统对话框引导去官网下载 |

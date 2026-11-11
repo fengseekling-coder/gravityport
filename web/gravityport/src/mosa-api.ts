@@ -75,6 +75,10 @@ export type MosaNavigation = {
   favorites: number
   unorganized: number
   trash: number
+  // Task 383: what emptying the trash would free. The sqlite backend always
+  // sends it; the JSON backend doesn't — absent (undefined) hides the
+  // toolbar line, a present 0 shows "0 KB".
+  trashReclaimableBytes?: number
   sourceTypes: [string, number][]
   groups: { name: string; count: number; color: string }[]
 }
@@ -447,6 +451,11 @@ export async function fetchNavigation(project: string, signal?: AbortSignal): Pr
     favorites: Number(navigation.favorites || 0),
     unorganized: Number(navigation.unorganized || 0),
     trash: Number(navigation.trash || 0),
+    // Task 383: keep "absent" distinct from 0 — the JSON backend never sends
+    // this field, and its trash line must hide instead of claiming 0 KB.
+    trashReclaimableBytes: navigation.trashReclaimableBytes === undefined
+      ? undefined
+      : Number(navigation.trashReclaimableBytes || 0),
     sourceTypes: rawSources.filter(Array.isArray).map((entry: unknown[]) => [
       String(entry[0] || ""), Number(entry[1] || 0),
     ]),

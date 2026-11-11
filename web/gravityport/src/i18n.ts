@@ -519,6 +519,8 @@ const english: Record<string, string> = {
   "浏览器扩展的连接请求已过期，请在扩展里重试": "The browser extension’s connection request expired. Try again from the extension.",
   "没能保存连接设置": "Couldn’t save the connection setting",
   "{seconds} 秒内不回应将视为不允许": "No response within {seconds} seconds counts as Don’t Allow",
+  // Task 383: trash toolbar line left of the 清空回收站 button.
+  "清空可腾出约 {size}": "Emptying frees about {size}",
 }
 
 export function translate(text: string, language: Language): string {

@@ -4851,10 +4851,24 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             ) : pinterestActive ? null : (
               <>
                 {active === "回收站" && (navigation?.trash ?? 0) > 0 && (
-                  <button className="toolbar-empty-trash" onClick={() => setEmptyTrashConfirm(true)}>
-                    <Icon name="trash" size={12} />
-                    {tr("清空回收站")}
-                  </button>
+                  <>
+                    {/* Task 383: what emptying would free, left of the button.
+                        The JSON backend sends no field — hide the line entirely;
+                        a present 0 means "frees nothing" and still shows. */}
+                    {navigation?.trashReclaimableBytes !== undefined && (
+                      <span className="trash-reclaimable">
+                        {fillNamed(tr("清空可腾出约 {size}"), {
+                          size: navigation.trashReclaimableBytes > 0
+                            ? humanSize(navigation.trashReclaimableBytes)
+                            : "0 KB",
+                        })}
+                      </span>
+                    )}
+                    <button className="toolbar-empty-trash" onClick={() => setEmptyTrashConfirm(true)}>
+                      <Icon name="trash" size={12} />
+                      {tr("清空回收站")}
+                    </button>
+                  </>
                 )}
                 <ToolbarSelect label={tr("素材类型")} value={assetType} onChange={setAssetType} options={[{ value: "all", label: tr("全部类型") }, { value: "image", label: tr("图片") }, { value: "video", label: tr("视频") }]} />
                 <ToolbarSelect label={tr("排序")} value={sortOrder} onChange={setSortOrder} options={[{ value: "newest", label: tr("最新优先") }, { value: "name", label: tr("名称排序") }]} />

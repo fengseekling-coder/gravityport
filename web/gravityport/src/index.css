@@ -3511,6 +3511,15 @@ video.black-image,
 .toolbar-empty-trash {
   white-space: nowrap;
   flex-shrink: 0;
+}/* Task 383: what emptying the trash would free — one muted 12px line left
+   of the 清空回收站 button, vertically centered by .toolbar-right's flex.
+   Horizontal spacing comes from its existing --space-1 gap (no literals).
+   no-drag: the 56px toolbar is a window-drag region. */
+.trash-reclaimable {
+  font-size: 12px;
+  color: var(--ui-muted);
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
 }
 /* Task 148: the expanded version view renders every block as thumbnail rows.
    Gray placeholder frame for records without a resolvable asset; static rows

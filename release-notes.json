@@ -8,7 +8,9 @@
       "improved": [
         "超大图片（最多约 2.68 亿像素）也能生成缩略图和预览。",
         "可以用 ⌘[ / ⌘]（Windows 为 Alt+← / →）和鼠标侧键后退、前进；检视器开着时，后退只关闭检视器。",
-        "在堆叠里按 Esc 可以退出堆叠；分组和堆叠的弹窗打开时，光标直接落在输入框或「取消」上，Tab 键不会跳出弹窗，按 Esc 等于取消。"
+        "在堆叠里按 Esc 可以退出堆叠；分组和堆叠的弹窗打开时，光标直接落在输入框或「取消」上，Tab 键不会跳出弹窗，按 Esc 等于取消。",
+        "以前导入的图片缺少的中等尺寸缩略图，会在 App 开着时于后台慢慢补齐，浏览旧素材更顺畅。",
+        "回收站的工具栏会显示清空后大约能腾出多少空间。"
       ],
       "fixed": [
         "修复了 AI 助手在同一个对话里记录多次生成时，几次生成被合成一条记录的问题。",
@@ -23,7 +25,9 @@
       "improved": [
         "Very large images (up to about 268 megapixels) now get thumbnails and previews.",
         "⌘[ / ⌘] (Alt+← / → on Windows) and the mouse side buttons now go back and forward. With the viewer open, Back closes only the viewer.",
-        "Press Esc inside a stack to leave it. Group and stack dialogs now put the cursor in the text field or on Cancel, keep Tab inside the dialog, and treat Esc as Cancel."
+        "Press Esc inside a stack to leave it. Group and stack dialogs now put the cursor in the text field or on Cancel, keep Tab inside the dialog, and treat Esc as Cancel.",
+        "Older images that lack a medium-size thumbnail now get one in the background while the app is open, so browsing older assets is smoother.",
+        "The Trash toolbar now shows about how much space emptying it would free."
       ],
       "fixed": [
         "Fixed an issue where several generations an AI assistant recorded in one conversation were merged into a single record.",
