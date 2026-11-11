@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { createAssetStore } from "../lib/asset-store.mjs";
 import { TRASH_RETENTION_MS } from "../lib/sqlite-asset-store.mjs";
+import { confirmTimeoutMs, createLiveDeletionRequests } from "../lib/live-deletion-requests.mjs";
 import { assetStoreError } from "../lib/asset-version-history.mjs";
 import { assertExternalVerificationLevel } from "../lib/generation-history.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
@@ -76,6 +77,9 @@ function describeLibraryStartupError(error) {
 // created anywhere. All of the state below stays unset until openLibrary()
 // succeeds.
 let libraryDir;
+// Task 385 — the display name the App's confirmation dialog shows for this
+// client, from initialize's clientInfo. Empty until (and if) the client sends one.
+let mcpClientDisplayName = "";
 let store = null;
 let databasePath = "";
 let databaseIdentity = null;
@@ -333,6 +337,30 @@ function sendError(id, code, message) {
   send({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
+// Task 385 — the requester name shown in the App's confirmation dialog.
+// Known clients get their display name; anything else non-empty is sanitized
+// (control characters stripped, 40 characters) and used verbatim; empty means
+// the dialog shows the anonymous wording.
+function sanitizeClientDisplayName(rawName) {
+  const value = String(rawName || "");
+  const lowered = value.toLowerCase();
+  if (lowered.includes("claude")) return "Claude";
+  if (lowered.includes("codex")) return "Codex";
+  if (lowered.includes("cursor")) return "Cursor";
+  if (lowered.includes("gemini")) return "Gemini";
+  // eslint-disable-next-line no-control-regex
+  const cleaned = value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+  return cleaned ? [...cleaned].slice(0, 40).join("") : "";
+}
+
+function sendProgressNotification(progressToken, { progress, total, message }) {
+  send({
+    jsonrpc: "2.0",
+    method: "notifications/progress",
+    params: { progressToken, progress, total, message },
+  });
+}
+
 function toolDefinitions() {
   return [
     {
@@ -446,7 +474,7 @@ function toolDefinitions() {
     },
     {
       name: TOOL_ASSET_TRASH,
-      description: "Move an asset to Trash. Trashed assets can be restored with asset_restore or inside the GravityPort app, and are permanently purged after 90 days. Use this when the user asks to delete or remove an asset. Do NOT use this when the user asks to archive or stash an asset.",
+      description: "Move an asset to Trash. Trashed assets can be restored with asset_restore or inside the GravityPort app, and are permanently purged after 90 days. Use this when the user asks to delete or remove an asset. Do NOT use this when the user asks to archive or stash an asset. If the user is viewing this asset in GravityPort, GravityPort asks the user first and the call waits up to 60 seconds for the answer.",
       inputSchema: {
         type: "object",
         properties: { assetId: { type: "string" } },
@@ -1433,6 +1461,17 @@ async function handleToolCall(id, params) {
     return;
   }
   if (params?.name === TOOL_ASSET_TRASH) {
+    // Task 385: when the user is looking at exactly this asset in the App's
+    // viewer, the App asks before the move and this call waits for the answer.
+    // No viewer / another asset / another project / the JSON backend / no
+    // library at all: the trash proceeds exactly as before.
+    if (await viewerWatchesAsset(args.assetId)) {
+      const decision = await requestViewerDeletionDecision(args.assetId, params);
+      if (decision !== "allowed") {
+        sendResult(id, viewerDeletionRefusalResult(args.assetId, decision));
+        return;
+      }
+    }
     const result = await store.deleteAsset("default", args.assetId, { reason: "mcp" });
     const purgeAfter = new Date(new Date(result.deleted_at).getTime() + TRASH_RETENTION_MS).toISOString();
     sendResult(id, {
@@ -1801,12 +1840,116 @@ async function libraryRelocating() {
   }
 }
 
+// ---- Task 385: viewer-confirmation flow for asset_trash ----------------------
+
+function mcpDelay(ms) {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+// The confirmation protocol rides on the shared .live/ directory of the open
+// library; JSON backends and not-yet-open libraries never confirm (task 385
+// rule 10) — the trash behaves exactly as it did before this task.
+function mcpLiveDeletionRequests() {
+  return createLiveDeletionRequests({ libraryDir });
+}
+
+/** True only when the App viewer is fresh and showing exactly this asset. */
+async function viewerWatchesAsset(assetId) {
+  if (!libraryDir || !store || store.storageKind !== "sqlite") return false;
+  const requests = mcpLiveDeletionRequests();
+  const viewer = await requests.readViewer();
+  if (!requests.isViewerFresh(viewer)) return false;
+  if (String(viewer.projectId) !== "default") return false;
+  return String(viewer.assetId) === String(assetId);
+}
+
+/**
+ * Files (or merges into) a delete request and polls the file every 250 ms
+ * until the App writes a decision, the window closes (this process writes the
+ * timeout itself — task 385 rule 3), or the outer bound (expiresAt + 2 s)
+ * passes. While waiting, progress notifications every 5 s keep a client with
+ * a progressToken from timing out.
+ */
+async function requestViewerDeletionDecision(assetId, params) {
+  const requests = mcpLiveDeletionRequests();
+  const timeoutMs = confirmTimeoutMs();
+  const { request, created } = await requests.createDeleteRequest({
+    projectId: "default",
+    assetId,
+    requester: { kind: "mcp", name: mcpClientDisplayName, pid: process.pid },
+  });
+  const progressToken = params?._meta?.progressToken;
+  const totalSeconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const pollEveryMs = 250;
+  const progressEveryMs = 5_000;
+  const startedAt = Date.now();
+  let lastProgressAt = progressToken === undefined ? Number.POSITIVE_INFINITY : startedAt;
+  try {
+    while (true) {
+      await mcpDelay(pollEveryMs);
+      if (progressToken !== undefined && Date.now() - lastProgressAt >= progressEveryMs) {
+        lastProgressAt = Date.now();
+        sendProgressNotification(progressToken, {
+          progress: Math.min(totalSeconds, Math.round((Date.now() - startedAt) / 1000)),
+          total: totalSeconds,
+          message: "正在等用户在 GravityPort 里确认删除…",
+        });
+      }
+      const current = await requests.readRequest(request.id);
+      // The file vanished while pending (only the 10-minute sweep can do
+      // that): there is no answer to wait for any more.
+      if (!current) return "cancelled";
+      if (current.status !== "pending") {
+        // A late allow (decidedAt after the window) is no answer (rule 3).
+        if (current.status === "allowed" && Number(current.decidedAt) > Number(current.expiresAt)) return "timeout";
+        return current.status;
+      }
+      if (Date.now() > Number(current.expiresAt)) {
+        await requests.writeDecision(request.id, "timeout", { enforceExpiry: false }).catch(() => {});
+        return "timeout";
+      }
+      if (Date.now() > Number(current.expiresAt) + 2_000) return "timeout";
+    }
+  } finally {
+    // Rule 3: the requester removes the request file it created once it holds
+    // the final result. A merged waiter leaves the creator's file alone.
+    if (created) await requests.deleteRequest(request.id).catch(() => {});
+  }
+}
+
+/** The isError result for every non-allowed decision (task 385 rule 8). */
+function viewerDeletionRefusalResult(assetId, decision) {
+  const seconds = Math.max(1, Math.round(confirmTimeoutMs() / 1000));
+  const declinedText = `用户拒绝了这次删除，素材没有动。/ The user declined this deletion; the asset was not changed. (${assetId})`;
+  const byDecision = {
+    denied: { reason: "user_denied", text: declinedText },
+    timeout: {
+      reason: "user_no_response",
+      text: `用户 ${seconds} 秒内没有回应，素材没有删除。/ The user did not respond within ${seconds} seconds; the asset was not deleted. (${assetId})`,
+    },
+    cancelled: { reason: "cancelled", text: declinedText },
+  };
+  const refusal = byDecision[decision] || byDecision.cancelled;
+  return {
+    content: [{ type: "text", text: refusal.text }],
+    isError: true,
+    structuredContent: {
+      asset_id: assetId,
+      trashed: false,
+      reason: refusal.reason,
+    },
+  };
+}
+
 async function handleRequest(message) {
   const { id, method, params } = message;
   // JSON-RPC notifications (no `id`, e.g. notifications/initialized) must never
   // get a response; none of them needs handling here.
   if (!Object.hasOwn(message, "id")) return;
   if (method === "initialize") {
+    // Task 385 — remember who is asking, so the App's confirmation dialog can
+    // say "允许 Claude 删除这张素材吗？" instead of the anonymous wording.
+    mcpClientDisplayName = sanitizeClientDisplayName(params?.clientInfo?.name);
     sendResult(id, {
       protocolVersion: params?.protocolVersion || "2025-11-25",
       capabilities: { tools: {} },

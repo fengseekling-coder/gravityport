@@ -323,7 +323,7 @@
   },
   {
     "name": "asset_trash",
-    "description": "Move an asset to Trash. Trashed assets can be restored with asset_restore or inside the GravityPort app, and are permanently purged after 90 days. Use this when the user asks to delete or remove an asset. Do NOT use this when the user asks to archive or stash an asset.",
+    "description": "Move an asset to Trash. Trashed assets can be restored with asset_restore or inside the GravityPort app, and are permanently purged after 90 days. Use this when the user asks to delete or remove an asset. Do NOT use this when the user asks to archive or stash an asset. If the user is viewing this asset in GravityPort, GravityPort asks the user first and the call waits up to 60 seconds for the answer.",
     "inputSchema": {
       "type": "object",
       "properties": {

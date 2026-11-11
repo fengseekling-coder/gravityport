@@ -3,7 +3,8 @@
   "unreleased": {
     "zh": {
       "new": [
-        "AI 助手可以用一行命令 npx -y gravityport-mcp 接入 GravityPort；还没安装 App 时，AI 助手会收到中英文的安装说明。"
+        "AI 助手可以用一行命令 npx -y gravityport-mcp 接入 GravityPort；还没安装 App 时，AI 助手会收到中英文的安装说明。",
+        "检视器里正在看的素材要被 AI 助手（MCP）或即梦删除同步移进回收站时，App 会先弹窗问你；在即梦删除同步的弹窗里点了「不允许」的素材，以后不会再被自动移走。"
       ],
       "improved": [
         "超大图片（最多约 2.68 亿像素）也能生成缩略图和预览。",
@@ -20,7 +21,8 @@
     },
     "en": {
       "new": [
-        "AI assistants can connect to GravityPort with one command, npx -y gravityport-mcp. If the app is not installed yet, the assistant receives installation instructions in Chinese and English."
+        "AI assistants can connect to GravityPort with one command, npx -y gravityport-mcp. If the app is not installed yet, the assistant receives installation instructions in Chinese and English.",
+        "If an AI assistant (MCP) or Jimeng delete sync tries to move the asset you are viewing to Trash, GravityPort now asks you first. Assets you decline for Jimeng delete sync are not moved automatically again."
       ],
       "improved": [
         "Very large images (up to about 268 megapixels) now get thumbnails and previews.",

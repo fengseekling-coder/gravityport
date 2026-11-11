@@ -116,20 +116,22 @@ describe("AuthorizationModal interaction contract (source pins)", () => {
 
   it("routes Escape through the App chain first, denying the displayed request", () => {
     // The authorization dialog sits at layer 110 — its Escape branch must be
-    // the first dialog branch in the App's Escape chain.
+    // the first dialog branch in the App's Escape chain. Task 385: the chain
+    // routes the merged queue's head (pairing or deletion) to its handler.
     const chain = appSource.slice(appSource.indexOf('if (e.key === "Escape")'));
-    const branch = chain.indexOf("if (pairRequestsActive) pairDecideRef.current");
+    const branch = chain.indexOf("if (authorizationActive) {");
     const renameBranch = chain.indexOf("else if (renameNoticeOpen)");
-    assert.ok(branch >= 0, "the Escape chain denies the pairing request");
+    assert.ok(branch >= 0, "the Escape chain denies the authorization head");
     assert.ok(renameBranch > branch, "the authorization branch precedes every other overlay");
     assert.ok(
-      chain.slice(branch, branch + 200).includes('"deny")'),
+      chain.slice(branch, branch + 400).includes('"deny")'),
       "the Escape branch denies, never allows",
     );
   });
 
   it("feeds the whole pending list so the component queues, and the layer sits at 110", () => {
-    assert.match(appSource, /requests=\{pairRequests\.map\(row => \(\{/);
+    // Task 385: the queue is the merged pairing + live-deletion list.
+    assert.match(appSource, /requests=\{authorizationQueue\.map\(/);
     assert.match(appSource, /<AuthorizationModal/);
   });
 });

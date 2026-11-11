@@ -626,6 +626,63 @@ export async function decideWebCapturePairRequest(id: string, allow: boolean): P
   })
 }
 
+// Task 385 — live deletion requests: a viewer-shown asset that an AI assistant
+// (MCP) or the Jimeng delete sync wants to move to Trash. The server's list is
+// authoritative; SSE `live-deletion-requests` only signals a refetch.
+export type MosaLiveDeletionRequest = {
+  id: string
+  projectId: string
+  assetId: string
+  requesterKind: "mcp" | "jimeng"
+  requesterName: string
+  expiresAt: number
+}
+
+/** GET /api/live-deletion-requests — pending, unexpired, oldest first. The
+ * payload carries the server's `now` so the countdown uses one clock. */
+export async function fetchLiveDeletionRequests(signal?: AbortSignal): Promise<{ rows: MosaLiveDeletionRequest[]; serverNow: number }> {
+  const data = await requestJson<{ requests?: JsonValue; now?: number }>("/api/live-deletion-requests", { signal })
+  const rows = (Array.isArray(data.requests) ? data.requests : [])
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    .map(row => {
+      const requester = row.requester && typeof row.requester === "object" && !Array.isArray(row.requester)
+        ? row.requester as Record<string, unknown>
+        : {}
+      return {
+        id: String(row.id || ""),
+        projectId: String(row.projectId || "default"),
+        assetId: String(row.assetId || ""),
+        requesterKind: requester.kind === "jimeng" ? "jimeng" as const : "mcp" as const,
+        requesterName: String(requester.name || ""),
+        expiresAt: Number(row.expiresAt || 0),
+      }
+    })
+    .filter(row => row.id)
+  return { rows, serverNow: Number(data.now || 0) }
+}
+
+/** POST /api/live-deletion-requests/<id>/decision — the user's answer. An
+ * expired request answers 409 (written as timeout server-side); an unknown
+ * id answers 404; both mean "the dialog is gone either way". */
+export async function decideLiveDeletionRequest(
+  id: string,
+  result: "allow" | "deny" | "timeout",
+): Promise<void> {
+  await requestJson(`/api/live-deletion-requests/${encodeURIComponent(id)}/decision`, {
+    method: "POST",
+    body: { result },
+  })
+}
+
+/** POST /api/viewer-presence — which asset the viewer shows right now, or
+ * null when it closed. Failures are silently ignored by callers. */
+export async function reportViewerPresence(projectId: string, assetId: string | null): Promise<void> {
+  await requestJson("/api/viewer-presence", {
+    method: "POST",
+    body: { projectId, assetId },
+  })
+}
+
 export type MosaProviderDeletionSettings = {
   jimengDeleteSyncEnabled: boolean
 }

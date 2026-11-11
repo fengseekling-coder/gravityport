@@ -218,7 +218,7 @@ Cowart 快照可提供画布说明与来源，但不保证具有完整生图 Pro
 
 ### 设置
 
-设置在左下角「用户中心」，分五页：「常规」（主题、显示素材名称、界面语言）、「存储」（素材库位置与存储类型，可「打开」或「修改」）、「连接」（Pinterest 连接卡片；「AI 助手（MCP）」卡——选 Claude Desktop、Claude Code 或 Codex，点「复制」得到现成配置，粘进对应客户端，重启 AI 助手；「浏览器扩展」卡——显示扩展是否已连接、扩展版本、待重试数量和最近一次错误，可点「刷新」，卡上还有「即梦站内删除作品时，同步移进回收站」开关）、「反馈」、「关于」（版本信息、检查与下载更新、本版本更新内容）。
+设置在左下角「用户中心」，分五页：「常规」（主题、显示素材名称、界面语言）、「存储」（素材库位置与存储类型，可「打开」或「修改」）、「连接」（Pinterest 连接卡片；「AI 助手（MCP）」卡——选 Claude Desktop、Claude Code 或 Codex，点「复制」得到现成配置，粘进对应客户端，重启 AI 助手；「浏览器扩展」卡——显示扩展是否已连接、扩展版本、待重试数量和最近一次错误，可点「刷新」，卡上还有「即梦站内删除作品时，同步移进回收站」开关）、「反馈」、「关于」（版本信息、检查与下载更新、本版本更新内容）。即梦删除同步要移走的素材如果正在检视器里看着，同样先弹授权确认框问一次；在弹框里点了不允许的图，即梦删除同步以后不会再移动它，需要时请在 App 里手动删除。
 
 ### 反馈
 
@@ -319,7 +319,7 @@ MCP 的 `asset_list` 和 `asset_search` 每张素材只返回精简摘要：固�
 
 `asset_provenance_export` 导出 `mosa.provenance.bundle/1`，包含经过字段白名单/敏感字段清理的素材身份、内容摘要、Recipe 历史、Generation Events/Relations 和 verification level；同时生成一个 `com.azhuilab.mosa.provenance` C2PA assertion payload。导出的来源记录默认不包含提示词与用户原话（只有在调用时显式指定 `includePrompts: true` 才会包含，且提示词中若出现本机路径或操作系统用户名会被替换为 `[redacted]`）；任何情况下均不会带出本机文件路径和操作系统用户名。该 payload 明确标记为 `signed: false`：它只是交给 C2PA SDK/签名器的可移植声明数据，**不是**已经签名的 Content Credential，GravityPort 不会把未签名记录描述成经过 C2PA 验证的来源证明。
 
-素材删除与恢复：`asset_trash` 将素材移入 App 的回收站（可在 90 天内通过 `asset_restore` 或在 App 回收站里恢复，90 天后自动清除），AI 助手在用户要求删除时使用；`asset_restore` 从回收站中恢复素材回图库。
+素材删除与恢复：`asset_trash` 将素材移入 App 的回收站（可在 90 天内通过 `asset_restore` 或在 App 回收站里恢复，90 天后自动清除），AI 助手在用户要求删除时使用；`asset_restore` 从回收站中恢复素材回图库。如果这张素材此刻正在 GravityPort 的检视器里看着，App 会先弹授权确认框问用户，60 秒内没有回应按不允许处理（任务 385）。
 
 后端 `c2pa-export` 已提供真正的签名导出链路：它把上述 provenance 组装成 `c2pa.actions.v2` + GravityPort 自定义 assertion，通过外部 `c2patool` 写入**新的导出副本**，然后重新读取结果确认 GravityPort assertion 确实存在。开发测试模式可使用 c2patool 自带测试证书；生产模式禁止把私钥塞进 manifest 或环境变量，必须配置独立 subprocess signer。当前这仍是后端能力，尚未接入桌面 UI。
 
