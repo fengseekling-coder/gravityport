@@ -68,6 +68,41 @@ Removed assets move to Trash, where they are kept for 90 days with a per-asset c
 
 Settings → Feedback sends bug reports and ideas, optionally with a redacted diagnostic log that you can read in full before sending. The Pinterest entry is already shown in the app; connecting opens up once Pinterest approves production API access.
 
+## MCP setup
+
+GravityPort MCP is a local stdio server built into the desktop app. It opens no port and needs no Node.js or npm package.
+
+1. Install GravityPort and open it once.
+2. Go to Settings → Connect → AI assistants (MCP), pick Claude Desktop, Claude Code or Codex, and click Copy.
+3. Paste the config into that client and restart it.
+
+On macOS the config looks like this. On Windows the paths depend on where the app is installed, so use the Copy button in Settings.
+
+```json
+{
+  "mcpServers": {
+    "gravityport": {
+      "command": "/Applications/GravityPort.app/Contents/MacOS/GravityPort",
+      "args": ["/Applications/GravityPort.app/Contents/Resources/app.asar/mcp/server.mjs"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
+    }
+  }
+}
+```
+
+## Tools
+
+GravityPort MCP provides 25 tools:
+
+- **Search:** `asset_search` (text and time range), `asset_list`, `asset_get`
+- **Add:** `asset_create`, `asset_import_folder`
+- **Edit:** `asset_update_metadata`, `asset_attach_prompt`, `asset_duplicate`
+- **Trash:** `asset_trash` (move to Trash), `asset_restore` (restore from Trash)
+- **Stacks:** `stack_list`, `stack_get`, `stack_create`, `stack_rename`, `stack_add_assets`, `stack_remove_assets`, `stack_dissolve`
+- **Versions:** `asset_version_create`, `asset_version_history`, `asset_recipe_history`
+- **Generation history:** `generation_record`, `generation_list`, `generation_relation_record`, `generation_lineage`
+- **Export:** `asset_provenance_export` (provenance without file paths or user names)
+
 ## Fits into your workflow
 
 | You create in | GravityPort keeps |
