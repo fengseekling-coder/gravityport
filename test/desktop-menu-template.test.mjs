@@ -124,3 +124,27 @@ test("menu template labels follow the desktop i18n locale", () => {
   assert.equal(zh[1].label, "文件");
   assert.equal(en[1].label, "File");
 });
+
+// 任务 384：全选不走 role（避免菜单快捷键抢先吃掉 ⌘A），照搜索项的写法
+// accelerator + click 由 main.mjs 注入；拷贝、剪切、粘贴三项必须仍是 role，
+// 文字框里的复制粘贴靠它们。
+test("select-all forwards to the page via accelerator + click while copy/cut/paste keep their roles", () => {
+  const onSelectAll = () => {};
+  const template = buildMenuTemplate({ platform: "darwin", locale: "zh", onSearch: () => {}, onSelectAll });
+  const edit = template.find((top) => top.id === "mosa-menu-edit").submenu;
+
+  const selectAll = edit.find((item) => item.id === "mosa-menu-select-all");
+  assert.equal(selectAll.role, undefined);
+  assert.equal(selectAll.accelerator, "CmdOrCtrl+A");
+  assert.equal(selectAll.click, onSelectAll);
+  assert.equal(selectAll.label, "全选");
+
+  assert.equal(edit.find((item) => item.id === "mosa-menu-cut").role, "cut");
+  assert.equal(edit.find((item) => item.id === "mosa-menu-copy").role, "copy");
+  assert.equal(edit.find((item) => item.id === "mosa-menu-paste").role, "paste");
+
+  // 全选和搜索一样是可选回调：不传时 click 为 undefined，模板照常构建。
+  const withoutHandler = buildMenuTemplate({ platform: "darwin", locale: "zh", onSearch: () => {} });
+  assert.equal(withoutHandler.find((top) => top.id === "mosa-menu-edit").submenu
+    .find((item) => item.id === "mosa-menu-select-all").click, undefined);
+});

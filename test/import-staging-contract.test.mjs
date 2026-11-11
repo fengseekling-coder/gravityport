@@ -259,6 +259,7 @@ test("preload surface and Electron security boundaries stay narrowly approved", 
     "getUpdateReady", // 任务 231：只读，主进程已下好并校验的更新包状态
     "libraryFileFlags", // drop-back guard: which dropped files already live in the library (booleans only)
     "onMenuSearch",
+    "onMenuSelectAll", // 任务 384：全选不走 role，经 menu-select-all 转给网页
     "onUpdateDownloadProgress",
     "onUpdateReady", // 任务 231：主进程广播「已下好」，与 getUpdateReady 成对
     "onWindowFullScreenChange",

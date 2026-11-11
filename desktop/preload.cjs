@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getBackgroundCaptureState: () => ipcRenderer.invoke("background-capture-state"),
   setBackgroundCapture: (enabled) => ipcRenderer.invoke("set-background-capture", enabled),
   onMenuSearch: (callback) => ipcRenderer.on("menu-search", (_event, ...args) => callback(...args)),
+  // 任务 384：全选不走 role，由主进程把 ⌘A 转给网页统一处理。
+  onMenuSelectAll: (callback) => ipcRenderer.on("menu-select-all", (_event, ...args) => callback(...args)),
   // 任务 96（A6）：大图页「全屏」与窗口系统全屏双向同步——渲染层写窗口全屏态、
   // 订阅主进程广播的 enter/leave-full-screen 变化。
   setWindowFullScreen: (flag) => ipcRenderer.invoke("set-window-full-screen", flag === true),

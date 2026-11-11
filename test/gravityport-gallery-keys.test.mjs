@@ -62,6 +62,54 @@ describe("resolveNavHistoryShortcut", () => {
   });
 });
 
+describe("mouseNavDirection", () => {
+  it("maps side button 3 to back", () => {
+    assert.equal(galleryKeysModule.mouseNavDirection(3), -1);
+  });
+
+  it("maps side button 4 to forward", () => {
+    assert.equal(galleryKeysModule.mouseNavDirection(4), 1);
+  });
+
+  it("returns 0 for left, middle and right buttons", () => {
+    assert.equal(galleryKeysModule.mouseNavDirection(0), 0);
+    assert.equal(galleryKeysModule.mouseNavDirection(1), 0);
+    assert.equal(galleryKeysModule.mouseNavDirection(2), 0);
+  });
+});
+
+describe("menuSelectAllTarget", () => {
+  it("sends a focused editable to the text select-all", () => {
+    assert.equal(galleryKeysModule.menuSelectAllTarget(
+      { activeIsEditable: true, galleryIdle: true, msSinceKeySelectAll: null }
+    ), "text");
+  });
+
+  it("runs the gallery select-all when idle and no key select-all is pending", () => {
+    assert.equal(galleryKeysModule.menuSelectAllTarget(
+      { activeIsEditable: false, galleryIdle: true, msSinceKeySelectAll: null }
+    ), "gallery");
+  });
+
+  it("returns none when an overlay is up", () => {
+    assert.equal(galleryKeysModule.menuSelectAllTarget(
+      { activeIsEditable: false, galleryIdle: false, msSinceKeySelectAll: null }
+    ), "none");
+  });
+
+  it("dedupes a keydown select-all within 500ms", () => {
+    assert.equal(galleryKeysModule.menuSelectAllTarget(
+      { activeIsEditable: false, galleryIdle: true, msSinceKeySelectAll: 120 }
+    ), "none");
+  });
+
+  it("runs the gallery select-all again after the 500ms dedupe window", () => {
+    assert.equal(galleryKeysModule.menuSelectAllTarget(
+      { activeIsEditable: false, galleryIdle: true, msSinceKeySelectAll: 500 }
+    ), "gallery");
+  });
+});
+
 describe("isFocusSearchKey", () => {
   it("returns true for / in library without overlay", () => {
     assert.equal(galleryKeysModule.isFocusSearchKey(

@@ -53,6 +53,7 @@ type ElectronAPI = {
   setWindowFullScreen?: (flag: boolean) => Promise<unknown>
   onWindowFullScreenChange?: (callback: (isFullScreen: boolean) => void) => unknown
   onMenuSearch?: (callback: () => void) => unknown
+  onMenuSelectAll?: (callback: () => void) => unknown
   openPinterestAuthorize?: (url: string) => Promise<{ ok?: boolean }>
   openExternalLink?: (url: string) => Promise<{ ok?: boolean }>
   [key: string]: unknown

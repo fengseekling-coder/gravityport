@@ -12,14 +12,16 @@
  * macOS keeps the native services/hide items; other platforms drop them (they
  * are Mac-only roles) and keep only About and Quit around a single separator.
  * The search item's click callback is injected by main.mjs (it forwards into
- * the focused window), keeping this module free of Electron imports.
+ * the focused window), keeping this module free of Electron imports. 全选 is
+ * wired the same way (task 384): without a `role` the ⌘A accelerator cannot
+ * outrun the web page's own keydown, so the two paths stay consistent.
  */
 
 import { getDesktopText } from "./notification-i18n.mjs";
 
 export const GRAVITYPORT_APP_MENU_LABEL = "GravityPort";
 
-export function buildMenuTemplate({ platform, locale, onSearch }) {
+export function buildMenuTemplate({ platform, locale, onSearch, onSelectAll }) {
   const isMac = platform === "darwin";
   const appSubmenu = [
     { id: "mosa-menu-about", role: "about", label: getDesktopText("menuAbout", locale) },
@@ -68,7 +70,12 @@ export function buildMenuTemplate({ platform, locale, onSearch }) {
         { id: "mosa-menu-paste", role: "paste", label: getDesktopText("menuPaste", locale) },
         { id: "mosa-menu-paste-match-style", role: "pasteAndMatchStyle", label: getDesktopText("menuPasteAndMatchStyle", locale) },
         { id: "mosa-menu-delete", role: "delete", label: getDesktopText("menuDelete", locale) },
-        { id: "mosa-menu-select-all", role: "selectAll", label: getDesktopText("menuSelectAll", locale) },
+        {
+          id: "mosa-menu-select-all",
+          label: getDesktopText("menuSelectAll", locale),
+          accelerator: "CmdOrCtrl+A",
+          click: onSelectAll,
+        },
       ],
     },
     {

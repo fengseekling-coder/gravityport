@@ -624,6 +624,7 @@ function buildMenu() {
     platform: process.platform,
     locale: currentLocale,
     onSearch: () => sendToWindow("menu-search"),
+    onSelectAll: () => sendToWindow("menu-select-all"),
   }));
   Menu.setApplicationMenu(menu);
   if (desktopPlatform.capabilities.hideApplicationMenuBar && mainWindow && !mainWindow.isDestroyed()) {

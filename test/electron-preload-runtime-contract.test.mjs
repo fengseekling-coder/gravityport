@@ -30,6 +30,7 @@ const EXPECTED_API_KEYS = [
   "getUpdateReady",
   "libraryFileFlags",
   "onMenuSearch",
+  "onMenuSelectAll", // 任务 384：全选不走 role，经 menu-select-all 转给网页
   "onUpdateDownloadProgress",
   "onUpdateReady",
   "onWindowFullScreenChange",

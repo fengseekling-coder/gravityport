@@ -29,7 +29,7 @@ import { focusSelection, logicalSelection, pruneSelection, replaceSelection, tog
 import { boxFromPoints, boxesIntersect, marqueeAutoScrollDelta, marqueeAutoScrollStep, marqueeSelection, masonryCardBoxes, MARQUEE_AUTO_SCROLL_TICK_MS, MARQUEE_DRAG_THRESHOLD_PX, type Box } from "./marquee"
 import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
-import { galleryKeyAction, isFocusSearchKey, neighbourAssetId } from "./gallery-keys"
+import { galleryKeyAction, isFocusSearchKey, menuSelectAllTarget, mouseNavDirection, neighbourAssetId, resolveNavHistoryShortcut } from "./gallery-keys"
 import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
 import { computeConversationRounds, conversationRoundRows, roundCompareSelection, roundLine, type ConversationRoundRow } from "./conversation-rounds"
 import VersionCompare, { type VersionCompareEntry } from "./version-compare"
@@ -1200,15 +1200,24 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     return () => media.removeEventListener("change", sync)
   }, [])
   useEffect(() => {
-    if (!settings && !deleting) return
+    // Task 384 (审查低-14): the group/stack dialogs join the settings window
+    // and the delete confirm in the focus trap. When several are open the
+    // topmost one wins (DESIGN.md hierarchy: 填写框 105 > 确认框 45 > 设置 20).
+    const formDialogOpen = Boolean(groupRename || stackRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm)
+    const confirmDialogOpen = Boolean(deleting || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
+    if (!settings && !formDialogOpen && !confirmDialogOpen) return
     const dialog = appRef.current?.querySelector<HTMLElement>(
-      deleting ? '[role="alertdialog"]' : '[role="dialog"]',
+      formDialogOpen ? ".group-dialog" : confirmDialogOpen ? '[role="alertdialog"]' : '[role="dialog"]',
     )
     const previous = document.activeElement as HTMLElement | null
     const controls = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
       'button:not([disabled]), input, select, [tabindex="0"]',
     ) || [])
-    controls()[0]?.focus()
+    const first = controls()[0]
+    first?.focus()
+    // 带输入框的小框（重命名分组/堆叠、新建分组并移入）落在输入框上并全选
+    // 现有文字；只有按钮的确认框和合并分组的下拉框落在第一个控件（取消/下拉）。
+    if (first instanceof HTMLInputElement && first.type === "text") first.select()
     const trap = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return
       const list = controls()
@@ -1227,7 +1236,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       document.removeEventListener("keydown", trap)
       previous?.focus()
     }
-  }, [settings, deleting])
+  }, [settings, deleting, groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm,
+    stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds])
   useEffect(() => {
     if (!selected) return
     const controller = new AbortController()
@@ -1870,7 +1880,16 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // history entry. Shared by the incremental commit's deleted-group branch
   // and the fresh-sidebar-stats liveness check the reload path leans on.
   const exitDeletedGroupView = () => goTo({ active: "所有素材" }, { replace: true })
+  // Back while the viewer is open closes the viewer only (task 384): the
+  // toolbar arrow, ⌘[/⌘] and the mouse side buttons all come through here, so
+  // one branch keeps all three from stepping back twice. Forward keeps the old
+  // close-and-step behavior.
   const navigateHistory = (direction: -1 | 1) => {
+    if (direction === -1 && preview) {
+      setViewerFullscreen(false)
+      setPreview(false)
+      return
+    }
     const next = navHistory.index + direction
     if (next < 0) {
       // The design's back arrow also resets a filtered workspace at the
@@ -1904,6 +1923,11 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     setSortOrder(snap.sortOrder); setAssetType(snap.assetType)
     setPreview(false)
   }
+  // Keyboard ⌘[/⌘] and the mouse side buttons live in long-lived listeners
+  // that do not re-register when navHistory moves; they read the latest
+  // navigateHistory through this ref (same pattern as focusSearchRef below).
+  const navigateHistoryRef = useRef<(direction: -1 | 1) => void>(() => {})
+  navigateHistoryRef.current = navigateHistory
   // A settled search commit records its own entry; applying a history entry
   // reproduces its snapshot verbatim, so the dedupe keeps the stack clean.
   useEffect(() => {
@@ -2887,8 +2911,33 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   }
   useEffect(() => {
     desktopAPI()?.onMenuSearch?.(() => focusSearchRef.current())
+    desktopAPI()?.onMenuSelectAll?.(() => menuSelectAllRef.current())
   }, [])
+  // The desktop menu's 全选 (task 384): without the role it can no longer
+  // outrun the page's own keydown, so both paths converge here. A text field
+  // keeps select-all for itself; the idle gallery runs the cross-page
+  // select-all unless a keydown ⌘A handled the same press within 500ms.
+  const keySelectAllAtRef = useRef(0)
+  const menuSelectAllRef = useRef<() => void>(() => {})
+  menuSelectAllRef.current = () => {
+    const target = menuSelectAllTarget({
+      activeIsEditable: isEditableTarget(document.activeElement),
+      // The Pinterest view hides the gallery; its keydown ⌘A returns early
+      // without preventDefault, so this menu path must refuse it too.
+      galleryIdle: !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !pairRequestsActive && !pinterestActive,
+      msSinceKeySelectAll: keySelectAllAtRef.current ? Date.now() - keySelectAllAtRef.current : null,
+    })
+    if (target === "text") document.execCommand("selectAll")
+    else if (target === "gallery") void selectAllAcrossPages()
+  }
   useEffect(() => {
+    // Task 384: the small dialogs join the overlay set for copy/cut and
+    // back/forward (the older galleryIdle list below never knew them). The
+    // viewer does not count: copying the image being viewed and back-closing
+    // the viewer stay live.
+    const overlaysUp = Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || pairRequestsActive || settings
+      || groupRename || stackRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm
+      || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         // A live card drag consumes Escape on its own: cancel the gesture,
@@ -2901,19 +2950,35 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         }
         selectAllAbortRef.current?.abort()
         pendingSelectAllRef.current = null
-        // The authorization dialog sits at layer 110, above every overlay in
-        // this chain, so its Escape comes first (DESIGN.md hierarchy).
+        // Task 384 (审查低-14): the group/stack dialogs join this chain, each
+        // Escape equal to clicking 取消. The authorization dialog sits at
+        // layer 110, above every overlay here, so its Escape comes first
+        // (DESIGN.md hierarchy); the 填写框 (105) follow, then the 确认框 (45).
         if (pairRequestsActive) pairDecideRef.current(pairRequestsRef.current[0]?.id || "", "deny")
+        else if (groupRename) setGroupRename(null)
+        else if (stackRename) setStackRename(null)
+        else if (groupCreateWithSelection) setGroupCreateWithSelection(null)
+        else if (groupMerge) setGroupMerge(null)
+        else if (groupDeleteConfirm) setGroupDeleteConfirm(null)
         else if (renameNoticeOpen) dismissRenameNotice()
         else if (schemaNoticeOpen) dismissSchemaUpgradeNotice()
         else if (deleting) setDeleting(false)
+        else if (stackDissolveConfirm) setStackDissolveConfirm(null)
+        else if (stackTrashConfirm) setStackTrashConfirm(null)
+        else if (permanentDeleteIds) setPermanentDeleteIds(null)
+        else if (emptyTrashConfirm) setEmptyTrashConfirm(false)
         else if (menu) setMenu(null)
         // Fullscreen sits above the viewer in the chain: Esc first leaves the
         // in-app fullscreen, and only a second Esc closes the viewer itself.
         else if (viewerFullscreen) setViewerFullscreen(false)
         else if (settings) setSettings(false)
         else if (preview) setPreview(false)
-        else if (selectedIds.length || selected) applySelection([], "")
+        // A user selection clears first. Inside a stack without one, Esc
+        // leaves the stack — a plain goTo, so 后退 can come back to it. Only
+        // the app's implicit focus falls through to being cleared.
+        else if (selectedIds.length || (selected && selected !== implicitFocusRef.current)) applySelection([], "")
+        else if (stackId && !isEditableTarget(e.target)) goTo({ stackId: "", stackName: "" })
+        else applySelection([], "")
       }
       // Find works from inside a text field too (the desktop menu's Find is
       // the same key and arrives through onMenuSearch instead).
@@ -2934,11 +2999,22 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // The Pinterest view hides the gallery: ⌘A then Delete there must not
       // select and trash library assets nobody can see.
       if (pinterestActive) return
+      const plainKey = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
+      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !pairRequestsActive
+      // Back/forward (task 384): ⌘[/⌘] on macOS, Alt+←/→ elsewhere. The
+      // editable and Pinterest guards above already returned; the viewer stays
+      // eligible — back there closes the viewer only (navigateHistory).
+      const navDirection = resolveNavHistoryShortcut(e, isMacPlatform() ? "mac" : "other")
+      if (navDirection !== 0) {
+        if (!overlaysUp && !cardDragRef.current) {
+          e.preventDefault()
+          navigateHistoryRef.current(navDirection)
+        }
+        return
+      }
       // Gallery keyboard navigation: arrows move the inspected card by its
       // on-screen neighbours, Enter opens it (or enters its stack). Off while
       // the viewer, Settings, a menu or a dialog is up, and for a batch.
-      const plainKey = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
-      const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !pairRequestsActive
       if (plainKey && galleryIdle && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {
         const grid = gridRef.current
         const current = selectionRef.current.selected || asset?.id || ""
@@ -2979,6 +3055,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       }
       if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "A")) {
         e.preventDefault()
+        keySelectAllAtRef.current = Date.now()
         void selectAllAcrossPages()
         return
       }
@@ -2989,12 +3066,23 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       )
         // Same entry as the menu's 移至回收站: 不再提醒 skips the dialog.
         requestDelete()
+      // ⌘C copies the selection as files (task 384). A text selection keeps
+      // the browser's own copy; the desktop menu's 拷贝 role lands in the
+      // `copy` listener below — one entry, either path.
+      const copyKey = isMacPlatform() ? Boolean(e.metaKey) && !e.ctrlKey : Boolean(e.ctrlKey) && !e.metaKey
+      if (copyKey && (e.key === "c" || e.key === "C")) {
+        if (overlaysUp || cardDragRef.current || active === "回收站") return
+        if (window.getSelection()?.toString()) return
+        if (!selectionIds.length && !preview) return
+        e.preventDefault()
+        copySelection()
+        return
+      }
       // Stack cards cannot be cut (the menu greys 剪切 out for them too).
       if ((e.metaKey || e.ctrlKey) && (e.key === "x" || e.key === "X") && selectionIds.length
         && !splitSelectionStacks(selectionIds).stackIds.length) {
         e.preventDefault()
-        cutIdsRef.current = [...selectionIds]
-        notify(selectionIds.length === 1 ? tr("已剪切 1 个素材") : fillNamed("已剪切 {count} 个素材", { count: selectionIds.length }))
+        cutSelection()
       }
       if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
         if (!cutIdsRef.current.length) return
@@ -3005,9 +3093,53 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       }
     }
     window.addEventListener("keydown", key)
-    return () => window.removeEventListener("keydown", key)
+    // Mouse side buttons (task 384): button 3 back, 4 forward — same guards as
+    // the keyboard shortcut, but a focused text field does not block them.
+    // preventDefault on both phases keeps Chromium from running its own web
+    // history navigation on top (and app-command is deliberately not listened
+    // to: on Windows it would double the step).
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button === 3 || e.button === 4) e.preventDefault()
+    }
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button !== 3 && e.button !== 4) return
+      e.preventDefault()
+      const direction = mouseNavDirection(e.button)
+      if (!direction || overlaysUp || cardDragRef.current || pinterestActive) return
+      navigateHistoryRef.current(direction)
+    }
+    // The web `copy`/`cut` events carry the desktop menu's 拷贝/剪切 roles
+    // (plus any raw ⌘C/⌘X the keydown above did not preventDefault). Same
+    // guards, one entry — a preventDefault'ed key never produces the event.
+    const onCopy = (event: ClipboardEvent) => {
+      if (overlaysUp || cardDragRef.current || active === "回收站" || pinterestActive) return
+      if (isEditableTarget(event.target)) return
+      if (window.getSelection()?.toString()) return
+      if (!selectionIds.length && !preview) return
+      event.preventDefault()
+      copySelection()
+    }
+    const onCut = (event: ClipboardEvent) => {
+      if (overlaysUp || cardDragRef.current || pinterestActive) return
+      if (isEditableTarget(event.target)) return
+      if (!selectionIds.length || splitSelectionStacks(selectionIds).stackIds.length) return
+      event.preventDefault()
+      cutSelection()
+    }
+    window.addEventListener("mousedown", onMouseDown)
+    window.addEventListener("mouseup", onMouseUp)
+    window.addEventListener("copy", onCopy)
+    window.addEventListener("cut", onCut)
+    return () => {
+      window.removeEventListener("keydown", key)
+      window.removeEventListener("mousedown", onMouseDown)
+      window.removeEventListener("mouseup", onMouseUp)
+      window.removeEventListener("copy", onCopy)
+      window.removeEventListener("cut", onCut)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, schemaNoticeOpen, pairRequestsActive])
+  }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, schemaNoticeOpen, pairRequestsActive,
+    groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm, stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds])
   // Fullscreen belongs to the open viewer, never outlives it: the back button,
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
@@ -3407,13 +3539,23 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     const paste = (event: ClipboardEvent) => {
       const dataTransfer = event.clipboardData
       const topFiles = Array.from(dataTransfer?.files || [])
+      const targetIsEditable = isEditableTarget(event.target)
+      const hasOverlay = Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || permanentDeleteIds || emptyTrashConfirm
+        || groupDeleteConfirm || groupMerge || groupRename || stackRename || stackDissolveConfirm
+        || stackTrashConfirm || groupStats || groupCreateWithSelection || pairRequestsActive)
+      // Task 384: the desktop menu's 粘贴 (role paste) fires this same event.
+      // With a cut pending, move the cut assets first — the same entry as the
+      // keydown ⌘V, whose preventDefault keeps it from firing this event too.
+      if (cutIdsRef.current.length && !targetIsEditable && !settings && !pinterestActive && !hasOverlay) {
+        event.preventDefault()
+        pasteCut(stackId || null)
+        return
+      }
       const decision = pasteImportDecision({
-        targetIsEditable: isEditableTarget(event.target),
+        targetIsEditable,
         settingsOpen: settings,
         pinterestActive,
-        hasOverlay: Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || permanentDeleteIds || emptyTrashConfirm
-          || groupDeleteConfirm || groupMerge || groupRename || stackRename || stackDissolveConfirm
-          || stackTrashConfirm || groupStats || groupCreateWithSelection || pairRequestsActive),
+        hasOverlay,
         cutActive: cutIdsRef.current.length > 0,
         trashView: active === "回收站",
         hasFiles: topFiles.length > 0,
@@ -3610,6 +3752,25 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       }
       notify("已复制图片")
     } catch { notify("无法复制图片") }
+  }
+  // ⌘C and the web `copy` event (the desktop menu's 拷贝 role ends there) share
+  // this entry, task 384. The selection goes out as files — a single stack card
+  // expands to its members exactly like the stack menu's 复制全部图片, and the
+  // viewer with no batch copies the image being looked at. A fresh copy cancels
+  // a pending cut, Finder-style.
+  const copySelection = () => {
+    const ids = [...selectionIds]
+    cutIdsRef.current = []
+    if (!ids.length) { void copyImage(); return }
+    void copyFiles(limit => batchFilePaths(ids, { limit }))
+  }
+  // ⌘X and the web `cut` event share this entry. Stack cards cannot be cut
+  // (same guard as the menu's 剪切).
+  const cutSelection = () => {
+    const ids = [...selectionIds]
+    if (!ids.length || splitSelectionStacks(ids).stackIds.length) return
+    cutIdsRef.current = ids
+    notify(ids.length === 1 ? tr("已剪切 1 个素材") : fillNamed("已剪切 {count} 个素材", { count: ids.length }))
   }
   // Several files onto the system clipboard (task 198): what pastes into
   // Finder, Explorer, chat apps and web pages as that many files. A single

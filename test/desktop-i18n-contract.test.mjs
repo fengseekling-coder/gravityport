@@ -86,11 +86,13 @@ test("main localizes custom menu labels without changing roles or accelerators",
 
   for (const role of [
     "about", "services", "hide", "hideOthers", "unhide", "quit", "close",
-    "undo", "redo", "cut", "copy", "paste", "pasteAndMatchStyle", "delete", "selectAll",
+    "undo", "redo", "cut", "copy", "paste", "pasteAndMatchStyle", "delete",
     "resetZoom", "zoomIn", "zoomOut", "togglefullscreen", "minimize", "zoom", "front",
   ]) {
     assert.match(template, new RegExp(`role\\s*:\\s*"${role}"`), `${role} role remains available`);
   }
+  // 任务 384：全选不再用 role（改 accelerator + click 转给网页）；拷贝、剪切、
+  // 粘贴的 role 保留在上面列表里。
   // 2026-09: the "Import Asset" menu item retired with the manual import
   // modal, so the File menu keeps only Close and the ⌘N accelerator is gone.
   assert.doesNotMatch(template, /CmdOrCtrl\+N/);
@@ -159,6 +161,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
     "getUpdateReady",
     "libraryFileFlags",
     "onMenuSearch",
+    "onMenuSelectAll", // 任务 384：全选不走 role，经 menu-select-all 转给网页
     "onUpdateDownloadProgress",
     "onUpdateReady",
     "onWindowFullScreenChange",
