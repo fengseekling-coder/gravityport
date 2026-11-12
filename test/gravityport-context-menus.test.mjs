@@ -88,7 +88,7 @@ describe("context-menus / asset menu", () => {
   it("single asset: exact entry order and separator positions", () => {
     const entries = buildContextMenu(baseCtx());
     assert.deepEqual(idList(entries), [
-      "open-viewer", "show-in-library",
+      "open-viewer", "show-in-library", "reveal-in-folder",
       "|",
       "copy-image", "cut", "copy-prompt", "copy-path",
       "|",
@@ -110,6 +110,28 @@ describe("context-menus / asset menu", () => {
   it("single favorite asset: label flips to 取消收藏", () => {
     const entries = buildContextMenu(baseCtx({ favorite: true }));
     assert.equal(findItem(entries, "toggle-favorite").label, "取消收藏");
+  });
+
+  // 任务 389（中13 后半）：单选普通卡多一项「在访达中显示 / 在文件资源管理
+  // 器中显示」，跟在「在素材库中显示」后面；多选、堆叠卡、回收站都没有。
+  it("reveal-in-folder: single asset gets it after show-in-library, per-platform labels", () => {
+    const mac = buildContextMenu(baseCtx({ isMac: true }));
+    const macItem = findItem(mac, "reveal-in-folder");
+    assert.ok(macItem, "single asset menu carries reveal-in-folder");
+    assert.equal(macItem.label, "在访达中显示");
+    assert.equal(macItem.icon, "folder");
+    const windows = buildContextMenu(baseCtx({ isMac: false }));
+    assert.equal(findItem(windows, "reveal-in-folder").label, "在文件资源管理器中显示");
+  });
+
+  it("reveal-in-folder: absent on multi-select, stack cards and the trash view", () => {
+    assert.ok(!itemIds(buildContextMenu(baseCtx({ selectionCount: 2 }))).includes("reveal-in-folder"),
+      "multi-select has no reveal-in-folder");
+    assert.ok(!itemIds(buildContextMenu(baseCtx({ target: "stack" }))).includes("reveal-in-folder"),
+      "stack card menu has no reveal-in-folder");
+    const trash = buildContextMenu(baseCtx({ scope: "trash" }));
+    assert.ok(!itemIds(trash).includes("reveal-in-folder"), "trash menu keeps its own entries (task 142)");
+    assert.deepEqual(itemIds(trash), ["open-viewer", "copy-path", "restore-selection", "permanent-delete"]);
   });
 
   it("multi-select: heading first, no open section, copy section copies files and paths", () => {

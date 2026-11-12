@@ -385,6 +385,10 @@ const english: Record<string, string> = {
   "无法更改存储位置。新位置不能位于当前素材库内，也不能包含当前素材库。": "Couldn’t change storage location. The new location can’t be inside the current library or contain it.",
   "无法更改存储位置。无法访问所选文件夹。": "Couldn’t change storage location. The selected folder can’t be accessed.",
   "无法更改存储位置。复制素材库时出错，原素材库未改动。": "Couldn’t change storage location. Copying the library failed. The original library was not changed.",
+  // 任务 389（低18 ②）：空间不足、没有权限各一句；句式对齐同组已有条目
+  // （「Couldn’t change storage location. … The original library was not changed.」）。
+  "无法更改存储位置。所选位置空间不足，原素材库未改动。": "Couldn’t change storage location. There isn’t enough space at the selected location. The original library was not changed.",
+  "无法更改存储位置。没有权限写入所选文件夹，原素材库未改动。": "Couldn’t change storage location. GravityPort doesn’t have permission to write to the selected folder. The original library was not changed.",
   "无法更改存储位置。请退出其他正在运行的 GravityPort 后重试。": "Couldn’t change storage location. Quit any other running GravityPort and try again.",
   "无法更改存储位置。素材库位置由启动设置指定。": "Couldn’t change storage location. The location is set by a launch setting.",
   // 任务 367：未知原因的兜底句也翻（App.tsx 传 fillNamed 先 tr 再填）。
@@ -458,6 +462,9 @@ const english: Record<string, string> = {
   "复制位置": "Copy location",
   "2. 在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」。": "2. Open chrome://extensions in Chrome and enable Developer mode (top right).",
   "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 ⌘⇧G，粘贴位置。）": "3. Select Load unpacked and choose this folder. (Mac: press ⌘⇧G in the file picker and paste the path.)",
+  // 任务 389（低18 ①）：第 3 步在 Windows 上也有一句怎么粘贴位置的提示，
+  // 句式对齐 Mac 那句。
+  "3. 点「加载已解压的扩展程序」，选这个文件夹。（Windows：在选择窗口上方的地址栏粘贴位置，按回车。）": "3. Select Load unpacked and choose this folder. (Windows: paste the location into the address bar at the top of the window and press Enter.)",
   "然后在扩展设置里打开「自动收录」。": "Then turn on auto-capture in the extension settings.",
   "也可以去官网下载": "Alternatively, download from the website:",
   "扩展现在需要手动更新。改成跟随 App 自动更新：": "Your extension currently requires manual updates. Switch to automatic updates with the app:",

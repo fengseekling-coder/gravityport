@@ -18,6 +18,7 @@ import { installManagedExtension, managedExtensionPaths, readManagedExtension } 
 import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../lib/import-staging.mjs";
 import { getDesktopText, getLibrarySchemaNewerDialogText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getStartupFailureText, getUpdateNotificationText } from "./notification-i18n.mjs";
 import { buildMenuTemplate } from "./menu-template.mjs";
+import { ensureWindowsShortcutAppId } from "./windows-shortcut-app-id.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
 import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
@@ -56,6 +57,7 @@ import {
   clearStaleRelocationMarker,
   copyLibraryForRelocationGuarded,
   removeRelocationMarker,
+  relocationFailureReason,
   validateRelocationTarget,
   writeRelocationMarker,
 } from "../lib/library-relocation.mjs";
@@ -511,6 +513,10 @@ if (!app.requestSingleInstanceLock()) {
     screenGuard.focusWindow(mainWindow);
   });
 
+  // 任务 389（中15）：Windows 只把系统通知投给开始菜单快捷方式带同一
+  // AppUserModelID 的程序；身份号与 Mac 的 bundle id 一致（forge.config.mjs）。
+  if (process.platform === "win32") app.setAppUserModelId("com.azhuilab.mosa");
+
   app.whenReady().then(async () => {
     await desktopStartupHandoffPromise;
     if (desktopStartupHandoffError) throw desktopStartupHandoffError;
@@ -529,6 +535,20 @@ if (!app.requestSingleInstanceLock()) {
     startAnonymousUsageLifecycle();
     void updateScheduler.start();
     cleanupStaleUpdateTransactions();
+    // 任务 389（中15）：安装器不写快捷方式身份号，启动时对齐到与
+    // setAppUserModelId 相同的值（函数只 console.warn，不会抛）。
+    if (process.platform === "win32") {
+      void ensureWindowsShortcutAppId({
+        platform: process.platform,
+        shell,
+        appUserModelId: "com.azhuilab.mosa",
+        shortcutPaths: [
+          join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs", "GravityPort.lnk"),
+          join(app.getPath("desktop"), "GravityPort.lnk"),
+          join(app.getPath("appData"), "Microsoft", "Internet Explorer", "Quick Launch", "User Pinned", "TaskBar", "GravityPort.lnk"),
+        ],
+      });
+    }
   }).catch(reportStartupFailure);
 
   app.on("activate", () => {
@@ -1311,7 +1331,9 @@ function registerIPC() {
       libraryDir = previousLibraryDir;
       app.relaunch();
       app.exit(1);
-      return { ok: false, reason: "copy-failed" };
+      // 任务 389（低18 ②）：空间不足、没有权限各回一句自己的话，其余照旧
+      // copy-failed；上面的收尾（删标记、还原、relaunch）不因原因而变。
+      return { ok: false, reason: relocationFailureReason(error) };
     }
 
     // The new copy and persisted location are now complete. Failure to remove
