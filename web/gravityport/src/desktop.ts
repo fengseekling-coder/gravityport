@@ -70,3 +70,20 @@ export function desktopAPI(): ElectronAPI | null {
   const api = window.electronAPI
   return api && typeof api === "object" ? api : null
 }
+
+/**
+ * Plain-text copy that works in the packaged app: the desktop bridge writes
+ * the system clipboard directly, while navigator.clipboard can be refused
+ * there (the extension-folder 复制位置 button silently did nothing). The
+ * browser API stays the fallback for source/browser mode.
+ */
+export async function writeTextToClipboard(text: string): Promise<void> {
+  const api = desktopAPI()
+  if (api?.writeClipboardText) {
+    const result = await api.writeClipboardText(text) as { ok?: boolean } | undefined
+    if (result?.ok === false) throw new Error("clipboard write refused")
+    return
+  }
+  if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable")
+  await navigator.clipboard.writeText(text)
+}

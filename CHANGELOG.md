@@ -9,7 +9,7 @@ This file records user-visible changes. Internal deployment notes, local paths, 
 - When an AI assistant (`asset_trash`) or Jimeng delete sync targets the asset open in the viewer, the app asks first; no answer within 60 seconds defers the deletion, and assets declined in the Jimeng prompt are kept from later automatic deletion. Viewer-presence reports no longer count as user edits during sync.
 - Back / forward navigation with ⌘[ / ⌘] (Alt+← / → on Windows) and the mouse side buttons; with the viewer open, Back closes only the viewer. Esc leaves a stack; group and stack dialogs trap focus and treat Esc as Cancel.
 - Very large images (up to about 268 megapixels) get thumbnails and previews; older imports missing a medium-size thumbnail are backfilled in the background; the Trash toolbar shows the reclaimable size.
-- Fixes: images with non-ASCII (e.g. Chinese) file names keep their original name in cards, the inspector, exports and search (single-character CJK search); ⌘C / Ctrl+C copies selected assets to Finder or File Explorer; several `generation_record` calls in one conversation no longer collapse into one record.
+- Fixes: images with non-ASCII (e.g. Chinese) file names keep their original name in cards, the inspector, exports and search (single-character CJK search); ⌘C / Ctrl+C copies selected assets to Finder or File Explorer; several `generation_record` calls in one conversation no longer collapse into one record; in Settings → Connect, the browser extension's Copy location button copies through the desktop bridge (it silently did nothing) and Show in Finder / File Explorer selects the extension folder itself instead of opening its contents.
 
 ### MCP launcher
 
