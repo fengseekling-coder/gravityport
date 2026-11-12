@@ -36,7 +36,9 @@ function cliArch(argv) {
       break;
     }
   }
-  value = String(value || process.env.MOSA_DESKTOP_ARCH || "").trim() || "arm64";
+  // Without an explicit architecture each platform keeps its only package:
+  // arm64 on macOS, x64 on Windows (the same default packagedExecutablePath uses).
+  value = String(value || process.env.MOSA_DESKTOP_ARCH || "").trim() || (process.platform === "win32" ? "x64" : "arm64");
   if (value !== "arm64" && value !== "x64") throw new Error(`Unsupported packaged smoke architecture: ${value}.`);
   return value;
 }
@@ -49,12 +51,14 @@ if (!existsSync(binary)) throw new Error(`Missing packaged binary: ${binary}`);
 // started once in Node mode (the same ELECTRON_RUN_AS_NODE=1 mode the bundled
 // MCP config uses, enabled by the RunAsNode fuse) and reads its own
 // sysctl.proc_translated: 1 means macOS is translating it under Rosetta (an
-// x64 package on an Apple-silicon host), 0 means it runs natively. Node's
-// process.arch inside that process is the binary's build architecture.
+// x64 package on an Apple-silicon host), 0 means it runs natively. A real
+// Intel Mac has no such sysctl at all ("unknown oid"), which also means native,
+// so a failing sysctl reads as 0. Node's process.arch inside that process is
+// the binary's build architecture.
 async function verifyX64RuntimeProbe(binaryPath) {
   if (process.platform !== "darwin") return;
   const output = await new Promise((resolveProbe, rejectProbe) => {
-    execFile(binaryPath, ["-e", "process.stdout.write('translated=' + require('node:child_process').execFileSync('/usr/sbin/sysctl', ['-n', 'sysctl.proc_translated']).toString().trim() + ' arch=' + process.arch + '\\n')"], {
+    execFile(binaryPath, ["-e", "let translated = '0'; try { translated = require('node:child_process').execFileSync('/usr/sbin/sysctl', ['-n', 'sysctl.proc_translated'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() } catch {} process.stdout.write('translated=' + translated + ' arch=' + process.arch + '\\n')"], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       timeout: 30_000,
     }, (error, stdout, stderr) => {
