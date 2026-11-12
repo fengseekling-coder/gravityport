@@ -88,6 +88,9 @@ import {
   resolveMacosUpdateReadyFile,
 } from "./macos-updater.mjs";
 import { cleanupLegacyVisualData as cleanupLegacyVisualDataDir } from "./legacy-visual-cleanup.mjs";
+import { registerClipboardIpc } from "./ipc/clipboard.mjs";
+import { registerLibraryLocationIpc } from "./ipc/library-location.mjs";
+import { registerMiscIpc } from "./ipc/misc.mjs";
 import { createMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { isTelemetryDisabled } from "../lib/env-aliases.mjs";
@@ -752,282 +755,72 @@ async function syncPackagedBackgroundAgent(enabled) {
 function registerIPC() {
   if (ipcRegistered) return;
   ipcRegistered = true;
-  ipcMain.handle("reveal-managed-extension-folder", async (event) => {
-    if (!trustedRendererEvent(event)) return { ok: false };
-    const manifestPath = join(managedBrowserExtensionTarget, "manifest.json");
-    try {
-      await access(manifestPath);
-      // Select the extension folder itself in its parent: that folder is what
-      // Chrome's 加载已解压的扩展程序 asks for. Selecting manifest.json opened
-      // the folder's contents and hid which folder to pick.
-      shell.showItemInFolder(managedBrowserExtensionTarget);
-      return { ok: true };
-    } catch {
-      return { ok: false };
-    }
-  });
-
-  ipcMain.handle("background-capture-state", async (event) => {
-    if (!trustedRendererEvent(event)) return { supported: false, enabled: false };
-    return {
-      supported: backgroundCaptureSupported(),
-      enabled: readBackgroundCaptureSetting(desktopDataDir).enabled,
-    };
-  });
-
-  ipcMain.handle("set-background-capture", async (event, enabled) => {
-    if (!trustedRendererEvent(event)) return { ok: false };
-    if (typeof enabled !== "boolean") return { ok: false };
-    const previous = readBackgroundCaptureSetting(desktopDataDir).enabled;
-    if (!backgroundCaptureSupported()) return { ok: false, enabled: previous };
-    try {
-      writeBackgroundCaptureSetting(desktopDataDir, enabled);
-      const result = await syncPackagedBackgroundAgent(enabled);
-      if (!result.ok) {
-        writeBackgroundCaptureSetting(desktopDataDir, previous);
-        await syncPackagedBackgroundAgent(previous);
-        return { ok: false, enabled: previous };
-      }
-      return { ok: true, enabled };
-    } catch (error) {
-      console.warn(`[MOSA] background capture agent: settings failed: ${error?.message || error}`);
-      try { writeBackgroundCaptureSetting(desktopDataDir, previous); } catch {}
-      return { ok: false, enabled: previous };
-    }
-  });
-
-  ipcMain.handle("paste-image", async (event) => {
-    if (!trustedRendererEvent(event)) return null;
-    const image = clipboard.readImage();
-    if (image.isEmpty()) return null;
-    try {
-      // BUG-01 fix: pastes now land inside the trusted import staging root
-      // instead of an untrusted userData/pastes directory.
-      return await writeStagedPng(importStagingRoot, image.toPNG());
-    } catch (error) {
-      console.error(`[MOSA] import-staging paste failed: ${error?.message || error}`);
-      throw new Error(`import-staging paste failed (${error?.code || "unknown"})`);
-    }
-  });
-
-  // Task 239: blank-area 粘贴 import. The main process only answers whether
-  // the system clipboard holds importable content (task 245: on macOS files
-  // are judged by their extensions — a Finder copy always carries the file
-  // icon as an image, so readImage() says yes for any file); it never hands
-  // paths or bytes to the renderer. The import itself stays in the renderer's
-  // paste listener, which is why the second handler just performs one
-  // webContents.paste() on the main window.
-  ipcMain.handle("clipboard-importable", (event) => {
-    if (!trustedRendererEvent(event)) return false;
-    try {
-      return clipboardImportable({ platform: process.platform, clipboard });
-    } catch {
-      return false;
-    }
-  });
-
-  ipcMain.handle("paste-from-clipboard", (event) => {
-    if (!trustedRendererEvent(event)) return false;
-    event.sender.paste();
-    return true;
-  });
-
-  // Text copy uses Electron's native clipboard rather than the renderer Web
-  // Clipboard API. Browser permissions are intentionally denied for the app's
-  // local HTTP renderer, so navigator.clipboard.writeText() is not a reliable
-  // desktop path (notably on macOS). Keep the bridge narrow: current main
-  // window only, text only, and a bounded payload.
-  ipcMain.handle("write-clipboard-text", async (event, text) => {
-    if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
-    if (typeof text !== "string" || text.length > MAX_CLIPBOARD_TEXT_LENGTH) {
-      return { ok: false, reason: "invalid" };
-    }
-    clipboard.writeText(text);
-    return { ok: true };
-  });
-
-  // Copy the stored full-resolution asset, never a gallery thumbnail or preview.
-  // The renderer may only request files inside the active MOSA library; decoding
-  // and clipboard access stay in the trusted main process. 审查 3-6 甲（任务 318）：
-  // the path gate lives in clipboard-image-path.mjs and decides library
-  // containment on the literal path first, so out-of-library requests can no
-  // longer distinguish「存在」from「不存在」.
-  ipcMain.handle("write-clipboard-image", async (event, path) => {
-    if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
-    const target = clipboardImageTarget(path, libraryDir);
-    if (!target.ok) return { ok: false, reason: target.reason };
-    try {
-      const image = nativeImage.createFromPath(target.path);
-      if (image.isEmpty()) return { ok: false, reason: "unsupported" };
-      clipboard.writeImage(image);
-      return { ok: true };
-    } catch {
-      return { ok: false, reason: "unavailable" };
-    }
-  });
-
-  // Native file export (drag-out and the multi-file clipboard) is deliberately
-  // a one-way, narrow bridge. The renderer may nominate library paths, but the
-  // trusted main process canonicalizes every path, rejects directories and
-  // out-of-library targets, caps the batch, and only then hands files to the
-  // OS. `skipped` counts nominated paths that did not pass.
-  const allowedLibraryFiles = (requestedPaths) => {
-    const input = Array.isArray(requestedPaths) ? requestedPaths.slice(0, MAX_NATIVE_DRAG_FILES) : [];
-    const files = [];
-    const seen = new Set();
-    let skipped = 0;
-    for (const requestedPath of input) {
-      if (typeof requestedPath !== "string" || !requestedPath.trim()) { skipped += 1; continue; }
-      let allowed;
-      try {
-        allowed = resolveAllowedFolderPath(requestedPath.trim(), [libraryDir]);
-        if (allowed && seen.has(allowed)) continue;
-        if (!allowed || !existsSync(allowed) || !statSync(allowed).isFile()) { skipped += 1; continue; }
-      } catch {
-        skipped += 1;
-        continue;
-      }
-      seen.add(allowed);
-      files.push(allowed);
-    }
-    return { files, skipped };
+  const deps = {
+    ipcMain,
+    trustedRendererEvent,
+    access,
+    join,
+    dirname,
+    mkdirSync,
+    writeFileSync,
+    shell,
+    app,
+    managedBrowserExtensionTarget,
+    backgroundCaptureSupported,
+    readBackgroundCaptureSetting,
+    writeBackgroundCaptureSetting,
+    syncPackagedBackgroundAgent,
+    desktopDataDir,
+    buildMenu,
+    evaluateMacosInstallLocation,
+    buildMcpClientConfig,
+    appRoot,
+    LIBRARY_LOCATION_PATH,
+    acknowledgeRenameNotice,
+    macosUpdateReadyFile,
+    windowsUpdateReadyFile,
+    expectedServiceIdentity,
+    releaseBridgesAfterUpdateReady: () => releaseBridgesAfterUpdateReady(),
+    screenGuard,
+    openExternalLinkByPolicy,
+    updateDialogText,
+    showSystemDialog,
+    getService: () => service,
+    getRenameNotice: () => renameNotice,
+    setRenameNotice: (value) => { renameNotice = value; },
+    getCurrentLocale: () => currentLocale,
+    setCurrentLocale: (value) => { currentLocale = value; },
+    getMainWindow: () => mainWindow,
+    clipboard,
+    nativeImage,
+    existsSync,
+    statSync,
+    writeStagedPng,
+    importStagingRoot,
+    clipboardImportable,
+    clipboardImageTarget,
+    writeClipboardFiles,
+    resolveAllowedFolderPath,
+    MAX_CLIPBOARD_TEXT_LENGTH,
+    MAX_NATIVE_DRAG_FILES,
+    NATIVE_DRAG_FALLBACK_ICON,
+    nativeDragIcon,
+    getLibraryDir: () => libraryDir,
+    resolve,
+    rm,
+    getDesktopText,
+    validateRelocationTarget,
+    writeRelocationMarker,
+    stopOwnedRuntime,
+    copyLibraryForRelocationGuarded,
+    removeRelocationMarker,
+    relocationFailureReason,
+    saveLibraryDir,
+    setLibraryDir: (value) => { libraryDir = value; },
+    setService: (value) => { service = value; },
   };
-
-  ipcMain.handle("start-native-file-drag", async (event, requestedPaths) => {
-    if (!trustedRendererEvent(event)) return { ok: false };
-    const { files } = allowedLibraryFiles(requestedPaths);
-    if (!files.length) return { ok: false };
-    let icon = nativeImage.createFromPath(files[0]);
-    icon = icon.isEmpty() ? NATIVE_DRAG_FALLBACK_ICON : nativeDragIcon(icon);
-    screenGuard.startDrag(event.sender, { file: files[0], files, icon });
-    return { ok: true, count: files.length };
-  });
-
-  ipcMain.handle("write-clipboard-files", async (event, requestedPaths) => {
-    if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
-    const { files, skipped } = allowedLibraryFiles(requestedPaths);
-    if (!files.length) return { ok: false, reason: "missing", skipped };
-    try {
-      const written = await writeClipboardFiles(files, { clipboard });
-      return written ? { ok: true, count: files.length, skipped } : { ok: false, reason: "unsupported" };
-    } catch (error) {
-      console.error(`[MOSA] write-clipboard-files failed: ${error?.message || error}`);
-      return { ok: false, reason: "unavailable" };
-    }
-  });
-
-  // The reverse check for drops: true for each path that resolves to an
-  // existing file inside the library (same canonicalization as the drag-out
-  // bridge above), so the renderer can skip re-importing those files.
-  ipcMain.handle("library-file-flags", async (event, requestedPaths) => {
-    if (!trustedRendererEvent(event)) return [];
-    const input = Array.isArray(requestedPaths) ? requestedPaths.slice(0, 10_000) : [];
-    return input.map((requestedPath) => {
-      if (typeof requestedPath !== "string" || !requestedPath.trim()) return false;
-      try {
-        const allowed = resolveAllowedFolderPath(requestedPath.trim(), [libraryDir]);
-        return Boolean(allowed && existsSync(allowed) && statSync(allowed).isFile());
-      } catch {
-        return false;
-      }
-    });
-  });
-
-  ipcMain.handle("set-locale", async (event, locale) => {
-    if (!trustedRendererEvent(event)) return false;
-    if (locale !== "zh" && locale !== "en") return false;
-    if (locale === currentLocale) return true;
-    currentLocale = locale;
-    buildMenu();
-    return true;
-  });
-
-  // Settings → Connections: a ready-to-paste config that runs the bundled MCP
-  // server with this executable in Node mode. It names the library-location
-  // file rather than the library, so moving the library keeps it valid.
-  ipcMain.handle("mcp-client-config", async (event) => {
-    if (!trustedRendererEvent(event)) return { available: false };
-    let installWarning = null;
-    if (process.platform === "darwin" && app.isPackaged) {
-      const location = evaluateMacosInstallLocation(process.execPath);
-      if (location.reason === "app-translocation" || !String(location.installAppPath || "").startsWith("/Applications/")) {
-        installWarning = "not-in-applications";
-      }
-    }
-    return {
-      available: true,
-      platform: process.platform,
-      installWarning,
-      ...buildMcpClientConfig({
-        platform: process.platform,
-        execPath: process.execPath,
-        serverPath: join(appRoot, "mcp", "server.mjs"),
-        libraryLocationFile: LIBRARY_LOCATION_PATH,
-        managedLibraryDir: process.env.MOSA_LIBRARY_DIR || "",
-      }),
-    };
-  });
-
-  // 审查 3-6 甲（任务 318）:the user-profile channel is gone — the installation
-  // ID stays in the main process (anonymous-usage bookkeeping) and is never
-  // handed to the renderer.
-
-  // Task 311: the client credential no longer travels in the URL fragment. The
-  // renderer asks once before its first request; the main process answers only
-  // when the invoke comes from the main window's main frame while that frame
-  // sits on the origin of the service this launch verified (an owned runtime,
-  // or one that passed the challenge) — trustedRendererEvent enforces all four
-  // conditions together with the service reference.
-  ipcMain.handle("get-client-token", (event) => {
-    if (!trustedRendererEvent(event)) return "";
-    return service?.clientToken || "";
-  });
-
-  // 任务 116：老用户「已更名」提示。状态在启动最早期已判定（见 renameNotice），
-  // 这里只读快照；确认写 acknowledged 并同步内存快照，写失败只记日志（下次
-  // 启动还会弹，符合「没确认就算未读」）。
-  ipcMain.handle("rename-notice-state", async (event) => {
-    if (!trustedRendererEvent(event)) {
-      return { shouldShow: false, state: renameNotice.state, persisted: renameNotice.persisted };
-    }
-    return { ...renameNotice };
-  });
-
-  ipcMain.handle("acknowledge-rename-notice", async (event) => {
-    if (!trustedRendererEvent(event)) return false;
-    acknowledgeRenameNotice({
-      userDataDir: desktopDataDir,
-      log: (line) => console.warn(`[MOSA] ${line}`),
-    });
-    renameNotice = { shouldShow: false, state: "acknowledged", persisted: true };
-    return true;
-  });
-
-  ipcMain.handle("renderer-ready", async (event) => {
-    if (!trustedRendererEvent(event)) return false;
-    if (!service) return false;
-    const updateReadyFiles = [macosUpdateReadyFile, windowsUpdateReadyFile].filter(Boolean);
-    for (const readyFile of updateReadyFiles) {
-      try {
-        mkdirSync(dirname(readyFile), { recursive: true });
-        writeFileSync(readyFile, JSON.stringify({
-          version: app.getVersion(),
-          gitSha: expectedServiceIdentity.gitSha,
-          uiFingerprint: expectedServiceIdentity.uiFingerprint,
-          runtimeFingerprint: expectedServiceIdentity.runtimeFingerprint,
-          distribution: expectedServiceIdentity.distribution,
-          readyAt: new Date().toISOString(),
-          port: service.port,
-        }), "utf8");
-      } catch (error) {
-        console.error(`[MOSA] unable to report post-update readiness: ${error?.message || error}`);
-        releaseBridgesAfterUpdateReady();
-        return false;
-      }
-    }
-    releaseBridgesAfterUpdateReady();
-    return true;
-  });
+  registerMiscIpc(deps);
+  registerClipboardIpc(deps);
 
   ipcMain.handle("check-for-updates", async (event, notify = false) => {
     if (!trustedRendererEvent(event)) return { status: "unavailable", currentVersion: app.getVersion() };
@@ -1242,124 +1035,7 @@ function registerIPC() {
     }
   });
 
-  ipcMain.handle("open-pinterest-authorize", async (event, url) => {
-    if (!trustedRendererEvent(event)) return { ok: false };
-
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== "https:" || parsed.hostname !== "www.pinterest.com" || parsed.pathname !== "/oauth/") {
-        return { ok: false };
-      }
-      await screenGuard.openExternal(url);
-      return { ok: true };
-    } catch (error) {
-      console.warn(`[MOSA] unable to open Pinterest authorize page: ${error?.message || error}`);
-      return { ok: false };
-    }
-  });
-
-  // 任务 147:打开 Pinterest Pin / 外链的普通网址(窗口 setWindowOpenHandler 全拒,
-  // 渲染层没有别的出站通道);只认主窗口。审查 3-6 甲（任务 318）:目的地按用途
-  // 限域名(externalLinkDecision),白名单外的 http/https 先弹系统确认框,用户
-  // 取消不算失败({ ok: true, opened: false }),网址校验在 open-external-link.mjs。
-  ipcMain.handle("open-external-link", async (event, url) => {
-    if (!trustedRendererEvent(event)) return { ok: false };
-    return openExternalLinkByPolicy({
-      url,
-      dialogText: updateDialogText,
-      confirmDialog: (options) => showSystemDialog(options),
-      openExternal: (href) => screenGuard.openExternal(href),
-      warn: (line) => console.warn(line),
-    });
-  });
-
-  ipcMain.handle("change-library-location", async (event) => {
-    if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
-    // An explicit environment override is an administrator/developer contract;
-    // do not let a renderer preference silently fight it on the next launch.
-    if (process.env.MOSA_LIBRARY_DIR) return { ok: false, reason: "managed" };
-    if (service?.mode !== "owned") return { ok: false, reason: "attached" };
-
-    // 任务 359（NATIVE-16）：选择器文字进 notification-i18n 表。
-    const selection = await screenGuard.openDialog(mainWindow, {
-      title: getDesktopText("chooseLibraryLocationTitle", currentLocale),
-      buttonLabel: getDesktopText("chooseLibraryLocationButton", currentLocale),
-      properties: ["openDirectory", "createDirectory"],
-    });
-    if (selection.canceled || !selection.filePaths?.[0]) return { ok: false, reason: "cancelled" };
-
-    const nextLibraryDir = resolve(selection.filePaths[0]);
-    const validation = await validateRelocationTarget({ currentLibraryDir: libraryDir, nextLibraryDir });
-    if (!validation.ok) return { ok: false, reason: validation.reason };
-
-    // 任务 359（NATIVE-17）：确认框文字进 notification-i18n 表。
-    const confirmation = await screenGuard.messageBox(mainWindow, {
-      type: "question",
-      title: getDesktopText("moveLibraryTitle", currentLocale),
-      message: getDesktopText("moveLibraryMessage", currentLocale),
-      detail: getDesktopText("moveLibraryDetail", currentLocale),
-      buttons: [getDesktopText("moveLibraryCancel", currentLocale), getDesktopText("moveLibraryRestart", currentLocale)],
-      defaultId: 1,
-      cancelId: 0,
-      noLink: true,
-    });
-    if (confirmation.response !== 1) return { ok: false, reason: "cancelled" };
-
-    const previousLibraryDir = libraryDir;
-    // The marker goes down before the runtime stops: the desktop MCP checks it
-    // before every tools/call, so from here on no MCP write can vanish with
-    // the old library. A marker that cannot be written means the move cannot
-    // be guarded, so it never starts.
-    try {
-      await writeRelocationMarker({ libraryDir: previousLibraryDir, pid: process.pid });
-    } catch (error) {
-      console.error(`[MOSA] library relocation marker could not be written: ${error?.stack || error}`);
-      return { ok: false, reason: "copy-failed" };
-    }
-    try {
-      await stopOwnedRuntime();
-      service = null;
-      // The runtime lock has been released by stopOwnedRuntime(), and the copy
-      // skips the lock file and the relocation marker. The guarded copy also
-      // settles in-flight MCP writes, verifies the source database was not
-      // touched mid-copy, and removes the marker when it fails.
-      await copyLibraryForRelocationGuarded({
-        sourceLibraryDir: previousLibraryDir,
-        destinationLibraryDir: nextLibraryDir,
-      });
-      saveLibraryDir(nextLibraryDir);
-    } catch (error) {
-      // The move is off; without this the MCP would refuse the old library forever.
-      await removeRelocationMarker({ libraryDir: previousLibraryDir }).catch(() => {});
-      console.error(`[MOSA] library relocation failed: ${error?.stack || error}`);
-      libraryDir = previousLibraryDir;
-      app.relaunch();
-      app.exit(1);
-      // 任务 389（低18 ②）：空间不足、没有权限各回一句自己的话，其余照旧
-      // copy-failed；上面的收尾（删标记、还原、relaunch）不因原因而变。
-      return { ok: false, reason: relocationFailureReason(error) };
-    }
-
-    // The new copy and persisted location are now complete. Failure to remove
-    // the old directory must never roll back by deleting the new authoritative
-    // copy; at worst the user is left with a harmless duplicate to remove.
-    libraryDir = nextLibraryDir;
-    await rm(previousLibraryDir, { recursive: true, force: true }).catch((error) => {
-      console.warn(`[MOSA] new library is active but the old directory could not be removed: ${error?.message || error}`);
-    });
-    app.relaunch();
-    app.exit(0);
-    return { ok: true, restarting: true };
-  });
-
-  // 任务 96（A6）：渲染层写窗口系统全屏（大图页「全屏」双向同步）。只接受主窗口
-  // 自己的调用；flag 不是 true 就退全屏（与 preload 的 `flag === true` 归一口径一致）。
-  ipcMain.handle("set-window-full-screen", (event, flag) => {
-    if (!trustedRendererEvent(event)) return { ok: false };
-    mainWindow.setFullScreen(flag === true);
-    return { ok: true, isFullScreen: mainWindow.isFullScreen() };
-  });
-
+  registerLibraryLocationIpc(deps);
 }
 
 function runAnonymousUsageReport() {

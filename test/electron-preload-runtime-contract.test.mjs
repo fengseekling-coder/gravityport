@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync as readFileSyncForMainSources, readdirSync as readdirSyncForMainSources } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -57,9 +58,20 @@ const read = (relativePath) => readFile(resolve(root, relativePath), "utf8");
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const sortedApiKeys = (source) => [...source.matchAll(/^  ([A-Za-z][A-Za-z0-9]*):/gm)].map((match) => match[1]).sort();
 
+// Task 396: registerIPC handlers now live in desktop/ipc/*.mjs, so source-text
+// assertions read desktop/main.mjs plus those files.
+function readDesktopMainSources(repoRoot) {
+  const ipcDir = repoRoot + "/desktop/ipc";
+  const parts = [readFileSyncForMainSources(repoRoot + "/desktop/main.mjs", "utf8")];
+  for (const name of readdirSyncForMainSources(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
+    parts.push(readFileSyncForMainSources(ipcDir + "/" + name, "utf8"));
+  }
+  return parts.join("\n");
+}
+
 test("preload path, module format, security settings, and API surface are stable", async () => {
   const [main, preload, packageJson, lockfile] = await Promise.all([
-    read("desktop/main.mjs"),
+    readDesktopMainSources(root),
     read("desktop/preload.cjs"),
     read("package.json"),
     read("package-lock.json"),
@@ -129,7 +141,7 @@ test("preload path, module format, security settings, and API surface are stable
   // Drop-back guard: the preload only resolves dropped File objects to paths;
   // the main process decides which of them are library files.
   assert.match(preload, /libraryFileFlags: \(files\) => ipcRenderer\.invoke\("library-file-flags"[\s\S]*?webUtils\.getPathForFile\(file\)/);
-  assert.match(main, /ipcMain\.handle\("library-file-flags"[\s\S]*?resolveAllowedFolderPath\(requestedPath\.trim\(\), \[libraryDir\]\)/);
+  assert.match(main, /ipcMain\.handle\("library-file-flags"[\s\S]*?resolveAllowedFolderPath\(requestedPath\.trim\(\), \[getLibraryDir\(\)\]\)/);
   // 任务 239：右键粘贴导入的两个通道——查询只回布尔值，代按粘贴限定主窗口。
   assert.match(preload, /clipboardImportable: \(\) => ipcRenderer\.invoke\("clipboard-importable"\)/);
   assert.match(preload, /pasteFromClipboard: \(\) => ipcRenderer\.invoke\("paste-from-clipboard"\)/);
@@ -182,20 +194,20 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /ipcMain\.handle\("set-window-full-screen"/);
   const windowFullScreenHandler = main.slice(main.indexOf('ipcMain.handle("set-window-full-screen"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("set-window-full-screen"')));
   assert.match(windowFullScreenHandler, /trustedRendererEvent\(event\)/);
-  assert.match(windowFullScreenHandler, /mainWindow\.setFullScreen\(flag === true\)/);
+  assert.match(windowFullScreenHandler, /getMainWindow\(\)\.setFullScreen\(flag === true\)/);
   assert.match(main, /mainWindow\.on\("enter-full-screen"/);
   assert.match(main, /mainWindow\.on\("leave-full-screen"/);
   assert.equal((main.match(/window-full-screen-change/g) || []).length, 2, "enter/leave-full-screen both broadcast the same channel");
   const relocationHandler = main.slice(main.indexOf('ipcMain.handle("change-library-location"'), main.indexOf('\n\n  // Phase 4C', main.indexOf('ipcMain.handle("change-library-location"')));
   assert.match(relocationHandler, /trustedRendererEvent\(event\)/, "library relocation validates the sender");
   assert.match(relocationHandler, /process\.env\.MOSA_LIBRARY_DIR/, "an explicit environment-managed library cannot be overridden in-app");
-  assert.match(relocationHandler, /service\?\.mode !== "owned"/, "attached external runtimes cannot be moved by the desktop shell");
+  assert.match(relocationHandler, /getService\(\)\?\.mode !== "owned"/, "attached external runtimes cannot be moved by the desktop shell");
   // Destination inspection (same-dir/nesting/empty-target) and the copy
   // itself (runtime lock skipped, no overwrites, fail-closed cleanup) live in
   // lib/library-relocation.mjs and are pinned behaviorally by
   // test/library-relocation.test.mjs. The handler must still validate before
   // the confirm dialog and keep the copy -> save -> delete ordering.
-  assert.match(relocationHandler, /validateRelocationTarget\(\{ currentLibraryDir: libraryDir, nextLibraryDir \}\)/, "the destination must be validated before copying");
+  assert.match(relocationHandler, /validateRelocationTarget\(\{ currentLibraryDir: getLibraryDir\(\), nextLibraryDir \}\)/, "the destination must be validated before copying");
   assert.ok(relocationHandler.indexOf("if (!validation.ok) return") > -1
     && relocationHandler.indexOf("if (!validation.ok) return") < relocationHandler.indexOf("await screenGuard.messageBox"),
     "a rejected target aborts before any copy is attempted");
@@ -242,7 +254,7 @@ test("preload path, module format, security settings, and API surface are stable
   // 任务 318：路径闸门在 clipboard-image-path.mjs——先按字面判库内再碰文件
   // 系统，库外请求不再能借 missing/not-allowed 之分探测文件存在性。
   assert.match(main, /import \{ clipboardImageTarget \} from "\.\/clipboard-image-path\.mjs";/);
-  assert.match(clipboardImageHandler, /clipboardImageTarget\(path, libraryDir\)/);
+  assert.match(clipboardImageHandler, /clipboardImageTarget\(path, getLibraryDir\(\)\)/);
   assert.match(clipboardImageHandler, /nativeImage\.createFromPath\(target\.path\)/);
   assert.match(clipboardImageHandler, /clipboard\.writeImage\(image\)/);
   assert.doesNotMatch(clipboardImageHandler, /existsSync/, "existence must be probed only inside the library gate");

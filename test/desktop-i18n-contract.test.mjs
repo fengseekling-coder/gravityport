@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync as readFileSyncForMainSources, readdirSync as readdirSyncForMainSources } from "node:fs";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -27,6 +28,17 @@ function sliceBetween(source, startMarker, endMarker) {
   const end = source.indexOf(endMarker, start + startMarker.length);
   assert.notEqual(end, -1, `missing source marker: ${endMarker}`);
   return source.slice(start, end);
+}
+
+// Task 396: registerIPC handlers now live in desktop/ipc/*.mjs, so source-text
+// assertions read desktop/main.mjs plus those files.
+function readDesktopMainSources(repoRoot) {
+  const ipcDir = repoRoot + "/desktop/ipc";
+  const parts = [readFileSyncForMainSources(repoRoot + "/desktop/main.mjs", "utf8")];
+  for (const name of readdirSyncForMainSources(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
+    parts.push(readFileSyncForMainSources(ipcDir + "/" + name, "utf8"));
+  }
+  return parts.join("\n");
 }
 
 test("getDesktopText resolves desktop labels in zh/en and falls back safely", () => {
@@ -113,17 +125,17 @@ test("main keeps MOSA shortcuts scoped to its application menu", async () => {
 });
 
 test("set-locale validates sender and locale, rebuilds once, and is idempotent", async () => {
-  const main = await read("desktop/main.mjs");
+  const main = readDesktopMainSources(root);
   const handler = sliceBetween(main, 'ipcMain.handle("set-locale"', "\n  });");
 
   // 任务 311：sender 校验走统一的 trustedRendererEvent 守卫（还核对主框架与
   // 已核实服务 origin）。
   assert.match(handler, /if \(!trustedRendererEvent\(event\)\) return false;/);
   assert.match(handler, /locale\s*!==\s*"zh"\s*&&\s*locale\s*!==\s*"en"/);
-  assert.match(handler, /if\s*\(\s*(?:locale\s*===\s*currentLocale|currentLocale\s*===\s*locale)\s*\)\s*return\s+true;/);
-  assert.match(handler, /currentLocale\s*=\s*locale/);
+  assert.match(handler, /if\s*\(\s*(?:locale\s*===\s*getCurrentLocale\(\)|getCurrentLocale\(\)\s*===\s*locale)\s*\)\s*return\s+true;/);
+  assert.match(handler, /setCurrentLocale\(locale\)/);
   assert.match(handler, /buildMenu\(\)/);
-  assert.ok(handler.indexOf("currentLocale = locale") < handler.indexOf("buildMenu()"), "menu rebuild follows locale update");
+  assert.ok(handler.indexOf("setCurrentLocale(locale)") < handler.indexOf("buildMenu()"), "menu rebuild follows locale update");
 });
 
 test("startup failures route the localized title while preserving the raw error message", async () => {

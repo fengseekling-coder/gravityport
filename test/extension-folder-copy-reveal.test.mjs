@@ -4,6 +4,7 @@
 // manifest.json, which opened the extension folder's contents instead of
 // showing which folder Chrome's 加载已解压的扩展程序 asks for.
 import { execFileSync } from "node:child_process";
+import { readFileSync as readFileSyncForMainSources, readdirSync as readdirSyncForMainSources } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -44,6 +45,17 @@ after(async () => {
   await rm(tempRoot, { recursive: true, force: true });
 });
 
+// Task 396: registerIPC handlers now live in desktop/ipc/*.mjs, so source-text
+// assertions read desktop/main.mjs plus those files.
+function readDesktopMainSources(repoRoot) {
+  const ipcDir = repoRoot + "/desktop/ipc";
+  const parts = [readFileSyncForMainSources(repoRoot + "/desktop/main.mjs", "utf8")];
+  for (const name of readdirSyncForMainSources(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
+    parts.push(readFileSyncForMainSources(ipcDir + "/" + name, "utf8"));
+  }
+  return parts.join("\n");
+}
+
 test("the desktop bridge copies the text even when navigator.clipboard refuses", async () => {
   const written = [];
   globalThis.window = { electronAPI: { writeClipboardText: async (text) => { written.push(text); return { ok: true }; } } };
@@ -75,7 +87,7 @@ test("复制位置 goes through the shared helper, not navigator.clipboard", asy
 });
 
 test("在访达中显示 selects the extension folder itself, not manifest.json inside it", async () => {
-  const main = await readFile(join(repositoryRoot, "desktop", "main.mjs"), "utf8");
+  const main = readDesktopMainSources(repositoryRoot);
   const start = main.indexOf('ipcMain.handle("reveal-managed-extension-folder"');
   assert.ok(start >= 0);
   const handler = main.slice(start, main.indexOf("});", start));

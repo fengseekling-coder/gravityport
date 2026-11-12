@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync as readFileSyncForMainSources, readdirSync as readdirSyncForMainSources } from "node:fs";
 import { cp, mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
@@ -41,6 +42,17 @@ function runtimeOptions(root, overrides = {}) {
     cowartRegistryPath: join(root, "state", "cowart-projects.json"),
     ...overrides,
   };
+}
+
+// Task 396: registerIPC handlers now live in desktop/ipc/*.mjs, so source-text
+// assertions read desktop/main.mjs plus those files.
+function readDesktopMainSources(repoRoot) {
+  const ipcDir = repoRoot + "/desktop/ipc";
+  const parts = [readFileSyncForMainSources(repoRoot + "/desktop/main.mjs", "utf8")];
+  for (const name of readdirSyncForMainSources(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
+    parts.push(readFileSyncForMainSources(ipcDir + "/" + name, "utf8"));
+  }
+  return parts.join("\n");
 }
 
 test("getBuildIdentity reads productVersion, Git, UI, and runtime fingerprints from build-identity.json", async () => {
@@ -282,7 +294,7 @@ test("the forge packaging config includes the built web/gravityport/dist/ resour
 });
 
 test("desktop main.mjs derives the app root from its own module location, not app.getAppPath() or cwd", async () => {
-  const source = await readFile(join(repositoryRoot, "desktop", "main.mjs"), "utf-8");
+  const source = readDesktopMainSources(repositoryRoot);
   // 静态 UI 根从 desktop/main.mjs 的模块位置派生：父目录即应用根（dev 解析为仓库根，packaged 解析为 app.asar 根）。
   assert.ok(source.includes('const appRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));'),
     "appRoot must be derived from the module location, not app.getAppPath()");

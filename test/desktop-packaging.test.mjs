@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync as readFileSyncForMainSources, readdirSync as readdirSyncForMainSources } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { deferTestPathRemoval, removeTestPath } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
@@ -22,6 +23,17 @@ import {
 } from "../desktop/icon-assets.mjs";
 import { desktopLicensesOutputDir } from "../scripts/third-party-licenses.mjs";
 import { WEB_CAPTURE_RUNTIME_FILES } from "../scripts/web-capture-runtime-files.mjs";
+
+// Task 396: registerIPC handlers now live in desktop/ipc/*.mjs, so source-text
+// assertions read desktop/main.mjs plus those files.
+function readDesktopMainSources(repoRoot) {
+  const ipcDir = repoRoot + "/desktop/ipc";
+  const parts = [readFileSyncForMainSources(repoRoot + "/desktop/main.mjs", "utf8")];
+  for (const name of readdirSyncForMainSources(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
+    parts.push(readFileSyncForMainSources(ipcDir + "/" + name, "utf8"));
+  }
+  return parts.join("\n");
+}
 
 test("packaged browser extension keeps its pinned key and exact runtime manifest files", async () => {
   const root = await mkdtemp(join(tmpdir(), "mosa-packaged-extension-"));
@@ -623,7 +635,7 @@ test("desktop:start has a native Windows launch path while preserving the macOS 
 });
 
 test("keeps the desktop window single-instance and sandboxed", async () => {
-  const source = await readFile(resolve(import.meta.dirname, "..", "desktop", "main.mjs"), "utf8");
+  const source = readDesktopMainSources(resolve(import.meta.dirname, ".."));
   assert.match(source, /app\.requestSingleInstanceLock\(\)/);
   assert.match(source, /desktopPlatformAdapter\(\)/);
   // 任务 367：判定收进 desktop/startup-failure-flow.mjs 的

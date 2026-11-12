@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync as readFileSyncForMainSources, readdirSync as readdirSyncForMainSources } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -6,6 +7,17 @@ import { fileURLToPath } from "node:url";
 import { getLibraryStartupFailureText, getNotificationTextForAssetsImported, getStartupFailureText, getUpdateReadyNotificationText } from "../desktop/notification-i18n.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+
+// Task 396: registerIPC handlers now live in desktop/ipc/*.mjs, so source-text
+// assertions read desktop/main.mjs plus those files.
+function readDesktopMainSources(repoRoot) {
+  const ipcDir = repoRoot + "/desktop/ipc";
+  const parts = [readFileSyncForMainSources(repoRoot + "/desktop/main.mjs", "utf8")];
+  for (const name of readdirSyncForMainSources(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
+    parts.push(readFileSyncForMainSources(ipcDir + "/" + name, "utf8"));
+  }
+  return parts.join("\n");
+}
 
 test("getNotificationTextForAssetsImported formats the count placeholder", () => {
   // 任务 359（NOTIF-01）：结果句「已导入 N 个新素材」。
@@ -37,7 +49,7 @@ test("main.mjs localizes bridge and update notifications", async () => {
 });
 
 test("set-locale IPC validates sender and locale values", async () => {
-  const source = await readFile(resolve(repositoryRoot, "desktop/main.mjs"), "utf8");
+  const source = readDesktopMainSources(repositoryRoot);
   assert.match(source, /ipcMain\.handle\("set-locale"/);
   assert.match(source, /async \(event,\s*locale\)/);
   // Sender must be the main window's webContents (task 311: via the shared
@@ -46,7 +58,7 @@ test("set-locale IPC validates sender and locale values", async () => {
   assert.match(source, /if \(!trustedRendererEvent\(event\)\) return false;/);
   // Only zh/en accepted; anything else is rejected.
   assert.match(source, /locale\s*!==\s*"zh"\s*&&\s*locale\s*!==\s*"en"/);
-  assert.match(source, /currentLocale\s*=\s*locale/);
+  assert.match(source, /setCurrentLocale\(locale\)/);
 });
 
 test("preload exposes setLocale and no longer exposes openFolder", async () => {
