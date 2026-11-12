@@ -967,6 +967,17 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         // The committed window now reflects the library as of this revision:
         // fold it into the baseline and reconcile whatever came after.
         librarySyncRef.current?.notePageRevision(page.revision, baselineAtStart)
+        // Sidebar counts after a view switch: the switch reset the sync
+        // baseline, so a batch still in flight for the outgoing view (trash
+        // a card, click 回收站 at once) is discarded and its navigation
+        // refresh never runs. The page above already shows that change; the
+        // counts (and the 清空回收站 button that hangs off trash > 0) must
+        // match it, so re-read them once the new view has committed.
+        if (isViewSwitch) {
+          fetchNavigation(project, controller.signal).then(data => {
+            if (!controller.signal.aborted) setNavigation(data)
+          }).catch(() => {})
+        }
       } catch (error) {
         if (controller.signal.aborted) return
         // A failed load for a freshly switched-to project is a failed switch:
