@@ -5,6 +5,7 @@
 [![CI](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml)
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#下载)
+[![GravityPort MCP on mcprush](https://mcprush.com/badge/gravityport-mcp/score.svg)](https://mcprush.com/to/gravityport-mcp?ref=badge)
 
 > **让每一次 AI 创作，有迹可循**
 > 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
@@ -85,6 +86,19 @@ macOS 上的配置长这样。Windows 的路径取决于安装位置，请直接
       "command": "/Applications/GravityPort.app/Contents/MacOS/GravityPort",
       "args": ["/Applications/GravityPort.app/Contents/Resources/app.asar/mcp/server.mjs"],
       "env": { "ELECTRON_RUN_AS_NODE": "1" }
+    }
+  }
+}
+```
+
+装有 Node.js 18 或更新版本时，也可以用 `npx -y gravityport-mcp` 接入：这个包会自动找到已安装的 App；没装 App 时，它会告诉 AI 助手先安装 GravityPort。
+
+```json
+{
+  "mcpServers": {
+    "gravityport": {
+      "command": "npx",
+      "args": ["-y", "gravityport-mcp"]
     }
   }
 }

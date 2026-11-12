@@ -1,0 +1,1225 @@
+[
+  {
+    "name": "asset_create",
+    "description": "Copy an image into the GravityPort library and save prompt recipe metadata. The image path must be an absolute path on this machine. Symbolic links are rejected. Only supported image and video formats are imported. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "imagePath": {
+          "type": "string",
+          "description": "Absolute path of the image on this machine."
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "user_prompt": {
+          "type": "string",
+          "description": "Optional user request kept separately from the effective generation prompt."
+        },
+        "negative_prompt": {
+          "type": "string"
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "asset_id": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "applied": {
+                    "type": "boolean"
+                  },
+                  "allowed_uses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Purposes this reference may serve, for example identity, style, world, wardrobe, composition. Once set, any purpose outside the list is treated as forbidden."
+                  },
+                  "forbidden_uses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Purposes this reference must not serve. A forbidden use always overrides the same allowed use."
+                  },
+                  "rights": {
+                    "type": "object",
+                    "description": "Rights declarations for the reference image. Unstated fields stay unknown; silence is never recorded as permission.",
+                    "properties": {
+                      "copyright": {
+                        "enum": [
+                          "unknown",
+                          "owned",
+                          "licensed",
+                          "third-party"
+                        ]
+                      },
+                      "portrait_consent": {
+                        "enum": [
+                          "unknown",
+                          "granted",
+                          "not-required",
+                          "denied"
+                        ]
+                      },
+                      "redistribution": {
+                        "enum": [
+                          "unknown",
+                          "allowed",
+                          "forbidden"
+                        ]
+                      },
+                      "attribution": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "skill": {
+          "type": "string"
+        },
+        "style": {
+          "type": "string"
+        },
+        "ratio": {
+          "type": "string"
+        },
+        "theme": {
+          "type": "string"
+        },
+        "business_fields": {
+          "type": "object",
+          "description": "Stored with the asset but not searchable; put anything that should be findable via search into tags instead."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tags saved with the asset; searchable."
+        },
+        "favorite": {
+          "type": "boolean",
+          "description": "Mark the asset as a favorite."
+        },
+        "group": {
+          "type": "string",
+          "description": "Group the asset is filed under; grouping, not a project."
+        },
+        "category": {
+          "type": "string",
+          "description": "Category label shown in the app."
+        },
+        "rating": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Star rating from 0 (unrated) to 5."
+        },
+        "parent_asset_id": {
+          "type": "string"
+        },
+        "version_change": {
+          "type": "string"
+        },
+        "sourceType": {
+          "type": "string",
+          "description": "Optional source type. Defaults to codex-generated for images under <CODEX_HOME>/generated_images (normally the user's .codex/generated_images), and to mcp-agent (an image saved by an AI assistant, shown as \"AI 助手\" in the App) for everything else."
+        },
+        "source": {
+          "type": "object",
+          "description": "Optional generation provenance, such as generation_tool, model, codex_session_id, or codex_thread_id. The original image path and Codex task ID are detected automatically.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "imagePath"
+      ],
+      "additionalProperties": true
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_import_folder",
+    "description": "Import every image and video found in a local folder into the GravityPort library, applying the same prompt/sourceType/source to each file. The folder path must be an absolute path on this machine. Symbolic links are skipped; with recursive: true the folder itself is level 1 and its contents are read down to level 5 (at most four subfolder levels below it), and deeper subfolders are skipped; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest. Files already in the library are listed in duplicates with the existing assetId.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "folderPath": {
+          "type": "string",
+          "description": "Absolute path of the folder to import."
+        },
+        "recursive": {
+          "type": "boolean",
+          "description": "Also read subfolders (default false; the folder itself is level 1, contents are read down to level 5, deeper subfolders are skipped)."
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "sourceType": {
+          "type": "string"
+        },
+        "source": {
+          "type": "object",
+          "description": "Optional generation provenance applied to every imported file, such as generation_tool, model, or codex_session_id.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "folderPath"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_list",
+    "description": "List saved GravityPort assets for a project, optionally filtered by search text. Returns compact per-asset summaries with the total count (20 per page by default, at most 100; pass `cursor` to page further); use asset_get for an asset's full recipe and metadata.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        },
+        "cursor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_search",
+    "description": "Search GravityPort visual memory using lexical search and explicit creation-time bounds. Multiple query words are combined with AND: every word must appear for an asset to match; OR is not supported. Returns compact per-asset summaries with the total match count (20 per page by default, at most 100; pass `cursor` to page further); use asset_get for an asset's full recipe and metadata.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Space-separated words; every word must appear (AND). OR is not supported."
+        },
+        "createdAfter": {
+          "type": "string",
+          "description": "Inclusive lower creation-time bound. A date-only value (\"2026-11-07\") means local midnight of that day on this machine; a value with Z or a ±hh:mm offset keeps its explicit zone."
+        },
+        "createdBefore": {
+          "type": "string",
+          "description": "Inclusive upper creation-time bound. A date-only value (\"2026-11-07\") means local midnight of that day, so the bound is \"before Nov 7 starts\" — assets created on Nov 7 itself are outside. A value with Z or a ±hh:mm offset keeps its explicit zone."
+        },
+        "visual": {
+          "type": "boolean",
+          "description": "Deprecated and ignored."
+        },
+        "minScore": {
+          "type": "number",
+          "description": "Deprecated and ignored."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "cursor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_get",
+    "description": "Get one saved asset and its full prompt recipe. asset_list and asset_search return only compact summaries; call this for the full recipe and metadata.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assetId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_provenance_export",
+    "description": "Export a portable GravityPort provenance bundle plus an unsigned C2PA assertion payload. Prompts and user messages are excluded by default; pass includePrompts: true only when the user explicitly asks to include prompts. Local filesystem paths and usernames are never exported under any circumstances. This does not create a signed Content Credential; a C2PA signer must bind and sign the assertion separately.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        },
+        "includePrompts": {
+          "type": "boolean",
+          "description": "Whether to include prompts and user messages. Defaults to false; pass true only when the user explicitly requests prompts. Local filesystem paths and usernames are never exported under any circumstances."
+        }
+      },
+      "required": [
+        "assetId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_trash",
+    "description": "Move an asset to Trash. Trashed assets can be restored with asset_restore or inside the GravityPort app, and are permanently purged after 90 days. Use this when the user asks to delete or remove an asset. Do NOT use this when the user asks to archive or stash an asset. If the user is viewing this asset in GravityPort, GravityPort asks the user first and the call waits up to 60 seconds for the answer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assetId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "asset_restore",
+    "description": "Restore an asset from Trash back to the active library.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assetId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true
+    }
+  },
+  {
+    "name": "asset_duplicate",
+    "description": "Create an independent editable copy that starts a new version root while retaining duplicate provenance.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        },
+        "assetIdNew": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assetId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_version_create",
+    "description": "Save a new recipe version as a child of an existing asset without overwriting the parent.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "description": "Existing parent asset ID."
+        },
+        "assetIdNew": {
+          "type": "string",
+          "description": "Optional ID for the new version."
+        },
+        "imagePath": {
+          "type": "string",
+          "description": "Optional new image path; must be an absolute path on this machine (any local folder is accepted, same as asset_create). When omitted, the parent image is copied for a recipe-only version."
+        },
+        "version_change": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required summary of what changed from the parent."
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "user_prompt": {
+          "type": "string",
+          "description": "Optional user request kept separately from the effective generation prompt."
+        },
+        "negative_prompt": {
+          "type": "string"
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "asset_id": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "applied": {
+                    "type": "boolean"
+                  },
+                  "allowed_uses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Purposes this reference may serve, for example identity, style, world, wardrobe, composition. Once set, any purpose outside the list is treated as forbidden."
+                  },
+                  "forbidden_uses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Purposes this reference must not serve. A forbidden use always overrides the same allowed use."
+                  },
+                  "rights": {
+                    "type": "object",
+                    "description": "Rights declarations for the reference image. Unstated fields stay unknown; silence is never recorded as permission.",
+                    "properties": {
+                      "copyright": {
+                        "enum": [
+                          "unknown",
+                          "owned",
+                          "licensed",
+                          "third-party"
+                        ]
+                      },
+                      "portrait_consent": {
+                        "enum": [
+                          "unknown",
+                          "granted",
+                          "not-required",
+                          "denied"
+                        ]
+                      },
+                      "redistribution": {
+                        "enum": [
+                          "unknown",
+                          "allowed",
+                          "forbidden"
+                        ]
+                      },
+                      "attribution": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "skill": {
+          "type": "string"
+        },
+        "style": {
+          "type": "string"
+        },
+        "ratio": {
+          "type": "string"
+        },
+        "theme": {
+          "type": "string"
+        },
+        "business_fields": {
+          "type": "object",
+          "description": "Stored with the asset but not searchable; put anything that should be findable via search into tags instead."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "favorite": {
+          "type": "boolean"
+        },
+        "group": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "rating": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "sourceType": {
+          "type": "string"
+        },
+        "source": {
+          "type": "object",
+          "description": "Optional provenance for a replacement image, such as generation_tool, model, or codex_session_id.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "assetId",
+        "version_change"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_version_history",
+    "description": "Read the complete root-to-descendant recipe version tree for an asset, including archived versions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assetId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_recipe_history",
+    "description": "Read immutable generation recipe snapshots for one asset and identify the currently active snapshot.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assetId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_update_metadata",
+    "description": "Update metadata fields for a saved asset. Pass `references` to record reference rights and permitted uses for a saved asset; that annotation is not a generation input, so it appends a new recipe snapshot.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "user_prompt": {
+          "type": "string"
+        },
+        "negative_prompt": {
+          "type": "string"
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "asset_id": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "applied": {
+                    "type": "boolean"
+                  },
+                  "allowed_uses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Purposes this reference may serve, for example identity, style, world, wardrobe, composition. Once set, any purpose outside the list is treated as forbidden."
+                  },
+                  "forbidden_uses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Purposes this reference must not serve. A forbidden use always overrides the same allowed use."
+                  },
+                  "rights": {
+                    "type": "object",
+                    "description": "Rights declarations for the reference image. Unstated fields stay unknown; silence is never recorded as permission.",
+                    "properties": {
+                      "copyright": {
+                        "enum": [
+                          "unknown",
+                          "owned",
+                          "licensed",
+                          "third-party"
+                        ]
+                      },
+                      "portrait_consent": {
+                        "enum": [
+                          "unknown",
+                          "granted",
+                          "not-required",
+                          "denied"
+                        ]
+                      },
+                      "redistribution": {
+                        "enum": [
+                          "unknown",
+                          "allowed",
+                          "forbidden"
+                        ]
+                      },
+                      "attribution": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "skill": {
+          "type": "string"
+        },
+        "style": {
+          "type": "string"
+        },
+        "ratio": {
+          "type": "string"
+        },
+        "theme": {
+          "type": "string"
+        },
+        "business_fields": {
+          "type": "object",
+          "description": "Stored with the asset but not searchable; put anything that should be findable via search into tags instead. Only the keys you pass are merged into the stored object: a key whose value is null is removed, and every other stored key is kept unchanged."
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "favorite": {
+          "type": "boolean"
+        },
+        "group": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "rating": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "recipe_change_summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assetId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "asset_attach_prompt",
+    "description": "Attach or replace the full prompt recipe for a saved asset.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assetId",
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "generation_record",
+    "description": "Record one generation occurrence independently from the deduplicated output asset. Use this when an agent knows that a specific generation produced a saved GravityPort asset.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "outputAssetId": {
+          "type": "string",
+          "description": "Existing GravityPort asset produced by this generation."
+        },
+        "provider": {
+          "type": "string"
+        },
+        "captureContextId": {
+          "type": "string",
+          "description": "GravityPort/local observation context. This is not a provider generation-call ID. Several generations in one capture context are told apart by providerToolCallId."
+        },
+        "providerToolCallId": {
+          "type": "string",
+          "description": "Provider/runtime tool-call identifier when observed."
+        },
+        "providerGenerationCallId": {
+          "type": "string",
+          "description": "Provider generation-call identifier only when actually supplied by the provider integration."
+        },
+        "providerResponseId": {
+          "type": "string"
+        },
+        "providerAssetId": {
+          "type": "string"
+        },
+        "conversationId": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "batchId": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "userPrompt": {
+          "type": "string"
+        },
+        "effectivePrompt": {
+          "type": "string"
+        },
+        "promptStatus": {
+          "type": "string"
+        },
+        "captureChannel": {
+          "type": "string"
+        },
+        "verificationLevel": {
+          "enum": [
+            "user_confirmed",
+            "observed",
+            "inferred"
+          ],
+          "description": "Evidence level for this externally supplied record. provider_verified is reserved for trusted GravityPort provider integrations."
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "asset_id": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "applied": {
+                    "type": "boolean"
+                  },
+                  "allowed_uses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Purposes this reference may serve, for example identity, style, world, wardrobe, composition. Once set, any purpose outside the list is treated as forbidden."
+                  },
+                  "forbidden_uses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Purposes this reference must not serve. A forbidden use always overrides the same allowed use."
+                  },
+                  "rights": {
+                    "type": "object",
+                    "description": "Rights declarations for the reference image. Unstated fields stay unknown; silence is never recorded as permission.",
+                    "properties": {
+                      "copyright": {
+                        "enum": [
+                          "unknown",
+                          "owned",
+                          "licensed",
+                          "third-party"
+                        ]
+                      },
+                      "portrait_consent": {
+                        "enum": [
+                          "unknown",
+                          "granted",
+                          "not-required",
+                          "denied"
+                        ]
+                      },
+                      "redistribution": {
+                        "enum": [
+                          "unknown",
+                          "allowed",
+                          "forbidden"
+                        ]
+                      },
+                      "attribution": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "outputAssetId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "generation_list",
+    "description": "List generation occurrences, optionally filtered by output asset or provider identifiers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetId": {
+          "type": "string"
+        },
+        "captureContextId": {
+          "type": "string"
+        },
+        "providerToolCallId": {
+          "type": "string"
+        },
+        "providerGenerationCallId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "generation_relation_record",
+    "description": "Record an explicit generation-to-generation relationship such as edited_from or variant_of. Do not infer a parent unless the evidence supports it. When verificationLevel is omitted the relation is recorded as user_confirmed (you are asserting it on the user's behalf); pass \"observed\" or \"inferred\" to record a weaker evidence level.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "childGenerationId": {
+          "type": "string"
+        },
+        "parentGenerationId": {
+          "type": "string"
+        },
+        "relationType": {
+          "enum": [
+            "edited_from",
+            "variant_of",
+            "derived_from",
+            "based_on"
+          ],
+          "default": "derived_from",
+          "description": "How the child relates to the parent; defaults to derived_from when omitted."
+        },
+        "verificationLevel": {
+          "enum": [
+            "user_confirmed",
+            "observed",
+            "inferred"
+          ],
+          "description": "Evidence level for this externally supplied record. provider_verified is reserved for trusted GravityPort provider integrations."
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "childGenerationId",
+        "parentGenerationId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "generation_lineage",
+    "description": "Read the connected generation lineage graph around one generation event, including parent/child IDs and evidence-bearing relations.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "generationId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "generationId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "stack_create",
+    "description": "Group two or more saved assets into a new stack, the same as stacking a selection in the GravityPort app. coverAssetId defaults to the first asset. name (optional, at most 80 characters) is the stack's display name. An asset can belong to only one stack: if any asset is already in a stack the call fails with ASSET_ALREADY_STACKED and nothing changes; take it out with stack_remove_assets first. To show the same image in several stacks, copy it with asset_duplicate and stack the copy. Archived assets cannot be stacked.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "assetIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2000
+        },
+        "coverAssetId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "assetIds"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "stack_add_assets",
+    "description": "Add saved assets to an existing stack, after its current members. Assets already in this stack are skipped and listed in alreadyInStack. If any asset belongs to a different stack the call fails with ASSET_ALREADY_STACKED and nothing changes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "stackId": {
+          "type": "string"
+        },
+        "assetIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 2000
+        }
+      },
+      "required": [
+        "stackId",
+        "assetIds"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "stack_rename",
+    "description": "Set a stack's display name (trimmed, 1 to 80 characters). The name is kept even when the stack was created automatically from a conversation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "stackId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "stackId",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "stack_remove_assets",
+    "description": "Take assets out of a stack; the assets stay in the library. Every assetId must belong to this stack, otherwise the call fails with ASSET_NOT_IN_STACK and nothing changes. A stack left with one asset is dissolved (dissolved: true). Assets taken out are not stacked again automatically.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "stackId": {
+          "type": "string"
+        },
+        "assetIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 2000
+        }
+      },
+      "required": [
+        "stackId",
+        "assetIds"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "stack_dissolve",
+    "description": "Dissolve a stack: its assets return to the library as separate assets; nothing is deleted or archived. They are not stacked again automatically.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "stackId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stackId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "stack_get",
+    "description": "Read one stack: its name, cover, member count, and member asset IDs in stack order. Members in Trash or archived are left out.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "stackId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stackId"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "stack_list",
+    "description": "List the stacks shown in the GravityPort library (two or more visible members), most recently updated first, optionally filtered by text in the stack name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  }
+]

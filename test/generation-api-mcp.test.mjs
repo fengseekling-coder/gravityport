@@ -230,6 +230,13 @@ test("MCP exposes generation recording, relation, and lineage tools with the sam
   }
   const relationDefinition = tools.find((tool) => tool.name === "generation_relation_record");
   assert.deepEqual(relationDefinition.inputSchema.properties.verificationLevel.enum, ["user_confirmed", "observed", "inferred"]);
+  const recordDefinition = tools.find((tool) => tool.name === "generation_record");
+  assert.equal(
+    recordDefinition.inputSchema.properties.captureContextId.description,
+    "GravityPort/local observation context. This is not a provider generation-call ID. Several generations in one capture context are told apart by providerToolCallId.",
+  );
+  const listDefinition = tools.find((tool) => tool.name === "generation_list");
+  assert.equal(listDefinition.inputSchema.properties.captureContextId.description, undefined);
 
   const invalidList = await callMcp(server, {
     jsonrpc: "2.0",
@@ -327,6 +334,55 @@ test("MCP exposes generation recording, relation, and lineage tools with the sam
   });
   assert.equal(reserved.error.code, -32602);
   assert.match(reserved.error.message, /arguments\.verificationLevel must be one of: user_confirmed, observed, inferred/);
+
+  const dedupFirst = await callMcp(server, {
+    jsonrpc: "2.0",
+    id: 9,
+    method: "tools/call",
+    params: {
+      name: "generation_record",
+      arguments: {
+        outputAssetId: firstAsset.id,
+        provider: "openai",
+        providerToolCallId: "call-372-dedup-1",
+        captureContextId: "ctx-372-dedup",
+      },
+    },
+  });
+  const dedupSecond = await callMcp(server, {
+    jsonrpc: "2.0",
+    id: 10,
+    method: "tools/call",
+    params: {
+      name: "generation_record",
+      arguments: {
+        outputAssetId: firstAsset.id,
+        provider: "openai",
+        providerToolCallId: "call-372-dedup-2",
+        captureContextId: "ctx-372-dedup",
+      },
+    },
+  });
+  assert.notEqual(
+    dedupFirst.result.structuredContent.event.id,
+    dedupSecond.result.structuredContent.event.id,
+  );
+  const dedupListed = await callMcp(server, {
+    jsonrpc: "2.0",
+    id: 11,
+    method: "tools/call",
+    params: {
+      name: "generation_list",
+      arguments: {
+        assetId: firstAsset.id,
+        captureContextId: "ctx-372-dedup",
+      },
+    },
+  });
+  assert.deepEqual(
+    dedupListed.result.structuredContent.events.map((event) => event.provider_tool_call_id),
+    ["call-372-dedup-1", "call-372-dedup-2"],
+  );
 });
 
 function postJson(url, body) {

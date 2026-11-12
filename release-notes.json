@@ -6,6 +6,52 @@
   },
   "releases": [
     {
+      "version": "0.3.12",
+      "date": "2026-11-12",
+      "zh": {
+        "new": [
+          "检视器里正在看的素材，要被 AI 助手（MCP）或即梦删除同步移进回收站时，App 会先弹窗确认。",
+          "在即梦删除同步的确认弹窗里点了「不允许」的素材，以后不会再被自动移走。"
+        ],
+        "improved": [
+          "超大尺寸的图片也能生成缩略图和预览。",
+          "支持用 ⌘[ / ⌘]（Windows 为 Alt+← / →）和鼠标侧键后退、前进；检视器开着时，后退只关闭检视器。",
+          "在堆叠里按 Esc 可以退出堆叠。",
+          "分组和堆叠的弹窗打开时，光标直接落在输入框或「取消」上；Tab 键不会跳出弹窗，按 Esc 等于取消。",
+          "以前导入的图片缺少的中等尺寸缩略图，会在 App 开着时于后台补齐，浏览旧素材更顺畅。",
+          "回收站的工具栏会显示清空后大约能腾出多少空间。"
+        ],
+        "fixed": [
+          "修复了 AI 助手在同一个对话里记录多次生成时，几次生成被合成一条记录的问题。",
+          "修复了中文文件名的图片导入后名字变成一串编号的问题：卡片、检视器和导出的文件都保留原名，也能按中文名搜索，单个字也能搜到。",
+          "修复了按 ⌘C / Ctrl+C 复制选中的素材没有反应的问题，现在可以复制到访达或资源管理器。",
+        "修复了设置 →「连接」里浏览器扩展的「复制位置」按钮没有反应的问题。",
+        "修复了浏览器扩展的「在访达中显示」（Windows 为「在文件资源管理器中显示」）打开的是扩展文件夹里面、看不出该选哪个文件夹的问题，现在会直接选中扩展文件夹。"
+        ]
+      },
+      "en": {
+        "new": [
+          "If an AI assistant (MCP) or Jimeng delete sync tries to move the asset open in the viewer to Trash, GravityPort now asks first.",
+          "Assets declined in the Jimeng delete sync prompt are no longer moved to Trash automatically."
+        ],
+        "improved": [
+          "Very large images now get thumbnails and previews.",
+          "⌘[ / ⌘] (Alt+← / → on Windows) and the mouse side buttons now go back and forward. With the viewer open, Back closes only the viewer.",
+          "Press Esc inside a stack to leave it.",
+          "Group and stack dialogs now place the cursor in the text field or on Cancel, keep Tab inside the dialog, and treat Esc as Cancel.",
+          "Older images that lack a medium-size thumbnail now get one in the background while the app is open, so older assets browse more smoothly.",
+          "The Trash toolbar now shows about how much space emptying it would free."
+        ],
+        "fixed": [
+          "Fixed several generations recorded by an AI assistant in one conversation being merged into a single record.",
+          "Fixed images with Chinese file names showing a string of numbers after import. Cards, the inspector and exported files now keep the original name, and assets can be found by it, even by a single character.",
+          "Fixed ⌘C / Ctrl+C doing nothing on selected assets. Selected assets can now be copied to Finder or File Explorer.",
+        "Fixed the browser extension's Copy location button in Settings → Connect doing nothing.",
+        "Fixed the browser extension's Show in Finder (Show in File Explorer on Windows) opening the inside of the extension folder, which hid which folder to choose. It now selects the extension folder itself."
+        ]
+      }
+    },
+    {
       "version": "0.3.11",
       "date": "2026-11-08",
       "zh": {

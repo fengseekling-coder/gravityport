@@ -47,7 +47,7 @@ export interface ImageDecodeClientOptions {
 
 export interface ImageDecoder {
   pixelDigest(input: DecodeInput, options?: { limitInputPixels?: number }): Promise<string>;
-  metadata(input: DecodeInput, options?: { failOn?: "none" | "truncated" | "error" | "warning"; limitInputPixels?: number }): Promise<Record<string, unknown>>;
+  metadata(input: DecodeInput, options?: { failOn?: "none" | "truncated" | "error" | "warning"; limitInputPixels?: number | boolean }): Promise<Record<string, unknown>>;
   perceptualHash(input: DecodeInput): Promise<string>;
   palette(input: DecodeInput, options?: { limitInputPixels?: number }): Promise<PaletteColor[]>;
   encodeVideoPoster(input: DecodeInput, options?: { width?: number; quality?: number; limitInputPixels?: number }): Promise<Buffer>;

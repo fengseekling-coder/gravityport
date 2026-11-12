@@ -15,6 +15,30 @@ export function resolveNavHistoryShortcut(
   return 0;
 }
 
+// Mouse side buttons: 3 = back, 4 = forward (DOM MouseEvent.button numbers,
+// what Chromium reports for the browser-back/forward extra mouse buttons).
+// Everything else (0 left, 1 middle, 2 right) is no navigation.
+export function mouseNavDirection(button: number): -1 | 0 | 1 {
+  if (button === 3) return -1;
+  if (button === 4) return 1;
+  return 0;
+}
+
+// Where the desktop menu's 全选 (⌘A accelerator) should land. A focused text
+// surface keeps select-all for itself (native text selection); an idle gallery
+// runs the cross-page select-all — unless a keydown ⌘A handled the same press
+// moments ago, in which case the menu event is the second delivery of one
+// keystroke and must not select twice.
+export function menuSelectAllTarget({ activeIsEditable, galleryIdle, msSinceKeySelectAll }: {
+  activeIsEditable: boolean;
+  galleryIdle: boolean;
+  msSinceKeySelectAll: number | null;
+}): "text" | "gallery" | "none" {
+  if (activeIsEditable) return "text";
+  if (galleryIdle && (msSinceKeySelectAll === null || msSinceKeySelectAll >= 500)) return "gallery";
+  return "none";
+}
+
 export function isFocusSearchKey(
   event: { key: string; metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean },
   ctx: { viewIsLibrary: boolean; hasBlockingOverlay: boolean; targetIsTextEntry: boolean; platform: "mac" | "other" }

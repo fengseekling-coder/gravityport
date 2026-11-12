@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { createJsonAssetStore } from "../lib/asset-store.mjs";
 import { pngBytes } from "./helpers/managed-media.mjs";
-import { resolveGenerationRelationCandidates } from "../lib/generation-history.mjs";
+import { normalizeGenerationEvent, resolveGenerationRelationCandidates } from "../lib/generation-history.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 
 test("GPT relation resolver proposes lineage without turning proximity into fact", () => {
@@ -489,5 +489,106 @@ for (const [name, createStore] of [
     assert.equal(remainingHistory.relation_candidates.some((candidate) => (
       childEventIds.has(candidate.child_generation_id) || childEventIds.has(candidate.parent_generation_id)
     )), false, "relation candidates referencing deleted generation events must be removed");
+  });
+
+  test(`${name} store separates distinct providerToolCallIds in one captureContextId while keeping legacy event ids stable`, async (t) => {
+    const root = await mkdtemp(join(tmpdir(), `mosa-generation-ctx-tool-${name.toLowerCase()}-`));
+    deferTestPathRemoval(root, { recursive: true, force: true });
+    let store;
+    t.after(async () => {
+      store?.close?.();
+    });
+    await mkdir(join(root, "input"), { recursive: true });
+    const imgPath = join(root, "input", "dedup-out.png");
+    await writeFile(imgPath, await pngBytes());
+
+    store = createStore(root);
+    await store.ensureProject("default");
+    const asset = await store.createAsset({
+      projectId: "default",
+      assetId: "copy-1-mw703gcg-9451a83e-mw704yxs-768af462",
+      imagePath: imgPath,
+    });
+
+    // 1. Only captureContextId, no providerToolCallId -> id is identical to the pre-380 value.
+    const contextOnly = normalizeGenerationEvent({
+      project_id: "default",
+      output_asset_id: asset.id,
+      provider: "openai",
+      capture_context_id: "ctx-372-dedup",
+    });
+    assert.equal(contextOnly.id, "gen-4fb8e2b31e4d2c81eafe75b0");
+
+    // 2. Legacy compatibility: insert a record whose id was derived by the pre-380
+    // algorithm (anchor without provider_tool_call_id) while carrying a provider_tool_call_id,
+    // then record the same generation again through the new code -> still 1 record, legacy id kept.
+    const legacySeed = await store.recordGenerationEvent({
+      project_id: "default",
+      id: "gen-4fb8e2b31e4d2c81eafe75b0",
+      output_asset_id: asset.id,
+      provider: "openai",
+      capture_context_id: "ctx-372-dedup",
+      provider_tool_call_id: "call-372-dedup-1",
+      effective_prompt: "initial legacy capture",
+      verification_level: "observed",
+      created_at: "2026-11-07T15:00:00.000Z",
+    });
+    assert.equal(legacySeed.id, "gen-4fb8e2b31e4d2c81eafe75b0");
+
+    const reobservedLegacy = await store.recordGenerationEvent({
+      project_id: "default",
+      output_asset_id: asset.id,
+      provider: "openai",
+      capture_context_id: "ctx-372-dedup",
+      provider_tool_call_id: "call-372-dedup-1",
+      effective_prompt: "re-observed legacy capture",
+      verification_level: "observed",
+      created_at: "2026-11-07T15:01:00.000Z",
+    });
+    assert.equal(reobservedLegacy.id, "gen-4fb8e2b31e4d2c81eafe75b0");
+    assert.equal(reobservedLegacy.effective_prompt, "re-observed legacy capture");
+    const afterReobserve = await store.listGenerationEvents("default", {
+      assetId: asset.id,
+      captureContextId: "ctx-372-dedup",
+    });
+    assert.equal(afterReobserve.length, 1);
+
+    // 3. Same captureContextId, two different providerToolCallIds, same image (task 372 lines 480 & 481)
+    // -> two distinct records, each keeping its own provider_tool_call_id.
+    const secondCall = await store.recordGenerationEvent({
+      project_id: "default",
+      output_asset_id: asset.id,
+      provider: "openai",
+      capture_context_id: "ctx-372-dedup",
+      provider_tool_call_id: "call-372-dedup-2",
+      effective_prompt: "second call in same context",
+      verification_level: "observed",
+      created_at: "2026-11-07T15:02:00.000Z",
+    });
+    assert.notEqual(secondCall.id, reobservedLegacy.id);
+    assert.equal(secondCall.provider_tool_call_id, "call-372-dedup-2");
+
+    // 4. Recording the same captureContextId + providerToolCallId twice -> still one record for that call.
+    const secondCallReplay = await store.recordGenerationEvent({
+      project_id: "default",
+      output_asset_id: asset.id,
+      provider: "openai",
+      capture_context_id: "ctx-372-dedup",
+      provider_tool_call_id: "call-372-dedup-2",
+      effective_prompt: "second call updated prompt",
+      verification_level: "observed",
+      created_at: "2026-11-07T15:03:00.000Z",
+    });
+    assert.equal(secondCallReplay.id, secondCall.id);
+
+    const allEvents = await store.listGenerationEvents("default", {
+      assetId: asset.id,
+      captureContextId: "ctx-372-dedup",
+    });
+    assert.equal(allEvents.length, 2);
+    assert.deepEqual(
+      allEvents.map((event) => event.provider_tool_call_id),
+      ["call-372-dedup-1", "call-372-dedup-2"],
+    );
   });
 }

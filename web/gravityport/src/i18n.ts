@@ -519,6 +519,20 @@ const english: Record<string, string> = {
   "浏览器扩展的连接请求已过期，请在扩展里重试": "The browser extension’s connection request expired. Try again from the extension.",
   "没能保存连接设置": "Couldn’t save the connection setting",
   "{seconds} 秒内不回应将视为不允许": "No response within {seconds} seconds counts as Don’t Allow",
+  // Task 383: trash toolbar line left of the 清空回收站 button.
+  "清空可腾出约 {size}": "Emptying frees about {size}",
+  // Task 385 — live deletion confirmation (MCP / Jimeng delete sync).
+  "允许 {name} 删除这张素材吗？": "Allow {name} to delete this asset?",
+  "允许「即梦删除同步」删除这张素材吗？": "Allow Jimeng delete sync to delete this asset?",
+  "允许一个 AI 助手删除这张素材吗？": "Allow an AI assistant to delete this asset?",
+  "允许后，这张素材会被移进回收站。": "If allowed, this asset moves to Trash.",
+  "来自：{name}（MCP）": "From: {name} (MCP)",
+  "来自：AI 助手（MCP）": "From: AI assistant (MCP)",
+  "来自：即梦删除同步": "From: Jimeng delete sync",
+  "允许删除": "Allow deletion",
+  "已拒绝 {name} 的删除请求（超时）": "Declined {name}’s deletion request (timed out)",
+  "已拒绝「即梦删除同步」的删除请求（超时）": "Declined Jimeng delete sync’s deletion request (timed out)",
+  "已拒绝 AI 助手的删除请求（超时）": "Declined the AI assistant’s deletion request (timed out)",
 }
 
 export function translate(text: string, language: Language): string {

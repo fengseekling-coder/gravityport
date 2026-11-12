@@ -19,7 +19,7 @@ import {
 import { translate, type Language } from "./i18n.js"
 import { bundledExtensionVersion } from "./bundled-extension-version.js"
 import { handleExternalLinkClick } from "./external-link.js"
-import { desktopAPI } from "./desktop.js"
+import { desktopAPI, writeTextToClipboard } from "./desktop.js"
 import "./web-capture-status.css"
 
 // The extension posts a queue status about once a minute (a chrome.alarms
@@ -132,7 +132,7 @@ export function WebCaptureStatusCardView({
   const copyFolder = async () => {
     if (!managed?.path) return
     try {
-      await navigator.clipboard.writeText(managed.path)
+      await writeTextToClipboard(managed.path)
       setCopied(true)
       if (copiedTimeout.current) clearTimeout(copiedTimeout.current)
       copiedTimeout.current = setTimeout(() => setCopied(false), 2000)

@@ -75,6 +75,10 @@ export type MosaNavigation = {
   favorites: number
   unorganized: number
   trash: number
+  // Task 383: what emptying the trash would free. The sqlite backend always
+  // sends it; the JSON backend doesn't — absent (undefined) hides the
+  // toolbar line, a present 0 shows "0 KB".
+  trashReclaimableBytes?: number
   sourceTypes: [string, number][]
   groups: { name: string; count: number; color: string }[]
 }
@@ -333,7 +337,7 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
   return {
     id: String(input.id || ""),
     project_id: String(input.project_id || project),
-    name: String(input.name || input.title || path.split(/[\\/]/).pop() || input.id || ""),
+    name: String(input.name || input.title || input.display_name || path.split(/[\\/]/).pop() || input.id || ""),
     favorite: input.favorite === true,
     width, height,
     mediaKind: kind === "video" || (/\.(?:mp4|mov|webm|m4v)$/i.test(path) && kind !== "image") ? "video" : "image",
@@ -447,6 +451,11 @@ export async function fetchNavigation(project: string, signal?: AbortSignal): Pr
     favorites: Number(navigation.favorites || 0),
     unorganized: Number(navigation.unorganized || 0),
     trash: Number(navigation.trash || 0),
+    // Task 383: keep "absent" distinct from 0 — the JSON backend never sends
+    // this field, and its trash line must hide instead of claiming 0 KB.
+    trashReclaimableBytes: navigation.trashReclaimableBytes === undefined
+      ? undefined
+      : Number(navigation.trashReclaimableBytes || 0),
     sourceTypes: rawSources.filter(Array.isArray).map((entry: unknown[]) => [
       String(entry[0] || ""), Number(entry[1] || 0),
     ]),
@@ -614,6 +623,68 @@ export async function decideWebCapturePairRequest(id: string, allow: boolean): P
   await requestJson(`/api/web-capture/pair-requests/${encodeURIComponent(id)}/decision`, {
     method: "POST",
     body: { allow },
+  })
+}
+
+// Task 385 — live deletion requests: a viewer-shown asset that an AI assistant
+// (MCP) or the Jimeng delete sync wants to move to Trash. The server's list is
+// authoritative; SSE `live-deletion-requests` only signals a refetch.
+export type MosaLiveDeletionRequest = {
+  id: string
+  projectId: string
+  assetId: string
+  requesterKind: "mcp" | "jimeng"
+  requesterName: string
+  expiresAt: number
+}
+
+/** GET /api/live-deletion-requests — pending, unexpired, oldest first. The
+ * payload carries the server's `now` so the countdown uses one clock. */
+export async function fetchLiveDeletionRequests(signal?: AbortSignal): Promise<{ rows: MosaLiveDeletionRequest[]; serverNow: number }> {
+  const data = await requestJson<{ requests?: JsonValue; now?: number }>("/api/live-deletion-requests", { signal })
+  const rows = (Array.isArray(data.requests) ? data.requests : [])
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    .map(row => {
+      const requester = row.requester && typeof row.requester === "object" && !Array.isArray(row.requester)
+        ? row.requester as Record<string, unknown>
+        : {}
+      return {
+        id: String(row.id || ""),
+        projectId: String(row.projectId || "default"),
+        assetId: String(row.assetId || ""),
+        requesterKind: requester.kind === "jimeng" ? "jimeng" as const : "mcp" as const,
+        requesterName: String(requester.name || ""),
+        expiresAt: Number(row.expiresAt || 0),
+      }
+    })
+    .filter(row => row.id)
+  return { rows, serverNow: Number(data.now || 0) }
+}
+
+/** POST /api/live-deletion-requests/<id>/decision — the user's answer. An
+ * expired request answers 409 (written as timeout server-side); an unknown
+ * id answers 404; both mean "the dialog is gone either way". */
+export async function decideLiveDeletionRequest(
+  id: string,
+  result: "allow" | "deny" | "timeout",
+): Promise<void> {
+  await requestJson(`/api/live-deletion-requests/${encodeURIComponent(id)}/decision`, {
+    method: "POST",
+    body: { result },
+  })
+}
+
+/** POST /api/viewer-presence — which asset the viewer shows right now, or
+ * null when it closed. Failures are silently ignored by callers. */
+export async function reportViewerPresence(projectId: string, assetId: string | null): Promise<void> {
+  // Presence changes no asset: counting it as a mutation would make the live
+  // sync defer or discard its merges on every 10 s heartbeat — and the
+  // viewer-close report would race the viewer-close release, leaving a card
+  // the view no longer matches on screen.
+  await requestJson("/api/viewer-presence", {
+    method: "POST",
+    body: { projectId, assetId },
+    countMutation: false,
   })
 }
 

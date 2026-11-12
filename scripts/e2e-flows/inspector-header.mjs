@@ -68,7 +68,7 @@ export async function run(ctx) {
     if (String(storedB?.source?.prompt_status || "") !== "not-available") throw new Error(`inspector-header seed: asset B prompt_status is ${JSON.stringify(storedB?.source?.prompt_status)}`);
     if (String(storedC?.source?.prompt_status || "") !== "provider-visible-prompt") throw new Error(`inspector-header seed: asset C prompt_status is ${JSON.stringify(storedC?.source?.prompt_status)}`);
 
-    const assetName = (created) => created.asset.name || created.asset.asset
+    const assetName = (created) => created.asset.display_name || created.asset.name || created.asset.asset
       || String(created.asset.image_path || "").split("/").pop();
     const config = {
       nameA: assetName(a),

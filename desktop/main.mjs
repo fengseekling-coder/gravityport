@@ -624,6 +624,7 @@ function buildMenu() {
     platform: process.platform,
     locale: currentLocale,
     onSearch: () => sendToWindow("menu-search"),
+    onSelectAll: () => sendToWindow("menu-select-all"),
   }));
   Menu.setApplicationMenu(menu);
   if (desktopPlatform.capabilities.hideApplicationMenuBar && mainWindow && !mainWindow.isDestroyed()) {
@@ -735,7 +736,10 @@ function registerIPC() {
     const manifestPath = join(managedBrowserExtensionTarget, "manifest.json");
     try {
       await access(manifestPath);
-      shell.showItemInFolder(manifestPath);
+      // Select the extension folder itself in its parent: that folder is what
+      // Chrome's 加载已解压的扩展程序 asks for. Selecting manifest.json opened
+      // the folder's contents and hid which folder to pick.
+      shell.showItemInFolder(managedBrowserExtensionTarget);
       return { ok: true };
     } catch {
       return { ok: false };

@@ -14,6 +14,7 @@
 // - generation_record backfills an empty user_prompt slot (first wording
 //   wins, never overwrites), which makes the wording searchable.
 
+import { crc32 } from "node:zlib";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
@@ -48,11 +49,16 @@ async function writeTruncatedPng(filePath) {
   return filePath;
 }
 
-async function writeHugePng(filePath, { width = 6401, height = 6401 } = {}) {
+async function writeHugePng(filePath, { width = 16500, height = 16500 } = {}) {
   await mkdir(join(filePath, ".."), { recursive: true });
-  // 6401×6401 = 40,972,801 pixels — just past the 40,000,000 ceiling. A flat
-  // color keeps the file (and the encode) small.
-  await sharp({ create: { width, height, channels: 3, background: "#223344" } }).png().toFile(filePath);
+  // 16500×16500 = 272,250,000 pixels — past the 268,402,689 derivative ceiling
+  // (task 380). Declare the dimensions in the PNG IHDR header with a valid CRC
+  // so header-only metadata reads report them without encoding 272M pixels.
+  const buf = await sharp({ create: { width: 16, height: 16, channels: 3, background: "#223344" } }).png().toBuffer();
+  buf.writeUInt32BE(width, 16);
+  buf.writeUInt32BE(height, 20);
+  buf.writeUInt32BE(crc32(buf.subarray(12, 29)), 29);
+  await writeFile(filePath, buf);
   return filePath;
 }
 
@@ -149,22 +155,22 @@ test("3. a truncated PNG is refused with IMAGE_FILE_INCOMPLETE (bilingual)", asy
   assert.ok(paddedOk.structuredContent.asset.id, "a PNG with bytes after IEND is accepted");
 });
 
-test("4. an image beyond 40 megapixels saves with a preview warning", async (t) => {
+test("4. an image beyond 268 megapixels saves with a preview warning", async (t) => {
   const workspace = await createMcpWorkspace(t);
   const server = startMcpServer(t, workspace);
 
-  const huge = await writeHugePng(join(workspace.root, "outside", "huge-6401.png"));
+  const huge = await writeHugePng(join(workspace.root, "outside", "huge-16500.png"));
   const created = await server.callToolStrict("asset_create", { imagePath: huge, prompt: "too big for previews" });
   assert.deepEqual(created.structuredContent.warnings, ["IMAGE_TOO_LARGE_FOR_PREVIEW"]);
-  assert.match(created.content[0].text, /这张图超过 4000 万像素，App 里不会生成缩略图和预览。\/ This image exceeds 40 megapixels; the App will not generate a thumbnail or preview for it\./);
-  assert.equal(created.structuredContent.asset.business_fields.width, 6401);
-  assert.equal(created.structuredContent.asset.business_fields.height, 6401);
+  assert.match(created.content[0].text, /这张图超过 2\.68 亿像素，App 里不会生成缩略图和预览。\/ This image exceeds 268 megapixels; the App will not generate a thumbnail or preview for it\./);
+  assert.equal(created.structuredContent.asset.business_fields.width, 16500);
+  assert.equal(created.structuredContent.asset.business_fields.height, 16500);
 
   // A normal image carries neither the warning text nor the warnings key.
   const normal = await outsidePng(workspace);
   const quiet = await server.callToolStrict("asset_create", { imagePath: normal, prompt: "normal size" });
   assert.equal(quiet.structuredContent.warnings, undefined);
-  assert.ok(!quiet.content[0].text.includes("4000 万像素"));
+  assert.ok(!quiet.content[0].text.includes("2.68 亿像素"));
 });
 
 test("5. asset ids that are not letters/digits/_/- are refused before the store", async (t) => {
