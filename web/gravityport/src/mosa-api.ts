@@ -677,9 +677,14 @@ export async function decideLiveDeletionRequest(
 /** POST /api/viewer-presence — which asset the viewer shows right now, or
  * null when it closed. Failures are silently ignored by callers. */
 export async function reportViewerPresence(projectId: string, assetId: string | null): Promise<void> {
+  // Presence changes no asset: counting it as a mutation would make the live
+  // sync defer or discard its merges on every 10 s heartbeat — and the
+  // viewer-close report would race the viewer-close release, leaving a card
+  // the view no longer matches on screen.
   await requestJson("/api/viewer-presence", {
     method: "POST",
     body: { projectId, assetId },
+    countMutation: false,
   })
 }
 
