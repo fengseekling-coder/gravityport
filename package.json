@@ -83,7 +83,7 @@
     "qa:gallery:resize": "node scripts/qa-gallery-resize.mjs"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.1",
+    "better-sqlite3": "^13.1.1",
     "sharp": "^0.35.4"
   },
   "devDependencies": {
