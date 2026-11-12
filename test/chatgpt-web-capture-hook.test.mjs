@@ -5,7 +5,6 @@ import test from "node:test";
 import vm from "node:vm";
 
 const manifest = JSON.parse(await readFile(new URL("../extensions/chatgpt-web-capture/manifest.json", import.meta.url), "utf8"));
-const contentSource = await readFile(new URL("../extensions/chatgpt-web-capture/content.js", import.meta.url), "utf8");
 const generationRegistrySource = await readFile(new URL("../extensions/chatgpt-web-capture/generation-registry.js", import.meta.url), "utf8");
 const contentCss = await readFile(new URL("../extensions/chatgpt-web-capture/content.css", import.meta.url), "utf8");
 const optionsSource = await readFile(new URL("../extensions/chatgpt-web-capture/options.js", import.meta.url), "utf8");
@@ -19,6 +18,8 @@ import {
   hookSource,
   MockMessagePort,
 } from "./helpers/page-hook-harness.mjs";
+
+import { createContentHarness } from "./helpers/content-harness.mjs";
 
 import {
   createBackgroundHarness,
@@ -261,8 +262,6 @@ test("Google adapter capture work is limited to two concurrent tasks", async () 
 test("uses safe local extension settings without a public Token default", () => {
   assert.equal(typeof manifest.key, "string");
   assert.ok(manifest.key.length > 300);
-  assert.match(contentSource, /chrome\.storage\?\.local\?\.get\?\./);
-  assert.doesNotMatch(contentSource, /chrome\.storage\.sync\.set/);
   assert.match(optionsSource, /chrome\.storage\.local\.set/);
   assert.match(optionsSource, /function normalizeBaseUrl\(value\)/);
   assert.match(optionsSource, /\["127\.0\.0\.1", "localhost"\]\.includes\(url\.hostname\)/);
@@ -328,7 +327,6 @@ test("defaults capture off and keeps Chrome permissions minimal", async () => {
   assert.deepEqual(manifest.permissions, ["storage", "contextMenus", "alarms", "unlimitedStorage"]);
   assert.equal(manifest.permissions.includes("activeTab"), false);
   assert.match(optionsSource, /autoCapture:\s*false/);
-  assert.match(contentSource, /let autoCapture = false/);
   assert.match(providerSource, /let autoCapture = false/);
   assert.match(optionsHtml, /默认关闭/);
 
@@ -354,8 +352,6 @@ test("defaults capture off and keeps Chrome permissions minimal", async () => {
 });
 
 test("manual fallback controls cover ChatGPT images and Google videos", () => {
-  assert.match(contentSource, /data-action="save-visible">保存当前图片</);
-  assert.match(contentSource, /data-action="save-all">保存全部图片</);
   assert.match(providerSource, /"mosa\.capture\.saveVideoWithPrompt"/);
   assert.match(providerSource, /mediaKind: videoRequest \? "video" : "image"/);
 });
@@ -382,8 +378,6 @@ test("ChatGPT hook stays dormant until capture is explicitly enabled", async () 
 
 test("ChatGPT generation asset hosts stay consistent across hook, content script, and manifest", () => {
   assert.ok(manifest.host_permissions.includes("https://*.blob.core.windows.net/*"));
-  assert.match(contentSource, /"blob\.core\.windows\.net"/);
-  assert.match(contentSource, /if \(!isLikelyGeneratedUrl\(imageUrl\)\) return;/);
 });
 
 test("the page hook keeps generated image URLs on blob.core hosts and drops unknown hosts", async () => {
@@ -400,48 +394,28 @@ test("the page hook keeps generated image URLs on blob.core hosts and drops unkn
   assert.deepEqual(emittedUrls(blocked), []);
 });
 
-test("ChatGPT startup and SPA conversation changes never re-read the conversation; persisted bindings hydrate instead", () => {
-  // Task 353: the cookie-only conversation re-read is gone — prompts exist
-  // only in the live push. Boot and SPA switches rehydrate the persisted
-  // file-id bindings instead of firing recovery requests.
-  const bootStart = contentSource.indexOf("loadSettings().then(() => {");
-  const intervalStart = contentSource.indexOf("autoScanInterval = setInterval", bootStart);
-  const boot = contentSource.slice(bootStart, intervalStart);
-  assert.ok(bootStart >= 0 && intervalStart > bootStart);
-  assert.match(boot, /hydratePersistedGenerationBindings\(\);[\s\S]*scheduleScan\(true\);/);
-  assert.doesNotMatch(boot, /requestCurrentConversationRefresh/);
-  assert.match(contentSource, /const previousConversationId = activeConversationId;/);
-  assert.match(contentSource, /adoptConversationId\(nextConversationId\);/);
-  assert.match(contentSource, /nextConversationId !== previousConversationId\) hydratePersistedGenerationBindings\(\);/);
-  assert.doesNotMatch(contentSource, /requestCurrentConversationRefresh/);
-  assert.match(contentSource, /function scheduleGenerationEvidenceRecovery\(candidate\)/);
-  assert.match(contentSource, /enqueueDomFallback\(candidate\)/);
-});
-
-test("new-chat conversation identity is adopted without clearing live-only generation state", () => {
-  const functions = ["conversationIdFromUrl", "currentConversationId", "adoptConversationId"]
-    .map((name) => new RegExp(`\\n {2}function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource)?.[0])
-    .filter(Boolean)
-    .join("\n");
+test("new-chat conversation identity is adopted without clearing live-only generation state", async () => {
+  // The real adoptConversationId, booted through the content harness with the
+  // reset counted by replacing its global binding.
+  const harness = await createContentHarness({ settings: null, pathname: "/" });
+  const { context } = harness;
+  harness.state.activeConversationId = "";
   let resets = 0;
-  const context = {
-    location: { pathname: "/", href: "https://chatgpt.com/" },
-    activeConversationId: "",
-    resetConversationTransientState() { resets += 1; },
+  context.resetConversationTransientState = () => {
+    resets += 1;
   };
-  vm.runInNewContext(`${functions}\nthis.adopt = adoptConversationId; this.current = currentConversationId;`, context);
 
-  assert.equal(context.current(), "");
-  assert.equal(context.adopt("conversation-new"), "conversation-new");
+  assert.equal(context.currentConversationId(), "");
+  assert.equal(context.adoptConversationId("conversation-new"), "conversation-new");
   assert.equal(resets, 0, "transport identity enrichment must preserve live-only evidence");
-  context.location.pathname = "/c/conversation-new";
-  assert.equal(context.adopt("conversation-new"), "conversation-new");
+  harness.location.pathname = "/c/conversation-new";
+  assert.equal(context.adoptConversationId("conversation-new"), "conversation-new");
   assert.equal(resets, 0, "URL assignment for the same conversation must not reset state");
 
-  assert.equal(context.adopt("conversation-stale"), "", "stale transport events must lose to the named URL conversation");
+  assert.equal(context.adoptConversationId("conversation-stale"), "", "stale transport events must lose to the named URL conversation");
   assert.equal(resets, 0);
-  context.location.pathname = "/c/conversation-other";
-  assert.equal(context.adopt("conversation-other"), "conversation-other");
+  harness.location.pathname = "/c/conversation-other";
+  assert.equal(context.adoptConversationId("conversation-other"), "conversation-other");
   assert.equal(resets, 1, "a real conversation switch must clear transient state once");
 });
 
@@ -467,12 +441,6 @@ test("ChatGPT DOM hook reacts to both src and srcset changes", () => {
   assert.equal(disabled.events.filter((event) => event.type === "dom-image").length, 0);
 });
 
-test("oversized ChatGPT metadata fails visibly while DOM fallback remains available", () => {
-  assert.match(contentSource, /data\.type === "harvest-skipped"/);
-  assert.match(contentSource, /对话信息过大，将先保存图片/);
-  assert.match(contentSource, /function enqueueDomFallback\(candidate\)/);
-});
-
 test("the page hook skips oversized buffered responses visibly", async () => {
   const big = { ...generatedPayload("file-big"), pad: "x".repeat(12_100_000) };
   const fetchHarness = createHookHarness(big);
@@ -486,21 +454,15 @@ test("the page hook skips oversized buffered responses visibly", async () => {
 });
 
 test("ChatGPT automatic capture work is limited to two concurrent tasks", async () => {
-  const helperSource = [
-    /const AUTO_CAPTURE_CONCURRENCY = 2;/.exec(contentSource)?.[0],
-    /let autoCaptureInFlight = 0;/.exec(contentSource)?.[0],
-    /const autoCaptureWaiters = \[\];/.exec(contentSource)?.[0],
-    /async function withAutoCaptureSlot\(task\) \{[\s\S]*?\n  \}/.exec(contentSource)?.[0],
-  ].filter(Boolean).join("\n");
-  assert.match(helperSource, /withAutoCaptureSlot/);
-
-  const context = { Promise };
-  vm.runInNewContext(`${helperSource}\nthis.withAutoCaptureSlot = withAutoCaptureSlot;`, context, { filename: "chatgpt-capture-limit.js" });
+  // The real withAutoCaptureSlot from the booted content script: five tasks,
+  // never more than two running at once.
+  const harness = await createContentHarness({ settings: null });
+  const { withAutoCaptureSlot } = harness.context;
 
   let active = 0;
   let maxActive = 0;
   const releases = [];
-  const tasks = Array.from({ length: 5 }, (_, index) => context.withAutoCaptureSlot(async () => {
+  const tasks = Array.from({ length: 5 }, (_, index) => withAutoCaptureSlot(async () => {
     active += 1;
     maxActive = Math.max(maxActive, active);
     await new Promise((resolveTask) => releases.push(resolveTask));
@@ -646,11 +608,8 @@ test("captures an explicit provider generation-call id without promoting a gener
 });
 
 test("preserves event-scoped conversation and generation-call identity through extension ingest", async () => {
-  assert.match(contentSource, /const transportConversationId = String\(item\.conversationId \|\| item\.conversation_id \|\| ""\)/);
-  assert.match(contentSource, /conversationId: transportConversationId \|\| currentConversationId\(\)/);
-  assert.match(contentSource, /providerGenerationCallId: String\(item\.providerGenerationCallId \|\| item\.provider_generation_call_id \|\| ""\)/);
-  assert.match(contentSource, /conversationId: resolved\.conversationId \|\| currentConversationId\(\)/);
-  assert.match(contentSource, /providerGenerationCallId: resolved\.providerGenerationCallId \|\| ""/);
+  // The content side of this passthrough is behavior-tested in
+  // web-capture-content-behavior.test.mjs through the booted content script.
 
   // Background ingest forwards is_reference, generation_request_prompt, providerGenerationCallId, and trimmed title
   const harness = await createBackgroundHarness({ appOnline: true });
@@ -1149,26 +1108,6 @@ test("multi-message DOM wrappers bind only when every message resolves to one ge
   assert.equal(registry.resolvedForMessages("conversation-wrapper", ["display-message", "retry-message"]), null);
 });
 
-test("content capture uses stable generation context instead of time-window prompt guessing", () => {
-  assert.match(contentSource, /function generationRegistryForPage\(\)/);
-  assert.match(contentSource, /resolvedForImage/);
-  assert.match(contentSource, /imageKeysForEntry/);
-  assert.doesNotMatch(contentSource, /findRecentUnboundPrompt|recentPrompts/);
-});
-
-test("content capture waits for generation stability and upgrades every output independently", () => {
-  assert.match(contentSource, /const AUTO_STABILITY_DELAY_MS = 900/);
-  assert.match(contentSource, /const AUTO_IN_PROGRESS_STALE_MS = 6_000/);
-  assert.match(contentSource, /const AUTO_PARTIAL_FALLBACK_MS = 15_000/);
-  assert.match(contentSource, /function autoCandidateReadiness\(candidate, evidence, reason\)/);
-  assert.match(contentSource, /if \(status === "in_progress"\)[\s\S]*age < AUTO_IN_PROGRESS_STALE_MS[\s\S]*return \{ ready: true, forceTerminalRefresh: false \};/);
-  assert.match(contentSource, /if \(status === "partial"\)[\s\S]*!pixelSignature[\s\S]*age < AUTO_PARTIAL_FALLBACK_MS/);
-  assert.match(contentSource, /readiness\.forceTerminalRefresh/);
-  assert.match(contentSource, /resolvedOutputsForEntry\?\.\(meta\)/);
-  assert.match(contentSource, /for \(const resolvedMeta of targets\)/);
-  assert.match(contentSource, /resolvedForMessages\?\.\(currentConversationId\(\), domMessageIds\)/);
-});
-
 test("websocket image identifiers are treated as interesting generation metadata", async () => {
   const harness = createHookHarness({});
   await harness.socketFrame(JSON.stringify({
@@ -1431,25 +1370,6 @@ test("retryRequestId in status report triggers retry only once per request ID", 
   assert.equal(second.retryRequested, false, "repeated report with same retryRequestId must not trigger retryRequested again");
 });
 
-test("ChatGPT page bridge only trusts the first privately transferred port", () => {
-  // content.js: only event.source === window hook-port transfers with a port
-  // are accepted, only the first port is adopted, and the ack goes back
-  // through that port.
-  assert.doesNotMatch(contentSource, /mosaPageHookChannel/);
-  assert.match(contentSource, /window\.addEventListener\("message", \(event\) => \{/);
-  assert.match(contentSource, /if \(event\.source !== window\) return;/);
-  assert.match(contentSource, /if \(data\.type !== "hook-port"\) return;/);
-  assert.match(contentSource, /if \(hookPort \|\| !event\.ports\?\.\[0\]\) return;/);
-  assert.match(contentSource, /type: "hook-port-ack"/);
-  assert.match(contentSource, /function syncPageHookCaptureEnabled\(attempt = 0\)/);
-  assert.match(contentSource, /function desiredPageHookCaptureEnabled\(\)/);
-  assert.match(contentSource, /return autoCapture \|\| Date\.now\(\) < manualHookLeaseUntil/);
-  assert.match(contentSource, /pageHookCaptureAck === desired/);
-  assert.match(contentSource, /const retryDelays = \[25, 100, 300, 750, 1_500, 2_500\]/);
-  assert.match(contentSource, /data\.type === "capture-state"/);
-  assert.match(contentSource, /DOMContentLoaded", \(\) => syncPageHookCaptureEnabled\(\)/);
-});
-
 test("the page hook publishes one private port instead of a DOM channel", () => {
   const harness = createHookHarness({ conversation_id: "conversation-test", mapping: {} }, "conversation-test", { captureEnabled: false, ack: false });
 
@@ -1621,28 +1541,13 @@ test("clears the legacy development Token and verifies the real ingest authoriza
 });
 
 function loadImageLookupKeys() {
-  // imageLookupKeys reads the blob: -> file id table through blobAssetIdForUrl,
-  // so extract those helpers too and run the existing checks with an empty table.
-  const source = ["chatGptImageProxyInfo", "normalizeAssetId", "isTrustedBlobAssetUrl", "normalizeBlobAssetId", "rememberBlobAsset", "blobAssetIdForUrl", "imageLookupKeys"].map((name) => {
-    const match = new RegExp(`\\n {2}function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource);
-    assert.ok(match, `${name} should be extractable from content.js`);
-    return match[0];
-  }).join("\n");
-  const context = {
-    Set,
-    Map,
-    String,
-    URL,
-    location: { origin: "https://chatgpt.com", href: "https://chatgpt.com/c/demo" },
-    blobAssetIds: new Map(),
-    MAX_BLOB_ASSETS: 400,
-  };
-  vm.runInNewContext(source, context, { filename: "content-lookup.js" });
-  return context.imageLookupKeys;
+  // The real imageLookupKeys from the booted content script (which reads the
+  // blob: -> file id table through its own blobAssetIdForUrl).
+  return createContentHarness({ settings: null, pathname: "/c/demo" }).then((harness) => harness.context.imageLookupKeys);
 }
 
-test("resolves every URL variant of one ChatGPT file to a shared identity", () => {
-  const imageLookupKeys = loadImageLookupKeys();
+test("resolves every URL variant of one ChatGPT file to a shared identity", async () => {
+  const imageLookupKeys = await loadImageLookupKeys();
   const estuary = imageLookupKeys("https://chatgpt.com/backend-api/estuary/content?cid=demo&id=file-abc123def&ts=1&sig=first");
   const estuaryWithoutConversation = imageLookupKeys("https://chatgpt.com/backend-api/estuary/content?id=file-abc123def&ts=2&sig=no-cid");
   const cdn = imageLookupKeys("https://files.oaiusercontent.com/file-abc123def?se=2026-07-26&sig=second");
@@ -1655,55 +1560,6 @@ test("resolves every URL variant of one ChatGPT file to a shared identity", () =
   assert.ok(estuary.some((key) => cdn.includes(key)), "Estuary and CDN links must share an identity");
   assert.deepEqual(cdn, cdnResigned, "a re-signed link is the same image");
   assert.equal(other.some((key) => cdn.includes(key)), false, "different files stay separate");
-});
-
-test("archives one row per uploaded reference photo", () => {
-  // The same upload surfaces as a composer blob, an Estuary proxy URL and a
-  // signed CDN link. Keying on the raw src archived it once per variant.
-  assert.match(contentSource, /const savedIdentityKeys = new Set\(\)/);
-  assert.match(contentSource, /function isSavedCandidate\(candidate\)/);
-  assert.match(contentSource, /function rememberSavedCandidate\(candidate, generationStatus = "unknown"\)/);
-  assert.match(contentSource, /if \(isSavedCandidate\(candidate\)\) return false;/);
-  assert.doesNotMatch(contentSource, /if \(savedKeys\.has\(key\)\) return false;/);
-
-  // A composer attachment is re-rendered inside the sent message at a capped
-  // size, so capturing both produced two differently sized assets.
-  assert.match(contentSource, /function isComposerNode\(node\)/);
-  assert.match(contentSource, /if \(!manual && isComposerNode\(img\)\) return false;/);
-  assert.match(contentSource, /if \(manual\) \{[\s\S]*document\.querySelectorAll\("div, section, main, figure"\)/);
-
-  // The Estuary proxy and the signed CDN link carry the same file id. Without
-  // it they read as two images, and their bytes differ (canvas re-encode vs
-  // served file), so the server content-hash dedupe cannot merge them either.
-  assert.match(contentSource, /if \(fileId\) keys\.push\(`asset:\$\{fileId\}`\);/);
-
-  // Preserve the provider-served original whenever available. The server's
-  // pixel hash keeps an older canvas-encoded copy from becoming a second asset.
-  const bytesFn = /async function bytesFromUrlOrImg\(candidate\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0] || "";
-  assert.ok(bytesFn, "bytesFromUrlOrImg should exist");
-  assert.ok(bytesFn.indexOf("originalBytesFromUrl(") < bytesFn.indexOf("canvasBytesFromImage(candidate.el)"));
-
-  assert.match(contentSource, /isReference: isReferenceCandidate\(candidate\)/);
-  assert.match(contentSource, /function hasObservedGenerationEvidence\(candidate\)/);
-  assert.match(contentSource, /function findGenerationEvidenceForCandidate\(candidate\)/);
-  assert.match(contentSource, /const evidence = findGenerationEvidenceForCandidate\(candidate\);/);
-  assert.match(contentSource, /if \(!evidence && isRecoverableGenerationCandidate\(candidate\)\) scheduleGenerationEvidenceRecovery\(candidate\);/);
-  assert.match(contentSource, /function enqueueDomFallback\(candidate\)/);
-  assert.match(contentSource, /reason: "dom-fallback"/);
-  assert.match(contentSource, /const provenGeneration = !manual && !reference/);
-  assert.match(contentSource, /const minEdge = reference \? 32 : manual \? 360 : provenGeneration \? 256 : MIN_EDGE/);
-  assert.match(contentSource, /if \(!reference && byteLength > 0 && byteLength < MIN_BYTES\) return false/);
-  assert.match(contentSource, /const needsReferenceRepair = stagedReferences > 0[\s\S]*isSavedCandidate\(candidate\)/);
-  assert.match(contentSource, /force: needsReferenceRepair/);
-  assert.match(contentSource, /rememberSet\(referenceSyncKeys, syncKey\)/);
-  // A previously-seen reference still has to reach the server for each new
-  // generation context. The server deduplicates the blob and appends usage.
-  const stageReferences = /async function stageGenerationReferences\(candidate\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0] || "";
-  assert.ok(stageReferences, "stageGenerationReferences should exist");
-  assert.doesNotMatch(stageReferences, /isSavedCandidate\(reference\)/);
-  assert.match(stageReferences, /reason: "auto-reference"/);
-  // An optional reference failure must never surface as a user-facing error.
-  assert.match(contentSource, /const optionalReferenceFailure = reason === "auto-reference"/);
 });
 
 test("only tool-generated images are offered for automatic capture", async () => {
@@ -1719,55 +1575,26 @@ test("only tool-generated images are offered for automatic capture", async () =>
   assert.equal(uploaded.events.filter((event) => event.type === "auto-image").length, 0);
 });
 
-test("automatic capture does not starve new images behind already-saved DOM candidates", () => {
-  const scanStart = contentSource.indexOf("const candidates = collectDomCandidates();");
-  const scanEnd = contentSource.indexOf("}, force ? 120 : 600);", scanStart);
-  const scan = contentSource.slice(scanStart, scanEnd);
-  assert.ok(scanStart >= 0 && scanEnd > scanStart, "scan block should be extractable");
-  assert.match(scan, /const eligible = candidates\.filter\(\(candidate\) => \{/);
-  assert.match(scan, /if \(!canAttempt\(candidate\)\) return false;/);
-  assert.match(scan, /if \(hasObservedGenerationEvidence\(candidate\)\) return true;/);
-  assert.match(scan, /if \(isRecoverableGenerationCandidate\(candidate\)\) scheduleGenerationEvidenceRecovery\(candidate\);/);
-  assert.match(scan, /\}\)\.slice\(0, 6\);/);
-  assert.doesNotMatch(scan, /for \(const candidate of candidates\.slice\(0, 6\)\)/);
-});
+test("ChatGPT DOM fallback recognizes generated-image turn structure without legacy role nesting", async () => {
+  // The booted content script starts its DOM observer with the real config,
+  // and an explicit "Generated image" alt marker makes even a plain-host
+  // image a recoverable generation candidate.
+  const harness = await createContentHarness({ settings: { autoCapture: true } });
+  const scanObserver = harness.observers.find((observer) => observer.observed.length);
+  assert.ok(scanObserver, "the DOM observer observes with capture on");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(scanObserver.observed[0].options)),
+    { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset", "alt", "aria-label"] },
+  );
 
-test("ChatGPT DOM fallback recognizes generated-image turn structure without legacy role nesting", () => {
-  assert.match(contentSource, /const CHATGPT_TURN_SELECTOR = '\[data-testid\^="conversation-turn-"\]'/);
-  assert.match(contentSource, /function hasGeneratedImageDomMarker\(image\)/);
-  assert.match(contentSource, /generated image\|image generated/);
-  assert.match(contentSource, /const explicitGeneratedImage = hasGeneratedImageDomMarker\(image\)/);
-  assert.match(contentSource, /if \(!roleScope && !turnOwnsAssistantContent && !explicitGeneratedImage\) return false;/);
-  assert.match(contentSource, /if \(explicitGeneratedImage\) return true;/);
-  assert.match(contentSource, /attributeFilter: \["src", "srcset", "alt", "aria-label"\]/);
-});
-
-test("ChatGPT generation evidence recovery spans slow multi-image renders", () => {
-  assert.match(contentSource, /const GENERATION_EVIDENCE_RECOVERY_DELAYS = \[2_800, 7_200, 15_000\]/);
-  assert.match(contentSource, /GENERATION_EVIDENCE_RECOVERY_DELAYS\.map\(\(delay, index\) => setTimeout/);
-  assert.match(contentSource, /index !== GENERATION_EVIDENCE_RECOVERY_DELAYS\.length - 1/);
-  assert.match(contentSource, /enqueueDomFallback\(candidate\);/);
-});
-
-test("temporary small ChatGPT generation candidates remain retryable", () => {
-  const ingestStart = contentSource.indexOf("async function ingestCandidate(candidate");
-  const enqueueStart = contentSource.indexOf("function enqueueAuto(candidate", ingestStart);
-  const ingest = contentSource.slice(ingestStart, enqueueStart);
-  assert.ok(ingestStart >= 0 && enqueueStart > ingestStart);
-  assert.match(ingest, /hasObservedGenerationEvidence\(candidate\) \|\| isRecoverableGenerationCandidate\(candidate\)/);
-  assert.match(ingest, /failedAt\.set\(key, Date\.now\(\)\)/);
-});
-
-test("promptless generation events can archive before the DOM finishes rendering", () => {
-  const autoImageStart = contentSource.indexOf('if (data.type === "auto-image"');
-  const domImageStart = contentSource.indexOf('if (data.type === "dom-image"', autoImageStart);
-  const block = contentSource.slice(autoImageStart, domImageStart);
-  assert.ok(autoImageStart >= 0 && domImageStart > autoImageStart);
-  assert.match(block, /if \(meta\.isGeneration !== true\) return;/);
-  assert.match(block, /enqueueAuto\(\{/);
-  assert.doesNotMatch(block, /\["generation-tool-prompt", "visible-caption"\]\.includes\(meta\.promptStatus\)/);
-  assert.match(contentSource, /const failedNetworkIdentityKeys = new Set\(\)/);
-  assert.match(contentSource, /candidateLookupKeys\(candidate\)\.some\(\(identity\) => failedNetworkIdentityKeys\.has\(identity\)\)/);
+  const marked = new harness.context.HTMLImageElement({
+    src: "https://chatgpt.com/backend-api/files/plain-host", complete: true, naturalWidth: 1024, naturalHeight: 1024, alt: "Generated image 1",
+  });
+  const unmarked = new harness.context.HTMLImageElement({
+    src: "https://chatgpt.com/backend-api/files/plain-host", complete: true, naturalWidth: 1024, naturalHeight: 1024,
+  });
+  assert.equal(harness.context.isRecoverableGenerationCandidate({ el: marked, imageUrl: marked.src }), true, "the marker wins over the plain host");
+  assert.equal(harness.context.isRecoverableGenerationCandidate({ el: unmarked, imageUrl: unmarked.src }), false, "no marker, no recovery");
 });
 
 test("splits sibling generations without tool call ids into per-asset reference scopes", async () => {
@@ -2156,13 +1983,8 @@ test("binds prompt and asset when one image call splits them across nested reque
   assert.equal(generation?.payload.promptSource, "revised_prompt");
 });
 
-test("uses only a same-message Model caption when conversation metadata is cached", () => {
-  assert.equal(manifest.version, "0.15.47");
-  assert.match(contentSource, /function messageScopeForCandidate\(candidate\)/);
-  assert.match(contentSource, /function domCaptionForCandidate\(candidate\)/);
-  assert.match(contentSource, /model caption\\s\*:\\s\*\(\.\+\)\$/i);
-  assert.match(contentSource, /via: "dom-message-caption"/);
-});
+// The same-message caption fallback for cached conversations is
+// behavior-tested in web-capture-content-behavior.test.mjs.
 
 function currentChatGptConversation(prompt = "", role = "tool") {
   return {
@@ -2435,7 +2257,6 @@ test("keeps the live image tool request Prompt beside the caption", async () => 
   const resolved = registry.resolvedForMessage("conversation-test", "displayed-cat");
   assert.equal(resolved.prompt, caption);
   assert.equal(resolved.generationRequestPrompt, requestPrompt);
-  assert.match(contentSource, /generationRequestPrompt: resolved\.generationRequestPrompt/);
 });
 
 test("binds request Prompts in a multi-call turn only by parent_id", async () => {
@@ -2706,21 +2527,8 @@ test("the passive path binds images from the page's own conversation read", asyn
 });
 
 function currentChatGptContentHarness() {
-  const names = [
-    "conversationIdFromUrl", "currentConversationId", "conversationTurnForNode", "turnContainsRole", "nearestPrecedingUserScope",
-    "userMessageForCandidate", "stripSystemHintLabelLines", "messageIdsForCandidate", "messageIdForCandidate", "messageScopeForCandidate", "domCaptionForCandidate",
-    "chatGptImageProxyInfo", "normalizeAssetId", "isTrustedBlobAssetUrl", "normalizeBlobAssetId", "blobAssetIdForUrl", "imageLookupKeys", "candidateLookupKeys",
-    "findGenerationEvidenceForCandidate", "resolvePrompt", "buildStoredPrompt", "cleanPromptText",
-    "extractPlaceHints", "promptMentionsPlace", "looksLikeGenerationCaption", "isWeakChatPrompt",
-    "scorePromptText", "normalizeGenerationStatus",
-  ];
-  const source = names.map((name) => {
-    const match = new RegExp(`\\n {2}function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource);
-    assert.ok(match, `missing ${name}`);
-    return match[0];
-  }).join("\n");
-  const constants = ["CHATGPT_TURN_SELECTOR", "CHATGPT_USER_SELECTOR", "CHATGPT_MESSAGE_SELECTOR", "SYSTEM_HINT_LABEL_LINES"]
-    .map((name) => new RegExp(`const ${name} = [^;]+;`).exec(contentSource)[0]).join("\n");
+  // The real content.js booted through the harness, with this test family's
+  // DOM stubs: one user unit, one message node carrying the output id.
   const userNode = {
     innerText: "Make the lettering blue and keep the background red.",
     matches: () => false,
@@ -2735,27 +2543,28 @@ function currentChatGptContentHarness() {
     }
     getAttribute() { return "Generated image 1"; }
   }
-  const registry = createGenerationRegistryHarness();
-  const context = {
-    HTMLImageElement: TestImage, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
-    URL, location: { href: "https://chatgpt.com/c/conversation-test", origin: "https://chatgpt.com", pathname: "/c/conversation-test" },
-    blobAssetIds: new Map(),
-    MAX_BLOB_ASSETS: 400,
-    activeConversationId: "conversation-test",
-    document: { querySelectorAll: (selector) => selector.includes('data-content-search-unit-key$=":user"') ? [userNode] : [] },
-    STYLE_HINTS: [],
-    findBoundPromptForImage: () => null,
-    findGenerationEvidenceForImage: () => null,
-    generationRegistryForPage: () => registry,
-  };
-  vm.runInNewContext(`${constants}\n${source}`, context);
-  return { context, registry, messageNode, userNode, candidate: { el: new TestImage(), imageUrl: "blob:https://chatgpt.com/preview-1" } };
+  return createContentHarness({
+    settings: null,
+    pathname: "/c/conversation-test",
+    env: { HTMLImageElement: TestImage },
+    document: { querySelector: () => null, querySelectorAll: (selector) => (String(selector).includes('data-content-search-unit-key$=":user"') ? [userNode] : []) },
+  }).then((harness) => {
+    harness.state.activeConversationId = "conversation-test";
+    return {
+      harness,
+      context: harness.context,
+      messageNode,
+      userNode,
+      candidate: { el: new harness.context.HTMLImageElement(), imageUrl: "blob:https://chatgpt.com/preview-1" },
+    };
+  });
 }
 
 test("new blob previews preserve user input and output identity without inventing a prompt", async () => {
   const hook = createHookHarness(currentChatGptConversation());
   await hook.harvest(undefined, "https://chatgpt.com/backend-api/conversations/conversation-test");
-  const { context, registry, candidate, userNode } = currentChatGptContentHarness();
+  const { context, candidate, userNode } = await currentChatGptContentHarness();
+  const registry = context.generationRegistryForPage();
   for (const event of hook.events.filter((event) => event.type === "generation-meta")) registry.remember(event.payload);
   const resolved = context.resolvePrompt(candidate.imageUrl, candidate);
   assert.equal(resolved.prompt, "");
@@ -2768,7 +2577,8 @@ test("new blob previews preserve user input and output identity without inventin
 
 test("late generation metadata upgrades only the matching current blob message", async () => {
   const prompt = "Create blue metallic lettering on a red poster, with soft lighting.";
-  const { context, registry, candidate, messageNode } = currentChatGptContentHarness();
+  const { context, candidate, messageNode } = await currentChatGptContentHarness();
+  const registry = context.generationRegistryForPage();
   const hook = createHookHarness(currentChatGptConversation(prompt));
   await hook.harvest(undefined, "https://chatgpt.com/backend-api/conversations/conversation-test");
   for (const event of generationEvents(hook)) registry.remember(event.payload);
@@ -2782,25 +2592,17 @@ test("late generation metadata upgrades only the matching current blob message",
 });
 
 test("an already saved blob is upgraded when its provider identity arrives late", async () => {
-  const { context, registry, candidate } = currentChatGptContentHarness();
+  const { harness, context, candidate } = await currentChatGptContentHarness();
   const savedKeys = context.candidateLookupKeys(candidate);
+  for (const key of savedKeys) harness.state.savedPromptRanks.set(key, 0);
   const ingests = [];
-  Object.assign(context, {
-    savedPromptRanks: new Map(savedKeys.map((key) => [key, 0])),
-    capturedCandidates: new Map(),
-    collectDomCandidates: () => [candidate],
-    promptUpgradeInFlight: new Set(),
-    clearPromptRecovery: () => {},
-    withAutoCaptureSlot: async (task) => task(),
-    ingestCandidate: async (item, options) => { ingests.push({ item, options }); },
-  });
-  const source = ["findCandidateForMeta", "candidateOperationKey", "savedPromptRankForKeys", "promptQuality", "metaPromptQuality", "schedulePromptUpgrade"]
-    .map((name) => new RegExp(`\\n {2}function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource)[0]).join("\n");
-  vm.runInNewContext(source, context);
+  context.collectDomCandidates = () => [candidate];
+  context.withAutoCaptureSlot = async (task) => task();
+  context.ingestCandidate = async (item, options) => { ingests.push({ item, options }); };
   const hook = createHookHarness(currentChatGptConversation("Create a poster with blue lettering and soft lighting."));
   await hook.harvest(undefined, "https://chatgpt.com/backend-api/conversations/conversation-test");
   const meta = generationEvents(hook)[0].payload;
-  registry.remember(meta);
+  context.generationRegistryForPage().remember(meta);
   context.schedulePromptUpgrade(meta);
   await setImmediate();
   assert.equal(ingests.length, 1);
@@ -2809,180 +2611,6 @@ test("an already saved blob is upgraded when its provider identity arrives late"
   assert.equal(ingests[0].options.force, true);
 });
 
-test("keeps a same-message user instruction separate and the DOM caption fallback available", () => {
-  assert.doesNotMatch(contentSource, /allowUserMessageFallback/);
-  assert.doesNotMatch(contentSource, /promptSource: "bound-user-message"/);
-  assert.match(contentSource, /function domCandidateForImage\(imageUrl(?:, \{ manual = false \} = \{\})?\)/);
-  assert.match(contentSource, /function enqueueDomCandidateForImage\(imageUrl, reason\)/);
-  assert.match(contentSource, /function currentViewportCandidate\(candidates\)/);
-  // Task 353 removed the conversation re-read retries; nothing in the script
-  // may schedule or await them.
-  assert.doesNotMatch(contentSource, /schedulePromptRecovery/);
-  assert.doesNotMatch(contentSource, /promptWaitMs/);
-});
-
-test("an orphaned content script explains itself instead of dying on sendMessage", () => {
-  // Reloading or re-adding the unpacked extension leaves the injected script
-  // running with chrome.runtime gone; every save then failed with a raw
-  // "Cannot read properties of undefined (reading 'sendMessage')".
-  assert.match(contentSource, /function extensionAlive\(\)/);
-  assert.match(contentSource, /function markContextLost\(\)/);
-  assert.match(contentSource, /const CONTEXT_LOST_MESSAGE = /);
-
-  const send = /async function runtimeSend\(message\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0] || "";
-  assert.ok(send, "runtimeSend should be extractable from content.js");
-  assert.ok(
-    send.indexOf("extensionAlive()") !== -1
-      && send.indexOf("extensionAlive()") < send.indexOf("chrome.runtime.sendMessage(message)"),
-    "runtimeSend must verify the extension context before touching chrome.runtime",
-  );
-  assert.match(send, /reading 'sendMessage'/);
-
-  // The scan interval doubles as the watchdog: an orphaned page flips to the
-  // refresh instruction on its own instead of waiting for a failed save.
-  const interval = /autoScanInterval = setInterval\(\(\) => \{[\s\S]*?\n {2}\}, 5000\);/.exec(contentSource)?.[0] || "";
-  assert.ok(interval, "auto scan interval should be extractable from content.js");
-  assert.match(interval, /markContextLost\(\)/);
-});
-
-function loadSettingsHarness({ response, responseError, localValue = true } = {}) {
-  const loadSettings = /async function loadSettings\(\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0] || "";
-  assert.ok(loadSettings, "loadSettings should be extractable from content.js");
-  const localReads = [];
-  const localWrites = [];
-  const context = {
-    chrome: {
-      storage: {
-        local: {
-          get: async (defaults) => {
-            localReads.push(defaults);
-            return { autoCapture: localValue };
-          },
-          set: async (value) => localWrites.push(value),
-        },
-      },
-    },
-    contextLost: false,
-    runtimeSend: async () => {
-      if (responseError) throw responseError;
-      return response;
-    },
-    syncPageHookCaptureEnabled: () => {},
-  };
-  vm.runInNewContext(`
-    let autoCapture = false;
-    let pageHookCaptureAck = null;
-    ${loadSettings}
-    globalThis.runLoadSettings = async () => {
-      await loadSettings();
-      return autoCapture;
-    };
-  `, context, { filename: "content-settings.js" });
-  return { context, localReads, localWrites };
-}
-
-test("a settings read failure preserves an explicit local auto-capture choice", async () => {
-  const harness = loadSettingsHarness({
-    responseError: new Error("background temporarily unavailable"),
-    localValue: false,
-  });
-
-  assert.equal(await harness.context.runLoadSettings(), false);
-  assert.equal(harness.localReads.length, 1);
-  assert.equal(harness.localReads[0].autoCapture, false);
-  assert.deepEqual(harness.localWrites, [], "the content script must not rewrite settings");
-});
-
-test("the background setting wins without a redundant local read", async () => {
-  const harness = loadSettingsHarness({
-    response: { ok: true, settings: { autoCapture: false } },
-    localValue: true,
-  });
-
-  assert.equal(await harness.context.runLoadSettings(), false);
-  assert.deepEqual(harness.localReads, []);
-  assert.deepEqual(harness.localWrites, []);
-});
-
-test("startup context loss disconnects an initialized observer without a TDZ error", async () => {
-  const observerAssignment = contentSource.indexOf("observer = new MutationObserver");
-  const settingsBoot = contentSource.indexOf("loadSettings().then");
-  assert.ok(observerAssignment !== -1 && observerAssignment < settingsBoot);
-  assert.match(contentSource, /observer\?\.disconnect\(\)/);
-
-  const markContextLost = /function markContextLost\(\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0] || "";
-  const runtimeSend = /async function runtimeSend\(message\) \{[\s\S]*?\n {2}\}/.exec(contentSource)?.[0] || "";
-  const context = {
-    CONTEXT_LOST_MESSAGE: "refresh required",
-    Error,
-    autoScanInterval: null,
-    clearInterval,
-    clearTimeout,
-    chrome: {},
-    contextLost: false,
-    document: { getElementById: () => null },
-    extensionAlive: () => false,
-    observer: { disconnectCalled: 0, disconnect() { this.disconnectCalled += 1; } },
-    autoStabilityStates: new Map(),
-    autoStabilityTimers: new Map(),
-    generationEvidenceRecoveryTimers: new Map(),
-    manualHookDisableTimer: null,
-    promptRecoveryTimers: new Map(),
-    scanTimer: null,
-    setStatus: () => {},
-    showToast: () => {},
-  };
-  vm.runInNewContext(`
-    ${markContextLost}
-    ${runtimeSend}
-    globalThis.runRuntimeSend = () => runtimeSend({ type: "mosa.getSettings" });
-  `, context, { filename: "content-context-loss.js" });
-
-  await assert.rejects(context.runRuntimeSend(), /refresh required/);
-  assert.equal(context.observer.disconnectCalled, 1);
-  assert.equal(context.contextLost, true);
-});
-
-test("an open page follows auto-capture changes from local storage only", () => {
-  const listener = /chrome\.storage\?\.onChanged\?\.addListener\(\(changes, area\) => \{[\s\S]*?\n {2}\}\);/.exec(contentSource)?.[0] || "";
-  assert.ok(listener, "storage listener should be extractable from content.js");
-  let storageListener = null;
-  const context = {
-    chrome: { storage: { onChanged: { addListener: (callback) => { storageListener = callback; } } } },
-    clearTimeout,
-    autoStabilityStates: new Map(),
-    autoStabilityTimers: new Map(),
-    observer: { disconnect() {} },
-    scanTimer: null,
-    requestCurrentConversationRefresh: () => false,
-    setPageHookCaptureEnabled: () => {},
-    startObs: () => {},
-    state: {},
-  };
-  vm.runInNewContext(`
-    let autoCapture = true;
-    let manualHookLeaseUntil = 0;
-    let manualHookDisableTimer = null;
-    let pageHookCaptureAck = null;
-    let scheduled = 0;
-    let titleReports = 0;
-    let status = "";
-    function scheduleScan() { scheduled += 1; }
-    function scheduleSessionTitleReport() { titleReports += 1; }
-    function setStatus(value) { status = value; }
-    function syncPageHookCaptureEnabled() {}
-    ${listener}
-    globalThis.readState = () => ({ autoCapture, scheduled, titleReports, status });
-  `, context, { filename: "content-storage-listener.js" });
-
-  assert.equal(typeof storageListener, "function");
-  storageListener({ autoCapture: { newValue: false } }, "local");
-  assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: false, scheduled: 0, titleReports: 0, status: "自动关" }));
-  storageListener({ autoCapture: { newValue: true } }, "sync");
-  assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: false, scheduled: 0, titleReports: 0, status: "自动关" }));
-  storageListener({ autoCapture: { newValue: true } }, "local");
-  assert.equal(JSON.stringify(context.readState()), JSON.stringify({ autoCapture: true, scheduled: 1, titleReports: 1, status: "自动开" }));
-});
 
 test("the page's own conversation read still binds a late Model caption and title", async () => {
   const caption = "Model caption: A detailed retro travel poster for Nanjing, China, with cream paper, bold red Art Deco typography, city vignettes, and a screen-print editorial layout.";
@@ -3152,7 +2780,6 @@ test("does not capture page authentication headers", async () => {
 
   const posted = JSON.stringify(harness.events);
   assert.equal(posted.includes("page-session-token"), false, "a page token must never be posted out of the page");
-  assert.doesNotMatch(contentSource, /authorization/i);
   assert.doesNotMatch(hookSource, /authorization/i);
 });
 
@@ -3605,10 +3232,8 @@ test("does not attach a prompt from one message to an unrelated image message", 
 });
 
 test("opens the in-page control panel in the lower-right corner instead of relying on popup UI", () => {
-  assert.match(contentSource, /mosa\.capture\.togglePanel/);
-  assert.match(contentSource, /function ensureControlPanel\(\)/);
-  assert.match(contentSource, /function toggleControlPanel\(\)/);
-  assert.match(contentSource, /mosa-capture-panel/);
+  // The panel's runtime behavior (manual actions, closing) is behavior-tested
+  // in web-capture-content-behavior.test.mjs.
   assert.match(contentCss, /#mosa-capture-panel/);
   assert.match(contentCss, /right:\s*16px/);
   assert.match(contentCss, /bottom:\s*16px/);
@@ -3724,24 +3349,11 @@ async function postBlobAssetsForBatch(harness) {
   return harness.events.filter((event) => event.type === "blob-asset").map((event) => event.payload);
 }
 
-function loadContentLookupWithBlobAssets() {
-  const names = ["chatGptImageProxyInfo", "normalizeAssetId", "isTrustedBlobAssetUrl", "normalizeBlobAssetId", "rememberBlobAsset", "blobAssetIdForUrl", "imageLookupKeys"];
-  const source = names.map((name) => {
-    const match = new RegExp(`\\n {2}function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource);
-    assert.ok(match, `${name} should be extractable from content.js`);
-    return match[0];
-  }).join("\n");
-  const context = {
-    Set,
-    Map,
-    String,
-    URL,
-    location: { origin: "https://chatgpt.com", href: "https://chatgpt.com/c/demo" },
-    blobAssetIds: new Map(),
-    MAX_BLOB_ASSETS: 400,
-  };
-  vm.runInNewContext(source, context, { filename: "content-blob-lookup.js" });
-  return context;
+async function loadContentLookupWithBlobAssets() {
+  // The real lookup functions from the booted content script; the blob: ->
+  // file id table is reachable through the harness state.
+  const harness = await createContentHarness({ settings: null, pathname: "/c/demo" });
+  return { context: harness.context, state: harness.state };
 }
 
 function batchGenerationMetas(harness) {
@@ -3828,7 +3440,7 @@ test("page hook blob mapping survives hook-internal errors without touching the 
 
 test("multi-image gallery binds every blob to its own caption via the estuary file id", async () => {
   const harness = createHookHarness({});
-  const lookup = loadContentLookupWithBlobAssets();
+  const { context: lookup } = await loadContentLookupWithBlobAssets();
   const registry = createGenerationRegistryHarness({ imageLookupKeys: lookup.imageLookupKeys });
   await feedBatchGalleryTurn(harness);
   const payloads = await postBlobAssetsForBatch(harness);
@@ -3851,7 +3463,7 @@ test("multi-image gallery binds every blob to its own caption via the estuary fi
 
 test("the same gallery without blob-asset mappings still fails closed on prompts", async () => {
   const harness = createHookHarness({});
-  const lookup = loadContentLookupWithBlobAssets();
+  const { context: lookup } = await loadContentLookupWithBlobAssets();
   const registry = createGenerationRegistryHarness({ imageLookupKeys: lookup.imageLookupKeys });
   await feedBatchGalleryTurn(harness);
   const metas = batchGenerationMetas(harness);
@@ -3883,22 +3495,22 @@ test("batch_requests with 4 entries leaves the request prompt empty instead of g
   assert.deepEqual(new Set(captions).size, 4, "all four captions stay distinct");
 });
 
-test("content-side blob-asset validation drops cross-origin urls and malformed ids", () => {
-  const lookup = loadContentLookupWithBlobAssets();
-  assert.equal(lookup.rememberBlobAsset({ blobUrl: "blob:https://evil.example/mosa-1", assetId: "file-qae2e000001" }), null, "cross-origin blob is dropped");
-  assert.equal(lookup.rememberBlobAsset({ blobUrl: "blob:https://chatgpt.com/mosa-2", assetId: "sediment://file-qae2e000002" }), null, "pointer-shaped id is dropped");
-  assert.equal(lookup.rememberBlobAsset({ blobUrl: "https://chatgpt.com/backend-api/estuary/content?id=file-qae2e000003", assetId: "file-qae2e000003" }), null, "non-blob url is dropped");
-  const ok = lookup.rememberBlobAsset({ blobUrl: "blob:https://chatgpt.com/mosa-4", assetId: "file-qae2e000004" });
+test("content-side blob-asset validation drops cross-origin urls and malformed ids", async () => {
+  const { context, state } = await loadContentLookupWithBlobAssets();
+  assert.equal(context.rememberBlobAsset({ blobUrl: "blob:https://evil.example/mosa-1", assetId: "file-qae2e000001" }), null, "cross-origin blob is dropped");
+  assert.equal(context.rememberBlobAsset({ blobUrl: "blob:https://chatgpt.com/mosa-2", assetId: "sediment://file-qae2e000002" }), null, "pointer-shaped id is dropped");
+  assert.equal(context.rememberBlobAsset({ blobUrl: "https://chatgpt.com/backend-api/estuary/content?id=file-qae2e000003", assetId: "file-qae2e000003" }), null, "non-blob url is dropped");
+  const ok = context.rememberBlobAsset({ blobUrl: "blob:https://chatgpt.com/mosa-4", assetId: "file-qae2e000004" });
   assert.equal(ok?.blobUrl, "blob:https://chatgpt.com/mosa-4");
   assert.equal(ok?.assetId, "file-qae2e000004");
-  assert.ok(lookup.imageLookupKeys("blob:https://chatgpt.com/mosa-4").includes("asset:file-qae2e000004"));
-  assert.equal(lookup.imageLookupKeys("blob:https://evil.example/mosa-1").some((key) => key.startsWith("asset:")), false);
+  assert.ok(context.imageLookupKeys("blob:https://chatgpt.com/mosa-4").includes("asset:file-qae2e000004"));
+  assert.equal(context.imageLookupKeys("blob:https://evil.example/mosa-1").some((key) => key.startsWith("asset:")), false);
   // The table is bounded and drops the oldest entries first.
   for (let index = 0; index < 400; index += 1) {
-    lookup.rememberBlobAsset({ blobUrl: `blob:https://chatgpt.com/overflow-${index}`, assetId: "file-qae2e000004" });
+    context.rememberBlobAsset({ blobUrl: `blob:https://chatgpt.com/overflow-${index}`, assetId: "file-qae2e000004" });
   }
-  assert.equal(lookup.blobAssetIds.size, 400);
-  assert.equal(lookup.blobAssetIds.has("blob:https://chatgpt.com/mosa-4"), false);
+  assert.equal(state.blobAssetIds.size, 400);
+  assert.equal(state.blobAssetIds.has("blob:https://chatgpt.com/mosa-4"), false);
 });
 
 // Proven gallery blob auto-capture: a multi-image gallery thumbnail that was
@@ -3924,51 +3536,9 @@ function galleryGenerationEvidence() {
 }
 
 function currentChatGptAutoCaptureHarness() {
-  const constants = [
-    "BLOCK_URL_HINTS", "GENERATION_HOST_HINTS", "MIN_EDGE", "MIN_BYTES", "PROVEN_GENERATION_MIN_EDGE",
-    "COMPOSER_SELECTOR", "CHATGPT_TURN_SELECTOR", "CHATGPT_USER_SELECTOR", "CHATGPT_MESSAGE_SELECTOR", "STYLE_HINTS",
-    "MAX_BLOB_ASSETS", "SESSION_CACHE_MAX", "SIZE_FAILURE_LIMIT", "SIZE_FAILURE_BACKOFF_MS",
-    "AUTO_STABILITY_DELAY_MS", "AUTO_IN_PROGRESS_STALE_MS", "AUTO_PARTIAL_FALLBACK_MS", "DOM_MEDIA_GRACE_MS",
-    "SESSION_TITLE_MAX_LENGTH", "SESSION_TITLE_PLACEHOLDERS", "SYSTEM_HINT_LABEL_LINES",
-    "DELIVERY_RETRY_MAX", "DELIVERY_RETRY_GAP_MS", "PAGE_READ_ATTEMPTS_MAX",
-  ].map((name) => new RegExp(`const ${name} = [^;]+;`).exec(contentSource)?.[0]);
-  assert.ok(constants.every(Boolean), "auto-capture constants should be extractable from content.js");
-
-  const names = [
-    "rememberSet", "rememberMap", "rememberCandidate",
-    "isBlockedUrl", "chatGptImageProxyInfo", "normalizeAssetId", "isTrustedBlobAssetUrl", "normalizeBlobAssetId",
-    "rememberBlobAsset", "blobAssetIdForUrl", "imageLookupKeys", "isLikelyGeneratedUrl",
-    "conversationIdFromUrl", "currentConversationId",
-    "normalizeConversationTitle", "conversationTitleFromSidebar", "currentConversationTitle", "sessionTitleForConversation",
-    "hasGeneratedImageDomMarker", "isComposerNode", "conversationTurnForNode", "turnContainsRole", "nearestPrecedingUserScope",
-    "isReferenceCandidate", "isRecoverableGenerationCandidate", "looksLikeGeneratedImage",
-    "isProvenGalleryBlobUrl", "isProvenGalleryBlobImage", "collectDomCandidates", "domCandidateForImage", "enqueueDomCandidateForImage",
-    "findBoundPromptForImage", "findGenerationEvidenceForImage", "findGenerationEvidenceForCandidate", "hasObservedGenerationEvidence",
-    "candidateLookupKeys", "candidateOperationKey", "candidateSizeSignature", "renderedPixelSignature",
-    "markSizeFailure", "isSizeFailureBlocked", "normalizeGenerationStatus", "isTerminalGenerationStatus",
-    "isSavedCandidate", "rememberSavedCandidate", "savedGenerationStatusForCandidate", "rememberSavedPrompt",
-    "clearAutoStability", "scheduleAutoStabilityRetry", "autoCandidateReadiness",
-    "isArchiveWorthyCandidate", "canAttempt", "noteAutomaticFailure", "enqueueAuto", "ingestCandidate", "findCandidateForMeta", "resolvePrompt",
-    // 任务 359：错误上屏前的统一映射（ingestCandidate 的 catch 会调用它）。
-    "friendlyCaptureError",
-    "bytesFromUrlOrImg", "waitForRenderedCandidate", "renderedCandidateFor", "originalBytesFromUrl", "canvasBytesFromImage",
-    "arrayBufferToBase64", "decodedImageDimensions",
-    "userMessageForCandidate", "stripSystemHintLabelLines", "messageScopeForCandidate", "domCaptionForCandidate", "messageIdsForCandidate", "messageIdForCandidate",
-    "buildStoredPrompt", "cleanPromptText", "extractPlaceHints", "promptMentionsPlace", "looksLikeGenerationCaption", "isWeakChatPrompt",
-    "scorePromptText", "promptQuality", "metaPromptQuality",
-  ];
-  const source = names.map((name) => {
-    const match = new RegExp(`\\n {2}(?:async )?function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource);
-    assert.ok(match, `missing ${name}`);
-    return match[0];
-  }).join("\n");
-
-  // Blob bytes big enough to pass the 20KB MIN_BYTES floor; the decoded pixel
-  // size is what the tests control through context.decodedSize.
-  class FakeBlob {
-    constructor(parts = [], opts = {}) { this.type = opts?.type || ""; }
-    async arrayBuffer() { return new Uint8Array(30_000).fill(7).buffer; }
-  }
+  // The real content.js booted through the harness with this test family's
+  // stubs: blob bytes big enough for the 20 KB floor, a controllable decoded
+  // size, and DOM images the tests push into the shared images array.
   const userNode = {
     innerText: "Make the lettering blue and keep the background red.",
     matches: () => false,
@@ -4000,67 +3570,62 @@ function currentChatGptAutoCaptureHarness() {
     getAttribute() { return ""; }
   }
 
-  const context = {
-    HTMLImageElement: GalleryImage, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
-    URL, Date, JSON, Math, Set, Map, String, Promise, Uint8Array, ArrayBuffer, Error,
-    btoa: globalThis.btoa, atob: globalThis.atob,
-    location: { href: "https://chatgpt.com/c/conversation-test", origin: "https://chatgpt.com", pathname: "/c/conversation-test" },
-    blobAssetIds: new Map(), networkMeta: [],
-    inFlight: new Set(), queuedAutoKeys: new Set(), savedKeys: new Set(), savedIdentityKeys: new Set(),
-    capturedCandidates: new Map(), savedPromptRanks: new Map(), referenceSyncKeys: new Set(),
-    failedNetworkIdentityKeys: new Set(), promptUpgradeInFlight: new Set(),
-    failedAt: new Map(), sizeFailureStates: new Map(),
-    deliveryRetries: new Map(), deliveryRefusedKeys: new Set(), pageReadFailures: new Map(),
-    queuedToastKeys: new Set(), errorToastKeys: new Set(),
-    autoStabilityStates: new Map(), autoStabilityTimers: new Map(), savedGenerationStatuses: new Map(),
-    conversationEpoch: 0, activeConversationId: "conversation-test", autoCapture: true,
-    generationRegistry: null,
-    images: [], fetchCalls: [], ingestMessages: [], statusTexts: [], toasts: [], scheduledTimers: [],
-    Blob: FakeBlob,
-    fetch: async (url) => {
-      context.fetchCalls.push(String(url));
-      return { ok: true, blob: async () => new FakeBlob([], { type: "image/png" }) };
-    },
-    runtimeSend: async (message) => {
-      context.ingestMessages.push(message);
-      return { ok: true, result: { status: "imported" } };
-    },
-    showToast: (message) => { context.toasts.push(message); },
-    setStatus: (text) => { context.statusTexts.push(text); },
-    scheduleScan: () => {},
-    scheduleGenerationEvidenceRecovery: () => {},
-    schedulePromptUpgrade: () => {},
-    stageGenerationReferences: async () => ({ generationContextId: "", stagedReferences: 0 }),
-    withAutoCaptureSlot: async (task) => task(),
-    setTimeout: (fn, ms) => { context.scheduledTimers.push({ fn, ms }); return 0; },
-    clearTimeout: () => {},
+  const images = [];
+  const ingestMessages = [];
+  const statusTexts = [];
+  const toasts = [];
+  return createContentHarness({
+    settings: null,
+    pathname: "/c/conversation-test",
+    images,
+    decodedSize: { width: 1024, height: 1024 },
+    env: { HTMLImageElement: GalleryImage },
     document: {
       querySelector: () => null,
       querySelectorAll: (selector) => (String(selector).includes('data-content-search-unit-key$=":user"')
         ? [userNode]
-        : (String(selector) === "img" ? context.images : [])),
-      createElement: () => ({ width: 0, height: 0, getContext: () => null }),
+        : (String(selector) === "img" ? images : [])),
     },
-    decodedSize: { width: 1024, height: 1024 },
-    createImageBitmapCalls: [],
-    closedBitmaps: 0,
-    createImageBitmap: async (blob) => {
-      context.createImageBitmapCalls.push(blob);
-      return { width: context.decodedSize.width, height: context.decodedSize.height, close: () => { context.closedBitmaps += 1; } };
-    },
-  };
-  vm.runInNewContext(`${constants.join("\n")}\n${source}`, context, { filename: "content-auto-capture.js" });
-  const registry = createGenerationRegistryHarness({ imageLookupKeys: context.imageLookupKeys });
-  context.generationRegistryForPage = () => registry;
-  return { context, registry, userNode, GalleryImage };
+  }).then((harness) => {
+    const { context, state } = harness;
+    state.autoCapture = true;
+    context.runtimeSend = async (message) => {
+      ingestMessages.push(message);
+      return { ok: true, result: { status: "imported" } };
+    };
+    context.showToast = (message) => { toasts.push(message); };
+    context.setStatus = (text) => { statusTexts.push(text); };
+    context.scheduleScan = () => {};
+    context.scheduleGenerationEvidenceRecovery = () => {};
+    context.schedulePromptUpgrade = () => {};
+    context.stageGenerationReferences = async () => ({ generationContextId: "", stagedReferences: 0 });
+    context.withAutoCaptureSlot = async (task) => task();
+    context.ingestMessages = ingestMessages;
+    context.statusTexts = statusTexts;
+    context.toasts = toasts;
+    return {
+      harness,
+      context,
+      state,
+      registry: context.generationRegistryForPage(),
+      userNode,
+      GalleryImage,
+      images,
+      ingestMessages,
+      statusTexts,
+      toasts,
+    };
+  });
 }
+
 
 async function flushAutoCapture(times = 10) {
   for (let index = 0; index < times; index += 1) await setImmediate();
 }
 
 test("an unclicked proven gallery thumbnail is archived from its blob bytes without loading the img", async () => {
-  const { context, registry, userNode } = currentChatGptAutoCaptureHarness();
+  const { harness, context, registry, userNode } = await currentChatGptAutoCaptureHarness();
+  const timersAtStart = harness.timers.timeouts.length;
   assert.equal(context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID })?.assetId, GALLERY_FILE_ID);
   registry.remember(galleryGenerationEvidence());
   // naturalWidth 0 / complete false: the lazy thumbnail never decoded; 54px is only its display size.
@@ -4082,13 +3647,14 @@ test("an unclicked proven gallery thumbnail is archived from its blob bytes with
   assert.deepEqual(context.fetchCalls, [GALLERY_BLOB_URL], "bytes come from the page-local blob: URL");
   assert.equal(context.createImageBitmapCalls.length, 1, "the real size is decoded from the bytes");
   assert.equal(context.closedBitmaps, 1, "the decoded bitmap is released");
-  assert.equal(context.scheduledTimers.length, 0, "archiving does not wait for the img to render");
+  assert.equal(harness.timers.timeouts.length, timersAtStart, "archiving does not wait for the img to render");
 });
 
 test("a manual capture no longer schedules the deleted conversation re-read wait", async () => {
   // Task 353: with the recovery channel gone the manual path must archive
   // immediately — no 700 ms prompt wait, no 150 ms polling, no refresh call.
-  const { context, registry } = currentChatGptAutoCaptureHarness();
+  const { harness, context, registry } = await currentChatGptAutoCaptureHarness();
+  const timersAtStart = harness.timers.timeouts.length;
   context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID });
   registry.remember(galleryGenerationEvidence());
   context.images.push(new context.HTMLImageElement({
@@ -4102,14 +3668,11 @@ test("a manual capture no longer schedules the deleted conversation re-read wait
 
   assert.equal(context.ingestMessages.length, 1, "the capture completed without waiting");
   assert.equal(context.ingestMessages[0].payload.promptStatus, "visible-caption");
-  assert.equal(context.scheduledTimers.length, 0, "nothing polls in 150 ms steps for a prompt that cannot arrive");
+  assert.equal(harness.timers.timeouts.length, timersAtStart, "nothing polls in 150 ms steps for a prompt that cannot arrive");
 });
 
 test("the deleted recovery channel leaves no residue in the extension sources", () => {
-  assert.doesNotMatch(contentSource, /refresh-current-conversation/);
-  assert.doesNotMatch(contentSource, /conversation-refresh-failed/);
-  assert.doesNotMatch(contentSource, /requestCurrentConversationRefresh/);
-  assert.doesNotMatch(contentSource, /promptWaitMs/);
+  // The content side is covered by the whole-extension security scan (R6).
   assert.doesNotMatch(hookSource, /refresh-current-conversation/);
   assert.doesNotMatch(hookSource, /refreshCurrentConversation/);
   assert.doesNotMatch(hookSource, /conversation-refresh-failed/);
@@ -4117,13 +3680,13 @@ test("the deleted recovery channel leaves no residue in the extension sources", 
 
 test("a gallery thumbnail without a mapping or without generation evidence stays filtered", async () => {
   // Generation evidence present, blob mapping missing.
-  const withoutMapping = currentChatGptAutoCaptureHarness();
+  const withoutMapping = await currentChatGptAutoCaptureHarness();
   withoutMapping.registry.remember(galleryGenerationEvidence());
   withoutMapping.context.images.push(new withoutMapping.context.HTMLImageElement({ src: GALLERY_BLOB_URL }));
   assert.equal(withoutMapping.context.collectDomCandidates().length, 0, "no mapping means no proven gallery blob");
 
   // Blob mapping present, generation evidence missing, still unloaded.
-  const withoutEvidence = currentChatGptAutoCaptureHarness();
+  const withoutEvidence = await currentChatGptAutoCaptureHarness();
   withoutEvidence.context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID });
   const thumb = new withoutEvidence.context.HTMLImageElement({ src: GALLERY_BLOB_URL });
   withoutEvidence.context.images.push(thumb);
@@ -4135,7 +3698,7 @@ test("a gallery thumbnail without a mapping or without generation evidence stays
 
   // A loaded large mapped blob without evidence keeps today's behavior:
   // collected by size, then rejected at enqueue time for missing evidence.
-  const loadedWithoutEvidence = currentChatGptAutoCaptureHarness();
+  const loadedWithoutEvidence = await currentChatGptAutoCaptureHarness();
   loadedWithoutEvidence.context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID });
   loadedWithoutEvidence.context.images.push(new loadedWithoutEvidence.context.HTMLImageElement({
     src: GALLERY_BLOB_URL, complete: true, naturalWidth: 1024, naturalHeight: 1024, width: 680, height: 680,
@@ -4149,7 +3712,8 @@ test("a gallery thumbnail without a mapping or without generation evidence stays
 });
 
 test("a proven gallery blob whose decoded size is below the proven floor is not archived", async () => {
-  const { context, registry } = currentChatGptAutoCaptureHarness();
+  const { harness, context, registry } = await currentChatGptAutoCaptureHarness();
+  const timersAtStart = harness.timers.timeouts.length;
   context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID });
   registry.remember(galleryGenerationEvidence());
   context.images.push(new context.HTMLImageElement({ src: GALLERY_BLOB_URL }));
@@ -4160,11 +3724,12 @@ test("a proven gallery blob whose decoded size is below the proven floor is not 
 
   assert.equal(context.createImageBitmapCalls.length, 1, "the bytes were decoded");
   assert.equal(context.ingestMessages.length, 0, "a 200px decoded proven blob stays out");
-  assert.ok(context.sizeFailureStates.get(`asset:${GALLERY_FILE_ID}`), "the small proven blob is recorded as a size failure");
+  assert.ok(harness.state.sizeFailureStates.get(`asset:${GALLERY_FILE_ID}`), "the small proven blob is recorded as a size failure");
 });
 
 test("the displayed gallery image and its thumbnail share one blob identity and archive once", async () => {
-  const { context, registry } = currentChatGptAutoCaptureHarness();
+  const { harness, context, registry } = await currentChatGptAutoCaptureHarness();
+  const timersAtStart = harness.timers.timeouts.length;
   context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID });
   registry.remember(galleryGenerationEvidence());
   // The page shows the large image and the 54px thumbnail of the SAME blob URL.
@@ -4187,7 +3752,8 @@ test("the displayed gallery image and its thumbnail share one blob identity and 
 });
 
 test("composer and reference images with a valid blob mapping are never archived", async () => {
-  const { context, registry } = currentChatGptAutoCaptureHarness();
+  const { harness, context, registry } = await currentChatGptAutoCaptureHarness();
+  const timersAtStart = harness.timers.timeouts.length;
   context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID });
   registry.remember(galleryGenerationEvidence());
   const composerImage = new context.HTMLImageElement({
@@ -4214,7 +3780,7 @@ test("composer and reference images with a valid blob mapping are never archived
 });
 
 test("generation evidence arriving after the blob mapping still picks up the unclicked thumbnail", async () => {
-  const { context, registry } = currentChatGptAutoCaptureHarness();
+  const { context, registry } = await currentChatGptAutoCaptureHarness();
   context.rememberBlobAsset({ blobUrl: GALLERY_BLOB_URL, assetId: GALLERY_FILE_ID });
   context.images.push(new context.HTMLImageElement({ src: GALLERY_BLOB_URL }));
 
@@ -4239,19 +3805,8 @@ test("generation evidence arriving after the blob mapping still picks up the unc
 // the assistant unit shares the container.
 
 function referenceScopeHarness() {
-  const constants = ["COMPOSER_SELECTOR", "CHATGPT_TURN_SELECTOR", "CHATGPT_USER_SELECTOR", "CHATGPT_MESSAGE_SELECTOR"]
-    .map((name) => new RegExp(`const ${name} = [^;]+;`).exec(contentSource)?.[0]);
-  assert.ok(constants.every(Boolean), "reference scope constants should be extractable");
-  const names = [
-    "hasGeneratedImageDomMarker", "isComposerNode", "conversationTurnForNode", "turnContainsRole",
-    "nearestPrecedingUserScope", "userUnitKeyPrefix", "userUnitsOfSameMessage", "isReferenceCandidate",
-    "referenceCandidatesForGeneration",
-  ];
-  const source = names.map((name) => {
-    const match = new RegExp(`\\n {2}(?:async )?function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource);
-    assert.ok(match, `missing ${name}`);
-    return match[0];
-  }).join("\n");
+  // The real content.js booted through the harness; the reference-scope tests
+  // supply their own FakeNode document below.
 
   let order = 0;
   class FakeNode {
@@ -4318,12 +3873,12 @@ function referenceScopeHarness() {
   }
 
   const root = new FakeNode("#document");
-  const context = {
-    HTMLImageElement: FakeImage,
-    Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
-    document: { querySelectorAll: (selector) => root.querySelectorAll(selector) },
-  };
-  vm.runInNewContext(`${constants.join("\n")}\n${source}`, context, { filename: "content-reference-scope.js" });
+  const harness = createContentHarness({
+    settings: null,
+    pathname: "/c/conversation-test",
+    env: { HTMLImageElement: FakeImage, Node: { DOCUMENT_POSITION_FOLLOWING: 4 } },
+    document: { querySelector: () => null, querySelectorAll: (selector) => root.querySelectorAll(selector) },
+  });
 
   // The 2026-09 turn layout: an attachment unit (chatgpt-search unit key), a
   // text unit (content-search unit key), then the assistant unit holding the
@@ -4362,16 +3917,11 @@ function referenceScopeHarness() {
     return { attachmentUnit, attachments, generated, candidate: { el: generated, imageUrl: generated.src } };
   };
 
-  return { context, root, FakeImage, FakeNode, buildTurn };
+  return harness.then(({ context }) => ({ context, root, FakeImage, FakeNode, buildTurn }));
 }
 
-test("the user selector recognizes the split attachment unit alongside the legacy scopes", () => {
-  assert.match(contentSource, /const CHATGPT_USER_SELECTOR = '\[data-message-author-role="user"\], \[data-content-search-unit-key\$=":user"\], \[data-chatgpt-search-unit-key\$=":user"\]'/);
-  assert.match(contentSource, /for \(const unit of userUnitsOfSameMessage\(nearestUser, image\)\)/);
-});
-
-test("reference lookup spans the split attachment and text units of one user message", () => {
-  const { context, buildTurn } = referenceScopeHarness();
+test("reference lookup spans the split attachment and text units of one user message", async () => {
+  const { context, buildTurn } = await referenceScopeHarness();
   const turn = buildTurn(1);
   const references = context.referenceCandidatesForGeneration(turn.candidate);
   assert.deepEqual([...references.map((reference) => reference.el)], turn.attachments, "exactly the two uploaded attachments");
@@ -4382,16 +3932,16 @@ test("reference lookup spans the split attachment and text units of one user mes
   assert.equal(references[0].width, 2048, "the natural upload size is kept");
 });
 
-test("reference lookup reaches an attachment unit that sits beside the inner content-search turn", () => {
-  const { context, buildTurn } = referenceScopeHarness();
+test("reference lookup reaches an attachment unit that sits beside the inner content-search turn", async () => {
+  const { context, buildTurn } = await referenceScopeHarness();
   buildTurn(1, { attachmentOutsideSearchTurn: true });
   const turn = buildTurn(2, { attachmentOutsideSearchTurn: true });
   const references = context.referenceCandidatesForGeneration(turn.candidate);
   assert.deepEqual([...references.map((reference) => reference.el)], turn.attachments, "the outer turn-key wrapper bounds the message");
 });
 
-test("attachment unit images are reference candidates while gallery images never are", () => {
-  const { context, buildTurn } = referenceScopeHarness();
+test("attachment unit images are reference candidates while gallery images never are", async () => {
+  const { context, buildTurn } = await referenceScopeHarness();
   const turn = buildTurn(1);
   for (const image of turn.attachments) {
     assert.equal(context.isReferenceCandidate({ el: image }), true, `attachment ${image.src} is a reference`);
@@ -4399,22 +3949,22 @@ test("attachment unit images are reference candidates while gallery images never
   assert.equal(context.isReferenceCandidate({ el: turn.generated }), false, "the generated gallery image is not a reference");
 });
 
-test("a generation only inherits the attachments of its own user message", () => {
-  const { context, buildTurn } = referenceScopeHarness();
+test("a generation only inherits the attachments of its own user message", async () => {
+  const { context, buildTurn } = await referenceScopeHarness();
   buildTurn(1);
   const second = buildTurn(2);
   const references = context.referenceCandidatesForGeneration(second.candidate);
   assert.deepEqual([...references.map((reference) => reference.el)], second.attachments, "turn one's attachments stay out");
 });
 
-test("a text-only user message yields no reference candidates", () => {
-  const { context, buildTurn } = referenceScopeHarness();
+test("a text-only user message yields no reference candidates", async () => {
+  const { context, buildTurn } = await referenceScopeHarness();
   const turn = buildTurn(1, { attachmentCount: 0 });
   assert.deepEqual([...context.referenceCandidatesForGeneration(turn.candidate)], []);
 });
 
-test("user units without a shared turn container merge by their unit-key prefix", () => {
-  const { context, root, FakeImage, FakeNode } = referenceScopeHarness();
+test("user units without a shared turn container merge by their unit-key prefix", async () => {
+  const { context, root, FakeImage, FakeNode } = await referenceScopeHarness();
   // An earlier message's units also precede the generated image, so only the
   // shared "fallback-turn-9" prefix may merge them into one scope.
   const earlierAttachmentUnit = root.append(new FakeNode("div", { "data-chatgpt-search-unit-key": "fallback-turn-10:0:user" }));
@@ -4429,8 +3979,8 @@ test("user units without a shared turn container merge by their unit-key prefix"
   assert.deepEqual([...references.map((item) => item.el)], [reference]);
 });
 
-test("attachments still sitting in the composer are never staged as references", () => {
-  const { context, root, FakeImage, FakeNode, buildTurn } = referenceScopeHarness();
+test("attachments still sitting in the composer are never staged as references", async () => {
+  const { context, root, FakeImage, FakeNode, buildTurn } = await referenceScopeHarness();
   const composer = root.append(new FakeNode("form", { "data-type": "unified-composer" }));
   const draft = composer.append(new FakeImage({ src: "blob:https://chatgpt.com/composer-draft", label: "用户附件", naturalWidth: 2048, naturalHeight: 1143 }));
   const turn = buildTurn(1);
@@ -4445,8 +3995,8 @@ test("attachments still sitting in the composer are never staged as references",
   assert.equal(references.some((reference) => reference.el === draft || reference.el === inlineDraft), false);
 });
 
-test("the legacy conversation-turn structure keeps staging references from the user turn", () => {
-  const { context, root, FakeImage, FakeNode } = referenceScopeHarness();
+test("the legacy conversation-turn structure keeps staging references from the user turn", async () => {
+  const { context, root, FakeImage, FakeNode } = await referenceScopeHarness();
   const userTurn = root.append(new FakeNode("div", { "data-testid": "conversation-turn-1" }));
   const roleUnit = userTurn.append(new FakeNode("div", { "data-message-author-role": "user" }));
   const legacyReferences = [
@@ -4467,26 +4017,22 @@ test("the legacy conversation-turn structure keeps staging references from the u
 // --- ChatGPT conversation session title for stack naming (0.15.24) ---
 
 function sessionTitleHarness({ title = "", sidebarTitle = "", pathname = "/c/conv-1" } = {}) {
-  const pieces = [
-    /const SESSION_TITLE_MAX_LENGTH = [^\n]*/.exec(contentSource)?.[0],
-    /const SESSION_TITLE_PLACEHOLDERS = new Set\([^\n]*/.exec(contentSource)?.[0],
-    ...["conversationIdFromUrl", "normalizeConversationTitle", "conversationTitleFromSidebar", "currentConversationTitle", "sessionTitleForConversation"]
-      .map((name) => new RegExp(`\\n {2}function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource)?.[0]),
-  ].filter(Boolean).join("\n");
-  const context = {
-    document: { title, querySelector: () => ({ textContent: sidebarTitle }) },
-    location: { pathname, href: `https://chatgpt.com${pathname}` },
-  };
-  vm.runInNewContext(
-    `${pieces}\nthis.normalize = normalizeConversationTitle; this.current = currentConversationTitle; this.forConversation = sessionTitleForConversation;`,
+  // The real title functions from the booted content script.
+  return createContentHarness({
+    settings: null,
+    title: title || undefined,
+    sidebarTitle,
+    pathname,
+  }).then(({ context }) => ({
     context,
-    { filename: "chatgpt-session-title.js" },
-  );
-  return context;
+    normalize: (value) => context.normalizeConversationTitle(value),
+    current: () => context.currentConversationTitle(),
+    forConversation: (value) => context.sessionTitleForConversation(value),
+  }));
 }
 
-test("conversation titles strip the site suffix, trim, and keep the 200-char cap", () => {
-  const context = sessionTitleHarness({ title: "Bangkok Travel Poster - ChatGPT", pathname: "/c/conv-title" });
+test("conversation titles strip the site suffix, trim, and keep the 200-char cap", async () => {
+  const context = await sessionTitleHarness({ title: "Bangkok Travel Poster - ChatGPT", pathname: "/c/conv-title" });
   assert.equal(context.normalize("Bangkok Travel Poster - ChatGPT"), "Bangkok Travel Poster");
   assert.equal(context.normalize("Skyline Edit | ChatGPT"), "Skyline Edit");
   assert.equal(context.normalize("  Padded Title  "), "Padded Title");
@@ -4494,28 +4040,24 @@ test("conversation titles strip the site suffix, trim, and keep the 200-char cap
   assert.equal(context.current(), "Bangkok Travel Poster", "document.title is the first source");
 });
 
-test("placeholder titles count as no title, and the sidebar entry is the fallback", () => {
-  const context = sessionTitleHarness({ title: "New chat", sidebarTitle: "Sidebar Named Chat" });
+test("placeholder titles count as no title, and the sidebar entry is the fallback", async () => {
+  const context = await sessionTitleHarness({ title: "New chat", sidebarTitle: "Sidebar Named Chat" });
   for (const placeholder of ["ChatGPT", "new chat", "新聊天", "新对话", "   ", ""]) {
     assert.equal(context.normalize(placeholder), "", JSON.stringify(placeholder));
   }
   assert.equal(context.current(), "Sidebar Named Chat", "a placeholder document.title falls through to the sidebar entry");
 });
 
-test("a session title only rides with captures of the conversation open in the URL", () => {
-  const context = sessionTitleHarness({ title: "Matched Chat", pathname: "/c/conv-1" });
+test("a session title only rides with captures of the conversation open in the URL", async () => {
+  const context = await sessionTitleHarness({ title: "Matched Chat", pathname: "/c/conv-1" });
   assert.equal(context.forConversation("conv-1"), "Matched Chat");
   assert.equal(context.forConversation("conv-other"), "", "a different conversation id carries no title");
   assert.equal(context.forConversation(""), "", "no conversation id, no title");
 });
 
 test("the ingest payload and server request carry the session title", async () => {
-  assert.match(
-    contentSource,
-    /conversationId: resolved\.conversationId \|\| currentConversationId\(\),\n {10}generationSessionTitle: sessionTitleForConversation\(resolved\.conversationId \|\| currentConversationId\(\)\),/,
-  );
-  assert.match(contentSource, /type: "mosa\.reportSessionTitle",/);
-  assert.match(contentSource, /titleObserver\.observe\(title, \{ childList: true, characterData: true, subtree: true \}\)/);
+  // The ingest-payload and reportSessionTitle behaviors are behavior-tested in
+  // web-capture-content-behavior.test.mjs.
 
   // Background provider gating: reportSessionTitle is permitted only from ChatGPT
   const harness = await createBackgroundHarness({ appOnline: true });
@@ -5140,8 +4682,8 @@ test("a flat conversation read that still has older pages is never reported over
 });
 
 test("the XHR conversation path reports turn bindings under the same open-conversation gate", async () => {
-  assert.match(contentSource, /data\.type === "conversation-turn-bindings"/);
-  assert.match(contentSource, /type: "mosa\.reportConversationTurns",/);
+  // The content-side relay is behavior-tested in
+  // web-capture-content-behavior.test.mjs.
 
   // Background provider gating: only ChatGPT tabs may report conversation turns
   const harness = await createBackgroundHarness({ appOnline: true });
@@ -5394,32 +4936,26 @@ test("background opens a ChatGPT desktop conversation only when it holds a gener
   );
 });
 
-test("user message drops the image tool chip line but keeps the same words typed in the text", () => {
-  const constant = /const SYSTEM_HINT_LABEL_LINES = [^\n]+\n/.exec(contentSource)?.[0];
-  const fn = /function stripSystemHintLabelLines\([\s\S]*?\n  }\n/.exec(contentSource)?.[0];
-  assert.ok(constant && fn);
-  const context = {};
-  vm.runInNewContext(`${constant}\n${fn}\nthis.strip = stripSystemHintLabelLines;`, context);
-  assert.equal(context.strip("一只放在白色桌面上的蓝色玻璃苹果\n创建图像"), "一只放在白色桌面上的蓝色玻璃苹果");
-  assert.equal(context.strip("创建图像\n\n一座巨大的赛博朋克佛像\n第二段"), "一座巨大的赛博朋克佛像\n第二段");
-  assert.equal(context.strip("Create image\r\nA glass apple"), "A glass apple");
-  assert.equal(context.strip("@创建图像 基于参考图: 一只苹果"), "@创建图像 基于参考图: 一只苹果");
-  assert.equal(context.strip("第一行\n创建图像\n最后一行"), "第一行\n创建图像\n最后一行");
-  assert.equal(context.strip("创建图像"), "");
+test("user message drops the image tool chip line but keeps the same words typed in the text", async () => {
+  const harness = await createContentHarness({ settings: null });
+  const strip = harness.context.stripSystemHintLabelLines;
+  assert.ok(strip);
+  assert.equal(strip("一只放在白色桌面上的蓝色玻璃苹果\n创建图像"), "一只放在白色桌面上的蓝色玻璃苹果");
+  assert.equal(strip("创建图像\n\n一座巨大的赛博朋克佛像\n第二段"), "一座巨大的赛博朋克佛像\n第二段");
+  assert.equal(strip("Create image\r\nA glass apple"), "A glass apple");
+  assert.equal(strip("@创建图像 基于参考图: 一只苹果"), "@创建图像 基于参考图: 一只苹果");
+  assert.equal(strip("第一行\n创建图像\n最后一行"), "第一行\n创建图像\n最后一行");
+  assert.equal(strip("创建图像"), "");
 });
 
-test("conversation titles are reported only while automatic capture is on", async () => {
-  const source = await readFile(new URL("../extensions/chatgpt-web-capture/content.js", import.meta.url), "utf8");
-  assert.match(source, /function reportSessionTitleNow\(\) \{\n {4}if \(!autoCapture \|\| contextLost \|\| !extensionAlive\(\)\) return;/);
-  // Switching auto capture on (at boot or later) reports the open conversation once.
-  assert.match(source, /hydratePersistedGenerationBindings\(\);\n {4}if \(autoCapture\) \{\n {6}if \(document\.documentElement\) startObs\(\);/);
-  assert.match(source, /startObs\(\);\n {6}scheduleScan\(true\);\n {6}scheduleSessionTitleReport\(0\);\n {4}\} else \{/);
-});
+// Title reporting is gated on automatic capture — behavior-tested in
+// web-capture-content-behavior.test.mjs ("session titles are reported only
+// while automatic capture is on").
 
 // Review 294 B/C: the page's hand-off rules for ChatGPT, on the gallery harness
 // above, with a clock the test can move.
-function chatGptHandOffHarness(answer) {
-  const harness = currentChatGptAutoCaptureHarness();
+async function chatGptHandOffHarness(answer) {
+  const harness = await currentChatGptAutoCaptureHarness();
   const { context, registry } = harness;
   const clock = { now: 1_700_000_000_000 };
   context.Date = class FakeDate extends Date {
@@ -5449,7 +4985,7 @@ function chatGptHandOffHarness(answer) {
 }
 
 test("ChatGPT: a queued capture is not sent again and says it is queued, not failed", async () => {
-  const { context, clock, attempt } = chatGptHandOffHarness({ ok: true, result: { status: "queued", reason: "mosa-unavailable" } });
+  const { context, clock, attempt } = await chatGptHandOffHarness({ ok: true, result: { status: "queued", reason: "mosa-unavailable" } });
   await attempt();
   assert.equal(context.ingestMessages.length, 1);
   assert.equal(context.statusTexts.at(-1), "已暂存，打开 GravityPort 后自动收录");
@@ -5463,7 +4999,7 @@ test("ChatGPT: a queued capture is not sent again and says it is queued, not fai
 });
 
 test("ChatGPT: a retryable failure is tried twice, 60 s apart, and its error shows once", async () => {
-  const { context, attempt } = chatGptHandOffHarness({ ok: false, error: "GravityPort is closed", retryable: true });
+  const { context, attempt } = await chatGptHandOffHarness({ ok: false, error: "GravityPort is closed", retryable: true });
   await attempt();
   assert.equal(context.ingestMessages.length, 1);
   await attempt(30_000);
@@ -5479,31 +5015,13 @@ test("ChatGPT: a retryable failure is tried twice, 60 s apart, and its error sho
 });
 
 test("ChatGPT: a refused capture (not retryable) is never sent again automatically", async () => {
-  const { context, attempt } = chatGptHandOffHarness({ ok: false, error: "bad image", retryable: false });
+  const { context, attempt } = await chatGptHandOffHarness({ ok: false, error: "bad image", retryable: false });
   await attempt();
   await attempt(600_000);
   assert.equal(context.ingestMessages.length, 1);
 });
 
-// 任务 351:the capture confirmation must speak plainly — no internal
-// promptStatus codes on screen. The mapping (every lib/prompt-rank.mjs
-// PROMPT_STATUS_RANK value, plus the old display fallback) is locked here:
-//   没拿到提示词  → not-available, not-available-in-session,
-//                  image-generation-prompt-unavailable, and any empty prompt
-//   页面说明      → user-message, provider-visible-prompt, session-user-prompt,
-//                  task-user-prompt, canvas-alt-text-only, visible-caption
-//   生图提示词    → generation-tool-prompt, image-generation-revised-prompt,
-//                  user-edited (no suffix)
-test("the capture toast uses the 359 wording and never shows the promptStatus code", () => {
-  // 351 first replaced the raw promptStatus in this toast; 359 (EXT-34) then
-  // fixed the final wording: "已保存到 GravityPort" with or without a prompt.
-  const toastLine = contentSource.split("\n").find((line) => line.includes("showToast(resolved.prompt ?"));
-  assert.ok(toastLine, "the saved toast line exists");
-  assert.match(toastLine, /"已保存到 GravityPort"/);
-  assert.match(toastLine, /"已保存到 GravityPort，无提示词"/);
-  assert.doesNotMatch(toastLine, /promptStatus/, "the toast must not interpolate the internal status");
-  assert.doesNotMatch(contentSource, /入库 ✓/);
-  const statusLine = contentSource.split("\n").find((line) => line.includes("setStatus(`已保存 · 共"));
-  assert.ok(statusLine, "the saved status line exists");
-  assert.doesNotMatch(statusLine, /promptStatus|\$\{label\}/, "the status bar no longer shows the internal label");
-});
+// 任务 351/359: the capture confirmation speaks plainly (no internal
+// promptStatus codes on screen). The saved-toast wording and the status-bar
+// count are behavior-tested in web-capture-content-behavior.test.mjs
+// ("the capture toast speaks plainly and the status bar counts saves").

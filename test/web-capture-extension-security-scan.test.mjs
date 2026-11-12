@@ -71,3 +71,44 @@ test("R4: video transfer does not retain monolithic in-memory chunk buffers acro
       `${file} must not allocate monolithic video chunk arrays`);
   }
 });
+
+// Task 390 (review 4-1 丙): the content.js negative safety assertions moved
+// here, scanned across every manifest-referenced script instead of one file.
+
+const contentScripts = [...new Set(manifest.content_scripts.flatMap((entry) => entry.js || []))];
+
+test("R5: content scripts read their settings from local storage, never chrome.storage.sync", () => {
+  for (const file of contentScripts) {
+    const text = scriptTexts.get(file);
+    assert.doesNotMatch(text, /chrome\.storage\.sync/,
+      `${file} must not read or write chrome.storage.sync (settings live in storage.local/session)`);
+  }
+});
+
+test("R6: the deleted cookie-only conversation re-read machinery stays deleted", () => {
+  // Task 353 removed the extension-issued conversation re-read and its prompt
+  // wait; a return of any of these identifiers would reintroduce a request
+  // that could replay page authentication state (see
+  // "no extension-originated conversation request exists…").
+  const forbidden = [
+    ["refresh-current-conversation", /refresh-current-conversation/],
+    ["conversation-refresh-failed", /conversation-refresh-failed/],
+    ["requestCurrentConversationRefresh", /requestCurrentConversationRefresh/],
+    ["schedulePromptRecovery", /schedulePromptRecovery/],
+    ["promptWaitMs", /promptWaitMs/],
+    ["mosaPageHookChannel", /mosaPageHookChannel/],
+  ];
+  for (const [file, text] of scriptTexts) {
+    for (const [name, pattern] of forbidden) {
+      assert.doesNotMatch(text, pattern, `${file} must not resurrect the deleted ${name} recovery machinery`);
+    }
+  }
+});
+
+test("R7: content scripts never touch page Authorization values", () => {
+  for (const file of contentScripts) {
+    const text = scriptTexts.get(file);
+    assert.doesNotMatch(text, /authorization/i,
+      `${file} must not read or forward page Authorization credentials`);
+  }
+});
