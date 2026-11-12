@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import Database from "better-sqlite3";
-import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { copyLibraryForRelocation, finalizeCopiedSqliteLibrary, validateRelocationTarget } from "../lib/library-relocation.mjs";
+import { copyLibraryForRelocation, finalizeCopiedSqliteLibrary, relocationFailureReason, validateRelocationTarget } from "../lib/library-relocation.mjs";
 import { createSqliteAssetStore, sqliteDatabasePath } from "../lib/sqlite-asset-store.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 
@@ -141,6 +141,47 @@ test("validateRelocationTarget mirrors the desktop handler's accept/reject reaso
     { ok: true },
   );
   assert.equal((await stat(freshTarget)).isDirectory(), true, "a missing target is created so the copy can proceed");
+});
+
+// 任务 389（低18 ②）：目标文件夹的 EACCES/EPERM 单独说「没有权限」，
+// 不再一律 unavailable。真盘造 ENOSPC 不现实，错误码映射走 relocationFailureReason
+// 的单测（本文件底部）。
+test("validateRelocationTarget reports permission-denied when the target folder cannot be read", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-relocation-eacces-"));
+  t.after(async () => {
+    await chmod(root, 0o700).catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  });
+  const sourceLibraryDir = await seedRelocatableLibrary(root, "eacces-source", "eacces");
+  const target = join(root, "locked-target");
+  await mkdir(target);
+  await chmod(target, 0o200); // 收走读权限：非 root 下 readdir 以 EACCES 失败
+  try {
+    const result = await validateRelocationTarget({ currentLibraryDir: sourceLibraryDir, nextLibraryDir: target });
+    assert.deepEqual(result, { ok: false, reason: "permission-denied" });
+  } finally {
+    await chmod(target, 0o700); // 恢复，清理才能删得掉
+  }
+});
+
+// 任务 389（低18 ②）：桌面端复制失败原因的五种情形——ENOSPC、EACCES、EPERM、
+// 包一层 cause、未知错误。
+test("relocationFailureReason classifies the error codes behind the relocation copy", () => {
+  const coded = (code) => Object.assign(new Error(`simulated ${code}`), { code });
+  assert.equal(relocationFailureReason(coded("ENOSPC")), "no-space");
+  assert.equal(relocationFailureReason(coded("EACCES")), "permission-denied");
+  assert.equal(relocationFailureReason(coded("EPERM")), "permission-denied");
+  assert.equal(
+    relocationFailureReason(Object.assign(new Error("wrapped"), { cause: coded("ENOSPC") })),
+    "no-space",
+    "a wrapped error is classified through its cause chain",
+  );
+  assert.equal(
+    relocationFailureReason(coded("EIO")),
+    "copy-failed",
+    "unknown codes keep the copy-failed fallback",
+  );
+  assert.equal(relocationFailureReason(new Error("no code at all")), "copy-failed");
 });
 
 test("copyLibraryForRelocation skips the runtime lock and rebases managed paths", async (t) => {

@@ -11,12 +11,13 @@ import { releaseProductNames, resolveReleaseProduct } from "./release-product.mj
 import { verifyMacosReleaseApp } from "./verify-macos-release.mjs";
 
 export const MOSA_MAC_UPDATE_ARCH = "arm64";
+export const MOSA_MAC_UPDATE_ARCHES = Object.freeze(["arm64", "x64"]);
 
 export function macosUpdateArtifactName(version, arch = MOSA_MAC_UPDATE_ARCH, product = resolveReleaseProduct()) {
   const cleanVersion = String(version || "").trim();
   const cleanArch = String(arch || "").trim();
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(cleanVersion)) throw new Error("Invalid macOS update version.");
-  if (cleanArch !== MOSA_MAC_UPDATE_ARCH) throw new Error(`Unsupported macOS update architecture: ${cleanArch}.`);
+  if (!MOSA_MAC_UPDATE_ARCHES.includes(cleanArch)) throw new Error(`Unsupported macOS update architecture: ${cleanArch}.`);
   return releaseProductNames(product).macosUpdateZipName(cleanVersion, cleanArch);
 }
 
@@ -52,6 +53,9 @@ export async function makeMacosUpdateZip({
   await rm(output, { force: true });
   await runner("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, output]);
   const metadata = await fileMetadata(output);
+  // The x64 update ships as the manifest's separate `platforms.macosX64`
+  // entry; the arm64 patch key stays `macos` for the existing pipeline.
+  const platformKey = arch === "x64" ? "macosX64" : "macos";
   const result = {
     artifactPath: output,
     artifactName,
@@ -63,7 +67,7 @@ export async function makeMacosUpdateZip({
     sha256: metadata.sha256,
     release_manifest_patch: {
       platforms: {
-        macos: {
+        [platformKey]: {
           platform: "macOS",
           arch,
           file: artifactName,
@@ -106,8 +110,30 @@ export function runCommand(command, args, { cwd = process.cwd() } = {}) {
   });
 }
 
+// Reads the target architecture from --arch or MOSA_DESKTOP_ARCH. Never
+// defaults to process.arch: the Intel update ZIP is cross-built on Apple
+// silicon, where process.arch is arm64.
+export function cliArch(argv = process.argv.slice(2), env = process.env) {
+  const exact = "--arch";
+  const prefix = `${exact}=`;
+  let value = "";
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === exact) {
+      value = argv[index + 1] || "";
+      break;
+    }
+    if (argv[index].startsWith(prefix)) {
+      value = argv[index].slice(prefix.length);
+      break;
+    }
+  }
+  value = String(value || env.MOSA_DESKTOP_ARCH || "").trim() || MOSA_MAC_UPDATE_ARCH;
+  if (!MOSA_MAC_UPDATE_ARCHES.includes(value)) throw new Error(`Unsupported macOS update architecture: ${value}.`);
+  return value;
+}
+
 async function main() {
-  const result = await makeMacosUpdateZip();
+  const result = await makeMacosUpdateZip({ arch: cliArch() });
   console.log(JSON.stringify(result, null, 2));
 }
 

@@ -201,7 +201,8 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // qa:packaged launcher scripts to package.json, so its dependency sections
   // (the frozen semantics) are pinned structurally instead of by file hash.
   // 任务 238 更新：删除 @huggingface/tokenizers 与 onnxruntime-node（本地视觉检索移除）。
-  assert.equal(sha256(JSON.stringify(manifest.dependencies)), "0339eb218322b3a863818f979cfe4aca62624c31811a775da305ccda617d91a7", "package.json dependencies must remain unchanged");
+  // 任务 392 更新：better-sqlite3 ^13.0.1→^13.1.1（上游 SQLite 3.53.3→3.54.1）。
+  assert.equal(sha256(JSON.stringify(manifest.dependencies)), "64d898a72172e592bc44290505da3ed61f41a32a8d39befbc125807288fdfd9a", "package.json dependencies must remain unchanged");
   // 任务 246 更新：forge 三包 7.11.2→8.0.1、typescript 5.4.5→5.9.3，显式加
   // @electron/asar 4.3.1 与 @electron/windows-sign 2.1.0（版本对齐 forge 8 实际安装）。
   // 10-29 Dependabot #317：smol-toml 1.8.0→1.9.0。

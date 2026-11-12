@@ -126,11 +126,21 @@ function cliOption(argv, name) {
   return argv.find((value) => value.startsWith(prefix))?.slice(prefix.length) || "";
 }
 
+// Reads the package architecture from --arch or MOSA_DESKTOP_ARCH. Never
+// defaults to process.arch: the Intel package is verified on Apple silicon
+// during cross-release, where process.arch is arm64.
+export function cliArch(argv = process.argv.slice(2), env = process.env) {
+  const value = String(cliOption(argv, "arch") || env.MOSA_DESKTOP_ARCH || "").trim() || "arm64";
+  if (value !== "arm64" && value !== "x64") throw new Error(`Unsupported macOS release architecture: ${value}.`);
+  return value;
+}
+
 async function main() {
   if (process.platform !== "darwin") throw new Error("macOS release verification must run on macOS.");
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const names = resolveReleaseProductNames();
-  const appPath = cliOption(process.argv.slice(2), "app") || resolve(root, process.env.MOSA_FORGE_OUT_DIR || "out", names.macosPackageDirName, names.macAppBundleName);
+  const arch = cliArch();
+  const appPath = cliOption(process.argv.slice(2), "app") || resolve(root, process.env.MOSA_FORGE_OUT_DIR || "out", names.macosPackageDirName(arch), names.macAppBundleName);
   const result = await verifyMacosReleaseApp({ appPath, staple: process.argv.includes("--staple") });
   console.log(`[MOSA] macOS ${result.distribution} app verified: ${result.bundleId}${result.teamId ? `; team ${result.teamId}` : ""}`);
 }

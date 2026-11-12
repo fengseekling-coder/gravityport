@@ -231,6 +231,7 @@ test("make-macos-dmg notarizes with --keychain-profile and never passes --passwo
 
 test("desktop packaging target resolution supports only the approved macOS and Windows targets", () => {
   assert.equal(resolveDesktopPackagingTarget({ platform: "darwin", arch: "arm64", env: {}, argv: [] }).id, "darwin-arm64");
+  assert.equal(resolveDesktopPackagingTarget({ platform: "darwin", arch: "x64", env: {}, argv: [] }).id, "darwin-x64");
   assert.equal(resolveDesktopPackagingTarget({ platform: "win32", arch: "x64", env: {}, argv: [] }).id, "win32-x64");
   assert.equal(resolveDesktopPackagingTarget({ env: {}, argv: ["node", "forge", "--platform", "win32", "--arch=x64"] }).id, "win32-x64");
   assert.equal(resolveDesktopPackagingTarget({ env: { MOSA_DESKTOP_PLATFORM: "win32", MOSA_DESKTOP_ARCH: "x64" }, argv: [] }).id, "win32-x64");
@@ -238,6 +239,35 @@ test("desktop packaging target resolution supports only the approved macOS and W
     () => resolveDesktopPackagingTarget({ platform: "win32", arch: "arm64", env: {}, argv: [] }),
     /Unsupported MOSA desktop packaging target: win32-arm64/,
   );
+  assert.throws(
+    () => resolveDesktopPackagingTarget({ platform: "darwin", arch: "ppc64", env: {}, argv: [] }),
+    /Supported targets: darwin-arm64, darwin-x64, win32-x64/,
+  );
+});
+
+test("the Intel macOS packaging target names the x64 native runtimes and stays unpacked from the asar", () => {
+  const target = resolveDesktopPackagingTarget({ platform: "darwin", arch: "x64", env: {}, argv: [] });
+  assert.equal(target.platform, "darwin");
+  assert.equal(target.arch, "x64");
+  assert.equal(target.sqlitePrebuild, "darwin-x64.node");
+  assert.deepEqual([...target.sharpPackages], ["sharp-darwin-x64", "sharp-libvips-darwin-x64"]);
+  assert.equal(target.libvipsPackage, "sharp-libvips-darwin-x64");
+  // `--platform darwin` without --arch keeps defaulting to arm64; the Intel
+  // build must always be requested explicitly (never from process.arch).
+  assert.equal(resolveDesktopPackagingTarget({ platform: "darwin", env: {}, argv: [] }).arch, "arm64");
+  assert.equal(
+    resolveDesktopPackagingTarget({ platform: "darwin", env: { MOSA_DESKTOP_ARCH: "x64" }, argv: [] }).arch,
+    "x64",
+  );
+  const config = createForgeConfig({ target, env: {} });
+  assert.equal(config.packagerConfig.asar.unpackDir, "node_modules/@img/sharp-libvips-darwin-x64");
+  assert.equal(config.packagerConfig.appBundleId, "com.azhuilab.mosa");
+  const patterns = packageIgnorePatternsForTarget(target);
+  const ignored = (path) => patterns.some((pattern) => pattern.test(path));
+  assert.equal(ignored("/node_modules/@img/sharp-darwin-x64/lib/sharp-darwin-x64.node"), false);
+  assert.equal(ignored("/node_modules/@img/sharp-libvips-darwin-x64/lib/libvips.8.dylib"), false);
+  // The arm64 Sharp packages may not creep into the Intel bundle.
+  assert.equal(ignored("/node_modules/@img/sharp-darwin-arm64/lib/sharp-darwin-arm64.node"), true);
 });
 
 test("both targets copy the generated license and browser extension folders into Resources", () => {

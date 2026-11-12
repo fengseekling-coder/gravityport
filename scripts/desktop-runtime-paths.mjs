@@ -40,8 +40,8 @@ export function packagedExecutablePath({
   if (!rootDir) throw new Error("rootDir is required.");
   const names = releaseProductNames(product);
   const outputRoot = resolve(outDir || join(rootDir, "out"));
-  if (platform === "darwin" && arch === "arm64") {
-    return join(outputRoot, names.macosPackageDirName, names.macAppBundleName, "Contents", "MacOS", names.macExecutableName);
+  if (platform === "darwin" && (arch === "arm64" || arch === "x64")) {
+    return join(outputRoot, names.macosPackageDirName(arch), names.macAppBundleName, "Contents", "MacOS", names.macExecutableName);
   }
   if (platform === "win32" && arch === "x64") {
     return join(outputRoot, names.windowsPackageDirName, names.windowsExecutableName);

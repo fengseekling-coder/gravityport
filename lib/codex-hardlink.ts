@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, readFile, rename, stat, unlink } from "node:fs/promises";
+import fsPromises from "node:fs/promises";
+import { readFile, stat, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 interface Asset {
@@ -71,13 +72,27 @@ export async function relinkCodexAsset(asset: Asset): Promise<SingleRelinkResult
   if (sourceHash !== targetHash) return { status: "content-mismatch" };
   const temporaryPath = join(dirname(targetPath), `.${basename(targetPath)}.${randomUUID()}.hardlink`);
   try {
-    await link(sourcePath, temporaryPath);
-    await rename(temporaryPath, targetPath);
+    // link/rename 走 fs/promises 的默认导出对象（属性查找），失败路径才能被
+    // 用 t.mock.method(fsPromises, "link", …) 注入 EPERM 的测试驱动——和
+    // lib/reference-attachment-store.ts 同一做法。
+    await fsPromises.link(sourcePath, temporaryPath);
+    await fsPromises.rename(temporaryPath, targetPath);
     return { status: "migrated" };
+  } catch (error: unknown) {
+    // 任务 389（低18 ⑤）：exFAT 这类盘不支持硬链接，link/rename 抛
+    // EPERM/EXDEV/ENOTSUP/EMLINK/EACCES；这张按 link-failed 记进 skipped，
+    // 整理不再中断。其他错误照旧抛出去。
+    if (HARDLINK_FAILURE_CODES.has((error as NodeJS.ErrnoException)?.code ?? "")) {
+      return { status: "link-failed" };
+    }
+    throw error;
   } finally {
     await unlink(temporaryPath).catch(() => {});
   }
 }
+
+// exFAT 等文件系统上硬链接不可用时的错误码：整次迁移继续，单张记为跳过。
+const HARDLINK_FAILURE_CODES: ReadonlySet<string> = new Set(["EPERM", "EXDEV", "ENOTSUP", "EMLINK", "EACCES"]);
 
 function isStrictChildPath(parent: string, child: string): boolean {
   const rel = relative(resolve(parent), resolve(child));

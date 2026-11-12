@@ -4206,6 +4206,11 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // Asset menu
     if (id === "open-viewer") setPreview(true)
     else if (id === "show-in-library") showInLibrary()
+    // 任务 389（中13 后半）：卡片右键菜单的「在访达中显示」与检视器里的
+    // onOpenLocation 走同一个 revealAssetPath（openLibraryFolder，失败复制路径）。
+    // asset 即右键那张：onContextMenu 在开菜单前已用 applySelection/focusAsset
+    // 把焦点换到被右键的卡（App.tsx 卡片 onContextMenu 处）。
+    else if (id === "reveal-in-folder") void revealAssetPath()
     else if (id === "copy-image") {
       if (ids.length > 1) void copyFiles(limit => batchFilePaths(ids, { limit }))
       else void copyImage()

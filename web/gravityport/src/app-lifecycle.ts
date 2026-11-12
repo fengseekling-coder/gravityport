@@ -324,6 +324,10 @@ const LIBRARY_LOCATION_FAILURE_TEXTS: Record<string, string> = {
   "invalid": "无法更改存储位置。新位置不能位于当前素材库内，也不能包含当前素材库。",
   "unavailable": "无法更改存储位置。无法访问所选文件夹。",
   "copy-failed": "无法更改存储位置。复制素材库时出错，原素材库未改动。",
+  // 任务 389（低18 ②）：空间不足、没有权限各一句自己的话，来源见
+  // lib/library-relocation.mjs 的 relocationFailureReason。
+  "no-space": "无法更改存储位置。所选位置空间不足，原素材库未改动。",
+  "permission-denied": "无法更改存储位置。没有权限写入所选文件夹，原素材库未改动。",
   "attached": "无法更改存储位置。请退出其他正在运行的 GravityPort 后重试。",
   "managed": "无法更改存储位置。素材库位置由启动设置指定。",
 };

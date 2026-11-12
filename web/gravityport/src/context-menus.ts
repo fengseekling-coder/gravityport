@@ -134,9 +134,14 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
     ? [{ kind: "heading", label: "已选择 {count} 项" }]
     : null
 
+  // 任务 389（中13 后半）：单选普通卡多一项「在访达中显示 / 在文件资源管理
+  // 器中显示」。openSection 只在单选时存在，且 buildAssetMenu 只被
+  // target === "asset" 调用（堆叠卡走 buildStackMenu，回收站走专属菜单），
+  // 所以这里天然不会出现在多选、堆叠卡和回收站里。
   const openSection = isMultiple ? null : [
     { kind: "item" as const, id: "open-viewer", label: "在查看器中打开", icon: "external" },
     { kind: "item" as const, id: "show-in-library", label: "在素材库中显示", icon: "folder" },
+    { kind: "item" as const, id: "reveal-in-folder", label: ctx.isMac ? "在访达中显示" : "在文件资源管理器中显示", icon: "folder" },
   ]
 
   // Multi-selection copies files and paths (stack cards expand to their

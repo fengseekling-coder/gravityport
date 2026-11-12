@@ -11,6 +11,7 @@ import {
   downloadMacosUpdate,
   evaluateMacosInstallLocation,
   launchMacosUpdateHelper,
+  macosLipoArchForUpdateArch,
   macosUpdateDownloadUrl,
   macosUpdateHelperScript,
   normalizeMacosUpdateAppName,
@@ -21,13 +22,13 @@ import {
 } from "../desktop/macos-updater.mjs";
 import { removeTestPath } from "./test-cleanup.mjs";
 
-function artifactFor(bytes, version = "0.3.0", { appName = "MOSA.app", teamIdentifier = "" } = {}) {
+function artifactFor(bytes, version = "0.3.0", { appName = "MOSA.app", teamIdentifier = "", arch = "arm64" } = {}) {
   const stem = appName.slice(0, -4);
   return {
     platform: "macOS",
-    arch: "arm64",
+    arch,
     appName,
-    file: `${stem}-darwin-arm64-${version}.zip`,
+    file: `${stem}-darwin-${arch}-${version}.zip`,
     size: bytes.length,
     sha256: createHash("sha256").update(bytes).digest("hex"),
     ...(teamIdentifier ? { teamIdentifier } : {}),
@@ -62,6 +63,61 @@ test("macOS update artifacts are pinned to the official filename and HTTPS downl
   assert.throws(() => macosUpdateDownloadUrl({ ...renamed, file: "../../etc/passwd.zip" }), /Unsafe macOS update filename/);
   assert.throws(() => validateMacosUpdateArtifact({ ...artifact, file: "other.zip" }, "0.3.0"), /filename/);
   assert.throws(() => validateMacosUpdateArtifact({ ...artifact, sha256: "bad" }, "0.3.0"), /SHA-256/);
+});
+
+test("macOS update artifacts accept the Intel x64 package and pin its filename to it", () => {
+  const x64 = artifactFor(Buffer.from("zip-intel"), "0.3.0", { arch: "x64" });
+  assert.deepEqual(validateMacosUpdateArtifact(x64, "0.3.0"), x64);
+  assert.equal(
+    macosUpdateDownloadUrl(x64),
+    "https://gravityport.azhuilab.com/downloads/MOSA-darwin-x64-0.3.0.zip",
+  );
+  // An arm64-named ZIP cannot pose as the x64 package, and the other way
+  // around either.
+  assert.throws(() => validateMacosUpdateArtifact({ ...x64, file: "MOSA-darwin-arm64-0.3.0.zip" }, "0.3.0"), /filename/);
+  assert.throws(() => validateMacosUpdateArtifact({ ...x64, arch: "arm64" }, "0.3.0"), /filename/);
+  assert.throws(() => validateMacosUpdateArtifact({ ...artifactFor(Buffer.from("zip")), arch: "x64" }, "0.3.0"), /filename/);
+  assert.throws(() => validateMacosUpdateArtifact({ ...artifactFor(Buffer.from("zip")), arch: "ppc64" }, "0.3.0"), /architecture/);
+});
+
+test("the update helper expects the lipo architecture name of the manifest arch", async () => {
+  assert.equal(macosLipoArchForUpdateArch("arm64"), "arm64");
+  assert.equal(macosLipoArchForUpdateArch("x64"), "x86_64");
+  assert.throws(() => macosLipoArchForUpdateArch("ppc64"), /Invalid macOS update architecture/);
+
+  const root = await mkdtemp(join(tmpdir(), "mosa-mac-helper-arch-"));
+  try {
+    const invocations = [];
+    const spawnImpl = (command, args, options) => {
+      invocations.push({ command, args, options });
+      const child = new EventEmitter();
+      child.pid = 4321;
+      child.kill = () => true;
+      child.unref = () => {};
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
+    };
+    const baseArgs = {
+      zipPath: join(root, "MOSA-darwin-x64-0.3.0.zip"),
+      installAppPath: "/Applications/MOSA.app",
+      version: "0.3.0",
+      expectedIdentity: EXPECTED_IDENTITY,
+      processId: 1234,
+      libraryDir: "/tmp/mosa-library",
+      createUpdateHandoff: async () => ({}),
+      spawnImpl,
+    };
+    await launchMacosUpdateHelper({ ...baseArgs, expectedArch: "x64" });
+    assert.equal(invocations.at(-1).args.at(-1), "x86_64");
+    await launchMacosUpdateHelper({ ...baseArgs, expectedArch: "arm64" });
+    assert.equal(invocations.at(-1).args.at(-1), "arm64");
+    await assert.rejects(
+      launchMacosUpdateHelper({ ...baseArgs, expectedArch: "ia32" }),
+      /Invalid macOS update architecture/,
+    );
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
 });
 
 test("macOS updater downloads to userData staging and verifies exact size plus SHA-256", async () => {
@@ -161,6 +217,11 @@ test("macOS apply helper waits for MOSA, verifies the replacement, rolls back, a
   assert.match(script, /"\$SPCTL_BIN" -a -vv --type execute/);
   assert.match(script, /\[ "\$EXPECTED_DISTRIBUTION" = "production" \]/);
   assert.match(script, /\[ "\$EXPECTED_DISTRIBUTION" = "preview" \]/);
+  // 387: the payload architecture is verified with lipo before anything is
+  // replaced; a renamed cross-arch ZIP rolls back under its own step code.
+  assert.match(script, /LIPO_BIN="\$\(printenv MOSA_UPDATE_LIPO_BIN \|\| true\)"\nif \[ -z "\$LIPO_BIN" \]; then LIPO_BIN="\/usr\/bin\/lipo"; fi/);
+  assert.match(script, /STEP="ARCH_MISMATCH"\n\[ "\$\("\$LIPO_BIN" -archs "\$PAYLOAD_APP\/Contents\/MacOS\/\$EXEC_NAME"\)" = "\$EXPECTED_LIPO_ARCH" \]/);
+  assert.match(script, /EXPECTED_LIPO_ARCH="\$5"/);
   assert.match(script, /mv \"\$INSTALL_APP\" \"\$BACKUP_APP\"/);
   assert.match(script, /mv \"\$BACKUP_APP\" \"\$INSTALL_APP\"/);
   assert.match(script, /--mosa-update-ready-file=/);
@@ -209,7 +270,10 @@ test("macOS apply helper waits for MOSA, verifies the replacement, rolls back, a
     assert.equal(invocation.args.includes(EXPECTED_IDENTITY.distribution), true);
     assert.equal(invocation.args.includes("/tmp/mosa-library/.mosa-desktop-starting.json"), true);
     assert.equal(invocation.args.includes("MOSA.app"), true);
-    assert.equal(invocation.args[invocation.args.length - 1], "");
+    // The default update architecture is arm64, so the helper receives the
+    // arm64 lipo name after the (empty) team identifier.
+    assert.equal(invocation.args[invocation.args.length - 2], "");
+    assert.equal(invocation.args[invocation.args.length - 1], "arm64");
     assert.match(await readFile(join(root, "apply-update.sh"), "utf8"), /ditto -x -k/);
   } finally {
     await removeTestPath(root, { recursive: true, force: true });
@@ -265,8 +329,9 @@ test("macOS apply helper honors the new app name and pins the production team id
       spawnImpl,
     });
     const crossName = invocations.at(-1);
-    assert.equal(crossName.args[crossName.args.length - 2], "GravityPort.app");
-    assert.equal(crossName.args[crossName.args.length - 1], "ABCD1234EF");
+    assert.equal(crossName.args[crossName.args.length - 3], "GravityPort.app");
+    assert.equal(crossName.args[crossName.args.length - 2], "ABCD1234EF");
+    assert.equal(crossName.args[crossName.args.length - 1], "arm64");
     assert.equal(crossName.args.filter((value) => String(value).endsWith("update-ready.json")).length, 1);
 
     await launchMacosUpdateHelper({
@@ -280,7 +345,8 @@ test("macOS apply helper honors the new app name and pins the production team id
       spawnImpl,
     });
     const sameName = invocations.at(-1);
-    assert.equal(sameName.args[sameName.args.length - 2], "MOSA.app");
+    assert.equal(sameName.args[sameName.args.length - 3], "MOSA.app");
+    assert.equal(sameName.args[sameName.args.length - 1], "arm64");
     // The readiness file is derived from the updater staging root, so its path
     // is identical no matter which app name the update installs.
     assert.deepEqual(
@@ -415,6 +481,7 @@ test("macOS helper tool overrides never leak in from the app environment", () =>
     MOSA_UPDATE_CODESIGN_BIN: "/tmp/fake-codesign",
     MOSA_UPDATE_SPCTL_BIN: "/tmp/fake-spctl",
     MOSA_UPDATE_OPEN_BIN: "/tmp/fake-open",
+    MOSA_UPDATE_LIPO_BIN: "/tmp/fake-lipo",
     MOSA_UPDATE_TRASH_DIR: "/tmp/fake-trash",
   };
   assert.deepEqual(macosUpdateHelperEnv(null, base), { PATH: "/usr/bin" });

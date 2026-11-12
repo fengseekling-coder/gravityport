@@ -154,7 +154,11 @@ export function WebCaptureStatusCardView({
         </button>
       </p>
       <p>{t("2. 在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」。")}</p>
-      <p>{t("3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 ⌘⇧G，粘贴位置。）")}</p>
+      {/* 任务 389（低18 ①）：第 3 步的选文件夹提示按系统给一句；判断沿用上面
+          「在访达中显示」按钮的 /Win/i.test(navigator.platform) 写法。 */}
+      <p>{t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform)
+        ? "3. 点「加载已解压的扩展程序」，选这个文件夹。（Windows：在选择窗口上方的地址栏粘贴位置，按回车。）"
+        : "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 ⌘⇧G，粘贴位置。）")}</p>
       <p>{t("然后在扩展设置里打开「自动收录」。")}</p>
     </div>
   )

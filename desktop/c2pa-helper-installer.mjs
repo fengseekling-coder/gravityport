@@ -101,7 +101,7 @@ export function c2paHelperDownloadUrl(release, relativePath = C2PA_HELPER_PACK_M
   const version = String(release?.version || "").trim().replace(/^v/u, "");
   if (!/^\d+\.\d+\.\d+(?:[-+][a-z0-9.-]+)?$/iu.test(version)) throw installerError("VERSION_INVALID", "C2PA helper version is invalid.");
   const target = String(release?.target || c2paHelperTarget(release?.platform, release?.arch));
-  if (target !== "darwin-arm64" && target !== "win32-x64") throw installerError("TARGET_INVALID", "Unsupported C2PA helper target.");
+  if (target !== "darwin-arm64" && target !== "darwin-x64" && target !== "win32-x64") throw installerError("TARGET_INVALID", "Unsupported C2PA helper target.");
   const safePath = safeRelativePath(relativePath);
   const encodedPath = safePath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
   return new URL(`${encodeURIComponent(version)}/${target}/${encodedPath}`, MOSA_C2PA_HELPER_DOWNLOAD_BASE_URL).toString();

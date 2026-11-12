@@ -11,6 +11,7 @@ import {
   missingMcpServerModules,
   packagedAsarPath,
   packagedExecutablePath,
+  packagedLipoArch,
   verifyPackagedRuntime,
 } from "../scripts/verify-packaged-runtime.mjs";
 import { LICENSE_FILES } from "../scripts/third-party-licenses.mjs";
@@ -70,9 +71,9 @@ async function createFixture(t, { platform, arch, packedNatives = false, omitMcp
   }
 
   if (platform === "darwin") {
-    await writeFixtureFile(runtimeRoot, "node_modules/better-sqlite3/prebuilds/darwin-arm64.node", "sqlite-native");
-    await writeFixtureFile(runtimeRoot, "node_modules/@img/sharp-darwin-arm64/lib/sharp-darwin-arm64.node", "sharp-native");
-    await writeFixtureFile(runtimeRoot, "node_modules/@img/sharp-libvips-darwin-arm64/lib/libvips.8.dylib", "libvips-native");
+    await writeFixtureFile(runtimeRoot, `node_modules/better-sqlite3/prebuilds/darwin-${arch}.node`, "sqlite-native");
+    await writeFixtureFile(runtimeRoot, `node_modules/@img/sharp-darwin-${arch}/lib/sharp-darwin-${arch}.node`, "sharp-native");
+    await writeFixtureFile(runtimeRoot, `node_modules/@img/sharp-libvips-darwin-${arch}/lib/libvips.8.dylib`, "libvips-native");
   } else {
     await writeFixtureFile(runtimeRoot, "node_modules/better-sqlite3/prebuilds/win32-x64.node", "sqlite-native");
     await writeFixtureFile(runtimeRoot, "node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64.node", "sharp-native");
@@ -86,7 +87,7 @@ async function createFixture(t, { platform, arch, packedNatives = false, omitMcp
   } else {
     await createPackageWithOptions(runtimeRoot, asarPath, {
       unpack: "*.node",
-      unpackDir: platform === "darwin" ? "node_modules/@img/sharp-libvips-darwin-arm64" : "node_modules/@img/sharp-win32-x64",
+      unpackDir: platform === "darwin" ? `node_modules/@img/sharp-libvips-darwin-${arch}` : "node_modules/@img/sharp-win32-x64",
     });
   }
   // The fuse-wire check runs against the packaged executable; fixtures only
@@ -105,11 +106,50 @@ test("packaged runtime verifier accepts a macOS package only when native binarie
     platform: "darwin",
     arch: "arm64",
     readPackagedFuses: async () => matchingFuseWire(),
+    readPackagedBinaryArch: async () => "arm64\n",
   });
   assert.equal(result.asarPath, asarPath);
   assert.equal(result.target, "darwin-arm64");
   assert.equal(result.productVersion, IDENTITY.productVersion);
   assert.equal(result.nativeBinaries.length, 3);
+});
+
+test("packaged runtime verifier verifies the Mach-O architecture of every darwin binary", async (t) => {
+  assert.equal(packagedLipoArch("arm64"), "arm64");
+  assert.equal(packagedLipoArch("x64"), "x86_64");
+  assert.throws(() => packagedLipoArch("ppc64"), /Unsupported packaged architecture for lipo/);
+
+  // An Intel package whose sqlite prebuild is the arm64 binary (a mixed
+  // runtime) is refused, naming the offending file.
+  const mixed = await createFixture(t, { platform: "darwin", arch: "x64" });
+  const seen = [];
+  await assert.rejects(
+    verifyPackagedRuntime({
+      projectRoot: mixed.projectRoot,
+      platform: "darwin",
+      arch: "x64",
+      readPackagedFuses: async () => matchingFuseWire(),
+      readPackagedBinaryArch: async (binaryPath) => {
+        seen.push(binaryPath);
+        return String(binaryPath).includes("prebuilds") ? "arm64" : "x86_64";
+      },
+    }),
+    /has architecture arm64, expected exactly x86_64 for darwin-x64/,
+  );
+  assert.ok(seen.some((path) => path.includes("prebuilds")), "the verifier lipo-checks the sqlite prebuild too");
+
+  // A fat/unreadable answer is not exactly the expected architecture either.
+  const fat = await createFixture(t, { platform: "darwin", arch: "arm64" });
+  await assert.rejects(
+    verifyPackagedRuntime({
+      projectRoot: fat.projectRoot,
+      platform: "darwin",
+      arch: "arm64",
+      readPackagedFuses: async () => matchingFuseWire(),
+      readPackagedBinaryArch: async () => "arm64 x86_64",
+    }),
+    /has architecture arm64 x86_64, expected exactly arm64 for darwin-arm64/,
+  );
 });
 
 test("packaged runtime verifier rejects the manual repack failure mode with packed .node files", async (t) => {
@@ -258,9 +298,12 @@ test("desktop packaging scripts cannot bypass structural verification and packag
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   for (const scriptName of [
     "desktop:package",
+    "desktop:package:x64",
     "desktop:package:windows",
     "desktop:release:preview",
     "desktop:release:production",
+    "desktop:release:preview:x64",
+    "desktop:release:production:x64",
     "desktop:release:windows:preview",
     "desktop:release:windows:production",
   ]) {
@@ -271,6 +314,16 @@ test("desktop packaging scripts cannot bypass structural verification and packag
   assert.match(String(manifest.scripts?.["desktop:release"] || ""), /desktop:release:preview/);
   assert.match(String(manifest.scripts?.["desktop:release:windows"] || ""), /desktop:release:windows:preview/);
   assert.match(String(manifest.scripts?.["desktop:make"] || ""), /npm run desktop:package/);
+  // 387: the Intel release reuses the build the arm64 release just made — it
+  // must never rebuild (a second build would drift the shared build identity)
+  // and must start from the provenance check.
+  for (const scriptName of ["desktop:release:preview:x64", "desktop:release:production:x64"]) {
+    const script = String(manifest.scripts?.[scriptName] || "");
+    assert.match(script, /^npm run verify:release:provenance/, `${scriptName} verifies provenance first`);
+    assert.match(script, /provision:darwin-x64-natives/, `${scriptName} provisions the x64 natives`);
+    assert.doesNotMatch(script, /npm run build/, `${scriptName} must not rebuild`);
+    assert.match(script, /--arch x64/, `${scriptName} packages the x64 target`);
+  }
   assert.match(String(manifest.scripts?.["desktop:make:windows"] || ""), /npm run desktop:package:windows/);
   assert.match(String(manifest.scripts?.["desktop:make:windows"] || ""), /desktop:update-artifact:windows/);
   assert.match(String(manifest.scripts?.["desktop:make:windows"] || ""), /desktop:installer:windows/);

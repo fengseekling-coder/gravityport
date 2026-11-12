@@ -584,3 +584,103 @@ test("release manifest keeps 2500-character notes intact on write and on parse",
     await removeTestPath(files.root, { recursive: true, force: true });
   }
 });
+
+test("release manifest adds platforms.macosX64 from the --mac-x64 artifact with the arm64 trust chain", async () => {
+  const version = "0.3.0";
+  const files = await fixtureArtifacts(version);
+  const macX64 = join(files.root, `MOSA-darwin-x64-${version}.zip`);
+  await writeFile(macX64, `mac-x64-${version}`);
+  try {
+    const result = await prepareDesktopReleaseManifest({
+      version,
+      macArtifactPath: files.mac,
+      macX64ArtifactPath: macX64,
+      ...signingOptions(version),
+      publishedAt: "2026-11-12T01:00:00Z",
+      notes: { zh: "Intel 包", en: "Intel package" },
+    });
+    assert.deepEqual(Object.keys(result.platforms), ["macos", "macosX64"]);
+    assert.deepEqual(result.platforms.macosX64, {
+      platform: "macOS",
+      arch: "x64",
+      appName: "MOSA.app",
+      file: `MOSA-darwin-x64-${version}.zip`,
+      size: Buffer.byteLength(`mac-x64-${version}`),
+      sha256: createHash("sha256").update(`mac-x64-${version}`).digest("hex"),
+      teamIdentifier: "B5ZJT8TRPN",
+    });
+    assert.equal(result.platforms.macos.teamIdentifier, result.platforms.macosX64.teamIdentifier);
+    // An Intel reader resolves the x64 entry; the arm64 reader is untouched.
+    const parsedX64 = parseUpdateManifest(result, { macArch: "x64" });
+    assert.equal(parsedX64.macArtifact.file, result.platforms.macosX64.file);
+    assert.equal(parsedX64.macArtifact.arch, "x64");
+    const parsedArm64 = parseUpdateManifest(result);
+    assert.equal(parsedArm64.macArtifact.file, result.platforms.macos.file);
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+test("release manifest refuses a macOS x64 artifact without the arm64 artifact", async () => {
+  const version = "0.3.0";
+  const files = await fixtureArtifacts(version);
+  const macX64 = join(files.root, `MOSA-darwin-x64-${version}.zip`);
+  await writeFile(macX64, `mac-x64-${version}`);
+  try {
+    await assert.rejects(
+      prepareDesktopReleaseManifest({
+        version,
+        macX64ArtifactPath: macX64,
+        ...signingOptions(version),
+        publishedAt: "2026-11-12T01:00:00Z",
+        notes: { zh: "Intel 包", en: "Intel package" },
+      }),
+      /pass --mac as well/,
+    );
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+test("release manifest refuses a macOS x64 entry whose team identifier differs from arm64", async () => {
+  const version = "0.3.0";
+  const files = await fixtureArtifacts(version);
+  const macX64 = join(files.root, `MOSA-darwin-x64-${version}.zip`);
+  await writeFile(macX64, `mac-x64-${version}`);
+  try {
+    await assert.rejects(
+      prepareDesktopReleaseManifest({
+        version,
+        macArtifactPath: files.mac,
+        macX64ArtifactPath: macX64,
+        ...signingOptions(version),
+        macX64TeamIdentifier: "AAAAAAAAAA",
+        publishedAt: "2026-11-12T01:00:00Z",
+        notes: { zh: "Intel 包", en: "Intel package" },
+      }),
+      /must match the macOS arm64 teamIdentifier/,
+    );
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+test("release manifest refuses an x64 artifact bound to the arm64 filename", async () => {
+  const version = "0.3.0";
+  const files = await fixtureArtifacts(version);
+  try {
+    await assert.rejects(
+      prepareDesktopReleaseManifest({
+        version,
+        macArtifactPath: files.mac,
+        macX64ArtifactPath: files.mac,
+        ...signingOptions(version),
+        publishedAt: "2026-11-12T01:00:00Z",
+        notes: { zh: "Intel 包", en: "Intel package" },
+      }),
+      /filename must be MOSA-darwin-x64-0\.3\.0\.zip/,
+    );
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});

@@ -123,16 +123,25 @@ async function writeStubScripts(root, { stubCodesign = false, stubSpctl = false 
 app="\${1:-}"
 [ \$# -gt 0 ] && shift
 [ "\${1:-}" = "--args" ] && shift
-printf '%s\n' "$app" >> "${join(root, "open.log")}"
+printf '%s\\n' "$app" >> "${join(root, "open.log")}"
 # Which unpacked payloads are still in the transaction when the new app opens:
 # a rename leaves none behind, a copy would still hold one.
-printf 'open:%s\n' "$(ls -d "$(dirname "$app")"/.MOSA-update-*/extracted/* 2>/dev/null | tr '\n' ' ')" >> "${join(root, "open-payloads.log")}"
+printf 'open:%s\\n' "$(ls -d "$(dirname "$app")"/.MOSA-update-*/extracted/* 2>/dev/null | tr '\\n' ' ')" >> "${join(root, "open-payloads.log")}"
 exe_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist" 2>/dev/null || true)"
 [ -n "$exe_name" ] || exe_name="$(basename "$app" .app)"
 "$app/Contents/MacOS/$exe_name" "$@" &
 exit 0
 `);
   stubs.open = openStub;
+  // lipo stand-in: the rehearsal payloads are shell scripts, not Mach-O
+  // binaries, so the real /usr/bin/lipo cannot read them. The architecture
+  // the payload pretends to have arrives through MOSA_TEST_LIPO_ARCH (the
+  // same scripted-answer pattern the codesign stand-in uses).
+  const lipoStub = join(root, "stub-lipo.sh");
+  await writeExecutable(lipoStub, `#!/bin/sh
+printf '%s\\n' "\${MOSA_TEST_LIPO_ARCH:-arm64}"
+`);
+  stubs.lipo = lipoStub;
   if (stubCodesign) {
     const codesignStub = join(root, "stub-codesign.sh");
     await writeExecutable(codesignStub, `#!/bin/sh
@@ -179,10 +188,11 @@ async function helperEnv(root, stubs, extra = {}) {
   if (stubs.open) env.MOSA_UPDATE_OPEN_BIN = stubs.open;
   if (stubs.codesign) env.MOSA_UPDATE_CODESIGN_BIN = stubs.codesign;
   if (stubs.spctl) env.MOSA_UPDATE_SPCTL_BIN = stubs.spctl;
+  if (stubs.lipo) env.MOSA_UPDATE_LIPO_BIN = stubs.lipo;
   return env;
 }
 
-async function launchHelper({ root, stubs, installAppPath, zipPath, appName, distribution = "preview", teamIdentifier = "", envExtra = {} }) {
+async function launchHelper({ root, stubs, installAppPath, zipPath, appName, distribution = "preview", teamIdentifier = "", expectedArch = "arm64", envExtra = {} }) {
   return launchMacosUpdateHelper({
     zipPath,
     installAppPath,
@@ -192,6 +202,7 @@ async function launchHelper({ root, stubs, installAppPath, zipPath, appName, dis
     libraryDir: join(root, "library"),
     appName,
     expectedTeamIdentifier: teamIdentifier,
+    expectedArch,
     helperEnv: await helperEnv(root, stubs, envExtra),
     createUpdateHandoff: async () => ({}),
   });
@@ -409,6 +420,71 @@ previewScope("rehearsal: a cross-name payload that upgraded the library is kept 
     assert.match(readFileSync(logPath, "utf8"), /kept the new version/);
     assert.equal(markerOf(join(appsDir, "GravityPort.app")), "new");
     assert.equal(existsSync(join(appsDir, "MOSA.app")), false, "the previous name is not restored over an upgraded library");
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
+});
+
+previewScope("rehearsal: an Intel x64 update whose payload reports x86_64 installs in place", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-rehearsal-x64-"));
+  const appsDir = join(root, "apps");
+  try {
+    await mkdir(appsDir, { recursive: true });
+    await makeFakeApp({ root: appsDir, appName: "MOSA.app", execName: "MOSA", version: "0.2.1-rc.34", marker: "old" });
+    const payloadRoot = join(root, "payload");
+    await mkdir(payloadRoot, { recursive: true });
+    await makeFakeApp({ root: payloadRoot, appName: "MOSA.app", execName: "MOSA", version: VERSION, marker: "new" });
+    const zipPath = await makePayloadZip({ root: payloadRoot, appName: "MOSA.app" });
+    const stubs = await writeStubScripts(root);
+
+    const { logPath, readyFile } = await launchHelper({
+      root,
+      stubs,
+      installAppPath: join(appsDir, "MOSA.app"),
+      zipPath,
+      appName: "MOSA.app",
+      expectedArch: "x64",
+      envExtra: { MOSA_TEST_LIPO_ARCH: "x86_64" },
+    });
+
+    await waitFor(() => markerOf(join(appsDir, "MOSA.app")) === "new", { label: "x64 success (replacement installed)" });
+    await waitFor(() => transactionDirs(appsDir).length === 0, { label: "x64 success (transaction cleanup)" });
+    assert.equal(existsSync(logPath), false, `helper failure log must be absent, got: ${existsSync(logPath) ? readFileSync(logPath, "utf8") : ""}`);
+    assert.equal(existsSync(readyFile), true, "the x64 replacement reports readiness");
+  } finally {
+    await removeTestPath(root, { recursive: true, force: true });
+  }
+});
+
+previewScope("rehearsal failure: ARCH_MISMATCH when an arm64 payload poses as the x64 update", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-rehearsal-arch-"));
+  const appsDir = join(root, "apps");
+  try {
+    await mkdir(appsDir, { recursive: true });
+    await makeFakeApp({ root: appsDir, appName: "MOSA.app", execName: "MOSA", version: "0.2.1-rc.34", marker: "old" });
+    const payloadRoot = join(root, "payload");
+    await mkdir(payloadRoot, { recursive: true });
+    await makeFakeApp({ root: payloadRoot, appName: "MOSA.app", execName: "MOSA", version: VERSION, marker: "new" });
+    // The update ZIP is presented as the x64 package, but the payload inside
+    // reports the arm64 architecture: exactly a renamed cross-arch package.
+    const zipPath = join(payloadRoot, `MOSA-darwin-x64-${VERSION}.zip`);
+    execFileSync("/usr/bin/ditto", ["-c", "-k", "--keepParent", "MOSA.app", zipPath], { cwd: payloadRoot });
+    const stubs = await writeStubScripts(root);
+
+    const { logPath } = await launchHelper({
+      root,
+      stubs,
+      installAppPath: join(appsDir, "MOSA.app"),
+      zipPath,
+      appName: "MOSA.app",
+      expectedArch: "x64",
+      envExtra: { MOSA_TEST_LIPO_ARCH: "arm64" },
+    });
+
+    await waitFor(() => existsSync(logPath), { label: "ARCH_MISMATCH failure log" });
+    const [firstLine] = readFileSync(logPath, "utf8").split("\n");
+    assert.match(firstLine, /^GP_UPDATE_FAILURE code=ARCH_MISMATCH exit=\d+$/);
+    await waitFor(() => markerOf(join(appsDir, "MOSA.app")) === "old", { label: "previous app restored after the architecture refusal" });
   } finally {
     await removeTestPath(root, { recursive: true, force: true });
   }

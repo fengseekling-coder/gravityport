@@ -40,6 +40,9 @@ const REASON_SENTENCES = [
   ["invalid", "无法更改存储位置。新位置不能位于当前素材库内，也不能包含当前素材库。", "Couldn’t change storage location. The new location can’t be inside the current library or contain it."],
   ["unavailable", "无法更改存储位置。无法访问所选文件夹。", "Couldn’t change storage location. The selected folder can’t be accessed."],
   ["copy-failed", "无法更改存储位置。复制素材库时出错，原素材库未改动。", "Couldn’t change storage location. Copying the library failed. The original library was not changed."],
+  // 任务 389（低18 ②）：空间不足、没有权限各一句自己的话。
+  ["no-space", "无法更改存储位置。所选位置空间不足，原素材库未改动。", "Couldn’t change storage location. There isn’t enough space at the selected location. The original library was not changed."],
+  ["permission-denied", "无法更改存储位置。没有权限写入所选文件夹，原素材库未改动。", "Couldn’t change storage location. GravityPort doesn’t have permission to write to the selected folder. The original library was not changed."],
   ["attached", "无法更改存储位置。请退出其他正在运行的 GravityPort 后重试。", "Couldn’t change storage location. Quit any other running GravityPort and try again."],
   ["managed", "无法更改存储位置。素材库位置由启动设置指定。", "Couldn’t change storage location. The location is set by a launch setting."],
 ];

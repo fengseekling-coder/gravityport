@@ -2,6 +2,7 @@
 
 import { extractFile, getRawHeader } from "@electron/asar";
 import { getCurrentFuseWire, FuseState, FuseV1Options } from "@electron/fuses";
+import { execFile } from "node:child_process";
 import { access, readFile, stat } from "node:fs/promises";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,6 +15,26 @@ const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const NATIVE_BINARY_PATTERN = /\.(?:node|dylib|dll)$/iu;
 export const PACKAGED_MCP_SERVER = "mcp/server.mjs";
 const RELATIVE_IMPORT_PATTERN = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)["'](\.{1,2}\/[^"']+)["']/gu;
+
+// `lipo -archs` names the Intel architecture "x86_64", while the packaging
+// target says "x64" — same machine code, different vocabulary.
+export function packagedLipoArch(arch) {
+  if (arch === "arm64") return "arm64";
+  if (arch === "x64") return "x86_64";
+  throw new Error(`Unsupported packaged architecture for lipo: ${arch}`);
+}
+
+function runLipoArchs(binaryPath) {
+  return new Promise((resolveLipo, rejectLipo) => {
+    execFile("/usr/bin/lipo", ["-archs", binaryPath], (error, stdout, stderr) => {
+      if (error) {
+        rejectLipo(new Error(`/usr/bin/lipo -archs ${binaryPath} failed: ${String(stderr || error.message).trim()}`));
+        return;
+      }
+      resolveLipo(String(stdout || ""));
+    });
+  });
+}
 
 /**
  * Every packaged module the bundled MCP server reaches through relative
@@ -130,6 +151,7 @@ export async function verifyPackagedRuntime({
   arch,
   product = resolveReleaseProduct(),
   readPackagedFuses = (executablePath) => getCurrentFuseWire(executablePath),
+  readPackagedBinaryArch = runLipoArchs,
 } = {}) {
   const target = resolveDesktopPackagingTarget({ platform, arch, env: {}, argv: [] });
   const asarPath = packagedAsarPath({ projectRoot, outDir, platform: target.platform, arch: target.arch, product });
@@ -228,6 +250,28 @@ export async function verifyPackagedRuntime({
   const fuseProblems = fuseMismatches(fuseWire);
   if (fuseProblems.length) {
     throw new Error(`Packaged fuses do not match DESKTOP_FUSES: ${fuseProblems.join("; ")}`);
+  }
+
+  // 387: every Mach-O in a darwin package must be exactly the target
+  // architecture — the main executable, the better-sqlite3 prebuild, every
+  // Sharp native module and libvips. A file of the other architecture (a
+  // mixed-arch prebuild that survived pruning) would crash the packaged app
+  // or silently fall back, so the verifier refuses the package outright.
+  if (target.platform === "darwin") {
+    const expectedLipoArch = packagedLipoArch(target.arch);
+    const darwinBinaryPaths = [
+      executablePath,
+      ...nativeEntries.map(({ path }) => join(unpackedRoot, ...path.split("/"))),
+    ];
+    for (const binaryPath of darwinBinaryPaths) {
+      const lipoArch = String(await readPackagedBinaryArch(binaryPath) || "").trim();
+      if (lipoArch !== expectedLipoArch) {
+        throw new Error(
+          `Packaged binary ${binaryPath} has architecture ${lipoArch || "(unreadable)"}, `
+          + `expected exactly ${expectedLipoArch} for ${target.id}.`,
+        );
+      }
+    }
   }
 
   return {
