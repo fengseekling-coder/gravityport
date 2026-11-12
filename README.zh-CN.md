@@ -5,6 +5,7 @@
 [![CI](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml)
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
 [![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#下载)
+[![GravityPort MCP on mcprush](https://mcprush.com/badge/gravityport-mcp/score.svg)](https://mcprush.com/to/gravityport-mcp?ref=badge)
 
 > **让每一次 AI 创作，有迹可循**
 > 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。

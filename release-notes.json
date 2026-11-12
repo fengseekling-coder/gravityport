@@ -1,44 +1,52 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {
-      "new": [
-        "AI 助手可以用一行命令 npx -y gravityport-mcp 接入 GravityPort；还没安装 App 时，AI 助手会收到中英文的安装说明。",
-        "检视器里正在看的素材要被 AI 助手（MCP）或即梦删除同步移进回收站时，App 会先弹窗问你；在即梦删除同步的弹窗里点了「不允许」的素材，以后不会再被自动移走。"
-      ],
-      "improved": [
-        "超大图片（最多约 2.68 亿像素）也能生成缩略图和预览。",
-        "可以用 ⌘[ / ⌘]（Windows 为 Alt+← / →）和鼠标侧键后退、前进；检视器开着时，后退只关闭检视器。",
-        "在堆叠里按 Esc 可以退出堆叠；分组和堆叠的弹窗打开时，光标直接落在输入框或「取消」上，Tab 键不会跳出弹窗，按 Esc 等于取消。",
-        "以前导入的图片缺少的中等尺寸缩略图，会在 App 开着时于后台慢慢补齐，浏览旧素材更顺畅。",
-        "回收站的工具栏会显示清空后大约能腾出多少空间。"
-      ],
-      "fixed": [
-        "修复了 AI 助手在同一个对话里记录多次生成时，几次生成被合成一条记录的问题。",
-        "修复了中文文件名的图片导入后名字变成一串编号的问题：卡片、检视器和导出的文件都保留中文原名，也能按中文名搜索，单个字也能搜到。",
-        "修复了按 ⌘C / Ctrl+C 复制素材没有反应的问题，现在可以把选中的素材复制到访达或资源管理器。"
-      ]
-    },
-    "en": {
-      "new": [
-        "AI assistants can connect to GravityPort with one command, npx -y gravityport-mcp. If the app is not installed yet, the assistant receives installation instructions in Chinese and English.",
-        "If an AI assistant (MCP) or Jimeng delete sync tries to move the asset you are viewing to Trash, GravityPort now asks you first. Assets you decline for Jimeng delete sync are not moved automatically again."
-      ],
-      "improved": [
-        "Very large images (up to about 268 megapixels) now get thumbnails and previews.",
-        "⌘[ / ⌘] (Alt+← / → on Windows) and the mouse side buttons now go back and forward. With the viewer open, Back closes only the viewer.",
-        "Press Esc inside a stack to leave it. Group and stack dialogs now put the cursor in the text field or on Cancel, keep Tab inside the dialog, and treat Esc as Cancel.",
-        "Older images that lack a medium-size thumbnail now get one in the background while the app is open, so browsing older assets is smoother.",
-        "The Trash toolbar now shows about how much space emptying it would free."
-      ],
-      "fixed": [
-        "Fixed an issue where several generations an AI assistant recorded in one conversation were merged into a single record.",
-        "Fixed images with Chinese file names losing their names after import. Cards, the inspector and exported files now keep the original name, and you can search by it, even by a single character.",
-        "Fixed ⌘C / Ctrl+C doing nothing on selected assets. You can now copy them to Finder or File Explorer."
-      ]
-    }
+    "zh": {},
+    "en": {}
   },
   "releases": [
+    {
+      "version": "0.3.12",
+      "date": "2026-11-12",
+      "zh": {
+        "new": [
+          "检视器里正在看的素材，要被 AI 助手（MCP）或即梦删除同步移进回收站时，App 会先弹窗确认。",
+          "在即梦删除同步的确认弹窗里点了「不允许」的素材，以后不会再被自动移走。"
+        ],
+        "improved": [
+          "超大尺寸的图片也能生成缩略图和预览。",
+          "支持用 ⌘[ / ⌘]（Windows 为 Alt+← / →）和鼠标侧键后退、前进；检视器开着时，后退只关闭检视器。",
+          "在堆叠里按 Esc 可以退出堆叠。",
+          "分组和堆叠的弹窗打开时，光标直接落在输入框或「取消」上；Tab 键不会跳出弹窗，按 Esc 等于取消。",
+          "以前导入的图片缺少的中等尺寸缩略图，会在 App 开着时于后台补齐，浏览旧素材更顺畅。",
+          "回收站的工具栏会显示清空后大约能腾出多少空间。"
+        ],
+        "fixed": [
+          "修复了 AI 助手在同一个对话里记录多次生成时，几次生成被合成一条记录的问题。",
+          "修复了中文文件名的图片导入后名字变成一串编号的问题：卡片、检视器和导出的文件都保留原名，也能按中文名搜索，单个字也能搜到。",
+          "修复了按 ⌘C / Ctrl+C 复制选中的素材没有反应的问题，现在可以复制到访达或资源管理器。"
+        ]
+      },
+      "en": {
+        "new": [
+          "If an AI assistant (MCP) or Jimeng delete sync tries to move the asset open in the viewer to Trash, GravityPort now asks first.",
+          "Assets declined in the Jimeng delete sync prompt are no longer moved to Trash automatically."
+        ],
+        "improved": [
+          "Very large images now get thumbnails and previews.",
+          "⌘[ / ⌘] (Alt+← / → on Windows) and the mouse side buttons now go back and forward. With the viewer open, Back closes only the viewer.",
+          "Press Esc inside a stack to leave it.",
+          "Group and stack dialogs now place the cursor in the text field or on Cancel, keep Tab inside the dialog, and treat Esc as Cancel.",
+          "Older images that lack a medium-size thumbnail now get one in the background while the app is open, so older assets browse more smoothly.",
+          "The Trash toolbar now shows about how much space emptying it would free."
+        ],
+        "fixed": [
+          "Fixed several generations recorded by an AI assistant in one conversation being merged into a single record.",
+          "Fixed images with Chinese file names showing a string of numbers after import. Cards, the inspector and exported files now keep the original name, and assets can be found by it, even by a single character.",
+          "Fixed ⌘C / Ctrl+C doing nothing on selected assets. Selected assets can now be copied to Finder or File Explorer."
+        ]
+      }
+    },
     {
       "version": "0.3.11",
       "date": "2026-11-08",
