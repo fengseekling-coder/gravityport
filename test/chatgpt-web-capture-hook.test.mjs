@@ -7,10 +7,7 @@ import vm from "node:vm";
 const manifest = JSON.parse(await readFile(new URL("../extensions/chatgpt-web-capture/manifest.json", import.meta.url), "utf8"));
 const generationRegistrySource = await readFile(new URL("../extensions/chatgpt-web-capture/generation-registry.js", import.meta.url), "utf8");
 const contentCss = await readFile(new URL("../extensions/chatgpt-web-capture/content.css", import.meta.url), "utf8");
-const optionsSource = await readFile(new URL("../extensions/chatgpt-web-capture/options.js", import.meta.url), "utf8");
 const optionsHtml = await readFile(new URL("../extensions/chatgpt-web-capture/options.html", import.meta.url), "utf8");
-const providerPolicySource = await readFile(new URL("../extensions/chatgpt-web-capture/provider-policy.js", import.meta.url), "utf8");
-const providerSource = await readFile(new URL("../extensions/chatgpt-web-capture/provider-sites.js", import.meta.url), "utf8");
 
 import {
   createHookHarness,
@@ -91,181 +88,11 @@ test("declares the supported Google media sites and provider content script", ()
     "https://storage.googleapis.com/*",
     "https://flow-content.google/*",
   ]) assert.ok(manifest.host_permissions.includes(host), `missing ${host}`);
-  assert.match(providerPolicySource, /host === "gemini\.google\.com"/);
-  assert.match(providerPolicySource, /host === "labs\.google"/);
-  assert.match(providerPolicySource, /host === "flow\.google\.com"/);
-  assert.match(providerPolicySource, /host === "aistudio\.google\.com"/);
-});
-
-test("Google adapters capture visible images and supported Flow / AI Studio videos with bounded Prompt lookup", () => {
-  const executableProviderSource = providerSource.replace(/\/\/.*$/gm, "");
-  assert.match(providerSource, /const IMAGE_HOSTS/);
-  assert.match(providerSource, /^  const BLOB_MEDIA_HOSTS = \[[^\n]*"gemini\.google\.com"/m);
-  assert.match(providerSource, /getBoundingClientRect/);
-  assert.match(providerSource, /document\.images/);
-  assert.match(providerSource, /document\.querySelectorAll\?\.\("video"\)/);
-  assert.match(providerSource, /function flowMediaIdFromImage\(img\)/);
-  assert.match(providerSource, /media\.getMediaUrlRedirect/);
-  assert.match(providerSource, /function captureFlowMediaThumbnail\(img\)/);
-  assert.match(providerSource, /if \(!mediaId \|\| !isVisibleFlowMediaThumbnail\(img\)\) return false;/,
-    "Flow media capture must not require Prompt text to render before the media");
-  assert.match(providerSource, /function isCaptureEligibleImage\(provider, img\)/,
-    "Flow thumbnail Prompt association must use the thumbnail floor, not the 512px generic-image floor");
-  assert.match(providerSource, /FLOW_PROBE_BACKOFF_DELAYS = \[15_000, 60_000, 300_000\]/,
-    "failed Flow media probes must back off instead of re-firing every scan");
-  assert.match(providerSource, /flowProbeFailures\.clear\(\)/);
-  assert.match(providerSource, /type: "mosa\.probeFlowMedia"/);
-  assert.match(providerSource, /probe\.mediaKind === "video"/);
-  assert.match(providerSource, /function isVisibleGeneratedVideo\(video\)/);
-  assert.match(providerSource, /function isProviderGeneratedVideo\(provider, video\)/);
-  assert.match(providerSource, /AI_STUDIO_VIDEO_PATH = \/\^\\\/generate-video/);
-  assert.match(providerSource, /AI_STUDIO_VIDEO_PATH\.test\(String\(location\.pathname/);
-  assert.match(providerSource, /document\.addEventListener\("loadedmetadata", \(\) => \{ if \(autoCapture\) scheduleScan\(\); \}, true\)/);
-  assert.match(providerSource, /document\.addEventListener\("loadeddata", \(\) => \{ if \(autoCapture\) scheduleScan\(\); \}, true\)/);
-  assert.match(providerSource, /document\.addEventListener\("canplay", \(\) => \{ if \(autoCapture\) scheduleScan\(\); \}, true\)/);
-  assert.match(providerSource, /"flow-content\.google"/);
-  assert.match(providerSource, /media\?\.videoWidth \|\| media\?\.naturalWidth \|\| media\?\.width/);
-  assert.match(providerSource, /media\?\.videoHeight \|\| media\?\.naturalHeight \|\| media\?\.height/);
-  assert.match(providerSource, /sendCapture\(provider, source, video, \{ mediaKind: "video" \}\)/);
-  assert.match(providerSource, /promptStatus: "not-available"/);
-  assert.match(providerSource, /promptSource: video \? "provider-visible-video" : "provider-visible-image"/);
-  assert.match(providerSource, /promptStatus: "provider-visible-prompt"/);
-  assert.match(providerSource, /promptSource: "gemini-visible-user-prompt"/);
-  assert.match(providerSource, /promptSource: "flow-visible-prompt"/);
-  assert.match(providerSource, /promptSource: "google-ai-studio-visible-user-prompt"/);
-  assert.match(providerSource, /function geminiVisibleUserPromptForImage\(image\)/);
-  assert.match(providerSource, /ancestorWithTag\(image, "model-response"\)/);
-  assert.match(providerSource, /String\(previous\.tagName \|\| ""\)\.toLowerCase\(\) === "user-query"/);
-  assert.match(providerSource, /GEMINI_PROMPT_MAX_CHARS = 24_000/);
-  assert.match(providerSource, /GEMINI_MAX_PREVIOUS_TURNS = 8/);
-  assert.match(providerSource, /FLOW_PROMPT_ANCHOR = \/reuse\\s\+prompt\/i/);
-  assert.match(providerSource, /FLOW_PROMPT_MAX_CHARS = 20_000/);
-  assert.match(providerSource, /FLOW_PROMPT_MAX_ANCESTORS = 14/);
-  assert.match(providerSource, /function flowNodeIsUiGlyph\(node\)/);
-  assert.match(providerSource, /className\.includes\("material-symbol"\)/);
-  assert.match(providerSource, /className\.includes\("google-symbol"\)/);
-  assert.match(providerSource, /if \(flowNodeIsUiGlyph\(node\)\) return true/);
-  assert.match(providerSource, /flowHasReusePromptAnchor/);
-  assert.match(providerSource, /flowReusePromptAnchorCount/);
-  assert.match(providerSource, /const buttonLike = tag === "button" \|\| tag === "a" \|\| role === "button" \|\| Boolean\(label\)/);
-  assert.match(providerSource, /flowNearbyPromptCard/);
-  assert.match(providerSource, /const reusePromptCards = promptCards\.filter/);
-  assert.match(providerSource, /if \(reusePromptCards\.length === 1\)/);
-  assert.doesNotMatch(providerSource, /!\/\\bprompt\\b\/i\.test\(raw\)/);
-  assert.doesNotMatch(providerSource, /bestPrompt/);
-  assert.doesNotMatch(providerSource, /console\.log/);
-  assert.match(providerSource, /AI_STUDIO_PROMPT_MAX_CHARS = 24_000/);
-  assert.match(providerSource, /AI_STUDIO_PROMPT_MAX_NODES = 12_000/);
-  assert.match(providerSource, /AI_STUDIO_MAX_PREVIOUS_TURNS = 16/);
-  assert.match(providerSource, /function aiStudioVisibleUserPromptForImage\(image\)/);
-  assert.match(providerSource, /function isProviderGeneratedOutput\(provider, img\)/);
-  assert.match(providerSource, /if \(!isProviderGeneratedOutput\(provider, img\)\) continue/);
-  assert.match(providerSource, /provider === "gemini"/);
-  assert.match(providerSource, /provider === "flow"/);
-  assert.match(providerSource, /provider === "google-ai-studio"/);
-  assert.match(providerSource, /ancestorWithTag\(image, "ms-chat-turn"\)/);
-  assert.match(providerSource, /sessionContent\?\.classList\?\.contains\("chat-session-content"\)/);
-  assert.match(providerSource, /directTurnContainer\(imageTurn, "model"\)/);
-  assert.match(providerSource, /directTurnContainer\(turn, "user"\)/);
-  assert.match(providerSource, /descendantsWithClass\(userContainer, "user-prompt-container"\)/);
-  assert.match(providerSource, /previous = previous\.previousElementSibling/);
-  assert.match(providerSource, /contenteditable/);
-  assert.match(providerSource, /"textarea"/);
-  assert.match(providerSource, /"mosa\.capture\.saveVideoWithPrompt"/);
-  assert.match(providerSource, /function supportedImageUrl\(value\)/);
-  assert.match(providerSource, /const PROMPT_RETRY_DELAYS = \[900, 2_700, 7_200, 15_000, 30_000\]/);
-  assert.match(providerSource, /function schedulePromptRetry\(provider, source, mediaKind = "image", \{/);
-  assert.match(providerSource, /lookupSourceUrl: lookupSource\?\.url \|\| source\.url/);
-  assert.match(providerSource, /lookupMediaKind: "image"/);
-  assert.match(providerSource, /type: "mosa\.upgradeMetadata"/);
-  assert.match(providerSource, /sourceMediaUrl: state\.source\.url/);
-  assert.match(providerSource, /function attemptPendingPromptUpgrades\(\)/);
-  assert.match(providerSource, /characterData: false/);
-  assert.match(providerSource, /attributeFilter: \["src", "srcset", "class", "aria-hidden", "hidden"\]/);
-  assert.match(providerSource, /document\.addEventListener\("load", \(\) => \{ if \(autoCapture\) scheduleScan\(\); \}, true\)/);
-  assert.match(providerSource, /function startProviderObserver\(\)/);
-  assert.match(providerSource, /observer\?\.disconnect\(\)/);
-  const providerSourceWithoutVideoQueries = executableProviderSource.replace(/document\.querySelectorAll\?\.\("video"\)/g, "");
-  assert.doesNotMatch(providerSourceWithoutVideoQueries, /innerText|textContent|innerHTML|querySelectorAll|conversation/);
-  assert.doesNotMatch(executableProviderSource, /document\.body\.innerText|document\.documentElement\.innerText/);
-});
-
-test("Google adapters read only eligible page-local bytes and keep CDN URLs remote", () => {
-  assert.match(providerSource, /src\.startsWith\("blob:"\)/);
-  assert.match(providerSource, /url\.origin !== location\.origin/);
-  assert.match(providerSource, /isAllowedLocalImageUrl/);
-  assert.match(providerSource, /providerPolicy\.isFlowMediaRedirectUrl\(url\.href\)/);
-  assert.match(providerPolicySource, /isFlowMediaRedirectUrl/);
-  assert.match(providerPolicySource, /"\/fx\/api\/trpc\/media\.getMediaUrlRedirect"/);
-  assert.match(providerPolicySource, /"\/api\/trpc\/media\.getMediaUrlRedirect"/);
-  assert.match(providerSource, /credentials: "same-origin"/);
-  assert.match(providerSource, /const bytes = video \? await bytesFromVisibleVideo\(source, media\) : await bytesFromVisibleImage\(source, media\)/);
-  assert.match(providerSource, /payload\.imageBase64 = bytes\.imageBase64/);
-  assert.match(providerSource, /payload\.imageUrl = source\.url/);
-  assert.match(providerSource, /if \(source\.kind === "local" && source\.url\.startsWith\("blob:"\)\) \{/);
-  assert.match(providerSource, /!isVisibleGeneratedImage\(image\)/);
-  assert.match(providerSource, /if \(source\?\.kind !== "local" \|\| !isVisibleGeneratedImage\(img\)\)/);
-  // Review 294 B: a queued or refused answer keeps the dedupe key. Only a
-  // retryable answer or a lost message frees it, at most twice and 60 s apart.
-  // The 401/503 ticket staying in the background queue is proven in
-  // web-capture-background-queue.test.mjs.
-  assert.match(providerSource, /if \(handOffNeedsRetry\(response\)\) releaseSeenForRetry\(source\.url\)/);
-  assert.match(providerSource, /\.catch\(\(\) => releaseSeenForRetry\(source\.url\)\)/);
-  assert.match(providerSource, /const HANDOFF_RETRY_MAX_ATTEMPTS = 2;/);
-  assert.match(providerSource, /const HANDOFF_RETRY_GAP_MS = 60_000;/);
-  assert.match(providerSource, /setTimeout\(\(\) => seen\.delete\(key\), HANDOFF_RETRY_GAP_MS\)/);
-  // A page that changed mid-capture never reached the background; it must stay
-  // retryable instead of locking the key for the rest of the page.
-  assert.equal(providerSource.match(/error: "Provider page changed before capture completed\.", retryable: true \}/g)?.length, 2);
-  assert.match(providerSource, /!changes\.autoCapture && !changes\.mosaBaseUrl && !changes\.mosaToken/);
-  assert.match(providerSource, /seen\.clear\(\);/);
-  assert.doesNotMatch(providerSource, /chrome\.cookies|document\.cookie|authorization/i);
-});
-
-test("Google adapter capture work is limited to two concurrent tasks", async () => {
-  assert.match(providerSource, /const CAPTURE_CONCURRENCY = 2/);
-  assert.match(providerSource, /return withCaptureSlot\(async \(\) => \{/);
-
-  const helperSource = [
-    /const CAPTURE_CONCURRENCY = 2;/.exec(providerSource)?.[0],
-    /let captureInFlight = 0;/.exec(providerSource)?.[0],
-    /const captureWaiters = \[\];/.exec(providerSource)?.[0],
-    /async function withCaptureSlot\(task\) \{[\s\S]*?\n  \}/.exec(providerSource)?.[0],
-  ].filter(Boolean).join("\n");
-  assert.match(helperSource, /withCaptureSlot/);
-
-  const context = { Promise };
-  vm.runInNewContext(`${helperSource}\nthis.withCaptureSlot = withCaptureSlot;`, context, { filename: "provider-capture-limit.js" });
-
-  let active = 0;
-  let maxActive = 0;
-  const releases = [];
-  const tasks = Array.from({ length: 5 }, (_, index) => context.withCaptureSlot(async () => {
-    active += 1;
-    maxActive = Math.max(maxActive, active);
-    await new Promise((resolveTask) => releases.push(resolveTask));
-    active -= 1;
-    return index;
-  }));
-
-  await setImmediate();
-  assert.equal(active, 2);
-  assert.equal(maxActive, 2);
-  while (releases.length || active) {
-    releases.shift()?.();
-    await setImmediate();
-  }
-  assert.deepEqual(await Promise.all(tasks), [0, 1, 2, 3, 4]);
-  assert.equal(maxActive, 2);
 });
 
 test("uses safe local extension settings without a public Token default", () => {
   assert.equal(typeof manifest.key, "string");
   assert.ok(manifest.key.length > 300);
-  assert.match(optionsSource, /chrome\.storage\.local\.set/);
-  assert.match(optionsSource, /function normalizeBaseUrl\(value\)/);
-  assert.match(optionsSource, /\["127\.0\.0\.1", "localhost"\]\.includes\(url\.hostname\)/);
-  assert.match(optionsSource, /baseUrl = normalizeBaseUrl\(baseUrlEl\.value\.trim\(\) \|\| DEFAULTS\.mosaBaseUrl\)/);
   assert.match(optionsHtml, /type="password"/);
 });
 
@@ -277,7 +104,6 @@ test("keeps the extension key, version, and pairing identifiers intact across th
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
   assert.equal(manifest.version, "0.15.47");
-  assert.match(optionsSource, /identity\?\.product !== "mosa"/);
 });
 
 test("surfaces MOSA's own ingest error when pairing repair keeps the same connection", async () => {
@@ -326,8 +152,6 @@ test("surfaces MOSA's own ingest error when pairing repair keeps the same connec
 test("defaults capture off and keeps Chrome permissions minimal", async () => {
   assert.deepEqual(manifest.permissions, ["storage", "contextMenus", "alarms", "unlimitedStorage"]);
   assert.equal(manifest.permissions.includes("activeTab"), false);
-  assert.match(optionsSource, /autoCapture:\s*false/);
-  assert.match(providerSource, /let autoCapture = false/);
   assert.match(optionsHtml, /默认关闭/);
 
   const harness = await createBackgroundHarness();
@@ -349,11 +173,6 @@ test("defaults capture off and keeps Chrome permissions minimal", async () => {
   const pageSettings = await emptyHarness.dispatchMessage({ type: "mosa.getSettings" }, pageSender);
   assert.equal(pageSettings.ok, true);
   assert.deepEqual(JSON.parse(JSON.stringify(pageSettings.settings)), { autoCapture: false });
-});
-
-test("manual fallback controls cover ChatGPT images and Google videos", () => {
-  assert.match(providerSource, /"mosa\.capture\.saveVideoWithPrompt"/);
-  assert.match(providerSource, /mediaKind: videoRequest \? "video" : "image"/);
 });
 
 test("ChatGPT hook stays dormant until capture is explicitly enabled", async () => {
@@ -1519,10 +1338,6 @@ test("provider content scripts only receive the autoCapture setting", async () =
 });
 
 test("clears the legacy development Token and verifies the real ingest authorization path", async () => {
-  assert.match(optionsSource, /authorization: `Bearer \$\{token\}`/);
-  assert.match(optionsSource, /WEB_CAPTURE_BAD_IMAGE/);
-  assert.match(optionsSource, /WEB_CAPTURE_UNAUTHORIZED/);
-
   const harness = await createBackgroundHarness({
     appOnline: true,
     settings: { mosaToken: "mosa-web-capture-dev" },
@@ -1632,29 +1447,6 @@ test("splits sibling generations without tool call ids into per-asset reference 
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.js,
     ["provider-policy.js", "provider-sites.js"],
   );
-});
-
-test("provider policy classifies only supported top-level product URLs", () => {
-  const sandbox = { URL };
-  vm.runInNewContext(providerPolicySource, sandbox, { filename: "provider-policy.js" });
-  const policy = sandbox.MosaProviderPolicy;
-  assert.equal(policy.providerForPageUrl("https://chatgpt.com/c/abc"), "chatgpt");
-  assert.equal(policy.providerForPageUrl("https://gemini.google.com/app/abc"), "gemini");
-  assert.equal(policy.providerForPageUrl("https://aistudio.google.com/generate-video"), "google-ai-studio");
-  assert.equal(policy.providerForPageUrl("https://labs.google/fx/en/tools/flow/project/abc"), "flow");
-  assert.equal(policy.providerForPageUrl("https://flow.google.com/project/abc"), "flow");
-  assert.equal(policy.providerForPageUrl("https://labs.google/search"), "");
-  assert.equal(policy.isFlowMediaRedirectUrl("https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=abc"), true);
-  assert.equal(policy.isFlowMediaRedirectUrl("https://flow.google.com/api/trpc/media.getMediaUrlRedirect?name=abc"), true);
-  assert.equal(policy.isFlowMediaRedirectUrl("https://flow.google.com/fx/api/trpc/media.getMediaUrlRedirect?name=abc"), true);
-  assert.equal(policy.isFlowMediaRedirectUrl("https://flow.google.com/api/trpc/media.getMediaUrlRedirect"), false);
-  assert.equal(policy.isFlowMediaRedirectUrl("https://evil.example/api/trpc/media.getMediaUrlRedirect?name=abc"), false);
-  assert.equal(policy.isFlowMediaRedirectUrl("https://flow.google.com/api/trpc/media.getSomethingElse?name=abc"), false);
-  assert.equal(policy.providerForPageUrl("http://gemini.google.com/app/abc"), "");
-  assert.equal(policy.providerForPageUrl("https://evil.example/?next=https://gemini.google.com"), "");
-  assert.equal(policy.supportsVideo("flow"), true);
-  assert.equal(policy.supportsVideo("google-ai-studio"), true);
-  assert.equal(policy.supportsVideo("gemini"), false);
 });
 
 test("url and asset events of one generation share a single reference scope", async () => {

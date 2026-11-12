@@ -112,3 +112,26 @@ test("R7: content scripts never touch page Authorization values", () => {
       `${file} must not read or forward page Authorization credentials`);
   }
 });
+
+// Task 397 (review 4-1 丁): the provider-script negative safety assertions
+// moved here from chatgpt-web-capture-hook.test.mjs.
+
+test("R8: content scripts never touch cookies", () => {
+  for (const file of contentScripts) {
+    const text = scriptTexts.get(file);
+    assert.doesNotMatch(text, /chrome\.cookies|document\.cookie/,
+      `${file} must not read or write cookies`);
+  }
+});
+
+test("R9: provider-sites.js never scans page-wide text and never logs to the console", () => {
+  const text = scriptTexts.get("provider-sites.js");
+  // Comments legitimately narrate page anatomy; scan the executable shape.
+  const code = text.replace(/\/\/[^\n]*/g, "");
+  // The only querySelectorAll in the adapter is the video query of the video
+  // loop; everything else stays on document.images and injected media events.
+  const withoutVideoQuery = code.replace(/document\.querySelectorAll\?\.\("video"\)/g, "");
+  assert.doesNotMatch(withoutVideoQuery, /innerText|textContent|innerHTML|querySelectorAll|conversation/,
+    "provider-sites.js must not scrape page-wide text or query beyond the video loop");
+  assert.doesNotMatch(code, /console\.log/, "provider-sites.js must not log to the page console");
+});
