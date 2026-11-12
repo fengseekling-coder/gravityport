@@ -278,18 +278,25 @@ function queueOrderSource({ assetId }) {
 // server checks viewer.json at call time — an early call would trash directly
 // without asking). Each runInPage is a fresh page, so every round is one
 // self-contained page source plus this Node-side handshake.
-async function waitForViewerFile(libraryDir, { timeoutMs = 10_000 } = {}) {
-  const { stat } = await import("node:fs/promises");
+// Waits until the presence record names `assetId`. A bare existence check is
+// not enough: the record a previous round (or the stopped flow service) left
+// behind still exists, so the MCP call could race the new viewer's report and
+// find nobody viewing the asset — it then trashes without asking (PR #343,
+// Windows e2e 1/2, round 5 light screenshot).
+async function waitForViewerFile(libraryDir, { assetId, timeoutMs = 10_000 } = {}) {
+  const { readFile } = await import("node:fs/promises");
   const path = join(libraryDir, ".live", "viewer.json");
   const deadline = Date.now() + timeoutMs;
+  let last = "(missing)";
   while (Date.now() < deadline) {
     try {
-      const info = await stat(path);
-      if (info.isFile()) return;
+      const record = JSON.parse(await readFile(path, "utf8"));
+      last = JSON.stringify({ assetId: record?.assetId, pid: record?.pid });
+      if (!assetId || record?.assetId === assetId) return;
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("the viewer presence file never appeared: " + path);
+  throw new Error(`the viewer presence file never named ${assetId || "any asset"}: ${path} last=${last}`);
 }
 
 // ---- Round 5 helpers: desktop-shell screenshots (the schema-upgrade-notice
@@ -437,7 +444,7 @@ async function captureDialogShot({ ctx, theme, cardId, mcp, serverEnv }) {
       for (let waited = 0; waited < 10000 && !document.querySelector('.viewer-title'); waited += 100) await sleep(100);
       return Boolean(document.querySelector('.viewer-title'));
     })()`);
-    await waitForViewerFile(ctx.libraryDir);
+    await waitForViewerFile(ctx.libraryDir, { assetId: cardId });
     const call = mcp.callTool("asset_trash", { assetId: cardId });
     await waitForExpression(cdp, "Boolean(document.querySelector('.authorization-modal'))", "authorization dialog", 30000);
     await waitForExpression(
@@ -512,7 +519,7 @@ export async function run(ctx) {
     // ── Round 1: allow — the asset trashes and the viewer steps. ──
     const x = created[0].id;
     const page1 = ctx.runInPage(server, viewerDialogSource({ phase: "approve", assetId: x }));
-    await waitForViewerFile(ctx.libraryDir);
+    await waitForViewerFile(ctx.libraryDir, { assetId: x });
     const call1 = mcp.callTool("asset_trash", { assetId: x });
     const approval = await page1;
     const problems = [];
@@ -532,7 +539,7 @@ export async function run(ctx) {
     // ── Round 2a: deny by button — the asset stays. ──
     const y = created[1].id;
     const page2a = ctx.runInPage(server, viewerDialogSource({ phase: "deny", assetId: y }));
-    await waitForViewerFile(ctx.libraryDir);
+    await waitForViewerFile(ctx.libraryDir, { assetId: y });
     const call2a = mcp.callTool("asset_trash", { assetId: y });
     const denial = await page2a;
     if (denial.title !== "允许 Claude 删除这张素材吗？") throw new Error(`deny round title: ${denial.title}`);
@@ -545,7 +552,7 @@ export async function run(ctx) {
     // ── Round 2b: deny by Escape. ──
     const w = created[2].id;
     const page2b = ctx.runInPage(server, viewerDialogSource({ phase: "esc", assetId: w }));
-    await waitForViewerFile(ctx.libraryDir);
+    await waitForViewerFile(ctx.libraryDir, { assetId: w });
     const call2b = mcp.callTool("asset_trash", { assetId: w });
     const escape = await page2b;
     if (escape.viewerNameAfter !== escape.viewerName) throw new Error("the Esc-denied asset must stay in the viewer");
@@ -557,7 +564,7 @@ export async function run(ctx) {
     // ── Round 3: timeout — dialog closes itself, toast appears. ──
     const z = created[3].id;
     const page3 = ctx.runInPage(server, viewerDialogSource({ phase: "timeout", assetId: z }));
-    await waitForViewerFile(ctx.libraryDir);
+    await waitForViewerFile(ctx.libraryDir, { assetId: z });
     const call3 = mcp.callTool("asset_trash", { assetId: z });
     const timeout = await page3;
     if (timeout.toast !== "已拒绝 Claude 的删除请求（超时）") {
@@ -573,7 +580,7 @@ export async function run(ctx) {
     // pairing dialog shows first, the deletion one after it is decided. ──
     const v = z; // still live: round 3 kept it
     const page4 = ctx.runInPage(server, queueOrderSource({ assetId: v }));
-    await waitForViewerFile(ctx.libraryDir);
+    await waitForViewerFile(ctx.libraryDir, { assetId: v });
     const pairAsk = await fetch(`${server.origin}/api/web-capture/pair`, {
       method: "POST",
       headers: { origin: DEVELOPMENT_ORIGIN, "content-type": "application/json" },
