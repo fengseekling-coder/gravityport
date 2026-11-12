@@ -138,6 +138,28 @@ export async function run(ctx) {
       if (!point) throw new Error(`card not on screen: ${assetId}`);
       return point;
     };
+    // Right after a history step the group view is still laying out: a
+    // double-click aimed at a card that then moves lands on nothing and the
+    // viewer never opens (seen on macOS CI and locally, about 1 run in 3).
+    // Wait for the card to hold still, and re-aim if the viewer stays shut.
+    const openViewerOn = async (assetId, label) => {
+      for (let attempt = 1; ; attempt += 1) {
+        let previous = null;
+        for (let read = 0; read < 25; read += 1) {
+          const point = await cardCenter(assetId).catch(() => null);
+          if (point && previous && Math.abs(point.x - previous.x) < 1 && Math.abs(point.y - previous.y) < 1) break;
+          previous = point;
+          await sleep(120);
+        }
+        await dispatchDoubleClick(cdp, await cardCenter(assetId));
+        try {
+          await waitFor(cdp, `document.querySelector('.workspace')?.classList.contains('preview-open')`, label, 4000);
+          return;
+        } catch (error) {
+          if (attempt >= 3) throw error;
+        }
+      }
+    };
     const selectedCount = () => cdp.evaluate(`document.querySelectorAll('.asset-card.asset-selected').length`);
     const toastText = () => cdp.evaluate(`document.querySelector('.toast')?.textContent || ''`);
     const waitForToast = async (fragment) => {
@@ -248,15 +270,13 @@ export async function run(ctx) {
 
     // ── 7. back with the viewer open closes only the viewer ──
     await step("⌘[ with the viewer open closes just the viewer (windowed, then fullscreen)", async () => {
-      await dispatchDoubleClick(cdp, await cardCenter(seeded.ids[2]));
-      await waitFor(cdp, `document.querySelector('.workspace')?.classList.contains('preview-open')`, "viewer open");
+      await openViewerOn(seeded.ids[2], "viewer open");
       await dispatchNavBackKey(cdp);
       await waitFor(cdp, `!document.querySelector('.workspace')?.classList.contains('preview-open')`, "viewer closed");
       const stillGroup = await activeNav();
       if (stillGroup !== GROUP_NAME) throw new Error(`viewer-back left the group: ${stillGroup}`);
       // Fullscreen: the same single-step close, no extra history step.
-      await dispatchDoubleClick(cdp, await cardCenter(seeded.ids[2]));
-      await waitFor(cdp, `document.querySelector('.workspace')?.classList.contains('preview-open')`, "viewer open again");
+      await openViewerOn(seeded.ids[2], "viewer open again");
       await clickCenter(cdp, `document.querySelector('.viewer-controls button[title="全屏"]')`);
       await waitFor(cdp, `document.querySelector('.viewer-controls button[aria-pressed="true"]') !== null`, "viewer fullscreen");
       await dispatchNavBackKey(cdp);
