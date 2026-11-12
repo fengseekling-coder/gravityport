@@ -434,7 +434,11 @@ function readSystemClipboard() {
     return JSON.parse(execFileSync("osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8" }));
   }
   const filesScript = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; ConvertTo-Json -Compress @(Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName })";
-  const files = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-Command", filesScript], { encoding: "utf8" }));
+  // With no file on the clipboard, Get-Clipboard -Format FileDropList yields
+  // $null, and Windows PowerShell's ForEach-Object still runs once for a piped
+  // $null — the JSON comes back as [null]. Keep only real paths.
+  const parsedFiles = JSON.parse(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-Command", filesScript], { encoding: "utf8" }) || "[]");
+  const files = (Array.isArray(parsedFiles) ? parsedFiles : [parsedFiles]).filter((path) => typeof path === "string" && path);
   const text = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard"], { encoding: "utf8" }).replace(/\r?\n$/, "");
   return { files, text };
 }
