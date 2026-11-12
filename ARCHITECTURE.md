@@ -60,7 +60,7 @@ Pinterest 授权中转与 Pinterest API，以及用户在设置页点击发送�
 只有一份 UI：`web/gravityport/` 是 React + Vite 的界面源码。`src/` 下
 `App.tsx` 负责页面状态、事件绑定、导航和 API 调用；画廊窗口化、选择、
 拖拽、右键菜单、回收站、版本树、滚动记忆、偏好等逻辑拆分为同目录下的
-纯逻辑模块（可独立编译测试），界面组件和样式在 `src/` 与 `index.css`。
+纯逻辑模块（可独立编译测试），界面组件和样式在 `src/` 与 `src/styles/`（由 `index.css` 按序引入）。
 界面以中文文案为源，英文对照在 `src/i18n.ts`。
 
 `npm run build` 先由 Vite 把源码构建到 `web/gravityport/dist/`，再由

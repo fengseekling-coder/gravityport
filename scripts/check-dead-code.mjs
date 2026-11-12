@@ -109,7 +109,8 @@ function hasDynamicClassSuffix(corpus, name) {
 }
 
 export function extractCssClasses(css) {
-  return new Set([...stripCssComments(css).matchAll(CSS_CLASS_RE)].map((match) => match[1]));
+  const withoutImports = stripCssComments(css).replace(/@import\s+["'][^"'\r\n]*["']\s*;?/g, " ");
+  return new Set([...withoutImports.matchAll(CSS_CLASS_RE)].map((match) => match[1]));
 }
 
 export function analyzeDeadCode({ files, sourceDirs = SOURCE_DIRS, cssFiles = null }) {
@@ -155,15 +156,18 @@ export function analyzeDeadCode({ files, sourceDirs = SOURCE_DIRS, cssFiles = nu
 
   // Every tracked stylesheet in the UI tree is scanned — derived from the
   // file list, so adding a stylesheet to the tree cannot slip past the gate.
-  // The React tree keeps its single stylesheet at index.css; a tree that
-  // ships stylesheets but none of them is a broken tree.
-  const UI_STYLESHEETS = [`${UI_TREE}/index.css`];
+  // The React tree keeps its entry stylesheet at index.css and split files
+  // under styles/; a tree that ships stylesheets but none of them is a broken tree.
+  const UI_STYLESHEETS = [
+    `${UI_TREE}/index.css`,
+    ...allPaths.filter((path) => path.startsWith(`${UI_TREE}/styles/`) && path.endsWith(".css")),
+  ];
   const cssPaths = cssFiles
     ? cssFiles.filter((path) => files.has(path))
     : (() => {
         const treeFiles = allPaths.filter((path) => path.startsWith(`${UI_TREE}/`) && path.endsWith(".css"));
-        if (treeFiles.length > 0 && !treeFiles.some((path) => UI_STYLESHEETS.includes(path))) {
-          throw new Error(`${UI_TREE} has stylesheets but is missing ${UI_STYLESHEETS.join(" or ")}.`);
+        if (treeFiles.length > 0 && !treeFiles.includes(`${UI_TREE}/index.css`)) {
+          throw new Error(`${UI_TREE} has stylesheets but is missing ${UI_TREE}/index.css.`);
         }
         return treeFiles;
       })();
@@ -181,6 +185,14 @@ export function analyzeDeadCode({ files, sourceDirs = SOURCE_DIRS, cssFiles = nu
     }
   }
 
+  const indexAndStylesClasses = new Set();
+  for (const path of cssPaths.filter((p) => UI_STYLESHEETS.includes(p))) {
+    for (const name of extractCssClasses(files.get(path))) indexAndStylesClasses.add(name);
+  }
+  const otherCssCount = cssPaths
+    .filter((p) => !UI_STYLESHEETS.includes(p))
+    .reduce((total, path) => total + extractCssClasses(files.get(path)).size, 0);
+
   return {
     deadFiles,
     deadExports,
@@ -188,7 +200,7 @@ export function analyzeDeadCode({ files, sourceDirs = SOURCE_DIRS, cssFiles = nu
     counts: {
       modules: sourcePaths.length,
       exports: [...exportInfo.values()].reduce((total, { names }) => total + names.length, 0),
-      cssClasses: cssPaths.reduce((total, path) => total + extractCssClasses(files.get(path)).size, 0),
+      cssClasses: indexAndStylesClasses.size + otherCssCount,
     },
   };
 }

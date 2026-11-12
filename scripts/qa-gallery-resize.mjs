@@ -23,7 +23,7 @@ import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 // column, aspect ratios preserved, decoded images in the viewport, no
 // unhydrated placeholder visible, no horizontal overflow. The expected
 // column counts follow the React design's responsive bands
-// (web/gravityport/src/index.css): user column setting above 720px
+// (web/gravityport/src/styles/02-gallery.css): user column setting above 720px
 // (default 5), 3 columns at ≤720px, 2 columns at ≤480px.
 const root = resolve(import.meta.dirname, "..");
 const scratch = await mkdtemp(join(tmpdir(), "mosa-resize-qa-"));
