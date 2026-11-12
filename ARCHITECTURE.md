@@ -192,7 +192,7 @@ lib/api/*.mjs            素材、生成历史、库、桥接/Web Capture、Pint
 lib/pinterest/           Pinterest OAuth、token 存储与 API 客户端
 lib/feedback/            反馈转发配置
 lib/asset-store.mjs      存储选择和 JSON 兼容实现
-lib/sqlite-asset-store.mjs SQLite 实现（better-sqlite3）
+lib/sqlite-asset-store.mjs SQLite 实现（better-sqlite3；工具函数在 lib/sqlite-store/）
 lib/*.mjs                Node 运行时模块
 lib/*.ts                 TypeScript 源码；构建后生成运行时 JS/声明文件
 desktop/                 Electron 主进程、preload、服务管理和 Forge 配置
