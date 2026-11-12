@@ -34,7 +34,11 @@ const ECHO_SERVER = [
   "});",
 ].join("\n");
 
-test("launcher with the app spawns it as node and forwards stdio and exit codes", async (t) => {
+// The fixture is a macOS .app bundle and the env check uses macOS `ps -E`;
+// on other systems the launcher (correctly) finds no app, so skip there.
+test("launcher with the app spawns it as node and forwards stdio and exit codes", {
+  skip: process.platform !== "darwin" && "macOS-only fixture (.app bundle, ps -E)",
+}, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-launcher-app-"));
   const appDir = join(root, "GravityPort.app");
   const asarDir = join(appDir, "Contents", "Resources", "app.asar");

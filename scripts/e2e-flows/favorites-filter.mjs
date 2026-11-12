@@ -16,9 +16,10 @@ export async function run(ctx) {
     });
     const favoriteResponse = await ctx.api(first.origin, "POST", `/api/assets/default/${encodeURIComponent(starred.asset.id)}/favorite`);
     console.log(`[favorites-flow] seed favorite -> favorite=${favoriteResponse?.asset?.favorite} id=${starred.asset.id.slice(0, 10)}`);
-    // The create response omits the derived name; the stored filename is the
-    // same string the gallery renders, so fall back to it.
-    const starredName = starred.asset.name || starred.asset.asset || String(starred.asset.image_path || "").split("/").pop();
+    // The gallery renders display_name (task 382: the stored filename minus
+    // machine-added segments); fall back to the stored filename for responses
+    // that do not carry it.
+    const starredName = starred.asset.display_name || starred.asset.name || starred.asset.asset || String(starred.asset.image_path || "").split("/").pop();
     seeded = { plainId: plain.asset.id, starredId: starred.asset.id, starredName };
     console.log(`[favorites-flow] seeded=${JSON.stringify(seeded)}`);
     assertFiltered(await ctx.runInPage(first, favoritesSource(seeded)), "before restart");

@@ -37,7 +37,7 @@ export async function run(ctx) {
     if (seededMany?.length !== 20) {
       throw new Error(`inspector-tags seed: many-tag asset tags wrong on the server: ${JSON.stringify(seededMany)}`);
     }
-    const assetName = (created) => created.asset.name || created.asset.asset
+    const assetName = (created) => created.asset.display_name || created.asset.name || created.asset.asset
       || String(created.asset.image_path || "").split("/").pop();
     const config = {
       basicName: assetName(basic),

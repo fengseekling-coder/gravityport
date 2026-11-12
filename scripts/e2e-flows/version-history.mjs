@@ -19,7 +19,7 @@ export async function run(ctx) {
     const parentCreate = await ctx.api(server.origin, "POST", "/api/assets/create", {
       projectId: "default", imagePath: await ctx.makePng("version-parent.png", [74, 127, 181]), prompt: "version flow original prompt",
     });
-    const parent = { asset: { ...parentCreate.asset, name: parentCreate.asset.name || parentCreate.asset.asset || "version-parent.png" } };
+    const parent = { asset: { ...parentCreate.asset, name: parentCreate.asset.display_name || parentCreate.asset.name || parentCreate.asset.asset || "version-parent.png" } };
     const child = await ctx.api(server.origin, "POST",
       `/api/assets/default/${encodeURIComponent(parent.asset.id)}/versions`,
       { version_change: "e2e version change" });

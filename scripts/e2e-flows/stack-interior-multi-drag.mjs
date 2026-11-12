@@ -164,12 +164,30 @@ function stackInteriorSource(config) {
     // Escape until no card is marked, with the empty state holding for several
     // reads: every view reload re-lands the implicit selection on the first
     // card, and a marked card would turn the marquee press into a card drag.
-    async function resetSelection() {
+    async function resetSelection({ clearImplicitFocus = false } = {}) {
       let emptyReads = 0;
       const deadline = Date.now() + 20000;
+      // A lone highlight on the first member may be the app's implicit focus
+      // (a view load re-picks it after a clear). Since task 384, Escape with
+      // only that focus left leaves the stack instead of clearing it. The
+      // later parts select by clicking, which replaces that focus, so it
+      // counts as cleared there. Part A's marquee presses that very card and
+      // needs it gone: click it first (a user selection Escape clears inside
+      // the stack). Only Part A does this — it runs before any drag, and the
+      // app swallows the first synthetic click after a drag.
+      const onlyImplicitFocus = () => {
+        const ids = selectedIds();
+        return ids.length === 1 && ids[0] === visibleIds()[0];
+      };
       while (Date.now() < deadline) {
-        if (selectedIds().length) {
+        if (selectedIds().length && (clearImplicitFocus || !onlyImplicitFocus())) {
           emptyReads = 0;
+          if (onlyImplicitFocus()) {
+            const focusCard = cardFor(selectedIds()[0]);
+            if (!focusCard) throw new Error('reset: focused card missing ' + JSON.stringify({ selected: selectedIds(), visible: visibleIds() }));
+            click(focusCard);
+            await sleep(100);
+          }
           window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         } else emptyReads += 1;
         if (emptyReads >= 3) return;
@@ -224,7 +242,7 @@ function stackInteriorSource(config) {
     await waitForGalleryStable();
 
     // ── Part A: marquee three members, press one, drag out of the window ──
-    await resetSelection();
+    await resetSelection({ clearImplicitFocus: true });
     const shown = visibleIds();
     const first3 = shown.slice(0, 3);
     const boxes = first3.map((id) => cardFor(id).getBoundingClientRect());
