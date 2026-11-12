@@ -112,6 +112,19 @@ const DESKTOP_PACKAGING_TARGETS = Object.freeze({
     libvipsPackage: "sharp-libvips-darwin-arm64",
     asarUnpackDir: "node_modules/@img/sharp-libvips-darwin-arm64",
   }),
+  // The Intel (x64) macOS package. `npm ci` on an Apple-silicon Mac does not
+  // install these optional Sharp packages; scripts/provision-darwin-x64-natives.mjs
+  // fetches them from the registry (integrity-checked against the lockfile)
+  // before a darwin-x64 package step runs.
+  "darwin-x64": Object.freeze({
+    id: "darwin-x64",
+    platform: "darwin",
+    arch: "x64",
+    sqlitePrebuild: "darwin-x64.node",
+    sharpPackages: Object.freeze(["sharp-darwin-x64", "sharp-libvips-darwin-x64"]),
+    libvipsPackage: "sharp-libvips-darwin-x64",
+    asarUnpackDir: "node_modules/@img/sharp-libvips-darwin-x64",
+  }),
   "win32-x64": Object.freeze({
     id: "win32-x64",
     platform: "win32",
@@ -145,7 +158,7 @@ export function resolveDesktopPackagingTarget({
   const requestedArch = String(arch || env.MOSA_DESKTOP_ARCH || cliOption(argv, "arch") || defaultArch).trim();
   const target = DESKTOP_PACKAGING_TARGETS[`${requestedPlatform}-${requestedArch}`];
   if (!target) {
-    throw new Error(`Unsupported MOSA desktop packaging target: ${requestedPlatform}-${requestedArch}. Supported targets: darwin-arm64, win32-x64.`);
+    throw new Error(`Unsupported MOSA desktop packaging target: ${requestedPlatform}-${requestedArch}. Supported targets: darwin-arm64, darwin-x64, win32-x64.`);
   }
   return target;
 }

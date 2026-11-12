@@ -21,7 +21,7 @@ import { buildMenuTemplate } from "./menu-template.mjs";
 import { ensureWindowsShortcutAppId } from "./windows-shortcut-app-id.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
-import { canInstallUpdateInApp, checkForMosaUpdate, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
+import { canInstallUpdateInApp, checkForMosaUpdate, macosUpdateArchForHost, MOSA_DOWNLOAD_PAGE_URL, reportAnonymousUsage } from "./update-service.mjs";
 import { releaseManifestTrustSet } from "../lib/release-manifest-signature.mjs";
 import { markPendingSchemaUpgrade } from "./update-schema-marker.mjs";
 import { cleanupStaleUpdateStagingDirs } from "./update-staging-cleanup.mjs";
@@ -443,6 +443,7 @@ const updateScheduler = createUpdateScheduler({
     currentVersion: app.getVersion(),
     currentDistribution: expectedServiceIdentity.distribution,
     releaseManifestTrust: releaseManifestVerificationTrusts(),
+    macArch: macosUpdateArchForHost({ arch: process.arch, runningUnderARM64Translation: app.runningUnderARM64Translation }),
   }),
   artifactForPlatform: (release) => (
     process.platform === "darwin" ? release.macArtifact
@@ -1061,6 +1062,7 @@ function registerIPC() {
             currentVersion: app.getVersion(),
             currentDistribution: expectedServiceIdentity.distribution,
             releaseManifestTrust: releaseManifestVerificationTrusts(),
+            macArch: macosUpdateArchForHost({ arch: process.arch, runningUnderARM64Translation: app.runningUnderARM64Translation }),
           });
           if (!release.updateAvailable) return { status: "current", currentVersion: release.currentVersion };
           if (!release.macArtifact) return { status: "unavailable", currentVersion: release.currentVersion };
@@ -1105,6 +1107,7 @@ function registerIPC() {
             expectedIdentity: release.buildIdentity,
             appName: release.macArtifact.appName,
             expectedTeamIdentifier: release.macArtifact.teamIdentifier || "",
+            expectedArch: release.macArtifact.arch,
             processId: process.pid,
             libraryDir,
           });
@@ -1147,6 +1150,7 @@ function registerIPC() {
         currentVersion: app.getVersion(),
         currentDistribution: expectedServiceIdentity.distribution,
         releaseManifestTrust: releaseManifestVerificationTrusts(),
+        macArch: macosUpdateArchForHost({ arch: process.arch, runningUnderARM64Translation: app.runningUnderARM64Translation }),
       });
       if (!release.updateAvailable) return { status: "current", currentVersion: release.currentVersion };
       if (!release.windowsArtifact) return { status: "unavailable", currentVersion: release.currentVersion };
@@ -1537,6 +1541,7 @@ function runUpdateCheck({ notify = false } = {}) {
     currentVersion,
     currentDistribution: expectedServiceIdentity.distribution,
     releaseManifestTrust: releaseManifestVerificationTrusts(),
+    macArch: macosUpdateArchForHost({ arch: process.arch, runningUnderARM64Translation: app.runningUnderARM64Translation }),
   })
     .then((result) => {
       if (notify && result.updateAvailable) {

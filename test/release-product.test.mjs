@@ -53,14 +53,17 @@ test("release product names cover every packaging name for both products", () =>
   assert.equal(defaulted.macAppBundleName, "GravityPort.app");
   assert.equal(defaulted.macExecutableName, "GravityPort");
   assert.equal(defaulted.windowsExecutableName, "GravityPort.exe");
-  assert.equal(defaulted.macosPackageDirName, "GravityPort-darwin-arm64");
+  assert.equal(defaulted.macosPackageDirName(), "GravityPort-darwin-arm64");
+  // 387: the package directory name follows the target architecture.
+  assert.equal(defaulted.macosPackageDirName("x64"), "GravityPort-darwin-x64");
   assert.equal(defaulted.windowsPackageDirName, "GravityPort-win32-x64");
   const legacy = releaseProductNames("MOSA");
   assert.equal(legacy.product, "MOSA");
   assert.equal(legacy.macAppBundleName, "MOSA.app");
   assert.equal(legacy.macExecutableName, "MOSA");
   assert.equal(legacy.windowsExecutableName, "MOSA.exe");
-  assert.equal(legacy.macosPackageDirName, "MOSA-darwin-arm64");
+  assert.equal(legacy.macosPackageDirName(), "MOSA-darwin-arm64");
+  assert.equal(legacy.macosPackageDirName("x64"), "MOSA-darwin-x64");
   assert.equal(legacy.windowsPackageDirName, "MOSA-win32-x64");
   assert.equal(legacy.macosUpdateZipName("0.2.1-rc.4"), "MOSA-darwin-arm64-0.2.1-rc.4.zip");
   assert.equal(legacy.windowsUpdateZipName("0.2.1-rc.4"), "MOSA-win32-x64-0.2.1-rc.4.zip");
@@ -68,9 +71,11 @@ test("release product names cover every packaging name for both products", () =>
   assert.equal(legacy.macosDmgName("0.2.1-rc.4"), "MOSA-darwin-arm64-0.2.1-rc.4.dmg");
   const renamed = releaseProductNames("GravityPort");
   assert.equal(renamed.macosUpdateZipName("0.3.0"), "GravityPort-darwin-arm64-0.3.0.zip");
+  assert.equal(renamed.macosUpdateZipName("0.3.0", "x64"), "GravityPort-darwin-x64-0.3.0.zip");
   assert.equal(renamed.windowsUpdateZipName("0.3.0"), "GravityPort-win32-x64-0.3.0.zip");
   assert.equal(renamed.windowsInstallerName("0.3.0"), "GravityPort-win32-x64-0.3.0.exe");
   assert.equal(renamed.macosDmgName("0.3.0"), "GravityPort-darwin-arm64-0.3.0.dmg");
+  assert.equal(renamed.macosDmgName("0.3.0", "x64"), "GravityPort-darwin-x64-0.3.0.dmg");
   assert.throws(() => releaseProductNames("mosa"), /Unsupported release product/);
 });
 

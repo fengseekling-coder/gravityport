@@ -32,7 +32,9 @@ export const DEFAULT_TARGETS = [...REGENERABLE_ROOTS, ...TEMP_NAMESPACES];
 export const PRESERVED_RELEASE_PATHS = Object.freeze([
   "out/make",
   ...RELEASE_PRODUCTS.flatMap((product) => [
-    `out/${releaseProductNames(product).macosPackageDirName}`,
+    `out/${releaseProductNames(product).macosPackageDirName()}`,
+    // 387: the Intel package directory is release output too and stays preserved.
+    `out/${releaseProductNames(product).macosPackageDirName("x64")}`,
     `out/${releaseProductNames(product).windowsPackageDirName}`,
   ]),
   "out/store",

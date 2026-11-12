@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { packagedExecutablePath } from "./desktop-runtime-paths.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
@@ -19,10 +19,62 @@ import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const forgeOutDir = resolve(rootDir, process.env.MOSA_FORGE_OUT_DIR || "out");
-const binary = packagedExecutablePath({ rootDir, outDir: forgeOutDir });
+// The smoke target architecture comes from --arch or MOSA_DESKTOP_ARCH and
+// never from process.arch: the Intel package is smoked under Rosetta on an
+// Apple-silicon Mac, where process.arch is arm64.
+function cliArch(argv) {
+  const exact = "--arch";
+  const prefix = `${exact}=`;
+  let value = "";
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === exact) {
+      value = argv[index + 1] || "";
+      break;
+    }
+    if (argv[index].startsWith(prefix)) {
+      value = argv[index].slice(prefix.length);
+      break;
+    }
+  }
+  value = String(value || process.env.MOSA_DESKTOP_ARCH || "").trim() || "arm64";
+  if (value !== "arm64" && value !== "x64") throw new Error(`Unsupported packaged smoke architecture: ${value}.`);
+  return value;
+}
+const binary = packagedExecutablePath({ rootDir, outDir: forgeOutDir, arch: cliArch(process.argv.slice(2)) });
 const ELECTRON_QA_FLAGS = process.platform === "win32" ? ["--disable-gpu"] : [];
 
 if (!existsSync(binary)) throw new Error(`Missing packaged binary: ${binary}`);
+
+// 387: proof the Intel package really runs as x86_64. The packaged binary is
+// started once in Node mode (the same ELECTRON_RUN_AS_NODE=1 mode the bundled
+// MCP config uses, enabled by the RunAsNode fuse) and reads its own
+// sysctl.proc_translated: 1 means macOS is translating it under Rosetta (an
+// x64 package on an Apple-silicon host), 0 means it runs natively. Node's
+// process.arch inside that process is the binary's build architecture.
+async function verifyX64RuntimeProbe(binaryPath) {
+  if (process.platform !== "darwin") return;
+  const output = await new Promise((resolveProbe, rejectProbe) => {
+    execFile(binaryPath, ["-e", "process.stdout.write('translated=' + require('node:child_process').execFileSync('/usr/sbin/sysctl', ['-n', 'sysctl.proc_translated']).toString().trim() + ' arch=' + process.arch + '\\n')"], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      timeout: 30_000,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        rejectProbe(new Error(`x64 runtime probe failed: ${String(stderr || error.message).trim()}`));
+        return;
+      }
+      resolveProbe(String(stdout || ""));
+    });
+  });
+  // This smoke script itself always runs natively (npm does not launch under
+  // Rosetta), so its process.arch is the host architecture.
+  const expectedTranslated = process.arch === "arm64" ? "translated=1" : "translated=0";
+  if (!output.includes("arch=x64") || !output.includes(expectedTranslated)) {
+    throw new Error(`x64 runtime probe mismatch: got ${JSON.stringify(output.trim())}, expected arch=x64 and ${expectedTranslated}.`);
+  }
+  console.log(`PACKAGED_X64_RUNTIME_PROBE ${output.trim()}`);
+}
+
+if (cliArch(process.argv.slice(2)) === "x64") await verifyX64RuntimeProbe(binary);
 
 const temp = await mkdtemp(join(tmpdir(), "mosa-smoke-"));
 const libraryDir = join(temp, "library");
@@ -271,6 +323,11 @@ async function verifyPackagedReadOnlyPointerInput(origin, cdpPort) {
     await waitForDom(socket, `document.querySelector('.sidebar .main-nav > .nav-row:first-child')?.getAttribute('aria-current') === 'page'`, "all-assets navigation");
     await clickElement(socket, '.sidebar .user-button');
     await waitForDom(socket, `Boolean(document.querySelector('.settings-modal'))`, "settings opening");
+    // The close button moves while the modal animates in; a click aimed
+    // mid-animation can land where the button no longer is. Under Rosetta the
+    // animation runs visibly slower, so the read-only pass waits for the same
+    // settle the full pointer pass below already applies.
+    await waitForDom(socket, `document.querySelector('.modal-layer')?.getAnimations({ subtree: true }).every((animation) => animation.playState !== 'running')`, "settings open animation");
     await clickElement(socket, '.settings-modal .modal-close');
     await waitForDom(socket, `!document.querySelector('.settings-modal')`, "settings closing");
   } finally {

@@ -49,12 +49,13 @@ export function validateMacosUpdateArtifact(input, version) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("macOS update artifact is missing.");
   const normalizedVersion = safeVersion(version);
   const appName = normalizeMacosUpdateAppName(input.appName);
-  const expectedFile = `${appName.slice(0, -4)}-darwin-arm64-${normalizedVersion}.zip`;
+  const arch = String(input.arch || "").trim();
+  if (arch !== "arm64" && arch !== "x64") throw new Error("macOS update artifact has an unexpected architecture.");
+  const expectedFile = `${appName.slice(0, -4)}-darwin-${arch}-${normalizedVersion}.zip`;
   const file = String(input.file || "").trim();
   const size = Number(input.size);
   const sha256 = String(input.sha256 || "").trim().toLowerCase();
   if (String(input.platform || "").trim() !== "macOS") throw new Error("macOS update artifact has an unexpected platform.");
-  if (String(input.arch || "").trim() !== "arm64") throw new Error("macOS update artifact has an unexpected architecture.");
   if (file !== expectedFile) throw new Error("macOS update artifact filename does not match the release version.");
   if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_MACOS_UPDATE_BYTES) throw new Error("macOS update artifact has an invalid size.");
   if (!SHA256_PATTERN.test(sha256)) throw new Error("macOS update artifact has an invalid SHA-256 digest.");
@@ -64,7 +65,7 @@ export function validateMacosUpdateArtifact(input, version) {
   }
   return {
     platform: "macOS",
-    arch: "arm64",
+    arch,
     appName,
     file,
     size,
@@ -75,7 +76,7 @@ export function validateMacosUpdateArtifact(input, version) {
 
 export function macosUpdateDownloadUrl(artifact) {
   const file = String(artifact?.file || "").trim();
-  if (!/^(?:MOSA|GravityPort)-darwin-arm64-[0-9A-Za-z.-]+\.zip$/.test(file)) throw new Error("Unsafe macOS update filename.");
+  if (!/^(?:MOSA|GravityPort)-darwin-(?:arm64|x64)-[0-9A-Za-z.-]+\.zip$/.test(file)) throw new Error("Unsafe macOS update filename.");
   return new URL(encodeURIComponent(file), MOSA_MACOS_DOWNLOAD_BASE_URL).toString();
 }
 
@@ -237,6 +238,7 @@ HANDOFF_FILE="$1"
 EXPECTED_DISTRIBUTION="$2"
 APP_NAME="$3"
 EXPECTED_TEAM_IDENTIFIER="$4"
+EXPECTED_LIPO_ARCH="$5"
 
 # Installation-rehearsal tests override these to run against stub tools in a
 # temporary directory. The defaults are the real absolute paths a packaged
@@ -248,6 +250,8 @@ CODESIGN_BIN="$(printenv MOSA_UPDATE_CODESIGN_BIN || true)"
 if [ -z "$CODESIGN_BIN" ]; then CODESIGN_BIN="/usr/bin/codesign"; fi
 SPCTL_BIN="$(printenv MOSA_UPDATE_SPCTL_BIN || true)"
 if [ -z "$SPCTL_BIN" ]; then SPCTL_BIN="/usr/sbin/spctl"; fi
+LIPO_BIN="$(printenv MOSA_UPDATE_LIPO_BIN || true)"
+if [ -z "$LIPO_BIN" ]; then LIPO_BIN="/usr/bin/lipo"; fi
 TRASH_DIR="$(printenv MOSA_UPDATE_TRASH_DIR || true)"
 if [ -z "$TRASH_DIR" ]; then TRASH_DIR="$HOME/.Trash"; fi
 
@@ -362,6 +366,13 @@ else
   [ "$EXPECTED_DISTRIBUTION" = "preview" ]
 fi
 
+# The payload's CPU architecture must be exactly the one the manifest named:
+# a ZIP renamed across architectures (an arm64 package posing as the x64
+# update) fails here before anything is replaced, and the rollback restores
+# the previous app untouched.
+STEP="ARCH_MISMATCH"
+[ "$("$LIPO_BIN" -archs "$PAYLOAD_APP/Contents/MacOS/$EXEC_NAME")" = "$EXPECTED_LIPO_ARCH" ]
+
 # Moves within TRANSACTION_ROOT (one volume), so the payload is renamed rather
 # than copied: the install step never holds two full copies of the app.
 STEP="REPLACE_FAILED"
@@ -425,8 +436,17 @@ const HELPER_TOOL_OVERRIDE_KEYS = Object.freeze([
   "MOSA_UPDATE_OPEN_BIN",
   "MOSA_UPDATE_CODESIGN_BIN",
   "MOSA_UPDATE_SPCTL_BIN",
+  "MOSA_UPDATE_LIPO_BIN",
   "MOSA_UPDATE_TRASH_DIR",
 ]);
+
+// `lipo -archs` prints Apple's Mach-O architecture names, which differ from
+// the manifest's arch for Intel: the x64 update payload must be "x86_64".
+export function macosLipoArchForUpdateArch(arch) {
+  if (arch === "arm64") return "arm64";
+  if (arch === "x64") return "x86_64";
+  throw new Error("Invalid macOS update architecture.");
+}
 
 // The helper's tool overrides exist only for installation-rehearsal tests,
 // which pass them explicitly. Never let them leak in from the app's own
@@ -446,6 +466,7 @@ export async function launchMacosUpdateHelper({
   libraryDir,
   appName = "MOSA.app",
   expectedTeamIdentifier = "",
+  expectedArch = "arm64",
   helperEnv = null,
   spawnImpl = spawn,
   createUpdateHandoff = createMosaMacosUpdateHelperHandoff,
@@ -462,6 +483,7 @@ export async function launchMacosUpdateHelper({
   if (identity.distribution === "production" && !safeTeamIdentifier) {
     throw new Error("macOS production updates require a release team identifier.");
   }
+  const safeLipoArch = macosLipoArchForUpdateArch(expectedArch);
   const stagingDir = dirname(zipPath);
   const scriptPath = join(stagingDir, "apply-update.sh");
   const logPath = join(stagingDir, "apply-update-error.log");
@@ -485,6 +507,7 @@ export async function launchMacosUpdateHelper({
     identity.distribution,
     safeAppName,
     safeTeamIdentifier,
+    safeLipoArch,
   ], {
     detached: true,
     stdio: "ignore",

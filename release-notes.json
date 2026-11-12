@@ -3,6 +3,7 @@
   "unreleased": {
     "zh": {
       "new": [
+        "新增 Intel 芯片 Mac 的独立安装包与自动更新；苹果芯片下载与更新保持不变。",
         "图片和视频卡片的右键菜单新增「在访达中显示」（Windows 为「在文件资源管理器中显示」）。"
       ],
       "improved": [
@@ -18,6 +19,7 @@
     },
     "en": {
       "new": [
+        "Add a separate installer and automatic updates for Intel Macs; Apple-silicon downloads and updates are unchanged.",
         "The context menu on image and video cards now includes Show in Finder (Show in File Explorer on Windows)."
       ],
       "improved": [

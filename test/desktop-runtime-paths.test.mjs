@@ -20,6 +20,15 @@ test("desktop runtime paths resolve macOS executables without leaking into Windo
     packagedExecutablePath({ rootDir, platform: "darwin", arch: "arm64", product: "MOSA" }),
     join(process.cwd(), rootDir, "out", "MOSA-darwin-arm64", "MOSA.app", "Contents", "MacOS", "MOSA"),
   );
+  // 387: the Intel package lives beside the arm64 one under its own directory.
+  assert.equal(
+    packagedExecutablePath({ rootDir, platform: "darwin", arch: "x64" }),
+    join(process.cwd(), rootDir, "out", "GravityPort-darwin-x64", "GravityPort.app", "Contents", "MacOS", "GravityPort"),
+  );
+  assert.equal(
+    packagedExecutablePath({ rootDir, platform: "darwin", arch: "x64", product: "MOSA" }),
+    join(process.cwd(), rootDir, "out", "MOSA-darwin-x64", "MOSA.app", "Contents", "MacOS", "MOSA"),
+  );
 });
 
 test("desktop runtime paths resolve Windows x64 executables", () => {

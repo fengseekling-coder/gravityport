@@ -24,8 +24,13 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 export async function prepareDesktopReleaseManifest({
   version,
   macArtifactPath = "",
+  macX64ArtifactPath = "",
   macAppName = "MOSA.app",
   macTeamIdentifier = "",
+  // Test seam only: production callers pass one team id that both macOS
+  // entries share. The x64 entry must always carry the same team id as the
+  // arm64 entry, which the rule below enforces.
+  macX64TeamIdentifier = macTeamIdentifier,
   windowsArtifactPath = "",
   windowsInstallerPath = "",
   windowsPayloadExeName = "MOSA.exe",
@@ -59,11 +64,25 @@ export async function prepareDesktopReleaseManifest({
   const macos = macArtifactPath
     ? await artifactMetadata({
         path: macArtifactPath,
-        expectedFile: macosUpdateFileNameForAppName(cleanMacAppName, cleanVersion),
+        expectedFile: macosUpdateFileNameForAppName(cleanMacAppName, cleanVersion, "arm64"),
         platform: "macOS",
         arch: "arm64",
         appName: cleanMacAppName,
         ...(cleanMacTeamIdentifier ? { teamIdentifier: cleanMacTeamIdentifier } : {}),
+      })
+    : null;
+  // 387: the Intel update ships as the separate platforms.macosX64 entry with
+  // the same structure. It may only appear next to the arm64 entry, under the
+  // same app name, and pinned to the very same team identifier — one trust
+  // chain for both packages.
+  const macosX64 = macX64ArtifactPath
+    ? await artifactMetadata({
+        path: macX64ArtifactPath,
+        expectedFile: macosUpdateFileNameForAppName(cleanMacAppName, cleanVersion, "x64"),
+        platform: "macOS",
+        arch: "x64",
+        appName: cleanMacAppName,
+        ...(String(macX64TeamIdentifier || "").trim() ? { teamIdentifier: String(macX64TeamIdentifier).trim().toUpperCase() } : {}),
       })
     : null;
   const expectedAppleTeamId = String(env.APPLE_TEAM_ID || "").trim().toUpperCase();
@@ -72,6 +91,17 @@ export async function prepareDesktopReleaseManifest({
   }
   if (macos && expectedAppleTeamId && macos.teamIdentifier !== expectedAppleTeamId) {
     throw new Error(`Release macOS teamIdentifier ${macos.teamIdentifier} does not match APPLE_TEAM_ID ${expectedAppleTeamId}.`);
+  }
+  if (macosX64 && !macos) {
+    throw new Error("A macOS x64 artifact ships together with the macOS arm64 artifact: pass --mac as well.");
+  }
+  if (macosX64) {
+    if (!macosX64.teamIdentifier || macosX64.teamIdentifier !== macos.teamIdentifier) {
+      throw new Error("Release macOS x64 teamIdentifier is required and must match the macOS arm64 teamIdentifier.");
+    }
+    if (expectedAppleTeamId && macosX64.teamIdentifier !== expectedAppleTeamId) {
+      throw new Error(`Release macOS x64 teamIdentifier ${macosX64.teamIdentifier} does not match APPLE_TEAM_ID ${expectedAppleTeamId}.`);
+    }
   }
   const windows = windowsArtifactPath
     ? await artifactMetadata({
@@ -113,6 +143,7 @@ export async function prepareDesktopReleaseManifest({
     notes: normalizedNotes,
     platforms: {
       ...(macos ? { macos } : {}),
+      ...(macosX64 ? { macosX64 } : {}),
       ...(windows ? { windows } : {}),
     },
   };
@@ -231,7 +262,7 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.version || !args.output) {
-    throw new Error("Usage: prepare-desktop-release-manifest.mjs --version <version> --output <latest.json> [--previous <latest.json>] [--mac <zip>] [--mac-app-name <MOSA.app|GravityPort.app>] [--mac-team-identifier <10-char id>] [--windows <zip>] [--windows-installer <exe>] [--windows-payload-exe-name <MOSA.exe|GravityPort.exe>] [--windows-signer-thumbprint <40-char id>] [--published-at <ISO>] [--notes-zh <text>] [--notes-en <text>] [--release-notes <release-notes.json>]");
+    throw new Error("Usage: prepare-desktop-release-manifest.mjs --version <version> --output <latest.json> [--previous <latest.json>] [--mac <zip>] [--mac-x64 <zip>] [--mac-app-name <MOSA.app|GravityPort.app>] [--mac-team-identifier <10-char id>] [--windows <zip>] [--windows-installer <exe>] [--windows-payload-exe-name <MOSA.exe|GravityPort.exe>] [--windows-signer-thumbprint <40-char id>] [--published-at <ISO>] [--notes-zh <text>] [--notes-en <text>] [--release-notes <release-notes.json>]");
   }
   const previousManifest = args.previous ? JSON.parse(await readFile(resolve(args.previous), "utf8")) : null;
   const projectRoot = new URL("..", import.meta.url);
@@ -240,6 +271,7 @@ async function main() {
   const manifest = await prepareDesktopReleaseManifest({
     version: args.version,
     macArtifactPath: args.mac || "",
+    macX64ArtifactPath: args["mac-x64"] || "",
     macAppName: args["mac-app-name"] || "MOSA.app",
     macTeamIdentifier: args["mac-team-identifier"] || process.env.APPLE_TEAM_ID || "",
     windowsArtifactPath: args.windows || "",

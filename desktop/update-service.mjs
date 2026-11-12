@@ -21,12 +21,27 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
 export const MACOS_TEAM_IDENTIFIER_PATTERN = /^[A-Z0-9]{10}$/;
 export const MACOS_UPDATE_APP_NAMES = Object.freeze(["MOSA.app", "GravityPort.app"]);
 
+export const MACOS_UPDATE_ARCHES = Object.freeze(["arm64", "x64"]);
+
+// Which macOS update artifact a running client should read from the manifest.
+// arm64 hosts read the arm64 package; an Intel (x64) host reads the x64
+// package, unless it is running under Rosetta — that is an Intel package
+// installed by mistake on an Apple-silicon Mac, and the next update moves it
+// back to the arm64 package (the helper's architecture gate enforces it).
+// Anything else is not a supported macOS target.
+export function macosUpdateArchForHost({ arch, runningUnderARM64Translation } = {}) {
+  if (arch === "arm64") return "arm64";
+  if (arch === "x64") return runningUnderARM64Translation ? "arm64" : "x64";
+  return null;
+}
+
 // The manifest app name is bound to the update package filename: MOSA.app
-// ships as MOSA-darwin-arm64-<version>.zip and GravityPort.app ships as
-// GravityPort-darwin-arm64-<version>.zip. Anything else is rejected.
-export function macosUpdateFileNameForAppName(appName, version) {
+// ships as MOSA-darwin-<arch>-<version>.zip and GravityPort.app ships as
+// GravityPort-darwin-<arch>-<version>.zip. Anything else is rejected.
+export function macosUpdateFileNameForAppName(appName, version, arch = "arm64") {
   if (!MACOS_UPDATE_APP_NAMES.includes(appName)) throw new Error("Invalid macOS update app name.");
-  return `${appName.slice(0, -4)}-darwin-arm64-${version}.zip`;
+  if (!MACOS_UPDATE_ARCHES.includes(arch)) throw new Error("Invalid macOS update architecture.");
+  return `${appName.slice(0, -4)}-darwin-${arch}-${version}.zip`;
 }
 
 function normalizeMacosTeamIdentifier(value) {
@@ -195,17 +210,18 @@ function parseWindowsArtifact(value, version) {
   };
 }
 
-function parseMacArtifact(value, version) {
+function parseMacArtifact(value, version, expectedArch = "arm64") {
   if (value == null) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid macOS update artifact.");
+  if (!MACOS_UPDATE_ARCHES.includes(expectedArch)) throw new Error("Invalid macOS update architecture.");
   const appName = typeof value.appName === "string" && value.appName.trim() ? value.appName.trim() : "MOSA.app";
   if (appName.includes("/") || appName.includes("\\")) throw new Error("Invalid macOS update app name.");
-  const expectedFile = macosUpdateFileNameForAppName(appName, version);
+  const expectedFile = macosUpdateFileNameForAppName(appName, version, expectedArch);
   const file = typeof value.file === "string" ? value.file.trim() : "";
   const size = Number(value.size);
   const sha256 = typeof value.sha256 === "string" ? value.sha256.trim().toLowerCase() : "";
   const teamIdentifier = normalizeMacosTeamIdentifier(value.teamIdentifier);
-  if (value.platform !== "macOS" || value.arch !== "arm64" || file !== expectedFile) {
+  if (value.platform !== "macOS" || value.arch !== expectedArch || file !== expectedFile) {
     throw new Error("Invalid macOS update artifact identity.");
   }
   if (!Number.isSafeInteger(size) || size <= 0 || size > 1_500_000_000) {
@@ -214,7 +230,7 @@ function parseMacArtifact(value, version) {
   if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error("Invalid macOS update artifact digest.");
   return {
     platform: "macOS",
-    arch: "arm64",
+    arch: expectedArch,
     appName,
     file,
     size,
@@ -223,7 +239,7 @@ function parseMacArtifact(value, version) {
   };
 }
 
-export function parseUpdateManifest(input) {
+export function parseUpdateManifest(input, { macArch } = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid update manifest.");
   const parsedVersion = parseVersion(input.version);
   if (!parsedVersion) throw new Error("Invalid update manifest version.");
@@ -236,7 +252,14 @@ export function parseUpdateManifest(input) {
         zh: cleanNote(input.notes?.zh),
         en: cleanNote(input.notes?.en),
       };
-  const macArtifact = parseMacArtifact(input.platforms?.macos, parsedVersion.version);
+  // Both macOS entries are always parsed and validated, whichever one this
+  // host reads: a broken entry must fail the whole manifest everywhere, not
+  // only on the machine it happens to affect. Callers that don't pass an
+  // architecture keep reading the arm64 package (existing behavior).
+  const macosArch = MACOS_UPDATE_ARCHES.includes(macArch) ? macArch : "arm64";
+  const macArtifactArm64 = parseMacArtifact(input.platforms?.macos, parsedVersion.version, "arm64");
+  const macArtifactX64 = parseMacArtifact(input.platforms?.macosX64, parsedVersion.version, "x64");
+  const macArtifact = macosArch === "x64" ? macArtifactX64 : macArtifactArm64;
   const windowsArtifact = parseWindowsArtifact(input.platforms?.windows, parsedVersion.version);
   const buildIdentity = parseBuildIdentity(input.build);
   if ((macArtifact || windowsArtifact) && !buildIdentity) {
@@ -245,8 +268,10 @@ export function parseUpdateManifest(input) {
   // Production trust is anchored to the manifest: the pinned team identifier
   // is what the macOS installer verifies the payload against. Preview may omit
   // it because those builds are ad-hoc signed.
-  if (buildIdentity?.distribution === "production" && macArtifact && !macArtifact.teamIdentifier) {
-    throw new Error("Production macOS releases require a release team identifier.");
+  for (const productionMacArtifact of [macArtifactArm64, macArtifactX64]) {
+    if (buildIdentity?.distribution === "production" && productionMacArtifact && !productionMacArtifact.teamIdentifier) {
+      throw new Error("Production macOS releases require a release team identifier.");
+    }
   }
   // Windows production trust mirrors macOS: the pinned signer thumbprint is
   // what the installer verifies every payload signature against. Preview may
@@ -324,6 +349,7 @@ export async function checkForMosaUpdate({
   currentDistribution = null,
   anonymousUsage = null,
   releaseManifestTrust = null,
+  macArch,
   fetchImpl = globalThis.fetch,
   timeoutMs = 8_000,
 } = {}) {
@@ -349,7 +375,7 @@ export async function checkForMosaUpdate({
     const document = JSON.parse(text);
     const trusts = Array.isArray(releaseManifestTrust) ? releaseManifestTrust : [releaseManifestTrust].filter(Boolean);
     if (trusts.length) verifyReleaseManifestSignature(document, trusts);
-    const release = parseUpdateManifest(document);
+    const release = parseUpdateManifest(document, { macArch });
     const distributionAllowed = !release.buildIdentity
       || canUpdateDistribution(currentDistribution, release.buildIdentity.distribution);
     return {

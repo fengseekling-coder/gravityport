@@ -11,6 +11,10 @@ import { verifyMacosReleaseApp } from "./verify-macos-release.mjs";
 
 export const MOSA_MAC_BUNDLE_ID = "com.azhuilab.mosa";
 export const MOSA_MAC_ARCH = "arm64";
+// Both macOS package architectures the DMG builder accepts. The default stays
+// arm64; the Intel DMG is built with --arch x64 (never from process.arch, so
+// cross-building on an Apple-silicon Mac keeps working).
+export const MOSA_MAC_ARCHES = Object.freeze(["arm64", "x64"]);
 
 function nonEmpty(value) {
   return String(value || "").trim();
@@ -150,14 +154,14 @@ export async function makeMacosDmg({
   runner = runCommand,
 } = {}) {
   if (platform !== "darwin") throw new Error("macOS DMG creation must run on macOS.");
-  if (arch !== MOSA_MAC_ARCH) throw new Error(`Unsupported MOSA macOS DMG architecture: ${arch}.`);
+  if (!MOSA_MAC_ARCHES.includes(arch)) throw new Error(`Unsupported MOSA macOS DMG architecture: ${arch}.`);
   const names = releaseProductNames(product);
 
   const packageJson = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8"));
   const version = nonEmpty(packageJson.version);
   if (!version) throw new Error("package.json version is required for macOS DMG creation.");
 
-  const appPath = resolve(rootDir, outDir, names.macosPackageDirName, names.macAppBundleName);
+  const appPath = resolve(rootDir, outDir, names.macosPackageDirName(arch), names.macAppBundleName);
   await access(appPath).catch(() => {
     throw new Error(`Packaged macOS app not found: ${appPath}. Run the macOS package step first.`);
   });
@@ -219,8 +223,30 @@ export async function makeMacosDmg({
   }
 }
 
+// Reads the target architecture from --arch or MOSA_DESKTOP_ARCH. Never
+// defaults to process.arch: the Intel DMG is cross-built on Apple silicon,
+// where process.arch is arm64.
+export function cliArch(argv = process.argv.slice(2), env = process.env) {
+  const exact = "--arch";
+  const prefix = `${exact}=`;
+  let value = "";
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === exact) {
+      value = argv[index + 1] || "";
+      break;
+    }
+    if (argv[index].startsWith(prefix)) {
+      value = argv[index].slice(prefix.length);
+      break;
+    }
+  }
+  value = String(value || env.MOSA_DESKTOP_ARCH || "").trim() || MOSA_MAC_ARCH;
+  if (!MOSA_MAC_ARCHES.includes(value)) throw new Error(`Unsupported MOSA macOS DMG architecture: ${value}.`);
+  return value;
+}
+
 async function main() {
-  const result = await makeMacosDmg();
+  const result = await makeMacosDmg({ arch: cliArch() });
   console.log(`[MOSA] macOS DMG ready: ${result.dmgPath}`);
 }
 

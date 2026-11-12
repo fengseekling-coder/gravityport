@@ -36,7 +36,9 @@ export function releaseProductNames(product = resolveReleaseProduct()) {
     macAppBundleName: `${product}.app`,
     macExecutableName: product,
     windowsExecutableName: `${product}.exe`,
-    macosPackageDirName: `${product}-darwin-arm64`,
+    // The macOS package directory follows the target architecture; the arm64
+    // name is the default so existing arm64-only callers keep their path.
+    macosPackageDirName: (arch = "arm64") => `${product}-darwin-${arch}`,
     windowsPackageDirName: `${product}-win32-x64`,
     macosUpdateZipName: (version, arch = "arm64") => `${product}-darwin-${arch}-${version}.zip`,
     windowsUpdateZipName: (version, arch = "x64") => `${product}-win32-${arch}-${version}.zip`,

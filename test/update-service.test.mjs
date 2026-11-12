@@ -11,6 +11,7 @@ import {
   canUpdateDistribution,
   checkForMosaUpdate,
   compareVersions,
+  macosUpdateArchForHost,
   parseUpdateManifest,
   reportAnonymousUsage,
 } from "../desktop/update-service.mjs";
@@ -315,6 +316,264 @@ test("update manifest rejects a macOS artifact that is not bound to the release 
       },
     },
   }), /artifact identity/);
+});
+
+test("macosUpdateArchForHost picks the manifest entry from the host architecture and Rosetta state", () => {
+  assert.equal(macosUpdateArchForHost({ arch: "arm64", runningUnderARM64Translation: false }), "arm64");
+  assert.equal(macosUpdateArchForHost({ arch: "arm64", runningUnderARM64Translation: true }), "arm64");
+  // An Intel package running under Rosetta is an accidental Intel install on
+  // an Apple-silicon Mac; its next update moves it back to the arm64 package.
+  assert.equal(macosUpdateArchForHost({ arch: "x64", runningUnderARM64Translation: true }), "arm64");
+  assert.equal(macosUpdateArchForHost({ arch: "x64", runningUnderARM64Translation: false }), "x64");
+  assert.equal(macosUpdateArchForHost({ arch: "ia32", runningUnderARM64Translation: false }), null);
+  assert.equal(macosUpdateArchForHost({}), null);
+});
+
+test("update manifests carry a separate macosX64 entry and an Intel host reads it", () => {
+  const manifestFor = (macArch) => parseUpdateManifest({
+    version: "0.3.0",
+    build: {
+      gitSha: "a".repeat(40),
+      uiFingerprint: "b".repeat(64),
+      runtimeFingerprint: "c".repeat(64),
+      distribution: "preview",
+    },
+    platforms: {
+      macos: {
+        platform: "macOS",
+        arch: "arm64",
+        file: "MOSA-darwin-arm64-0.3.0.zip",
+        size: 123,
+        sha256: "d".repeat(64),
+      },
+      macosX64: {
+        platform: "macOS",
+        arch: "x64",
+        file: "MOSA-darwin-x64-0.3.0.zip",
+        size: 456,
+        sha256: "e".repeat(64),
+      },
+    },
+  }, { macArch });
+
+  assert.deepEqual(manifestFor("arm64").macArtifact, {
+    platform: "macOS",
+    arch: "arm64",
+    appName: "MOSA.app",
+    file: "MOSA-darwin-arm64-0.3.0.zip",
+    size: 123,
+    sha256: "d".repeat(64),
+  });
+  assert.deepEqual(manifestFor("x64").macArtifact, {
+    platform: "macOS",
+    arch: "x64",
+    appName: "MOSA.app",
+    file: "MOSA-darwin-x64-0.3.0.zip",
+    size: 456,
+    sha256: "e".repeat(64),
+  });
+  // A GravityPort x64 entry reads back the same way under the other app name.
+  const gravity = parseUpdateManifest({
+    version: "0.3.0",
+    build: {
+      gitSha: "a".repeat(40),
+      uiFingerprint: "b".repeat(64),
+      runtimeFingerprint: "c".repeat(64),
+      distribution: "preview",
+    },
+    platforms: {
+      macos: {
+        platform: "macOS",
+        arch: "arm64",
+        appName: "GravityPort.app",
+        file: "GravityPort-darwin-arm64-0.3.0.zip",
+        size: 123,
+        sha256: "d".repeat(64),
+      },
+      macosX64: {
+        platform: "macOS",
+        arch: "x64",
+        appName: "GravityPort.app",
+        file: "GravityPort-darwin-x64-0.3.0.zip",
+        size: 456,
+        sha256: "e".repeat(64),
+      },
+    },
+  }, { macArch: "x64" });
+  assert.equal(gravity.macArtifact.file, "GravityPort-darwin-x64-0.3.0.zip");
+  assert.equal(gravity.macArtifact.arch, "x64");
+});
+
+test("macosX64 entries are held to the x64 filename and architecture", () => {
+  const manifestFor = (macosX64, macArch = "arm64") => parseUpdateManifest({
+    version: "0.3.0",
+    build: {
+      gitSha: "a".repeat(40),
+      uiFingerprint: "b".repeat(64),
+      runtimeFingerprint: "c".repeat(64),
+      distribution: "preview",
+    },
+    platforms: {
+      macos: {
+        platform: "macOS",
+        arch: "arm64",
+        file: "MOSA-darwin-arm64-0.3.0.zip",
+        size: 123,
+        sha256: "d".repeat(64),
+      },
+      ...(macosX64 ? { macosX64 } : {}),
+    },
+  }, { macArch });
+
+  // An arm64-named ZIP posing as the x64 package is refused.
+  assert.throws(() => manifestFor({
+    platform: "macOS",
+    arch: "x64",
+    file: "MOSA-darwin-arm64-0.3.0.zip",
+    size: 456,
+    sha256: "e".repeat(64),
+  }), /artifact identity/);
+  // So is an entry that claims the wrong architecture.
+  assert.throws(() => manifestFor({
+    platform: "macOS",
+    arch: "arm64",
+    file: "MOSA-darwin-x64-0.3.0.zip",
+    size: 456,
+    sha256: "e".repeat(64),
+  }), /artifact identity/);
+});
+
+test("a broken macosX64 entry fails the whole manifest even for arm64 readers", () => {
+  assert.throws(() => parseUpdateManifest({
+    version: "0.3.0",
+    build: {
+      gitSha: "a".repeat(40),
+      uiFingerprint: "b".repeat(64),
+      runtimeFingerprint: "c".repeat(64),
+      distribution: "preview",
+    },
+    platforms: {
+      macos: {
+        platform: "macOS",
+        arch: "arm64",
+        file: "MOSA-darwin-arm64-0.3.0.zip",
+        size: 123,
+        sha256: "d".repeat(64),
+      },
+      macosX64: {
+        platform: "macOS",
+        arch: "x64",
+        file: "MOSA-darwin-arm64-0.3.0.zip",
+        size: 456,
+        sha256: "e".repeat(64),
+      },
+    },
+  }, { macArch: "arm64" }), /artifact identity/);
+  // Broken in a different way (bad digest) is caught the same way.
+  assert.throws(() => parseUpdateManifest({
+    version: "0.3.0",
+    build: {
+      gitSha: "a".repeat(40),
+      uiFingerprint: "b".repeat(64),
+      runtimeFingerprint: "c".repeat(64),
+      distribution: "preview",
+    },
+    platforms: {
+      macos: {
+        platform: "macOS",
+        arch: "arm64",
+        file: "MOSA-darwin-arm64-0.3.0.zip",
+        size: 123,
+        sha256: "d".repeat(64),
+      },
+      macosX64: {
+        platform: "macOS",
+        arch: "x64",
+        file: "MOSA-darwin-x64-0.3.0.zip",
+        size: 456,
+        sha256: "zz".repeat(32),
+      },
+    },
+  }, { macArch: "arm64" }), /digest/);
+});
+
+test("an Intel host without an Intel package in the manifest reports no update instead of erroring", () => {
+  const release = parseUpdateManifest({
+    version: "0.3.0",
+    build: {
+      gitSha: "a".repeat(40),
+      uiFingerprint: "b".repeat(64),
+      runtimeFingerprint: "c".repeat(64),
+      distribution: "preview",
+    },
+    platforms: {
+      macos: {
+        platform: "macOS",
+        arch: "arm64",
+        file: "MOSA-darwin-arm64-0.3.0.zip",
+        size: 123,
+        sha256: "d".repeat(64),
+      },
+    },
+  }, { macArch: "x64" });
+  assert.equal(release.macArtifact, null);
+  // A caller that passes no architecture keeps reading the arm64 entry.
+  assert.equal(parseUpdateManifest({
+    version: "0.3.0",
+    build: {
+      gitSha: "a".repeat(40),
+      uiFingerprint: "b".repeat(64),
+      runtimeFingerprint: "c".repeat(64),
+      distribution: "preview",
+    },
+    platforms: {
+      macos: {
+        platform: "macOS",
+        arch: "arm64",
+        file: "MOSA-darwin-arm64-0.3.0.zip",
+        size: 123,
+        sha256: "d".repeat(64),
+      },
+    },
+  }).macArtifact.file, "MOSA-darwin-arm64-0.3.0.zip");
+});
+
+test("production manifests pin the team identifier on both macOS architectures", () => {
+  const manifestFor = (macosX64) => parseUpdateManifest({
+    version: "0.3.0",
+    build: {
+      gitSha: "a".repeat(40),
+      uiFingerprint: "b".repeat(64),
+      runtimeFingerprint: "c".repeat(64),
+      distribution: "production",
+    },
+    platforms: {
+      macos: {
+        platform: "macOS",
+        arch: "arm64",
+        file: "MOSA-darwin-arm64-0.3.0.zip",
+        size: 123,
+        sha256: "d".repeat(64),
+        teamIdentifier: "B5ZJT8TRPN",
+      },
+      ...(macosX64 ? { macosX64 } : {}),
+    },
+  });
+  assert.equal(manifestFor({
+    platform: "macOS",
+    arch: "x64",
+    file: "MOSA-darwin-x64-0.3.0.zip",
+    size: 456,
+    sha256: "e".repeat(64),
+    teamIdentifier: "B5ZJT8TRPN",
+  }).macArtifact.teamIdentifier, "B5ZJT8TRPN");
+  assert.throws(() => manifestFor({
+    platform: "macOS",
+    arch: "x64",
+    file: "MOSA-darwin-x64-0.3.0.zip",
+    size: 456,
+    sha256: "e".repeat(64),
+  }), /team identifier/);
 });
 
 test("same or older website versions never report an update", async () => {

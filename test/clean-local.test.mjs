@@ -183,8 +183,10 @@ test("declared target set matches the documented allowlist", () => {
   assert.deepEqual([...PRESERVED_RELEASE_PATHS], [
     "out/make",
     "out/MOSA-darwin-arm64",
+    "out/MOSA-darwin-x64",
     "out/MOSA-win32-x64",
     "out/GravityPort-darwin-arm64",
+    "out/GravityPort-darwin-x64",
     "out/GravityPort-win32-x64",
     "out/store",
   ]);

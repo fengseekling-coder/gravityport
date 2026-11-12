@@ -18,6 +18,7 @@ on:
       - "scripts/*packag*"
       - "scripts/verify-*"
       - "scripts/desktop-*"
+      - "scripts/provision-*"
       - "scripts/check-desktop-package-node.mjs"
       - "test/desktop-*"
       - "test/windows-*"
@@ -37,6 +38,7 @@ on:
       - "scripts/*packag*"
       - "scripts/verify-*"
       - "scripts/desktop-*"
+      - "scripts/provision-*"
       - "scripts/check-desktop-package-node.mjs"
       - "test/desktop-*"
       - "test/windows-*"
@@ -88,8 +90,8 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/Library/Caches/electron
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: electron-${{ runner.os }}-
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-${{ runner.arch }}-
       - run: npm ci
       - run: node -e "require('electron')"
       - run: node -e "if (process.arch !== 'arm64') throw new Error('Expected arm64 macOS runner')"
@@ -139,8 +141,8 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~\AppData\Local\electron\Cache
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: electron-${{ runner.os }}-
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-${{ runner.arch }}-
       - run: npm ci
       - run: node -e "require('electron')"
       - run: node -e "if (process.arch !== 'x64') throw new Error('Expected x64 Windows runner')"
@@ -189,8 +191,8 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/Library/Caches/electron
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: electron-${{ runner.os }}-
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-${{ runner.arch }}-
       - run: npm ci
       - run: node -e "require('electron')"
       - run: node --test test/desktop-packaging.test.mjs test/electron-preload-runtime-contract.test.mjs
@@ -205,6 +207,16 @@ jobs:
         run: |
           set -o pipefail
           npm run qa:packaged:smoke 2>&1 | tee packaged-smoke-output.log
+      # 387: the release-day Intel path runs on this Apple-silicon runner —
+      # provision the x64 Sharp natives, cross-package darwin-x64, and verify
+      # the architecture. The cross-packaged app is never launched here; the
+      # Intel job below runs its smoke on a real x64 runner.
+      - name: Cross-package the Intel app (no launch)
+        run: |
+          set -o pipefail
+          node scripts/provision-darwin-x64-natives.mjs 2>&1 | tee provision-x64-output.log
+          npx electron-forge package --platform darwin --arch x64 2>&1 | tee package-x64-output.log
+          npm run verify:desktop:package:x64 2>&1 | tee verify-x64-output.log
       - name: Upload packaging failure artifacts
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -213,6 +225,60 @@ jobs:
           path: |
             package-output.log
             packaged-smoke-output.log
+            provision-x64-output.log
+            package-x64-output.log
+            verify-x64-output.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # 387: GitHub is retiring macos-15-intel — it announced this as its last
+  # Intel macOS runner generation, scheduled for decommissioning around fall
+  # 2027. When GitHub removes it, this job must either move to a macOS-on-AWS
+  # x64 image or be dropped; the Intel package can still be cross-built (the
+  # step inside desktop-macos-package above) but its smoke would lose a native
+  # runner.
+  desktop-macos-intel-package:
+    runs-on: macos-15-intel
+    # Mirrors desktop-macos-package (~1.5 min green there); Intel runners are
+    # slower, so 20 keeps roughly the same >10x headroom while bounding hangs.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Cache Electron binaries
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-${{ runner.arch }}-
+      - run: npm ci
+      - run: node -e "require('electron')"
+      - run: node -e "if (process.arch !== 'x64') throw new Error('Expected x64 macOS runner')"
+      - run: node --test test/desktop-packaging.test.mjs test/electron-preload-runtime-contract.test.mjs
+        env:
+          MOSA_ELECTRON_PRELOAD_SMOKE: "1"
+      - name: Package the Intel macOS app
+        run: |
+          set -o pipefail
+          npm run desktop:package:x64 2>&1 | tee package-x64-output.log
+      - run: codesign --verify --deep --strict --verbose=2 out/GravityPort-darwin-x64/GravityPort.app
+      - name: Intel packaged smoke
+        run: |
+          set -o pipefail
+          npm run qa:packaged:smoke:x64 2>&1 | tee packaged-smoke-x64-output.log
+      - name: Upload packaging failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-macos-intel
+          path: |
+            package-x64-output.log
+            packaged-smoke-x64-output.log
           retention-days: 7
           if-no-files-found: ignore
 
@@ -234,8 +300,8 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~\AppData\Local\electron\Cache
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: electron-${{ runner.os }}-
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-${{ runner.arch }}-
       - run: npm ci
       - run: node -e "require('electron')"
       - run: node --test test/desktop-packaging.test.mjs test/desktop-platform-adapter.test.mjs test/desktop-runtime-paths.test.mjs test/electron-preload-runtime-contract.test.mjs test/path-safety.test.mjs test/source-locations.test.mjs test/windows-updater.test.mjs test/windows-updater-install-rehearsal.test.mjs test/windows-installer.test.mjs
