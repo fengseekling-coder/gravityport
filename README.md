@@ -14,12 +14,12 @@ GravityPort is an AI asset manager. It automatically collects the images and vid
 
 ![GravityPort gallery with the Inspector open](docs/images/gravityport-app.webp)
 
-- **Auto-Capture:** Saves generated images and videos straight to your library.
-- **Prompts & Context:** Keeps prompts, reference images, and sources with every asset.
-- **Version Tree:** Records every round of edits in a conversation.
-- **Smart Stacks:** Groups related assets by source and conversation.
-- **100% Local:** Stores all assets and records locally on your computer.
-- **GravityPort MCP:** Lets AI assistants manage your library assets directly.
+- **Auto-Capture:** Automatically captures generated images and videos into your library.
+- **Prompts & Context:** Preserves prompts, reference images, and provenance with every asset.
+- **Version Tree:** Tracks every round of iterations within a conversation.
+- **Smart Stacks:** Organizes related assets by generation source and conversation.
+- **100% Local:** Stores all assets and metadata locally on your device.
+- **GravityPort MCP:** Enables AI assistants to access and manage your library directly.
 - **Free Download:** macOS · Windows · gravityport.azhuilab.com
 
 [Downloads](#downloads) · [First launch](#first-launch) · [中文使用指南](docs/guide.zh-CN.md) · [Privacy](PRIVACY.md) · [Documentation](#documentation)
