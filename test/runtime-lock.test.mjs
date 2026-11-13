@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { acquireMosaRuntimeLock } from "../lib/runtime-lock.js";
+import { acquireMosaRuntimeLock, readMosaRuntimeProcessIdentity } from "../lib/runtime-lock.js";
 
 test("permits only one MOSA bridge runtime for a library", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-runtime-lock-"));
@@ -87,4 +87,67 @@ test("legacy JSON MCP refuses a second writer while a MOSA runtime lease is acti
   ]);
   assert.notEqual(code, 0);
   assert.match(stderr, /GravityPort runtime already active for this library/);
+});
+
+// 任务 398（低18 ⑥）：Windows 分支此前没有测试。readMosaRuntimeProcessIdentity
+// 的第二参数是可选的（不传即原行为），让测试可以注入 platform 与假 execFile。
+test("readMosaRuntimeProcessIdentity asks Windows PowerShell for the process start time", async () => {
+  const calls = [];
+  const fakeExecFile = async (file, args, options) => {
+    calls.push({ file, args, options });
+    return { stdout: "638000000000000000\r\n", stderr: "" };
+  };
+  const identity = await readMosaRuntimeProcessIdentity(4242, { platform: "win32", execFile: fakeExecFile });
+  assert.equal(identity, "win-start:638000000000000000");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, "powershell.exe");
+  assert.ok(
+    calls[0].args.some((arg) => arg.includes("Get-Process -Id 4242")),
+    `the PowerShell command must name the pid, got: ${JSON.stringify(calls[0].args)}`,
+  );
+  assert.equal(calls[0].options.windowsHide, true);
+});
+
+test("readMosaRuntimeProcessIdentity returns null when Windows PowerShell answers empty", async () => {
+  const identity = await readMosaRuntimeProcessIdentity(4242, {
+    platform: "win32",
+    execFile: async () => ({ stdout: "", stderr: "" }),
+  });
+  assert.equal(identity, null);
+});
+
+test("readMosaRuntimeProcessIdentity returns null when Windows PowerShell fails", async () => {
+  const identity = await readMosaRuntimeProcessIdentity(4242, {
+    platform: "win32",
+    execFile: async () => { throw new Error("powershell exploded"); },
+  });
+  assert.equal(identity, null);
+});
+
+test("readMosaRuntimeProcessIdentity refuses non-positive pids without spawning anything", async () => {
+  let calls = 0;
+  const countingExecFile = async () => { calls += 1; return { stdout: "1", stderr: "" }; };
+  for (const badPid of [0, -1, 1.5, Number.NaN]) {
+    const identity = await readMosaRuntimeProcessIdentity(badPid, { platform: "win32", execFile: countingExecFile });
+    assert.equal(identity, null, `pid ${badPid} must answer null`);
+  }
+  assert.equal(calls, 0, "the fake execFile must never be called for invalid pids");
+});
+
+test("readMosaRuntimeProcessIdentity keeps the unix ps branch working on darwin", async () => {
+  const calls = [];
+  const fakeExecFile = async (file, args, options) => {
+    calls.push({ file, args, options });
+    return { stdout: "Mon Nov 10 09:00:00 2026\n", stderr: "" };
+  };
+  const identity = await readMosaRuntimeProcessIdentity(777, { platform: "darwin", execFile: fakeExecFile });
+  assert.equal(identity, "unix-start:Mon Nov 10 09:00:00 2026");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, "ps");
+  assert.deepEqual(calls[0].args, ["-p", "777", "-o", "lstart="]);
+  assert.equal(calls[0].options.windowsHide, undefined);
+  assert.equal(calls[0].options.timeout, 3000);
+
+  assert.equal(await readMosaRuntimeProcessIdentity(777, { platform: "darwin", execFile: async () => ({ stdout: "   \n", stderr: "" }) }), null);
+  assert.equal(await readMosaRuntimeProcessIdentity(777, { platform: "darwin", execFile: async () => { throw new Error("ps exploded"); } }), null);
 });

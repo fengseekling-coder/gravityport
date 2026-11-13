@@ -26,6 +26,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 
@@ -302,6 +303,21 @@ async function waitForViewerFile(libraryDir, { assetId, timeoutMs = 10_000 } = {
 // ---- Round 5 helpers: desktop-shell screenshots (the schema-upgrade-notice
 // pattern, task 350 — a hidden background Electron window via CDP). ----------
 
+// Ask the OS for a port that is free right now. Random picks in the 4xxxx
+// range collided with the ephemeral ports the runner hands to other servers
+// (Windows starts that range at 49152), so the app could not bind and the
+// CDP target never appeared.
+function freePort() {
+  return new Promise((resolvePort, rejectPort) => {
+    const server = createServer();
+    server.once("error", rejectPort);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => resolvePort(address.port));
+    });
+  });
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -391,8 +407,8 @@ async function captureDialogShot({ ctx, theme, cardId, mcp, serverEnv }) {
   // shell residue ever lands in the repository.
   const userDataDir = join(ctx.libraryDir, "..", `385-shots-${theme}-user-data`);
   mkdirSync(userDataDir, { recursive: true });
-  const port = 43000 + Math.floor(Math.random() * 4000);
-  const cdpPort = 48000 + Math.floor(Math.random() * 3000);
+  const port = await freePort();
+  const cdpPort = await freePort();
   const pidFile = join(userDataDir, "pid.txt");
   const logFile = join(userDataDir, "main.log");
   const qaFlags = process.platform === "win32" ? ["--disable-gpu"] : [];

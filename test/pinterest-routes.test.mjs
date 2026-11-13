@@ -205,7 +205,7 @@ test("POST /connect answers 500 without the error text on other errors", async (
   const { handled, res } = await call("POST", "/api/pinterest/connect", { pinterest });
   assert.equal(handled, true);
   assert.equal(res.statusCode, 500);
-  assert.deepEqual(JSON.parse(res.endBody), { error: "Internal error" });
+  assert.deepEqual(JSON.parse(res.endBody), { error: "Internal error", code: "PINTEREST_INTERNAL_ERROR" });
   assert.ok(!res.endBody.includes("state manager exploded"), "error message must not leak");
 });
 
@@ -342,7 +342,7 @@ for (const [method, path, routeName] of [
       assert.equal(handled, true);
       assert.equal(res.statusCode, expectedStatus);
       if (code === null) {
-        assert.deepEqual(JSON.parse(res.endBody), { error: "Internal error" });
+        assert.deepEqual(JSON.parse(res.endBody), { error: "Internal error", code: "PINTEREST_INTERNAL_ERROR" });
         assert.ok(!res.endBody.includes("pinterest exploded"), "error message must not leak");
       } else {
         assert.deepEqual(JSON.parse(res.endBody), { code });

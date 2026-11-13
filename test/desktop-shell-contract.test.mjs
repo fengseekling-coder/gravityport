@@ -31,7 +31,11 @@ describe("desktop shell contract", () => {
   });
 
   it("GravityPort drags only from the macOS top rows", async () => {
-    const source = await readFile(join(repositoryRoot, "web", "gravityport", "src", "index.css"), "utf8");
+    const srcDir = join(repositoryRoot, "web", "gravityport", "src");
+    const indexCss = await readFile(join(srcDir, "index.css"), "utf8");
+    const importedPaths = [...indexCss.matchAll(/@import\s+['"]\.\/(styles\/[^'"]+\.css)['"]/g)].map((m) => join(srcDir, m[1]));
+    const importedContents = await Promise.all(importedPaths.map((p) => readFile(p, "utf8")));
+    const source = [indexCss, ...importedContents].join("\n");
     // The page covers the hiddenInset titlebar, so the window needs a CSS drag
     // region to be movable at all. Keep it to the native-darwin top rows; any
     // other drag declaration risks swallowing real clicks.

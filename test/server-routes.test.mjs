@@ -80,7 +80,7 @@ test("returns 404 for a missing library image without stopping the server", asyn
 
   const unknownApi = await fetch(`http://127.0.0.1:${port}/api/not-a-route`);
   assert.equal(unknownApi.status, 404);
-  assert.deepEqual(await unknownApi.json(), { error: "Not found" });
+  assert.deepEqual(await unknownApi.json(), { error: "Not found", code: "NOT_FOUND" });
 
   for (const retiredPath of [
     "/api/diagnostics",
@@ -104,7 +104,7 @@ test("returns 404 for a missing library image without stopping the server", asyn
 
   const missingImage = await fetch(`http://127.0.0.1:${port}/library/default/images/does-not-exist.png`);
   assert.equal(missingImage.status, 404);
-  assert.deepEqual(await missingImage.json(), { error: "Asset not found" });
+  assert.deepEqual(await missingImage.json(), { error: "Asset not found", code: "ASSET_NOT_FOUND" });
 
   const bridgeStatus = await waitForBridgeEnabled(port, server, "grok");
   assert.equal(bridgeStatus.status, 200);
@@ -526,7 +526,7 @@ test("cross-origin request returns 403 while same-origin succeeds", async (t) =>
     headers: { origin: "https://example.com" },
   });
   assert.equal(crossOrigin.status, 403);
-  assert.deepEqual(await crossOrigin.json(), { error: "Cross-origin requests are not allowed." });
+  assert.deepEqual(await crossOrigin.json(), { error: "Cross-origin requests are not allowed.", code: "CROSS_SITE_REQUEST" });
 
   const sameOrigin = await fetch(`http://127.0.0.1:${port}/api/projects`, {
     headers: { origin: `http://127.0.0.1:${port}` },
@@ -792,7 +792,7 @@ test("JSON write routes reject non-object bodies with 400 INVALID_JSON_BODY_TYPE
   // An absent body still normalizes to {} — the routes keep their existing
   // validation behavior for empty bodies.
   const emptyBatch = await postJson("POST", "/api/assets/batch", "");
-  assert.deepEqual(await emptyBatch.json(), { error: "Unknown batch action: undefined" });
+  assert.deepEqual(await emptyBatch.json(), { error: "Unknown batch action: undefined", code: "BATCH_ACTION_UNKNOWN" });
   const emptyGroups = await postJson("POST", "/api/groups", "");
   assert.equal(emptyGroups.status, 400);
   assert.equal((await emptyGroups.json()).code, "GROUP_NAME_REQUIRED");

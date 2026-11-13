@@ -2,7 +2,7 @@
 
 One command connects Claude, Codex, and other MCP clients to your local GravityPort library: `npx -y gravityport-mcp` starts the GravityPort MCP server from the installed desktop app.
 
-**Install the [GravityPort desktop app](https://gravityport.azhuilab.com/en/?ref=mcp) first (macOS and Windows).** This package only starts the server that ships inside the app. When the app is missing, it still speaks MCP: your assistant sees the tool list and gets a clear "install GravityPort first" answer with the download link on every tool call, instead of an unexplained connection failure.
+**Install the [GravityPort desktop app](https://gravityport.azhuilab.com/en/?ref=mcp) first (macOS on Apple silicon or Intel, or Windows).** This package only starts the server that ships inside the app. When the app is missing, it still speaks MCP: your assistant sees the tool list and gets a clear "install GravityPort first" answer with the download link on every tool call, instead of an unexplained connection failure.
 
 After installing the app, open it once, then restart your AI assistant.
 

@@ -36,6 +36,8 @@ Windows 上的 Grok/Cowart 来源目录尚未完成真机验证，暂不把推�
 
 macOS Desktop 与 Web Capture 的后台监督服务共用同一资料库和本地端口。新版 Desktop 启动时会先发布一个最多 90 秒有效（覆盖 Desktop 最长 30 秒的旧 Runtime 退出等待和自身启动）、绑定当前 PID 与进程启动身份的接管标记；监督服务看到后会停止自己拉起的后台 Runtime 并让 Desktop 接管。若 Desktop 启动失败，标记会自动过期，后台服务恢复。这样覆盖安装/重启 GravityPort 时不应再需要手动结束仓库里的 `server.mjs`。外部非 GravityPort 服务、不同资料库的 GravityPort Runtime 仍不会被自动终止。
 
+Windows 上没有 Mac 那样的常驻后台收图；App 关着时，浏览器扩展收到的图会先存在扩展的离线队列里，下次打开 App 再入库。
+
 ### 本地视觉搜索（已移除）
 
 本地视觉搜索（按画面找相似图、文字搜图）已整块移除：设置里没有「模型」页，检视器不显示相关推荐，GravityPort 不会下载任何模型，启动时还会清掉旧版本留在本机的视觉模型与索引数据。找图请用分组、自动堆叠、搜索框，或通过 MCP 让 AI 代理检索。

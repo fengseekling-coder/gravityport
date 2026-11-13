@@ -48,7 +48,7 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
     <section className="mcp-config-card" aria-label={t("AI 助手（MCP）")}>
       <div className="mcp-config-copy">
         <strong>{t("AI 助手（MCP）")}</strong>
-        <p>{t("让 Claude、Codex 等 AI 助手直接管理你的素材库资产。将下方配置粘贴到 AI 助手中，然后重启该助手。")}</p>
+        <p>{t("支持 Claude、Codex 等 AI 助手直接连接与管理素材库。将下方配置粘贴到 AI 助手中，然后重启该助手。")}</p>
       </div>
       {config === undefined ? null : config?.available ? (
         <>

@@ -101,14 +101,14 @@ describe("MCP client config card", () => {
   it("uses the approved Chinese and English copy", () => {
     const zh = decode(render({}));
     assert.ok(zh.includes("AI 助手（MCP）"));
-    assert.ok(zh.includes("让 Claude、Codex 等 AI 助手直接管理你的素材库资产。将下方配置粘贴到 AI 助手中，然后重启该助手。"));
+    assert.ok(zh.includes("支持 Claude、Codex 等 AI 助手直接连接与管理素材库。将下方配置粘贴到 AI 助手中，然后重启该助手。"));
     assert.ok(zh.includes("更改存储位置后无需修改此配置，重启 AI 助手即可。GravityPort 无需保持打开。"));
     assert.ok(zh.includes(">复制</button>"));
     assert.ok(decode(render({ copied: true })).includes(">已复制</button>"));
 
     const en = decode(render({ language: "en", client: "codex" }));
     assert.ok(en.includes("AI assistants (MCP)"));
-    assert.ok(en.includes("Let AI assistants such as Claude and Codex manage your library assets directly. Paste the configuration below into the assistant, then restart it."));
+    assert.ok(en.includes("Enable AI assistants such as Claude and Codex to access and manage your library directly. Paste the configuration below into the assistant, then restart it."));
     assert.ok(en.includes("Paste at the end of ~/.codex/config.toml."));
     assert.ok(en.includes("After the storage location changes, this configuration stays valid; restart the assistant to apply it. GravityPort doesn’t need to be open."));
     assert.ok(en.includes(">Copy</button>"));

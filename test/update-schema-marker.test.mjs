@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync as readFileSyncForMainSources, readdirSync as readdirSyncForMainSources } from "node:fs";
 import Database from "better-sqlite3";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
@@ -30,6 +31,17 @@ async function fixture(t, { schemaVersion = null, completed = true } = {}) {
     database.close();
   }
   return { libraryDir, readyFile: join(stagingDir, "update-ready.json") };
+}
+
+// Task 396: registerIPC handlers now live in desktop/ipc/*.mjs, so source-text
+// assertions read desktop/main.mjs plus those files.
+function readDesktopMainSources(repoRoot) {
+  const ipcDir = repoRoot + "/desktop/ipc";
+  const parts = [readFileSyncForMainSources(repoRoot + "/desktop/main.mjs", "utf8")];
+  for (const name of readdirSyncForMainSources(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
+    parts.push(readFileSyncForMainSources(ipcDir + "/" + name, "utf8"));
+  }
+  return parts.join("\n");
 }
 
 test("an update launch that is about to upgrade the schema leaves a marker next to the ready file", async (t) => {
@@ -84,7 +96,7 @@ test("an ordinary launch without a ready file never checks the library", async (
 });
 
 test("desktop main marks a pending upgrade before starting the service and holds bridges until readiness", () => {
-  const source = readFileSync(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  const source = readDesktopMainSources(new URL("..", import.meta.url).pathname.replace(/\/$/, ""));
   const ensure = source.slice(source.indexOf("async function ensureDesktopService()"));
   const mark = ensure.indexOf("markPendingSchemaUpgrade({ readyFile: updateReadyFile, libraryDir })");
   assert.ok(mark > 0 && mark < ensure.indexOf("await startMosaService({"), "the marker is written before the runtime can upgrade the library");

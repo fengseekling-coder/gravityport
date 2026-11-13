@@ -1,8 +1,8 @@
 # 界面设计规范
 
-本文总结 GravityPort 桌面版界面（`web/gravityport`）现在的设计规则，写给改界面的人和代码助手。**代码是准绳**：值以 `web/gravityport/src/index.css` 为准，这里只是归纳。改了样式表里的变量、字号或组件规格，同一个改动里把本文对应的地方一起改掉。
+本文总结 GravityPort 桌面版界面（`web/gravityport`）现在的设计规则，写给改界面的人和代码助手。**代码是准绳**：值以 `web/gravityport/src/styles/`（由 `web/gravityport/src/index.css` 按序引入）为准，这里只是归纳。新样式加在对应主题的文件末尾，不要都加到最后一个文件。改了样式表里的变量、字号或组件规格，同一个改动里把本文对应的地方一起改掉。
 
-`index.css` 是在原型样式上一层层叠加出来的，`:root` 出现了好几次，后面的覆盖前面的。最终生效的是注释 `Product-wide language` 下面那一层 `--ui-*` 变量；`.app` 里的旧变量名（`--panel`、`--work`、`--text`、`--muted`、`--line`、`--ink-secondary`、`--ink-tertiary`、`--surface-raised`、`--surface-hover`）都指向它们，新代码不要再用旧名字。判断一个元素的最终效果，看浏览器里的计算值，不要只读前面的规则。
+`web/gravityport/src/styles/` 是在原型样式上一层层叠加出来的，`:root` 出现了好几次，后面的覆盖前面的。最终生效的是注释 `Product-wide language` 下面那一层 `--ui-*` 变量；`.app` 里的旧变量名（`--panel`、`--work`、`--text`、`--muted`、`--line`、`--ink-secondary`、`--ink-tertiary`、`--surface-raised`、`--surface-hover`）都指向它们，新代码不要再用旧名字。判断一个元素的最终效果，看浏览器里的计算值，不要只读前面的规则。
 
 ## 原则
 
@@ -185,4 +185,4 @@
 
 - 工具栏的文字和图标是浅色 `--ui-secondary` 放在 `--ui-work` 上（3.7:1），没到正文的 4.5:1；改它会动整条工具栏的观感，要单独定。
 - 深色 `--ui-muted` 放在 `--ui-raised` 上只有 4.4:1，右键菜单的小标题、快捷键提示就是这样；两套主题都要达标，得调深色 `--ui-muted` 本身，会影响全局。
-- `index.css` 前面的原型层里被后面覆盖、不生效的字面量，2026-10-30（任务 316）已按级联核实删掉一批（焦点框旧色、设置导航和详情栏被覆盖的字号内边距、外观预览写死色）。还留着的几处是「颜色已死但声明还承担别的」：`.nav-row`/`.toolbar-right select`/`.search` 的 border 简写（颜色被后面的 `border-color` 覆盖，但线宽线型还靠它）、`.settings-nav h2` 和 `.delete-modal h3` 的 `margin: 0 0 …`（margin-bottom 被覆盖，margin-top 仍生效）。读源码时以计算值为准，改到这几处时整体重构。
+- `web/gravityport/src/styles/` 前面的原型层里被后面覆盖、不生效的字面量，2026-10-30（任务 316）已按级联核实删掉一批（焦点框旧色、设置导航和详情栏被覆盖的字号内边距、外观预览写死色）。还留着的几处是「颜色已死但声明还承担别的」：`.nav-row`/`.toolbar-right select`/`.search` 的 border 简写（颜色被后面的 `border-color` 覆盖，但线宽线型还靠它）、`.settings-nav h2` 和 `.delete-modal h3` 的 `margin: 0 0 …`（margin-bottom 被覆盖，margin-top 仍生效）。读源码时以计算值为准，改到这几处时整体重构。

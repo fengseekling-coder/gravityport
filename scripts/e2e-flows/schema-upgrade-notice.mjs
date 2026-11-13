@@ -13,6 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import Database from "better-sqlite3";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
@@ -294,8 +295,8 @@ function pageSource({ expectDialog = true, liveWait = false } = {}) {
 }
 
 async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, language, fileName }) {
-  const port = 41000 + Math.floor(Math.random() * 8000);
-  const cdpPort = 49000 + Math.floor(Math.random() * 4000);
+  const port = await freePort();
+  const cdpPort = await freePort();
   const pidFile = join(userDataDir, "pid.txt");
   const logFile = join(userDataDir, "main.log");
   const healthFile = join(userDataDir, "health.json");
@@ -387,6 +388,21 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
       try { launched.waiter.kill("SIGTERM"); } catch {}
     }
   }
+}
+
+// Ask the OS for a port that is free right now. Random picks in the 4xxxx
+// range collided with the ephemeral ports the runner hands to other servers
+// (Windows starts that range at 49152), so the app could not bind and the
+// CDP target never appeared.
+function freePort() {
+  return new Promise((resolvePort, rejectPort) => {
+    const server = createServer();
+    server.once("error", rejectPort);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => resolvePort(address.port));
+    });
+  });
 }
 
 function sleep(ms) {

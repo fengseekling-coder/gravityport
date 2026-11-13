@@ -2,6 +2,21 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.13 — 2026-11-13 / Preview
+
+### Desktop
+
+- Separate Intel (darwin-x64) macOS installer and automatic updates, signed and notarized like the Apple-silicon build; Apple-silicon downloads and updates are unchanged. An Intel build running under Rosetta updates back to the Apple-silicon package.
+- Show in Finder / Show in File Explorer in the context menu of image and video cards.
+- Changing the library location now says whether the move failed for lack of space or write permission.
+- Fixes: Windows system notifications could stay hidden (AppUserModelID); organizing Codex assets no longer stops when their disk does not support hard links.
+- Local API JSON errors carry a stable `code` next to the unchanged `error` text.
+- better-sqlite3 13.1.1 (SQLite 3.54.1). Internal reorganization of the UI stylesheet, `App.tsx` dialogs, the SQLite store helpers and desktop IPC handlers; no behavior change.
+
+### MCP launcher
+
+- `gravityport-mcp` 0.3.13: the no-app install notice and README name Apple-silicon and Intel Macs.
+
 ## 0.3.12 — 2026-11-12 / Preview
 
 ### Desktop

@@ -428,7 +428,7 @@ const english: Record<string, string> = {
 
   // ── AI 助手（MCP）（区域五 SET-09）──
   "AI 助手（MCP）": "AI assistants (MCP)",
-  "让 Claude、Codex 等 AI 助手直接管理你的素材库资产。将下方配置粘贴到 AI 助手中，然后重启该助手。": "Let AI assistants such as Claude and Codex manage your library assets directly. Paste the configuration below into the assistant, then restart it.",
+  "支持 Claude、Codex 等 AI 助手直接连接与管理素材库。将下方配置粘贴到 AI 助手中，然后重启该助手。": "Enable AI assistants such as Claude and Codex to access and manage your library directly. Paste the configuration below into the assistant, then restart it.",
   "AI 助手": "AI assistant",
   "粘贴到 claude_desktop_config.json（Claude 设置 > 开发者 > 编辑配置）。若文件中已有 mcpServers，仅合并 gravityport 这一段。": "Paste into claude_desktop_config.json (Claude Settings > Developer > Edit Config). If mcpServers already exists, merge only the gravityport entry.",
   "在终端中运行此命令。": "Run this command in a terminal.",

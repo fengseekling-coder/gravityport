@@ -112,7 +112,7 @@ test("open-folder route rejects paths outside the allowlist without spawning", a
   });
 
   assert.equal(response.statusCode, 403);
-  assert.deepEqual(response.body, { error: "Path not allowed" });
+  assert.deepEqual(response.body, { error: "Path not allowed", code: "PATH_NOT_ALLOWED" });
   assert.equal(spawnCount, 0);
 });
 

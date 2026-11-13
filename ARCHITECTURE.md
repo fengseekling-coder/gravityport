@@ -60,7 +60,7 @@ Pinterest 授权中转与 Pinterest API，以及用户在设置页点击发送�
 只有一份 UI：`web/gravityport/` 是 React + Vite 的界面源码。`src/` 下
 `App.tsx` 负责页面状态、事件绑定、导航和 API 调用；画廊窗口化、选择、
 拖拽、右键菜单、回收站、版本树、滚动记忆、偏好等逻辑拆分为同目录下的
-纯逻辑模块（可独立编译测试），界面组件和样式在 `src/` 与 `index.css`。
+纯逻辑模块（可独立编译测试），界面组件和样式在 `src/` 与 `src/styles/`（由 `index.css` 按序引入）。
 界面以中文文案为源，英文对照在 `src/i18n.ts`。
 
 `npm run build` 先由 Vite 把源码构建到 `web/gravityport/dist/`，再由
@@ -192,7 +192,7 @@ lib/api/*.mjs            素材、生成历史、库、桥接/Web Capture、Pint
 lib/pinterest/           Pinterest OAuth、token 存储与 API 客户端
 lib/feedback/            反馈转发配置
 lib/asset-store.mjs      存储选择和 JSON 兼容实现
-lib/sqlite-asset-store.mjs SQLite 实现（better-sqlite3）
+lib/sqlite-asset-store.mjs SQLite 实现（better-sqlite3；工具函数在 lib/sqlite-store/）
 lib/*.mjs                Node 运行时模块
 lib/*.ts                 TypeScript 源码；构建后生成运行时 JS/声明文件
 desktop/                 Electron 主进程、preload、服务管理和 Forge 配置

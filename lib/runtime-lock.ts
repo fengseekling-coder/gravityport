@@ -122,12 +122,24 @@ export async function verifyMosaRuntimeLockProcessIdentity(owner: {
   return currentIdentity === owner.processIdentity;
 }
 
-export async function readMosaRuntimeProcessIdentity(pid: number): Promise<string | null> {
+type RuntimeIdentityExecFile = (
+  file: string,
+  args: readonly string[],
+  options: { windowsHide?: boolean; timeout?: number; encoding?: string },
+) => Promise<{ stdout: string; stderr?: string }>;
+
+export async function readMosaRuntimeProcessIdentity(
+  pid: number,
+  { platform = process.platform, execFile = execFileAsync as RuntimeIdentityExecFile }: {
+    platform?: string;
+    execFile?: RuntimeIdentityExecFile;
+  } = {},
+): Promise<string | null> {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
-    if (process.platform === "win32") {
+    if (platform === "win32") {
       const script = `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`;
-      const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+      const { stdout } = await execFile("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
         windowsHide: true,
         timeout: 3000,
         encoding: "utf8",
@@ -135,7 +147,7 @@ export async function readMosaRuntimeProcessIdentity(pid: number): Promise<strin
       const value = stdout.trim();
       return value ? `win-start:${value}` : null;
     }
-    const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "lstart="], {
+    const { stdout } = await execFile("ps", ["-p", String(pid), "-o", "lstart="], {
       timeout: 3000,
       encoding: "utf8",
     });

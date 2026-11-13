@@ -28,8 +28,8 @@ const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const { version } = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
 // Install notice, fixed wording: Chinese first, English second.
-const NOTICE_ZH = "使用 GravityPort MCP 需要先安装 GravityPort 桌面 App（macOS 和 Windows）。下载：https://gravityport.azhuilab.com/?ref=mcp 。安装后打开一次 App，再重启这个 AI 助手。如果 App 装在别的位置，请把环境变量 GRAVITYPORT_APP_PATH 设为 App 所在位置。";
-const NOTICE_EN = "GravityPort MCP needs the GravityPort desktop app (macOS and Windows). Download: https://gravityport.azhuilab.com/en/?ref=mcp . After installing, open the app once, then restart this AI assistant. If the app is installed somewhere else, set GRAVITYPORT_APP_PATH to its location.";
+const NOTICE_ZH = "使用 GravityPort MCP 需要先安装 GravityPort 桌面 App（macOS：Apple 芯片和 Intel 芯片；Windows）。下载：https://gravityport.azhuilab.com/?ref=mcp 。安装后打开一次 App，再重启这个 AI 助手。如果 App 装在别的位置，请把环境变量 GRAVITYPORT_APP_PATH 设为 App 所在位置。";
+const NOTICE_EN = "GravityPort MCP needs the GravityPort desktop app (macOS on Apple silicon or Intel; Windows). Download: https://gravityport.azhuilab.com/en/?ref=mcp . After installing, open the app once, then restart this AI assistant. If the app is installed somewhere else, set GRAVITYPORT_APP_PATH to its location.";
 const NOTICE_TEXT = `${NOTICE_ZH}\n${NOTICE_EN}`;
 
 const app = findGravityPortApp({ platform: process.platform, env: process.env, homedir, exists: existsSync });

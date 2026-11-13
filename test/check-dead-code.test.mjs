@@ -162,6 +162,15 @@ test("scans every stylesheet in the UI tree, not just styles.css", () => {
   assert.deepEqual(result.deadCssClasses, [{ file: "web/gravityport/src/extra.css", name: "extra-dead" }]);
 });
 
+test("flags unused CSS classes in split stylesheets under styles/", () => {
+  const result = analyze({
+    "web/gravityport/src/index.css": "@import 'tailwindcss';\n@import './styles/01-base.css';\n",
+    "web/gravityport/src/styles/01-base.css": ".alive-in-split { color: red; }\n.dead-in-split { color: blue; }\n",
+    "web/gravityport/src/main.tsx": "el.classList.add('alive-in-split');\n",
+  });
+  assert.deepEqual(result.deadCssClasses, [{ file: "web/gravityport/src/styles/01-base.css", name: "dead-in-split" }]);
+});
+
 test("treats pluggable e2e flows as entry points but still checks their helpers", () => {
   const result = analyze({
     "scripts/e2e-flows/some-flow.mjs": "export const name = 'some-flow';\nexport async function run() {}\n",

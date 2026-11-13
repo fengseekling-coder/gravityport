@@ -1,0 +1,449 @@
+/* Task 139 wiring: group statistics facets, empty-state hint */
+.group-stats-facet { grid-column: 1 / -1; display: grid; gap: 2px; margin-top: 6px; }
+.group-stats-data p { margin: 0; }
+.app .empty-state small { margin-top: 6px; max-width: 360px; text-align: center; color: var(--ui-muted); }
+.app .empty-state button { margin-top: 12px; }
+
+/* Task 142: the trash countdown badge mirrors the stack mark's geometry; the
+   undo toast action is a bare text button in the toast's theme color. */
+.trash-countdown {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(22, 22, 22, 0.72);
+  color: #f5f5f7;
+  font-size: 12px;
+  line-height: 16px;
+  z-index: 1;
+}.stack-mark ~ .trash-countdown {
+  top: 36px;
+}.toast-action {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--ui-accent);
+  font-size: 12px;
+  line-height: var(--space-4);
+  cursor: pointer;
+}
+/* Keep 清空回收站 on one line at narrow window widths (~1000pt with both
+   side panels open); the search field gives up the width instead. */
+.toolbar-empty-trash {
+  white-space: nowrap;
+  flex-shrink: 0;
+}/* Task 383: what emptying the trash would free — one muted 12px line left
+   of the 清空回收站 button, vertically centered by .toolbar-right's flex.
+   Horizontal spacing comes from its existing --space-1 gap (no literals).
+   no-drag: the 56px toolbar is a window-drag region. */
+.trash-reclaimable {
+  font-size: 12px;
+  color: var(--ui-muted);
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+}
+/* Task 148: the expanded version view renders every block as thumbnail rows.
+   Gray placeholder frame for records without a resolvable asset; static rows
+   (unknown records, the anchor display) keep no hover state. */
+.app .details .related i.row-thumb-empty {
+  background: var(--ui-work);
+}.app .details .related.row-static {
+  cursor: default;
+}.app .details .related.row-static:hover {
+  background: transparent;
+}/* Pressed rows in the relation pickers. */
+.app .details .related[aria-pressed="true"] {
+  background: var(--ui-selected);
+}/* Upstream → downstream pair row (confirmed relations and candidates):
+   two 36px thumbnails, one arrow, clipped caption — no overflow at the
+   ~280px inspector width. */
+.relation-pair-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 100%;
+  min-width: 0;
+}.relation-pair-row i {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+  background: var(--ui-work);
+  overflow: hidden;
+}.relation-pair-row i img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}.relation-pair-row .relation-thumb-link {
+  display: flex;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}.relation-pair-row > small {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-muted);
+  font-size: 12px;
+}.generation-candidate-card > small {
+  flex: 1 1 100%;
+  color: var(--ui-muted);
+  font-size: 12px;
+}.relation-show-all {
+  justify-self: start;
+  padding: 0 var(--space-1);
+  color: var(--ui-accent);
+}
+/* Task 146: card dragging. Drop-target highlight on a gallery card (theme
+   accent through the existing ::after frame), the reorder insertion line, the
+   sidebar row highlight, the floating drag thumbnail with its count badge, and
+   the grabbing cursor while a drag is live. */
+.app .asset-card.card-drop-target {
+  transform: scale(.985);
+}.app .asset-card.card-drop-target::after {
+  border-color: var(--ui-accent);
+}.app .asset-card.stack-reorder-target::after {
+  border-color: var(--ui-accent);
+}.app .asset-card.stack-reorder-target.stack-reorder-before::after {
+  box-shadow: inset 3px 0 0 0 var(--ui-accent);
+}.app .asset-card.stack-reorder-target.stack-reorder-after::after {
+  box-shadow: inset -3px 0 0 0 var(--ui-accent);
+}.nav-row.side-drop-target {
+  background: var(--ui-hover);
+  box-shadow: inset 0 0 0 1.5px var(--ui-accent);
+}.nav-row.side-drop-target small {
+  color: var(--ui-accent);
+}.card-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 120;
+  pointer-events: none;
+  will-change: transform;
+}.card-drag-ghost img,
+.card-drag-ghost .card-drag-ghost-fallback {
+  display: block;
+  width: 76px;
+  height: 92px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: var(--ui-panel);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.22), 0 2px 8px rgba(15, 23, 42, 0.16);
+  opacity: 0.94;
+}.card-drag-ghost-count {
+  position: absolute;
+  right: -9px;
+  bottom: -9px;
+  display: grid;
+  min-width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0 6px;
+  border: 2px solid var(--ui-raised);
+  border-radius: 999px;
+  color: var(--ui-primary-text);
+  background: var(--ui-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}body.gp-card-dragging {
+  cursor: grabbing;
+  user-select: none;
+}body.gp-card-dragging * {
+  cursor: grabbing !important;
+}
+/* A drag sweeping under the toast must still hit-test its real drop target:
+   while a card drag is live the toast is click-through. */
+body.gp-card-dragging .toast {
+  pointer-events: none;
+}
+
+/* Gallery "back to top": floats over the gallery's bottom-right corner. */
+.app .gallery-to-top {
+  position: absolute;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: var(--space-10);
+  height: var(--space-10);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ui-raised);
+  box-shadow: var(--ui-shadow);
+  color: var(--ui-secondary);
+  cursor: pointer;
+  animation: surface-in 200ms var(--ease-out) both;
+}.app .gallery-to-top:hover {
+  color: var(--ui-text);
+}
+
+/* Settings → 反馈 (task 158): the whole form lives inside the scrolling
+   settings page; the modal keeps its CSS-governed size and nothing here may
+   force horizontal overflow, even at narrow windows. */
+.app .feedback-section {
+  display: flex;
+  flex-direction: column;
+}.app .feedback-kind-row {
+  display: flex;
+  gap: var(--space-2);
+}.app .feedback-kind-option {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ui-secondary);
+  font-size: 12px;
+  line-height: var(--space-4);
+  cursor: pointer;
+}.app .feedback-kind-option:hover {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}.app .feedback-kind-option.chosen {
+  color: var(--ui-text);
+  font-weight: 500;
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}.app .feedback-kind-option:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}.app .feedback-message {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  margin-top: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--space-4);
+  resize: vertical;
+  box-sizing: border-box;
+}.app .feedback-message::placeholder,
+.app .feedback-contact::placeholder {
+  color: var(--ui-muted);
+}.app .feedback-message:focus-visible,
+.app .feedback-contact:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}.app .feedback-message-foot {
+  display: flex;
+  justify-content: flex-end;
+  min-height: var(--space-4);
+  margin-top: var(--space-1);
+}.app .feedback-counter {
+  font-size: 12px;
+  line-height: var(--space-4);
+  color: var(--ui-muted);
+  font-variant-numeric: tabular-nums;
+}.app .feedback-contact {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: var(--space-4);
+  box-sizing: border-box;
+}.app .feedback-log-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}.app .feedback-log-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  line-height: var(--space-4);
+  color: var(--ui-text);
+  cursor: pointer;
+}.app .feedback-log-toggle input {
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: 0;
+  accent-color: var(--ui-accent);
+  flex-shrink: 0;
+}.app .feedback-log-view-button {
+  border: 0;
+  background: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-small);
+  color: var(--ui-secondary);
+  font-size: 12px;
+  line-height: var(--space-4);
+  cursor: pointer;
+  white-space: nowrap;
+}.app .feedback-log-view-button:hover {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}.app .feedback-log-view-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}.app .feedback-log-view {
+  margin: var(--space-2) 0 0;
+  max-height: 168px;
+  overflow: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: var(--ui-inset);
+  color: var(--ui-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}.app .feedback-auto-note {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  line-height: var(--space-4);
+  color: var(--ui-muted);
+  overflow-wrap: anywhere;
+}.app .feedback-status {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  line-height: var(--space-4);
+}.app .feedback-success {
+  color: var(--ui-accent);
+}.app .feedback-error {
+  color: var(--ui-danger);
+}.app .feedback-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}.app .feedback-send {
+  min-width: 88px;
+}.app .feedback-send:disabled {
+  opacity: .4;
+  cursor: default;
+}
+/* Task 291: 导入结果浮层(手动导入去重的清单确认)。规格照确认框:--ui-panel
+   底、--radius-panel、--ui-shadow、surface-in;层级 50 写进 DESIGN.md 层级表。 */
+.import-review-layer {
+  z-index: 50;
+}.import-review {
+  width: min(680px, calc(100vw - 40px));
+  max-height: min(640px, calc(100vh - 80px));
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-6);
+  border-radius: var(--radius-panel);
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  box-shadow: var(--ui-shadow);
+  animation: surface-in 320ms var(--ease-out) both;
+}.import-review h3 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -.5px;
+  margin: 0 0 6px;
+}.import-review .review-note {
+  font-size: 12px;
+  color: var(--ui-muted);
+  margin: 0 0 4px;
+}.import-review .review-scroll {
+  overflow-y: auto;
+  min-height: 0;
+}.import-review .review-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0 2px;
+}.import-review .review-section-head h4 {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ui-muted);
+  margin: 0;
+}.import-review .review-section-actions {
+  display: flex;
+  gap: 10px;
+}.import-review .review-section-actions button {
+  font-size: 12px;
+  color: var(--ui-secondary);
+}.import-review .review-section-actions button:hover {
+  color: var(--ui-text);
+}.import-review .review-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--ui-line);
+}.import-review .review-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
+  flex: none;
+}.import-review .review-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}.import-review .review-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}.import-review .review-name {
+  font-size: 12px;
+  color: var(--ui-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}.import-review .review-sub {
+  font-size: 12px;
+  color: var(--ui-muted);
+}.import-review .review-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+}.import-review .review-options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ui-secondary);
+}.import-review .review-options label:has(input:checked) {
+  color: var(--ui-text);
+}.import-review .review-options input {
+  accent-color: var(--ui-text);
+  margin: 0;
+}.import-review .review-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 12px;
+}.import-review .review-more {
+  display: block;
+  margin: 8px auto 0;
+  font-size: 12px;
+  color: var(--ui-secondary);
+}.import-review .review-more:hover {
+  color: var(--ui-text);
+}

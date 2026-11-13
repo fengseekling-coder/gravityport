@@ -80,6 +80,11 @@ import ImportReviewDialog, { type ImportReviewData, type ImportReviewDecision } 
 import type { AlreadyInLibraryEntry } from "./import-pipeline"
 import { VideoPosterQueue } from "./video-poster"
 import { handleExternalLinkClick } from "./external-link.js"
+import { ReadingText } from "./ReadingText"
+import { MenuRow } from "./MenuRow"
+import { isVideoUrl, ThumbMedia, VideoMark } from "./ThumbMedia"
+import { InspectorRow, RelationThumb } from "./InspectorParts"
+import { GroupDialogs } from "./GroupDialogs"
 
 // 任务 351：关于页社区入口。Discord 只放行任务单授权的这一个邀请链接
 // （desktop/open-external-link.mjs 的 allowlist 同步只放行它）。
@@ -100,36 +105,6 @@ function loadPreferences() {
   } catch {
     return { appearance: "跟随系统", cardInfo: false, language: "zh" as const, skipTrashConfirm: false }
   }
-}
-
-/** Inspector text that shows its first five lines and offers to expand only
- *  when there is more to show. */
-function ReadingText({ id, text, expanded, onToggle, expandLabel, collapseLabel }: {
-  id: string
-  text: string
-  expanded: boolean
-  onToggle: () => void
-  expandLabel: string
-  collapseLabel: string
-}) {
-  const ref = useRef<HTMLParagraphElement>(null)
-  const [overflows, setOverflows] = useState(false)
-  useLayoutEffect(() => {
-    const paragraph = ref.current
-    if (!paragraph || expanded) return
-    const measure = () => setOverflows(paragraph.scrollHeight > paragraph.clientHeight + 1)
-    measure()
-    if (typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(measure)
-    observer.observe(paragraph)
-    return () => observer.disconnect()
-  }, [text, expanded])
-  return (
-    <div className={`detail-reading five-lines ${expanded ? "expanded" : ""}`}>
-      <p id={id} ref={ref}>{text}</p>
-      {overflows && <button className="reading-toggle" aria-expanded={expanded} aria-controls={id} onClick={onToggle}>{expanded ? collapseLabel : expandLabel}<Icon name={expanded ? "minus" : "down"} size={12} /></button>}
-    </div>
-  )
 }
 
 function humanSize(bytes: number | null): string {
@@ -229,182 +204,10 @@ type ToastAction = { label: string; run: () => void }
 
 type ToastState = { text: string; action?: ToastAction; duration?: number; overViewer?: boolean } | null
 
-/** One row of the context menu. A row with a submenu expands it on hover or
- * keyboard focus; near the right window edge the submenu flips to the left,
- * and a submenu taller than the window shifts up and scrolls internally. */
-const MENU_SUBMENU_WIDTH = 200
-
-function MenuRow({ entry, onAction }: { entry: Extract<MenuEntry, { kind: "item" }>; onAction: (id: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const [flip, setFlip] = useState(false)
-  const [shiftUp, setShiftUp] = useState(0)
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  // Leaving the row starts a short close timer so the pointer can travel the
-  // gap to the submenu (and cross back over the flipped side) without
-  // collapsing it; entering either part cancels the timer.
-  const closeTimer = useRef<number | null>(null)
-  useEffect(() => () => { if (closeTimer.current !== null) window.clearTimeout(closeTimer.current) }, [])
-  const scheduleClose = () => {
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
-    closeTimer.current = window.setTimeout(() => setOpen(false), 250)
-  }
-  const cancelClose = () => {
-    if (closeTimer.current !== null) { window.clearTimeout(closeTimer.current); closeTimer.current = null }
-  }
-  const expand = () => {
-    cancelClose()
-    if (!entry.submenu?.length) return
-    const rect = buttonRef.current?.getBoundingClientRect()
-    if (rect) {
-      setFlip(rect.right + MENU_SUBMENU_WIDTH + 8 > window.innerWidth)
-      // The submenu must clear the window bottom before its real height can
-      // be measured; the row count bounds it well enough for the shift.
-      const estimatedHeight = entry.submenu.length * 32 + 8
-      setShiftUp(Math.max(0, rect.bottom + estimatedHeight - window.innerHeight + 8))
-    }
-    setOpen(true)
-  }
-  const iconFor = (item: Extract<MenuEntry, { kind: "item" }>) => item.color
-    ? <span className="group-color-dot" style={{ background: item.color || "#8b8b93" }} />
-    : item.icon ? <Icon name={item.icon} size={14} /> : <span className="menu-icon-slot" />
-  return (
-    <div className="menu-row" onMouseLeave={scheduleClose}>
-      <button
-        ref={buttonRef}
-        role="menuitem"
-        aria-haspopup={entry.submenu ? "menu" : undefined}
-        aria-expanded={entry.submenu ? open : undefined}
-        className={entry.danger ? "danger" : ""}
-        disabled={entry.disabled}
-        onClick={entry.submenu
-          ? () => { if (open) setOpen(false); else expand() }
-          : () => onAction(entry.id)}
-        onMouseEnter={expand}
-        onFocus={expand}
-        onBlur={event => {
-          // Pressing a submenu item moves focus off this button before the
-          // click lands; closing here would unmount the item mid-click.
-          if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) setOpen(false)
-        }}
-        aria-label={entry.label}
-      >
-        {iconFor(entry)}
-        <span>{entry.label}</span>
-        {entry.shortcut && <small>{entry.shortcut}</small>}
-        {!entry.shortcut && entry.id === "open-viewer" && <small><Icon name="enter" size={12} /></small>}
-        {entry.id === "move-to-trash" && <small><Icon name="backspace" size={12} /></small>}
-        {entry.submenu && <small><Icon name="right" size={12} /></small>}
-      </button>
-      {open && entry.submenu && (
-        <div
-          className={`context-submenu${flip ? " flip" : ""}`}
-          role="menu"
-          style={shiftUp ? { top: -4 - shiftUp } : undefined}
-          onMouseEnter={cancelClose}
-          onMouseLeave={scheduleClose}
-        >
-          {entry.submenu.map((sub, index) => {
-            if (sub.kind === "separator") return <div key={`sep-${index}`} className="menu-divider" />
-            if (sub.kind === "heading") return <div key={`head-${index}`} className="menu-heading">{sub.label}</div>
-            return (
-              <button
-                key={sub.id}
-                role="menuitem"
-                className={sub.danger ? "danger" : ""}
-                disabled={sub.disabled}
-                onClick={() => { setOpen(false); onAction(sub.id) }}
-              >
-                {iconFor(sub)}
-                <span>{sub.label}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
 /** localStorage for the remembered column count; blocked storage (privacy
  * mode, denied access) just means the choice is not remembered. */
 function columnsStorage(): { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void } {
   try { return window.localStorage } catch { return { getItem: () => null, setItem: () => {} } }
-}
-
-// Videos never get a generated thumbnail (the app ships no frame extractor),
-// so their thumbnail_url falls back to the mp4 itself and an <img> shows a
-// broken icon. Let the browser paint an early frame of the video instead.
-const VIDEO_URL_PATTERN = /\.(?:mp4|mov|webm|m4v)(?:[?#].*)?$/i
-function isVideoUrl(url: string | null | undefined): boolean {
-  return !!url && VIDEO_URL_PATTERN.test(url)
-}
-
-function ThumbMedia({ src, ...img }: { src: string } & React.ImgHTMLAttributes<HTMLImageElement>) {
-  if (isVideoUrl(src)) {
-    return <video className={img.className} src={src.includes("#") ? src : `${src}#t=0.1`} muted playsInline preload="metadata" tabIndex={-1} aria-hidden="true" draggable={false} />
-  }
-  return <img src={src} {...img} />
-}
-
-function VideoMark() {
-  return <span className="video-mark"><Icon name="play" size={12} /></span>
-}
-
-// Task 148: one row renderer shared by the version-tree list above and every
-// block of the expanded 「查看」 region below. The list rows keep the exact DOM
-// they had before the extraction (the version-history e2e drives it).
-type InspectorRowSpec = {
-  key: string
-  thumbnailUrl?: string | null
-  emptyThumb?: boolean
-  title: string
-  detail?: string
-  isCurrent?: boolean
-  selected?: boolean
-  showChevron?: boolean
-  staticRow?: boolean
-  rowClassName?: string
-  indent?: number
-  onClick?: () => void
-}
-
-function InspectorRow(spec: InspectorRowSpec) {
-  const className = [
-    "related",
-    spec.isCurrent ? "is-current" : "",
-    spec.staticRow ? "row-static" : "",
-    spec.rowClassName || "",
-  ].filter(Boolean).join(" ")
-  const style = spec.indent ? { marginLeft: spec.indent * 14 } : undefined
-  const row = (
-    <>
-      <i className={spec.emptyThumb ? "row-thumb-empty" : undefined}>
-        {!spec.emptyThumb && spec.thumbnailUrl ? <ThumbMedia src={spec.thumbnailUrl} alt="" loading="lazy" /> : null}
-      </i>
-      <span>{spec.title}<small>{spec.detail || ""}</small></span>
-      {spec.showChevron === false ? null : <Icon name="right" size={11} />}
-    </>
-  )
-  if (spec.staticRow) return <div className={className} key={spec.key} style={style}>{row}</div>
-  return (
-    <button
-      className={className}
-      key={spec.key}
-      aria-pressed={spec.selected === true ? true : undefined}
-      style={style}
-      onClick={spec.onClick}
-    >{row}</button>
-  )
-}
-
-// One generation record as a 36px thumbnail for the upstream → downstream pair
-// rows; records that resolve to no asset render the gray placeholder frame.
-function RelationThumb({ display, onClick, label }: { display: GenerationDisplay; onClick?: () => void; label?: string }) {
-  const thumb = display.known && display.asset
-    ? <i>{display.asset.thumbnail_url ? <ThumbMedia src={display.asset.thumbnail_url} alt="" loading="lazy" /> : null}</i>
-    : <i className="row-thumb-empty" />
-  if (!onClick) return <span className="relation-thumb-frame">{thumb}</span>
-  return <button className="relation-thumb-link" title={label} aria-label={label} onClick={onClick}>{thumb}</button>
 }
 
 export default function App() {
@@ -4738,198 +4541,23 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           <Icon name="settings" size={14} />
         </button>
       </aside>
-      {(groupRename || groupDeleteConfirm || groupMerge || groupStats) && <div className="group-dialog-backdrop" role="presentation">
-        {/* 任务 359（DLG-06a）：读屏名称跟随各自标题，不再共用「分组管理」。 */}
-        <div className="group-dialog" role="dialog" aria-modal="true" aria-label={groupRename ? tr("重命名分组")
-          : groupDeleteConfirm ? fillNamed("删除分组「{group}」？", { group: groupDeleteConfirm })
-          : groupMerge ? fillNamed("合并分组「{source}」", { source: groupMerge.source })
-          : `${tr("分组统计")} · ${groupStats?.name || ""}`}>
-          {groupRename && <form onSubmit={event => {
-            event.preventDefault()
-            const name = groupRename.draft.trim()
-            if (!name || name === groupRename.original) { setGroupRename(null); return }
-            renameGroup(project, groupRename.original, name).then(() => {
-              if (active === `group:${groupRename.original}`) goTo({ active: `group:${name}` })
-              scheduleSync(); setGroupRename(null)
-            }).catch(error => notify(errorMessage(error, language)))
-          }}><h3>{tr("重命名分组")}</h3><input autoFocus value={groupRename.draft} maxLength={80} onChange={event => setGroupRename(old => old ? { ...old, draft: event.target.value } : old)} /><div className="group-dialog-actions"><button type="button" className="neutral-button" onClick={() => setGroupRename(null)}>{tr("取消")}</button><button type="submit" className="primary-button">{tr("重命名")}</button></div></form>}
-          {groupDeleteConfirm && <><h3>{fillNamed("删除分组「{group}」？", { group: groupDeleteConfirm })}</h3><p>{tr("分组中的素材不会被删除。")}</p><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupDeleteConfirm(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
-            const name = groupDeleteConfirm
-            deleteGroupKeepingAssets(project, name).then(() => {
-              if (active === `group:${name}`) goTo({ active: "所有素材" })
-              scheduleSync(); setGroupDeleteConfirm(null)
-            }).catch(error => notify(errorMessage(error, language)))
-          }}>{tr("删除分组")}</button></div></>}
-          {groupMerge && <><h3>{fillNamed("合并分组「{source}」", { source: groupMerge.source })}</h3><p>{tr("合并到：")}</p><p className="group-dialog-error">{fillNamed("「{source}」中的素材将移到所选分组，「{source}」随后删除。", { source: groupMerge.source })}</p><select value={groupMerge.target} onChange={event => setGroupMerge(old => old ? { ...old, target: event.target.value } : old)}>{navigation?.groups.filter(item => item.name !== groupMerge.source).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select><div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupMerge(null)}>{tr("取消")}</button><button className="primary-button" onClick={() => {
-            const { source, target } = groupMerge
-            mergeGroups(project, source, target).then(() => {
-              if (active === `group:${source}`) goTo({ active: `group:${target}` })
-              scheduleSync(); setGroupMerge(null)
-            }).catch(error => notify(errorMessage(error, language)))
-          }}>{tr("合并")}</button></div></>}
-          {groupStats && (() => {
-            const described = describeGroupStats(groupStats.values)
-            return <>
-              <h3>{tr("分组统计")} · {groupStats.name}</h3>
-              <div className="group-stats-data">
-                {/* 任务 359（DLG-09b）：标签 + 数值不写冒号。 */}
-                {described.overview.map(item => <p key={item.label}>{language === "en" && item.enLabel ? item.enLabel : tr(item.label)} {item.value}</p>)}
-                {described.facets.map(facet => <div key={facet.title} className="group-stats-facet">
-                  <strong>{tr(facet.title)}</strong>
-                  {facet.entries.length
-                    ? facet.entries.map(entry => <p key={entry.name}>
-                        {/* 任务 359（HC-16）：来源码过显示名（ChatGPT 网页版…），分类原样。 */}
-                        {facet.title === "按来源" ? sourceDisplayLabel(entry.name) : entry.name} {entry.count}
-                      </p>)
-                    : <p>{tr(facet.emptyText)}</p>}
-                </div>)}
-              </div>
-              <div className="group-dialog-actions"><button className="neutral-button" onClick={() => setGroupStats(null)}>{tr("关闭")}</button></div>
-            </>
-          })()}
-        </div>
-      </div>}
-
-      {/* Stack rename dialog */}
-      {stackRename && (
-        <div className="group-dialog-backdrop" role="presentation" onClick={event => { if (event.target === event.currentTarget) setStackRename(null) }}>
-          <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("重命名堆叠")}>
-            <form onSubmit={event => {
-              event.preventDefault()
-              const name = stackRename.draft.trim()
-              if (!name) return
-              renameStack(project, stackRename.stackId, name)
-                .then(() => {
-                  notify("已重命名堆叠")
-                  setAssets(old => old.map(a => a.stack && a.stack.id === stackRename.stackId ? { ...a, stack: { ...a.stack, name } } : a))
-                  if (stackId === stackRename.stackId) setStackName(name)
-                  setStackRename(null)
-                  scheduleSync()
-                })
-                .catch(error => notify(errorMessage(error, language)))
-            }}>
-              <h3>{tr("重命名堆叠")}</h3>
-              <input autoFocus value={stackRename.draft} maxLength={80} onChange={event => setStackRename(old => old ? { ...old, draft: event.target.value } : old)} />
-              <div className="group-dialog-actions">
-                <button type="button" className="neutral-button" onClick={() => setStackRename(null)}>{tr("取消")}</button>
-                <button type="submit" className="primary-button">{tr("重命名")}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Stack dissolve confirmation */}
-      {stackDissolveConfirm && (
-        <div className="modal-layer delete-layer" onClick={event => { if (event.target === event.currentTarget) setStackDissolveConfirm(null) }}>
-          <div className="delete-modal" role="alertdialog" aria-modal="true">
-            <div className="delete-icon"><Icon name="layers" size={26} /></div>
-            <h3>{tr("解散堆叠？")}</h3>
-            <p>{tr("堆叠中的素材将恢复为独立素材，不会被删除。")}</p>
-            <div className="delete-actions">
-              <button className="neutral-button" onClick={() => setStackDissolveConfirm(null)}>{tr("取消")}</button>
-              <button className="primary-button" onClick={() => {
-                const target = stackDissolveConfirm
-                setStackDissolveConfirm(null)
-                dissolveStack(project, target.stackId)
-                  .then(result => {
-                    // The server echoes the members it released; the toast
-                    // counts those, not the stale menu-time count.
-                    notify(result.assetIds.length === 1
-                      ? tr("已解散堆叠，1 个素材已恢复为独立素材")
-                      : fillNamed("已解散堆叠，{count} 个素材已恢复为独立素材", { count: result.assetIds.length }))
-                    setAssets(old => old.map(a => a.stack && a.stack.id === target.stackId ? { ...a, stack: null } : a))
-                    if (stackId === target.stackId) goTo({ stackId: "", stackName: "" })
-                    scheduleSync()
-                  })
-                  .catch(error => notify(errorMessage(error, language)))
-              }}>{tr("解散堆叠")}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Stack move-to-trash confirmation — a stack always confirms, the
-      "不再提醒" suppression only ever covered plain assets. */}
-      {stackTrashConfirm && (
-        <div className="modal-layer delete-layer" onClick={event => { if (event.target === event.currentTarget) setStackTrashConfirm(null) }}>
-          <div className="delete-modal" role="alertdialog" aria-modal="true">
-            <div className="delete-icon"><Icon name="trash" size={26} /></div>
-            <h3>{tr("将堆叠移到回收站？")}</h3>
-            <p>{fillNamed("堆叠中的 {count} 个素材将一并移到回收站，90 天内可恢复。", { count: stackTrashConfirm.stackCount })}</p>
-            <div className="delete-actions">
-              <button className="neutral-button" onClick={() => setStackTrashConfirm(null)}>{tr("取消")}</button>
-              <button className="primary-button" onClick={() => {
-                const target = stackTrashConfirm
-                setStackTrashConfirm(null)
-                trashStack(project, target.stackId)
-                  .then(outcome => {
-                    // 任务 359（TOAST-17）：全部失败固定句，不再出现「0 项」。
-                    if (outcome.failed && !outcome.succeeded) {
-                      notify("无法将堆叠移到回收站")
-                    } else if (outcome.failed) {
-                      notify(fillNamed("已将 {count} 个素材移到回收站，{failed} 个无法移动", { count: outcome.succeeded, failed: outcome.failed }))
-                    } else if (outcome.succeeded) {
-                      notify(outcome.succeeded === 1
-                        ? tr("已将堆叠及其中 1 个素材移到回收站")
-                        : fillNamed("已将堆叠及其中 {count} 个素材移到回收站", { count: outcome.succeeded }))
-                    }
-                    const failedIds = new Set(outcome.failedIds)
-                    setAssets(old => old.filter(a => !(a.stack && a.stack.id === target.stackId && !failedIds.has(a.id))))
-                    if (stackId === target.stackId) goTo({ stackId: "", stackName: "" })
-                    scheduleSync()
-                  })
-                  .catch(error => notify(errorMessage(error, language)))
-              }}>{tr("移到回收站")}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Create a group and move the menu's target into it. A server rejection
-      (duplicate name) shows inside the dialog and keeps it open. */}
-      {groupCreateWithSelection && (
-        <div className="group-dialog-backdrop" role="presentation" onClick={event => { if (event.target === event.currentTarget) setGroupCreateWithSelection(null) }}>
-          <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("用所选素材新建分组")}>
-            <form onSubmit={event => {
-              event.preventDefault()
-              const name = groupCreateWithSelection.draft.trim()
-              if (!name) return
-              const target = groupCreateWithSelection
-              let moveFailedTo = ""
-              createGroup(project, name)
-                .then(async () => {
-                  if (target.target === "stack" && target.targetStackId) { await assignStackToGroup(project, target.targetStackId, name); return }
-                  const outcome = await assignBatchToGroup(project, [...batchIds], name)
-                  // 任务 359（TOAST-21b）：创建成功但移入失败给出带分组名的整句。
-                  if (!outcome.succeeded) { moveFailedTo = name; throw new Error("move-into-group-failed") }
-                })
-                .then(() => {
-                  notify(target.target === "stack"
-                    ? fillNamed("已新建分组「{group}」，堆叠已移到其中", { group: name })
-                    : fillNamed("已新建分组「{group}」，{count} 个素材已移到其中", { group: name, count: batchIds.length }))
-                  if (target.target === "asset") setSelectedIds([])
-                  setGroupCreateWithSelection(null)
-                  scheduleSync()
-                })
-                .catch(error => setGroupCreateError(moveFailedTo
-                  ? fillNamed("无法将素材移到「{group}」。", { group: moveFailedTo })
-                  : describeError(error, language)))
-            }}>
-              <h3>{tr("用所选素材新建分组")}</h3>
-              <input autoFocus value={groupCreateWithSelection.draft} maxLength={80} onChange={event => {
-                setGroupCreateError("")
-                setGroupCreateWithSelection(old => old ? { ...old, draft: event.target.value } : old)
-              }} />
-              {groupCreateError && <p className="group-dialog-error" role="alert">{groupCreateError}</p>}
-              <div className="group-dialog-actions">
-                <button type="button" className="neutral-button" onClick={() => setGroupCreateWithSelection(null)}>{tr("取消")}</button>
-                <button type="submit" className="primary-button">{tr("新建")}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <GroupDialogs
+        groupRename={groupRename} setGroupRename={setGroupRename}
+        groupDeleteConfirm={groupDeleteConfirm} setGroupDeleteConfirm={setGroupDeleteConfirm}
+        groupMerge={groupMerge} setGroupMerge={setGroupMerge}
+        groupStats={groupStats} setGroupStats={setGroupStats}
+        stackRename={stackRename} setStackRename={setStackRename}
+        stackDissolveConfirm={stackDissolveConfirm} setStackDissolveConfirm={setStackDissolveConfirm}
+        stackTrashConfirm={stackTrashConfirm} setStackTrashConfirm={setStackTrashConfirm}
+        groupCreateWithSelection={groupCreateWithSelection} setGroupCreateWithSelection={setGroupCreateWithSelection}
+        groupCreateError={groupCreateError} setGroupCreateError={setGroupCreateError}
+        project={project} active={active} stackId={stackId} language={language}
+        navigation={navigation} batchIds={batchIds}
+        tr={tr} fillNamed={fillNamed} notify={notify} errorMessage={errorMessage}
+        goTo={goTo} scheduleSync={scheduleSync} sourceDisplayLabel={sourceDisplayLabel}
+        setAssets={setAssets} setStackName={setStackName} setSelectedIds={setSelectedIds}
+        assignBatchToGroup={assignBatchToGroup}
+      />
       <main
         className={`workspace ${preview ? "preview-open" : ""}`}
         onDragOver={event => {
