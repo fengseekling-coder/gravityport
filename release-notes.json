@@ -14,7 +14,8 @@
         "修复了 Codex 素材所在的盘不支持硬链接时，整理过程中断的问题。"
       ],
       "other": [
-        "素材库数据库组件 better-sqlite3 升级到 13.1.1（内置 SQLite 3.54.1）。"
+        "素材库数据库组件 better-sqlite3 升级到 13.1.1（内置 SQLite 3.54.1）。",
+        "整理了界面样式、主界面、素材库存储和桌面端的代码结构，方便后续开发；界面和功能不变。"
       ]
     },
     "en": {
@@ -30,7 +31,8 @@
         "Fixed asset organizing coming to a halt when the disk holding Codex assets doesn't support hard links."
       ],
       "other": [
-        "Updated the library database component better-sqlite3 to 13.1.1 (bundled SQLite 3.54.1)."
+        "Updated the library database component better-sqlite3 to 13.1.1 (bundled SQLite 3.54.1).",
+        "Reorganized the code behind the interface styles, main window, library storage, and desktop shell to make future work easier; the interface and features are unchanged."
       ]
     }
   },
