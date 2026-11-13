@@ -4,10 +4,6 @@ import ToolbarSelect from "./ToolbarSelect"
 import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
 import { PinterestView } from "./PinterestView"
-import { PinterestConnectionCard } from "./PinterestConnectionCard"
-import { McpClientConfigCard } from "./McpClientConfigCard"
-import { WebCaptureStatusCard } from "./WebCaptureStatusCard"
-import { FeedbackPanel } from "./FeedbackPanel"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } from "./context-menus"
@@ -56,10 +52,8 @@ import {
   installResultFeedback,
   libraryLocationFailureText,
   mapUpdateResult,
-  buildUpdateText,
   type UpdateUiState,
 } from "./app-lifecycle"
-import { buildReleaseNoteBlocks } from "./release-notes-view"
 import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite, setAssetsCurated,
@@ -79,17 +73,12 @@ import { AuthorizationModal, type AuthorizationResult } from "./AuthorizationMod
 import ImportReviewDialog, { type ImportReviewData, type ImportReviewDecision } from "./ImportReviewDialog"
 import type { AlreadyInLibraryEntry } from "./import-pipeline"
 import { VideoPosterQueue } from "./video-poster"
-import { handleExternalLinkClick } from "./external-link.js"
 import { ReadingText } from "./ReadingText"
 import { MenuRow } from "./MenuRow"
 import { isVideoUrl, ThumbMedia, VideoMark } from "./ThumbMedia"
 import { InspectorRow, RelationThumb } from "./InspectorParts"
 import { GroupDialogs } from "./GroupDialogs"
-
-// 任务 351：关于页社区入口。Discord 只放行任务单授权的这一个邀请链接
-// （desktop/open-external-link.mjs 的 allowlist 同步只放行它）。
-const DISCORD_INVITE_URL = "https://discord.gg/rArXAShSkQ"
-const GITHUB_DISCUSSIONS_URL = "https://github.com/fengseekling-coder/gravityport/discussions"
+import { PINTEREST_ENTRY, SettingsDialog } from "./SettingsDialog"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
 
@@ -136,10 +125,6 @@ const PROVIDER_LABELS: Record<string, string> = {
 // Task 146 card dragging.
 const CARD_DRAG_THRESHOLD_PX = 8
 const NATIVE_DRAG_MAX_FILES = 512
-// Pinterest browsing (tasks 135/138/147). The sidebar row and Settings → 连接
-// are shown, the row marked 即将上线 until Standard access; false hides
-// both while the view, the connection card, and the local token API stay.
-const PINTEREST_ENTRY = true
 
 type CardDragGesture = {
   pointerId: number
@@ -5358,260 +5343,22 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         </aside>
       )}
       {settings && (
-        <div
-          className="modal-layer"
-          onMouseDown={(e) =>
-            e.target === e.currentTarget && setSettings(false)
-          }
-        >
-          <div
-            className="settings-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={tr("设置")}
-          >
-            <aside className="settings-nav">
-              <h2>{tr("设置")}</h2>
-              {[
-                ["常规与外观", "sun"],
-                ["存储", "folder"],
-                ["连接", "link"],
-                ["反馈", "message"],
-                ["关于", "info"],
-              ].filter(([label]) => (PINTEREST_ENTRY || label !== "连接")).map(([label, icon]) => (
-                <button
-                  className={settingTab === label ? "active" : ""}
-                  aria-pressed={settingTab === label}
-                  key={label}
-                  onClick={() => setSettingTab(label)}
-                >
-                  <Icon name={icon} size={15} />
-                  {tr(label === "常规与外观" ? "常规" : label)}
-                </button>
-              ))}
-              <div className="settings-brand">
-                GravityPort
-                <span>{tr("让每一次 AI 创作，有迹可循")}</span>
-              </div>
-            </aside>
-            <div className="settings-content">
-              <div className="settings-heading">
-                <div className="settings-heading-copy">
-                  <h3>{tr(settingTab === "常规与外观" ? "常规" : settingTab)}</h3>
-                </div>
-                <button
-                  className="modal-close"
-                  aria-label={tr("关闭设置")}
-                  onClick={() => setSettings(false)}
-                >
-                  <Icon name="close" size={11} />
-                </button>
-              </div>
-              <div className="settings-page" key={settingTab}>
-              {settingTab === "常规与外观" ? (
-                <>
-                  <section className="settings-section theme-section" aria-label={tr("外观")}>
-                  <div className="appearance-options">
-                    {["跟随系统", "浅色", "深色"].map((a, i) => (
-                      <button
-                        key={a}
-                        aria-pressed={appearance === a}
-                        className={`appearance-option ${
-                          appearance === a ? "chosen" : ""
-                        }`}
-                        onClick={() => setAppearance(a)}
-                      >
-                        <div className={`theme-preview theme-${i}`}>
-                          <div className="mini-sidebar" />
-                          <div className="mini-content">
-                            <i />
-                            <i />
-                            <i />
-                            <i />
-                          </div>
-                          {appearance === a && (
-                            <span>
-                              <Icon name="check" size={10} />
-                            </span>
-                          )}
-                        </div>
-                        <span>{tr(a)}</span>
-                      </button>
-                    ))}
-                  </div>
-                  </section>
-                  <section className="settings-section">
-                  <div className="setting-row">
-                    <span>{tr("显示素材名称")}</span>
-                    <button className={`settings-switch ${cardInfo ? "enabled" : ""}`} role="switch" aria-checked={cardInfo} aria-label={tr("显示素材名称")} onClick={() => setCardInfo(!cardInfo)}><span /></button>
-                  </div>
-                  </section>
-                  <section className="settings-section">
-                  <div className="setting-row">
-                    <span>{tr("界面语言")}</span>
-                    <div className="segmented" role="group" aria-label={tr("界面语言")}>
-                      <button className={language === "zh" ? "on" : ""} aria-pressed={language === "zh"} onClick={() => setLanguage("zh")}>中文</button>
-                      <button className={language === "en" ? "on" : ""} aria-pressed={language === "en"} onClick={() => setLanguage("en")}>English</button>
-                    </div>
-                  </div>
-                  </section>
-                </>
-              ) : settingTab === "存储" ? (
-                <>
-                  <section className="settings-section">
-                    <div className="storage-summary storage-path">
-                      <Icon name="folder" size={16} />
-                      <div className="storage-description"><strong>{tr("存储位置")}</strong><span title={library?.path || ""}>{library?.path || "—"}</span></div>
-                      <div className="storage-actions">
-                        <button className="neutral-button" onClick={openStorageLocation}>{tr("打开")}</button>
-                        <button className="neutral-button" onClick={changeLibraryLocation}>{tr("更改…")}</button>
-                      </div>
-                    </div>
-                  </section>
-                  <div className="settings-note"><p>{library ? `${tr("存储类型")} ${library.storage}` : ""}</p></div>
-                </>
-              ) : settingTab === "连接" ? (
-                <>
-                  <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
-                  <McpClientConfigCard language={language} />
-                  <WebCaptureStatusCard language={language} />
-                  {backgroundCapture.supported && (
-                    <div className="web-capture-toggle">
-                      <div className="web-capture-toggle-row">
-                        <span>{tr("后台收录")}</span>
-                        <button
-                          type="button"
-                          className={`settings-switch ${backgroundCapture.enabled ? "enabled" : ""}`}
-                          role="switch"
-                          aria-checked={backgroundCapture.enabled}
-                          aria-label={tr("后台收录")}
-                          disabled={backgroundCaptureBusy}
-                          onClick={async () => {
-                            if (backgroundCaptureBusy) return
-                            const previous = backgroundCapture.enabled
-                            setBackgroundCaptureBusy(true)
-                            setBackgroundCapture(s => ({ ...s, enabled: !previous }))
-                            try {
-                              const result = await desktopAPI()?.setBackgroundCapture?.(!previous)
-                              if (!result?.ok) throw new Error("setting failed")
-                              setBackgroundCapture(s => ({ ...s, enabled: result.enabled }))
-                            } catch {
-                              setBackgroundCapture(s => ({ ...s, enabled: previous }))
-                              notify("无法更改后台收录设置")
-                            } finally {
-                              setBackgroundCaptureBusy(false)
-                            }
-                          }}
-                        ><span /></button>
-                      </div>
-                      <p className="web-capture-toggle-note">{tr("GravityPort 关闭后，继续接收浏览器扩展发来的素材。")}</p>
-                    </div>
-                  )}
-                </>
-              ) : settingTab === "反馈" ? (
-                <FeedbackPanel language={language} />
-              ) : (
-                <>
-                  <section className="settings-section about-summary">
-                    <div className="about-symbol">
-                      <img className="app-logo" src={`/assets/gravityport-mark-${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : "light"}.svg`} width={40} height={40} alt="" aria-hidden="true" />
-                    </div>
-                    <div className="about-identity">
-                      <h4>GravityPort</h4>
-                      {(() => {
-                        const text = buildUpdateText(
-                          health?.productVersion || "",
-                          updateState,
-                          updateState.phase === "downloading" ? updateState.percent : 0,
-                          tr,
-                          language,
-                        )
-                        return <span className="settings-badge" title={text.badgeText}>{text.badgeText}</span>
-                      })()}
-                    </div>
-                    {(() => {
-                      // Task 231 — a verified staged package wins: both entry
-                      // points restart into it instead of re-downloading.
-                      if (updateReady) {
-                        return <button className="neutral-button about-update" onClick={restartToUpdate} disabled={restartPending}>{tr("重启并更新")}</button>
-                      }
-                      const text = buildUpdateText(
-                        health?.productVersion || "",
-                        updateState,
-                        updateState.phase === "downloading" ? updateState.percent : 0,
-                        tr,
-                        language,
-                      )
-                      if (text.buttonLabel === null) return null
-                      if (text.downloadAndInstall) {
-                        return <button className="neutral-button about-update" onClick={downloadAndInstallUpdate} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
-                      }
-                      if (text.secondaryLabel) {
-                        return <div className="about-update about-update-actions">
-                          <button className="neutral-button" disabled>{text.buttonLabel}</button>
-                          <button className="neutral-button" onClick={cancelUpdateDownload}>{text.secondaryLabel}</button>
-                        </div>
-                      }
-                      if (updateState.phase === "available" && !text.downloadAndInstall) {
-                        return <button className="neutral-button about-update" onClick={openDownloadPage}>{text.buttonLabel}</button>
-                      }
-                      return <button className="neutral-button about-update" onClick={checkForUpdates} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
-                    })()}
-                  </section>
-                  <section className="settings-section">
-                    {/* 任务 351:不放 release-notes 类——关于页流程把第一个
-                        .release-notes 块当开发中分栏数行数,这里借用它会撞车。 */}
-                    <p className="web-capture-note">
-                      {tr("社区：")}
-                      <a href={DISCORD_INVITE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DISCORD_INVITE_URL)}>Discord</a>
-                      {" · "}
-                      <a href={GITHUB_DISCUSSIONS_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, GITHUB_DISCUSSIONS_URL)}>{tr("GitHub 讨论区")}</a>
-                    </p>
-                  </section>
-                  {(() => {
-                    const blocks = buildReleaseNoteBlocks({
-                      productVersion: health?.productVersion || "",
-                      distribution: health?.distribution || "",
-                      language,
-                      t: tr,
-                      updateState,
-                    })
-                    return (
-                      <>
-                        {blocks.map((block, index) => (
-                          <section key={`${index}-${block.title}`} className="settings-section release-notes" aria-label={block.title}>
-                            <div className="release-heading">
-                              <h4>{block.title}</h4>
-                              {block.date ? <span>{block.date}</span> : null}
-                            </div>
-                            {block.groups.map((group, groupIndex) => (
-                              <div key={groupIndex} className="release-group">
-                                {group.heading ? <h5 className="release-group-heading">{group.heading}</h5> : null}
-                                <ul>
-                                  {group.lines.map((line, lineIndex) => <li key={lineIndex}>{line}</li>)}
-                                </ul>
-                              </div>
-                            ))}
-                          </section>
-                        ))}
-                        <section className="settings-section release-notes">
-                          <p className="release-meta">
-                            {tr("版本")} {health?.productVersion || "—"} · {tr("构建")} {health?.gitSha ? health.gitSha.slice(0, 7) : "—"} · {health?.distribution === "development" ? tr("开发版") : tr("正式版")}
-                          </p>
-                        </section>
-                      </>
-                    )
-                  })()}
-                </>
-              )}
-              </div>
-              {!savedLocally && <div className="settings-footnote" role="status">
-                <Icon name="info" size={12} />
-                {tr("无法保存偏好设置。更改将在退出 GravityPort 后失效。")}
-              </div>}
-            </div>
-          </div>
-        </div>
+        <SettingsDialog
+          setSettings={setSettings}
+          settingTab={settingTab} setSettingTab={setSettingTab}
+          backgroundCapture={backgroundCapture} setBackgroundCapture={setBackgroundCapture}
+          backgroundCaptureBusy={backgroundCaptureBusy} setBackgroundCaptureBusy={setBackgroundCaptureBusy}
+          appearance={appearance} setAppearance={setAppearance}
+          cardInfo={cardInfo} setCardInfo={setCardInfo}
+          language={language} setLanguage={setLanguage}
+          savedLocally={savedLocally} updateState={updateState} updateReady={updateReady}
+          restartPending={restartPending} systemDark={systemDark} library={library} health={health}
+          tr={tr} notify={notify} onPinterestStatus={onPinterestStatus}
+          checkForUpdates={checkForUpdates} downloadAndInstallUpdate={downloadAndInstallUpdate}
+          restartToUpdate={restartToUpdate} cancelUpdateDownload={cancelUpdateDownload}
+          openDownloadPage={openDownloadPage} changeLibraryLocation={changeLibraryLocation}
+          openStorageLocation={openStorageLocation}
+        />
       )}
       {menu && (
         <div

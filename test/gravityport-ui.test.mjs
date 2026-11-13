@@ -313,7 +313,10 @@ describe("feature parity API contracts", () => {
 
 describe("i18n coverage", () => {
   it("every translated string in the React tree has a translation entry", async () => {
-    const files = ["App.tsx", "ImageViewer.tsx", "ColumnControl.tsx"];
+    const files = [
+      "App.tsx", "ImageViewer.tsx", "ColumnControl.tsx",
+      "SettingsDialog.tsx", "GroupDialogs.tsx", "InspectorParts.tsx", "MenuRow.tsx", "ReadingText.tsx", "ThumbMedia.tsx",
+    ];
     const used = new Set();
     for (const file of files) {
       const source = await readFile(join(uiRoot, "src", file), "utf8");
