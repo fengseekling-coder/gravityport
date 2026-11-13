@@ -75,17 +75,22 @@ test("desktop notifications keep localized import and update copy", () => {
 });
 
 test("main localizes custom menu labels without changing roles or accelerators", async () => {
+  // 任务 409：窗口位置记忆和应用菜单搬进 desktop/window-menu.mjs，菜单相关断言
+  // 拼读 main.mjs + window-menu.mjs；menu 切片从 window-menu.mjs 的
+  // buildMenu 切到工厂 return 之前。
   const main = await read("desktop/main.mjs");
-  const menu = sliceBetween(main, "function buildMenu()", "function registerIPC()");
+  const windowMenu = await read("desktop/window-menu.mjs");
+  const mainSources = `${main}\n${windowMenu}`;
+  const menu = sliceBetween(windowMenu, "function buildMenu()", "return { loadBounds");
   // 任务 351：菜单模板抽到 desktop/menu-template.mjs（可在测试里按平台构建），
   // buildMenu 只负责装菜单和 prune；标签/角色断言跟着搬到模板文件上。
   const template = await read("desktop/menu-template.mjs");
 
   assert.match(main, /getDesktopText/);
-  assert.match(main, /const MOSA_MENU_ID_PREFIX = "mosa-menu-"/);
-  assert.match(main, /function pruneInjectedMenuItems\(menu\)/);
-  assert.match(main, /child\.type !== "normal" \|\| child\.id\?\.startsWith\(MOSA_MENU_ID_PREFIX\)/);
-  assert.match(main, /buildMenuTemplate\(\{/);
+  assert.match(mainSources, /const MOSA_MENU_ID_PREFIX = "mosa-menu-"/);
+  assert.match(mainSources, /function pruneInjectedMenuItems\(menu\)/);
+  assert.match(mainSources, /child\.type !== "normal" \|\| child\.id\?\.startsWith\(MOSA_MENU_ID_PREFIX\)/);
+  assert.match(mainSources, /buildMenuTemplate\(\{/);
   assert.match(template, /id:\s*"mosa-menu-app"/);
   assert.match(template, /id:\s*"mosa-menu-file"/);
   assert.match(template, /id:\s*"mosa-menu-edit"/);

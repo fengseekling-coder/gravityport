@@ -3,9 +3,9 @@ import "../lib/apply-env-aliases.mjs";
 // activation policy before any heavy import lets the process check in with
 // Launch Services as a regular app. See desktop/quiet-test-mode.mjs.
 import "./quiet-test-mode.mjs";
-import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net, screen, session, shell, Notification } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, clipboard, nativeImage, net, session, shell, Notification } from "electron";
 import { evaluateQuietQaRunForElectronApp, createScreenGuard } from "./quiet-qa-screen.mjs";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, readdir, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -17,7 +17,7 @@ import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
 import { installManagedExtension, managedExtensionPaths, readManagedExtension } from "../lib/browser-extension-install.mjs";
 import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../lib/import-staging.mjs";
 import { getDesktopText, getLibrarySchemaNewerDialogText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getStartupFailureText, getUpdateNotificationText } from "./notification-i18n.mjs";
-import { buildMenuTemplate } from "./menu-template.mjs";
+import { createWindowMenu } from "./window-menu.mjs";
 import { ensureWindowsShortcutAppId } from "./windows-shortcut-app-id.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
@@ -372,8 +372,6 @@ function nativeDragIcon(image) {
     quality: "good",
   });
 }
-const BOUNDS_PATH = join(desktopDataDir, "window-bounds.json");
-const DEFAULT_BOUNDS = { width: 1320, height: 860 };
 
 let mainWindow = null;
 let service = null;
@@ -583,75 +581,12 @@ if (!app.requestSingleInstanceLock()) {
   process.once("SIGTERM", () => app.quit());
 }
 
-function loadBounds() {
-  let saved = null;
-  try {
-    if (existsSync(BOUNDS_PATH)) saved = JSON.parse(readFileSync(BOUNDS_PATH, "utf-8"));
-  } catch {}
-  if (!saved || !Number.isFinite(saved.width) || !Number.isFinite(saved.height)) return DEFAULT_BOUNDS;
-  const normalized = {
-    width: Math.max(960, Math.round(saved.width)),
-    height: Math.max(640, Math.round(saved.height)),
-  };
-  if (!Number.isFinite(saved.x) || !Number.isFinite(saved.y)) return normalized;
-  const candidate = { ...normalized, x: Math.round(saved.x), y: Math.round(saved.y) };
-  const visible = screen.getAllDisplays().some(({ workArea }) => {
-    const overlapWidth = Math.min(candidate.x + candidate.width, workArea.x + workArea.width) - Math.max(candidate.x, workArea.x);
-    const overlapHeight = Math.min(candidate.y + candidate.height, workArea.y + workArea.height) - Math.max(candidate.y, workArea.y);
-    return overlapWidth >= 120 && overlapHeight >= 80;
-  });
-  return visible ? candidate : normalized;
-}
-
-function saveBounds(win) {
-  if (!win.isMaximized() && !win.isMinimized() && !win.isFullScreen()) {
-    try { writeFileSync(BOUNDS_PATH, JSON.stringify(win.getBounds())); } catch {}
-  }
-}
-
-function sendToWindow(channel) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(channel);
-}
-
-const MOSA_MENU_ID_PREFIX = "mosa-menu-";
-
-// macOS/Electron may append unlabelled normal items to an application menu
-// after it is installed. Keep every explicit MOSA item and remove only those
-// injected normal entries, preserving separators and native role behavior.
-function pruneInjectedMenuItems(menu) {
-  for (const item of menu.items) {
-    const submenu = item.submenu;
-    if (!submenu) continue;
-    const retained = submenu.items.filter((child) => (
-      child.type !== "normal" || child.id?.startsWith(MOSA_MENU_ID_PREFIX)
-    ));
-    if (retained.length !== submenu.items.length) {
-      submenu.clear();
-      retained.forEach((child) => submenu.append(child));
-    }
-    pruneInjectedMenuItems(submenu);
-  }
-}
-
-function buildMenu() {
-  const menu = Menu.buildFromTemplate(buildMenuTemplate({
-    platform: process.platform,
-    locale: currentLocale,
-    onSearch: () => sendToWindow("menu-search"),
-    onSelectAll: () => sendToWindow("menu-select-all"),
-  }));
-  Menu.setApplicationMenu(menu);
-  if (desktopPlatform.capabilities.hideApplicationMenuBar && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setMenuBarVisibility(false);
-  }
-  if (desktopPlatform.capabilities.pruneInjectedApplicationMenuItems) {
-    pruneInjectedMenuItems(menu);
-    setImmediate(() => {
-      if (Menu.getApplicationMenu() === menu) pruneInjectedMenuItems(menu);
-    });
-  }
-}
+const { loadBounds, saveBounds, buildMenu } = createWindowMenu({
+  desktopDataDir,
+  desktopPlatform,
+  getMainWindow: () => mainWindow,
+  getCurrentLocale: () => currentLocale,
+});
 
 // The Windows update helper parks the previous installation under
 // .MOSA-update-*/previous beside the portable install directory, and the macOS
