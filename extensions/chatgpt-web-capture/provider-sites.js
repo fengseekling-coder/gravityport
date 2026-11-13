@@ -245,6 +245,30 @@ function friendlyCaptureError(message) {
         // Ignore malformed transient src values while Flow rerenders a tile.
       }
     }
+    return flowTileMediaId(img);
+  }
+
+  // Flow's new Angular grid renders tiles as flow-* components whose <img>
+  // points at a same-origin /asb/… thumbnail and carries the media id in
+  // data-media-id. The id is the same one the redirect endpoint takes as its
+  // name parameter, so both markups dedupe onto one flow-media:<id> key.
+  // Anything that is not a canonical UUID is rejected outright: the id is
+  // concatenated into a URL later.
+  const FLOW_MEDIA_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  function flowTileMediaId(img) {
+    const mediaId = elementAttribute(img, "data-media-id");
+    if (!FLOW_MEDIA_ID_PATTERN.test(mediaId)) return "";
+    for (const candidate of [elementAttribute(img, "src"), img.currentSrc, img.src]) {
+      const raw = String(candidate || "").trim();
+      if (!raw) continue;
+      try {
+        const url = new URL(raw, location.href);
+        if (url.origin === location.origin && url.pathname.startsWith("/asb/")) return mediaId;
+      } catch {
+        // Ignore malformed transient src values while Flow rerenders a tile.
+      }
+    }
     return "";
   }
 
@@ -468,6 +492,36 @@ function friendlyCaptureError(message) {
     return prompt;
   }
 
+  // Flow failure tiles render the provider's error text where a Prompt card
+  // would sit. Only the Chinese copy observed on a real page (task 402) is
+  // matched; English variants stay unmatched until a real sample exists.
+  const FLOW_FAILURE_TEXT_PREFIX = "失败";
+  const FLOW_FAILURE_TEXT_HINTS = ["本次生成不计费", "发现了一些异常活动"];
+
+  function flowTextIsFailureNotice(text) {
+    const value = String(text || "");
+    return value.startsWith(FLOW_FAILURE_TEXT_PREFIX)
+      || FLOW_FAILURE_TEXT_HINTS.some((hint) => value.includes(hint));
+  }
+
+  // Tiles (flow-* components) never hold a Prompt, so a candidate that is a
+  // tile or contains one must not become a Prompt card. The walk is bounded
+  // like the other Flow text reads.
+  const FLOW_TILE_TAGS = new Set(["flow-tile-container", "flow-grid-tile-container", "flow-image-tile"]);
+
+  function flowNodeHoldsTileElement(node) {
+    const stack = [node];
+    let visited = 0;
+    while (stack.length && visited < FLOW_PROMPT_MAX_NODES) {
+      const current = stack.pop();
+      if (!current || current.nodeType !== 1) continue;
+      visited += 1;
+      if (FLOW_TILE_TAGS.has(String(current.tagName || "").toLowerCase())) return true;
+      for (const child of flowNodeChildren(current)) stack.push(child);
+    }
+    return false;
+  }
+
   function flowNearbyPromptCard(image) {
     if (!image || !flowNodeIsVisible(image)) {
       return "";
@@ -480,8 +534,10 @@ function friendlyCaptureError(message) {
       const siblings = flowNodeChildren(parent);
       const promptCards = siblings
         .filter((candidate) => candidate !== node && flowNodeIsVisible(candidate))
+        // Failure tiles and tile components are never Prompt sources.
+        .filter((candidate) => !flowNodeHoldsTileElement(candidate))
         .map((candidate) => ({ candidate, prompt: flowPromptTextFromCard(candidate) }))
-        .filter((entry) => entry.prompt);
+        .filter((entry) => entry.prompt && !flowTextIsFailureNotice(entry.prompt));
 
       // The sibling card itself holds the image's Reuse Prompt control. This
       // preserves a one-image-group association even when Flow wraps the
@@ -1126,6 +1182,23 @@ function friendlyCaptureError(message) {
     while (flowProbeFailures.size > FLOW_PROBE_FAILURES_MAX) flowProbeFailures.delete(flowProbeFailures.keys().next().value);
   }
 
+  // New /asb/… tiles only carry thumbnail bytes; probe and capture both go
+  // through the same-origin redirect endpoint (already policy-allowed) so the
+  // archived media is the original. Old redirect-src tiles keep their source
+  // unchanged.
+  function flowMediaRedirectUrl(mediaId) {
+    return `${location.origin}/fx/api/trpc/media.getMediaUrlRedirect?name=${encodeURIComponent(mediaId)}`;
+  }
+
+  function flowTileMediaSource(img) {
+    const direct = imageSourceFor(img);
+    if (direct) return direct;
+    const mediaId = flowTileMediaId(img);
+    return mediaId
+      ? { kind: "local", url: flowMediaRedirectUrl(mediaId) }
+      : null;
+  }
+
   async function captureFlowMediaThumbnail(img) {
     const mediaId = flowMediaIdFromImage(img);
     if (!mediaId || !isVisibleFlowMediaThumbnail(img)) return false;
@@ -1135,7 +1208,7 @@ function friendlyCaptureError(message) {
     if (failure && Date.now() < failure.nextAllowedAt) return true;
     flowMediaProbeInFlight.add(key);
     try {
-      const source = imageSourceFor(img);
+      const source = flowTileMediaSource(img);
       if (!source) return false;
       const probeResponse = await chrome.runtime.sendMessage({
         type: "mosa.probeFlowMedia",
