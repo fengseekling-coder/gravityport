@@ -15,7 +15,7 @@
 // builder lives in test/search-golden-corpus-348.mjs.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { cp, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -29,7 +29,12 @@ import { buildGoldenCorpus, runGoldenQueries } from "./search-golden-corpus-348.
 
 const REPO_ROOT = dirname(dirname(new URL(import.meta.url).pathname));
 const GOLDEN_FIXTURE = JSON.parse(readFileSync(join(REPO_ROOT, "test", "fixtures", "348-search-golden", "results.json"), "utf8"));
-const STORE_SOURCE = readFileSync(join(REPO_ROOT, "lib", "sqlite-asset-store.mjs"), "utf8");
+// Task 404 split the search-index code into lib/sqlite-store/search-index.mjs;
+// the counts below are whole-module, so read the store plus every sqlite-store module.
+const STORE_SOURCE = [
+  join(REPO_ROOT, "lib", "sqlite-asset-store.mjs"),
+  ...readdirSync(join(REPO_ROOT, "lib", "sqlite-store")).filter((name) => name.endsWith(".mjs")).sort().map((name) => join(REPO_ROOT, "lib", "sqlite-store", name)),
+].map((path) => readFileSync(path, "utf8")).join("\n");
 const OLD_SEARCH_TERMS_DDL = `
   CREATE TABLE asset_short_terms (
     project_id TEXT NOT NULL,
