@@ -165,16 +165,28 @@ test("the user-visible failure copy never becomes the Prompt", async () => {
   assert.equal(exactPayload.prompt, undefined, "the failure copy is never attached as the Prompt");
   assert.equal(exactPayload.promptStatus, "not-available");
 
-  // (b) Any sibling text starting with 失败 is dropped.
+  // (b) The failure word followed by whitespace is dropped even without the
+  // two hint sentences.
   const prefix = await createProviderSitesHarness({ autoCapture: true, ...FLOW });
   const prefixGrid = mountGridTile(prefix, newGridTileImage());
   const prefixCard = prefix.document.createElement("div");
-  prefixCard.appendChild(textNode("失败了，请稍后再试。"));
+  prefixCard.appendChild(textNode("失败 请稍后再试。"));
   prefixGrid.appendChild(prefixCard);
   await runScan(prefix);
   const prefixPayload = messagesOf(prefix, "mosa.ingest")[0]?.message?.payload;
   assert.ok(prefixPayload, "the image itself is still captured");
   assert.equal(prefixPayload.prompt, undefined);
+
+  // (b2) A user's own prompt that merely starts with 失败 is still the Prompt.
+  const userPrompt = await createProviderSitesHarness({ autoCapture: true, ...FLOW });
+  const userGrid = mountGridTile(userPrompt, newGridTileImage());
+  const userCard = userPrompt.document.createElement("div");
+  userCard.appendChild(textNode("失败的蛋糕，暖色调"));
+  userGrid.appendChild(userCard);
+  await runScan(userPrompt);
+  const userPayload = messagesOf(userPrompt, "mosa.ingest")[0]?.message?.payload;
+  assert.ok(userPayload, "the image itself is still captured");
+  assert.equal(userPayload.prompt, "失败的蛋糕，暖色调", "a prompt that only starts with 失败 is not a failure notice");
 
   // (c) A tile component holding prose is dropped by structure, not by text.
   const structural = await createProviderSitesHarness({ autoCapture: true, ...FLOW });

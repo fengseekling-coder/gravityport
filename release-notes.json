@@ -1,8 +1,16 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {},
-    "en": {}
+    "zh": {
+      "fixed": [
+        "修复 Flow 新版页面上的图片收不到，以及提示词被收成报错文字。"
+      ]
+    },
+    "en": {
+      "fixed": [
+        "Fix images not being captured on Flow's new page layout, and error text being saved as the prompt."
+      ]
+    }
   },
   "releases": [
     {

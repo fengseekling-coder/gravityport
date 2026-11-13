@@ -495,12 +495,14 @@ function friendlyCaptureError(message) {
   // Flow failure tiles render the provider's error text where a Prompt card
   // would sit. Only the Chinese copy observed on a real page (task 402) is
   // matched; English variants stay unmatched until a real sample exists.
-  const FLOW_FAILURE_TEXT_PREFIX = "失败";
+  // The real copy opens with the word 失败 followed by whitespace ("失败 我们发现
+  // …"); a bare 失败 prefix would also drop user prompts such as 失败的蛋糕.
+  const FLOW_FAILURE_TEXT_PREFIX = /^失败\s/;
   const FLOW_FAILURE_TEXT_HINTS = ["本次生成不计费", "发现了一些异常活动"];
 
   function flowTextIsFailureNotice(text) {
     const value = String(text || "");
-    return value.startsWith(FLOW_FAILURE_TEXT_PREFIX)
+    return FLOW_FAILURE_TEXT_PREFIX.test(value)
       || FLOW_FAILURE_TEXT_HINTS.some((hint) => value.includes(hint));
   }
 
