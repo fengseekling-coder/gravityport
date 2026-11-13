@@ -215,7 +215,9 @@ export async function verifyPackagedRuntime({
 
   const missingMcpModules = missingMcpServerModules(
     files.map(({ path }) => path),
-    (path) => extractFile(asarPath, path).toString("utf8"),
+    // ASAR lookups split on the platform separator, so on Windows a nested
+    // posix path ("lib/sqlite-store/x.mjs") must be rejoined with "\\".
+    (path) => extractFile(asarPath, join(...path.split("/"))).toString("utf8"),
   );
   if (missingMcpModules.length) {
     throw new Error(`Bundled MCP server is incomplete; missing from app.asar: ${missingMcpModules.join(", ")}`);
