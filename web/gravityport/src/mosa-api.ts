@@ -17,6 +17,8 @@ export type MosaAsset = {
   width: number
   height: number
   mediaKind: "image" | "video"
+  /** The original animates (task 412): business_fields.animated, or a .gif whose flag has not been backfilled yet. */
+  animated: boolean
   image_url: string
   thumbnail_url: string
   preview_url: string
@@ -299,6 +301,17 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
 }
 
+/** Task 412: does this asset's original animate? business_fields.animated is
+ * authoritative once the derivative run (or the startup backfill) stamped it;
+ * until then a .gif path counts as animated so GIFs can play right away, and
+ * everything else stays still. */
+export function assetIsAnimated(fields: JsonValue | null | undefined, path: string): boolean {
+  const bag = fields && typeof fields === "object" && !Array.isArray(fields) ? fields as Record<string, unknown> : {}
+  if (bag.animated === true) return true
+  if (bag.animated === false) return false
+  return /\.gif$/i.test(String(path || ""))
+}
+
 /** Server response carries names and properties in both normalized columns and
  * persisted business_fields; do not fabricate missing metadata. */
 export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset {
@@ -341,6 +354,7 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     favorite: input.favorite === true,
     width, height,
     mediaKind: kind === "video" || (/\.(?:mp4|mov|webm|m4v)$/i.test(path) && kind !== "image") ? "video" : "image",
+    animated: assetIsAnimated(fields, path),
     image_url,
     thumbnail_url: String(input.thumbnail_url || image_url),
     preview_url: String(input.preview_url || input.medium_url || image_url),

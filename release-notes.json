@@ -2,11 +2,17 @@
   "schema": 2,
   "unreleased": {
     "zh": {
+      "new": [
+        "GIF、动态 WebP、APNG 和动态 AVIF 在查看器中直接播放；画廊卡片和详情栏缩略图在鼠标悬停时播放动图和视频（视频静音），移开后恢复静止。"
+      ],
       "fixed": [
         "修复 Flow 新版页面上的图片收不到，以及提示词被收成报错文字。"
       ]
     },
     "en": {
+      "new": [
+        "Animated GIF, WebP, APNG, and AVIF images now play in the viewer, and gallery cards and the details thumbnail play animations and videos (muted) on hover."
+      ],
       "fixed": [
         "Fix images not being captured on Flow's new page layout, and error text being saved as the prompt."
       ]

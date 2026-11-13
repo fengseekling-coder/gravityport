@@ -9,8 +9,8 @@ const CONTROLS_IDLE_MS = 2000
 const FIT_PAD_TOP = 16
 const CONTROLS_GAP = 8
 
-export default function ImageViewer({ width, height, src, originalSrc, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, onOpenLocation, message, openLocationLabel }: {
-  width: number; height: number; src?: string; originalSrc?: string; isVideo?: boolean; language: Language; disabled: boolean
+export default function ImageViewer({ width, height, src, originalSrc, isVideo, animated, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, onOpenLocation, message, openLocationLabel }: {
+  width: number; height: number; src?: string; originalSrc?: string; isVideo?: boolean; animated?: boolean; language: Language; disabled: boolean
   fullscreen: boolean
   onNavigate: (direction: number) => void
   onToggleFullscreen: () => void
@@ -87,10 +87,12 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
   const scale = manualScale ?? fitScale
   // Swap to the original only while the preview is on screen, when the original
   // is bigger than the preview and this view needs more device pixels than the
-  // preview holds. Fit mode and manual zoom share the same rule.
+  // preview holds — or (task 412) when the original animates, regardless of
+  // size: the still 1600 preview shows first, the original replaces it once
+  // decoded and plays. Fit mode and manual zoom share the same rule.
   const originalEdge = Math.max(usedWidth, usedHeight)
   const needsOriginal = !isVideo && !!originalSrc && originalSrc !== src && displaySrc === src && previewEdge > 0
-    && originalEdge > previewEdge && originalEdge * scale * window.devicePixelRatio > previewEdge * 1.05
+    && (animated === true || (originalEdge > previewEdge && originalEdge * scale * window.devicePixelRatio > previewEdge * 1.05))
   // Manual zoom recenters on the stage again — once the picture is bigger than
   // (or freed from) the fit band, panning math owns the placement and the bar
   // is allowed to sit on top of it.

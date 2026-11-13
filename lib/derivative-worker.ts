@@ -39,6 +39,10 @@ interface DerivativeProcessorResult extends Record<string, unknown> {
   thumbnailPath: string;
   width: number;
   height: number;
+  /** Task 412: whether the original animates (GIF/WebP pages, APNG acTL, AVIF avis); false when the probe failed. */
+  animated: boolean;
+  /** Task 412: frame count when the format states it, null for AVIF or a failed probe. */
+  frameCount: number | null;
   /** Dominant colors of the 400px thumbnail, largest share first; [] when none could be computed. */
   palette: PaletteColor[];
   /** "dhash64:<16 hex>" fingerprint of the 400px thumbnail; "" when it could not be computed. */

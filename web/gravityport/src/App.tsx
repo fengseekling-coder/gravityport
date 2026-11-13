@@ -4627,7 +4627,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           </div>
         </header>
         {preview ? (
-          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} originalSrc={asset?.mediaKind === "video" ? undefined : asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} onOpenLocation={() => void revealAssetPath()} message={toast?.text ?? ""} openLocationLabel={isMacPlatform() ? tr("在访达中显示") : tr("在文件资源管理器中显示")} />
+          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} originalSrc={asset?.mediaKind === "video" ? undefined : asset?.image_url} isVideo={asset?.mediaKind === "video"} animated={asset?.animated} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} onOpenLocation={() => void revealAssetPath()} message={toast?.text ?? ""} openLocationLabel={isMacPlatform() ? tr("在访达中显示") : tr("在文件资源管理器中显示")} />
         ) : pinterestActive ? (
           <PinterestView
             key={pinterestViewKey}
@@ -4674,8 +4674,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                     style={{ aspectRatio: `${a.width} / ${a.height}` }}
                     {...cardEventHandlers(a)}
                   >
-                    {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
-                    {a.mediaKind === "video" && <VideoMark />}
+                    {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" motionSrc={a.mediaKind === "video" || a.animated ? a.image_url : undefined} motionKind={a.mediaKind === "video" ? "video" : a.animated ? "image" : undefined} alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
+                    {(a.mediaKind === "video" || a.animated) && <VideoMark />}
                     {a.stack && (
                       <span className="stack-mark">
                         <Icon name="layers" size={12} />
@@ -4708,8 +4708,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                   style={placementStyle(globalIndex)}
                   {...cardEventHandlers(a)}
                 >
-                  {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={galleryImageSizes(model.placements[globalIndex]?.width ?? model.columnWidth)} alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
-                  {a.mediaKind === "video" && <VideoMark />}
+                  {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={galleryImageSizes(model.placements[globalIndex]?.width ?? model.columnWidth)} motionSrc={a.mediaKind === "video" || a.animated ? a.image_url : undefined} motionKind={a.mediaKind === "video" ? "video" : a.animated ? "image" : undefined} alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
+                  {(a.mediaKind === "video" || a.animated) && <VideoMark />}
                   {a.stack && (
                     <span className="stack-mark">
                       <Icon name="layers" size={12} />
@@ -4803,7 +4803,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             </button>
           </div>
           <div className="asset-summary">
-            <button className="summary-image" aria-label={tr("在查看器中打开")} onClick={() => setPreview(true)}>{asset.thumbnail_url ? <ThumbMedia src={asset.thumbnail_url} alt="" /> : null}{asset.mediaKind === "video" && <VideoMark />}<Icon name="expand" /></button>
+            <button className="summary-image" aria-label={tr("在查看器中打开")} onClick={() => setPreview(true)}>{asset.thumbnail_url ? <ThumbMedia src={asset.thumbnail_url} motionSrc={asset.mediaKind === "video" || asset.animated ? asset.image_url : undefined} motionKind={asset.mediaKind === "video" ? "video" : asset.animated ? "image" : undefined} alt="" /> : null}{(asset.mediaKind === "video" || asset.animated) && <VideoMark />}<Icon name="expand" /></button>
             <div className="asset-meta">
               <div className="asset-title">
                 <span className="asset-name" title={asset.name}>{asset.name}</span>
