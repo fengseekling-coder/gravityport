@@ -2,7 +2,7 @@
 // The module ships as TypeScript inside web/gravityport, so it is compiled to a
 // temp directory with tsc before import (same approach as gravityport-interaction.test.mjs).
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { rm, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -256,7 +256,14 @@ describe("installResultFeedback", () => {
   // toast). Reads desktop/main.mjs source text (read-only) so a future preflight
   // code added there without updating the mapping is caught here.
   it('every dialog-already-shown code in desktop/main.mjs maps to toast: null', () => {
-    const source = readFileSync(join(repositoryRoot, "desktop", "main.mjs"), "utf8");
+    // Task 406: the update channels (PREFLIGHT_DISK_SPACE results) moved to
+    // desktop/ipc/updates.mjs, so the code scan reads desktop/main.mjs plus
+    // those files.
+    const ipcDir = join(repositoryRoot, "desktop", "ipc");
+    const source = [
+      readFileSync(join(repositoryRoot, "desktop", "main.mjs"), "utf8"),
+      ...readdirSync(ipcDir).filter((file) => file.endsWith(".mjs")).sort().map((file) => readFileSync(join(ipcDir, file), "utf8")),
+    ].join("\n");
     const codes = [...new Set([...source.matchAll(/code: "((?:PREFLIGHT_[A-Z_]+)|UPDATE_FAILED_TWICE)"/g)].map((match) => match[1]))];
     assert.ok(codes.length >= 3, `expected at least 3 dialog-already-shown codes in desktop/main.mjs, got ${JSON.stringify(codes)}`);
     for (const code of codes) {
