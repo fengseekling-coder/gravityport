@@ -1,42 +1,48 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {
-      "new": [
-        "新增 Intel 芯片 Mac 的独立安装包与自动更新；苹果芯片下载与更新保持不变。",
-        "图片和视频卡片的右键菜单新增「在访达中显示」（Windows 为「在文件资源管理器中显示」）。"
-      ],
-      "improved": [
-        "更改素材库存储位置失败时，会说明是空间不足还是没有写入权限。"
-      ],
-      "fixed": [
-        "修复了 Windows 上系统通知可能不显示的问题。",
-        "修复了 Codex 素材所在的盘不支持硬链接时，整理过程中断的问题。"
-      ],
-      "other": [
-        "素材库数据库组件 better-sqlite3 升级到 13.1.1（内置 SQLite 3.54.1）。",
-        "整理了界面样式、主界面、素材库存储和桌面端的代码结构，方便后续开发；界面和功能不变。"
-      ]
-    },
-    "en": {
-      "new": [
-        "Add a separate installer and automatic updates for Intel Macs; Apple-silicon downloads and updates are unchanged.",
-        "The context menu on image and video cards now includes Show in Finder (Show in File Explorer on Windows)."
-      ],
-      "improved": [
-        "When changing the library storage location fails, the app now says whether space ran out or write permission is missing."
-      ],
-      "fixed": [
-        "Fixed system notifications on Windows possibly not appearing.",
-        "Fixed asset organizing coming to a halt when the disk holding Codex assets doesn't support hard links."
-      ],
-      "other": [
-        "Updated the library database component better-sqlite3 to 13.1.1 (bundled SQLite 3.54.1).",
-        "Reorganized the code behind the interface styles, main window, library storage, and desktop shell to make future work easier; the interface and features are unchanged."
-      ]
-    }
+    "zh": {},
+    "en": {}
   },
   "releases": [
+    {
+      "version": "0.3.13",
+      "date": "2026-11-13",
+      "zh": {
+        "new": [
+          "新增 Intel 芯片 Mac 的独立安装包与自动更新；苹果芯片下载与更新保持不变。",
+          "图片和视频卡片的右键菜单新增「在访达中显示」（Windows 为「在文件资源管理器中显示」）。"
+        ],
+        "improved": [
+          "更改素材库存储位置失败时，会说明是空间不足还是没有写入权限。"
+        ],
+        "fixed": [
+          "修复了 Windows 上系统通知可能不显示的问题。",
+          "修复了 Codex 素材所在的盘不支持硬链接时，整理过程中断的问题。"
+        ],
+        "other": [
+          "素材库数据库组件 better-sqlite3 升级到 13.1.1（内置 SQLite 3.54.1）。",
+          "整理了界面样式、主界面、素材库存储和桌面端的代码结构，方便后续开发；界面和功能不变。"
+        ]
+      },
+      "en": {
+        "new": [
+          "Add a separate installer and automatic updates for Intel Macs; Apple-silicon downloads and updates are unchanged.",
+          "The context menu on image and video cards now includes Show in Finder (Show in File Explorer on Windows)."
+        ],
+        "improved": [
+          "When changing the library storage location fails, the app now says whether space ran out or write permission is missing."
+        ],
+        "fixed": [
+          "Fixed system notifications on Windows possibly not appearing.",
+          "Fixed asset organizing coming to a halt when the disk holding Codex assets doesn't support hard links."
+        ],
+        "other": [
+          "Updated the library database component better-sqlite3 to 13.1.1 (bundled SQLite 3.54.1).",
+          "Reorganized the code behind the interface styles, main window, library storage, and desktop shell to make future work easier; the interface and features are unchanged."
+        ]
+      }
+    },
     {
       "version": "0.3.12",
       "date": "2026-11-12",

@@ -8,9 +8,9 @@
 [![GravityPort MCP on mcprush](https://mcprush.com/badge/gravityport-mcp/score.svg)](https://mcprush.com/to/gravityport-mcp?ref=badge)
 
 > **让每一次 AI 创作，有迹可循**
-> 把 AI 生成的每一张图，连同 Prompt、来源和版本，留在自己的电脑上。
+> 自动收录 AI 生成的图片与视频，完整保留提示词、参考图、来源与版本记录，全部存储于本地设备。
 
-GravityPort 是一个 AI 素材管理工具：把 ChatGPT、Gemini、Flow、Google AI Studio、Codex、Grok、即梦 生成的图片和视频，连同 Prompt、参考图和来源，自动收进你自己电脑上的素材库。
+GravityPort 是一款 AI 素材管理工具，支持 ChatGPT、Gemini、Flow、Google AI Studio、Codex、Grok、即梦。自动收录生成的图片与视频素材，同步保存提示词、参考图与生成来源，所有素材与记录均存储于本地设备。
 
 ![GravityPort 画廊与检视器](docs/images/gravityport-app.webp)
 
