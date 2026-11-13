@@ -316,6 +316,7 @@ describe("i18n coverage", () => {
     const files = [
       "App.tsx", "ImageViewer.tsx", "ColumnControl.tsx",
       "SettingsDialog.tsx", "GroupDialogs.tsx", "InspectorParts.tsx", "MenuRow.tsx", "ReadingText.tsx", "ThumbMedia.tsx",
+      "VersionSection.tsx",
     ];
     const used = new Set();
     for (const file of files) {
