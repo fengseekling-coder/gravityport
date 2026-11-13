@@ -12,7 +12,6 @@ const optionsHtml = await readFile(new URL("../extensions/chatgpt-web-capture/op
 import {
   createHookHarness,
   generationEvents,
-  hookSource,
   MockMessagePort,
 } from "./helpers/page-hook-harness.mjs";
 
@@ -947,15 +946,16 @@ test("websocket image identifiers are treated as interesting generation metadata
 });
 
 test("websocket ingress recognizes conversation message structure without relying on tool keywords", () => {
-  const fn = /function hasConversationMessageShape\(text\) \{[\s\S]*?\n  \}/.exec(hookSource)?.[0] || "";
-  assert.ok(fn, "hasConversationMessageShape should be extractable");
-  const context = {};
-  vm.runInNewContext(`${fn}\nthis.hasShape = hasConversationMessageShape;`, context);
-  assert.equal(context.hasShape(JSON.stringify({
+  // Task 411: run the real page-hook.js in the harness and read the function
+  // from the fixture's introspection tail instead of slicing it out.
+  const harness = createHookHarness({});
+  const hasShape = harness.internals.hasConversationMessageShape;
+  assert.equal(typeof hasShape, "function", "the hook harness must expose hasConversationMessageShape");
+  assert.equal(hasShape(JSON.stringify({
     type: "opaque-provider-event",
     payload: { update_content: { messages: [{ content: { parts: ["hello"] } }] } },
   })), true);
-  assert.equal(context.hasShape(JSON.stringify({ type: "token-delta", payload: { text: "hello" } })), false);
+  assert.equal(hasShape(JSON.stringify({ type: "token-delta", payload: { text: "hello" } })), false);
 });
 
 test("does not treat an unrelated tool image as generated artwork", async () => {
@@ -2563,7 +2563,9 @@ test("no extension-originated conversation request exists that could copy authen
     ["https://chatgpt.com/backend-api/conversation/test"],
     "the only fetch is the one the test staged for the page",
   );
-  assert.doesNotMatch(hookSource, /credentials:\s*"include"/);
+  // The hook issues no fetch of its own, so there is no hook-originated init
+  // to inspect here; the "credentials: include" ban for MAIN-world scripts
+  // lives in the whole-extension security scan (R2, task 411).
 });
 
 test("does not capture page authentication headers", async () => {
@@ -2572,7 +2574,8 @@ test("does not capture page authentication headers", async () => {
 
   const posted = JSON.stringify(harness.events);
   assert.equal(posted.includes("page-session-token"), false, "a page token must never be posted out of the page");
-  assert.doesNotMatch(hookSource, /authorization/i);
+  // authorization is banned for MAIN-world scripts by security scan R2 (the
+  // old single-file source-text assertion here was its weaker duplicate).
 });
 
 test("harvests a caption from the live WebSocket stream", async () => {
@@ -3463,12 +3466,10 @@ test("a manual capture no longer schedules the deleted conversation re-read wait
   assert.equal(harness.timers.timeouts.length, timersAtStart, "nothing polls in 150 ms steps for a prompt that cannot arrive");
 });
 
-test("the deleted recovery channel leaves no residue in the extension sources", () => {
-  // The content side is covered by the whole-extension security scan (R6).
-  assert.doesNotMatch(hookSource, /refresh-current-conversation/);
-  assert.doesNotMatch(hookSource, /refreshCurrentConversation/);
-  assert.doesNotMatch(hookSource, /conversation-refresh-failed/);
-});
+// Task 411: the "deleted recovery channel leaves no residue" source assertions
+// (refresh-current-conversation / refreshCurrentConversation /
+// conversation-refresh-failed) moved to the whole-extension security scan R6,
+// which scans every manifest script instead of page-hook.js alone.
 
 test("a gallery thumbnail without a mapping or without generation evidence stays filtered", async () => {
   // Generation evidence present, blob mapping missing.
@@ -3999,27 +4000,20 @@ function turnBindingsConversation(nodes, currentNode, conversationId = "conversa
 }
 
 function conversationBindingsContext() {
-  const names = [
-    "normalizeAssetId",
-    "isHiddenConversationUserMessage",
-    "isConversationUserMessage",
-    "conversationGenerationAssets",
-    "extractConversationTurnBindings",
-    "extractMessagesConversationTurnBindings",
-  ];
-  const pieces = [/const MAX_CONVERSATION_TURN_BINDINGS = [^;]+;/.exec(hookSource)?.[0]];
-  for (const name of names) {
-    const match = new RegExp(`\\n {2}function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(hookSource);
-    assert.ok(match, `page-hook.js should keep ${name} extractable`);
-    pieces.push(match[0]);
-  }
-  const context = {};
-  // The extractor runs in the vm realm; report objects cross back through
-  // JSON so plain deepEqual works on test-realm values.
-  vm.runInNewContext(`${pieces.filter(Boolean).join("\n")}\nthis.extractRaw = extractConversationTurnBindings;`, context, { filename: "page-hook-turn-bindings.js" });
+  // Task 411: the extractor now runs inside the real page-hook.js (its
+  // helpers — normalizeAssetId, isHiddenConversationUserMessage,
+  // isConversationUserMessage, conversationGenerationAssets,
+  // extractMessagesConversationTurnBindings, MAX_CONVERSATION_TURN_BINDINGS —
+  // stay live in the closure) and is read from the fixture's introspection
+  // tail instead of being sliced out of the source.
+  const harness = createHookHarness({});
+  const extractRaw = harness.internals.extractConversationTurnBindings;
+  assert.equal(typeof extractRaw, "function", "the hook harness must expose extractConversationTurnBindings");
   return {
     extract(input) {
-      const report = context.extractRaw(input);
+      // Report objects cross back through JSON so plain deepEqual works on
+      // test-realm values.
+      const report = extractRaw(input);
       return report ? JSON.parse(JSON.stringify(report)) : null;
     },
   };

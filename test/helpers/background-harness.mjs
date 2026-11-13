@@ -12,6 +12,26 @@ const extensionDir = new URL("../../extensions/chatgpt-web-capture/", import.met
 export const backgroundSource = await readFile(new URL("background.js", extensionDir), "utf8");
 export const providerPolicySource = await readFile(new URL("provider-policy.js", extensionDir), "utf8");
 
+/**
+ * The one place that loads background.js (task 411): build the vm context
+ * from `sandbox`, run provider-policy.js, then background.js with its single
+ * `import "./provider-policy.js"` line stripped — provider-policy.js is a
+ * plain IIFE attaching to globalThis, and background.js is an ES module only
+ * for that import line, which the policy evaluation replaces. When
+ * background.js is split into modules later, this is the only fixture that
+ * needs to change.
+ */
+export function runBackgroundWorkerInContext(sandbox) {
+  const context = vm.isContext(sandbox) ? sandbox : vm.createContext(sandbox);
+  new vm.Script(providerPolicySource, { filename: "provider-policy.js" }).runInContext(context);
+  const workerSource = backgroundSource.replace(/^import\s+".\/provider-policy.js";\s*$/m, "");
+  if (workerSource === backgroundSource) {
+    throw new Error("background.js must import ./provider-policy.js");
+  }
+  new vm.Script(workerSource, { filename: "background.js" }).runInContext(context);
+  return context;
+}
+
 export const RUNTIME_ID = "test-extension-id";
 export const PAIRING_TOKEN = "test-pairing-token";
 export const BASE_URL = "http://127.0.0.1:43517";
@@ -392,15 +412,8 @@ export async function createBackgroundHarness({
     Date: clock?.Date || Date,
   };
 
-  const context = vm.createContext(sandbox);
+  const context = runBackgroundWorkerInContext(sandbox);
   fetchHarness.setErrorRealm(context.Error);
-
-  new vm.Script(providerPolicySource, { filename: "provider-policy.js" }).runInContext(context);
-  const workerSource = backgroundSource.replace(/^import\s+".\/provider-policy.js";\s*$/m, "");
-  if (workerSource === backgroundSource) {
-    throw new Error("background.js must import ./provider-policy.js");
-  }
-  new vm.Script(workerSource, { filename: "background.js" }).runInContext(context);
 
   return {
     context,

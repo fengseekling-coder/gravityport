@@ -376,7 +376,9 @@ export async function createContentHarness(options = {}) {
   const sentMessages = [];
   const runtimeMessageListeners = [];
   const localStore = new Map();
-  const sessionStore = new Map();
+  // A caller-provided sessionStore Map shares one chrome.storage.session
+  // between harness instances — the same store two tabs of the extension see.
+  const sessionStore = options.sessionStore || new Map();
   const localReads = [];
   const localWrites = [];
   if (options.localAutoCapture !== undefined) localStore.set("autoCapture", options.localAutoCapture);
