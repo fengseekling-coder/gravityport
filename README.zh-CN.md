@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml/badge.svg)](https://github.com/fengseekling-coder/gravityport/actions/workflows/ci.yml)
 [![License: PolyForm Shield 1.0.0](https://img.shields.io/badge/license-PolyForm%20Shield%201.0.0-blue)](LICENSE)
-[![Platforms: macOS arm64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20Windows%20x64-lightgrey)](#下载)
+[![Platforms: macOS arm64 | macOS x64 | Windows x64](https://img.shields.io/badge/platforms-macOS%20arm64%20%7C%20macOS%20x64%20%7C%20Windows%20x64-lightgrey)](#下载)
 [![GravityPort MCP on mcprush](https://mcprush.com/badge/gravityport-mcp/score.svg)](https://mcprush.com/to/gravityport-mcp?ref=badge)
 
 > **让每一次 AI 创作，有迹可循**
@@ -28,7 +28,7 @@ GravityPort 是一个 AI 素材管理工具：把 ChatGPT、Gemini、Flow、Goog
 
 从[官方下载页](https://gravityport.azhuilab.com/#download)获取 GravityPort。下载页始终列出现行安装包的体积；Windows 包还标注 SHA-256 校验值。
 
-- **GravityPort 桌面版 macOS**（Apple Silicon）：DMG 镜像。把 `GravityPort.app` 拖入「应用程序」。
+- **GravityPort 桌面版 macOS**（Apple 芯片或 Intel 芯片，Intel 从 0.3.13 起）：两种芯片各一个 DMG 镜像，下载页两个都有，按你的 Mac 选（苹果菜单 → 关于本机）。把 `GravityPort.app` 拖入「应用程序」。
 - **GravityPort 桌面版 Windows 10/11**（x64）：安装程序。双击即可安装到当前 Windows 账户（不需要管理员），开始菜单和桌面会出现 GravityPort，装好后自动打开。卸载在「设置 → 应用」里，素材库会保留。（0.3.3 及更早版本是便携 ZIP：解压后运行 `GravityPort.exe`。）
 - **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，先启动桌面应用再加载，两边会自动配对。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
 
@@ -135,6 +135,7 @@ GravityPort MCP 共 25 个工具：
 | 目标 | 状态 |
 | --- | --- |
 | macOS arm64 | 主桌面目标。首次安装用 DMG，之后走应用内更新。 |
+| macOS x64（Intel） | 0.3.13 起。单独的 DMG 首次安装，之后走应用内更新。 |
 | Windows 10/11 x64 | 首次安装用安装程序，之后走应用内更新。暂无代码签名。 |
 
 ## 从源码运行
@@ -157,6 +158,9 @@ npm run desktop:start
 
 # macOS arm64 DMG
 npm run desktop:make
+
+# macOS x64（Intel）DMG
+npm run desktop:make:x64
 
 # Windows 10/11 x64 打包目录
 npm run desktop:package:windows

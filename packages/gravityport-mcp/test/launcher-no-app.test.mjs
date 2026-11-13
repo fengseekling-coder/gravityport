@@ -23,8 +23,8 @@ const packageVersion = JSON.parse(readFileSync(join(packageRoot, "package.json")
 // Fixed notice wording, copied verbatim from the task order (not imported
 // from the launcher) so a typo in the launcher fails this test.
 const NOTICE_TEXT = [
-  "使用 GravityPort MCP 需要先安装 GravityPort 桌面 App（macOS 和 Windows）。下载：https://gravityport.azhuilab.com/?ref=mcp 。安装后打开一次 App，再重启这个 AI 助手。如果 App 装在别的位置，请把环境变量 GRAVITYPORT_APP_PATH 设为 App 所在位置。",
-  "GravityPort MCP needs the GravityPort desktop app (macOS and Windows). Download: https://gravityport.azhuilab.com/en/?ref=mcp . After installing, open the app once, then restart this AI assistant. If the app is installed somewhere else, set GRAVITYPORT_APP_PATH to its location.",
+  "使用 GravityPort MCP 需要先安装 GravityPort 桌面 App（macOS：Apple 芯片和 Intel 芯片；Windows）。下载：https://gravityport.azhuilab.com/?ref=mcp 。安装后打开一次 App，再重启这个 AI 助手。如果 App 装在别的位置，请把环境变量 GRAVITYPORT_APP_PATH 设为 App 所在位置。",
+  "GravityPort MCP needs the GravityPort desktop app (macOS on Apple silicon or Intel; Windows). Download: https://gravityport.azhuilab.com/en/?ref=mcp . After installing, open the app once, then restart this AI assistant. If the app is installed somewhere else, set GRAVITYPORT_APP_PATH to its location.",
 ].join("\n");
 
 test("launcher without the app answers with tools and the install notice", async (t) => {
