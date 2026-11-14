@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -16,11 +17,12 @@ async function sharpBytes(format) {
   return sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 1, g: 2, b: 3 } } })[format]().toBuffer();
 }
 
+
 // One real sample per managed media extension (task 366): images are generated
 // by sharp on the fly, SVG is the real repository icon, videos are the existing
 // e2e fixtures plus the two committed ffmpeg samples (webm/m4v had none).
 async function mediaSamples() {
-  return [
+  const samples = [
     { ext: ".png", bytes: await sharpBytes("png") },
     // APNG is a valid PNG stream; the sniff accepts it through the PNG signature.
     { ext: ".apng", bytes: await sharpBytes("png") },
@@ -30,11 +32,45 @@ async function mediaSamples() {
     { ext: ".webp", bytes: await sharpBytes("webp") },
     { ext: ".avif", bytes: await sharpBytes("avif") },
     { ext: ".svg", bytes: await readFile(join(repositoryRoot, "desktop", "assets", "mosa-app-icon.svg")) },
+    // Task 413: TIFF in both byte orders, HEIC/HEIF via sips, MKV as a committed
+    // ffmpeg sample (the task 413 playback probe accepted the container).
+    { ext: ".tif", bytes: await sharpBytes("tiff") },
+    { ext: ".tiff", bytes: await sharpBytes("tiff") },
+    // sharp writes little-endian ("II") TIFF; big-endian ("MM") is the other
+    // byte order cameras and scanners emit. Only the signature is checked here.
+    { ext: ".tif", bytes: Buffer.concat([Buffer.from([0x4d, 0x4d, 0x00, 0x2a]), Buffer.alloc(60)]) },
     { ext: ".mp4", bytes: await readFile(join(repositoryRoot, "test", "fixtures", "video-first-frame.mp4")) },
     { ext: ".mov", bytes: await readFile(join(repositoryRoot, "test", "fixtures", "video-metadata", "sample-72x128.mov")) },
     { ext: ".m4v", bytes: await readFile(join(repositoryRoot, "test", "fixtures", "media-signature", "sample.m4v")) },
     { ext: ".webm", bytes: await readFile(join(repositoryRoot, "test", "fixtures", "media-signature", "sample.webm")) },
+    { ext: ".mkv", bytes: await readFile(join(repositoryRoot, "test", "fixtures", "media-signature", "sample.mkv")) },
   ];
+  if (process.platform === "darwin") {
+    samples.push({ ext: ".heic", bytes: await makeHeicSampleBytes() });
+    // sips cannot write the "public.heif" type ("Can't write format", Error 13);
+    // its HEIC output is an HEIF container with the heic brand, which .heif files
+    // carry too.
+    samples.push({ ext: ".heif", bytes: await makeHeicSampleBytes() });
+  }
+  return samples;
+}
+
+// sharp has no HEIC/HEIF encoder; macOS's system sips writes both from a PNG
+// (task 413). Non-macOS runners skip these samples — HEIC imports are gated to
+// darwin by heic-import-gate.mjs anyway.
+async function makeHeicSampleBytes(format = "heic") {
+  const dir = await mkdtemp(join(tmpdir(), "mosa-sips-heic-"));
+  deferTestPathRemoval(dir, { recursive: true, force: true });
+  const pngPath = join(dir, "src.png");
+  const outPath = join(dir, `src.${format}`);
+  await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toFile(pngPath);
+  await new Promise((resolveSips, rejectSips) => {
+    execFile("/usr/bin/sips", ["-s", "format", format, pngPath, "--out", outPath], { timeout: 30000 }, (error, _stdout, stderr) => {
+      if (error) rejectSips(new Error(String(stderr || error.message)));
+      else resolveSips();
+    });
+  });
+  return readFile(outPath);
 }
 
 async function makeSniffDir(t) {
@@ -69,10 +105,12 @@ test("plain text, empty files and 4-byte-truncated headers are rejected", async 
     return true;
   });
 
-  // Only the first four bytes of the real header survive the cut.
+  // Only the first four bytes of the real header survive the cut. Task 413:
+  // TIFF's whole magic is those four bytes (II*\0 / MM\0*), so its cut keeps
+  // three — every format here needs more than that to pass.
   for (const { ext, bytes } of await mediaSamples()) {
     const truncated = join(dir, `truncated${ext}`);
-    await writeFile(truncated, bytes.subarray(0, 4));
+    await writeFile(truncated, bytes.subarray(0, ext === ".tif" || ext === ".tiff" ? 3 : 4));
     await assert.rejects(() => assertMediaSignature(truncated, ext), (error) => {
       assert.equal(error.code, "IMAGE_CONTENT_NOT_MEDIA", `truncated ${ext} must be rejected`);
       return true;

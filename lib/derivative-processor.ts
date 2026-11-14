@@ -5,6 +5,7 @@ import { orientedImageDimensions } from "./image-dimensions.js";
 import { extractImagePalette, type PaletteColor } from "./image-palette.js";
 import { computePerceptualHash } from "./perceptual-hash.js";
 import { useInProcessImageDecoder } from "./image-decode-client.js";
+import { convertHeicToPngWithSips, isHeicExtension } from "./sips-image-support.mjs";
 import {
   derivativeTempFileName,
   publishDerivativeFile,
@@ -161,65 +162,89 @@ async function generateDerivatives(job: DerivativeProcessorJob) {
     targets.map((target) => dirname(target.finalPath)),
     targets.map((target) => basename(target.finalPath)),
   );
-  const sharpInputOptions = { animated: false, limitInputPixels: MAX_DERIVATIVE_INPUT_PIXELS, sequentialRead: true } as const;
-  const metadata = await sharp(job.original_path, sharpInputOptions).metadata();
-  // Task 292: createAsset reads the same dimensions at import time through
-  // this shared helper; both write-backs must agree or each card would jump
-  // between ratios twice.
-  const { width, height } = orientedImageDimensions(metadata);
-  const animation = await detectAnimation(job.original_path, metadata);
-
-  // Write every derivative to a temp file first, then rename them into place
-  // only once all three encoded successfully. If anything fails, this run's
-  // temp files are removed so the previous complete finals stay untouched.
-  const staged = targets.map((target) => ({
-    ...target,
-    tempPath: join(dirname(target.finalPath), derivativeTempFileName(basename(target.finalPath))),
-  }));
-  try {
-    for (const target of staged) {
-      await sharp(job.original_path, sharpInputOptions).rotate().resize({ width: target.size, height: target.size, fit: "inside", withoutEnlargement: true }).webp({ quality: target.quality }).toFile(target.tempPath);
+  // Task 413: sharp's libheif cannot decode the HEVC coding inside iPhone
+  // HEIC/HEIF files. On macOS the system sips converts the original into a
+  // temporary PNG (same directory and naming rules as the derivative temp
+  // files, removed on success and on failure alike) and the whole sharp
+  // pipeline below runs on that PNG — sips keeps the orientation marker as
+  // EXIF orientation, so .rotate() and orientedImageDimensions stay correct.
+  // Elsewhere there is no sips and the sharp open fails, failing the job as
+  // before; the import gate already refuses HEIC there.
+  let decodePath = job.original_path;
+  let heicTempPng: string | null = null;
+  if (isHeicExtension(extname(job.original_path).toLowerCase()) && process.platform === "darwin") {
+    heicTempPng = join(dirname(job.previewPath), derivativeTempFileName("heic-decode.png"));
+    try {
+      await convertHeicToPngWithSips(job.original_path, heicTempPng);
+      decodePath = heicTempPng;
+    } catch (error) {
+      await unlink(heicTempPng).catch(() => {});
+      throw error;
     }
-    for (const target of staged) {
-      await publishDerivativeFile(target.tempPath, target.finalPath);
+  }
+  try {
+    const sharpInputOptions = { animated: false, limitInputPixels: MAX_DERIVATIVE_INPUT_PIXELS, sequentialRead: true } as const;
+    const metadata = await sharp(decodePath, sharpInputOptions).metadata();
+    // Task 292: createAsset reads the same dimensions at import time through
+    // this shared helper; both write-backs must agree or each card would jump
+    // between ratios twice.
+    const { width, height } = orientedImageDimensions(metadata);
+    const animation = await detectAnimation(job.original_path, metadata);
+
+    // Write every derivative to a temp file first, then rename them into place
+    // only once all three encoded successfully. If anything fails, this run's
+    // temp files are removed so the previous complete finals stay untouched.
+    const staged = targets.map((target) => ({
+      ...target,
+      tempPath: join(dirname(target.finalPath), derivativeTempFileName(basename(target.finalPath))),
+    }));
+    try {
+      for (const target of staged) {
+        await sharp(decodePath, sharpInputOptions).rotate().resize({ width: target.size, height: target.size, fit: "inside", withoutEnlargement: true }).webp({ quality: target.quality }).toFile(target.tempPath);
+      }
+      for (const target of staged) {
+        await publishDerivativeFile(target.tempPath, target.finalPath);
+      }
+    } catch (error) {
+      await Promise.all(staged.map((target) => unlink(target.tempPath).catch(() => {})));
+      throw error;
     }
-  } catch (error) {
-    await Promise.all(staged.map((target) => unlink(target.tempPath).catch(() => {})));
-    throw error;
-  }
 
-  // Palette rides along with successful derivatives, computed from the just
-  // published 400px thumbnail. It must never fail the derivative job: the
-  // extractor already returns [] instead of throwing, and this guard keeps a
-  // surprise error in it cosmetic as well.
-  let palette: PaletteColor[] = [];
-  try {
-    palette = await extractImagePalette(job.thumbnailPath);
-  } catch {
-    palette = [];
-  }
+    // Palette rides along with successful derivatives, computed from the just
+    // published 400px thumbnail. It must never fail the derivative job: the
+    // extractor already returns [] instead of throwing, and this guard keeps a
+    // surprise error in it cosmetic as well.
+    let palette: PaletteColor[] = [];
+    try {
+      palette = await extractImagePalette(job.thumbnailPath);
+    } catch {
+      palette = [];
+    }
 
-  // The perceptual hash rides along the same way, from the same thumbnail, so
-  // manual-import dedupe never has to decode the original again.
-  let perceptualHash = "";
-  try {
-    perceptualHash = await computePerceptualHash(job.thumbnailPath);
-  } catch {
-    perceptualHash = "";
-  }
+    // The perceptual hash rides along the same way, from the same thumbnail, so
+    // manual-import dedupe never has to decode the original again.
+    let perceptualHash = "";
+    try {
+      perceptualHash = await computePerceptualHash(job.thumbnailPath);
+    } catch {
+      perceptualHash = "";
+    }
 
-  return {
-    previewPath: job.previewPath,
-    mediumPath: job.mediumPath,
-    thumbnailPath: job.thumbnailPath,
-    width,
-    height,
-    animated: animation.animated,
-    frameCount: animation.frameCount,
-    palette,
-    perceptualHash,
-    processorPid: process.pid,
-  };
+    return {
+      previewPath: job.previewPath,
+      mediumPath: job.mediumPath,
+      thumbnailPath: job.thumbnailPath,
+      width,
+      height,
+      animated: animation.animated,
+      frameCount: animation.frameCount,
+      palette,
+      perceptualHash,
+      processorPid: process.pid,
+    };
+  } finally {
+    if (heicTempPng) await unlink(heicTempPng).catch(() => {});
+  }
 }
 
 function sendToParent(message: unknown) {

@@ -3,7 +3,8 @@
   "unreleased": {
     "zh": {
       "new": [
-        "GIF、动态 WebP、APNG 和动态 AVIF 在查看器中直接播放；画廊卡片和详情栏缩略图在鼠标悬停时播放动图和视频（视频静音），移开后恢复静止。"
+        "GIF、动态 WebP、APNG 和动态 AVIF 在查看器中直接播放；画廊卡片和详情栏缩略图在鼠标悬停时播放动图和视频（视频静音），移开后恢复静止。",
+        "支持导入 TIFF、HEIC/HEIF（仅 Mac 版）和 MKV 素材，可生成缩略图并在查看器中查看；Windows 版导入 HEIC 时会提示暂不支持；无法播放的视频编码（如 ProRes）会说明原因。"
       ],
       "fixed": [
         "修复 Flow 新版页面上的图片收不到，以及提示词被收成报错文字。"
@@ -11,7 +12,8 @@
     },
     "en": {
       "new": [
-        "Animated GIF, WebP, APNG, and AVIF images now play in the viewer, and gallery cards and the details thumbnail play animations and videos (muted) on hover."
+        "Animated GIF, WebP, APNG, and AVIF images now play in the viewer, and gallery cards and the details thumbnail play animations and videos (muted) on hover.",
+        "Added support for TIFF, HEIC/HEIF (Mac only), and MKV files, with thumbnails and viewer previews. On Windows, importing HEIC explains that it isn't supported yet, and videos in codecs that can't play, such as ProRes, now say why."
       ],
       "fixed": [
         "Fix images not being captured on Flow's new page layout, and error text being saved as the prompt."

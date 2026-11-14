@@ -353,7 +353,9 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     name: String(input.name || input.title || input.display_name || path.split(/[\\/]/).pop() || input.id || ""),
     favorite: input.favorite === true,
     width, height,
-    mediaKind: kind === "video" || (/\.(?:mp4|mov|webm|m4v)$/i.test(path) && kind !== "image") ? "video" : "image",
+    // Task 413: the video list mirrors VIDEO_EXTENSIONS in lib/library-location.mjs
+    // (the single source; renderer code must not import lib/) — .mkv joined it there.
+    mediaKind: kind === "video" || (/\.(?:mp4|m4v|mov|webm|mkv)$/i.test(path) && kind !== "image") ? "video" : "image",
     animated: assetIsAnimated(fields, path),
     image_url,
     thumbnail_url: String(input.thumbnail_url || image_url),

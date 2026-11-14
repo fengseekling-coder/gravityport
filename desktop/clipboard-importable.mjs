@@ -5,12 +5,13 @@
 // clipboard as a TIFF, so readImage() is non-empty for EVERY file copy. The
 // renderer only ever sees the boolean; paths and bytes stay in the clipboard.
 
-// Mirror of lib/asset-store.mjs SUPPORTED_MEDIA_EXTENSIONS. The main process
-// must not import asset-store (it drags the whole store in), so the unit test
-// asserts the two lists stay identical instead.
-export const MEDIA_IMPORT_EXTENSIONS = [
-  ".apng", ".avif", ".gif", ".jpeg", ".jpg", ".m4v", ".mov", ".mp4", ".png", ".svg", ".webm", ".webp",
-];
+// Task 413: the same sets as the store's SUPPORTED_MEDIA_EXTENSIONS — but the
+// main process must not import asset-store (it drags the whole store in), so
+// this builds the list from library-location.mjs, the very source asset-store
+// re-exports from. The unit test still asserts the two lists stay identical.
+import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from "../lib/library-location.mjs";
+
+export const MEDIA_IMPORT_EXTENSIONS = [...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS].sort();
 
 const hasMediaExtension = (path) => {
   const lower = String(path).toLowerCase();

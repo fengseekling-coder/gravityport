@@ -14,3 +14,7 @@ export declare const LIBRARY_DATABASE_FILE: string;
  * already exists. Returns false when the write failed; never throws.
  */
 export declare function ensureSqliteMigrationMarker(libraryDir: string): boolean;
+
+/** Media extensions GravityPort manages (task 413: imported from derivative-worker.ts). */
+export declare const IMAGE_EXTENSIONS: ReadonlySet<string>;
+export declare const VIDEO_EXTENSIONS: ReadonlySet<string>;

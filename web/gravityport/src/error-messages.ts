@@ -108,6 +108,11 @@ const ERROR_CODE_MESSAGES: Record<string, MessagePack> = {
     zh: "导入失败，文件不是支持的格式。请检查文件格式再重新导入。",
     en: "Import failed. The file format isn’t supported. Check the file format and import again.",
   },
+  // 任务 413：HEIC/HEIF 只在 macOS 收（lib/heic-import-gate.mjs 的平台闸）。
+  HEIC_UNSUPPORTED_ON_PLATFORM: {
+    zh: "Windows 版暂时不能导入 HEIC 照片",
+    en: "The Windows version can’t import HEIC photos yet",
+  },
 };
 
 // 任务 369：部分失败时接在「{failed} 个导入失败，」后面的原因尾巴，

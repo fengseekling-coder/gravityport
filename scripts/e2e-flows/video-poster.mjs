@@ -9,7 +9,7 @@ import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const name = "video-poster";
-export const description = "black-intro mp4 -> poster generated (img, not black, 16:9, play chip) -> detail plays the original video -> second page load reuses the stored poster without re-uploading";
+export const description = "black-intro mp4 -> poster generated (img, not black, 16:9, play chip) -> detail plays the original video -> second page load reuses the stored poster without re-uploading -> MKV (task 413) gets a renderer poster too";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -49,10 +49,53 @@ export async function run(ctx) {
     if (second?.uploadedPoster !== false) secondProblems.push("second page re-uploaded a poster");
     if (secondProblems.length) throw new Error(`video-poster second pass: ${secondProblems.join("; ")} — ${JSON.stringify(second)}`);
 
-    return { ok: true, assetId, posterMeanLuma: first.posterLuma, firstPassUploads: first.posterPosts, secondPassUploads: second.posterPosts };
+    // Task 413: MKV joined the video extensions after the playback probe proved
+    // Electron 43 decodes it — the same poster pipeline must cover it.
+    const mkvPath = join(ctx.fixturesDir, "poster-mkv.mkv");
+    await copyFile(join(ctx.rootDir, "test", "fixtures", "media-signature", "sample.mkv"), mkvPath);
+    const mkvCreated = await ctx.api(server.origin, "POST", "/api/assets/create", {
+      projectId: "default", imagePath: mkvPath, prompt: "mkv poster clip",
+    });
+    const mkvId = mkvCreated.asset.id;
+    const mkvDetail = await ctx.runInPage(server, mkvPosterSource(mkvId));
+    if (mkvDetail?.__pageError) throw new Error(`video-poster mkv page error: ${mkvDetail.__pageError}`);
+    const mkvProblems = [];
+    if (mkvDetail?.posterImg !== true) mkvProblems.push("MKV card renders a poster <img> from /thumbnails/");
+    if (mkvDetail?.decoded !== true) mkvProblems.push("MKV poster img decoded with real pixels");
+    if (mkvProblems.length) throw new Error(`video-poster mkv pass: ${mkvProblems.join("; ")} — ${JSON.stringify(mkvDetail)}`);
+
+    return { ok: true, assetId, posterMeanLuma: first.posterLuma, firstPassUploads: first.posterPosts, secondPassUploads: second.posterPosts, mkvPoster: true };
   } finally {
     await server.stop();
   }
+}
+
+function mkvPosterSource(assetId) {
+  return `(async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    async function waitFor(check, label, timeoutMs = 40000) {
+      const deadline = Date.now() + timeoutMs;
+      let last = null;
+      while (Date.now() < deadline) {
+        try { last = check(); } catch (error) { last = String(error); }
+        if (last) return last;
+        await sleep(150);
+      }
+      throw new Error('Timed out waiting for ' + label + ' | last=' + String(last));
+    }
+    const card = await waitFor(
+      () => document.querySelector('.asset-card[data-asset-id="${assetId}"]'),
+      'mkv card mounts',
+    );
+    // The renderer picks a frame from an offscreen <video> and uploads it; the
+    // SSE derivatives flush then swap the card to the stored poster <img>.
+    const posterImg = await waitFor(() => card.querySelector('img.black-image'), 'mkv card renders poster <img>');
+    const src = posterImg.getAttribute('src') || '';
+    if (!src.includes('/thumbnails/')) throw new Error('mkv poster img src is not a thumbnail derivative: ' + src);
+    await waitFor(() => posterImg.complete && posterImg.naturalWidth > 0, 'mkv poster img decoded');
+    return { posterImg: true, decoded: true, src };
+  })().catch((error) => ({ __pageError: String(error && error.message ? error.message : error) }))
+  `;
 }
 
 function pageSource(assetId, { expectUpload }) {

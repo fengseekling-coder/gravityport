@@ -2,11 +2,11 @@ import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { VIDEO_EXTENSIONS } from "./library-location.mjs";
 import type { PaletteColor } from "./image-palette.js";
 
 const DEFAULT_CONCURRENCY = 2;
 const MAX_CLAIM_BACKOFF_MS = 30000;
-const VIDEO_EXTENSIONS = new Set([".m4v", ".mov", ".mp4", ".webm"]);
 const DERIVATIVE_PROCESSOR_PATH = fileURLToPath(new URL("./derivative-processor.js", import.meta.url));
 
 interface DerivativeJob {

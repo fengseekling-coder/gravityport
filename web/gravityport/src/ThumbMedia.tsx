@@ -3,11 +3,14 @@
 // play their ORIGINAL media while the pointer rests on them.
 import { useEffect, useRef, useState } from "react"
 import Icon from "./Icon"
+import { needsImagePlaceholder } from "./original-display"
 
 // Videos never get a generated thumbnail (the app ships no frame extractor),
 // so their thumbnail_url falls back to the mp4 itself and an <img> shows a
 // broken icon. Let the browser paint an early frame of the video instead.
-const VIDEO_URL_PATTERN = /\.(?:mp4|mov|webm|m4v)(?:[?#].*)?$/i
+// Task 413: the list mirrors VIDEO_EXTENSIONS in lib/library-location.mjs (the
+// single source; renderer code must not import lib/) — .mkv joined it there.
+const VIDEO_URL_PATTERN = /\.(?:mp4|m4v|mov|webm|mkv)(?:[?#].*)?$/i
 export function isVideoUrl(url: string | null | undefined): boolean {
   return !!url && VIDEO_URL_PATTERN.test(url)
 }
@@ -119,6 +122,13 @@ export function ThumbMedia({ src, motionSrc, motionKind, ...img }: {
 
   if (isVideoUrl(src)) {
     return <video ref={mediaRef as React.RefObject<HTMLVideoElement>} className={img.className} src={src.includes("#") ? src : `${src}#t=0.1`} muted playsInline preload="metadata" tabIndex={-1} aria-hidden="true" draggable={false} />
+  }
+
+  // Undisplayable original standing in for a missing derivative (task 413):
+  // the empty card's black box, never an <img> with a broken icon. No
+  // hover-motion hook here — TIFF/HEIC are still images, never motionSrc.
+  if (needsImagePlaceholder(src)) {
+    return <div className={img.className} aria-hidden="true" />
   }
 
   const { srcSet, sizes, ...rest } = img
