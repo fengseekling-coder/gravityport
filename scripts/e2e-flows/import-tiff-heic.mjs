@@ -114,13 +114,20 @@ function pageSource(proresId, tiffB64, heicB64, heicAvailable) {
       }
     };
     // Waits until the derivative flushed (img src moved to /thumbnails/) and decoded.
+    // The card is looked up again on every poll: a gallery refresh after the
+    // import can remount it, and a node captured at mount time would never see
+    // the thumbnail land (macOS CI on #348 timed out exactly that way).
+    const thumbnailOf = (name) => {
+      const image = cardFor(name)?.querySelector('img');
+      return image && (image.getAttribute('src') || '').includes('/thumbnails/') ? image : null;
+    };
     const waitForThumbnail = async (name) => {
-      const card = await waitFor(() => cardFor(name), name + ' card mounts');
-      const img = await waitFor(() => {
-        const image = card.querySelector('img');
-        return image && (image.getAttribute('src') || '').includes('/thumbnails/') ? image : null;
-      }, name + ' thumbnail img');
-      await waitFor(() => img.complete && img.naturalWidth > 0, name + ' thumbnail decoded');
+      await waitFor(() => cardFor(name), name + ' card mounts');
+      await waitFor(() => thumbnailOf(name), name + ' thumbnail img', 45000);
+      await waitFor(() => {
+        const image = thumbnailOf(name);
+        return image && image.complete && image.naturalWidth > 0;
+      }, name + ' thumbnail decoded');
       return true;
     };
     const checkViewerStaysPreview = async (name) => {
