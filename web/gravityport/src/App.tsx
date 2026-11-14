@@ -2846,8 +2846,12 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         // layer 110, above every overlay here, so its Escape comes first
         // (DESIGN.md hierarchy); the 填写框 (105) follow, then the 确认框 (45).
         // Task 385: the queue may hold pairing and deletion requests — Escape
-        // denies exactly the head, whichever kind it is.
-        if (authorizationActive) {
+        // denies exactly the head, whichever kind it is. Read the queue ref,
+        // not this closure's authorizationActive: the dialog is painted at
+        // commit, but this listener is only re-armed by the passive effect
+        // after it, so an Escape landing in between saw the stale "no
+        // dialog" and was swallowed (CI run 43613554996, slow macOS runner).
+        if (authorizationQueueRef.current.length > 0) {
           const head = authorizationQueueRef.current[0]
           if (head?.kind === "delete") liveDecideRef.current(head.row.id, "deny")
           else pairDecideRef.current(head?.row.id || "", "deny")

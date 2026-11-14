@@ -119,7 +119,12 @@ describe("AuthorizationModal interaction contract (source pins)", () => {
     // the first dialog branch in the App's Escape chain. Task 385: the chain
     // routes the merged queue's head (pairing or deletion) to its handler.
     const chain = appSource.slice(appSource.indexOf('if (e.key === "Escape")'));
-    const branch = chain.indexOf("if (authorizationActive) {");
+    // It reads the live queue ref, not the render-time authorizationActive:
+    // an Escape between the dialog's paint and the listener's re-arm used to
+    // be swallowed (CI run 43613554996).
+    const branch = chain.indexOf("if (authorizationQueueRef.current.length > 0) {");
+    assert.equal(chain.slice(0, chain.indexOf("else if (renameNoticeOpen)")).includes("if (authorizationActive) {"), false,
+      "the Escape chain must not gate on the stale authorizationActive closure");
     const renameBranch = chain.indexOf("else if (renameNoticeOpen)");
     assert.ok(branch >= 0, "the Escape chain denies the authorization head");
     assert.ok(renameBranch > branch, "the authorization branch precedes every other overlay");
