@@ -184,3 +184,7 @@ export function describeError(error: unknown, language: Language = "zh"): string
   if (error instanceof Error) return unknown(error.message || "");
   return unknown(String(error));
 }
+
+export function errorMessage(error: unknown, language: Language): string {
+  return describeError(error, language)
+}

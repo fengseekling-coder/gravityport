@@ -713,7 +713,10 @@ test("keeps the desktop window single-instance and sandboxed", async () => {
   const viewerSource = await readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "ImageViewer.tsx"), "utf8");
   assert.match(viewerSource, /img className="viewer-image"/);
   assert.match(viewerSource, /video className="viewer-image"/);
-  const appSource = await readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "App.tsx"), "utf8");
+  const appSource = (await Promise.all([
+    readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "App.tsx"), "utf8"),
+    readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "InspectorDetails.tsx"), "utf8"),
+  ])).join("\n");
   assert.match(appSource, /setPreview\(true\)/);
 });
 

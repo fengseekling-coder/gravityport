@@ -286,3 +286,10 @@ export function formatVideoDuration(seconds: number): string {
   const ss = String(secs).padStart(2, "0")
   return hours ? `${hours}:${mm}:${ss}` : `${minutes}:${ss}`
 }
+
+export function humanSize(bytes: number | null): string {
+  if (!bytes || bytes <= 0) return "—"
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
