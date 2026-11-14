@@ -10,7 +10,7 @@
 // - the startup splash reveals its organizing note by timer or early hook.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -218,7 +218,12 @@ test("the session stacking queries pin the session-key index and behave unchange
   // queries themselves live inside the store, so the pin is asserted at the
   // source (the same technique as the BEGIN IMMEDIATE source assertions), and
   // a missing or renamed index would make every stacking write fail loudly.
-  const source = readFileSync(join(REPO_ROOT, "lib", "sqlite-asset-store.mjs"), "utf8");
+  // Task 414 split the stack code into lib/sqlite-store/stacks.mjs; the pin
+  // count below is whole-module, so read the store plus every sqlite-store module.
+  const source = [
+    join(REPO_ROOT, "lib", "sqlite-asset-store.mjs"),
+    ...readdirSync(join(REPO_ROOT, "lib", "sqlite-store")).filter((name) => name.endsWith(".mjs")).sort().map((name) => join(REPO_ROOT, "lib", "sqlite-store", name)),
+  ].map((path) => readFileSync(path, "utf8")).join("\n");
   const pins = [...source.matchAll(/INDEXED BY assets_project_session_key_idx/g)].length;
   assert.equal(pins, 2, "exactly the two session stacking queries pin the index");
 
