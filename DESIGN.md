@@ -1,8 +1,31 @@
 # 界面设计规范
 
-本文总结 GravityPort 桌面版界面（`web/gravityport`）现在的设计规则，写给改界面的人和代码助手。**代码是准绳**：值以 `web/gravityport/src/styles/`（由 `web/gravityport/src/index.css` 按序引入）为准，这里只是归纳。新样式加在对应主题的文件末尾，不要都加到最后一个文件。改了样式表里的变量、字号或组件规格，同一个改动里把本文对应的地方一起改掉。
+本文总结 GravityPort 桌面版界面（`web/gravityport`）现在的设计规则，写给改界面的人和代码助手。**代码是准绳**：本项目基础变量以 `web/gravityport/src/design-tokens.css` 为准，基础组件以 `web/gravityport/src/ui/` 为准，业务布局以 `web/gravityport/src/styles/`（由 `web/gravityport/src/index.css` 按序引入）和独立卡片样式为准，这里只是归纳。新样式加在对应主题的文件末尾，不要都加到最后一个文件。改了样式表里的变量、字号或组件规格，同一个改动里把本文对应的地方一起改掉。
 
-`web/gravityport/src/styles/` 是在原型样式上一层层叠加出来的，`:root` 出现了好几次，后面的覆盖前面的。最终生效的是注释 `Product-wide language` 下面那一层 `--ui-*` 变量；`.app` 里的旧变量名（`--panel`、`--work`、`--text`、`--muted`、`--line`、`--ink-secondary`、`--ink-tertiary`、`--surface-raised`、`--surface-hover`）都指向它们，新代码不要再用旧名字。判断一个元素的最终效果，看浏览器里的计算值，不要只读前面的规则。
+`web/gravityport/src/styles/` 是在原型样式上一层层叠加出来的，仍有历史覆盖规则。产品级 `--ui-*`、字号、间距、圆角、动效变量已收敛到 `web/gravityport/src/design-tokens.css`；旧变量名（`--panel`、`--work`、`--text`、`--muted`、`--line`、`--ink-secondary`、`--ink-tertiary`、`--surface-raised`、`--surface-hover`）通过兼容层指向新变量，新代码不要再用旧名字。判断一个元素的最终效果，看浏览器里的计算值，不要只读前面的规则。
+
+## 代码入口与覆盖范围
+
+| 层级 | 入口 | 职责 |
+| --- | --- | --- |
+| 基础变量 | `web/gravityport/src/design-tokens.css` | 颜色、字体、间距、圆角、控件尺寸、动效；浅深主题和旧变量兼容 |
+| 基础组件 | `web/gravityport/src/ui/`、`web/gravityport/src/ui/primitives.css` | `Button`、`Text`、`TextField`、`Switch`、`Dialog` 的公共接口与状态 |
+| 已有专用组件 | `Icon.tsx`、`ToolbarSelect.tsx`、`ColumnControl.tsx` | 沿用现有图标、下拉、列数交互，不引入第二套组件库 |
+| 业务布局 | `web/gravityport/src/styles/` 和独立卡片样式 | 画廊、侧栏、设置等页面布局 |
+| 规范与验收 | `DESIGN.md` | 设计规则、组件约定和手动交付清单 |
+
+设计规范只通过本文、基础变量和共享组件维护，不作为产品页面或设置项展示。设置只包含常规、存储、连接、反馈和关于；不加入设计系统、组件展示或按钮方案对比。
+
+这是一套渐进落地的 v1 基础，不是全站重写：设置关闭按钮、设置中的显示素材名称开关、反馈页诊断日志开关、堆叠重命名已接入公共组件，其余历史控件在改到相关功能时逐步迁移，不为统一组件而改变业务行为。
+
+### 基础组件约定
+
+- `Button`：`variant="primary" | "neutral" | "quiet" | "danger"`，`size="standard" | "small"`；`loading` 同时禁用操作并设置 `aria-busy`；`iconOnly` 必须传 `aria-label`。默认 `type="button"`，表单提交显式设 `type="submit"`。
+- `Text`：`variant="body" | "label" | "title" | "page" | "code"`；`as` 设置实际语义标签，不能只为字号选择标题级别；`tone` 为 `default`、`secondary` 或 `muted`。
+- `TextField`：必须有 `label`；`hint` / `error` 自动关联输入框，错误带 `aria-invalid`；支持原生输入属性和 React 19 的 `ref` 属性。错误文案用正文色保证可读，描边用危险色，不只靠颜色表达错误。
+- `Switch`：`label`、`checked`、`onCheckedChange`，可选 `disabled`；使用原生按钮的 Enter / 空格行为，带 `role="switch"` 和 `aria-checked`。
+- `Dialog`：`open`、`title`、`closeLabel`、`onClose`，可选 `description`、`actions`；底层为原生 `<dialog>`，浏览器隔离背景，组件补齐 Tab / Shift+Tab 循环并在关闭后归还焦点。Esc 和遮罩点击关闭；内容区点击不关闭。标题和说明关联对话框。需要初始输入焦点时给 `TextField` 加 `autoFocus`。
+- 新业务界面优先组合这些公共组件；只有基础组件内部负责原生 HTML 控件和语义标签。不要复制一套按钮、输入框或弹窗样式。
 
 ## 原则
 
@@ -78,6 +101,8 @@
 - 几乎不描边：区块靠表面颜色区分，必要时一条 `--ui-line`。
 - 浮起只用一种阴影 `--ui-shadow`（浅色 `0 16px 48px #0000001c, 0 1px 4px #0000000a`，深色 `0 16px 48px #00000040, 0 1px 4px #00000020`）。下拉和列数弹层再加 `0 0 0 1px var(--ui-line)`。
 - 遮罩：设置窗口、确认框、填写框都是 `#00000012`。
+- 公共 `Dialog` 遮罩使用 `--overlay-veil`，原生顶层位于 CSS 浮层之上；它打开时不能再弹出背景中的旧式浮层。
+- 列数滑条的可拖动滑块（thumb）是原生控件质感的局部例外：两套主题均使用 `--ui-slider-thumb-*` 的白色微渐变、细边缘、顶部高光与柔和投影。只改变滑块，不改变轨道、刻度、弹层或工具栏入口的样式。
 
 ## 动效
 
@@ -105,15 +130,15 @@
 
 | 组件 | 类名 | 要点 |
 | --- | --- | --- |
-| 主按钮 | `.primary-button` | `--ui-primary` 底，高 32px，左右 12px；一个视图最多一个，只给确认框里真正执行的动作 |
-| 普通按钮 | `.neutral-button` | `--ui-inset` 底、`--ui-secondary` 字，悬停 `--ui-selected` |
+| 主按钮 | `Button variant="primary"`；历史实现 `.primary-button` | `--ui-primary` 底，高 32px，左右 12px；一个视图最多一个，只给确认框里真正执行的动作 |
+| 普通按钮 | `Button`；历史实现 `.neutral-button` | `--ui-inset` 底、`--ui-secondary` 字，悬停 `--ui-selected` |
 | 安静按钮 | `.toolbar button`、`.detail-heading button` 等 | 无底，悬停才出 `--ui-hover`；纯图标按钮 28 或 32px 见方，必须有 `aria-label` |
-| 分段控件 | `.segmented` + `button.on` | 设置页里底槽 `--ui-inset`、选中 `--ui-raised` 加轻阴影 |
-| 开关 | `button.settings-switch` + `.enabled` | 36×20，开时 `--ui-accent`，`role="switch"` |
+| 分段控件 | `.segmented` + `button.on` | 设置页里底槽 `--ui-inset`（加 1px `--ui-line` 细边）、选中 `--ui-raised` 加轻阴影，按钮高 24px |
+| 开关 | `Switch` / `.ui-switch`；历史实现 `.settings-switch` | 36×20，开时 `--ui-accent`，`role="switch"`；新界面用公共组件 |
 | 搜索框 | `label.search` | 240×32，`--ui-inset` 底，输入时 `--ui-raised` 加 2px 焦点框 |
 | 工具栏下拉 | `ToolbarSelect.tsx` | 列表 `.toolbar-select-menu` 最窄 176px，选项 32px 高，已选项打 `--ui-accent` 勾 |
 | 回收站可腾空间 | `.trash-reclaimable` | 回收站有素材时，「清空回收站」按钮左边 12px `--ui-muted` 一行「清空可腾出约 {size}」，只算非硬链接的原图大小；清空能腾出 0 时也显示（`0 KB`）；不可点、无图标无提示框，回收站空了或后端没给这个字段就不显示 |
-| 列数 | `ColumnControl.tsx` | 弹层 192px，滑杆 + 2/3/4/5/6/8 刻度 |
+| 列数 | `ColumnControl.tsx` | 工具栏入口沿用安静按钮「四宫格图标 + 当前列数」。弹层 192px，原有轨道和 2/3/4/5/6/8 刻度不变；滑块为 20px 白色圆形，微渐变、高光边缘和柔和投影，悬停轻微放大至 1.04，按住拖动时放大至 1.12 并改变阴影，键盘焦点仍有强调色外环。减少动态效果时关闭缩放与过渡。列数选择、拖动与键盘行为不变 |
 | 侧栏 | `.sidebar`、`.nav-row`、`.section-toggle` | 行高 36px，当前项 `--ui-selected` 底加 `aria-current="page"`。正在看的堆叠没了自动退回进堆叠前的视图，分组被删退回「所有素材」，分组被改名跟到新名字；都替换当前历史条目，后退不会回到已经不存在的视图 |
 | 侧栏更新提醒 | `.update-ready-slot`、`.update-ready-line` | 更新包下好后的单行提醒，在「用户中心」上方：高 32px、12px 字、`--radius-control`，`--ui-hover` 底悬停加深到 `--ui-selected`；左侧 6px `--ui-accent` 圆点，文字 `--ui-secondary`（版本号 `--ui-text` 字重 500）超长省略号截断，右侧「重启更新」`--ui-text` 保持完整；点击整行即重启更新，更新中禁用并显示「正在更新…」，`title`/`aria-label` 保留完整句子；同一版本装失败两次后不再显示，改由系统对话框引导去官网下载 |
 | 图片卡片 | `.asset-card` | 黑底，小标 `.stack-mark` `.video-mark` `.trash-countdown` `.favorite-mark`，名字条 `.card-name`；名字条显示原名（后端 `display_name`：去掉机器加的编号后缀，和搜索同一套规则），库里的真实文件名不变。名字条显示时，收藏心形落在名字条右端、和最后一行对齐，名字给它让出位置。视频卡片封面：界面在后台从视频里抽一帧（跳过片头黑场）存进素材库，之后和图片一样用 `thumbnails/<id>.webp`；抽帧失败或还没完成时，退回显示视频开头附近的某一帧，播放标记始终在 |
@@ -124,11 +149,12 @@
 | 确认框 | `.delete-modal` | 图标块、问题标题、一句后果、「取消」+ 写明动作的主按钮 |
 | 升级检查说明框 | `.delete-modal` + `info` 图标 | 升级后整库检查没有通过时弹一次（任务 350）。外观就是确认框那套：`info` 图标块、标题「素材库检查发现问题」、一段正文；左按钮「在访达中显示拷贝」（Windows：资源管理器）调 `/api/open-folder` 并保留弹窗，右主按钮「知道了」记已读并关闭。Esc 等于「知道了」，点遮罩不关；首屏渲染后再弹，和更名说明框同时到期时先弹更名说明框 |
 | 授权确认框 | `.authorization-modal` | 别处请求做某事、要用户放行时用（浏览器扩展第一次连接、别处要删正在看的那张）。外观同确认框：`--ui-panel` 底、`--radius-panel`、`--ui-shadow`、`surface-in` 320ms、遮罩颜色同确认框、内边距 24px、图标块同确认框；复用 `.delete-modal` 的样式变量，不写新字面量。标题是一个问题，主语是请求方；正文两行：第一行一句后果，第二行 12px `--ui-muted` 写「来自：…」；按钮「不允许」（普通按钮）+ 写明动作的主按钮。Esc、点遮罩都算「不允许」，初始焦点在「不允许」。只有请求方要求时才显示倒计时（正文下方 12px `--ui-muted`，逐秒减），到时按「不允许」处理、关框、出提示条。同时来多个请求一次只显示一个、排队；同一请求方对同一对象的重复请求合并。要盖住查看器和设置窗口。结果（允许 / 不允许 / 超时）一律回给请求方 |
-| 填写框 | `.group-dialog` | 新建分组并移入、重命名分组和堆叠、合并分组、删除分组；外观同确认框（`--ui-panel` 底、`--radius-panel`、`--ui-shadow`、16px 标题、同一层遮罩），输入框 32px 高，「取消」+ 写明动作的主按钮；名字最长 80 字 |
+| 填写框 | 公共 `Dialog` + `TextField`；历史实现 `.group-dialog` | 堆叠重命名已迁移到公共组件；新建分组并移入、重命名分组、合并分组、删除分组仍沿用历史实现。外观同确认框（`--ui-panel` 底、`--radius-panel`、`--ui-shadow`、16px 标题），输入框 32px 高，「取消」+ 写明动作的按钮（执行按钮用标题里的动词，堆叠重命名也是「重命名」）；名字最长 80 字 |
 | 导入结果清单 | `ImportReviewDialog.tsx`、`.import-review` | 手动导入结束后的逐张确认，外观照确认框规格（`--ui-panel` 底、`--radius-panel`、`--ui-shadow`、`surface-in` 320ms、遮罩同确认框）；标题一个问题，下面两节「已在素材库的其他位置」「可能重复」（有内容才显示），像素相同的只给一行只读说明；每行缩略图加宽×高加选项，默认全部保留，节标题右侧「全部…」快捷；行多时先 100 行，底部「再显示 100 条」；底部「取消」+「按所选处理」 |
-| 设置窗口 | `.settings-modal` | 最大 736×560，左栏 176px，内容放在 `.settings-section` 块里 |
-| MCP 配置卡片 | `McpClientConfigCard.tsx`、`mcp-config.css` | 连接页里：`--ui-panel` 底加 `--ui-line` 描边、`--radius-panel`；配置代码块 `--ui-inset` 底，右上角复制按钮 |
-| 浏览器扩展卡 | `WebCaptureStatusCard.tsx`、`web-capture-status.css` | 连接页里：已连接/没有连接（5 分钟窗口）、扩展版本（落后自带版本给官网链接）、待重试张数加重试按钮、最近一次错误一行；离线空间快满、因空间不足丢过票据、只剩网址时各一行提示；打开时取一次，刷新按钮手动取 |
+| 设置窗口 | `.settings-modal` | 最大 736×560，左栏 176px，内容放在 `.settings-section.settings-card` 卡片里；右上角关闭键用 32px 灰色圆形图标按钮 |
+| 设置卡片 | `.settings-section.settings-card`、`.settings-action-btn`、`.settings-status-dot` | 统一卡片容器：`--ui-inset` 浅灰底、8px 圆角（`--radius-control`）、无描边、内边距 16px、卡片间距 12px；头部 `.settings-card-header > .settings-card-head`（左粗体标题、右操作）配 `.settings-card-desc` 说明，分栏用 `.settings-card-sub`。操作小按钮 `.settings-action-btn` 高 28px、最窄 76px、`--ui-raised` 底加 `--ui-line` 细边。状态小圆点 6px 正圆，已连接用 `--ui-accent`、警告用 `--ui-danger`、未连接用 `--ui-muted` |
+| MCP 配置卡片 | `McpClientConfigCard.tsx`、`mcp-config.css` | 连接页里：`--ui-inset` 底、`--radius-control` 圆角、无描边；右上角无配置时给「使用指南」小按钮；配置代码块 `--ui-inset` 底，右上角复制按钮 |
+| 浏览器扩展卡 | `WebCaptureStatusCard.tsx`、`web-capture-status.css` | 连接页里：`--ui-inset` 底、`--radius-control` 圆角、无描边；标题旁带小圆点状态与版本号，「有新版扩展」链接放标题旁，待重试张数加重试按钮、最近一次错误一行；离线空间快满、因空间不足丢过票据、只剩网址时各一行提示；打开时取一次，刷新按钮手动取 |
 | 查看器 | `ImageViewer.tsx`、`.viewer-controls` | 底部缩放条，鼠标不动时淡出；「适合窗口」时画面下沿落在缩放条上方。视频用原生控件（禁全屏/下载/画中画，全屏走缩放条按钮），视频上的按下和双击不触发平移和 1:1 切换；图片先显示预览图，放大或适合窗口时需要的像素超过预览图，就在后台加载原图、解码完再替换（适合窗口时停留 200 毫秒后才加载），失败留在预览图。媒体加载出错（原图被挪走、文件损坏）时台面显示空态：32px 图标、「原图找不到了」一句、一个「打开素材位置」按钮（`.viewer-missing`）。正在看的这张被别处删掉（移到回收站、永久删除、归档）时检视器跳到原位置现在的那一张，没有就回画廊；只是不再符合当前视图（比如在收藏里被取消收藏）的，继续显示，关掉检视器后它才从画廊消失。正在看的这张要被 MCP 或即梦删除同步移进回收站时，先弹授权确认框问（任务 385） |
 | 空状态 | `.empty-state` | 32px 图标 + 一句话 + 一句提示，文案在 `empty-state.ts`。在堆叠里且无搜索词和类型筛选的空态是「这个堆叠已经空了」；正常情况下正在看的堆叠没了会自动退回进堆叠前的视图，这是兜底 |
 | 启动页整理提示 | `desktop/startup.html` `.organizing-note` | 开库慢时骨架启动页里的单行状态「正在整理素材库…」：12px `--muted` 色、居中，压在画廊骨架区顶部，跟随骨架的呼吸动画，不另加动画和控件。页面打开约 1.5 秒还没被真正界面换走才显示（正常快速启动永远看不到）；升级数据库的那次启动由主进程确认升级后立即显示。骨架页开始 10 秒后这行自己带上已用秒数并每秒更新（「正在整理素材库…（已用 N 秒）」，任务 348：升级后那次开库要等一次整理数据库，主进程发不了消息，页面自己计时）。启动页读不到 App 的语言设置，按系统语言显示：中文系统用中文，其他系统用英文（「Organizing your library… (Ns so far)」，骨架里的「资产检视器」写作 Inspector） |
@@ -142,7 +168,7 @@
 - 复制：⌘C / Ctrl+C 把所选素材作为文件放进系统剪贴板（访达 / 资源管理器里粘贴即是），提示「已复制 N 个素材」；堆叠卡片照右键菜单展开成成员。选中了一段文字时复制的还是文字（素材详情里的提示词照常）。检视器开着复制正在看的那张。新的复制取消之前的剪切（和访达一样）。右键菜单「复制图片」不变：单张复制像素。
 - 剪切 / 粘贴：⌘X / ⌘V 剪切移动素材，网页 `copy` / `cut` / `paste` 事件和 keydown 两条路都接（macOS 菜单 `role` 的快捷键可能先被菜单接走，所以两条路都必须对）；没有剪切时 ⌘V 照旧导入。
 - 全选：⌘A。桌面菜单「全选」不走 `role`，改 accelerator + click 经 `menu-select-all` 转给网页统一处理；焦点在文字框里时全选文字，画廊空闲时跨页全选，keydown 刚处理过（500 毫秒内）就忽略菜单那次。
-- 后退 / 前进：⌘[ ⌘]（Windows 为 Alt+← / Alt+→）和鼠标侧键（3 后退、4 前进，两个 phase 都 preventDefault，不监听 `app-command`，否则 Windows 上退两步），等于点工具栏的后退 / 前进箭头。检视器开着时后退只关闭检视器（退出全屏 + 关检视器，不动历史位置）；前进照旧关检视器并前进一步。
+- 后退 / 前进：⌘[ ⌘]（Windows 为 Alt+← / Alt+→）和鼠标侧键（3 后退、4 前进，两个 phase 都 preventDefault，不监听 `app-command`，否则 Windows 上退两步）；后退等于点工具栏的后退箭头。检视器开着时后退只关闭检视器（退出全屏 + 关检视器，不动历史位置）；前进照旧关检视器并前进一步。
 - Esc 按层级：授权确认框 → 填写框（重命名分组 / 重命名堆叠 / 新建分组并移入 / 合并分组 / 删除分组，等于「取消」）→ 更名说明框、升级说明框 → 移到回收站确认 → 解散堆叠、堆叠移到回收站、永久删除、清空回收站 → 右键菜单 → 退出全屏 → 设置窗口 → 检视器 → 清用户选中 → 退出堆叠（普通跳转，后退能回到堆叠）→ 清隐式焦点。
 - 弹窗焦点：设置窗口、确认框和分组类小框里 Tab / Shift+Tab 只在框里转，关框后焦点回到打开前的元素。初始焦点：带输入框的（重命名分组、重命名堆叠、新建分组并移入）落在输入框并全选现有文字；只有按钮的确认框落在「取消」上；合并分组落在下拉框上。
 - 方向键浏览、回车打开、⌘F / `/` 搜索、Delete 移到回收站照旧。
@@ -177,7 +203,20 @@
 - 字号只用 12 / 16 / 20，字重只用 400 / 500 / 600。
 - 新浮层照确认框的规格：`--ui-panel` 底、`--radius-panel`、`--ui-shadow`、`surface-in` 动画，并加到上面的层级表里。
 - 点遮罩关闭浮层时，只认点在遮罩本身（`event.target === event.currentTarget`）：框里的点击不能冒泡把框关掉，否则点「保存」会先关框、丢掉提交。
+- 公共 `Dialog` 使用原生模态层，遮罩事件还需判断指针在对话框矩形之外；不要把点击对话框自身的内边距误当作遮罩点击。
 - 交付前浅色、深色都看一遍，窗口 1280 和 1440 宽都看一遍。
+
+## 交付检查清单
+
+交付时在本文中手动核对以下项目；清单不是产品页面，也不代表自动检测结果：
+
+- [ ] 浅色和深色都检查，文字、图标、焦点可辨；正文对比度至少 4.5:1。
+- [ ] 检查 1280 / 1440 宽窗口和窄窗口，没有横向溢出或关键操作被截断。
+- [ ] Tab / Shift+Tab、Enter / 空格、Esc 可用，弹窗关闭后焦点回到触发位置。
+- [ ] 覆盖默认、悬停、选中、焦点、禁用、加载和错误状态。
+- [ ] 浮层层级与焦点约束正确；框内点击不误关，遮罩与 Esc 正常关闭。
+- [ ] 中英文成对维护，长文案不截断关键操作。
+- [ ] 使用公共组件与语义变量，新增规格同步更新本文。
 
 ## 已知的偏差
 

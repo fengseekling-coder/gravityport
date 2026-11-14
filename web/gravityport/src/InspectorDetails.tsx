@@ -75,7 +75,7 @@ export function InspectorDetails(props: InspectorDetailsProps) {
           <div className="detail-heading">
             <strong>{tr("素材详情")}</strong>
             <button aria-label={tr("关闭素材详情")} onClick={() => setDetail(false)}>
-              <Icon name="close" />
+              <Icon name="inspector" size={16} />
             </button>
           </div>
           <div className="asset-summary">

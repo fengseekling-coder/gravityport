@@ -195,41 +195,15 @@ body.gp-card-dragging .toast {
 .app .feedback-section {
   display: flex;
   flex-direction: column;
-}.app .feedback-kind-row {
-  display: flex;
-  gap: var(--space-2);
-}.app .feedback-kind-option {
-  flex: 1;
-  min-width: 0;
-  min-height: 32px;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-small);
-  background: transparent;
-  color: var(--ui-secondary);
-  font-size: 12px;
-  line-height: var(--space-4);
-  cursor: pointer;
-}.app .feedback-kind-option:hover {
-  color: var(--ui-text);
-  background: var(--ui-hover);
-}.app .feedback-kind-option.chosen {
-  color: var(--ui-text);
-  font-weight: 500;
-  outline: 2px solid var(--ui-accent);
-  outline-offset: 2px;
-}.app .feedback-kind-option:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }.app .feedback-message {
   display: block;
   width: 100%;
-  min-height: 120px;
-  margin-top: var(--space-3);
-  padding: var(--space-2);
+  min-height: 104px;
+  margin-top: 0;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--ui-line);
-  border-radius: var(--radius-small);
-  background: transparent;
+  border-radius: var(--radius-control);
+  background: var(--ui-raised);
   color: inherit;
   font: inherit;
   font-size: 12px;
@@ -246,8 +220,8 @@ body.gp-card-dragging .toast {
 }.app .feedback-message-foot {
   display: flex;
   justify-content: flex-end;
-  min-height: var(--space-4);
-  margin-top: var(--space-1);
+  min-height: 0;
+  margin-top: calc(-1 * var(--space-2));
 }.app .feedback-counter {
   font-size: 12px;
   line-height: var(--space-4);
@@ -256,51 +230,26 @@ body.gp-card-dragging .toast {
 }.app .feedback-contact {
   display: block;
   width: 100%;
-  margin-top: var(--space-1);
-  padding: var(--space-2);
+  height: var(--control-height);
+  margin-top: 0;
+  padding: 0 var(--space-3);
   border: 1px solid var(--ui-line);
-  border-radius: var(--radius-small);
-  background: transparent;
+  border-radius: var(--radius-control);
+  background: var(--ui-raised);
   color: inherit;
   font: inherit;
   font-size: 12px;
   line-height: var(--space-4);
   box-sizing: border-box;
-}.app .feedback-log-row {
+}.app .feedback-submit-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  margin-top: var(--space-3);
-}.app .feedback-log-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: 12px;
-  line-height: var(--space-4);
-  color: var(--ui-text);
-  cursor: pointer;
-}.app .feedback-log-toggle input {
-  width: var(--space-4);
-  height: var(--space-4);
-  margin: 0;
-  accent-color: var(--ui-accent);
-  flex-shrink: 0;
-}.app .feedback-log-view-button {
-  border: 0;
-  background: none;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-small);
-  color: var(--ui-secondary);
-  font-size: 12px;
-  line-height: var(--space-4);
-  cursor: pointer;
-  white-space: nowrap;
-}.app .feedback-log-view-button:hover {
-  color: var(--ui-text);
-  background: var(--ui-hover);
-}.app .feedback-log-view-button:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  padding-top: var(--space-1);
+}.app .feedback-submit-status {
+  min-width: 0;
+  flex: 1;
 }.app .feedback-log-view {
   margin: var(--space-2) 0 0;
   max-height: 168px;
@@ -316,29 +265,14 @@ body.gp-card-dragging .toast {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
-}.app .feedback-auto-note {
-  margin: var(--space-2) 0 0;
-  font-size: 12px;
-  line-height: var(--space-4);
-  color: var(--ui-muted);
-  overflow-wrap: anywhere;
 }.app .feedback-status {
-  margin: var(--space-2) 0 0;
+  margin: 0;
   font-size: 12px;
   line-height: var(--space-4);
 }.app .feedback-success {
   color: var(--ui-accent);
 }.app .feedback-error {
   color: var(--ui-danger);
-}.app .feedback-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: var(--space-3);
-}.app .feedback-send {
-  min-width: 88px;
-}.app .feedback-send:disabled {
-  opacity: .4;
-  cursor: default;
 }
 /* Task 291: 导入结果浮层(手动导入去重的清单确认)。规格照确认框:--ui-panel
    底、--radius-panel、--ui-shadow、surface-in;层级 50 写进 DESIGN.md 层级表。 */

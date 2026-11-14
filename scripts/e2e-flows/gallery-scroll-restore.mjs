@@ -420,7 +420,9 @@ function pageSource({ coverId, groupName }) {
     await settle('back to group');
     const groupTop2 = Math.round(grid().scrollTop);
     if (groupTop2 !== 0) throw new Error('group revisit did not stay at the top: ' + groupTop2);
-    document.querySelectorAll('.toolbar-left button')[1].click();
+    window.dispatchEvent(new KeyboardEvent('keydown', navigator.platform.startsWith('Mac')
+      ? { key: ']', metaKey: true, bubbles: true, cancelable: true }
+      : { key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true }));
     await waitFor(() => grid() && loaded() > ${GROUP_MEMBERS}, 'forward returns to all assets');
     await settle('forward to all');
     const g5after2 = measure();

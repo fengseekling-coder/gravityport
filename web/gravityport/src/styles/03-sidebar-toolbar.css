@@ -115,88 +115,10 @@
   }.sidebar .add-group {
     width: var(--space-6);
   }
-}/*Product-wide language, shared with the quiet sidebar.*/
+}/*Product-wide tokens live in design-tokens.css.*/
 
-:root {
-  --ui-text: #292929;
-  --ui-secondary: #707070;
-  --ui-muted: #737373;
-  --ui-hover: #00000005;
-  --ui-selected: #e8e8e8;
-  --ui-inset: #00000004;
-  --ui-line: #0000000c;
-  --ui-panel: #fafafa;
-  --ui-work: #dedede;
-  --ui-raised: #fff;
-  --ui-accent: #009a1a;
-  --focus-ring: #009a1a;
-  --ui-primary: #343434;
-  --ui-primary-text: #fff;
-  --ui-danger: #c45050;
-  --ui-shadow: 0 16px 48px #0000001c, 0 1px 4px #0000000a;
-  --type-body-size: 12px;
-  --type-body-line: 20px;
-  --type-weight-regular: 400;
-  --type-weight-label: 500;
-  --type-weight-title: 600;
-  --type-title-size: 16px;
-  --type-page-size: 20px;
-  /* Task 316: the settings-appearance theme previews must show both themes'
-     colours no matter which theme is active, so they pin their own fixed
-     palette instead of the live --ui-* values. Declared in DESIGN.md. */
-  --preview-light-surface: #ededed;
-  --preview-light-panel: #fff;
-  --preview-light-tile: #bcbcbc;
-  --preview-dark-surface: #353535;
-  --preview-dark-panel: #242424;
-  --preview-dark-tile: #111;
-  --preview-dark-tile-split: #161616;
-  --preview-dark-border: #484848;
-  --preview-border: #aaa;
-  --preview-chosen-outline: #4c4c4c;
-  --preview-badge: #454545;
-  --preview-badge-border: #e1e1e1;
-  --preview-badge-text: #fff;
-  --preview-shadow: 0 2px 3px #00000006;
-}.app.dark {
-  --ui-text: #f1f1f1;
-  --ui-secondary: #b0b0b0;
-  --ui-muted: #909090;
-  --ui-hover: #ffffff08;
-  --ui-selected: #ffffff12;
-  --ui-inset: #ffffff06;
-  --ui-line: #ffffff0c;
-  --ui-panel: #242424;
-  --ui-work: #343434;
-  --ui-raised: #2c2c2c;
-  --ui-accent: #39ff14;
-  --focus-ring: #39ff14;
-  --ui-primary: #e3e3e3;
-  --ui-primary-text: #292929;
-  --ui-danger: #ef9494;
-  --ui-shadow: 0 16px 48px #00000040, 0 1px 4px #00000020;
-}.app {
+.app {
   color: var(--ui-text);
-  /*Keep legacy consumers on the same palette until their styles are retired.*/
-  --panel: var(--ui-panel);
-  --work: var(--ui-work);
-  --text: var(--ui-text);
-  --muted: var(--ui-muted);
-  --line: var(--ui-line);
-  --ink-secondary: var(--ui-secondary);
-  --ink-tertiary: var(--ui-muted);
-  --surface-raised: var(--ui-raised);
-  --surface-hover: var(--ui-hover);
-}.app.dark {
-  --panel: var(--ui-panel);
-  --work: var(--ui-work);
-  --text: var(--ui-text);
-  --muted: var(--ui-muted);
-  --line: var(--ui-line);
-  --ink-secondary: var(--ui-secondary);
-  --ink-tertiary: var(--ui-muted);
-  --surface-raised: var(--ui-raised);
-  --surface-hover: var(--ui-hover);
 }.app .toolbar {
   height: var(--space-14);
 }.app .toolbar button {
@@ -289,6 +211,9 @@
   border-radius: var(--radius-control);
   box-shadow: var(--ui-shadow), 0 0 0 1px var(--ui-line);
 }.app .column-range {
+  --thumb-shadow: var(--ui-slider-thumb-shadow);
+  --thumb-focus: 0 0 0 0 transparent;
+  --thumb-scale: 1;
   appearance: none;
   width: 100%;
   height: var(--space-6);
@@ -301,19 +226,24 @@
   outline: none;
 }.app .column-range:focus-visible {
   outline: none;
+  --thumb-focus: 0 0 0 var(--focus-offset) color-mix(in srgb, var(--focus-ring) 40%, transparent);
 }.app .column-range::-webkit-slider-runnable-track {
   height: var(--space-2);
   border-radius: var(--radius-control);
   background: linear-gradient(to right, var(--ui-secondary) var(--range-fill), var(--ui-selected) var(--range-fill));
 }.app .column-range::-webkit-slider-thumb {
   appearance: none;
-  width: var(--space-4);
-  height: var(--space-4);
-  border-radius: 50%;
-  background: var(--ui-text);
-  border: 0;
-  margin-top: -4px;
-  box-shadow: 0 1px 4px #00000033;
+  width: var(--slider-thumb-size);
+  height: var(--slider-thumb-size);
+  box-sizing: border-box;
+  border-radius: var(--radius-round);
+  background: var(--ui-slider-thumb-surface);
+  border: var(--border-hairline) solid var(--ui-slider-thumb-edge);
+  margin-top: calc((var(--space-2) - var(--slider-thumb-size)) / 2);
+  box-shadow: var(--thumb-shadow), var(--thumb-focus);
+  transform: scale(var(--thumb-scale));
+  cursor: var(--thumb-cursor, grab);
+  transition: transform var(--duration-control) var(--ease-out), box-shadow var(--duration-control);
 }.app .column-range::-moz-range-track {
   height: var(--space-2);
   border-radius: var(--radius-control);
@@ -323,16 +253,16 @@
   border-radius: var(--radius-control);
   background: var(--ui-secondary);
 }.app .column-range::-moz-range-thumb {
-  width: var(--space-4);
-  height: var(--space-4);
-  border: 0;
-  border-radius: 50%;
-  background: var(--ui-text);
-  box-shadow: 0 1px 4px #00000033;
-}.app .column-range:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 45%, transparent);
-}.app .column-range:focus-visible::-moz-range-thumb {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 45%, transparent);
+  width: var(--slider-thumb-size);
+  height: var(--slider-thumb-size);
+  box-sizing: border-box;
+  border: var(--border-hairline) solid var(--ui-slider-thumb-edge);
+  border-radius: var(--radius-round);
+  background: var(--ui-slider-thumb-surface);
+  box-shadow: var(--thumb-shadow), var(--thumb-focus);
+  transform: scale(var(--thumb-scale));
+  cursor: var(--thumb-cursor, grab);
+  transition: transform var(--duration-control) var(--ease-out), box-shadow var(--duration-control);
 }.app .column-ticks {
   display: flex;
   align-items: center;
@@ -350,6 +280,31 @@
   color: var(--ui-text);
   background: none;
   font-weight: 600;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .app .column-range:hover {
+    --thumb-shadow: var(--ui-slider-thumb-hover-shadow);
+    --thumb-scale: 1.04;
+  }
+}
+.app .column-range:active {
+  --thumb-shadow: var(--ui-slider-thumb-pressed-shadow);
+  --thumb-scale: 1.12;
+  --thumb-cursor: grabbing;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app .column-range {
+    --thumb-scale: 1;
+  }
+  .app .column-range::-webkit-slider-thumb {
+    transform: none;
+    transition: none;
+  }
+  .app .column-range::-moz-range-thumb {
+    transform: none;
+    transition: none;
+  }
 }
 
 @media (max-width: 720px) {.app .column-control {

@@ -59,7 +59,7 @@ export async function run(ctx) {
     const zh = await runRound(ctx, server, zhSource(), 'zh');
     assertEqual(zh.titles, ["下个版本（开发中）"], "zh dev block titles");
     assertEqual(zh.firstLines, zhDevLines, "zh dev block lines match unreleased.zh");
-    assertOk(zh.meta.includes(`版本 ${status.productVersion} · 构建 ${sha} · 开发版`), `meta footnote line (got: ${zh.meta})`);
+    assertOk(zh.meta.includes(`v${status.productVersion} · 构建 ${sha} · 开发版`), `meta footnote line (got: ${zh.meta})`);
     assertEqual(zh.legacyHeadings, false, "本次更新/构建信息 headings are gone");
     assertOk(zh.paneOverflowFree, `about pane must not overflow horizontally (${zh.paneScrollWidth} <= ${zh.paneClientWidth})`);
 
@@ -67,7 +67,7 @@ export async function run(ctx) {
     const en = await runRound(ctx, server, englishSource(), 'en');
     assertEqual(en.titles, ["Next version (in development)"], "en dev block titles");
     assertEqual(en.firstLines, enDevLines, "en dev block lines match unreleased.en");
-    assertOk(en.meta.includes(`Version ${status.productVersion} · Build ${sha} · Development build`), `en meta footnote line (got: ${en.meta})`);
+    assertOk(en.meta.includes(`v${status.productVersion} · Build ${sha} · Development build`), `en meta footnote line (got: ${en.meta})`);
 
     // Round 3: 720x464 — the dialog keeps its CSS size and the about page
     // scrolls inside the content pane instead of overflowing sideways.
@@ -141,7 +141,10 @@ function pageHelpers() {
         titles: blocks.filter((s) => s.querySelector('.release-heading h4')).map((s) => s.querySelector('.release-heading h4').textContent.trim()),
         firstLines: Array.from(blocks[0]?.querySelectorAll('li') || []).map((li) => li.textContent.trim()),
         firstGroups: groups(blocks[0]),
-        meta: (pane.querySelector('.release-meta')?.textContent || '').replace(/\\s+/g, ' ').trim(),
+        meta: [
+          pane.querySelector('.about-card .settings-status-dot')?.textContent,
+          pane.querySelector('.about-card .settings-card-desc')?.textContent,
+        ].filter(Boolean).join(' · ').replace(/\\s+/g, ' ').trim(),
         legacyHeadings: /本次更新|构建信息/.test(pane.textContent),
         paneScrollWidth: pane.scrollWidth,
         paneClientWidth: pane.clientWidth,

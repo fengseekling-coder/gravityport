@@ -1,5 +1,7 @@
 // Settings dialog JSX moved out of App.tsx (task 405). Pure moves; no behavior changes.
 import Icon from "./Icon"
+import Button from "./ui/Button"
+import Switch from "./ui/Switch"
 import { PinterestConnectionCard } from "./PinterestConnectionCard"
 import { McpClientConfigCard } from "./McpClientConfigCard"
 import { WebCaptureStatusCard } from "./WebCaptureStatusCard"
@@ -76,9 +78,9 @@ export function SettingsDialog(props: SettingsDialogProps) {
             role="dialog"
             aria-modal="true"
             aria-label={tr("设置")}
+            tabIndex={-1}
           >
             <aside className="settings-nav">
-              <h2>{tr("设置")}</h2>
               {[
                 ["常规与外观", "sun"],
                 ["存储", "folder"],
@@ -89,6 +91,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 <button
                   className={settingTab === label ? "active" : ""}
                   aria-pressed={settingTab === label}
+                  title={tr(label === "常规与外观" ? "常规" : label)}
                   key={label}
                   onClick={() => setSettingTab(label)}
                 >
@@ -106,76 +109,102 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 <div className="settings-heading-copy">
                   <h3>{tr(settingTab === "常规与外观" ? "常规" : settingTab)}</h3>
                 </div>
-                <button
+                <Button
+                  variant="neutral"
+                  iconOnly
                   className="modal-close"
                   aria-label={tr("关闭设置")}
                   onClick={() => setSettings(false)}
                 >
-                  <Icon name="close" size={11} />
-                </button>
+                  <Icon name="close" size={16} />
+                </Button>
               </div>
               <div className="settings-page" key={settingTab}>
               {settingTab === "常规与外观" ? (
                 <>
-                  <section className="settings-section theme-section" aria-label={tr("外观")}>
-                  <div className="appearance-options">
-                    {["跟随系统", "浅色", "深色"].map((a, i) => (
-                      <button
-                        key={a}
-                        aria-pressed={appearance === a}
-                        className={`appearance-option ${
-                          appearance === a ? "chosen" : ""
-                        }`}
-                        onClick={() => setAppearance(a)}
-                      >
-                        <div className={`theme-preview theme-${i}`}>
-                          <div className="mini-sidebar" />
-                          <div className="mini-content">
-                            <i />
-                            <i />
-                            <i />
-                            <i />
-                          </div>
-                          {appearance === a && (
-                            <span>
-                              <Icon name="check" size={10} />
-                            </span>
-                          )}
-                        </div>
-                        <span>{tr(a)}</span>
-                      </button>
-                    ))}
-                  </div>
-                  </section>
-                  <section className="settings-section">
-                  <div className="setting-row">
-                    <span>{tr("显示素材名称")}</span>
-                    <button className={`settings-switch ${cardInfo ? "enabled" : ""}`} role="switch" aria-checked={cardInfo} aria-label={tr("显示素材名称")} onClick={() => setCardInfo(!cardInfo)}><span /></button>
-                  </div>
-                  </section>
-                  <section className="settings-section">
-                  <div className="setting-row">
-                    <span>{tr("界面语言")}</span>
-                    <div className="segmented" role="group" aria-label={tr("界面语言")}>
-                      <button className={language === "zh" ? "on" : ""} aria-pressed={language === "zh"} onClick={() => setLanguage("zh")}>中文</button>
-                      <button className={language === "en" ? "on" : ""} aria-pressed={language === "en"} onClick={() => setLanguage("en")}>English</button>
+                  <section className="settings-section settings-card" aria-label={tr("外观")}>
+                    <div className="settings-card-header">
+                      <div className="settings-card-head">
+                        <strong>{tr("外观")}</strong>
+                      </div>
+                      <p className="settings-card-desc">{tr("选择界面配色，或跟随系统自动切换。")}</p>
                     </div>
-                  </div>
+                    <div className="appearance-options">
+                      {["跟随系统", "浅色", "深色"].map((a, i) => (
+                        <button
+                          key={a}
+                          aria-pressed={appearance === a}
+                          className={`appearance-option ${
+                            appearance === a ? "chosen" : ""
+                          }`}
+                          onClick={() => setAppearance(a)}
+                        >
+                          <div className={`theme-preview theme-${i}`}>
+                            <div className="mini-sidebar" />
+                            <div className="mini-content">
+                              <i />
+                              <i />
+                              <i />
+                              <i />
+                            </div>
+                            {appearance === a && (
+                              <span>
+                                <Icon name="check" size={10} />
+                              </span>
+                            )}
+                          </div>
+                          <span>{tr(a)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                  <section className="settings-section settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-head">
+                        <strong>{tr("显示素材名称")}</strong>
+                        <Switch label={tr("显示素材名称")} checked={cardInfo} onCheckedChange={setCardInfo} />
+                      </div>
+                      <p className="settings-card-desc">{tr("在缩略图下方显示素材名称。")}</p>
+                    </div>
+                  </section>
+                  <section className="settings-section settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-head">
+                        <strong>{tr("界面语言")}</strong>
+                        <div className="segmented" role="group" aria-label={tr("界面语言")}>
+                          <button className={language === "zh" ? "on" : ""} aria-pressed={language === "zh"} onClick={() => setLanguage("zh")}>中文</button>
+                          <button className={language === "en" ? "on" : ""} aria-pressed={language === "en"} onClick={() => setLanguage("en")}>English</button>
+                        </div>
+                      </div>
+                      <p className="settings-card-desc">{tr("切换界面、菜单与提示信息的显示语言。")}</p>
+                    </div>
                   </section>
                 </>
               ) : settingTab === "存储" ? (
                 <>
-                  <section className="settings-section">
-                    <div className="storage-summary storage-path">
-                      <Icon name="folder" size={16} />
-                      <div className="storage-description"><strong>{tr("存储位置")}</strong><span title={library?.path || ""}>{library?.path || "—"}</span></div>
-                      <div className="storage-actions">
-                        <button className="neutral-button" onClick={openStorageLocation}>{tr("打开")}</button>
-                        <button className="neutral-button" onClick={changeLibraryLocation}>{tr("更改…")}</button>
+                  <section className="settings-section settings-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-head">
+                        <div className="settings-card-title">
+                          <strong>{tr("存储位置")}</strong>
+                          <span className="settings-inline-code" title={library?.path || ""}>{library?.path || "—"}</span>
+                        </div>
+                        <div className="settings-card-actions">
+                          <button type="button" className="settings-action-btn" onClick={openStorageLocation}>{tr("打开")}</button>
+                          <button type="button" className="settings-action-btn" onClick={changeLibraryLocation}>{tr("更改…")}</button>
+                        </div>
                       </div>
+                      <p className="settings-card-desc">{tr("素材和素材库数据均保存在此位置。")}</p>
                     </div>
+                    {library ? (
+                      <div className="settings-card-sub">
+                        <div className="settings-card-head">
+                          <strong>{tr("存储类型")}</strong>
+                        </div>
+                        <p className="settings-card-desc">{library.storage}</p>
+                      </div>
+                    ) : null}
                   </section>
-                  <div className="settings-note"><p>{library ? `${tr("存储类型")} ${library.storage}` : ""}</p></div>
                 </>
               ) : settingTab === "连接" ? (
                 <>
@@ -183,92 +212,103 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   <McpClientConfigCard language={language} />
                   <WebCaptureStatusCard language={language} />
                   {backgroundCapture.supported && (
-                    <div className="web-capture-toggle">
-                      <div className="web-capture-toggle-row">
-                        <span>{tr("后台收录")}</span>
-                        <button
-                          type="button"
-                          className={`settings-switch ${backgroundCapture.enabled ? "enabled" : ""}`}
-                          role="switch"
-                          aria-checked={backgroundCapture.enabled}
-                          aria-label={tr("后台收录")}
-                          disabled={backgroundCaptureBusy}
-                          onClick={async () => {
-                            if (backgroundCaptureBusy) return
-                            const previous = backgroundCapture.enabled
-                            setBackgroundCaptureBusy(true)
-                            setBackgroundCapture(s => ({ ...s, enabled: !previous }))
-                            try {
-                              const result = await desktopAPI()?.setBackgroundCapture?.(!previous)
-                              if (!result?.ok) throw new Error("setting failed")
-                              setBackgroundCapture(s => ({ ...s, enabled: result.enabled }))
-                            } catch {
-                              setBackgroundCapture(s => ({ ...s, enabled: previous }))
-                              notify("无法更改后台收录设置")
-                            } finally {
-                              setBackgroundCaptureBusy(false)
-                            }
-                          }}
-                        ><span /></button>
+                    <section className="settings-section settings-card">
+                      <div className="settings-card-header">
+                        <div className="settings-card-head">
+                          <strong>{tr("后台收录")}</strong>
+                          <button
+                            type="button"
+                            className={`settings-switch ${backgroundCapture.enabled ? "enabled" : ""}`}
+                            role="switch"
+                            aria-checked={backgroundCapture.enabled}
+                            aria-label={tr("后台收录")}
+                            disabled={backgroundCaptureBusy}
+                            onClick={async () => {
+                              if (backgroundCaptureBusy) return
+                              const previous = backgroundCapture.enabled
+                              setBackgroundCaptureBusy(true)
+                              setBackgroundCapture(s => ({ ...s, enabled: !previous }))
+                              try {
+                                const result = await desktopAPI()?.setBackgroundCapture?.(!previous)
+                                if (!result?.ok) throw new Error("setting failed")
+                                setBackgroundCapture(s => ({ ...s, enabled: result.enabled }))
+                              } catch {
+                                setBackgroundCapture(s => ({ ...s, enabled: previous }))
+                                notify("无法更改后台收录设置")
+                              } finally {
+                                setBackgroundCaptureBusy(false)
+                              }
+                            }}
+                          ><span /></button>
+                        </div>
+                        <p className="settings-card-desc">{tr("GravityPort 关闭后，继续接收浏览器扩展发来的素材。")}</p>
                       </div>
-                      <p className="web-capture-toggle-note">{tr("GravityPort 关闭后，继续接收浏览器扩展发来的素材。")}</p>
-                    </div>
+                    </section>
                   )}
                 </>
               ) : settingTab === "反馈" ? (
                 <FeedbackPanel language={language} />
               ) : (
                 <>
-                  <section className="settings-section about-summary">
-                    <div className="about-symbol">
-                      <img className="app-logo" src={`/assets/gravityport-mark-${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : "light"}.svg`} width={40} height={40} alt="" aria-hidden="true" />
-                    </div>
-                    <div className="about-identity">
-                      <h4>GravityPort</h4>
-                      {(() => {
-                        const text = buildUpdateText(
-                          health?.productVersion || "",
-                          updateState,
-                          updateState.phase === "downloading" ? updateState.percent : 0,
-                          tr,
-                          language,
-                        )
-                        return <span className="settings-badge" title={text.badgeText}>{text.badgeText}</span>
-                      })()}
-                    </div>
-                    {(() => {
-                      // Task 231 — a verified staged package wins: both entry
-                      // points restart into it instead of re-downloading.
-                      if (updateReady) {
-                        return <button className="neutral-button about-update" onClick={restartToUpdate} disabled={restartPending}>{tr("重启并更新")}</button>
-                      }
-                      const text = buildUpdateText(
-                        health?.productVersion || "",
-                        updateState,
-                        updateState.phase === "downloading" ? updateState.percent : 0,
-                        tr,
-                        language,
-                      )
-                      if (text.buttonLabel === null) return null
-                      if (text.downloadAndInstall) {
-                        return <button className="neutral-button about-update" onClick={downloadAndInstallUpdate} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
-                      }
-                      if (text.secondaryLabel) {
-                        return <div className="about-update about-update-actions">
-                          <button className="neutral-button" disabled>{text.buttonLabel}</button>
-                          <button className="neutral-button" onClick={cancelUpdateDownload}>{text.secondaryLabel}</button>
+                  <section className="settings-section settings-card about-card">
+                    <div className="settings-card-header">
+                      <div className="settings-card-head">
+                        <div className="settings-card-title">
+                          <img className="about-inline-logo" src={`/assets/gravityport-mark-${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : "light"}.svg`} width={18} height={18} alt="" aria-hidden="true" />
+                          <strong>GravityPort</strong>
+                          {(() => {
+                            const text = buildUpdateText(
+                              health?.productVersion || "",
+                              updateState,
+                              updateState.phase === "downloading" ? updateState.percent : 0,
+                              tr,
+                              language,
+                            )
+                            return <span className="settings-status-dot" title={text.badgeText}>{text.badgeText}</span>
+                          })()}
                         </div>
-                      }
-                      if (updateState.phase === "available" && !text.downloadAndInstall) {
-                        return <button className="neutral-button about-update" onClick={openDownloadPage}>{text.buttonLabel}</button>
-                      }
-                      return <button className="neutral-button about-update" onClick={checkForUpdates} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
-                    })()}
+                        <div className="settings-card-actions">
+                          {(() => {
+                            // Task 231 — a verified staged package wins: both entry
+                            // points restart into it instead of re-downloading.
+                            if (updateReady) {
+                              return <button type="button" className="settings-action-btn about-update" onClick={restartToUpdate} disabled={restartPending}>{tr("重启并更新")}</button>
+                            }
+                            const text = buildUpdateText(
+                              health?.productVersion || "",
+                              updateState,
+                              updateState.phase === "downloading" ? updateState.percent : 0,
+                              tr,
+                              language,
+                            )
+                            if (text.buttonLabel === null) return null
+                            if (text.downloadAndInstall) {
+                              return <button type="button" className="settings-action-btn about-update" onClick={downloadAndInstallUpdate} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
+                            }
+                            if (text.secondaryLabel) {
+                              return (
+                                <div className="about-update about-update-actions">
+                                  <button type="button" className="settings-action-btn" disabled>{text.buttonLabel}</button>
+                                  <button type="button" className="settings-action-btn" onClick={cancelUpdateDownload}>{text.secondaryLabel}</button>
+                                </div>
+                              )
+                            }
+                            if (updateState.phase === "available" && !text.downloadAndInstall) {
+                              return <button type="button" className="settings-action-btn about-update" onClick={openDownloadPage}>{text.buttonLabel}</button>
+                            }
+                            return <button type="button" className="settings-action-btn about-update" onClick={checkForUpdates} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
+                          })()}
+                        </div>
+                      </div>
+                      <p className="settings-card-desc">
+                        {tr("构建")} {health?.gitSha ? health.gitSha.slice(0, 7) : "—"} · {health?.distribution === "development" ? tr("开发版") : tr("正式版")}
+                      </p>
+                    </div>
                   </section>
-                  <section className="settings-section">
+                  <section className="settings-section settings-card">
                     {/* 任务 351:不放 release-notes 类——关于页流程把第一个
                         .release-notes 块当开发中分栏数行数,这里借用它会撞车。 */}
-                    <p className="web-capture-note">
+                    <p className="settings-card-desc">
                       {tr("社区：")}
                       <a href={DISCORD_INVITE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DISCORD_INVITE_URL)}>Discord</a>
                       {" · "}
@@ -286,8 +326,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
                     return (
                       <>
                         {blocks.map((block, index) => (
-                          <section key={`${index}-${block.title}`} className="settings-section release-notes" aria-label={block.title}>
-                            <div className="release-heading">
+                          <section key={`${index}-${block.title}`} className="settings-section settings-card release-notes" aria-label={block.title}>
+                            <div className="settings-card-head release-heading">
                               <h4>{block.title}</h4>
                               {block.date ? <span>{block.date}</span> : null}
                             </div>
@@ -301,11 +341,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
                             ))}
                           </section>
                         ))}
-                        <section className="settings-section release-notes">
-                          <p className="release-meta">
-                            {tr("版本")} {health?.productVersion || "—"} · {tr("构建")} {health?.gitSha ? health.gitSha.slice(0, 7) : "—"} · {health?.distribution === "development" ? tr("开发版") : tr("正式版")}
-                          </p>
-                        </section>
                       </>
                     )
                   })()}

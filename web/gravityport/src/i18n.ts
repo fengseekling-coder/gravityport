@@ -17,7 +17,7 @@ const english: Record<string, string> = {
   "这个文件 App 显示不了": "App can’t display this file",
   "在访达中显示": "Show in Finder",
   "在文件资源管理器中显示": "Show in File Explorer",
-  "返回": "Back", "后退": "Go back", "前进": "Go forward", "回到顶部": "Back to top",
+  "返回": "Back", "后退": "Go back", "回到顶部": "Back to top",
   "移到回收站": "Move to Trash",
   "隐藏素材详情": "Hide asset details", "显示素材详情": "Show asset details",
 
@@ -58,8 +58,11 @@ const english: Record<string, string> = {
   "设置": "Settings", "存储": "Storage", "关于": "About",
   "让每一次 AI 创作，有迹可循": "Every AI creation leaves a trail",
   "关闭设置": "Close settings", "外观": "Appearance",
+  "选择界面配色，或跟随系统自动切换。": "Choose the interface appearance, or follow the system setting.",
   "界面语言": "Language",
+  "切换界面、菜单与提示信息的显示语言。": "Switch the language used for the interface, menus, and messages.",
   "常规": "General", "显示素材名称": "Show asset names",
+  "在缩略图下方显示素材名称。": "Show asset names below thumbnails.",
   "跟随系统": "System", "浅色": "Light", "深色": "Dark",
 
   // ── 检视器头部行（模板键：kind 由 inspectorHeaderLine 拼进键）──
@@ -176,6 +179,7 @@ const english: Record<string, string> = {
   "全选": "Select all",
   "打开堆叠": "Open stack",
   "重命名堆叠": "Rename stack", "重命名堆叠…": "Rename stack…",
+  "堆叠名称": "Stack name",
   "解散堆叠": "Dissolve stack",
   "复制全部图片": "Copy all images", "复制全部路径": "Copy all paths",
   "恢复": "Restore", "恢复 {count} 个素材": "Restore {count} assets",
@@ -374,6 +378,7 @@ const english: Record<string, string> = {
   "v{version} 已就绪": "v{version} ready",
   "正在更新…": "Updating…",
   "存储位置": "Storage location", "打开": "Open", "更改…": "Change…",
+  "素材和素材库数据均保存在此位置。": "Assets and library data are stored in this location.",
   "存储类型": "Storage type",
   "已打开存储位置": "Opened storage location",
   "无法打开存储位置，路径已复制": "Couldn’t open storage location. Path copied.",
@@ -406,6 +411,7 @@ const english: Record<string, string> = {
   // ── 反馈（区域五 SET-12）──
   "反馈": "Feedback",
   "反馈类型": "Feedback type",
+  "发送遇到的问题或功能建议。": "Send problem reports or feature suggestions.",
   "反馈内容": "Feedback message",
   "联系方式": "Contact",
   "问题": "Problem",
@@ -439,11 +445,11 @@ const english: Record<string, string> = {
   "更改存储位置后无需修改此配置，重启 AI 助手即可。GravityPort 无需保持打开。": "After the storage location changes, this configuration stays valid; restart the assistant to apply it. GravityPort doesn’t need to be open.",
   "请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。": "Move GravityPort to the Applications folder before copying the configuration. Otherwise the path in it will stop working.",
   "当前环境无法自动生成配置，配置方法见使用指南。": "The configuration can’t be generated in this environment. See the guide for setup.",
+  "使用指南": "Setup guide",
 
   // ── 浏览器扩展卡（区域五 SET-10）──
   "浏览器扩展": "Browser extension",
   "已连接": "Connected",
-  "扩展版本": "Extension version",
   "未知": "Unknown",
   "有新版扩展": "A newer extension is available",
   "前往官网安装浏览器扩展，并在扩展设置中开启「自动收录」。": "Install the browser extension from the GravityPort website, then turn on auto-capture in its settings.",

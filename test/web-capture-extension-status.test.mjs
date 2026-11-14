@@ -237,7 +237,7 @@ test("not connected shows the verdict, the install guidance, and the download li
   assert.match(html, /前往官网安装浏览器扩展/);
   assert.match(html, /「自动收录」/);
   assert.match(html, new RegExp(String.raw`href="${card.DOWNLOAD_PAGE_URL.replace(/[/.#]/g, "\\$&")}"`));
-  assert.doesNotMatch(html, /扩展版本/);
+  assert.doesNotMatch(html, /v0\.15\.36/);
 });
 
 test("managed folder when disconnected shows one-time loading instructions", () => {
@@ -276,9 +276,7 @@ test("connected shows the verdict and the version row", () => {
     active: true,
     status: bridgeStatus({ lastExtensionVersion: "0.15.36" }),
   });
-  assert.match(html, /已连接/);
-  assert.match(html, /扩展版本/);
-  assert.match(html, /0\.15\.36/);
+  assert.match(html, /已连接 · v0\.15\.36/);
   assert.doesNotMatch(html, /有新版扩展/);
 });
 
@@ -312,7 +310,8 @@ test("the version row hides again once the extension is no longer active", () =>
     status: bridgeStatus({ lastExtensionVersion: "0.15.36", lastIngestAt: "2026-10-23T10:00:00.000Z" }),
   });
   assert.match(html, /未连接/);
-  assert.doesNotMatch(html, /扩展版本/);
+  assert.doesNotMatch(html, /已连接 · v0\.15\.36/);
+  assert.doesNotMatch(html, /v0\.15\.36/);
 });
 
 test("pending > 0 shows the count and the retry button; pending 0 shows neither", () => {
@@ -372,8 +371,7 @@ test("English rendering contains no Chinese characters in any state", () => {
   const all = pieces.join("");
   assert.doesNotMatch(all, /[一-鿿]/, `Chinese leaked into EN render: ${all.slice(0, 400)}`);
   assert.match(pieces[1], /Not connected/);
-  assert.match(pieces[2], /Connected/);
-  assert.match(pieces[2], /Extension version/);
+  assert.match(pieces[2], /Connected · v0\.15\.36/);
   assert.match(pieces[2], /A newer extension is available/);
   assert.match(pieces[2], /2 assets waiting to retry/);
   assert.match(pieces[2], /Last error/);

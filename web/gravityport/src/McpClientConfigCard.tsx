@@ -46,9 +46,24 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
 
   return (
     <section className="mcp-config-card" aria-label={t("AI 助手（MCP）")}>
-      <div className="mcp-config-copy">
-        <strong>{t("AI 助手（MCP）")}</strong>
-        <p>{t("支持 Claude、Codex 等 AI 助手直接连接与管理素材库。将下方配置粘贴到 AI 助手中，然后重启该助手。")}</p>
+      <div className="mcp-config-header">
+        <div className="mcp-config-head">
+          <strong>{t("AI 助手（MCP）")}</strong>
+          {config !== undefined && !config?.available ? (
+            <div className="mcp-config-actions">
+              <a
+                className="mcp-guide-button"
+                href={MCP_GUIDE_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => handleExternalLinkClick(event, MCP_GUIDE_URL)}
+              >
+                {t("使用指南")}
+              </a>
+            </div>
+          ) : null}
+        </div>
+        <p className="mcp-config-desc">{t("支持 Claude、Codex 等 AI 助手直接连接与管理素材库。将下方配置粘贴到 AI 助手中，然后重启该助手。")}</p>
       </div>
       {config === undefined ? null : config?.available ? (
         <>

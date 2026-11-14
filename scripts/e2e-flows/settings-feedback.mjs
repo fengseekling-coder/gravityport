@@ -187,7 +187,7 @@ function pageHelpers() {
     const feedbackState = () => ({
       message: document.querySelector('.feedback-message').value,
       contact: document.querySelector('.feedback-contact').value,
-      kindIndex: Array.from(document.querySelectorAll('.feedback-kind-option')).findIndex((b) => b.getAttribute('aria-pressed') === 'true'),
+      kindIndex: Array.from(document.querySelectorAll('.feedback-section .segmented button')).findIndex((b) => b.getAttribute('aria-pressed') === 'true'),
       sendDisabled: document.querySelector('.feedback-send').disabled,
     });
   `;
@@ -203,7 +203,7 @@ function mainSource({ canary, homeDir, libraryDir }) {
     await sleep(80);
     const sendDisabledWhitespace = document.querySelector('.feedback-send').disabled;
 
-    const kindButtons = Array.from(document.querySelectorAll('.feedback-kind-option'));
+    const kindButtons = Array.from(document.querySelectorAll('.feedback-section .segmented button'));
     if (kindButtons.length !== 3) throw new Error('kind options: ' + kindButtons.length);
     kindButtons[1].click();
     await sleep(80);
@@ -218,12 +218,12 @@ function mainSource({ canary, homeDir, libraryDir }) {
     const modal = document.querySelector('.settings-modal');
     const modalBefore = [modal.offsetWidth, modal.offsetHeight];
 
-    const checkbox = document.querySelector('.feedback-log-toggle input[type="checkbox"]');
-    if (checkbox.checked) throw new Error('diagnostics checkbox must default to unchecked');
-    checkbox.click();
+    const logSwitch = document.querySelector('.feedback-section button.ui-switch[role="switch"]');
+    if (logSwitch.getAttribute('aria-checked') === 'true') throw new Error('diagnostics switch must default to unchecked');
+    logSwitch.click();
     await sleep(80);
-    if (!checkbox.checked) throw new Error('diagnostics checkbox did not check');
-    document.querySelector('.feedback-log-view-button').click();
+    if (logSwitch.getAttribute('aria-checked') !== 'true') throw new Error('diagnostics switch did not turn on');
+    document.querySelector('.feedback-section .settings-card-sub button.settings-action-btn').click();
     const logView = await waitFor(() => document.querySelector('.feedback-log-view'), 'log viewer opens');
     await waitFor(() => logView.textContent.trim() !== '' && logView.textContent !== '正在加载…', 'log content settles');
     const shownLog = logView.textContent;

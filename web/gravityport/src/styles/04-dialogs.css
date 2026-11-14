@@ -204,16 +204,6 @@
 }.app .modal-close:hover {
   background: var(--ui-hover);
   color: var(--ui-text);
-}.app .setting-row {
-  border-top-color: var(--ui-line);
-}.app .setting-row > span {
-  white-space: normal;
-}.app .setting-row small {
-  display: block;
-  margin: var(--space-1) 0 0;
-  font-size: 12px;
-  line-height: var(--space-4);
-  color: var(--ui-muted);
 }.app .appearance-option {
   color: var(--ui-secondary);
 }.app .appearance-option.chosen {
@@ -336,13 +326,6 @@
 
 @media (max-width: 480px) {.app .settings-nav > button {
     font-size: 12px;
-  }.app .setting-row {
-    padding: var(--space-3) 0;
-    row-gap: var(--space-2);
-  }.app .setting-row > span {
-    flex: 1;
-  }.app .setting-row small {
-    max-width: none;
   }.app .delete-actions button {
     min-height: var(--space-10);
   }

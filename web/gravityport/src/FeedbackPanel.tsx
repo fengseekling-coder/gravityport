@@ -7,7 +7,8 @@
  * localStorage until a submission succeeds.
  */
 
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import Switch from "./ui/Switch"
 import {
   feedbackErrorMessage,
   fetchFeedbackDiagnostics,
@@ -153,8 +154,7 @@ export function FeedbackPanel({ language }: { language: Language }) {
     }
   }
 
-  const onToggleIncludeLog = (event: ChangeEvent<HTMLInputElement>) => {
-    const on = event.target.checked
+  const onToggleIncludeLog = (on: boolean) => {
     setIncludeLog(on)
     if (on && logStateRef.current !== "ready") void ensureDiagnostics()
   }
@@ -174,19 +174,25 @@ export function FeedbackPanel({ language }: { language: Language }) {
     : ""
 
   return (
-    <section className="settings-section feedback-section" aria-label={tr("反馈")}>
-      <div className="feedback-kind-row" role="group" aria-label={tr("反馈类型")}>
-        {KIND_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            aria-pressed={kind === option.value}
-            className={`feedback-kind-option ${kind === option.value ? "chosen" : ""}`}
-            onClick={() => { setKind(option.value); setSent(false) }}
-          >
-            {tr(option.label)}
-          </button>
-        ))}
+    <section className="settings-section settings-card feedback-section" aria-label={tr("反馈")}>
+      <div className="settings-card-header">
+        <div className="settings-card-head">
+          <strong>{tr("反馈类型")}</strong>
+          <div className="segmented" role="group" aria-label={tr("反馈类型")}>
+            {KIND_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={kind === option.value}
+                className={kind === option.value ? "on" : ""}
+                onClick={() => { setKind(option.value); setSent(false) }}
+              >
+                {tr(option.label)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="settings-card-desc">{tr("发送遇到的问题或功能建议。")}</p>
       </div>
       <textarea
         className="feedback-message"
@@ -210,29 +216,37 @@ export function FeedbackPanel({ language }: { language: Language }) {
         aria-label={tr("联系方式")}
         onChange={(event) => { setContact(event.target.value); setSent(false) }}
       />
-      <div className="feedback-log-row">
-        <label className="feedback-log-toggle">
-          <input type="checkbox" checked={includeLog} onChange={onToggleIncludeLog} />
-          <span>{tr("附上诊断日志")}</span>
-        </label>
-        <button type="button" className="feedback-log-view-button" aria-expanded={showLog} onClick={onViewLog}>
-          {showLog ? tr("收起") : tr("查看内容")}
-        </button>
+      <div className="settings-card-sub">
+        <div className="settings-card-head">
+          <div className="settings-card-title">
+            <strong>{tr("附上诊断日志")}</strong>
+          </div>
+          <div className="settings-card-actions">
+            <button type="button" className="settings-action-btn" aria-expanded={showLog} onClick={onViewLog}>
+              {showLog ? tr("收起") : tr("查看内容")}
+            </button>
+            <Switch label={tr("附上诊断日志")} checked={includeLog} onCheckedChange={onToggleIncludeLog} />
+          </div>
+        </div>
+        {autoSummary ? <p className="settings-card-desc">{tr("将自动附上：{summary}").replace("{summary}", autoSummary)}</p> : null}
+        {showLog && (
+          <pre className="feedback-log-view">
+            {logState === "loading" ? tr("正在加载…")
+              : logState === "error" ? tr("无法加载")
+              : logText || tr("暂无诊断日志")}
+          </pre>
+        )}
       </div>
-      {showLog && (
-        <pre className="feedback-log-view">
-          {logState === "loading" ? tr("正在加载…")
-            : logState === "error" ? tr("无法加载")
-            : logText || tr("暂无诊断日志")}
-        </pre>
-      )}
-      {autoSummary ? <p className="feedback-auto-note">{tr("将自动附上：{summary}").replace("{summary}", autoSummary)}</p> : null}
-      {sent ? <p className="feedback-status feedback-success" role="status">{tr("已发送反馈")}</p> : null}
-      {error ? <p className="feedback-status feedback-error" role="alert">{tr(error)}</p> : null}
-      <div className="feedback-actions">
-        <button type="button" className="neutral-button feedback-send" disabled={submitDisabled} onClick={() => void onSubmit()}>
-          {sending ? tr("发送中…") : tr("发送")}
-        </button>
+      <div className="feedback-submit-row">
+        <div className="feedback-submit-status">
+          {sent ? <p className="feedback-status feedback-success" role="status">{tr("已发送反馈")}</p> : null}
+          {error ? <p className="feedback-status feedback-error" role="alert">{tr(error)}</p> : null}
+        </div>
+        <div className="settings-card-actions">
+          <button type="button" className="settings-action-btn feedback-send" disabled={submitDisabled} onClick={() => void onSubmit()}>
+            {sending ? tr("发送中…") : tr("发送")}
+          </button>
+        </div>
       </div>
     </section>
   )

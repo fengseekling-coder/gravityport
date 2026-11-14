@@ -1019,7 +1019,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // Task 384 (审查低-14): the group/stack dialogs join the settings window
     // and the delete confirm in the focus trap. When several are open the
     // topmost one wins (DESIGN.md hierarchy: 填写框 105 > 确认框 45 > 设置 20).
-    const formDialogOpen = Boolean(groupRename || stackRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm)
+    const formDialogOpen = Boolean(groupRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm)
     const confirmDialogOpen = Boolean(deleting || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
     if (!settings && !formDialogOpen && !confirmDialogOpen) return
     const dialog = appRef.current?.querySelector<HTMLElement>(
@@ -1030,16 +1030,20 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       'button:not([disabled]), input, select, [tabindex="0"]',
     ) || [])
     const first = controls()[0]
-    first?.focus()
-    // 带输入框的小框（重命名分组/堆叠、新建分组并移入）落在输入框上并全选
-    // 现有文字；只有按钮的确认框和合并分组的下拉框落在第一个控件（取消/下拉）。
-    if (first instanceof HTMLInputElement && first.type === "text") first.select()
+    if (formDialogOpen || confirmDialogOpen) {
+      first?.focus()
+      // 带输入框的小框（重命名分组、新建分组并移入）落在输入框上并全选
+      // 现有文字；只有按钮的确认框和合并分组的下拉框落在第一个控件（取消/下拉）。
+      if (first instanceof HTMLInputElement && first.type === "text") first.select()
+    } else {
+      dialog?.focus()
+    }
     const trap = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return
       const list = controls()
       const first = list[0]
       const last = list[list.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
         event.preventDefault()
         last?.focus()
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -1052,7 +1056,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       document.removeEventListener("keydown", trap)
       previous?.focus()
     }
-  }, [settings, deleting, groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm,
+  }, [settings, deleting, groupRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm,
     stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds])
   useEffect(() => {
     if (!selected) return
@@ -4559,17 +4563,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                 <Icon name="left" size={14} />
                 {tr("返回")}</button>
             ) : (
-              <>
-                <button aria-label={tr("后退")} onClick={() => navigateHistory(-1)}>
-                  <Icon name="left" />
-                </button>
-                <button
-                  aria-label={tr("前进")}
-                  onClick={() => navigateHistory(1)}
-                >
-                  <Icon name="right" />
-                </button>
-              </>
+              <button aria-label={tr("后退")} onClick={() => navigateHistory(-1)}>
+                <Icon name="left" />
+              </button>
             )}
           </div>
           {preview && <div className="viewer-title"><strong>{asset?.name}</strong><span>{Math.max(1, visible.findIndex(a => a.id === asset?.id) + 1)} / {visible.length}</span></div>}

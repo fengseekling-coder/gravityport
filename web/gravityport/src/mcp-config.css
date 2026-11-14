@@ -4,31 +4,79 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  margin-top: var(--space-5);
+  margin-bottom: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-panel);
-  background: var(--ui-panel);
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
   min-width: 0;
 }
 
-.mcp-config-copy {
+.mcp-config-header {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  min-width: 0;
 }
 
-.mcp-config-copy strong {
+.mcp-config-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--space-6);
+}
+
+.mcp-config-head strong {
+  font-size: var(--type-body-size);
   font-weight: var(--type-weight-title);
+  line-height: var(--type-body-line);
   color: var(--ui-text);
 }
 
-.mcp-config-copy p,
+.mcp-config-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.mcp-guide-button,
+.app .settings-modal .mcp-guide-button,
+.app .settings-modal .mcp-config-copy-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(var(--space-16) + var(--space-3));
+  height: var(--control-height-small);
+  min-height: var(--control-height-small);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-control);
+  background: var(--ui-raised);
+  color: var(--ui-text);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-weight-label);
+  line-height: var(--type-control-line);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.mcp-guide-button:hover,
+.app .settings-modal .mcp-guide-button:hover,
+.app .settings-modal .mcp-config-copy-button:hover:not(:disabled) {
+  background: var(--ui-selected);
+  color: var(--ui-text);
+}
+
+.mcp-config-desc,
 .mcp-config-hint,
 .mcp-config-note,
 .mcp-config-warning {
   margin: 0;
   color: var(--ui-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
 }
 
 .mcp-config-hint,

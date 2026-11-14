@@ -1,4 +1,6 @@
 @import 'tailwindcss';
+@import './design-tokens.css';
+@import './ui/primitives.css';
 @import './styles/01-base.css';
 @import './styles/02-gallery.css';
 @import './styles/03-sidebar-toolbar.css';

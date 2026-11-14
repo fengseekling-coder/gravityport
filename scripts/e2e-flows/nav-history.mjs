@@ -60,7 +60,10 @@ function navHistorySource() {
     await waitFor(() => activeNav() === '收藏' && cards() === 1, 'back returns to Favorites');
     const backToIdentity = activeNav() === '收藏' && cards() === 1;
 
-    toolbarButton(1).click();
+    // Toolbar forward button was removed; forward navigation stays on ⌘] / Alt+→.
+    window.dispatchEvent(new KeyboardEvent('keydown', navigator.platform.startsWith('Mac')
+      ? { key: ']', metaKey: true, bubbles: true, cancelable: true }
+      : { key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true }));
     await waitFor(() => activeNav() === '所有素材' && cards() === 2, 'forward returns to all');
     const forwardToAll = activeNav() === '所有素材' && cards() === 2;
 
