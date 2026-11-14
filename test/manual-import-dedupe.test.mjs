@@ -924,17 +924,26 @@ test("skipIdenticalBytes lookup adds no measurable cost on a 2000-asset library"
     }
     return Number(process.hrtime.bigint() - started) / 1e6;
   };
-  let withSwitchTotal = 0;
-  let withoutSwitchTotal = 0;
+  // Compare the median of the per-round differences, not the means: one GC
+  // or disk pause on a shared runner used to inflate a 20-sample mean past the
+  // budget (CI run 43623051367: 23.13ms vs 3.76ms; task 352 saw the same on a
+  // busy machine) while the lookup itself costs well under a millisecond. A
+  // real per-asset cost shows up in every round, so the median still sees it.
+  const median = (values) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  };
+  const withSwitch = [];
+  const withoutSwitch = [];
   const rounds = 20;
   for (let round = 0; round < rounds; round += 1) {
-    withSwitchTotal += await timed({ skipIdenticalBytes: true });
-    withoutSwitchTotal += await timed({});
+    withSwitch.push(await timed({ skipIdenticalBytes: true }));
+    withoutSwitch.push(await timed({}));
   }
-  const withSwitchAverage = withSwitchTotal / rounds;
-  const withoutSwitchAverage = withoutSwitchTotal / rounds;
+  const addedCost = median(withSwitch.map((value, index) => value - withoutSwitch[index]));
   assert.ok(
-    withSwitchAverage - withoutSwitchAverage < 3,
-    `dedupe lookup should stay under 3ms per asset (with ${withSwitchAverage.toFixed(2)}ms vs without ${withoutSwitchAverage.toFixed(2)}ms)`,
+    addedCost < 3,
+    `dedupe lookup should stay under 3ms per asset (median added ${addedCost.toFixed(2)}ms; median with ${median(withSwitch).toFixed(2)}ms vs without ${median(withoutSwitch).toFixed(2)}ms)`,
   );
 });
