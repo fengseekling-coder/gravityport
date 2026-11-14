@@ -40,6 +40,19 @@ export { reserveIngestBodyCapacity, resetIngestBodyCapacityForTests } from "./we
 
 const DEFAULT_PROJECT_ID = "default";
 const DEFAULT_TEMP_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Task 416 (audit 低12 ②): a full disk while staging captured media is a
+// named outcome — 507 with DISK_FULL — instead of a generic 500 the extension
+// only re-queues. Every capture temp-file write goes through here.
+async function writeCaptureTempFile(tempPath: string, bytes: Buffer): Promise<void> {
+  try {
+    await writeFile(tempPath, bytes);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOSPC") throw error;
+    throw webCaptureError("The disk is full while writing captured media.", 507, "DISK_FULL");
+  }
+}
+
 const PROVIDER_CONFIG = {
   chatgpt: {
     label: "ChatGPT",
@@ -587,7 +600,7 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
     const tempName = `${providerConfig.tempPrefix}-${Date.now()}-${randomBytes(4).toString("hex")}${ext}`;
     tempPath = join(tempRoot, tempName);
     tempFileName = tempName;
-    await writeFile(tempPath, imageBytes);
+    await writeCaptureTempFile(tempPath, imageBytes);
     const captureAssetId = sanitizeAssetId(explicitAssetId || `${providerConfig.assetIdPrefix}-${contentHash.slice(0, 12)}`, providerConfig.assetIdPrefix);
     const references = await turnReferences(store, projectAssets, referenceStore, projectId, { conversationId, generationContextId, capturedAt, selfAssetId: captureAssetId });
     return {
@@ -831,7 +844,7 @@ async function ingestWebVideoCapture(options: {
   try {
     await mkdir(tempRoot, { recursive: true });
     tempPath = uploadedVideoPath || join(tempRoot, tempName);
-    if (!uploadedVideoPath) await writeFile(tempPath, videoBytes!);
+    if (!uploadedVideoPath) await writeCaptureTempFile(tempPath, videoBytes!);
     // Dimensions and duration read from the file itself are the truth; the
     // values a provider page reports (e.g. Jimeng's fixed duration of 7 for a
     // 6.08 s video, or 0×0 when its API carries none) are only the fallback
