@@ -236,11 +236,24 @@ function pageSource({ expectDialog = true, liveWait = false } = {}) {
     // while the check is still running (6s delay + maintenance start).
     await sleep(2500);
     if (dialog()) throw new Error('the dialog showed while the check was still pending');
-    await waitFor(() => dialog(), 'schema-upgrade notice dialog', 30000);
-    result.shown = true;
-    result.title = (dialog().querySelector('h3') || {}).textContent || '';
-    result.body = (dialog().querySelector('p') || {}).textContent || '';
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    // Task 428: press Escape the moment the dialog is inserted. A
+    // MutationObserver callback runs before React's passive effects — the
+    // window where the App's Escape listener still held the stale "no
+    // notice" closure and swallowed the key (CI run 43628176321) — so the
+    // race is exercised every run instead of only on slow runners.
+    let escapedAtInsert = false;
+    const observer = new MutationObserver(() => {
+      const node = dialog();
+      if (!node || escapedAtInsert) return;
+      observer.disconnect();
+      escapedAtInsert = true;
+      result.shown = true;
+      result.title = (node.querySelector('h3') || {}).textContent || '';
+      result.body = (node.querySelector('p') || {}).textContent || '';
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    await waitFor(() => escapedAtInsert, 'schema-upgrade notice dialog', 30000);
     await sleep(400);
     result.escClosed = !dialog();
     ` : expectDialog ? `

@@ -2861,8 +2861,13 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         else if (groupCreateWithSelection) setGroupCreateWithSelection(null)
         else if (groupMerge) setGroupMerge(null)
         else if (groupDeleteConfirm) setGroupDeleteConfirm(null)
-        else if (renameNoticeOpen) dismissRenameNotice()
-        else if (schemaNoticeOpen) dismissSchemaUpgradeNotice()
+        // The two notices open on their own (startup check, live post-upgrade
+        // verdict), not from a key or click, so like the authorization queue
+        // they read the render-time refs: an Escape between the notice's
+        // paint and this listener's re-arm saw the stale closure and was
+        // swallowed (task 428, CI run 43628176321, Windows runner).
+        else if (renameNoticeRef.current) dismissRenameNotice()
+        else if (schemaNoticeRef.current) dismissSchemaUpgradeNotice()
         else if (deleting) setDeleting(false)
         else if (stackDissolveConfirm) setStackDissolveConfirm(null)
         else if (stackTrashConfirm) setStackTrashConfirm(null)
