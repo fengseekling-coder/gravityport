@@ -331,7 +331,10 @@ previewScope("rehearsal: cross-name update with a silent payload rolls back to M
       appName: "GravityPort.app",
     });
 
-    await waitFor(() => existsSync(logPath), { label: "helper failure log" });
+    // Task 416 (audit 测试 a): the helper writes the log in two parts — wait
+    // for the asserted line, not just for the file to exist, or a read between
+    // the two writes fails the match.
+    await waitFor(() => existsSync(logPath) && /failed \(exit \d+\)/.test(readFileSync(logPath, "utf8")), { label: "helper failure log" });
     assert.match(readFileSync(logPath, "utf8"), /failed \(exit \d+\)/);
     await waitFor(() => existsSync(join(appsDir, "MOSA.app")) && markerOf(join(appsDir, "MOSA.app")) === "old", {
       label: "previous app restored at the original path and name",
@@ -369,7 +372,7 @@ previewScope("rehearsal: a payload that upgraded the library is kept instead of 
       appName: "GravityPort.app",
     });
 
-    await waitFor(() => existsSync(logPath), { label: "helper log" });
+    await waitFor(() => existsSync(logPath) && /kept the new version because it already upgraded the library/.test(readFileSync(logPath, "utf8")), { label: "helper log" });
     assert.match(readFileSync(logPath, "utf8"), /kept the new version because it already upgraded the library/);
     assert.equal(markerOf(join(appsDir, "GravityPort.app")), "new", "the version that upgraded the library stays installed");
     // The new version stopped before reporting readiness: the helper starts it
@@ -415,7 +418,7 @@ previewScope("rehearsal: a cross-name payload that upgraded the library is kept 
       appName: "GravityPort.app",
     });
 
-    await waitFor(() => existsSync(logPath), { label: "helper log" });
+    await waitFor(() => existsSync(logPath) && /kept the new version/.test(readFileSync(logPath, "utf8")), { label: "helper log" });
     assert.match(readFileSync(logPath, "utf8"), /exit \d+/);
     assert.match(readFileSync(logPath, "utf8"), /kept the new version/);
     assert.equal(markerOf(join(appsDir, "GravityPort.app")), "new");
@@ -481,7 +484,7 @@ previewScope("rehearsal failure: ARCH_MISMATCH when an arm64 payload poses as th
       envExtra: { MOSA_TEST_LIPO_ARCH: "arm64" },
     });
 
-    await waitFor(() => existsSync(logPath), { label: "ARCH_MISMATCH failure log" });
+    await waitFor(() => existsSync(logPath) && FAILURE_LINE.test(readFileSync(logPath, "utf8").split("\n")[0]), { label: "ARCH_MISMATCH failure log" });
     const [firstLine] = readFileSync(logPath, "utf8").split("\n");
     assert.match(firstLine, /^GP_UPDATE_FAILURE code=ARCH_MISMATCH exit=\d+$/);
     await waitFor(() => markerOf(join(appsDir, "MOSA.app")) === "old", { label: "previous app restored after the architecture refusal" });
@@ -674,7 +677,10 @@ previewScope("rehearsal: team identifier and signature transition rules in previ
 const FAILURE_LINE = /^GP_UPDATE_FAILURE code=(\S+) exit=(\d+)$/;
 
 async function assertFailureRestored({ root, appsDir, logPath, code }) {
-  await waitFor(() => existsSync(logPath), { label: `${code} failure log` });
+  // Task 416 (audit 测试 a): wait for the failure line itself — the helper
+  // appends a second line after creating the file, and an early read between
+  // the two writes used to see an empty or half-written log.
+  await waitFor(() => existsSync(logPath) && FAILURE_LINE.test(readFileSync(logPath, "utf8").split("\n")[0]), { label: `${code} failure log` });
   const [firstLine] = readFileSync(logPath, "utf8").split("\n");
   const match = FAILURE_LINE.exec(firstLine);
   assert.ok(match, `first log line must be a GP_UPDATE_FAILURE code, got: ${firstLine}`);
@@ -802,7 +808,7 @@ previewScope("rehearsal failure: a new app that upgraded the library is kept wit
     const zipPath = await makePayloadZip({ root: payloadRoot, appName: "MOSA.app" });
     const stubs = await writeStubScripts(root);
     const { logPath } = await launchHelper({ root, stubs, installAppPath: join(appsDir, "MOSA.app"), zipPath, appName: "MOSA.app" });
-    await waitFor(() => existsSync(logPath), { label: "kept-new log" });
+    await waitFor(() => existsSync(logPath) && readFileSync(logPath, "utf8").split("\n")[0] === "GP_UPDATE_KEPT_NEW exit=34", { label: "kept-new log" });
     const [firstLine] = readFileSync(logPath, "utf8").split("\n");
     assert.equal(firstLine, "GP_UPDATE_KEPT_NEW exit=34");
     assert.equal(markerOf(join(appsDir, "MOSA.app")), "new", "the upgraded new version stays installed");

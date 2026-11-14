@@ -16,6 +16,7 @@ import vm from "node:vm";
 import Database from "better-sqlite3";
 import sharp from "sharp";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
+import { runBackgroundWorkerInContext } from "./helpers/background-harness.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import { ingestWebCapture, createWebCaptureIngest } from "../lib/web-capture-ingest.js";
 import {
@@ -27,8 +28,6 @@ import {
 import { handleBridgeRoute, isWebCaptureApiPath } from "../lib/api/bridge-routes.mjs";
 
 const extensionRoot = new URL("../extensions/chatgpt-web-capture/", import.meta.url);
-const backgroundSource = await readFile(new URL("background.js", extensionRoot), "utf8");
-const providerPolicySource = await readFile(new URL("provider-policy.js", extensionRoot), "utf8");
 const jimengHookSource = await readFile(new URL("jimeng-page-hook.js", extensionRoot), "utf8");
 const providerJimengSource = await readFile(new URL("provider-jimeng.js", extensionRoot), "utf8");
 
@@ -966,7 +965,7 @@ test("background: reportProviderDeletions posts to the app with the token, caps 
     }
     return Promise.reject(new Error(`connection refused: ${url}`));
   };
-  const context = vm.createContext({
+  const context = runBackgroundWorkerInContext({
     chrome,
     fetch: fetchImpl,
     URL,
@@ -981,12 +980,6 @@ test("background: reportProviderDeletions posts to the app with the token, caps 
     queueMicrotask,
     console,
   });
-  new vm.Script(providerPolicySource, { filename: "provider-policy.js" }).runInContext(context);
-  const workerSource = backgroundSource.replace(/^import\s+".\/provider-policy.js";\s*$/m, "");
-  if (workerSource === backgroundSource) {
-    throw new Error("background.js must import ./provider-policy.js");
-  }
-  new vm.Script(workerSource, { filename: "background.js" }).runInContext(context);
 
   const dispatchMessage = (message, sender) => new Promise((resolve, reject) => {
     const listener = listeners.message[0];

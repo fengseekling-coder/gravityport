@@ -620,6 +620,12 @@ function reportCaptureQueueStatus() {
     const retryRequestId = Math.max(0, Number(body?.retryRequestId || 0));
     const retryRequested = retryRequestId > lastSeenRetryRequestId;
     lastSeenRetryRequestId = Math.max(lastSeenRetryRequestId, retryRequestId);
+    // Task 416 (audit 低3 ①): the settings page's Retry button only bumps
+    // retryRequestId on the server, so without this the re-send waited for
+    // the next minute beat. drainCaptureQueue() dedupes concurrent drains
+    // (queueDrainPromise), and the drain's own status report reads the same
+    // id, so this fires once per bump and cannot loop.
+    if (retryRequested) void drainCaptureQueue();
     return { reported: true, retryRequested };
   })().catch(() => ({ reported: false, retryRequested: false })).finally(() => {
     queueStatusReportPromise = undefined;

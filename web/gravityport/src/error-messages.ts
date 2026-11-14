@@ -100,6 +100,11 @@ const ERROR_CODE_MESSAGES: Record<string, MessagePack> = {
     zh: "导入失败，文件在导入过程中被修改。请重新导入。",
     en: "Import failed. The file was modified during import. Import it again.",
   },
+  // 任务 416：导入写文件遇到 ENOSPC，服务端回 507 + DISK_FULL（暂存、批量导入、收图三处）。
+  DISK_FULL: {
+    zh: "导入失败，磁盘空间不足。",
+    en: "Import failed. The disk is full.",
+  },
   ASSET_FILE_BUSY: {
     zh: "无法完成操作。素材文件正在使用中，请关闭后重试。",
     en: "Couldn’t complete the action. The asset files are in use. Close them and try again.",
@@ -107,6 +112,11 @@ const ERROR_CODE_MESSAGES: Record<string, MessagePack> = {
   IMAGE_CONTENT_NOT_MEDIA: {
     zh: "导入失败，文件不是支持的格式。请检查文件格式再重新导入。",
     en: "Import failed. The file format isn’t supported. Check the file format and import again.",
+  },
+  // 任务 413：HEIC/HEIF 只在 macOS 收（lib/heic-import-gate.mjs 的平台闸）。
+  HEIC_UNSUPPORTED_ON_PLATFORM: {
+    zh: "Windows 版暂时不能导入 HEIC 照片",
+    en: "The Windows version can’t import HEIC photos yet",
   },
 };
 
@@ -116,6 +126,7 @@ const IMPORT_FAILURE_TAIL_CODES = new Set([
   "IMAGE_CONTENT_NOT_MEDIA",
   "STAGING_FILE_TOO_LARGE",
   "SOURCE_CHANGED_DURING_IMPORT",
+  "DISK_FULL",
 ]);
 const IMPORT_FAILED_PREFIX = { zh: "导入失败，", en: "Import failed. " };
 
@@ -183,4 +194,8 @@ export function describeError(error: unknown, language: Language = "zh"): string
   }
   if (error instanceof Error) return unknown(error.message || "");
   return unknown(String(error));
+}
+
+export function errorMessage(error: unknown, language: Language): string {
+  return describeError(error, language)
 }

@@ -84,6 +84,10 @@ const FALLBACK_READ_ALLOWANCE = new Set([
   "gallery.business_fields.media_kind", "detail.business_fields.media_kind",
   // business_fields.duration_seconds — images have no duration.
   "gallery.business_fields.duration_seconds", "detail.business_fields.duration_seconds",
+  // business_fields.animated — task 412: the flag is absent until the asset's
+  // derivative run (or the startup animation backfill) stamps it; assetIsAnimated
+  // falls back to the .gif extension, everything else stays still.
+  "gallery.business_fields.animated", "detail.business_fields.animated",
   // business_fields.generation_request_prompt — request-prompt stores keep it
   // in source (and old rows carry neither).
   "gallery.business_fields.generation_request_prompt", "detail.business_fields.generation_request_prompt",

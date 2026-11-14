@@ -2,11 +2,11 @@ import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { VIDEO_EXTENSIONS } from "./library-location.mjs";
 import type { PaletteColor } from "./image-palette.js";
 
 const DEFAULT_CONCURRENCY = 2;
 const MAX_CLAIM_BACKOFF_MS = 30000;
-const VIDEO_EXTENSIONS = new Set([".m4v", ".mov", ".mp4", ".webm"]);
 const DERIVATIVE_PROCESSOR_PATH = fileURLToPath(new URL("./derivative-processor.js", import.meta.url));
 
 interface DerivativeJob {
@@ -39,6 +39,10 @@ interface DerivativeProcessorResult extends Record<string, unknown> {
   thumbnailPath: string;
   width: number;
   height: number;
+  /** Task 412: whether the original animates (GIF/WebP pages, APNG acTL, AVIF avis); false when the probe failed. */
+  animated: boolean;
+  /** Task 412: frame count when the format states it, null for AVIF or a failed probe. */
+  frameCount: number | null;
   /** Dominant colors of the 400px thumbnail, largest share first; [] when none could be computed. */
   palette: PaletteColor[];
   /** "dhash64:<16 hex>" fingerprint of the 400px thumbnail; "" when it could not be computed. */
@@ -218,8 +222,12 @@ export function createDerivativeWorker(options: {
   idleDelayMs?: number;
   maxClaimBackoffMs?: number;
   processor?: DerivativeProcessor;
+  isLibraryAvailable?: () => boolean;
 } = {}): DerivativeWorker {
   const store = options.store;
+  const isLibraryAvailable = typeof options.isLibraryAvailable === "function"
+    ? options.isLibraryAvailable
+    : () => true;
   const processor = options.processor || createDerivativeProcessor();
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || DEFAULT_CONCURRENCY, DEFAULT_CONCURRENCY));
   const idleDelayMs = Math.max(250, Number(options.idleDelayMs) || 1000);
@@ -246,6 +254,7 @@ export function createDerivativeWorker(options: {
   async function schedule(): Promise<void> {
     if (stopped || !store) return;
     while (active < concurrency && !stopped) {
+      if (!isLibraryAvailable()) break;
       let job: DerivativeJob | null = null;
       try {
         job = await store.claimDerivativeJob();

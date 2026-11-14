@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -16,6 +16,17 @@ import {
   reportAnonymousUsage,
 } from "../desktop/update-service.mjs";
 import { createReleaseManifestTrust, signReleaseManifest } from "../lib/release-manifest-signature.mjs";
+
+// Task 406: the update IPC handlers now live in desktop/ipc/updates.mjs, so
+// source-text assertions read desktop/main.mjs plus those files.
+function readDesktopMainSources() {
+  const ipcDir = new URL("desktop/ipc/", new URL("..", import.meta.url));
+  const parts = [readFileSync(new URL("../desktop/main.mjs", import.meta.url), "utf8")];
+  for (const name of readdirSync(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
+    parts.push(readFileSync(new URL(name, ipcDir), "utf8"));
+  }
+  return parts.join("\n");
+}
 
 test("version comparison follows semver ordering for MOSA releases", () => {
   assert.equal(compareVersions("0.2.1", "0.2.0"), 1);
@@ -729,7 +740,7 @@ test("in-app update install requires the packaged release manifest trust", () =>
 });
 
 test("desktop main refuses in-app installs and offers the download page without manifest trust", () => {
-  const source = readFileSync(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  const source = readDesktopMainSources();
   const handler = source.slice(source.indexOf('ipcMain.handle("download-and-install-update"'));
   const guard = handler.indexOf("canInstallUpdateInApp(expectedServiceIdentity.releaseManifestTrust)");
   assert.ok(guard > 0, "download-and-install-update must check the manifest trust");
@@ -738,7 +749,7 @@ test("desktop main refuses in-app installs and offers the download page without 
 });
 
 test("desktop main runs install preflight before any download and records the attempt only after the helper starts", () => {
-  const source = readFileSync(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  const source = readDesktopMainSources();
   const handler = source.slice(source.indexOf('ipcMain.handle("download-and-install-update"'));
   const end = handler.indexOf('ipcMain.handle("', 10) > 0 ? handler.indexOf('ipcMain.handle("', 10) : handler.length;
   const body = handler.slice(0, end);

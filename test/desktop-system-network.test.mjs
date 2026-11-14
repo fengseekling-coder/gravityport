@@ -4,11 +4,20 @@
 // server through one could neither update nor be counted (the usage report was
 // left on Node's fetch until this test existed).
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
-const mainSource = readFileSync(resolve(import.meta.dirname, "..", "desktop", "main.mjs"), "utf8");
+// Task 406: the update IPC handlers now live in desktop/ipc/updates.mjs, so the
+// call scan reads desktop/main.mjs plus those files.
+const desktopDir = resolve(import.meta.dirname, "..", "desktop");
+const mainSource = [
+  readFileSync(join(desktopDir, "main.mjs"), "utf8"),
+  ...readdirSync(join(desktopDir, "ipc"))
+    .filter((file) => file.endsWith(".mjs"))
+    .sort()
+    .map((file) => readFileSync(join(desktopDir, "ipc", file), "utf8")),
+].join("\n");
 const NETWORK_CALLS = ["checkForMosaUpdate", "downloadMacosUpdate", "downloadWindowsUpdate", "reportAnonymousUsage"];
 
 // The argument text of each call: from "name({" to the first "})" after it.

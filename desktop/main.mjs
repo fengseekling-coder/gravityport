@@ -3,10 +3,10 @@ import "../lib/apply-env-aliases.mjs";
 // activation policy before any heavy import lets the process check in with
 // Launch Services as a regular app. See desktop/quiet-test-mode.mjs.
 import "./quiet-test-mode.mjs";
-import { app, BrowserWindow, Menu, dialog, ipcMain, clipboard, nativeImage, net, screen, session, shell, Notification } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, clipboard, nativeImage, net, session, shell, Notification } from "electron";
 import { evaluateQuietQaRunForElectronApp, createScreenGuard } from "./quiet-qa-screen.mjs";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
-import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { access, readdir, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,7 @@ import { parseDisabledBridges } from "../lib/runtime-bridges.mjs";
 import { installManagedExtension, managedExtensionPaths, readManagedExtension } from "../lib/browser-extension-install.mjs";
 import { cleanupOrphanStagedFiles, importStagingDir, writeStagedPng } from "../lib/import-staging.mjs";
 import { getDesktopText, getLibrarySchemaNewerDialogText, getLibraryStartupFailureText, getNotificationTextForAssetsImported, getStartupFailureText, getUpdateNotificationText } from "./notification-i18n.mjs";
-import { buildMenuTemplate } from "./menu-template.mjs";
+import { createWindowMenu } from "./window-menu.mjs";
 import { ensureWindowsShortcutAppId } from "./windows-shortcut-app-id.mjs";
 import { loadOrCreateMosaClientToken, loadOrCreateWebCaptureToken, MOSA_WEB_CAPTURE_DEFAULT_ORIGINS } from "./web-capture-pairing.mjs";
 import { desktopPlatformAdapter } from "./platform/index.mjs";
@@ -30,7 +30,6 @@ import { showLibrarySchemaNewerDialogThenShutdown, shouldHandleWindowAllClosed }
 import {
   failureCountFor,
   failureRecordFor,
-  recordUpdateAttempt,
   settleUpdateAttempt,
   UPDATE_FAILURE_CONFIRMED_THRESHOLD,
 } from "./update-failures.mjs";
@@ -39,8 +38,6 @@ import {
   checkWindowsInstallDirWritable,
   checkWindowsInstallProcesses,
   formatBytesForDialog,
-  requiredDownloadBytes,
-  requiredInstallBytes,
 } from "./update-preflight.mjs";
 import { backgroundUpdateGatesPass, createUpdateScheduler, updateReadyNotificationCopy } from "./update-scheduler.mjs";
 import { ensureInstallationId, prepareAnonymousUsage } from "./anonymous-usage.mjs";
@@ -75,22 +72,21 @@ import { getBuildIdentity } from "../lib/build-identity.mjs";
 import { MOSA_SERVICE_PROTOCOL_VERSION } from "../lib/version-identities.mjs";
 import {
   downloadWindowsUpdate,
-  launchWindowsUpdateHelper,
   resolveWindowsUpdateReadyFile,
-  windowsInstalledExeName,
   windowsUpdateTransactionParentDir,
 } from "./windows-updater.mjs";
 import {
   downloadMacosUpdate,
   evaluateMacosInstallLocation,
-  launchMacosUpdateHelper,
   resolveMacosInstallAppPath,
   resolveMacosUpdateReadyFile,
 } from "./macos-updater.mjs";
 import { cleanupLegacyVisualData as cleanupLegacyVisualDataDir } from "./legacy-visual-cleanup.mjs";
 import { registerClipboardIpc } from "./ipc/clipboard.mjs";
 import { registerLibraryLocationIpc } from "./ipc/library-location.mjs";
+import { createLibraryVolumeWatch } from "./library-volume-watch.mjs";
 import { registerMiscIpc } from "./ipc/misc.mjs";
+import { macosUpdateInstallPromise, registerUpdateIpc, windowsUpdateInstallPromise } from "./ipc/updates.mjs";
 import { createMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
 import { buildMcpClientConfig } from "../lib/mcp-client-config.mjs";
 import { isTelemetryDisabled } from "../lib/env-aliases.mjs";
@@ -377,8 +373,6 @@ function nativeDragIcon(image) {
     quality: "good",
   });
 }
-const BOUNDS_PATH = join(desktopDataDir, "window-bounds.json");
-const DEFAULT_BOUNDS = { width: 1320, height: 860 };
 
 let mainWindow = null;
 let service = null;
@@ -393,10 +387,6 @@ let windowPromise = null;
 let windowOpenRequested = false;
 let ipcRegistered = false;
 let updateCheckPromise = null;
-let macosUpdateInstallPromise = null;
-let macosUpdateDownloadController = null;
-let windowsUpdateInstallPromise = null;
-let windowsUpdateDownloadController = null;
 let usageReportPromise = null;
 let usageReportTimer = null;
 let serviceManagerModulePromise = null;
@@ -576,6 +566,7 @@ if (!app.requestSingleInstanceLock()) {
     if (shuttingDown) return;
     event.preventDefault();
     shuttingDown = true;
+    libraryVolumeWatch.stop();
     stopBridgeNotificationPoll();
     stopAnonymousUsageLifecycle();
     updateScheduler.stop();
@@ -592,75 +583,12 @@ if (!app.requestSingleInstanceLock()) {
   process.once("SIGTERM", () => app.quit());
 }
 
-function loadBounds() {
-  let saved = null;
-  try {
-    if (existsSync(BOUNDS_PATH)) saved = JSON.parse(readFileSync(BOUNDS_PATH, "utf-8"));
-  } catch {}
-  if (!saved || !Number.isFinite(saved.width) || !Number.isFinite(saved.height)) return DEFAULT_BOUNDS;
-  const normalized = {
-    width: Math.max(960, Math.round(saved.width)),
-    height: Math.max(640, Math.round(saved.height)),
-  };
-  if (!Number.isFinite(saved.x) || !Number.isFinite(saved.y)) return normalized;
-  const candidate = { ...normalized, x: Math.round(saved.x), y: Math.round(saved.y) };
-  const visible = screen.getAllDisplays().some(({ workArea }) => {
-    const overlapWidth = Math.min(candidate.x + candidate.width, workArea.x + workArea.width) - Math.max(candidate.x, workArea.x);
-    const overlapHeight = Math.min(candidate.y + candidate.height, workArea.y + workArea.height) - Math.max(candidate.y, workArea.y);
-    return overlapWidth >= 120 && overlapHeight >= 80;
-  });
-  return visible ? candidate : normalized;
-}
-
-function saveBounds(win) {
-  if (!win.isMaximized() && !win.isMinimized() && !win.isFullScreen()) {
-    try { writeFileSync(BOUNDS_PATH, JSON.stringify(win.getBounds())); } catch {}
-  }
-}
-
-function sendToWindow(channel) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(channel);
-}
-
-const MOSA_MENU_ID_PREFIX = "mosa-menu-";
-
-// macOS/Electron may append unlabelled normal items to an application menu
-// after it is installed. Keep every explicit MOSA item and remove only those
-// injected normal entries, preserving separators and native role behavior.
-function pruneInjectedMenuItems(menu) {
-  for (const item of menu.items) {
-    const submenu = item.submenu;
-    if (!submenu) continue;
-    const retained = submenu.items.filter((child) => (
-      child.type !== "normal" || child.id?.startsWith(MOSA_MENU_ID_PREFIX)
-    ));
-    if (retained.length !== submenu.items.length) {
-      submenu.clear();
-      retained.forEach((child) => submenu.append(child));
-    }
-    pruneInjectedMenuItems(submenu);
-  }
-}
-
-function buildMenu() {
-  const menu = Menu.buildFromTemplate(buildMenuTemplate({
-    platform: process.platform,
-    locale: currentLocale,
-    onSearch: () => sendToWindow("menu-search"),
-    onSelectAll: () => sendToWindow("menu-select-all"),
-  }));
-  Menu.setApplicationMenu(menu);
-  if (desktopPlatform.capabilities.hideApplicationMenuBar && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setMenuBarVisibility(false);
-  }
-  if (desktopPlatform.capabilities.pruneInjectedApplicationMenuItems) {
-    pruneInjectedMenuItems(menu);
-    setImmediate(() => {
-      if (Menu.getApplicationMenu() === menu) pruneInjectedMenuItems(menu);
-    });
-  }
-}
+const { loadBounds, saveBounds, buildMenu } = createWindowMenu({
+  desktopDataDir,
+  desktopPlatform,
+  getMainWindow: () => mainWindow,
+  getCurrentLocale: () => currentLocale,
+});
 
 // The Windows update helper parks the previous installation under
 // .MOSA-update-*/previous beside the portable install directory, and the macOS
@@ -818,223 +746,26 @@ function registerIPC() {
     saveLibraryDir,
     setLibraryDir: (value) => { libraryDir = value; },
     setService: (value) => { service = value; },
+    pauseLibraryVolumeWatch: () => libraryVolumeWatch.pause(),
+    resumeLibraryVolumeWatch: (nextDir) => libraryVolumeWatch.resume(nextDir),
+    runUpdateCheck,
+    updateScheduler,
+    systemNetworkFetch,
+    releaseManifestVerificationTrusts,
+    updateFailedTwiceResult,
+    preflightFreeSpace,
+    windowsInstallPreflight,
+    stopBridgeNotificationPoll,
+    stopAnonymousUsageLifecycle,
+    releaseDesktopStartupHandoff,
+    MACOS_UPDATE_STAGING_ROOT,
+    WINDOWS_UPDATE_STAGING_ROOT,
+    isolationContext,
+    setShuttingDown: (value) => { shuttingDown = value; },
   };
   registerMiscIpc(deps);
   registerClipboardIpc(deps);
-
-  ipcMain.handle("check-for-updates", async (event, notify = false) => {
-    if (!trustedRendererEvent(event)) return { status: "unavailable", currentVersion: app.getVersion() };
-    return runUpdateCheck({ notify: notify === true });
-  });
-
-  // Task 231: the renderer mirrors the main process's "verified package is
-  // staged" state — queried once on mount (the window may open after the
-  // announcement) and pushed live through the update-ready event.
-  ipcMain.handle("get-update-ready", (event) => {
-    if (!trustedRendererEvent(event)) return null;
-    return updateScheduler.readyPayload();
-  });
-
-  ipcMain.handle("download-and-install-update", async (event) => {
-    if (!trustedRendererEvent(event)) return { status: "unavailable", currentVersion: app.getVersion() };
-    if (!app.isPackaged || isolationContext.qaRun) {
-      return { status: "unsupported", currentVersion: app.getVersion() };
-    }
-    if (!canInstallUpdateInApp(expectedServiceIdentity.releaseManifestTrust)) {
-      return { status: "unsupported", reason: "release-manifest-untrusted", currentVersion: app.getVersion() };
-    }
-    if (process.platform === "darwin") {
-      if (macosUpdateInstallPromise) return macosUpdateInstallPromise;
-      updateScheduler.cancelDownload();
-      macosUpdateInstallPromise = (async () => {
-        const controller = new AbortController();
-        macosUpdateDownloadController = controller;
-        try {
-          const release = await checkForMosaUpdate({
-            fetchImpl: systemNetworkFetch,
-            currentVersion: app.getVersion(),
-            currentDistribution: expectedServiceIdentity.distribution,
-            releaseManifestTrust: releaseManifestVerificationTrusts(),
-            macArch: macosUpdateArchForHost({ arch: process.arch, runningUnderARM64Translation: app.runningUnderARM64Translation }),
-          });
-          if (!release.updateAvailable) return { status: "current", currentVersion: release.currentVersion };
-          if (!release.macArtifact) return { status: "unavailable", currentVersion: release.currentVersion };
-          const blocked = await updateFailedTwiceResult(release.latestVersion, release.currentVersion);
-          if (blocked) return blocked;
-          const installLocation = evaluateMacosInstallLocation(process.execPath);
-          if (!installLocation.installAppPath) return { status: "unsupported", currentVersion: release.currentVersion };
-          if (!installLocation.supported) {
-            // Gatekeeper translocation or a non-writable install directory:
-            // never try an in-place replacement from there.
-            return {
-              status: "unavailable",
-              reason: "install-location-unsupported",
-              currentVersion: release.currentVersion,
-            };
-          }
-          await mkdir(MACOS_UPDATE_STAGING_ROOT, { recursive: true }).catch(() => {});
-          if (!(await preflightFreeSpace({
-            dir: MACOS_UPDATE_STAGING_ROOT,
-            requiredBytes: requiredDownloadBytes(release.macArtifact.size),
-          }))) return { status: "error", code: "PREFLIGHT_DISK_SPACE", currentVersion: release.currentVersion };
-          const download = await downloadMacosUpdate({
-            fetchImpl: systemNetworkFetch,
-            artifact: release.macArtifact,
-            version: release.latestVersion,
-            stagingRoot: MACOS_UPDATE_STAGING_ROOT,
-            signal: controller.signal,
-            onProgress: (progress) => {
-              if (!mainWindow || mainWindow.isDestroyed()) return;
-              mainWindow.webContents.send("update-download-progress", progress);
-            },
-          });
-          if (macosUpdateDownloadController === controller) macosUpdateDownloadController = null;
-          if (!(await preflightFreeSpace({
-            dir: dirname(installLocation.installAppPath),
-            requiredBytes: requiredInstallBytes(release.macArtifact.size),
-          }))) return { status: "error", code: "PREFLIGHT_DISK_SPACE", currentVersion: release.currentVersion };
-          await launchMacosUpdateHelper({
-            zipPath: download.zipPath,
-            installAppPath: installLocation.installAppPath,
-            version: release.latestVersion,
-            expectedIdentity: release.buildIdentity,
-            appName: release.macArtifact.appName,
-            expectedTeamIdentifier: release.macArtifact.teamIdentifier || "",
-            expectedArch: release.macArtifact.arch,
-            processId: process.pid,
-            libraryDir,
-          });
-          // Recorded before the App exits so the next launch can tell whether
-          // the new version came up (see settleUpdateAttempt).
-          await recordUpdateAttempt({ userDataDir: desktopDataDir, version: release.latestVersion, platform: "macos" });
-          shuttingDown = true;
-          stopBridgeNotificationPoll();
-          stopAnonymousUsageLifecycle();
-          updateScheduler.stop();
-          await stopOwnedRuntime();
-          await releaseDesktopStartupHandoff();
-          app.exit(0);
-          return { status: "installing", latestVersion: release.latestVersion };
-        } catch (error) {
-          if (controller.signal.aborted) {
-            return { status: "cancelled", currentVersion: app.getVersion() };
-          }
-          console.warn(`[MOSA] macOS update failed: ${error?.message || error}`);
-          return { status: "error", currentVersion: app.getVersion(), code: "MACOS_UPDATE_FAILED" };
-        } finally {
-          if (macosUpdateDownloadController === controller) macosUpdateDownloadController = null;
-        }
-      })().finally(() => { macosUpdateInstallPromise = null; });
-      return macosUpdateInstallPromise;
-    }
-    if (process.platform !== "win32") {
-      return { status: "unsupported", currentVersion: app.getVersion() };
-    }
-    if (windowsUpdateInstallPromise) return windowsUpdateInstallPromise;
-    updateScheduler.cancelDownload();
-    windowsUpdateInstallPromise = (async () => {
-      const controller = new AbortController();
-      windowsUpdateDownloadController = controller;
-      try {
-      // Re-read the first-party manifest in the trusted main process instead of
-      // accepting a renderer-supplied URL, filename or digest.
-      const release = await checkForMosaUpdate({
-        fetchImpl: systemNetworkFetch,
-        currentVersion: app.getVersion(),
-        currentDistribution: expectedServiceIdentity.distribution,
-        releaseManifestTrust: releaseManifestVerificationTrusts(),
-        macArch: macosUpdateArchForHost({ arch: process.arch, runningUnderARM64Translation: app.runningUnderARM64Translation }),
-      });
-      if (!release.updateAvailable) return { status: "current", currentVersion: release.currentVersion };
-      if (!release.windowsArtifact) return { status: "unavailable", currentVersion: release.currentVersion };
-      // Old installs keep MOSA.exe, new installs keep GravityPort.exe, and
-      // every relaunch path stays on the current name. An unrecognized
-      // executable name must stop the update before anything is downloaded
-      // or replaced.
-      const installedExeName = windowsInstalledExeName();
-      if (!installedExeName) return { status: "unsupported", currentVersion: release.currentVersion };
-      const blocked = await updateFailedTwiceResult(release.latestVersion, release.currentVersion);
-      if (blocked) return blocked;
-      const installDir = dirname(process.execPath);
-      await mkdir(WINDOWS_UPDATE_STAGING_ROOT, { recursive: true }).catch(() => {});
-      if (!(await preflightFreeSpace({
-        dir: WINDOWS_UPDATE_STAGING_ROOT,
-        requiredBytes: requiredDownloadBytes(release.windowsArtifact.size),
-      }))) return { status: "error", code: "PREFLIGHT_DISK_SPACE", currentVersion: release.currentVersion };
-      const beforeDownload = await windowsInstallPreflight(installDir, release.currentVersion);
-      if (beforeDownload) return beforeDownload;
-      const download = await downloadWindowsUpdate({
-        fetchImpl: systemNetworkFetch,
-        artifact: release.windowsArtifact,
-        version: release.latestVersion,
-        stagingRoot: WINDOWS_UPDATE_STAGING_ROOT,
-        signal: controller.signal,
-        onProgress: (progress) => {
-          if (!mainWindow || mainWindow.isDestroyed()) return;
-          mainWindow.webContents.send("update-download-progress", progress);
-        },
-      });
-      if (windowsUpdateDownloadController === controller) windowsUpdateDownloadController = null;
-      // The download took time: check the folder and the running assistants again.
-      if (!(await preflightFreeSpace({
-        dir: dirname(installDir),
-        requiredBytes: requiredInstallBytes(release.windowsArtifact.size),
-      }))) return { status: "error", code: "PREFLIGHT_DISK_SPACE", currentVersion: release.currentVersion };
-      const beforeLaunch = await windowsInstallPreflight(installDir, release.currentVersion);
-      if (beforeLaunch) return beforeLaunch;
-      await launchWindowsUpdateHelper({
-        zipPath: download.zipPath,
-        installDir,
-        currentExeName: installedExeName,
-        payloadExeName: release.windowsArtifact.payloadExeName,
-        signerThumbprint: release.windowsArtifact.signerThumbprint || "",
-        version: release.latestVersion,
-        expectedIdentity: release.buildIdentity,
-        processId: process.pid,
-      });
-      await recordUpdateAttempt({ userDataDir: desktopDataDir, version: release.latestVersion, platform: "windows" });
-
-      // Give the external helper exclusive ownership of the replacement only
-      // after MOSA has drained its local service and released SQLite/runtime locks.
-      shuttingDown = true;
-      stopBridgeNotificationPoll();
-      stopAnonymousUsageLifecycle();
-      updateScheduler.stop();
-      await stopOwnedRuntime();
-      app.exit(0);
-      return { status: "installing", latestVersion: release.latestVersion };
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return { status: "cancelled", currentVersion: app.getVersion() };
-        }
-        console.warn(`[MOSA] Windows update failed: ${error?.message || error}`);
-        return { status: "error", currentVersion: app.getVersion(), code: "WINDOWS_UPDATE_FAILED" };
-      } finally {
-        if (windowsUpdateDownloadController === controller) windowsUpdateDownloadController = null;
-      }
-    })().finally(() => { windowsUpdateInstallPromise = null; });
-    return windowsUpdateInstallPromise;
-  });
-
-  ipcMain.handle("cancel-update-download", async (event) => {
-    if (!trustedRendererEvent(event)) return { ok: false };
-    const controller = process.platform === "darwin" ? macosUpdateDownloadController : windowsUpdateDownloadController;
-    if (!controller || controller.signal.aborted) return { ok: false };
-    controller.abort(new Error("GravityPort update download cancelled by the user."));
-    return { ok: true };
-  });
-
-  ipcMain.handle("open-download-page", async (event) => {
-    if (!trustedRendererEvent(event)) return { ok: false };
-    try {
-      await screenGuard.openExternal(MOSA_DOWNLOAD_PAGE_URL);
-      return { ok: true };
-    } catch (error) {
-      console.warn(`[MOSA] unable to open download page: ${error?.message || error}`);
-      return { ok: false };
-    }
-  });
-
+  registerUpdateIpc(deps);
   registerLibraryLocationIpc(deps);
 }
 
@@ -1550,6 +1281,7 @@ async function ensureDesktopService() {
         console.warn(`[MOSA] could not check the library for a stale relocation marker: ${error?.message || error}`);
       }
     }
+    libraryVolumeWatch.start(libraryDir);
     return service;
   })().finally(() => {
     serviceStartPromise = null;
@@ -1706,6 +1438,28 @@ function stopBridgeNotificationPoll() {
   bridgePollAbortController = null;
   bridgePollFailures = 0;
 }
+
+const libraryVolumeWatch = createLibraryVolumeWatch({
+  stopCaptureAndPolling: () => {
+    shuttingDown = true;
+    stopBridgeNotificationPoll();
+    stopAnonymousUsageLifecycle();
+    updateScheduler.stop();
+  },
+  closeLibrary: async () => {
+    try {
+      await stopOwnedRuntime();
+    } finally {
+      await releaseDesktopStartupHandoff().catch(() => {});
+    }
+  },
+  showMissingDialog: (missingDir) => {
+    const title = getDesktopText("libraryLocationMissingTitle", currentLocale);
+    const body = getDesktopText("libraryLocationMissingBody", currentLocale).replace(/\{libraryDir\}/g, String(missingDir || ""));
+    screenGuard.errorBox(title, body);
+  },
+  exit: (code) => app.exit(code),
+});
 
 function stopOwnedRuntime() {
   if (shutdownPromise) return shutdownPromise;

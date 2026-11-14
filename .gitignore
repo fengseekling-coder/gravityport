@@ -17,6 +17,9 @@ npm-debug.log*
 /lib/*.js
 /lib/*.js.map
 /lib/*.d.ts
+/lib/web-capture/*.js
+/lib/web-capture/*.js.map
+/lib/web-capture/*.d.ts
 # Allow manually-written declaration files for .mjs modules
 !/lib/sqlite-asset-store.d.ts
 /dist/

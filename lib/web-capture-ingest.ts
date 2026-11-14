@@ -1,12 +1,10 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, mkdir, open, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
-import { imageDecoder } from "./image-decode-client.js";
+import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { readVideoMetadataFromFile } from "./video-metadata.js";
 import { createdAtTimestamp } from "./recent-window.js";
 import { createReferenceAttachmentStore, type ReferenceAttachment } from "./reference-attachment-store.js";
-import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
+import { PIXEL_HASH_VERSION } from "./image-pixel-hash.js";
 import {
   createIngestLookup,
   ingestIntoLibrary,
@@ -16,9 +14,45 @@ import {
   normalizePromptScope,
   upgradePrompt,
 } from "./library-ingest.mjs";
+import { WEB_CAPTURE_MAX_IMAGE_BYTES, WEB_CAPTURE_MAX_VIDEO_BYTES } from "./web-capture/limits.js";
+import {
+  assertVideoContainer,
+  decodeImageBytes,
+  decodeMediaBytes,
+  inspectImageBytes,
+  inspectTrustedCaptureTempFile,
+  normalizeMediaMetric,
+  sanitizeStoredMediaUrl,
+  sha256File,
+  webCaptureError,
+} from "./web-capture/media-inspect.js";
+import type { WebCaptureInput } from "./web-capture/types.js";
+export {
+  WEB_CAPTURE_BUSY_RETRY_AFTER_SECONDS,
+  WEB_CAPTURE_INFLIGHT_BODY_LIMIT_BYTES,
+  WEB_CAPTURE_MAX_BODY_BYTES,
+  WEB_CAPTURE_MAX_IMAGE_BYTES,
+  WEB_CAPTURE_MAX_IMAGE_PIXELS,
+  WEB_CAPTURE_MAX_JSON_BODY_BYTES,
+  WEB_CAPTURE_MAX_VIDEO_BYTES,
+} from "./web-capture/limits.js";
+export { reserveIngestBodyCapacity, resetIngestBodyCapacityForTests } from "./web-capture/body-capacity.js";
 
 const DEFAULT_PROJECT_ID = "default";
 const DEFAULT_TEMP_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Task 416 (audit 低12 ②): a full disk while staging captured media is a
+// named outcome — 507 with DISK_FULL — instead of a generic 500 the extension
+// only re-queues. Every capture temp-file write goes through here.
+async function writeCaptureTempFile(tempPath: string, bytes: Buffer): Promise<void> {
+  try {
+    await writeFile(tempPath, bytes);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOSPC") throw error;
+    throw webCaptureError("The disk is full while writing captured media.", 507, "DISK_FULL");
+  }
+}
+
 const PROVIDER_CONFIG = {
   chatgpt: {
     label: "ChatGPT",
@@ -73,86 +107,6 @@ const VIDEO_PROVIDERS = new Set(["flow", "google-ai-studio", "jimeng", "midjourn
 const PROVIDER_VISIBLE_PROMPT_PROVIDERS = new Set(["gemini", "flow", "google-ai-studio", "jimeng", "midjourney"]);
 const PROMPT_STATUSES = new Set(["user-message", "visible-caption", "not-available", "generation-tool-prompt", "provider-visible-prompt"]);
 const MIME_TO_FORMATS: Record<string, Set<string>> = { "image/png": new Set(["png"]), "image/jpeg": new Set(["jpeg"]), "image/webp": new Set(["webp"]), "image/gif": new Set(["gif"]), "image/avif": new Set(["avif", "heif"]) };
-export const WEB_CAPTURE_MAX_IMAGE_BYTES = 15 * 1024 * 1024;
-export const WEB_CAPTURE_MAX_VIDEO_BYTES = 96 * 1024 * 1024;
-export const WEB_CAPTURE_MAX_IMAGE_PIXELS = 40_000_000;
-export const WEB_CAPTURE_MAX_BODY_BYTES = Math.ceil(Math.max(WEB_CAPTURE_MAX_IMAGE_BYTES, WEB_CAPTURE_MAX_VIDEO_BYTES) / 3) * 4 + 1024 * 1024;
-// Task 314: the JSON entry now only has to fit base64 IMAGES (15 MiB → ~20 MiB
-// expanded) plus a 1 MiB metadata margin. Videos are refused here with
-// WEB_CAPTURE_USE_BINARY_UPLOAD so the extension can fall back to the binary
-// envelope or the chunked upload instead of buffering a ~128 MiB JSON string.
-export const WEB_CAPTURE_MAX_JSON_BODY_BYTES = Math.ceil(WEB_CAPTURE_MAX_IMAGE_BYTES / 3) * 4 + 1024 * 1024;
-// Task 314: global bound on capture request bytes buffered at once. Reading a
-// body is the unauthenticated-to-429 phase — the ingest concurrency cap only
-// applies after the body is fully parsed — so N concurrent large captures
-// could previously buffer without bound. Reservations come from Content-Length
-// before a byte is read; a single request larger than the whole budget (only
-// the binary video envelope can be) is admitted alone and starves the rest.
-export const WEB_CAPTURE_INFLIGHT_BODY_LIMIT_BYTES = 64 * 1024 * 1024;
-export const WEB_CAPTURE_BUSY_RETRY_AFTER_SECONDS = 5;
-
-interface IngestBodyReservation { bytes: number; released: boolean }
-const inflightIngestBodies = new Set<IngestBodyReservation>();
-
-function inflightIngestBodyBytes(): number {
-  let total = 0;
-  for (const reservation of inflightIngestBodies) total += reservation.bytes;
-  return total;
-}
-
-/**
- * Reserves `contentLength` bytes of the global in-flight budget before the
- * route reads anything. Throws (413 / 503) without consuming the request body
- * when the declared size is unusable or the budget is exhausted; the returned
- * release() is idempotent and must run in a finally. `res` is only used to
- * attach Retry-After to the 503. A missing or non-numeric Content-Length is
- * refused outright: every capture client (fetch with a concrete body) sends
- * one, and without it neither the entry cap nor the global budget is
- * enforceable before the bytes arrive.
- */
-export function reserveIngestBodyCapacity(
-  req: { headers: { "content-length"?: string | string[] | undefined } },
-  res: { setHeader(name: string, value: string): void },
-  entryMaxBytes: number,
-  oversizeCode = "WEB_CAPTURE_BODY_TOO_LARGE",
-): () => void {
-  const raw = req.headers["content-length"];
-  const header = Array.isArray(raw) ? raw[0] : raw;
-  const contentLength = typeof header === "string" && /^\d+$/.test(header) ? Number(header) : -1;
-  if (contentLength < 0) {
-    const e = new Error("Web capture requests must declare Content-Length.") as Error & { statusCode: number; code: string };
-    e.statusCode = 413;
-    e.code = "WEB_CAPTURE_CONTENT_LENGTH_REQUIRED";
-    throw e;
-  }
-  if (contentLength > entryMaxBytes) {
-    const e = new Error("Web capture request body exceeds the supported size limit.") as Error & { statusCode: number; code: string };
-    e.statusCode = 413;
-    e.code = oversizeCode;
-    throw e;
-  }
-  const already = inflightIngestBodyBytes();
-  const oversizeAlone = contentLength > WEB_CAPTURE_INFLIGHT_BODY_LIMIT_BYTES;
-  if (already + contentLength > WEB_CAPTURE_INFLIGHT_BODY_LIMIT_BYTES && !(oversizeAlone && already === 0)) {
-    res.setHeader("Retry-After", String(WEB_CAPTURE_BUSY_RETRY_AFTER_SECONDS));
-    const e = new Error("Web capture is busy; retry shortly.") as Error & { statusCode: number; code: string };
-    e.statusCode = 503;
-    e.code = "WEB_CAPTURE_BUSY";
-    throw e;
-  }
-  const reservation: IngestBodyReservation = { bytes: contentLength, released: false };
-  inflightIngestBodies.add(reservation);
-  return () => {
-    if (reservation.released) return;
-    reservation.released = true;
-    inflightIngestBodies.delete(reservation);
-  };
-}
-
-/** Test hook: drains all reservations (never used by the runtime itself). */
-export function resetIngestBodyCapacityForTests(): void {
-  inflightIngestBodies.clear();
-}
 
 type Metadata = Record<string, unknown>;
 
@@ -186,7 +140,6 @@ interface Store {
   assetsRoot?: string;
   [key: string]: unknown;
 }
-interface WebCaptureInput { provider?: string; mediaKind?: string; media_kind?: string; mimeType?: string; mime_type?: string; imageBase64?: string; image_base64?: string; imageBytes?: Buffer | Uint8Array; mediaBase64?: string; media_base64?: string; mediaBytes?: Buffer | Uint8Array; width?: number; height?: number; durationSeconds?: number; duration_seconds?: number; prompt?: string; prompt_status?: string; promptStatus?: string; prompt_source?: string; promptSource?: string; prompt_priority?: number; promptPriority?: number; prompt_scope?: string; promptScope?: string; generation_status?: string; generationStatus?: string; user_message?: string; userMessage?: string; generation_request_prompt?: string; generationRequestPrompt?: string; pageUrl?: string; page_url?: string; sourceMediaUrl?: string; source_media_url?: string; finalMediaUrl?: string; final_media_url?: string; mediaVariant?: string; media_variant?: string; conversationId?: string; conversation_id?: string; generationSessionTitle?: string; generation_session_title?: string; messageId?: string; message_id?: string; generationContextId?: string; generation_context_id?: string; providerToolCallId?: string; provider_tool_call_id?: string; providerGenerationCallId?: string; provider_generation_call_id?: string; providerResponseId?: string; provider_response_id?: string; providerAssetId?: string; provider_asset_id?: string; model?: string; capturedAt?: string; captured_at?: string; captureMode?: string; capture_mode?: string; assetId?: string; is_reference?: boolean; isReference?: boolean; extensionVersion?: string; extension_version?: string; }
 interface IngestResult { status: string; reason?: string; asset?: StoredAsset; attachment?: ReferenceAttachment; contentHash: string; upgraded?: boolean; recipeMerged?: boolean; replacedAssetId?: string; }
 interface WebCaptureIngest { ingest(input: WebCaptureInput, authToken?: string): Promise<IngestResult>; ingestFile(input: WebCaptureInput, mediaFilePath: string, authToken?: string): Promise<IngestResult>; upgradeMetadata(input: WebCaptureInput, authToken?: string): Promise<IngestResult>; status(): Record<string, unknown>; updateClientStatus(input: Metadata, authToken?: string): Record<string, unknown>; requestRetry(): Record<string, unknown>; assertToken(provided: string): void; readReference(projectId: string, fileName: string): Promise<{ stream: NodeJS.ReadableStream; fileName: string }>; pruneReferences(projectId: string, referencedIds: Iterable<string>): Promise<{ removed: number; retained: number; failed: number }>; tempRoot: string; token: string; }
 
@@ -647,7 +600,7 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
     const tempName = `${providerConfig.tempPrefix}-${Date.now()}-${randomBytes(4).toString("hex")}${ext}`;
     tempPath = join(tempRoot, tempName);
     tempFileName = tempName;
-    await writeFile(tempPath, imageBytes);
+    await writeCaptureTempFile(tempPath, imageBytes);
     const captureAssetId = sanitizeAssetId(explicitAssetId || `${providerConfig.assetIdPrefix}-${contentHash.slice(0, 12)}`, providerConfig.assetIdPrefix);
     const references = await turnReferences(store, projectAssets, referenceStore, projectId, { conversationId, generationContextId, capturedAt, selfAssetId: captureAssetId });
     return {
@@ -891,7 +844,7 @@ async function ingestWebVideoCapture(options: {
   try {
     await mkdir(tempRoot, { recursive: true });
     tempPath = uploadedVideoPath || join(tempRoot, tempName);
-    if (!uploadedVideoPath) await writeFile(tempPath, videoBytes!);
+    if (!uploadedVideoPath) await writeCaptureTempFile(tempPath, videoBytes!);
     // Dimensions and duration read from the file itself are the truth; the
     // values a provider page reports (e.g. Jimeng's fixed duration of 7 for a
     // 6.08 s video, or 0×0 when its API carries none) are only the fallback
@@ -1171,140 +1124,6 @@ async function recordCapturedGeneration(store: Store, asset: StoredAsset, input:
     },
     created_at: input.capturedAt,
   });
-}
-
-function webCaptureError(message: string, statusCode: number, code: string): Error & { statusCode: number; code: string } {
-  const error = new Error(message) as Error & { statusCode: number; code: string };
-  error.statusCode = statusCode;
-  error.code = code;
-  return error;
-}
-
-async function inspectImageBytes(imageBytes: Buffer): Promise<{ format: string; width: number; height: number; pixelHash: string }> {
-  try {
-    const metadata = await imageDecoder.metadata(imageBytes, {
-      failOn: "error",
-      limitInputPixels: WEB_CAPTURE_MAX_IMAGE_PIXELS,
-    });
-    const width = Number(metadata.width) || 0;
-    const height = Number(metadata.height) || 0;
-    const pages = Number(metadata.pages) || 1;
-    const frameHeight = Number(metadata.pageHeight) || height;
-    const totalPixels = width * frameHeight * pages;
-    if (!width || !height || totalPixels > WEB_CAPTURE_MAX_IMAGE_PIXELS) {
-      throw webCaptureError(
-        "Image exceeds " + WEB_CAPTURE_MAX_IMAGE_PIXELS.toLocaleString("en-US") + " pixel limit.",
-        413,
-        "WEB_CAPTURE_PIXEL_LIMIT",
-      );
-    }
-    return {
-      format: String(metadata.format || ""),
-      width,
-      height: frameHeight,
-      pixelHash: await safePixelDigest(imageBytes, { limitInputPixels: WEB_CAPTURE_MAX_IMAGE_PIXELS }),
-    };
-  } catch (error: unknown) {
-    if ((error as { code?: string })?.code === "WEB_CAPTURE_PIXEL_LIMIT") throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    if (/pixel limit|exceeds.*pixels|input image exceeds/i.test(detail)) {
-      throw webCaptureError(
-        "Image exceeds " + WEB_CAPTURE_MAX_IMAGE_PIXELS.toLocaleString("en-US") + " pixel limit.",
-        413,
-        "WEB_CAPTURE_PIXEL_LIMIT",
-      );
-    }
-    throw webCaptureError(
-      "Image bytes are invalid, truncated, or exceed the decoded pixel limit.",
-      400,
-      "WEB_CAPTURE_BAD_IMAGE_BYTES",
-    );
-  }
-}
-
-function decodeImageBytes(input: WebCaptureInput): Buffer {
-  if (Buffer.isBuffer(input.imageBytes)) return input.imageBytes;
-  if (input.imageBytes instanceof Uint8Array) return Buffer.from(input.imageBytes);
-  let raw = String(input.imageBase64 || input.image_base64 || "").trim(); if (!raw) return Buffer.alloc(0);
-  const dataUrl = /^data:image\/[a-z0-9.+-]+;base64,(.+)$/i.exec(raw); if (dataUrl) raw = dataUrl[1];
-  try { return Buffer.from(raw, "base64"); } catch { return Buffer.alloc(0); }
-}
-
-function decodeMediaBytes(input: WebCaptureInput): Buffer {
-  if (Buffer.isBuffer(input.mediaBytes)) return input.mediaBytes;
-  if (input.mediaBytes instanceof Uint8Array) return Buffer.from(input.mediaBytes);
-  let raw = String(input.mediaBase64 || input.media_base64 || "").trim();
-  if (!raw) return Buffer.alloc(0);
-  const dataUrl = /^data:video\/[a-z0-9.+-]+;base64,(.+)$/i.exec(raw);
-  if (dataUrl) raw = dataUrl[1];
-  try { return Buffer.from(raw, "base64"); } catch { return Buffer.alloc(0); }
-}
-
-function assertVideoContainer(bytes: Buffer, mimeType: string): void {
-  const header = bytes.subarray(0, 32);
-  if (mimeType === "video/webm") {
-    if (header.length < 4 || header[0] !== 0x1a || header[1] !== 0x45 || header[2] !== 0xdf || header[3] !== 0xa3) {
-      throw webCaptureError("Video bytes do not match WebM container.", 400, "WEB_CAPTURE_MIME_MISMATCH");
-    }
-    return;
-  }
-  if (["video/mp4", "video/quicktime", "video/x-m4v"].includes(mimeType)) {
-    const marker = header.subarray(4, 12).toString("ascii");
-    if (!marker.includes("ftyp")) {
-      throw webCaptureError("Video bytes do not match ISO BMFF container.", 400, "WEB_CAPTURE_MIME_MISMATCH");
-    }
-  }
-}
-
-function normalizeMediaMetric(value: unknown, max: number, allowFraction = false): number {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number <= 0 || number > max) return 0;
-  return allowFraction ? number : Math.round(number);
-}
-
-async function inspectTrustedCaptureTempFile(tempRoot: string, mediaFilePath: string): Promise<{ path: string; size: number; header: Buffer }> {
-  const root = resolve(tempRoot);
-  const path = resolve(mediaFilePath);
-  if (path === root || !path.startsWith(`${root}${sep}`)) {
-    throw webCaptureError("Uploaded media path is outside the Web Capture temp directory.", 400, "WEB_CAPTURE_UPLOAD_PATH_INVALID");
-  }
-  const info = await lstat(path).catch(() => null);
-  if (!info || !info.isFile() || info.isSymbolicLink()) {
-    throw webCaptureError("Uploaded media file is unavailable.", 400, "WEB_CAPTURE_UPLOAD_FILE_INVALID");
-  }
-  const handle = await open(path, "r");
-  try {
-    const header = Buffer.alloc(16);
-    const { bytesRead } = await handle.read(header, 0, header.length, 0);
-    return { path, size: info.size, header: header.subarray(0, bytesRead) };
-  } finally {
-    await handle.close();
-  }
-}
-
-async function sha256File(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
-  return hash.digest("hex");
-}
-
-function sanitizeStoredMediaUrl(value: unknown): string {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "https:") return "";
-    const retained = new URLSearchParams();
-    for (const key of ["id", "cid", "name", "asset_id", "assetId", "media_id", "mediaId"]) {
-      const entry = url.searchParams.get(key);
-      if (entry) retained.set(key, entry.slice(0, 512));
-    }
-    url.search = retained.toString();
-    url.hash = "";
-    return url.href;
-  } catch {
-    return "";
-  }
 }
 
 function safeTokenEqual(provided: string, configured: string): boolean { if (!provided || !configured) return false; const a = Buffer.from(provided); const b = Buffer.from(configured); return a.length === b.length && timingSafeEqual(a, b); }

@@ -4,16 +4,12 @@ import ToolbarSelect from "./ToolbarSelect"
 import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
 import { PinterestView } from "./PinterestView"
-import { PinterestConnectionCard } from "./PinterestConnectionCard"
-import { McpClientConfigCard } from "./McpClientConfigCard"
-import { WebCaptureStatusCard } from "./WebCaptureStatusCard"
-import { FeedbackPanel } from "./FeedbackPanel"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } from "./context-menus"
 import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberIds, listStackMemberPaths, dropAssetsOnCard } from "./library-actions"
 import { planStackDropUndo, runStackDropUndo } from "./stack-drop-undo"
-import { describeError, importFailureTail, messageForErrorCode } from "./error-messages"
+import { describeError, importFailureTail, messageForErrorCode, errorMessage } from "./error-messages"
 import {
   dragIdsForCard, dragGhostCount, pointOutsideWindow, nativeDragPaths,
   createNativeDragController, moveBlockRelative, stackMemberPaths, undoPlanForStackDrop, planStackMerge,
@@ -27,15 +23,14 @@ import { trashRemainingDays } from "./trash-ui"
 import { desktopAPI, type UpdateReadyState } from "./desktop"
 import { focusSelection, logicalSelection, pruneSelection, replaceSelection, toggleModifierSelection } from "./selection"
 import { boxFromPoints, boxesIntersect, marqueeAutoScrollDelta, marqueeAutoScrollStep, marqueeSelection, masonryCardBoxes, MARQUEE_AUTO_SCROLL_TICK_MS, MARQUEE_DRAG_THRESHOLD_PX, type Box } from "./marquee"
-import { promptEditorActive, resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
+import { resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { galleryKeyAction, isFocusSearchKey, menuSelectAllTarget, mouseNavDirection, neighbourAssetId, resolveNavHistoryShortcut } from "./gallery-keys"
-import { generationTreeRows, generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
-import { computeConversationRounds, conversationRoundRows, roundCompareSelection, roundLine, type ConversationRoundRow } from "./conversation-rounds"
-import VersionCompare, { type VersionCompareEntry } from "./version-compare"
-import { sanitizeAssetForExport, relationTypes, RELATION_LABELS } from "./feature-parity"
-import { aspectRatioLabel, formatVideoDuration, describeSource, promptNotice, trashReasonNotice, resolveReferences, SOURCE_LABEL_MAP } from "./inspector-info"
-import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, removeTagFromStored, fitTagsInTwoLines } from "./tag-display"
+import { type GenerationDisplay } from "./version-tree"
+import { computeConversationRounds } from "./conversation-rounds"
+import { sanitizeAssetForExport } from "./feature-parity"
+import { describeSource, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
+import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
   type MasonryModel,
@@ -56,10 +51,8 @@ import {
   installResultFeedback,
   libraryLocationFailureText,
   mapUpdateResult,
-  buildUpdateText,
   type UpdateUiState,
 } from "./app-lifecycle"
-import { buildReleaseNoteBlocks } from "./release-notes-view"
 import {
   fetchAssetPage, fetchAsset, fetchNavigation, fetchLibraryLocation, fetchHealth,
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite, setAssetsCurated,
@@ -70,7 +63,7 @@ import {
   fetchLibraryRevision, fetchLibraryChanges, fetchGalleryRows, readMutationState,
   mosaMutationHeaders, mergeAssetDetail, galleryImageSrcSet, type MosaAsset, type MosaNavigation, type MosaLibraryLocation,
   type AssetQuery, type MosaVersionRow, type MosaGenerationHistory, type MosaRecipeHistory,
-  fetchAssetRecipes, createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
+  fetchAssetRecipes,
   fetchImportSimilarCheck, resolveImportDuplicates, type ImportSimilarState,
   fetchWebCapturePairRequests, decideWebCapturePairRequest, type MosaWebCapturePairRequest,
   fetchLiveDeletionRequests, decideLiveDeletionRequest, reportViewerPresence, type MosaLiveDeletionRequest,
@@ -79,17 +72,12 @@ import { AuthorizationModal, type AuthorizationResult } from "./AuthorizationMod
 import ImportReviewDialog, { type ImportReviewData, type ImportReviewDecision } from "./ImportReviewDialog"
 import type { AlreadyInLibraryEntry } from "./import-pipeline"
 import { VideoPosterQueue } from "./video-poster"
-import { handleExternalLinkClick } from "./external-link.js"
-import { ReadingText } from "./ReadingText"
 import { MenuRow } from "./MenuRow"
 import { isVideoUrl, ThumbMedia, VideoMark } from "./ThumbMedia"
-import { InspectorRow, RelationThumb } from "./InspectorParts"
 import { GroupDialogs } from "./GroupDialogs"
-
-// 任务 351：关于页社区入口。Discord 只放行任务单授权的这一个邀请链接
-// （desktop/open-external-link.mjs 的 allowlist 同步只放行它）。
-const DISCORD_INVITE_URL = "https://discord.gg/rArXAShSkQ"
-const GITHUB_DISCUSSIONS_URL = "https://github.com/fengseekling-coder/gravityport/discussions"
+import { PINTEREST_ENTRY, SettingsDialog } from "./SettingsDialog"
+import { VersionSection } from "./VersionSection"
+import { InspectorDetails } from "./InspectorDetails"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
 
@@ -107,23 +95,12 @@ function loadPreferences() {
   }
 }
 
-function humanSize(bytes: number | null): string {
-  if (!bytes || bytes <= 0) return "—"
-  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`
-}
-
 /** Inspector header line "kind · source · date". Whole-sentence templates keep
  *  the kind word singular — the bare "图片" key is the filter buttons' plural. */
 function inspectorHeaderLine(info: ReturnType<typeof describeSource>, tr: (text: string) => string): string {
   const kind = info.kindLabel === "视频" ? "视频" : "图片"
   const template = info.dateLabel ? `${kind} · {source} · {date}` : `${kind} · {source}`
   return tr(template).replace("{source}", tr(info.sourceLabel)).replace("{date}", info.dateLabel)
-}
-
-function errorMessage(error: unknown, language: Language): string {
-  return describeError(error, language)
 }
 
 // 任务 359（写死文字 2）：版本树副行里的 provider 原值（chatgpt 等小写代号）
@@ -136,10 +113,6 @@ const PROVIDER_LABELS: Record<string, string> = {
 // Task 146 card dragging.
 const CARD_DRAG_THRESHOLD_PX = 8
 const NATIVE_DRAG_MAX_FILES = 512
-// Pinterest browsing (tasks 135/138/147). The sidebar row and Settings → 连接
-// are shown, the row marked 即将上线 until Standard access; false hides
-// both while the view, the connection card, and the local token API stay.
-const PINTEREST_ENTRY = true
 
 type CardDragGesture = {
   pointerId: number
@@ -2873,8 +2846,12 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         // layer 110, above every overlay here, so its Escape comes first
         // (DESIGN.md hierarchy); the 填写框 (105) follow, then the 确认框 (45).
         // Task 385: the queue may hold pairing and deletion requests — Escape
-        // denies exactly the head, whichever kind it is.
-        if (authorizationActive) {
+        // denies exactly the head, whichever kind it is. Read the queue ref,
+        // not this closure's authorizationActive: the dialog is painted at
+        // commit, but this listener is only re-armed by the passive effect
+        // after it, so an Escape landing in between saw the stale "no
+        // dialog" and was swallowed (CI run 43613554996, slow macOS runner).
+        if (authorizationQueueRef.current.length > 0) {
           const head = authorizationQueueRef.current[0]
           if (head?.kind === "delete") liveDecideRef.current(head.row.id, "deny")
           else pairDecideRef.current(head?.row.id || "", "deny")
@@ -4643,7 +4620,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           </div>
         </header>
         {preview ? (
-          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} originalSrc={asset?.mediaKind === "video" ? undefined : asset?.image_url} isVideo={asset?.mediaKind === "video"} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} onOpenLocation={() => void revealAssetPath()} message={toast?.text ?? ""} openLocationLabel={isMacPlatform() ? tr("在访达中显示") : tr("在文件资源管理器中显示")} />
+          <ImageViewer key={asset?.id} width={asset?.width || 768} height={asset?.height || 1170} src={asset?.preview_url || asset?.image_url} originalSrc={asset?.mediaKind === "video" ? undefined : asset?.image_url} isVideo={asset?.mediaKind === "video"} animated={asset?.animated} language={language} disabled={settings || deleting || !!menu} fullscreen={viewerFullscreen} onNavigate={navigateAsset} onToggleFullscreen={() => setViewerFullscreen(v => !v)} onContextMenu={(x, y) => { if (asset) openAssetMenu(asset, x, y) }} onOpenLocation={() => void revealAssetPath()} message={toast?.text ?? ""} openLocationLabel={isMacPlatform() ? tr("在访达中显示") : tr("在文件资源管理器中显示")} />
         ) : pinterestActive ? (
           <PinterestView
             key={pinterestViewKey}
@@ -4690,8 +4667,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                     style={{ aspectRatio: `${a.width} / ${a.height}` }}
                     {...cardEventHandlers(a)}
                   >
-                    {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
-                    {a.mediaKind === "video" && <VideoMark />}
+                    {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes="240px" motionSrc={a.mediaKind === "video" || a.animated ? a.image_url : undefined} motionKind={a.mediaKind === "video" ? "video" : a.animated ? "image" : undefined} alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
+                    {(a.mediaKind === "video" || a.animated) && <VideoMark />}
                     {a.stack && (
                       <span className="stack-mark">
                         <Icon name="layers" size={12} />
@@ -4724,8 +4701,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                   style={placementStyle(globalIndex)}
                   {...cardEventHandlers(a)}
                 >
-                  {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={galleryImageSizes(model.placements[globalIndex]?.width ?? model.columnWidth)} alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
-                  {a.mediaKind === "video" && <VideoMark />}
+                  {a.thumbnail_url ? <ThumbMedia className="black-image" src={a.thumbnail_url} srcSet={galleryImageSrcSet(a) || undefined} sizes={galleryImageSizes(model.placements[globalIndex]?.width ?? model.columnWidth)} motionSrc={a.mediaKind === "video" || a.animated ? a.image_url : undefined} motionKind={a.mediaKind === "video" ? "video" : a.animated ? "image" : undefined} alt="" loading="lazy" decoding="async" draggable={false} /> : <div className="black-image" />}
+                  {(a.mediaKind === "video" || a.animated) && <VideoMark />}
                   {a.stack && (
                     <span className="stack-mark">
                       <Icon name="layers" size={12} />
@@ -4812,541 +4789,81 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       </main>
       {detail && asset && !(pinterestActive && !preview) && (
         <aside className="details">
-          <div className="detail-heading">
-            <strong>{tr("素材详情")}</strong>
-            <button aria-label={tr("关闭素材详情")} onClick={() => setDetail(false)}>
-              <Icon name="close" />
-            </button>
-          </div>
-          <div className="asset-summary">
-            <button className="summary-image" aria-label={tr("在查看器中打开")} onClick={() => setPreview(true)}>{asset.thumbnail_url ? <ThumbMedia src={asset.thumbnail_url} alt="" /> : null}{asset.mediaKind === "video" && <VideoMark />}<Icon name="expand" /></button>
-            <div className="asset-meta">
-              <div className="asset-title">
-                <span className="asset-name" title={asset.name}>{asset.name}</span>
-                <button
-                  className={asset.favorite ? "is-favorite" : ""}
-                  aria-label={tr("收藏素材")}
-                  aria-pressed={!!asset.favorite}
-                  onClick={toggleFavorite}
-                >
-                  <Icon name="heart" size={13} />
-                </button>
-              </div>
-              <span className="muted">{headerLine}</span>
-              {trashReasonInfo && <span className="trash-reason">{tr(trashReasonInfo.text)}</span>}
-              <button className="summary-preview" onClick={() => setPreview(true)}>{tr("在查看器中打开")}<Icon name="right" size={12} /></button>
-            </div>
-          </div>
-          <div className="asset-properties">
-              {([
-                ["格式", asset.format || "—"],
-                ["尺寸", asset.width > 1 && asset.height > 1 ? `${asset.width} × ${asset.height}` : "—"],
-                ["宽高比", aspectRatioLabel(asset.width, asset.height)],
-                ...(asset.mediaKind === "video" && asset.duration_seconds
-                  ? [["时长", formatVideoDuration(asset.duration_seconds)]]
-                  : []),
-                ["大小", humanSize(asset.size_bytes)],
-              ] as [string, string][]).map(([label, value]) => (
-                // 任务 359（MAIN-19a）：中文全角冒号、英文半角，按语言取。
-                <span className="property-tag" key={label} title={`${tr(label)}${language === "en" ? ": " : "："}${tr(value)}`} aria-label={`${tr(label)}${language === "en" ? ": " : "："}${tr(value)}`}>{tr(value)}</span>
-              ))}
-              {sourceInfo?.groupLabel ? (
-                <span className="property-tag" title={`${tr("分组")}${language === "en" ? ": " : "："}${sourceInfo.groupLabel}`} aria-label={`${tr("分组")}${language === "en" ? ": " : "："}${sourceInfo.groupLabel}`}>{sourceInfo.groupLabel}</span>
-              ) : null}
-          </div>
-          <div className="tags" ref={tagsRowRef}>
-            {(expandedTags ? tagItems : tagItems.slice(0, collapsedTagCount)).map((t, index) => (
-              index === 0 && tagVendor ? (
-                <span className="tag-chip tag-vendor" key={`vendor-${t}`}>{t}</span>
-              ) : (
-                <span className="tag-chip" key={`tag-${t}`}>
-                  <span>{t}</span>
-                  <button aria-label={`${tr("移除标签")} ${t}`} title={`${tr("移除标签")} ${t}`}
-                    onClick={() => {
-                      const remaining = removeTagFromStored(currentTags, t)
-                      updateAssetMetadata(asset.project_id, asset.id, { tags: remaining })
-                        .then(updated => setAssets(old => old.map(item => item.id === updated.id ? mergeAssetDetail(item, updated) : item)))
-                        .catch(error => notify(errorMessage(error, language)))
-                    }}>×</button>
-                </span>
-              )
-            ))}
-            {expandedTags
-              ? <button className="tags-toggle" aria-expanded="true" onClick={() => setExpandedTags(false)}>{tr("收起")}</button>
-              : (collapsedTagCount < tagItems.length && <button className="tags-toggle" aria-expanded="false" onClick={() => setExpandedTags(true)}>{`+${tagItems.length - collapsedTagCount}`}</button>)}
-            {!addingTag && <button className="add-tag" onClick={() => { setAddingTag(true); setTagError("") }}><Icon name="plus" size={12} />{tr("添加标签")}</button>}
-            {addingTag && <form className="tag-editor" onSubmit={e => {
-              e.preventDefault()
-              const tag = tagDraft.trim()
-              if (!tag) { setTagError("请输入标签名称。"); return }
-              if (currentTags.some(existing => existing.toLocaleLowerCase() === tag.toLocaleLowerCase())) { setTagError("已有同名标签。"); return }
-              updateAssetMetadata(asset.project_id, asset.id, { tags: [...currentTags, tag] }).then(updated => {
-                setAssets(old => old.map(a => a.id === updated.id ? mergeAssetDetail(a, updated) : a))
-              }).catch(error => notify(errorMessage(error, language)))
-              setExpandedTags(true)
-              setTagDraft("")
-              setTagError("")
-              setAddingTag(false)
-            }}>
-              <div className="tag-editor-controls">
-                <input aria-label={tr("标签名称")} placeholder={tr("标签名称")} autoFocus maxLength={32} value={tagDraft} aria-invalid={!!tagError} aria-describedby={tagError ? "tag-error" : undefined} onChange={e => { setTagDraft(e.target.value); setTagError("") }} onKeyDown={e => {
-                  if (e.key === "Escape") { e.stopPropagation(); setAddingTag(false); setTagDraft(""); setTagError("") }
-                  if (e.key === "Enter" && e.nativeEvent.isComposing) e.preventDefault()
-                }} />
-                <button type="submit" aria-label={tr("保存标签")} title={tr("保存标签")}><Icon name="check" size={16} /></button>
-                <button type="button" aria-label={tr("取消")} title={tr("取消")} onClick={() => { setAddingTag(false); setTagDraft(""); setTagError("") }}><Icon name="close" size={16} /></button>
-              </div>
-              {tagError && <p id="tag-error" role="alert">{tr(tagError)}</p>}
-            </form>}
-            {/* Measuring twin last: document-order lookups of .add-tag / .tags-toggle
-             * must reach the live controls, never these inert copies. */}
-            <div className="tags-measure" aria-hidden="true" ref={tagsMeasureRef}>
-              {tagItems.map((t, index) => (
-                <span className={`tag-chip${index === 0 && tagVendor ? " tag-vendor" : ""}`} data-tag-measure-item key={`measure-${index}-${t}`}>
-                  {t}
-                  {!(index === 0 && tagVendor) && <button tabIndex={-1}>×</button>}
-                </span>
-              ))}
-              <button className="tags-toggle" data-tag-measure-toggle>{`+${Math.max(0, tagItems.length - collapsedTagCount)}`}</button>
-              <button className="add-tag" data-tag-measure-add><Icon name="plus" size={12} />{tr("添加标签")}</button>
-            </div>
-          </div>
-          {asset.palette.length > 0 && <div className="palette">
-            {asset.palette.map((c) => (
-              <button
-                key={c}
-                title={`${tr("复制颜色")} ${c}`}
-                style={{ background: c }}
-                aria-label={`${tr("复制颜色")} ${c}`}
-                onClick={async () => {
-                  // 任务 359（TOAST-06i）：失败不能再报「已复制」。
-                  try {
-                    try { await writeText(c) } catch { await navigator.clipboard?.writeText(c) }
-                    notify(fillNamed("已复制颜色 {color}", { color: c }))
-                  } catch { notify("无法复制颜色") }
-                }}
-              />
-            ))}
-          </div>}
-          <section className="detail-section">
-            <div className="field-heading">
-              <span className="prompt-tabs" role="group" aria-label={tr("提示词")}>
-                {asset.prompt2 ? <>
-                  <button className={promptVariant === 1 ? "active" : ""} aria-pressed={promptVariant === 1} onClick={() => { setPromptVariant(1); setExpandedPrompt(false) }}>{tr("提示词 1")}</button>
-                  <button className={promptVariant === 2 ? "active" : ""} aria-pressed={promptVariant === 2} onClick={() => { setPromptVariant(2); setExpandedPrompt(false); setPromptEdit(null) }}>{tr("提示词 2")}</button>
-                </> : tr("提示词")}
-              </span>
-              <span className="field-actions">
-                {promptVariant === 1 && !promptEditorActive(promptEdit, project, asset?.id) && <button className="section-action" onClick={startPromptEdit}>{tr("编辑")}</button>}
-                <button
-                  aria-label={tr("复制提示词")}
-                  onClick={async () => {
-                    if (!shownPrompt) { notify("此素材没有提示词记录"); return }
-                    try { await writeText(shownPrompt); notify("已复制提示词") }
-                    catch { notify("无法复制提示词") }
-                  }}
-                >
-                  <Icon name="copy" size={16} />
-                </button>
-              </span>
-            </div>
-            {promptVariant === 1 && promptEditorActive(promptEdit, project, asset?.id) && promptEdit ? (
-              <div className="prompt-editor">
-                <textarea
-                  className="detail-editor"
-                  aria-label={tr("编辑提示词")}
-                  value={promptEdit.draft}
-                  autoFocus
-                  rows={6}
-                  onChange={e => setPromptEdit(old => old ? { ...old, draft: e.target.value } : old)}
-                  onKeyDown={e => {
-                    if (e.key === "Escape") { e.stopPropagation(); setPromptEdit(null) }
-                  }}
-                />
-                <div className="prompt-editor-actions">
-                  <button className="neutral-button" onClick={() => setPromptEdit(null)}>{tr("取消")}</button>
-                  <button
-                    className="primary-button"
-                    onClick={savePrompt}
-                    disabled={(!promptEdit.draft.trim() && !asset.prompt) || savingPromptId === promptEdit.assetId}
-                  >{tr("保存")}</button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <ReadingText
-                  id="asset-prompt"
-                  text={shownPrompt || tr(promptNoticeInfo?.key === "webPromptUnavailable" ? "该网页未提供原始提示词" : "无提示词记录")}
-                  expanded={expandedPrompt}
-                  onToggle={() => setExpandedPrompt(!expandedPrompt)}
-                  expandLabel={tr("展开提示词")}
-                  collapseLabel={tr("收起")}
-                />
-                {promptVariant === 1 && promptNoticeInfo && promptNoticeInfo.key !== "webPromptUnavailable" && (
-                  <p className="prompt-provenance">{tr(promptNoticeInfo.text)}</p>
-                )}
-              </>
-            )}
-          </section>
-          <section className="detail-section user-instruction-section">
-            <div className="field-heading">
-              <span>{tr("用户指令")}</span>
-              <button aria-label={tr("复制用户指令")} disabled={!asset.user_instruction}
-                onClick={() => writeText(asset.user_instruction).then(() => notify("已复制用户指令")).catch(() => notify("无法复制用户指令"))}>
-                <Icon name="copy" size={16} />
-              </button>
-            </div>
-            <ReadingText
-              id="asset-instruction"
-              text={asset.user_instruction || tr("无用户指令记录")}
-              expanded={expandedInstruction}
-              onToggle={() => setExpandedInstruction(!expandedInstruction)}
-              expandLabel={tr("展开用户指令")}
-              collapseLabel={tr("收起")}
-            />
-          </section>
-          {asset.introduction && <section className="detail-section">
-            <div className="field-heading">
-              <span>{tr("内容介绍")}</span>
-              <button
-                aria-label={tr("复制内容介绍")}
-                onClick={async () => {
-                  // 任务 359（TOAST-06g）：复制失败要有反馈，不再静默。
-                  try {
-                    try { await writeText(asset.introduction) } catch { await navigator.clipboard?.writeText(asset.introduction) }
-                    notify("已复制内容介绍")
-                  } catch { notify("无法复制内容介绍") }
-                }}
-              >
-                <Icon name="copy" size={16} />
-              </button>
-            </div>
-            <div className={`detail-reading ${expandedIntro ? "expanded" : ""}`}>
-              <p id="asset-introduction">{asset.introduction}</p>
-              <button className="reading-toggle" aria-expanded={expandedIntro} aria-controls="asset-introduction" onClick={() => setExpandedIntro(!expandedIntro)}>{expandedIntro ? tr("收起") : tr("展开内容介绍")}<Icon name={expandedIntro ? "minus" : "down"} size={12} /></button>
-            </div>
-          </section>}
-          {(() => {
-            const references = resolveReferences(asset, recipeHistory, assets)?.items.filter(item => item.thumbnailUrl) || []
-            // Task 316: a failed recipes fetch must not read as "no references".
-            if (!references.length && !inspectorFetchError.recipes) return null
-            return <section className="detail-section">
-              <div className="field-heading">
-                <span>{tr("参考图")}</span>
-              </div>
-              {inspectorFetchError.recipes
-                ? <span className="muted">{tr("无法加载")}</span>
-                : <div className="reference-gallery" aria-label={tr("参考图缩略图")}>
-                {references.map(reference => <button key={reference.key} className="reference-thumbnail" title={/^参考图 \d+$/.test(reference.label) ? tr(reference.label) : reference.label} aria-label={tr("打开参考图")} onClick={() => window.open(reference.openUrl || reference.thumbnailUrl, "_blank", "noopener")}>
-                  <img className="reference-image" src={reference.thumbnailUrl} alt="" loading="lazy" />
-                </button>)}
-              </div>}
-            </section>
-          })()}
-          <section className="detail-section">
-            <div className="field-heading">
-              <span>{tr("版本树")}</span>
-              {(() => {
-                // The badge is the conversation's captured-image count
-                // (context mode); truncated counts stay hidden. Plain mode
-                // keeps the raw event count. Task 316: version families built
-                // over the API have no generation records but two or more
-                // versions — they still get the View entry into 版本历史 and
-                // the compare block. The badge rule is unchanged: no records,
-                // no badge.
-                const badgeCount = versionRounds.mode === "context"
-                  ? versionRounds.images
-                  : generationHistory?.events?.length || 0
-                const hasVersionFamily = (versions?.length || 0) > 1
-                if (versionRounds.mode !== "context" && !badgeCount && !hasVersionFamily) return null
-                return <span className="field-actions">
-                  {badgeCount ? <span className="settings-badge">{badgeCount}</span> : null}
-                  <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "展开")}</button>
-                </span>
-              })()}
-            </div>
-            {/* One list for the generation records: the record IS the version
-                tree entry — its output's thumbnail on the left, prompt on the
-                first line and the conversation-rounds text on the second.
-                Conversation mode lists every captured image of the current
-                ChatGPT conversation (three around this asset by default, all
-                when expanded); the current row is highlighted and inert, the
-                others jump to that image. Plain mode keeps the events list
-                with the time/provider/model line. */}
-            <div className="version-list" aria-label={tr("版本树")}>
-              {versionRounds.mode === "context"
-                ? (versionTreeOpen ? conversationRoundRows(generationHistory, asset?.id || "") : versionRounds.rows).map((row) => {
-                  const output = row.outputAsset || (row.isCurrent ? asset : undefined)
-                  return InspectorRow({
-                    key: String(row.outputAsset?.id || row.event.id || row.event.output_asset_id),
-                    thumbnailUrl: output?.thumbnail_url,
-                    isCurrent: row.isCurrent,
-                    title: (row.event.effective_prompt || row.event.user_prompt || tr("无提示词记录")).slice(0, 60),
-                    detail: roundLine(row, versionRounds, roundText),
-                    onClick: () => { if (!row.isCurrent && row.outputAsset?.id) selectHistoryAsset(row.outputAsset.id) },
-                  })
-                })
-                : (generationHistory?.events || []).slice(0, versionTreeOpen ? undefined : 3).map((event, index) => {
-                  const output = event.output_asset_id
-                    ? generationHistory?.output_assets?.find(item => item.id === event.output_asset_id)
-                      || (asset && asset.id === event.output_asset_id ? asset : undefined)
-                    : undefined
-                  return InspectorRow({
-                    key: String(event.id || index),
-                    thumbnailUrl: output?.thumbnail_url,
-                    title: (event.effective_prompt || event.user_prompt || tr("无提示词记录")).slice(0, 60),
-                    // 任务 359（MAIN-26q）：来源过显示名、日期本地化、轮次统一「第 N 轮」。
-                    detail: `${timeLabel(event.created_at)}${event.provider ? ` · ${providerDisplayLabel(event.provider)}` : ""}${event.turn_index != null ? ` · ${fillNamed("第 {n} 轮", { n: event.turn_index })}` : ""}`,
-                    onClick: () => { if (event.output_asset_id) selectHistoryAsset(event.output_asset_id) },
-                  })
-                })}
-              {inspectorFetchError.history
-                ? <span className="muted">{tr("无法加载")}</span>
-                : !generationHistory?.events?.length && <span className="muted">{tr("暂无生成记录")}</span>}
-            </div>
-            {versionTreeOpen && (() => {
-              // Every block below renders the same thumbnail rows as the list
-              // above; no gen- id may reach this region (task 148).
-              const currentAssetId = asset?.id || ""
-              const anchorRecordIds = (() => {
-                const seen = new Set<string>()
-                return [
-                  ...(generationHistory?.events || []),
-                  ...(generationHistory?.context_events || []),
-                ].filter((event) => {
-                  const id = String(event.id || "")
-                  if (!id || seen.has(id)) return false
-                  seen.add(id)
-                  return String(event.output_asset_id || "") === currentAssetId
-                }).sort((left, right) => String(left.created_at || "").localeCompare(String(right.created_at || ""))
-                  || String(left.id || "").localeCompare(String(right.id || "")))
-              })()
-              const fallbackAnchorId = String(anchorRecordIds[0]?.id || generationHistory?.events?.[0]?.id || "")
-              // The picker rows are asset-keyed (relatedChoices returns no
-              // generation ids); resolve the clicked asset back to its earliest
-              // generation record here — ids live in state, never in a row.
-              const generationIdForAsset = (assetId: string) => {
-                const seen = new Set<string>()
-                for (const event of [...(generationHistory?.events || []), ...(generationHistory?.context_events || [])]) {
-                  const id = String(event.id || "")
-                  if (!id || seen.has(id)) continue
-                  seen.add(id)
-                  if (String(event.output_asset_id || "") === assetId) return id
-                }
-                return ""
-              }
-              const candidateList = (generationHistory?.relation_candidates || [])
-                .filter(candidate => candidate.status !== "dismissed" && candidate.status !== "confirmed")
-              const jumpToDisplay = (display: GenerationDisplay) => (
-                display.known && display.asset && !display.isCurrent ? () => selectHistoryAsset(display.asset!.id) : undefined
-              )
-              const turnLine = (turnIndex: number | null) => (turnIndex != null ? fillNamed(tr("第 {n} 轮"), { n: turnIndex }) : "")
-              return <div className="version-tree" role="region" aria-label={tr("完整版本树")}>
-                {(() => {
-                  // 任务 217：对话模式也能任选两轮并排对比。有输出图的轮次
-                  // 不足两个时不出这块；默认目标 = 当前素材那一轮、基准 =
-                  // 它的上一轮（当前在第一轮时改为第一轮 vs 第二轮）。
-                  const selection = roundCompareSelection(conversationRoundRows(generationHistory, asset?.id || ""), asset?.id || "")
-                  if (!selection) return null
-                  const roundEntry = (row: ConversationRoundRow): VersionCompareEntry => {
-                    const output = row.outputAsset
-                    return {
-                      id: String(output?.id || ""),
-                      label: row.turnIndex !== null ? fillNamed(tr("第 {n} 轮"), { n: row.turnIndex }) : tr("无轮次"),
-                      imageUrl: output?.medium_url || output?.preview_url || output?.image_url || "",
-                      values: {
-                        "尺寸": output ? `${output.width} × ${output.height}` : "",
-                        "用户指令": row.event.user_prompt || "",
-                        "提示词": row.event.effective_prompt || "",
-                      },
-                    }
-                  }
-                  return <VersionCompare
-                    key={`rounds-${asset?.id || ""}`}
-                    language={language}
-                    captions
-                    fields={["尺寸", "用户指令", "提示词"]}
-                    entries={selection.options.map(roundEntry)}
-                    defaultBaseId={String(selection.base.outputAsset?.id || "")}
-                    defaultTargetId={String(selection.target.outputAsset?.id || "")}
-                  />
-                })()}
-                <h4>{tr("生成关系")}</h4>
-                {generationTreeRows(generationHistory).map(({ event, depth, parentIds, relationTypes }) => {
-                  const display = generationDisplay(generationHistory, event.id, asset)
-                  const ancestry = !parentIds.length
-                    ? tr("初始生成")
-                    : relationTypes[0] === "edited_from" ? tr("改自上一个素材") : tr(RELATION_LABELS[(relationTypes[0] || "derived_from") as keyof typeof RELATION_LABELS] || String(relationTypes[0]))
-                  return InspectorRow({
-                    key: `tree-${event.id}`,
-                    rowClassName: "generation-tree-row",
-                    indent: depth,
-                    emptyThumb: !display.known,
-                    thumbnailUrl: display.asset?.thumbnail_url,
-                    isCurrent: display.isCurrent,
-                    title: display.known ? (display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录")) : tr("不属于此对话的生成记录"),
-                    detail: `${ancestry}${display.turnIndex != null ? ` · ${turnLine(display.turnIndex)}` : ""}`,
-                    staticRow: !display.known,
-                    onClick: jumpToDisplay(display),
-                  })
-                })}
-                {(generationHistory?.relations || []).map(relation => {
-                  const key = `${relation.child_generation_id}|${relation.parent_generation_id}|${relation.relation_type}`
-                  const locked = relation.verification_level === "provider_verified"
-                  const upstream = generationDisplay(generationHistory, relation.parent_generation_id, asset)
-                  const downstream = generationDisplay(generationHistory, relation.child_generation_id, asset)
-                  return <div className="generation-relation-editor" key={key}>
-                    <span className="relation-pair-row">
-                      <RelationThumb display={upstream} />
-                      <Icon name="right" size={12} />
-                      <RelationThumb display={downstream} />
-                      <small>{relationPairLine(upstream, downstream)}</small>
-                    </span>
-                    <select disabled={locked || relationBusy} aria-label={tr("关系类型")} value={relationDrafts[key] || relation.relation_type} onChange={event => setRelationDrafts(old => ({ ...old, [key]: event.target.value }))}>
-                      {relationTypes.map(type => <option key={type} value={type}>{tr(RELATION_LABELS[type] || type)}</option>)}
-                    </select>
-                    {locked ? <small>{tr("已由来源平台验证，无法修改")}</small> : <>
-                      <button disabled={relationBusy} onClick={() => void mutateRelation(() => editGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, previousRelationType: relation.relation_type, relationType: relationDrafts[key] || relation.relation_type, evidence: relation.evidence }))}>{tr("保存关系")}</button>
-                      <button disabled={relationBusy} onClick={() => { if (window.confirm(tr("删除生成关系？"))) void mutateRelation(() => removeGenerationRelation(project, { childGenerationId: relation.child_generation_id, parentGenerationId: relation.parent_generation_id, relationType: relation.relation_type })) }}>{tr("删除关系")}</button>
-                    </>}
-                  </div>
-                })}
-                {candidateList.length > 0 && <h4>{tr("建议关系")}</h4>}
-                {candidateList.map(candidate => {
-                  const upstream = generationDisplay(generationHistory, candidate.parent_generation_id, asset)
-                  const downstream = generationDisplay(generationHistory, candidate.child_generation_id, asset)
-                  return <div className="generation-relation-editor generation-candidate-card" key={`${candidate.child_generation_id}|${candidate.parent_generation_id}`}>
-                    <span className="relation-pair-row">
-                      <RelationThumb display={upstream} onClick={jumpToDisplay(upstream)} label={tr("查看素材")} />
-                      <Icon name="right" size={12} />
-                      <RelationThumb display={downstream} onClick={jumpToDisplay(downstream)} label={tr("查看素材")} />
-                      <small>{relationPairLine(upstream, downstream)}</small>
-                    </span>
-                    <small>{fillNamed(tr("可信度 {percent}%"), { percent: Math.round((candidate.confidence || 0) * 100) })}</small>
-                    <button disabled={relationBusy} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: candidate.child_generation_id, parentGenerationId: candidate.parent_generation_id, relationType: candidate.suggested_relation_type || "derived_from", evidence: candidate.evidence }))}>{tr("确认关系")}</button>
-                    <button disabled={relationBusy} onClick={() => void mutateRelation(() => dismissGenerationCandidate(project, candidate.child_generation_id, candidate.parent_generation_id))}>{tr("忽略建议")}</button>
-                  </div>
-                })}
-                {!!generationHistory?.events?.length && <div className="generation-relation-editor">
-                  <button disabled={relationBusy} onClick={() => {
-                    setNewRelation({ anchor: fallbackAnchorId, other: "", direction: "candidate-parent", type: "edited_from" })
-                    setShowAllRelationChoices(false)
-                  }}>{tr("添加生成关系")}</button>
-                  {newRelation && (() => {
-                    const choices = relatedChoices(generationHistory, newRelation.anchor, asset)
-                    const visibleChoices = showAllRelationChoices ? choices : choices.slice(0, 6)
-                    return <div className="generation-relation-create">
-                      {anchorRecordIds.length > 1
-                        ? <div className="relation-choice-list" aria-label={tr("当前生成")}>
-                          {anchorRecordIds.map(record => {
-                            const display = generationDisplay(generationHistory, String(record.id), asset)
-                            return InspectorRow({
-                              key: `anchor-${record.id}`,
-                              thumbnailUrl: display.asset?.thumbnail_url,
-                              isCurrent: display.isCurrent,
-                              selected: newRelation.anchor === String(record.id),
-                              title: display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录"),
-                              detail: turnLine(display.turnIndex),
-                              showChevron: false,
-                              onClick: () => setNewRelation(old => old ? { ...old, anchor: String(record.id) } : old),
-                            })
-                          })}
-                        </div>
-                        : (() => {
-                          const display = generationDisplay(generationHistory, newRelation.anchor, asset)
-                          return InspectorRow({
-                            key: "anchor-current",
-                            thumbnailUrl: display.asset?.thumbnail_url ?? asset?.thumbnail_url,
-                            isCurrent: true,
-                            title: display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录"),
-                            detail: turnLine(display.turnIndex),
-                            showChevron: false,
-                            staticRow: true,
-                          })
-                        })()}
-                      <div className="relation-choice-list" aria-label={tr("关联生成")}>
-                        {choices.length === 0
-                          ? <span className="muted">{tr("此对话中没有可关联的其他素材")}</span>
-                          : <>
-                            {visibleChoices.map(choice => InspectorRow({
-                              key: `choice-${choice.asset.id}`,
-                              thumbnailUrl: choice.asset.thumbnail_url,
-                              selected: newRelation.other === generationIdForAsset(String(choice.asset.id)),
-                              title: choice.prompt ? choice.prompt.slice(0, 60) : tr("无提示词记录"),
-                              detail: turnLine(choice.turnIndex),
-                              showChevron: false,
-                              onClick: () => setNewRelation(old => old ? { ...old, other: generationIdForAsset(String(choice.asset.id)) } : old),
-                            }))}
-                            {choices.length > 6 && <button className="relation-show-all" onClick={() => setShowAllRelationChoices(!showAllRelationChoices)}>
-                              {showAllRelationChoices ? tr("收起") : fillNamed("显示全部 {count} 个", { count: choices.length })}
-                            </button>}
-                          </>}
-                      </div>
-                      <select aria-label={tr("关系方向")} value={newRelation.direction} onChange={event => setNewRelation(old => old ? { ...old, direction: event.target.value } : old)}><option value="candidate-parent">{tr("关联生成为前序")}</option><option value="candidate-child">{tr("关联生成为后续")}</option></select>
-                      <select aria-label={tr("关系类型")} value={newRelation.type} onChange={event => setNewRelation(old => old ? { ...old, type: event.target.value } : old)}>{relationTypes.map(type => <option value={type} key={type}>{tr(RELATION_LABELS[type] || type)}</option>)}</select>
-                      <button disabled={relationBusy || !newRelation.other || newRelation.other === newRelation.anchor} onClick={() => void mutateRelation(() => createGenerationRelation(project, { childGenerationId: newRelation.direction === "candidate-child" ? newRelation.other : newRelation.anchor, parentGenerationId: newRelation.direction === "candidate-child" ? newRelation.anchor : newRelation.other, relationType: newRelation.type }))}>{tr("添加")}</button>
-                    </div>
-                  })()}
-                </div>}
-                <h4>{tr("版本历史")}</h4>
-                {inspectorFetchError.versions && <span className="muted">{tr("无法加载")}</span>}
-                {(versions || []).map(v => InspectorRow({
-                  key: `version-${v.id}`,
-                  thumbnailUrl: v.thumbnail_url,
-                  // The inspector shows `asset` (the first card when nothing is
-                  // selected), so that is the current version; it does not jump.
-                  isCurrent: v.id === asset?.id,
-                  title: `${tr("版本")} ${v.version_index}`,
-                  detail: [v.version_change || "", timeLabel(v.created_at)].filter(Boolean).join(" · "),
-                  onClick: v.id === asset?.id ? undefined : () => selectHistoryAsset(v.id),
-                }))}
-                {versions && versions.length > 1 && <VersionCompare
-                  key={`family-${asset?.id || ""}`}
-                  language={language}
-                  fields={["尺寸", "提示词", "变更说明"]}
-                  entries={versions.map(v => ({
-                    id: v.id,
-                    label: `${tr("版本")} ${v.version_index}`,
-                    imageUrl: v.medium_url || v.preview_url || v.image_url,
-                    values: {
-                      "尺寸": `${v.width} × ${v.height}`,
-                      "提示词": v.prompt,
-                      "变更说明": v.version_change || "",
-                    },
-                  }))}
-                  defaultBaseId={versions[0].id}
-                  defaultTargetId={versions[versions.length - 1].id}
-                />}
-              </div>
-            })()}
-          </section>
-          {(inspectorFetchError.versions || (versions && versions.length > 1)) && <section className="detail-section">
-            <div className="field-heading">
-              <span>{tr("版本")}</span>
-              {versions && versions.length > 1 && <span className="settings-badge">{versions.length}</span>}
-            </div>
-            {inspectorFetchError.versions && <span className="muted">{tr("无法加载")}</span>}
-            <div className="version-list" aria-label={tr("版本")}>
-              {(versions || []).map(v => (
-                <button
-                  className="related"
-                  key={v.id}
-                  onClick={() => selectHistoryAsset(v.id)}
-                >
-                  {v.id === selected
-                    ? <Icon name="check" size={12} />
-                    : <i>{v.thumbnail_url ? <img src={v.thumbnail_url} alt="" loading="lazy" /> : null}</i>}
-                  <span>
-                    {tr("版本")} {v.version_index}
-                    <small>
-                      {[v.version_change || "", v.format || "—"].filter(Boolean).join(" · ")} · {v.width} × {v.height} · {timeLabel(v.created_at)}
-                    </small>
-                  </span>
-                  <Icon name="right" size={11} />
-                </button>
-              ))}
-            </div>
-          </section>}
+          <InspectorDetails
+            asset={asset}
+            language={language}
+            tr={tr}
+            fillNamed={fillNamed}
+            notify={notify}
+            project={project}
+            writeText={writeText}
+            headerLine={headerLine}
+            trashReasonInfo={trashReasonInfo}
+            sourceInfo={sourceInfo}
+            tagsRowRef={tagsRowRef}
+            tagsMeasureRef={tagsMeasureRef}
+            setDetail={setDetail}
+            setPreview={setPreview}
+            toggleFavorite={toggleFavorite}
+            setAssets={setAssets}
+            expandedTags={expandedTags}
+            setExpandedTags={setExpandedTags}
+            tagItems={tagItems}
+            collapsedTagCount={collapsedTagCount}
+            tagVendor={tagVendor}
+            currentTags={currentTags}
+            addingTag={addingTag}
+            setAddingTag={setAddingTag}
+            tagDraft={tagDraft}
+            setTagDraft={setTagDraft}
+            tagError={tagError}
+            setTagError={setTagError}
+            promptVariant={promptVariant}
+            setPromptVariant={setPromptVariant}
+            promptEdit={promptEdit}
+            setPromptEdit={setPromptEdit}
+            expandedPrompt={expandedPrompt}
+            setExpandedPrompt={setExpandedPrompt}
+            shownPrompt={shownPrompt}
+            startPromptEdit={startPromptEdit}
+            savePrompt={savePrompt}
+            savingPromptId={savingPromptId}
+            promptNoticeInfo={promptNoticeInfo}
+            expandedInstruction={expandedInstruction}
+            setExpandedInstruction={setExpandedInstruction}
+            expandedIntro={expandedIntro}
+            setExpandedIntro={setExpandedIntro}
+            recipeHistory={recipeHistory}
+            assets={assets}
+            inspectorFetchError={inspectorFetchError}
+          />
+          <VersionSection
+            asset={asset}
+            selected={selected}
+            project={project}
+            language={language}
+            tr={tr}
+            fillNamed={fillNamed}
+            versions={versions}
+            generationHistory={generationHistory}
+            versionRounds={versionRounds}
+            inspectorFetchError={inspectorFetchError}
+            relationBusy={relationBusy}
+            relationDrafts={relationDrafts}
+            newRelation={newRelation}
+            showAllRelationChoices={showAllRelationChoices}
+            versionTreeOpen={versionTreeOpen}
+            setVersionTreeOpen={setVersionTreeOpen}
+            setNewRelation={setNewRelation}
+            setRelationDrafts={setRelationDrafts}
+            setShowAllRelationChoices={setShowAllRelationChoices}
+            timeLabel={timeLabel}
+            relationPairLine={relationPairLine}
+            roundText={roundText}
+            selectHistoryAsset={selectHistoryAsset}
+            mutateRelation={mutateRelation}
+            providerDisplayLabel={providerDisplayLabel}
+          />
           <button
             className="library-location"
             onClick={revealAssetPath}
@@ -5358,260 +4875,22 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         </aside>
       )}
       {settings && (
-        <div
-          className="modal-layer"
-          onMouseDown={(e) =>
-            e.target === e.currentTarget && setSettings(false)
-          }
-        >
-          <div
-            className="settings-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={tr("设置")}
-          >
-            <aside className="settings-nav">
-              <h2>{tr("设置")}</h2>
-              {[
-                ["常规与外观", "sun"],
-                ["存储", "folder"],
-                ["连接", "link"],
-                ["反馈", "message"],
-                ["关于", "info"],
-              ].filter(([label]) => (PINTEREST_ENTRY || label !== "连接")).map(([label, icon]) => (
-                <button
-                  className={settingTab === label ? "active" : ""}
-                  aria-pressed={settingTab === label}
-                  key={label}
-                  onClick={() => setSettingTab(label)}
-                >
-                  <Icon name={icon} size={15} />
-                  {tr(label === "常规与外观" ? "常规" : label)}
-                </button>
-              ))}
-              <div className="settings-brand">
-                GravityPort
-                <span>{tr("让每一次 AI 创作，有迹可循")}</span>
-              </div>
-            </aside>
-            <div className="settings-content">
-              <div className="settings-heading">
-                <div className="settings-heading-copy">
-                  <h3>{tr(settingTab === "常规与外观" ? "常规" : settingTab)}</h3>
-                </div>
-                <button
-                  className="modal-close"
-                  aria-label={tr("关闭设置")}
-                  onClick={() => setSettings(false)}
-                >
-                  <Icon name="close" size={11} />
-                </button>
-              </div>
-              <div className="settings-page" key={settingTab}>
-              {settingTab === "常规与外观" ? (
-                <>
-                  <section className="settings-section theme-section" aria-label={tr("外观")}>
-                  <div className="appearance-options">
-                    {["跟随系统", "浅色", "深色"].map((a, i) => (
-                      <button
-                        key={a}
-                        aria-pressed={appearance === a}
-                        className={`appearance-option ${
-                          appearance === a ? "chosen" : ""
-                        }`}
-                        onClick={() => setAppearance(a)}
-                      >
-                        <div className={`theme-preview theme-${i}`}>
-                          <div className="mini-sidebar" />
-                          <div className="mini-content">
-                            <i />
-                            <i />
-                            <i />
-                            <i />
-                          </div>
-                          {appearance === a && (
-                            <span>
-                              <Icon name="check" size={10} />
-                            </span>
-                          )}
-                        </div>
-                        <span>{tr(a)}</span>
-                      </button>
-                    ))}
-                  </div>
-                  </section>
-                  <section className="settings-section">
-                  <div className="setting-row">
-                    <span>{tr("显示素材名称")}</span>
-                    <button className={`settings-switch ${cardInfo ? "enabled" : ""}`} role="switch" aria-checked={cardInfo} aria-label={tr("显示素材名称")} onClick={() => setCardInfo(!cardInfo)}><span /></button>
-                  </div>
-                  </section>
-                  <section className="settings-section">
-                  <div className="setting-row">
-                    <span>{tr("界面语言")}</span>
-                    <div className="segmented" role="group" aria-label={tr("界面语言")}>
-                      <button className={language === "zh" ? "on" : ""} aria-pressed={language === "zh"} onClick={() => setLanguage("zh")}>中文</button>
-                      <button className={language === "en" ? "on" : ""} aria-pressed={language === "en"} onClick={() => setLanguage("en")}>English</button>
-                    </div>
-                  </div>
-                  </section>
-                </>
-              ) : settingTab === "存储" ? (
-                <>
-                  <section className="settings-section">
-                    <div className="storage-summary storage-path">
-                      <Icon name="folder" size={16} />
-                      <div className="storage-description"><strong>{tr("存储位置")}</strong><span title={library?.path || ""}>{library?.path || "—"}</span></div>
-                      <div className="storage-actions">
-                        <button className="neutral-button" onClick={openStorageLocation}>{tr("打开")}</button>
-                        <button className="neutral-button" onClick={changeLibraryLocation}>{tr("更改…")}</button>
-                      </div>
-                    </div>
-                  </section>
-                  <div className="settings-note"><p>{library ? `${tr("存储类型")} ${library.storage}` : ""}</p></div>
-                </>
-              ) : settingTab === "连接" ? (
-                <>
-                  <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
-                  <McpClientConfigCard language={language} />
-                  <WebCaptureStatusCard language={language} />
-                  {backgroundCapture.supported && (
-                    <div className="web-capture-toggle">
-                      <div className="web-capture-toggle-row">
-                        <span>{tr("后台收录")}</span>
-                        <button
-                          type="button"
-                          className={`settings-switch ${backgroundCapture.enabled ? "enabled" : ""}`}
-                          role="switch"
-                          aria-checked={backgroundCapture.enabled}
-                          aria-label={tr("后台收录")}
-                          disabled={backgroundCaptureBusy}
-                          onClick={async () => {
-                            if (backgroundCaptureBusy) return
-                            const previous = backgroundCapture.enabled
-                            setBackgroundCaptureBusy(true)
-                            setBackgroundCapture(s => ({ ...s, enabled: !previous }))
-                            try {
-                              const result = await desktopAPI()?.setBackgroundCapture?.(!previous)
-                              if (!result?.ok) throw new Error("setting failed")
-                              setBackgroundCapture(s => ({ ...s, enabled: result.enabled }))
-                            } catch {
-                              setBackgroundCapture(s => ({ ...s, enabled: previous }))
-                              notify("无法更改后台收录设置")
-                            } finally {
-                              setBackgroundCaptureBusy(false)
-                            }
-                          }}
-                        ><span /></button>
-                      </div>
-                      <p className="web-capture-toggle-note">{tr("GravityPort 关闭后，继续接收浏览器扩展发来的素材。")}</p>
-                    </div>
-                  )}
-                </>
-              ) : settingTab === "反馈" ? (
-                <FeedbackPanel language={language} />
-              ) : (
-                <>
-                  <section className="settings-section about-summary">
-                    <div className="about-symbol">
-                      <img className="app-logo" src={`/assets/gravityport-mark-${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : "light"}.svg`} width={40} height={40} alt="" aria-hidden="true" />
-                    </div>
-                    <div className="about-identity">
-                      <h4>GravityPort</h4>
-                      {(() => {
-                        const text = buildUpdateText(
-                          health?.productVersion || "",
-                          updateState,
-                          updateState.phase === "downloading" ? updateState.percent : 0,
-                          tr,
-                          language,
-                        )
-                        return <span className="settings-badge" title={text.badgeText}>{text.badgeText}</span>
-                      })()}
-                    </div>
-                    {(() => {
-                      // Task 231 — a verified staged package wins: both entry
-                      // points restart into it instead of re-downloading.
-                      if (updateReady) {
-                        return <button className="neutral-button about-update" onClick={restartToUpdate} disabled={restartPending}>{tr("重启并更新")}</button>
-                      }
-                      const text = buildUpdateText(
-                        health?.productVersion || "",
-                        updateState,
-                        updateState.phase === "downloading" ? updateState.percent : 0,
-                        tr,
-                        language,
-                      )
-                      if (text.buttonLabel === null) return null
-                      if (text.downloadAndInstall) {
-                        return <button className="neutral-button about-update" onClick={downloadAndInstallUpdate} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
-                      }
-                      if (text.secondaryLabel) {
-                        return <div className="about-update about-update-actions">
-                          <button className="neutral-button" disabled>{text.buttonLabel}</button>
-                          <button className="neutral-button" onClick={cancelUpdateDownload}>{text.secondaryLabel}</button>
-                        </div>
-                      }
-                      if (updateState.phase === "available" && !text.downloadAndInstall) {
-                        return <button className="neutral-button about-update" onClick={openDownloadPage}>{text.buttonLabel}</button>
-                      }
-                      return <button className="neutral-button about-update" onClick={checkForUpdates} disabled={text.buttonDisabled}>{text.buttonLabel}</button>
-                    })()}
-                  </section>
-                  <section className="settings-section">
-                    {/* 任务 351:不放 release-notes 类——关于页流程把第一个
-                        .release-notes 块当开发中分栏数行数,这里借用它会撞车。 */}
-                    <p className="web-capture-note">
-                      {tr("社区：")}
-                      <a href={DISCORD_INVITE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DISCORD_INVITE_URL)}>Discord</a>
-                      {" · "}
-                      <a href={GITHUB_DISCUSSIONS_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, GITHUB_DISCUSSIONS_URL)}>{tr("GitHub 讨论区")}</a>
-                    </p>
-                  </section>
-                  {(() => {
-                    const blocks = buildReleaseNoteBlocks({
-                      productVersion: health?.productVersion || "",
-                      distribution: health?.distribution || "",
-                      language,
-                      t: tr,
-                      updateState,
-                    })
-                    return (
-                      <>
-                        {blocks.map((block, index) => (
-                          <section key={`${index}-${block.title}`} className="settings-section release-notes" aria-label={block.title}>
-                            <div className="release-heading">
-                              <h4>{block.title}</h4>
-                              {block.date ? <span>{block.date}</span> : null}
-                            </div>
-                            {block.groups.map((group, groupIndex) => (
-                              <div key={groupIndex} className="release-group">
-                                {group.heading ? <h5 className="release-group-heading">{group.heading}</h5> : null}
-                                <ul>
-                                  {group.lines.map((line, lineIndex) => <li key={lineIndex}>{line}</li>)}
-                                </ul>
-                              </div>
-                            ))}
-                          </section>
-                        ))}
-                        <section className="settings-section release-notes">
-                          <p className="release-meta">
-                            {tr("版本")} {health?.productVersion || "—"} · {tr("构建")} {health?.gitSha ? health.gitSha.slice(0, 7) : "—"} · {health?.distribution === "development" ? tr("开发版") : tr("正式版")}
-                          </p>
-                        </section>
-                      </>
-                    )
-                  })()}
-                </>
-              )}
-              </div>
-              {!savedLocally && <div className="settings-footnote" role="status">
-                <Icon name="info" size={12} />
-                {tr("无法保存偏好设置。更改将在退出 GravityPort 后失效。")}
-              </div>}
-            </div>
-          </div>
-        </div>
+        <SettingsDialog
+          setSettings={setSettings}
+          settingTab={settingTab} setSettingTab={setSettingTab}
+          backgroundCapture={backgroundCapture} setBackgroundCapture={setBackgroundCapture}
+          backgroundCaptureBusy={backgroundCaptureBusy} setBackgroundCaptureBusy={setBackgroundCaptureBusy}
+          appearance={appearance} setAppearance={setAppearance}
+          cardInfo={cardInfo} setCardInfo={setCardInfo}
+          language={language} setLanguage={setLanguage}
+          savedLocally={savedLocally} updateState={updateState} updateReady={updateReady}
+          restartPending={restartPending} systemDark={systemDark} library={library} health={health}
+          tr={tr} notify={notify} onPinterestStatus={onPinterestStatus}
+          checkForUpdates={checkForUpdates} downloadAndInstallUpdate={downloadAndInstallUpdate}
+          restartToUpdate={restartToUpdate} cancelUpdateDownload={cancelUpdateDownload}
+          openDownloadPage={openDownloadPage} changeLibraryLocation={changeLibraryLocation}
+          openStorageLocation={openStorageLocation}
+        />
       )}
       {menu && (
         <div

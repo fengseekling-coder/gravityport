@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import Icon from "./Icon"
 import { translate, type Language } from "./i18n"
+import { browserCanDisplayOriginal } from "./original-display"
 
 const CONTROLS_IDLE_MS = 2000
 // Vertical breathing room around the fitted media: 16px top (the top half of
@@ -9,8 +10,8 @@ const CONTROLS_IDLE_MS = 2000
 const FIT_PAD_TOP = 16
 const CONTROLS_GAP = 8
 
-export default function ImageViewer({ width, height, src, originalSrc, isVideo, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, onOpenLocation, message, openLocationLabel }: {
-  width: number; height: number; src?: string; originalSrc?: string; isVideo?: boolean; language: Language; disabled: boolean
+export default function ImageViewer({ width, height, src, originalSrc, isVideo, animated, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, onOpenLocation, message, openLocationLabel }: {
+  width: number; height: number; src?: string; originalSrc?: string; isVideo?: boolean; animated?: boolean; language: Language; disabled: boolean
   fullscreen: boolean
   onNavigate: (direction: number) => void
   onToggleFullscreen: () => void
@@ -49,6 +50,19 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
   const [mediaError, setMediaError] = useState(false)
   useEffect(() => { setMediaError(false) }, [src])
   const displaySrc = originalSrc && loadedOriginal === originalSrc ? originalSrc : src
+  // Task 413: once the media errors, one HEAD probe against the same URL tells
+  // "file present but undecodable" (ok) from "file gone" (not ok / failed) so
+  // the stage says which one happened instead of always "file not found".
+  const [errorProbe, setErrorProbe] = useState<{ src: string; undecodable: boolean } | null>(null)
+  useEffect(() => { setErrorProbe(null) }, [src])
+  useEffect(() => {
+    if (!mediaError || !displaySrc) return
+    let cancelled = false
+    fetch(displaySrc, { method: "HEAD", credentials: "same-origin" })
+      .then((response) => { if (!cancelled) setErrorProbe({ src: displaySrc, undecodable: response.ok }) })
+      .catch(() => { if (!cancelled) setErrorProbe({ src: displaySrc, undecodable: false }) })
+    return () => { cancelled = true }
+  }, [mediaError, displaySrc])
   const previewEdge = previewMeasure && previewMeasure.src === src ? previewMeasure.edge : 0
   const probedForSrc = !propsSizeKnown && probed && probed.src === displaySrc ? probed : null
   const usedWidth = propsSizeKnown ? width : (probedForSrc?.width || width)
@@ -87,10 +101,13 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
   const scale = manualScale ?? fitScale
   // Swap to the original only while the preview is on screen, when the original
   // is bigger than the preview and this view needs more device pixels than the
-  // preview holds. Fit mode and manual zoom share the same rule.
+  // preview holds — or (task 412) when the original animates, regardless of
+  // size: the still 1600 preview shows first, the original replaces it once
+  // decoded and plays. Fit mode and manual zoom share the same rule. Task 413:
+  // originals the browser cannot decode (TIFF/HEIC) never swap at all.
   const originalEdge = Math.max(usedWidth, usedHeight)
-  const needsOriginal = !isVideo && !!originalSrc && originalSrc !== src && displaySrc === src && previewEdge > 0
-    && originalEdge > previewEdge && originalEdge * scale * window.devicePixelRatio > previewEdge * 1.05
+  const needsOriginal = !isVideo && !!originalSrc && browserCanDisplayOriginal(originalSrc) && originalSrc !== src && displaySrc === src && previewEdge > 0
+    && (animated === true || (originalEdge > previewEdge && originalEdge * scale * window.devicePixelRatio > previewEdge * 1.05))
   // Manual zoom recenters on the stage again — once the picture is bigger than
   // (or freed from) the fit band, panning math owns the placement and the bar
   // is allowed to sit on top of it.
@@ -234,7 +251,9 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
       {src && mediaError
         ? <div className="viewer-missing" role="status">
           <Icon name="image" size={32} />
-          <p>{tr("找不到原始文件")}</p>
+          <p>{errorProbe && errorProbe.src === displaySrc && errorProbe.undecodable
+            ? tr(isVideo ? "这个视频的编码 App 播放不了" : "这个文件 App 显示不了")
+            : tr("找不到原始文件")}</p>
           <button onClick={onOpenLocation}>{openLocationLabel}</button>
         </div>
         : src && isVideo

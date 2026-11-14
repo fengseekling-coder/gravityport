@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
-import vm from "node:vm";
 
-const dir = new URL("../extensions/chatgpt-web-capture/", import.meta.url);
-const source = (await readFile(new URL("background.js", dir), "utf8"))
-  .replace(/^import\s+"\.\/provider-policy.js";\s*$/m, "");
-const policy = await readFile(new URL("provider-policy.js", dir), "utf8");
+import { runBackgroundWorkerInContext } from "./helpers/background-harness.mjs";
+
 const APP = "http://127.0.0.1:43517";
 const EXT = "chrome-extension://mock-extension-id/";
 const MARKER = `${EXT}gravityport-managed.json`;
@@ -85,11 +81,9 @@ async function harness({ marker = { schema: 1, installId: "abc", version: "0.15.
   };
   // captureMediaSizes tolerates an unavailable IndexedDB; no media is required
   // in these status/reload cases. The queue itself remains real storage.local.
-  const context = vm.createContext({ chrome, fetch, indexedDB: { open() { throw new Error("unavailable"); } },
+  const context = runBackgroundWorkerInContext({ chrome, fetch, indexedDB: { open() { throw new Error("unavailable"); } },
     URL, URLSearchParams, Blob, AbortController, TextEncoder, crypto, atob, btoa,
     setTimeout, clearTimeout, queueMicrotask, console });
-  new vm.Script(policy, { filename: "provider-policy.js" }).runInContext(context);
-  new vm.Script(source, { filename: "background.js" }).runInContext(context);
   // Startup reports asynchronously and is allowed to complete before each explicit probe.
   await context.reportCaptureQueueStatus();
   await tick();

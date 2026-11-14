@@ -13,6 +13,8 @@ const english: Record<string, string> = {
   "全屏": "Full screen", "退出全屏": "Exit full screen",
   "上一个素材": "Previous asset", "下一个素材": "Next asset",
   "找不到原始文件": "Original file not found",
+  "这个视频的编码 App 播放不了": "App can’t play this video’s codec",
+  "这个文件 App 显示不了": "App can’t display this file",
   "在访达中显示": "Show in Finder",
   "在文件资源管理器中显示": "Show in File Explorer",
   "返回": "Back", "后退": "Go back", "前进": "Go forward", "回到顶部": "Back to top",

@@ -43,12 +43,16 @@ test("R1: no extension script remembers or forwards ChatGPT page request headers
 });
 
 test("R2: MAIN-world page hooks never touch credentials or rewrite requests", () => {
+  // Task 411: "credentials: include" moved here from the hook test — the hook
+  // issues no fetch of its own, so there is no hook-originated init a
+  // behavior test could inspect; a MAIN-world script must never send cookies.
   const forbidden = [
     ["setRequestHeader", /setRequestHeader/],
     ["getAllResponseHeaders", /getAllResponseHeaders/],
     ["document.cookie", /document\.cookie/],
     ["chrome.cookies", /chrome\.cookies/],
     ["authorization", /authorization/i],
+    ['credentials: "include"', /credentials:\s*"include"/],
   ];
   for (const file of mainWorldScripts) {
     const text = scriptTexts.get(file);
@@ -93,6 +97,9 @@ test("R6: the deleted cookie-only conversation re-read machinery stays deleted",
   const forbidden = [
     ["refresh-current-conversation", /refresh-current-conversation/],
     ["conversation-refresh-failed", /conversation-refresh-failed/],
+    // Task 411: refreshCurrentConversation moved here from the hook test so
+    // the whole manifest (not just page-hook.js) is scanned for the name.
+    ["refreshCurrentConversation", /refreshCurrentConversation/],
     ["requestCurrentConversationRefresh", /requestCurrentConversationRefresh/],
     ["schedulePromptRecovery", /schedulePromptRecovery/],
     ["promptWaitMs", /promptWaitMs/],

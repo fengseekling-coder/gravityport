@@ -32,7 +32,9 @@ test("getNotificationTextForAssetsImported falls back to zh for unknown locale",
 });
 
 test("main.mjs localizes bridge and update notifications", async () => {
-  const source = await readFile(resolve(repositoryRoot, "desktop/main.mjs"), "utf8");
+  // Task 406: the update channels moved to desktop/ipc/updates.mjs, so this
+  // reads desktop/main.mjs plus those files (same as the 396 helper below).
+  const source = readDesktopMainSources(repositoryRoot);
   assert.match(source, /getNotificationTextForAssetsImported/);
   assert.match(source, /getUpdateNotificationText/);
   // 任务 359：启动期语言取系统语言（app.getLocale），不再固定 zh。

@@ -6,12 +6,14 @@
 // property, so a renderer-side fake can never reach the subscription
 // (Electron also strips --require/NODE_OPTIONS hooks from its main process).
 // The QA doubles therefore land inside the real main process through its
-// inspector (--inspect): the flow sets a breakpoint on the get-update-ready
-// handler in desktop/main.mjs, and when the App's mount-time query hits it,
-// the flow evaluates a replacement ON that call frame — the frame's scope is
-// the only place outside desktop/ where ipcMain is reachable — registering
-// QA doubles for the two update channels ("9.9.9" staged; install reports
-// {status:"installing"} and counts calls on globalThis.__e2eUpdateLine).
+// inspector (--inspect): the flow sets a breakpoint on trustedRendererEvent in
+// desktop/main.mjs (every IPC query passes through it, and only a main.mjs
+// frame still has ipcMain in scope — task 406 moved the update handlers to
+// desktop/ipc/updates.mjs), and when a query pauses there, the flow evaluates
+// a replacement ON that call frame — the frame's scope is the only place
+// outside desktop/ where ipcMain is reachable — registering QA doubles for the
+// two update channels ("9.9.9" staged; install reports {status:"installing"}
+// and counts calls on globalThis.__e2eUpdateLine).
 // The renderer runs fully production code and cannot tell the doubles from
 // the real main process; a second reload makes the mount-time subscription
 // query the doubles.
@@ -25,14 +27,16 @@ export const name = "sidebar-update-line";
 export const description =
   "sidebar update-ready line: single-row reminder above 设置 (position, 32px, one line, zh/en copy) -> click restarts (install called once, disabled, 正在更新…) -> dialog-already-shown install result re-enables without a toast, generic failure keeps 无法更新。请稍后重试。 -> null config renders nothing";
 
-// desktop/main.mjs, the first line inside the get-update-ready handler body
-// (0-based for Debugger.setBreakpointByUrl, i.e. the handler line + 1): the
-// first paused frame evaluates the swap with ipcMain in scope. Located from
-// the source so edits elsewhere in main.mjs never move it off the handler.
+// desktop/main.mjs, the first line inside trustedRendererEvent's body
+// (0-based for Debugger.setBreakpointByUrl, i.e. the function line + 1): every
+// IPC query passes through it, and its frame's module scope still reaches
+// ipcMain — an import binding of desktop/main.mjs. (Task 406 moved the update
+// handlers to desktop/ipc/updates.mjs, whose handler frames no longer close
+// over ipcMain, so the swap can no longer be evaluated on the handler frame.)
 const GET_UPDATE_READY_BREAKPOINT_LINE = await (async () => {
   const source = await readFile(new URL("../../desktop/main.mjs", import.meta.url), "utf8");
-  const handlerIndex = source.split("\n").findIndex((line) => line.includes('ipcMain.handle("get-update-ready"'));
-  if (handlerIndex < 0) throw new Error("get-update-ready handler not found in desktop/main.mjs");
+  const handlerIndex = source.split("\n").findIndex((line) => line.includes("function trustedRendererEvent(event)"));
+  if (handlerIndex < 0) throw new Error("trustedRendererEvent not found in desktop/main.mjs");
   return handlerIndex + 1;
 })();
 
@@ -220,8 +224,9 @@ export async function run(ctx) {
   }
 }
 
-// Register the QA doubles inside the running main process: breakpoint on the
-// get-update-ready handler body, let the App's next mount-time query hit it,
+// Register the QA doubles inside the running main process: breakpoint on
+// trustedRendererEvent in desktop/main.mjs (every IPC query passes through it),
+// let the App's next mount-time query hit it,
 // then evaluate the swap on that paused frame (the only place ipcMain is in
 // scope without touching desktop/). The interrupted query still answers null
 // — a final reload makes the App ask the doubles.

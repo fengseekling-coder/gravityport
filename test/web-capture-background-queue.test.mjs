@@ -6,13 +6,10 @@
 // 7-day expiry — is exercised end to end.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
-const extensionDir = new URL("../extensions/chatgpt-web-capture/", import.meta.url);
-const backgroundSource = await readFile(new URL("background.js", extensionDir), "utf8");
-const providerPolicySource = await readFile(new URL("provider-policy.js", extensionDir), "utf8");
+import { runBackgroundWorkerInContext } from "./helpers/background-harness.mjs";
 
 const RUNTIME_ID = "test-extension-id";
 const PAIRING_TOKEN = "test-pairing-token";
@@ -328,7 +325,7 @@ async function createHarness({ appOnline = false } = {}) {
   fetchHarness.setAppOnline(appOnline);
   const indexedDb = createFakeIndexedDb();
 
-  const context = vm.createContext({
+  const context = runBackgroundWorkerInContext({
     chrome: chromeHarness.chrome,
     fetch: fetchHarness.fetchImpl,
     indexedDB: indexedDb,
@@ -347,16 +344,6 @@ async function createHarness({ appOnline = false } = {}) {
     console,
   });
   fetchHarness.setErrorRealm(context.Error);
-
-  // provider-policy.js is a plain IIFE attaching to globalThis; background.js
-  // is an ES module only for its single import line, which the policy
-  // evaluation replaces.
-  new vm.Script(providerPolicySource, { filename: "provider-policy.js" }).runInContext(context);
-  const workerSource = backgroundSource.replace(/^import\s+".\/provider-policy.js";\s*$/m, "");
-  if (workerSource === backgroundSource) {
-    throw new Error("background.js must import ./provider-policy.js");
-  }
-  new vm.Script(workerSource, { filename: "background.js" }).runInContext(context);
 
   return {
     context,

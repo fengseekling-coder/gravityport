@@ -26,9 +26,14 @@ import { WEB_CAPTURE_RUNTIME_FILES } from "../scripts/web-capture-runtime-files.
 
 // Task 396: registerIPC handlers now live in desktop/ipc/*.mjs, so source-text
 // assertions read desktop/main.mjs plus those files.
+// Task 409: window bounds/menu code moved to desktop/window-menu.mjs, so that
+// file is part of the combined sources too.
 function readDesktopMainSources(repoRoot) {
   const ipcDir = repoRoot + "/desktop/ipc";
-  const parts = [readFileSyncForMainSources(repoRoot + "/desktop/main.mjs", "utf8")];
+  const parts = [
+    readFileSyncForMainSources(repoRoot + "/desktop/main.mjs", "utf8"),
+    readFileSyncForMainSources(repoRoot + "/desktop/window-menu.mjs", "utf8"),
+  ];
   for (const name of readdirSyncForMainSources(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
     parts.push(readFileSyncForMainSources(ipcDir + "/" + name, "utf8"));
   }
@@ -708,7 +713,10 @@ test("keeps the desktop window single-instance and sandboxed", async () => {
   const viewerSource = await readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "ImageViewer.tsx"), "utf8");
   assert.match(viewerSource, /img className="viewer-image"/);
   assert.match(viewerSource, /video className="viewer-image"/);
-  const appSource = await readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "App.tsx"), "utf8");
+  const appSource = (await Promise.all([
+    readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "App.tsx"), "utf8"),
+    readFile(resolve(import.meta.dirname, "..", "web", "gravityport", "src", "InspectorDetails.tsx"), "utf8"),
+  ])).join("\n");
   assert.match(appSource, /setPreview\(true\)/);
 });
 

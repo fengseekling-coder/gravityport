@@ -12,6 +12,21 @@ import vm from "node:vm";
 
 export const hookSource = await readFile(new URL("../../extensions/chatgpt-web-capture/page-hook.js", import.meta.url), "utf8");
 
+// page-hook.js is a named IIFE, so its function declarations are not reachable
+// as sandbox globals the way content.js's are (the content harness strips that
+// plain wrapper; a named IIFE with an early return cannot be stripped). Tests
+// that need one internal function get it through this introspection tail,
+// injected inside the IIFE right before the closing `})();` — the same idea as
+// the content harness's __mosaContentState, placed in the source instead of
+// appended after it. The hook keeps running when the injection no-ops (tail
+// changed); only harness.internals comes back empty and the tests that need a
+// name fail loudly on the missing function.
+const pageHookInternals = ["hasConversationMessageShape", "extractConversationTurnBindings"];
+const hookSourceWithInternals = hookSource.replace(
+  /\}\)\(\);\s*$/,
+  `;globalThis.__mosaPageHookInternals = { ${pageHookInternals.join(", ")} };\n})();`,
+);
+
 // Minimal MessageChannel stand-in: two entangled ports. Messages are
 // delivered synchronously while a listener is attached and queue otherwise,
 // which mirrors how the real content script behaves once it has adopted the
@@ -272,7 +287,7 @@ export function createHookHarness(payload, conversationId = "conversation-test",
     location: { origin: "https://chatgpt.com", pathname: `/c/${conversationId}` },
     window,
   };
-  vm.runInNewContext(hookSource, sandbox, { filename: "page-hook.js" });
+  vm.runInNewContext(hookSourceWithInternals, sandbox, { filename: "page-hook.js" });
 
   if (options.captureEnabled !== false && contentPort) {
     contentPort.postMessage({
@@ -284,6 +299,7 @@ export function createHookHarness(payload, conversationId = "conversation-test",
 
   return {
     events,
+    internals: sandbox.__mosaPageHookInternals || null,
     requestedUrls,
     requestedInits,
     createdObjectUrls,

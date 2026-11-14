@@ -6,17 +6,17 @@
 //
 // The page-hook side of every scenario replays the real 2026-11-03 Chrome
 // capture (test/fixtures/chatgpt-image-gen-ws-2026-11-03.json) through
-// page-hook-harness; the content-script side runs the real content.js
-// functions extracted into a vm the way chatgpt-web-capture-hook.test.mjs
-// does, with a Map-backed fake of chrome.storage.session.
+// page-hook-harness; the content-script side boots the real content.js
+// through createContentHarness (task 411: no more slicing functions out of
+// the source — persist/hydrate are body function declarations, reachable as
+// sandbox globals, and the registry is the real generationRegistryForPage()).
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
-import vm from "node:vm";
+import { createContentHarness } from "./helpers/content-harness.mjs";
 import { createHookHarness } from "./helpers/page-hook-harness.mjs";
 
-const contentSource = await readFile(new URL("../extensions/chatgpt-web-capture/content.js", import.meta.url), "utf8");
 const SAMPLE = JSON.parse(await readFile(new URL("./fixtures/chatgpt-image-gen-ws-2026-11-03.json", import.meta.url), "utf8"));
 
 const TOOL_CALL_FRAME = SAMPLE.wsFrames.find((entry) => entry.i === 11).frame;
@@ -45,79 +45,17 @@ async function sampleHookPayloads() {
   return payloads;
 }
 
-/** A Map-backed chrome.storage.session fake (shared object = shared store). */
-function fakeSessionStorage() {
-  const store = new Map();
-  return {
-    store,
-    session: {
-      async get(keys) {
-        if (keys === null) return Object.fromEntries(store);
-        const wanted = Array.isArray(keys) ? keys : [keys];
-        const out = {};
-        for (const key of wanted) if (store.has(key)) out[key] = store.get(key);
-        return out;
-      },
-      async set(patch) { for (const [key, value] of Object.entries(patch)) store.set(key, value); },
-      async remove(keys) { for (const key of [].concat(keys)) store.delete(key); },
-    },
-  };
-}
-
-/** The real content.js persistence + registry functions in a vm context. */
-function contentPersistenceHarness({ sessionStorage, location } = {}) {
-  const constants = ["GENERATION_BINDING_KEY_PREFIX", "GENERATION_BINDINGS_MAX", "GENERATION_BINDINGS_TTL_MS", "MAX_BLOB_ASSETS"]
-    .map((name) => new RegExp(`const ${name} = [^;]+;`).exec(contentSource)?.[0]);
-  const hydrationGuard = new RegExp("let generationBindingsHydration = [^;]+;").exec(contentSource)?.[0];
-  assert.ok(constants.every(Boolean) && hydrationGuard, "persistence constants must be extractable");
-  const names = [
-    "normalizeAssetId", "cleanPromptText", "normalizeGenerationStatus",
-    "promptQuality", "metaPromptQuality",
-    "chatGptImageProxyInfo", "imageLookupKeys", "blobAssetIdForUrl",
-    "isTrustedBlobAssetUrl", "normalizeBlobAssetId", "rememberBlobAsset",
-    "generationRegistryForPage",
-    "generationBindingRecord", "generationBindingEntry",
-    "persistGenerationBinding", "mergeGenerationBindingRecords",
-    "hydratePersistedGenerationBindings",
-  ];
-  const source = names.map((name) => {
-    const match = new RegExp(`\\n {2}(?:async )?function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource);
-    assert.ok(match, `missing ${name}`);
-    return match[0];
-  }).join("\n");
-  const context = {
-    Date, JSON, Math, Object, String, URL, Set, Map, RegExp, Array,
-    location: location || { href: `https://chatgpt.com/c/${CONVERSATION_ID}`, origin: "https://chatgpt.com", pathname: `/c/${CONVERSATION_ID}` },
-    blobAssetIds: new Map(),
-    chrome: { storage: { session: sessionStorage } },
-    scans: 0,
-    scheduleScan: (force) => { context.scans += 1; },
-  };
-  vm.runInNewContext(`${constants.join("\n")}\n${hydrationGuard}\n${source}\nglobalThis.persist = persistGenerationBinding;\nglobalThis.hydrate = hydratePersistedGenerationBindings;\nglobalThis.generationRegistry = null;`, context);
-  return context;
-}
-
-const generationRegistrySource = await readFile(
-  new URL("../extensions/chatgpt-web-capture/generation-registry.js", import.meta.url),
-  "utf8",
-);
-
-/** Attach the real generation registry (generation-registry.js) to a context. */
-function attachRegistryTo(context) {
-  if (!context.metaPromptQuality) {
-    const source = ["promptQuality", "metaPromptQuality"]
-      .map((name) => new RegExp(`\\n {2}function ${name}\\([\\s\\S]*?\\n {2}\\}`).exec(contentSource)?.[0])
-      .filter(Boolean)
-      .join("\n");
-    assert.ok(source, "prompt quality ranking must be extractable");
-    vm.runInNewContext(source, context);
-  }
-  vm.runInNewContext(generationRegistrySource, context);
-  const factory = context.MosaGenerationRegistry?.createGenerationRegistry ?? null;
-  assert.ok(factory, "the real registry factory must install");
-  context.generationRegistry = factory({
-    imageLookupKeys: context.imageLookupKeys,
-    promptQuality: context.metaPromptQuality,
+/**
+ * Boot the real content.js on an optional shared chrome.storage.session Map
+ * (the same store two tabs of the extension see). The tests drive the real
+ * functions directly: context.persistGenerationBinding and
+ * context.hydratePersistedGenerationBindings, with the registry exposed by
+ * the harness's __mosaContentState introspection.
+ */
+async function contentPersistenceHarness({ sessionStore, pathname } = {}) {
+  return createContentHarness({
+    pathname: pathname || `/c/${CONVERSATION_ID}`,
+    ...(sessionStore ? { sessionStore } : {}),
   });
 }
 
@@ -139,12 +77,11 @@ test("A — same page, push first, image after: both texts bind to the file id",
 });
 
 test("the persisted record carries the real prompt, the caption, the title and the conversation", async () => {
-  const storage = fakeSessionStorage();
-  const context = contentPersistenceHarness({ sessionStorage: storage.session });
+  const page = await contentPersistenceHarness();
   const [payload] = (await sampleHookPayloads()).filter((entry) => entry.prompt);
 
-  await context.persist(payload);
-  const record = storage.store.get(`mosaGenerationBinding:${FILE_ID}`);
+  await page.context.persistGenerationBinding(payload);
+  const record = page.storage.session.get(`mosaGenerationBinding:${FILE_ID}`);
   assert.ok(record, "the record is stored under the provider file id");
   assert.equal(record.generationRequestPrompt, REAL_REQUEST_PROMPT);
   assert.match(record.prompt, /^Model caption:/);
@@ -155,74 +92,74 @@ test("the persisted record carries the real prompt, the caption, the title and t
 });
 
 test("C — after a page refresh a fresh content script rehydrates and binds the image", async () => {
-  const storage = fakeSessionStorage();
-  const pageOne = contentPersistenceHarness({ sessionStorage: storage.session });
+  const store = new Map();
+  const pageOne = await contentPersistenceHarness({ sessionStore: store });
   for (const payload of (await sampleHookPayloads()).filter((entry) => entry.prompt || entry.generationRequestPrompt)) {
-    await pageOne.persist(payload);
+    await pageOne.context.persistGenerationBinding(payload);
   }
-  assert.ok(storage.store.size >= 1);
+  assert.ok(store.size >= 1);
 
-  // Refresh: a brand-new context with an empty in-memory registry.
-  const refreshed = contentPersistenceHarness({ sessionStorage: storage.session });
-  assert.equal(refreshed.generationRegistry, null);
-  attachRegistryTo(refreshed);
-  await refreshed.hydrate();
+  // Refresh: a brand-new content script boots on the same session store with
+  // an empty in-memory registry; hydrating is what binds the image again.
+  const refreshed = await contentPersistenceHarness({ sessionStore: store });
+  const timeoutsBeforeHydration = refreshed.timers.timeouts.length;
+  await refreshed.context.hydratePersistedGenerationBindings();
   await setImmediate();
-  const resolved = refreshed.generationRegistry.resolvedForImage(ESTUARY_URL);
+  const resolved = refreshed.state.generationRegistry.resolvedForImage(ESTUARY_URL);
   assert.ok(resolved, "the rehydrated registry answers for the estuary file id");
   assert.match(resolved.prompt, /^Model caption:/);
   assert.equal(resolved.generationRequestPrompt, REAL_REQUEST_PROMPT);
   assert.equal(resolved.isGeneration, true);
-  assert.ok(refreshed.scans >= 1, "hydration triggers a rescan so queued candidates pick the binding");
+  assert.ok(
+    refreshed.timers.timeouts.length > timeoutsBeforeHydration,
+    "hydration triggers a rescan so queued candidates pick the binding",
+  );
 });
 
 test("B — push arrives while another conversation is open; the file-id record is kept and rescues the image later", async () => {
-  const storage = fakeSessionStorage();
+  const store = new Map();
   // The page sits on a different conversation (the hook still emits the event
   // with the push's own conversation id; rememberMeta's adoption gate drops
-  // it, which is exactly why the pre-gate persistence exists).
-  const awayPage = contentPersistenceHarness({
-    sessionStorage: storage.session,
-    location: { href: "https://chatgpt.com/c/another-conversation", origin: "https://chatgpt.com", pathname: "/c/another-conversation" },
-  });
+  // it, which is exactly why the pre-gate persistence exists — that wiring is
+  // exercised for real by the "persists a push the adoption gate drops" test
+  // below).
+  const awayPage = await contentPersistenceHarness({ sessionStore: store, pathname: "/c/another-conversation" });
   const payload = (await sampleHookPayloads()).find((entry) => entry.prompt);
-  await awayPage.persist(payload);
-  const record = storage.store.get(`mosaGenerationBinding:${FILE_ID}`);
+  await awayPage.context.persistGenerationBinding(payload);
+  const record = store.get(`mosaGenerationBinding:${FILE_ID}`);
   assert.ok(record, "the record persists regardless of the open conversation");
   assert.equal(record.conversationId, CONVERSATION_ID, "the record carries the push's conversation, not the open one");
 
   // Back on the image's conversation (SPA switch): hydration binds it.
-  const back = contentPersistenceHarness({ sessionStorage: storage.session });
-  attachRegistryTo(back);
-  await back.hydrate();
+  const back = await contentPersistenceHarness({ sessionStore: store });
+  await back.context.hydratePersistedGenerationBindings();
   await setImmediate();
-  const resolved = back.generationRegistry.resolvedForImage(ESTUARY_URL);
+  const resolved = back.state.generationRegistry.resolvedForImage(ESTUARY_URL);
   assert.ok(resolved);
   assert.match(resolved.prompt, /^Model caption:/);
   assert.equal(resolved.generationRequestPrompt, REAL_REQUEST_PROMPT);
 });
 
 test("D — a second tab opens the conversation and hydrates the same session store", async () => {
-  const storage = fakeSessionStorage();
-  const tabOne = contentPersistenceHarness({ sessionStorage: storage.session });
+  const store = new Map();
+  const tabOne = await contentPersistenceHarness({ sessionStore: store });
   for (const payload of (await sampleHookPayloads()).filter((entry) => entry.prompt || entry.generationRequestPrompt)) {
-    await tabOne.persist(payload);
+    await tabOne.context.persistGenerationBinding(payload);
   }
 
   // Tab 2: same extension session store, no live events of its own.
-  const tabTwo = contentPersistenceHarness({ sessionStorage: storage.session });
-  attachRegistryTo(tabTwo);
-  await tabTwo.hydrate();
+  const tabTwo = await contentPersistenceHarness({ sessionStore: store });
+  await tabTwo.context.hydratePersistedGenerationBindings();
   await setImmediate();
-  const resolved = tabTwo.generationRegistry.resolvedForImage(ESTUARY_URL);
+  const resolved = tabTwo.state.generationRegistry.resolvedForImage(ESTUARY_URL);
   assert.ok(resolved, "chrome.storage.session is shared per extension, so tab 2 binds from tab 1's records");
   assert.match(resolved.prompt, /^Model caption:/);
   assert.equal(resolved.generationRequestPrompt, REAL_REQUEST_PROMPT);
 });
 
 test("the store is capped at 200 records and drops bindings older than 24 hours", async () => {
-  const storage = fakeSessionStorage();
-  const context = contentPersistenceHarness({ sessionStorage: storage.session });
+  const store = new Map();
+  const page = await contentPersistenceHarness({ sessionStore: store });
   const now = Date.now();
   // 250 records: 50 are older than the TTL, the rest overflow the cap.
   for (let index = 0; index < 250; index += 1) {
@@ -238,33 +175,79 @@ test("the store is capped at 200 records and drops bindings older than 24 hours"
     record.capturedAt = index < 50
       ? new Date(now - 25 * 60 * 60 * 1000).toISOString()
       : new Date(now - (200 - index) * 60 * 1000).toISOString();
-    storage.store.set(`mosaGenerationBinding:${record.assetId}`, record);
+    store.set(`mosaGenerationBinding:${record.assetId}`, record);
   }
-  assert.equal(storage.store.size, 250);
-  attachRegistryTo(context);
-  await context.hydrate();
+  assert.equal(store.size, 250);
+  await page.context.hydratePersistedGenerationBindings();
   await setImmediate();
-  assert.equal(storage.store.size, 200, "hydration prunes expired and overflow records");
-  for (const [key] of storage.store) {
-    const record = storage.store.get(key);
+  assert.equal(store.size, 200, "hydration prunes expired and overflow records");
+  for (const [key, record] of store) {
     assert.ok(Date.parse(record.capturedAt) > now - 24 * 60 * 60 * 1000, "every surviving record is within the TTL");
     assert.ok(key.startsWith("mosaGenerationBinding:file_cap_"), "pruning keeps the newest records");
   }
 });
 
-test("the wiring persists before the adoption gate and hydrates at boot and on switch", () => {
-  const handlerIndex = contentSource.indexOf("function handlePageHookEvent");
-  const gateIndex = contentSource.indexOf("const meta = rememberMeta(data.payload);", handlerIndex);
-  const persistIndex = contentSource.indexOf("persistGenerationBinding(data.payload);", handlerIndex);
-  assert.ok(handlerIndex >= 0 && gateIndex > 0 && persistIndex > 0);
-  assert.ok(persistIndex < gateIndex, "the file-id record is written before the conversation-identity gate can drop the event");
+test("a generation-meta push the adoption gate drops still leaves its file-id record", async () => {
+  // The wiring rule this locks: persistGenerationBinding runs BEFORE the
+  // conversation-identity gate inside handlePageHookEvent, so a push that
+  // arrives while another conversation is open is not lost (the gate drops
+  // the event itself, but the file-id record is conversation-agnostic).
+  const store = new Map();
+  const awayPage = await contentPersistenceHarness({ sessionStore: store, pathname: "/c/another-conversation" });
+  awayPage.offerHookPort();
+  const payload = (await sampleHookPayloads()).find((entry) => entry.prompt);
+  awayPage.deliverHookEvent("generation-meta", payload);
+  await awayPage.flush();
 
-  const bootStart = contentSource.indexOf("loadSettings().then(() => {");
-  const bootEnd = contentSource.indexOf("});", bootStart);
-  assert.match(contentSource.slice(bootStart, bootEnd), /hydratePersistedGenerationBindings\(\);/, "boot hydrates");
-  assert.match(
-    contentSource,
-    /nextConversationId !== previousConversationId\) hydratePersistedGenerationBindings\(\);/,
-    "an SPA conversation switch rehydrates (records may have arrived while away)",
-  );
+  const record = store.get(`mosaGenerationBinding:${FILE_ID}`);
+  assert.ok(record, "the record is written even though the gate dropped the event");
+  assert.equal(record.conversationId, CONVERSATION_ID, "the record carries the push's conversation, not the open one");
+  assert.equal(record.messageId, MESSAGE_ID);
+  assert.match(record.prompt, /^Model caption:/);
+  assert.equal(awayPage.state.generationRegistry, null, "the gate kept the event itself out of the in-memory registry");
+});
+
+test("a fresh page hydrates the persisted bindings at boot", async () => {
+  const store = new Map();
+  const pageOne = await contentPersistenceHarness({ sessionStore: store });
+  for (const payload of (await sampleHookPayloads()).filter((entry) => entry.prompt || entry.generationRequestPrompt)) {
+    await pageOne.context.persistGenerationBinding(payload);
+  }
+
+  // A brand-new page, no test-driven hydrate call: boot alone
+  // (loadSettings().then → hydratePersistedGenerationBindings) must bind.
+  const fresh = await contentPersistenceHarness({ sessionStore: store });
+  const resolved = fresh.state.generationRegistry?.resolvedForImage(ESTUARY_URL);
+  assert.ok(resolved, "boot hydration bound the persisted record without any explicit hydrate call");
+  assert.match(resolved.prompt, /^Model caption:/);
+  assert.equal(resolved.generationRequestPrompt, REAL_REQUEST_PROMPT);
+});
+
+test("an SPA conversation switch rehydrates bindings persisted while away", async () => {
+  const store = new Map();
+  // Boot on a different conversation with an empty store: boot hydration
+  // finds nothing and the registry stays empty.
+  const page = await contentPersistenceHarness({ sessionStore: store, pathname: "/c/conv-away" });
+  assert.equal(page.state.generationRegistry, null, "nothing to bind before the push arrives");
+  // While away, a push for the image's conversation arrives; the adoption
+  // gate drops the event but its file-id record is persisted.
+  page.offerHookPort();
+  const payload = (await sampleHookPayloads()).find((entry) => entry.prompt);
+  page.deliverHookEvent("generation-meta", payload);
+  await page.flush();
+  assert.ok(store.get(`mosaGenerationBinding:${FILE_ID}`), "the record survived while the user was away");
+  assert.equal(page.state.generationRegistry, null, "the gate kept the event out of the in-memory registry");
+
+  // Switch to the push's conversation: the next scan notices the URL change
+  // and rehydrates (records may have arrived while away).
+  page.location.href = `https://chatgpt.com/c/${CONVERSATION_ID}`;
+  page.location.pathname = `/c/${CONVERSATION_ID}`;
+  page.context.scheduleScan(true);
+  page.fireTimeouts();
+  await page.flush();
+
+  const resolved = page.state.generationRegistry?.resolvedForImage(ESTUARY_URL);
+  assert.ok(resolved, "the switch rehydrated the record persisted while away");
+  assert.match(resolved.prompt, /^Model caption:/);
+  assert.equal(resolved.generationRequestPrompt, REAL_REQUEST_PROMPT);
 });

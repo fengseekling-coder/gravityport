@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,19 @@ import {
 import { removeTestPath } from "./test-cleanup.mjs";
 
 const execFileAsync = promisify(execFile);
+
+// Task 406: the update IPC handlers now live in desktop/ipc/updates.mjs, so
+// source-text assertions over the desktop shell read desktop/main.mjs plus
+// those files.
+function readDesktopMainSources() {
+  const desktopDir = new URL("../desktop/", import.meta.url);
+  const ipcDir = new URL("ipc/", desktopDir);
+  const parts = [readFileSync(new URL("main.mjs", desktopDir), "utf8")];
+  for (const name of readdirSync(ipcDir).filter((file) => file.endsWith(".mjs")).sort()) {
+    parts.push(readFileSync(new URL(name, ipcDir), "utf8"));
+  }
+  return parts.join("\n");
+}
 
 function encodePowerShellCommand(command) {
   return Buffer.from(String(command || ""), "utf16le").toString("base64");
@@ -580,7 +594,9 @@ test("the readiness file path never depends on the installed exe name", async ()
 });
 
 test("the packaged app never passes the signature-probe option", async () => {
-  const main = await readFile(new URL("../desktop/main.mjs", import.meta.url), "utf8");
+  // Task 406: the helper launch sites moved to desktop/ipc/updates.mjs, so the
+  // absence scan reads desktop/main.mjs plus those files.
+  const main = readDesktopMainSources();
   assert.doesNotMatch(main, /signatureProbe/);
   assert.doesNotMatch(main, /MOSA_UPDATE_SIGNATURE_PROBE/);
 });

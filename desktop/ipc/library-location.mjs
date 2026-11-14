@@ -22,6 +22,8 @@ export function registerLibraryLocationIpc(deps) {
     setLibraryDir,
     getService,
     setService,
+    pauseLibraryVolumeWatch,
+    resumeLibraryVolumeWatch,
   } = deps;
   ipcMain.handle("change-library-location", async (event) => {
     if (!trustedRendererEvent(event)) return { ok: false, reason: "unavailable" };
@@ -66,6 +68,7 @@ export function registerLibraryLocationIpc(deps) {
       console.error(`[MOSA] library relocation marker could not be written: ${error?.stack || error}`);
       return { ok: false, reason: "copy-failed" };
     }
+    pauseLibraryVolumeWatch?.();
     try {
       await stopOwnedRuntime();
       setService(null);
@@ -83,6 +86,7 @@ export function registerLibraryLocationIpc(deps) {
       await removeRelocationMarker({ libraryDir: previousLibraryDir }).catch(() => {});
       console.error(`[MOSA] library relocation failed: ${error?.stack || error}`);
       setLibraryDir(previousLibraryDir);
+      resumeLibraryVolumeWatch?.(previousLibraryDir);
       app.relaunch();
       app.exit(1);
       // 任务 389（低18 ②）：空间不足、没有权限各回一句自己的话，其余照旧
@@ -94,6 +98,7 @@ export function registerLibraryLocationIpc(deps) {
     // the old directory must never roll back by deleting the new authoritative
     // copy; at worst the user is left with a harmless duplicate to remove.
     setLibraryDir(nextLibraryDir);
+    resumeLibraryVolumeWatch?.(nextLibraryDir);
     await rm(previousLibraryDir, { recursive: true, force: true }).catch((error) => {
       console.warn(`[MOSA] new library is active but the old directory could not be removed: ${error?.message || error}`);
     });

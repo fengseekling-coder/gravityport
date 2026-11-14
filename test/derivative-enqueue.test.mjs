@@ -237,6 +237,35 @@ test("startup mode re-queues completed jobs when dimensions went missing and lea
   assert.deepEqual(await store.derivativeStatus(), { pending: 1, completed: 1 }, "the completed job resets to pending; the complete asset keeps its completed job");
 });
 
+// Task 416 (audit 低10 ①): a job that failed three times never stops failing,
+// so the startup scan must leave it failed instead of re-enqueueing it on
+// every launch. repair and rebuild are explicit user requests and still
+// re-enqueue the same job.
+test("startup mode leaves a failed-at-3 job failed; repair and rebuild still re-enqueue it", async (t) => {
+  const { store, libraryDir } = await createLibraryWithAssets(t, ["stubborn"]);
+  await drainDerivativeJobs(store);
+  editLibraryRows(libraryDir, (database) => {
+    database.prepare("UPDATE assets SET thumbnail_path = NULL WHERE id = 'stubborn'").run();
+    database.prepare("UPDATE derivative_jobs SET status = 'failed', attempts = 3, error = 'Input image exceeds pixel limit' WHERE asset_id = 'stubborn'").run();
+  });
+
+  assert.equal(await store.enqueueMissingDerivatives({ mode: "startup" }), 0, "startup mode keeps the exhausted job quiet");
+  let afterStartup = null;
+  editLibraryRows(libraryDir, (database) => {
+    afterStartup = database.prepare("SELECT status, attempts FROM derivative_jobs WHERE asset_id = 'stubborn'").get();
+  });
+  assert.deepEqual(afterStartup, { status: "failed", attempts: 3 }, "the job was not reset to pending");
+
+  assert.equal(await store.enqueueMissingDerivatives({ mode: "repair" }), 1, "repair mode re-enqueues it");
+  assert.deepEqual(await store.derivativeStatus(), { pending: 1 });
+
+  editLibraryRows(libraryDir, (database) => {
+    database.prepare("UPDATE derivative_jobs SET status = 'failed', attempts = 3 WHERE asset_id = 'stubborn'").run();
+  });
+  assert.equal(await store.enqueueMissingDerivatives({ mode: "rebuild" }), 1, "rebuild mode re-enqueues it too");
+  assert.deepEqual(await store.derivativeStatus(), { pending: 1 });
+});
+
 test("startup mode never enqueues videos, trashed, or archived assets", async (t) => {
   const { store, libraryDir } = await createLibraryWithAssets(t, ["keeper", "trashed"]);
   const videoPath = join(store.projectRoot, "generated-images", "clip.mp4");

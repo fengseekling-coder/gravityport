@@ -49,7 +49,7 @@
         "https://chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
-      "js": ["generation-registry.js", "content.js"],
+      "js": ["generation-registry.js", "content-media.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_start",
       "all_frames": false

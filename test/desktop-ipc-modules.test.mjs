@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { registerClipboardIpc } from "../desktop/ipc/clipboard.mjs";
 import { registerLibraryLocationIpc } from "../desktop/ipc/library-location.mjs";
 import { registerMiscIpc } from "../desktop/ipc/misc.mjs";
+import { macosUpdateInstallPromise, registerUpdateIpc, windowsUpdateInstallPromise } from "../desktop/ipc/updates.mjs";
 
 function makeFakeIpcMain() {
   const handlers = new Map();
@@ -96,4 +98,47 @@ test("set-window-full-screen reads the current window through getMainWindow on e
   assert.deepEqual(secondResult, { ok: true, isFullScreen: true });
   assert.deepEqual(windowA.calls, [true]);
   assert.deepEqual(windowB.calls, [true]);
+});
+
+test("registerUpdateIpc registers exactly the five update channels in the original order", () => {
+  const updateIpc = makeFakeIpcMain();
+  registerUpdateIpc({ ipcMain: updateIpc });
+  assert.deepEqual(updateIpc.channels(), [
+    "check-for-updates",
+    "get-update-ready",
+    "download-and-install-update",
+    "cancel-update-download",
+    "open-download-page",
+  ]);
+});
+
+test("update install state exports as live bindings and cancel-update-download tolerates no active download", async () => {
+  // The four module-level update variables moved here from main.mjs (task 406).
+  // main.mjs reads the two install promises through these live exports, so the
+  // initial values must be the same null the handlers reset them to.
+  assert.equal(macosUpdateInstallPromise, null);
+  assert.equal(windowsUpdateInstallPromise, null);
+  const updateIpc = makeFakeIpcMain();
+  registerUpdateIpc({
+    ipcMain: updateIpc,
+    trustedRendererEvent: () => true,
+    macosUpdateDownloadController: null,
+    windowsUpdateDownloadController: null,
+  });
+  const handler = updateIpc.handlers.get("cancel-update-download");
+  assert.equal(typeof handler, "function");
+  const result = await handler({});
+  assert.deepEqual(result, { ok: false });
+});
+
+test("registerUpdateIpc never snapshots the window outside a handler", () => {
+  const source = readFileSync(new URL("../desktop/ipc/updates.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /const \w+ = getMainWindow\(\)/);
+  // Every window access sits inside the per-download onProgress callbacks, so
+  // a window rebuilt mid-download is still picked up on the next progress
+  // event. A behavior test would need a full staged release download (real
+  // manifest signature, real network fetch), which cannot be faked cheaply;
+  // the source nail plus the deps-based getMainWindow() calls carry this
+  // check the same way the set-window-full-screen test does for misc.mjs.
+  assert.match(source, /getMainWindow\(\)\.webContents\.send\("update-download-progress", progress\)/);
 });

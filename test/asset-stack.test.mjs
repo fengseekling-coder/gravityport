@@ -432,6 +432,57 @@ test("permanently deleting every trashed member leaves no orphan stack rows or g
   assert.equal(restacked.cover_asset_id, "c");
 });
 
+// Task 416 (audit 低1 ③): permanently deleting a trashed member compacts the
+// stack with the same rules as stack_remove_assets — compactAssetStack counts
+// member ROWS (trashed ones included), so what survives decides dissolve vs.
+// stay: one remaining row dissolves, two remain a (not-rendered) stack that
+// still lets the trashed member restore into it.
+test("permanently deleting one trashed member of a three-stack keeps the stack restorable", async (t) => {
+  const store = await createFixtureStore(t);
+  const stack = await store.createAssetStack("default", ["a", "b", "c"], { coverAssetId: "a" });
+  await store.deleteAsset("default", "a");
+  await store.deleteAsset("default", "b");
+
+  const since = (await store.listLibraryChangesSince("default", 0)).currentRevision;
+  await store.permanentlyDeleteAsset("default", "a");
+
+  const stackAfter = await store.getAssetStack("default", stack.id);
+  assert.equal(stackAfter.count, 1, "one trashed member (restorable) plus one active member keep the stack row alive");
+  const trashScope = await store.listAssetPage({ projectId: "default", trash: true, limit: 0, sort: "oldest" });
+  assert.deepEqual(trashScope.assets.map((asset) => asset.id), ["b"], "the other trashed member stays restorable");
+  assert.deepEqual(
+    (await store.listLibraryChangesSince("default", since)).changes.map((change) => change.kind),
+    ["asset-permanently-deleted", "stack-members-changed"],
+    "a surviving stack answers with the members-changed kind",
+  );
+});
+
+test("permanently deleting one member of a two-stack dissolves it and frees the survivor", async (t) => {
+  const store = await createFixtureStore(t);
+  const stack = await store.createAssetStack("default", ["c", "d"], { coverAssetId: "c" });
+  await store.deleteAsset("default", "c");
+
+  const since = (await store.listLibraryChangesSince("default", 0)).currentRevision;
+  await store.permanentlyDeleteAsset("default", "c");
+
+  await assert.rejects(
+    store.getAssetStack("default", stack.id),
+    (error) => error.code === "STACK_NOT_FOUND",
+    "a stack left with one member row dissolves (compactAssetStack rule)",
+  );
+  const page = await store.listAssetPage({ projectId: "default", collapseStacks: true, limit: 0, sort: "oldest" });
+  assert.equal(page.assets.find((asset) => asset.id === "d")?.stack, undefined, "the survivor renders as a plain asset");
+  assert.deepEqual(
+    (await store.listLibraryChangesSince("default", since)).changes.map((change) => change.kind),
+    ["asset-permanently-deleted", "stack-dissolved"],
+    "the dissolve carries the same kind stack_remove_assets records",
+  );
+  // The dissolve cascaded d's membership row away, so d can be stacked again
+  // without ASSET_ALREADY_STACKED interference from the deleted member.
+  const restacked = await store.createAssetStack("default", ["d", "b"], { coverAssetId: "d" });
+  assert.equal(restacked.count, 2);
+});
+
 test("getAssetStackMemberships reports membership for stacked assets and empty for non-members or empty input", async (t) => {
   const store = await createFixtureStore(t);
   const stack = await store.createAssetStack("default", ["a", "b"], { coverAssetId: "a" });
