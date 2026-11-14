@@ -30,6 +30,7 @@ import { MockMessagePort } from "./page-hook-harness.mjs";
 const extensionDir = new URL("../../extensions/chatgpt-web-capture/", import.meta.url);
 const contentSource = await readFile(new URL("content.js", extensionDir), "utf8");
 const contentMediaSource = await readFile(new URL("content-media.js", extensionDir), "utf8");
+const contentPromptSource = await readFile(new URL("content-prompt.js", extensionDir), "utf8");
 const generationRegistrySource = await readFile(new URL("generation-registry.js", extensionDir), "utf8");
 
 /** Base64 whose decoded size is ~30 KB, above the 20 KB MIN_BYTES floor. */
@@ -521,7 +522,8 @@ export async function createContentHarness(options = {}) {
   sandbox.images = images;
 
   // Merge caller env BEFORE the script runs (plain values the boot reads),
-  // then boot generation-registry.js (manifest order) and content.js itself.
+  // then boot generation-registry.js, content-media.js, content-prompt.js
+  // (manifest order) and content.js itself.
   const env = {
     location: {
       href: options.href || `https://chatgpt.com${options.pathname || "/c/conversation-test"}`,
@@ -586,6 +588,7 @@ export async function createContentHarness(options = {}) {
 };`;
   vm.runInNewContext(generationRegistrySource, sandbox, { filename: "generation-registry.js" });
   vm.runInNewContext(contentMediaSource, sandbox, { filename: "content-media.js" });
+  vm.runInNewContext(contentPromptSource, sandbox, { filename: "content-prompt.js" });
   vm.runInNewContext(`${body}\n${introspection}`, sandbox, { filename: "content.js" });
 
   // Caller function stubs replace the hoisted declarations after boot.

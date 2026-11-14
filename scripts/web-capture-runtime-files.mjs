@@ -4,6 +4,7 @@ export const WEB_CAPTURE_RUNTIME_FILES = Object.freeze([
   "content.css",
   "content.js",
   "content-media.js",
+  "content-prompt.js",
   "generation-registry.js",
   "options.html",
   "options.js",

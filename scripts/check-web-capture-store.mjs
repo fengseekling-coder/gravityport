@@ -11,7 +11,13 @@ const storeId = String(process.env.MOSA_CHROME_STORE_EXTENSION_ID || MOSA_WEB_CA
 const manifest = JSON.parse(await readFile(resolve(extensionDir, "manifest.json"), "utf8"));
 const background = await readFile(resolve(extensionDir, "background.js"), "utf8");
 const hook = await readFile(resolve(extensionDir, "page-hook.js"), "utf8");
-const content = await readFile(resolve(extensionDir, "content.js"), "utf8");
+// Read the ChatGPT content-script pipeline exactly the way manifest.json loads it (splits of content.js keep this preflight working).
+const chatgptContentEntry = (manifest.content_scripts || []).find(
+  (entry) => Array.isArray(entry?.js) && entry.js.includes("content.js"),
+);
+const content = (await Promise.all(
+  (chatgptContentEntry?.js || []).map((file) => readFile(resolve(extensionDir, file), "utf8")),
+)).join("\n");
 const generationRegistry = await readFile(resolve(extensionDir, "generation-registry.js"), "utf8");
 const providers = await readFile(resolve(extensionDir, "provider-sites.js"), "utf8");
 const options = await readFile(resolve(extensionDir, "options.js"), "utf8");
