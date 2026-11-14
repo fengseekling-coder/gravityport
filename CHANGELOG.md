@@ -2,6 +2,25 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.14 — 2026-11-14 / Preview
+
+### Desktop
+
+- Animated GIF, WebP, APNG and AVIF originals play in the viewer; gallery cards and the details thumbnail play animations and videos (muted) on hover and return to the still frame afterwards.
+- TIFF, HEIC/HEIF (macOS only) and MKV import with thumbnails and viewer previews. Importing HEIC on Windows is refused with an explanation, and videos in codecs the viewer can't play (such as ProRes) say why.
+- Imports onto a full disk report a named `DISK_FULL` error (HTTP 507) and leave no partial file behind.
+- Fixes: the capture status card's Retry re-sends queued media right away; a permanent delete in the Trash dissolves a stack left with one asset; unplugging or force-ejecting the drive that holds the library closes the library safely, shows a notice and quits instead of crashing; Escape reliably denies a browser-extension authorization dialog the moment it appears.
+- The startup thumbnail scan skips jobs that already failed three times (repair and rebuild still retry them); the database write-ahead log is capped at 64 MiB.
+- Internal reorganization of the SQLite store, desktop main process, inspector and settings UI, and web-capture helpers; no behavior change.
+
+### Web Capture
+
+- Extension 0.15.48: images on Flow's new page layout are captured again, and failure tiles are no longer read as prompts. Image byte reading moved into `content-media.js`.
+
+### MCP launcher
+
+- `gravityport-mcp` 0.3.14: version bump only.
+
 ## 0.3.13 — 2026-11-13 / Preview
 
 ### Desktop
