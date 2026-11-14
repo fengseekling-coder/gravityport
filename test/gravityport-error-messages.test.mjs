@@ -117,6 +117,14 @@ const TASK_369_TAILS = {
   },
 };
 
+// 任务 416：导入写文件遇到磁盘满，服务端回 DISK_FULL；整句和部分失败的尾巴都要说清。
+test("task 416 DISK_FULL reads as a full-disk import failure", () => {
+  assert.equal(errorMessagesModule.messageForErrorCode("DISK_FULL", "zh"), "导入失败，磁盘空间不足。");
+  assert.equal(errorMessagesModule.messageForErrorCode("DISK_FULL", "en"), "Import failed. The disk is full.");
+  assert.equal(errorMessagesModule.importFailureTail("DISK_FULL", "zh"), "磁盘空间不足。");
+  assert.equal(errorMessagesModule.importFailureTail("DISK_FULL", "en"), "The disk is full.");
+});
+
 test("task 369 import failure tails drop only the leading 导入失败 / Import failed", () => {
   for (const [code, pack] of Object.entries(TASK_369_TAILS)) {
     assert.equal(errorMessagesModule.importFailureTail(code, "zh"), pack.zh, `${code} zh tail`);
