@@ -223,6 +223,26 @@ function transactionDirs(appsDir) {
     : [];
 }
 
+/** The helper identifies "the new app is running" with
+ * `pgrep -f "<target app path>/Contents/MacOS/<name> --mosa-update-ready-file="`
+ * (desktop/macos-updater.mjs readiness loop) and takes the first match. An
+ * executable launched by an earlier case in this same appsDir path is still
+ * in its script phase for a moment and matches that pattern; if the helper
+ * latches it and it dies before the new app reports ready, the helper exits
+ * 31 and rolls back — the transaction never gets cleaned and the next
+ * case's cleanup wait times out (416 acceptance flake). Wait until nothing
+ * matches the pattern before tearing down for the next case. */
+async function waitNoAppExecutableRunning(installAppPath, execName) {
+  const pattern = `${installAppPath}/Contents/MacOS/${execName} --mosa-update-ready-file=`;
+  await waitFor(() => {
+    try {
+      return execFileSync("/usr/bin/pgrep", ["-f", pattern], { encoding: "utf8" }).trim() === "";
+    } catch {
+      return true; // pgrep exits 1 when nothing matches
+    }
+  }, `no leftover app executable matching ${pattern}`);
+}
+
 function markerOf(appPath) {
   // The replacement window briefly has no app at the install path; the
   // polling predicates treat null as "not yet".
@@ -418,7 +438,11 @@ previewScope("rehearsal: a cross-name payload that upgraded the library is kept 
       appName: "GravityPort.app",
     });
 
-    await waitFor(() => existsSync(logPath) && /kept the new version/.test(readFileSync(logPath, "utf8")), { label: "helper log" });
+    // The helper writes this log in two parts (GP_UPDATE_KEPT_NEW first, the
+    // "kept the new version … (exit N)" line second — desktop/macos-updater.mjs
+    // on_exit); wait for the asserted line itself, or a read between the two
+    // writes fails the /exit \d+/ match (414 acceptance flake).
+    await waitFor(() => existsSync(logPath) && /kept the new version because it already upgraded the library \(exit \d+\)/.test(readFileSync(logPath, "utf8")), { label: "helper log" });
     assert.match(readFileSync(logPath, "utf8"), /exit \d+/);
     assert.match(readFileSync(logPath, "utf8"), /kept the new version/);
     assert.equal(markerOf(join(appsDir, "GravityPort.app")), "new");
@@ -514,8 +538,16 @@ previewScope("rehearsal: cross-name update refuses to overwrite an existing Grav
       appName: "GravityPort.app",
     });
 
-    // Give a (wrong) full update flow time to make changes; none may appear.
-    await new Promise((resolveWait) => setTimeout(resolveWait, 2500));
+    // The refusal is terminal once the failure log is fully written. on_exit
+    // runs the rollback (which reopens the previous app into open.log) BEFORE
+    // writing the log, and writes it in two parts: the
+    // `GP_UPDATE_FAILURE code=TARGET_EXISTS exit=33` line first, then the
+    // "macOS update helper failed (exit 33)" line the assertion below matches
+    // (desktop/macos-updater.mjs). Wait for that second line — the first is
+    // already in by then (written with `>`) — so the log and every state
+    // asserted below are settled. No fixed sleep.
+    const refusalLog = join(payloadRoot, "apply-update-error.log");
+    await waitFor(() => existsSync(refusalLog) && /macOS update helper failed \(exit 33\)/.test(readFileSync(refusalLog, "utf8")), { label: "TARGET_EXISTS refusal log" });
     assert.equal(markerOf(join(appsDir, "MOSA.app")), "old");
     assert.equal(markerOf(join(appsDir, "GravityPort.app")), "user-copy");
     assert.deepEqual(transactionDirs(appsDir), [], "a refused update must not create a transaction");
@@ -564,6 +596,7 @@ previewScope("rehearsal: team identifier and signature transition rules in previ
     });
     await waitFor(() => markerOf(installApp) === "new", { label: "case A: transition ad-hoc -> signed success" });
     await waitFor(() => transactionDirs(appsDir).length === 0, { label: "case A: transaction cleanup" });
+    await waitNoAppExecutableRunning(installApp, "MOSA");
 
     // Case B: Signed -> Signed (same Team ID on old app, new app, and manifest) -> succeeds.
     await rm(appsDir, { recursive: true, force: true });
