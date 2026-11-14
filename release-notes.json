@@ -1,34 +1,46 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {
-      "new": [
-        "GIF、动态 WebP、APNG 和动态 AVIF 在查看器中直接播放；画廊卡片和详情栏缩略图在鼠标悬停时播放动图和视频（视频静音），移开后恢复静止。",
-        "支持导入 TIFF、HEIC/HEIF（仅 Mac 版）和 MKV 素材，可生成缩略图并在查看器中查看；Windows 版导入 HEIC 时会提示暂不支持；无法播放的视频编码（如 ProRes）会说明原因。"
-      ],
-      "fixed": [
-        "修复 Flow 新版页面上的图片收不到，以及提示词被收成报错文字。",
-        "修复了设置页收图状态卡上点「重试」没有反应的问题，等待重试的素材现在会立即重新发送。",
-        "修复了磁盘空间不足时导入只显示看不懂的错误，现在会提示磁盘空间不足。",
-        "修复了在回收站永久删除素材后，只剩一张图的堆叠不会解散的问题。",
-        "修复了素材库所在的外接硬盘被直接拔出或强制推出时 App 闪退的问题，现在会先安全关闭素材库，再提示并退出。"
-      ]
-    },
-    "en": {
-      "new": [
-        "Animated GIF, WebP, APNG, and AVIF images now play in the viewer, and gallery cards and the details thumbnail play animations and videos (muted) on hover.",
-        "Added support for TIFF, HEIC/HEIF (Mac only), and MKV files, with thumbnails and viewer previews. On Windows, importing HEIC explains that it isn't supported yet, and videos in codecs that can't play, such as ProRes, now say why."
-      ],
-      "fixed": [
-        "Fix images not being captured on Flow's new page layout, and error text being saved as the prompt.",
-        "Fixed the Retry button on the capture status card doing nothing; queued media now re-sends right away.",
-        "Fixed imports to a full disk showing an unclear error; the app now says the disk is full.",
-        "Fixed stacks left with a single asset not dissolving after a permanent delete in the Trash.",
-        "Fixed the app crashing when the external drive holding the library is unplugged or force-ejected; it now closes the library safely, shows a notice, and quits."
-      ]
-    }
+    "zh": {},
+    "en": {}
   },
   "releases": [
+    {
+      "version": "0.3.14",
+      "date": "2026-11-14",
+      "zh": {
+        "new": [
+          "动图直接播放：查看器播放 GIF、动态 WebP、APNG 和动态 AVIF；画廊卡片和详情栏缩略图在鼠标悬停时播放动图和视频（静音）。",
+          "支持导入 TIFF、HEIC/HEIF（仅 Mac）和 MKV，带缩略图，可在查看器中查看。"
+        ],
+        "improved": [
+          "Windows 版导入 HEIC、遇到 ProRes 等无法播放的视频编码时，会说明原因。",
+          "磁盘空间不足时，导入直接提示空间不足。"
+        ],
+        "fixed": [
+          "Flow 新版页面能正常收图，提示词不再收成报错文字。",
+          "设置页收图状态卡的「重试」会立即重新发送。",
+          "永久删除后只剩一张图的堆叠会自动解散。",
+          "素材库所在的外接硬盘被拔出时，App 不再闪退，会先安全关闭素材库再提示退出。"
+        ]
+      },
+      "en": {
+        "new": [
+          "Animated images play: GIF, animated WebP, APNG, and animated AVIF play in the viewer; gallery cards and the details thumbnail play animations and videos (muted) on hover.",
+          "Import TIFF, HEIC/HEIF (Mac only), and MKV, with thumbnails and viewer previews."
+        ],
+        "improved": [
+          "Importing HEIC on Windows, or a video in a codec that can't play such as ProRes, now explains why.",
+          "When the disk is full, imports say so directly."
+        ],
+        "fixed": [
+          "Capture works on Flow's new page layout, and prompts are no longer saved as error text.",
+          "Retry on the capture status card in Settings re-sends right away.",
+          "Stacks left with a single image dissolve after a permanent delete.",
+          "Unplugging the drive that holds the library no longer crashes the app; it closes the library safely, shows a notice, and quits."
+        ]
+      }
+    },
     {
       "version": "0.3.13",
       "date": "2026-11-13",
