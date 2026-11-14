@@ -1,9 +1,9 @@
 // GravityPort React UI flow (task 412): an animated GIF opens in the viewer
 // with the still preview first, then swaps to the ORIGINAL (whatever its
 // size — the old rule demanded the original to be bigger than the preview)
-// and actually plays: two screenshots of the viewer region, taken at least
-// 300ms apart inside the isolated QA desktop shell (CDP Page.captureScreenshot,
-// clipped to the media box), must differ pixel-wise.
+// and actually plays: a screenshot of the viewer region taken inside the
+// isolated QA desktop shell (CDP Page.captureScreenshot, clipped to the media
+// box) must be followed, within ~1.5s, by one that differs pixel-wise.
 //
 // The desktop shell is the only instance reachable over CDP (the web-driver
 // window has no debugging port); quiet QA mode renders it hidden with
@@ -18,15 +18,15 @@ import { runDesktopShell } from "./_animated-desktop.mjs";
 const FRAME_LOG_DIR = join(homedir(), "codex_aigc", "素材", "日志");
 
 export const name = "viewer-animated-original";
-export const description = "414x414 two-frame GIF: viewer shows the still preview, swaps to the /images/ original, and two viewer-region screenshots >=300ms apart differ (log dir PNGs)";
+export const description = "414x414 two-frame GIF: viewer shows the still preview, swaps to the /images/ original, and a later viewer-region screenshot (retried at uneven gaps over ~1.5s) differs from the first (log dir PNGs)";
 
 export async function run(ctx) {
   await ctx.prepare();
   const server = await ctx.startServer();
   let serverRunning = true;
   try {
-    // Two solid frames 414x414, ~120ms each: any two captures >=300ms apart
-    // land on different phases of the loop.
+    // Two solid frames 414x414, 120ms each (a 240ms loop); the capture loop
+    // below retries at uneven gaps so it cannot keep landing on one frame.
     const makeFrame = (color) => sharp({ create: { width: 414, height: 414, channels: 3, background: color } }).png().toBuffer();
     const gifPath = join(ctx.fixturesDir, "animated-414.gif");
     await sharp([await makeFrame({ r: 214, g: 61, b: 46 }), await makeFrame({ r: 52, g: 101, b: 214 })], {
@@ -77,10 +77,22 @@ export async function run(ctx) {
         return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
       })()`);
       if (!rect || rect.width <= 0 || rect.height <= 0) throw new Error(`viewer media box is empty: ${JSON.stringify(rect)}`);
+      // Two 120ms frames make a 240ms cycle, so two captures a fixed 350ms
+      // apart land on the same frame whenever the first falls in the first
+      // 50ms of a frame (~40% of runs — CI hit it on PR #348). Keep capturing
+      // the second shot at short, uneven gaps until it differs, for up to ~1.5s
+      // (several full cycles); a GIF that is really frozen never differs.
       await captureRect(rect, shots.first);
-      await sleep(350);
-      await captureRect(rect, shots.second);
-      return { originalPathname, rect };
+      const firstRaw = await sharp(shots.first).raw().toBuffer();
+      let attempts = 0;
+      for (const gap of [90, 70, 110, 90, 130, 70, 110, 150, 90, 130, 170, 110]) {
+        attempts += 1;
+        await sleep(gap);
+        await captureRect(rect, shots.second);
+        const secondRaw = await sharp(shots.second).raw().toBuffer();
+        if (secondRaw.length !== firstRaw.length || !secondRaw.equals(firstRaw)) break;
+      }
+      return { originalPathname, rect, attempts };
     });
 
     const [rawFirst, rawSecond] = await Promise.all([
@@ -99,6 +111,7 @@ export async function run(ctx) {
       originalSrc: result.originalPathname,
       mediaBox: result.rect,
       differingBytes,
+      captureAttempts: result.attempts,
       screenshots: [shots.first, shots.second],
     };
   } finally {
