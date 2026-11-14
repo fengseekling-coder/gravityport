@@ -13,9 +13,10 @@ import sharp from "sharp";
 import { mimeTypeForFile } from "../lib/asset-store.mjs";
 import { isDerivativeTempFileName } from "../lib/derivative-temp-file.js";
 import { processDerivativeJob } from "../lib/derivative-worker.js";
+import { missingImageDimensionFields } from "../lib/sqlite-store/backfills.mjs";
 import { heicUnsupportedOnPlatform, setHeicImportPlatformForTests } from "../lib/heic-import-gate.mjs";
 import { ImportStagingError, stageFileForImport, stageReadableForImport } from "../lib/import-staging.mjs";
-import { readImageDimensionsWithSips, sipsAvailable } from "../lib/sips-image-support.mjs";
+import { heifPrimaryRotation, readImageDimensionsWithSips, sipsAvailable } from "../lib/sips-image-support.mjs";
 import { createJsonAssetStore } from "../lib/asset-store.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
@@ -308,16 +309,31 @@ test("sips dimension fallback reads HEIC dimensions, junk included as null", { s
   const plain = await makeHeic();
   assert.deepEqual(await readImageDimensionsWithSips(plain), { width: 600, height: 400 });
   // An ImageIO-written rotated HEIC carries its rotation in the HEIF irot
-  // property, which `sips -g orientation` reports as <nil> — the fallback then
-  // returns the stored pixel size. The derivative pass writes the upright
-  // ratio back (the sips-converted PNG keeps the marker), so an initial wrong
-  // ratio self-corrects; an EXIF-carrying HEIC does swap here.
+  // property, which `sips -g orientation` reports as <nil> — task 424 parses
+  // the primary item's irot angle from the file head instead, so the fallback
+  // returns the upright (swapped) size right away, like an EXIF-carrying HEIC.
   const rotated = await makeHeic({ rotated: true });
-  assert.deepEqual(await readImageDimensionsWithSips(rotated), { width: 600, height: 400 });
+  assert.deepEqual(await readImageDimensionsWithSips(rotated), { width: 400, height: 600 });
   const notAnImage = join(await mkdtemp(join(tmpdir(), "mosa-413-sips-")), "nope.png");
   deferTestPathRemoval(dirname(notAnImage), { recursive: true, force: true });
   await writeFile(notAnImage, "junk");
   assert.equal(await readImageDimensionsWithSips(notAnImage), null);
+});
+
+test("heifPrimaryRotation reads the irot angle from real HEIC file heads", { skip: HEIC_SAMPLE_UNAVAILABLE }, async () => {
+  // readFile hands back the whole file; these samples are ~1 KiB, far inside
+  // the 512 KiB head the production read uses.
+  assert.equal(heifPrimaryRotation(await readFile(await makeHeic())), 0);
+  assert.equal(heifPrimaryRotation(await readFile(await makeHeic({ rotated: true }))), 3);
+});
+
+test("the import dimension fallback derives upright dimensions for irot-only HEIC", { skip: HEIC_SAMPLE_UNAVAILABLE }, async () => {
+  const rotated = await makeHeic({ rotated: true });
+  const rotatedFields = await missingImageDimensionFields(rotated, {});
+  assert.deepEqual([rotatedFields.width, rotatedFields.height], [400, 600]);
+  const plain = await makeHeic();
+  const plainFields = await missingImageDimensionFields(plain, {});
+  assert.deepEqual([plainFields.width, plainFields.height], [600, 400]);
 });
 
 test("staging the new extensions keeps the set identical to the store's", async () => {
