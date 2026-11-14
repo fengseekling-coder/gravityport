@@ -84,6 +84,7 @@ import {
 import { cleanupLegacyVisualData as cleanupLegacyVisualDataDir } from "./legacy-visual-cleanup.mjs";
 import { registerClipboardIpc } from "./ipc/clipboard.mjs";
 import { registerLibraryLocationIpc } from "./ipc/library-location.mjs";
+import { createLibraryVolumeWatch } from "./library-volume-watch.mjs";
 import { registerMiscIpc } from "./ipc/misc.mjs";
 import { macosUpdateInstallPromise, registerUpdateIpc, windowsUpdateInstallPromise } from "./ipc/updates.mjs";
 import { createMosaDesktopStartupHandoff } from "../lib/runtime-handoff.mjs";
@@ -565,6 +566,7 @@ if (!app.requestSingleInstanceLock()) {
     if (shuttingDown) return;
     event.preventDefault();
     shuttingDown = true;
+    libraryVolumeWatch.stop();
     stopBridgeNotificationPoll();
     stopAnonymousUsageLifecycle();
     updateScheduler.stop();
@@ -744,6 +746,8 @@ function registerIPC() {
     saveLibraryDir,
     setLibraryDir: (value) => { libraryDir = value; },
     setService: (value) => { service = value; },
+    pauseLibraryVolumeWatch: () => libraryVolumeWatch.pause(),
+    resumeLibraryVolumeWatch: (nextDir) => libraryVolumeWatch.resume(nextDir),
     runUpdateCheck,
     updateScheduler,
     systemNetworkFetch,
@@ -1277,6 +1281,7 @@ async function ensureDesktopService() {
         console.warn(`[MOSA] could not check the library for a stale relocation marker: ${error?.message || error}`);
       }
     }
+    libraryVolumeWatch.start(libraryDir);
     return service;
   })().finally(() => {
     serviceStartPromise = null;
@@ -1433,6 +1438,28 @@ function stopBridgeNotificationPoll() {
   bridgePollAbortController = null;
   bridgePollFailures = 0;
 }
+
+const libraryVolumeWatch = createLibraryVolumeWatch({
+  stopCaptureAndPolling: () => {
+    shuttingDown = true;
+    stopBridgeNotificationPoll();
+    stopAnonymousUsageLifecycle();
+    updateScheduler.stop();
+  },
+  closeLibrary: async () => {
+    try {
+      await stopOwnedRuntime();
+    } finally {
+      await releaseDesktopStartupHandoff().catch(() => {});
+    }
+  },
+  showMissingDialog: (missingDir) => {
+    const title = getDesktopText("libraryLocationMissingTitle", currentLocale);
+    const body = getDesktopText("libraryLocationMissingBody", currentLocale).replace(/\{libraryDir\}/g, String(missingDir || ""));
+    screenGuard.errorBox(title, body);
+  },
+  exit: (code) => app.exit(code),
+});
 
 function stopOwnedRuntime() {
   if (shutdownPromise) return shutdownPromise;

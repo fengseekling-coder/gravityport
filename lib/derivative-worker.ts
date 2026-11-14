@@ -222,8 +222,12 @@ export function createDerivativeWorker(options: {
   idleDelayMs?: number;
   maxClaimBackoffMs?: number;
   processor?: DerivativeProcessor;
+  isLibraryAvailable?: () => boolean;
 } = {}): DerivativeWorker {
   const store = options.store;
+  const isLibraryAvailable = typeof options.isLibraryAvailable === "function"
+    ? options.isLibraryAvailable
+    : () => true;
   const processor = options.processor || createDerivativeProcessor();
   const concurrency = Math.max(1, Math.min(Number(options.concurrency) || DEFAULT_CONCURRENCY, DEFAULT_CONCURRENCY));
   const idleDelayMs = Math.max(250, Number(options.idleDelayMs) || 1000);
@@ -250,6 +254,7 @@ export function createDerivativeWorker(options: {
   async function schedule(): Promise<void> {
     if (stopped || !store) return;
     while (active < concurrency && !stopped) {
+      if (!isLibraryAvailable()) break;
       let job: DerivativeJob | null = null;
       try {
         job = await store.claimDerivativeJob();

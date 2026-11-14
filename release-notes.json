@@ -10,7 +10,8 @@
         "修复 Flow 新版页面上的图片收不到，以及提示词被收成报错文字。",
         "修复了设置页收图状态卡上点「重试」没有反应的问题，等待重试的素材现在会立即重新发送。",
         "修复了磁盘空间不足时导入只显示看不懂的错误，现在会提示磁盘空间不足。",
-        "修复了在回收站永久删除素材后，只剩一张图的堆叠不会解散的问题。"
+        "修复了在回收站永久删除素材后，只剩一张图的堆叠不会解散的问题。",
+        "修复了素材库所在的外接硬盘被直接拔出或强制推出时 App 闪退的问题，现在会先安全关闭素材库，再提示并退出。"
       ]
     },
     "en": {
@@ -22,7 +23,8 @@
         "Fix images not being captured on Flow's new page layout, and error text being saved as the prompt.",
         "Fixed the Retry button on the capture status card doing nothing; queued media now re-sends right away.",
         "Fixed imports to a full disk showing an unclear error; the app now says the disk is full.",
-        "Fixed stacks left with a single asset not dissolving after a permanent delete in the Trash."
+        "Fixed stacks left with a single asset not dissolving after a permanent delete in the Trash.",
+        "Fixed the app crashing when the external drive holding the library is unplugged or force-ejected; it now closes the library safely, shows a notice, and quits."
       ]
     }
   },
