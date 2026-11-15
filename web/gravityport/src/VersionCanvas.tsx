@@ -976,7 +976,9 @@ export default function VersionCanvas({
                     {item.prompt || tr("无提示词记录")}
                   </Text>
                 </span>
-                <Text tone="secondary">{roundTitle(item)}</Text>
+                {item.round !== null && (
+                  <Text tone="secondary">{roundTitle(item)}</Text>
+                )}
                 {item.final && (
                   <span className="vc-list-final">
                     <Icon name="check" />

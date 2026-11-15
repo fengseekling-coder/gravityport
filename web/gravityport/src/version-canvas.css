@@ -233,9 +233,13 @@
 .vc-toast > svg { color: var(--ui-accent); }
 .vc-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); z-index: 3; color: var(--ui-secondary); }
 .vc-list-view { overflow: auto; padding: calc(var(--space-16) + var(--space-4)) var(--space-6) var(--space-16); }
-.app .vc-list-row { width: 100%; display: flex; justify-content: flex-start; text-align: left; white-space: normal; padding: var(--space-3); background: var(--ui-raised); margin-bottom: var(--space-2); gap: var(--space-4); }
-.app .vc-list-row.is-active { box-shadow: inset 0 0 0 var(--focus-width) var(--ui-accent); }
-.vc-list-row > img { width: var(--space-14); height: calc(var(--space-16) + var(--space-3)); object-fit: cover; border-radius: var(--space-1); }
+.vc-list-view > .vc-list-row { max-width: calc(var(--space-16) * 12); }
+.app .vc-list-view .vc-list-row { width: 100%; height: auto; display: flex; align-items: center; justify-content: flex-start; text-align: left; white-space: normal; padding: var(--space-2); border-radius: var(--radius-control); background: transparent; margin-bottom: var(--space-1); gap: var(--space-3); }
+.app .vc-list-view .vc-list-row:hover:not(:disabled) { background: var(--ui-hover); }
+.app .vc-list-view .vc-list-row.is-active,
+.app .vc-list-view .vc-list-row.is-active:hover:not(:disabled) { background: var(--ui-selected); }
+.app .vc-list-view .vc-list-row > svg { color: var(--ui-muted); flex-shrink: 0; }
+.vc-list-row > img { width: var(--space-12); height: var(--space-16); flex-shrink: 0; object-fit: cover; border-radius: var(--radius-small); }
 .vc-list-row > span:first-of-type { flex: 1; min-width: 0; }
 .vc-list-row p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .vc-list-final { display: flex; align-items: center; gap: var(--space-1); }
