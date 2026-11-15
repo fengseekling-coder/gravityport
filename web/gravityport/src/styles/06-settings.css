@@ -87,9 +87,11 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
   line-height: var(--type-body-line);
+}.app .settings-card-title > strong {
+  flex-shrink: 0;
 }.app .settings-card-head strong {
   font-size: var(--type-body-size);
   font-weight: var(--type-weight-title);
@@ -104,6 +106,7 @@
   color: inherit;
   text-decoration: underline;
 }.app .settings-inline-code {
+  min-width: 0;
   color: var(--ui-muted);
   font-family: var(--font-mono);
   font-size: 11px;
