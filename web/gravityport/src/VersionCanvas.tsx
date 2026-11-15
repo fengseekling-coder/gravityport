@@ -707,6 +707,10 @@ export default function VersionCanvas({
           </Text>
         </div>
         <div className="vc-header-actions">
+          <span className="vc-memory-status">
+            <span />
+            {tr("本页暂存")}
+          </span>
           <div className="vc-view-tabs" aria-label={tr("版本树视图")}>
             <Button
               variant="quiet"
@@ -727,10 +731,11 @@ export default function VersionCanvas({
               {tr("列表")}
             </Button>
           </div>
-          <span className="vc-memory-status">
-            <span />
-            {tr("本页暂存")}
-          </span>
+          <span className="vc-divider" />
+          <Button variant="quiet" onClick={() => setExportOpen(true)}>
+            <Icon name="export" />
+            {tr("导出版本树")}
+          </Button>
           <Button
             variant="quiet"
             iconOnly
@@ -740,11 +745,6 @@ export default function VersionCanvas({
             onClick={() => setInspector((old) => !old)}
           >
             <Icon name="inspector" />
-          </Button>
-          <span className="vc-divider" />
-          <Button onClick={() => setExportOpen(true)}>
-            <Icon name="export" />
-            {tr("导出版本树")}
           </Button>
         </div>
       </header>

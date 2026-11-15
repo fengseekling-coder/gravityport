@@ -62,8 +62,13 @@
 .vc-view-tabs { flex-shrink: 0; }
 .vc-summary { margin-left: var(--space-2); white-space: nowrap; }
 .vc-summary > span { margin: 0 var(--space-2); }
-.vc-view-tabs { padding: var(--space-1); background: var(--ui-inset); border-radius: var(--radius-control); gap: var(--space-1); }
-.app .vc-view-tabs .ui-button.is-active { color: var(--ui-text); background: var(--ui-raised); box-shadow: 0 0 0 var(--border-hairline) var(--ui-line); }
+.vc-view-tabs { gap: 0; }
+/* No container: the current view reads from text and icon, like the
+   sidebar's current row (accent icon, full-strength text). */
+.app .vc-header-actions .ui-button { color: var(--ui-secondary); }
+.app .vc-header-actions .ui-button:hover:not(:disabled),
+.app .vc-view-tabs .ui-button.is-active { color: var(--ui-text); }
+.app .vc-view-tabs .ui-button.is-active .ui-icon { color: var(--ui-accent); }
 
 .vc-board-area {
   grid-column: 1;
