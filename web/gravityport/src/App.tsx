@@ -4584,10 +4584,6 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           relationBusy={relationBusy}
           relationDrafts={relationDrafts}
           setRelationDrafts={setRelationDrafts}
-          newRelation={newRelation}
-          setNewRelation={setNewRelation}
-          showAllRelationChoices={showAllRelationChoices}
-          setShowAllRelationChoices={setShowAllRelationChoices}
           mutateRelation={mutateRelation}
           onClose={() => setCanvasOpen(false)}
           onOpenAsset={(id) => {

@@ -50,7 +50,7 @@ import {
   type CanvasNode,
 } from "./version-canvas-model"
 import VersionCompare, { type VersionCompareEntry } from "./version-compare"
-import { generationDisplay, relatedChoices, type GenerationDisplay } from "./version-tree"
+import { generationDisplay, type GenerationDisplay } from "./version-tree"
 import "./version-canvas.css"
 
 type Props = {
@@ -68,10 +68,6 @@ type Props = {
   relationBusy: boolean
   relationDrafts: Record<string, string>
   setRelationDrafts: Dispatch<SetStateAction<Record<string, string>>>
-  newRelation: { anchor: string; other: string; direction: string; type: string } | null
-  setNewRelation: Dispatch<SetStateAction<{ anchor: string; other: string; direction: string; type: string } | null>>
-  showAllRelationChoices: boolean
-  setShowAllRelationChoices: Dispatch<SetStateAction<boolean>>
   mutateRelation: (action: () => Promise<unknown>) => Promise<void>
   onClose: () => void
   onOpenAsset: (id: string) => void
@@ -120,10 +116,6 @@ export default function VersionCanvas({
   relationBusy,
   relationDrafts,
   setRelationDrafts,
-  newRelation,
-  setNewRelation,
-  showAllRelationChoices,
-  setShowAllRelationChoices,
   mutateRelation,
   onClose,
   onOpenAsset,
@@ -590,27 +582,6 @@ export default function VersionCanvas({
     generationHistory?.output_assets?.find((item) => item.id === node.assetId) ||
     asset
   const currentAssetId = inspectedAsset.id
-  const anchorRecordIds = (() => {
-    const seen = new Set<string>()
-    return [
-      ...(generationHistory?.events || []),
-      ...(generationHistory?.context_events || []),
-    ]
-      .filter((event) => {
-        const id = String(event.id || "")
-        if (!id || seen.has(id)) return false
-        seen.add(id)
-        return String(event.output_asset_id || "") === currentAssetId
-      })
-      .sort(
-        (left, right) =>
-          String(left.created_at || "").localeCompare(String(right.created_at || "")) ||
-          String(left.id || "").localeCompare(String(right.id || "")),
-      )
-  })()
-  const fallbackAnchorId = String(
-    anchorRecordIds[0]?.id || generationHistory?.events?.[0]?.id || "",
-  )
   const generationIdForAsset = (assetId: string) => {
     const seen = new Set<string>()
     for (const event of [
@@ -1391,173 +1362,6 @@ export default function VersionCanvas({
                       )
                     })}
 
-                    {!!generationHistory?.events?.length && (
-                      <div className="generation-relation-editor">
-                        <button
-                          disabled={relationBusy}
-                          onClick={() => {
-                            setNewRelation({
-                              anchor: fallbackAnchorId,
-                              other: "",
-                              direction: "candidate-parent",
-                              type: "edited_from",
-                            })
-                            setShowAllRelationChoices(false)
-                          }}
-                        >
-                          {tr("添加生成关系")}
-                        </button>
-                        {newRelation && (() => {
-                          const choices = relatedChoices(
-                            generationHistory,
-                            newRelation.anchor,
-                            inspectedAsset,
-                          )
-                          const visibleChoices = showAllRelationChoices
-                            ? choices
-                            : choices.slice(0, 6)
-                          return (
-                            <div className="generation-relation-create">
-                              {anchorRecordIds.length > 1 ? (
-                                <div className="relation-choice-list" aria-label={tr("当前生成")}>
-                                  {anchorRecordIds.map((record) => {
-                                    const display = generationDisplay(
-                                      generationHistory,
-                                      String(record.id),
-                                      inspectedAsset,
-                                    )
-                                    return InspectorRow({
-                                      key: `anchor-${record.id}`,
-                                      thumbnailUrl: display.asset?.thumbnail_url,
-                                      isCurrent: display.isCurrent,
-                                      selected: newRelation.anchor === String(record.id),
-                                      title: display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录"),
-                                      detail: turnLine(display.turnIndex),
-                                      showChevron: false,
-                                      onClick: () =>
-                                        setNewRelation((old) =>
-                                          old ? { ...old, anchor: String(record.id) } : old,
-                                        ),
-                                    })
-                                  })}
-                                </div>
-                              ) : (() => {
-                                const display = generationDisplay(
-                                  generationHistory,
-                                  newRelation.anchor,
-                                  inspectedAsset,
-                                )
-                                return InspectorRow({
-                                  key: "anchor-current",
-                                  thumbnailUrl: display.asset?.thumbnail_url ?? inspectedAsset.thumbnail_url,
-                                  isCurrent: true,
-                                  title: display.prompt ? display.prompt.slice(0, 60) : tr("无提示词记录"),
-                                  detail: turnLine(display.turnIndex),
-                                  showChevron: false,
-                                  staticRow: true,
-                                })
-                              })()}
-                              <div className="relation-choice-list" aria-label={tr("关联生成")}>
-                                {choices.length === 0 ? (
-                                  <span className="muted">{tr("此对话中没有可关联的其他素材")}</span>
-                                ) : (
-                                  <>
-                                    {visibleChoices.map((choice) =>
-                                      InspectorRow({
-                                        key: `choice-${choice.asset.id}`,
-                                        thumbnailUrl: choice.asset.thumbnail_url,
-                                        selected:
-                                          newRelation.other ===
-                                          generationIdForAsset(String(choice.asset.id)),
-                                        title: choice.prompt ? choice.prompt.slice(0, 60) : tr("无提示词记录"),
-                                        detail: turnLine(choice.turnIndex),
-                                        showChevron: false,
-                                        onClick: () =>
-                                          setNewRelation((old) =>
-                                            old
-                                              ? {
-                                                  ...old,
-                                                  other: generationIdForAsset(
-                                                    String(choice.asset.id),
-                                                  ),
-                                                }
-                                              : old,
-                                          ),
-                                      }),
-                                    )}
-                                    {choices.length > 6 && (
-                                      <button
-                                        className="relation-show-all"
-                                        onClick={() =>
-                                          setShowAllRelationChoices(!showAllRelationChoices)
-                                        }
-                                      >
-                                        {showAllRelationChoices
-                                          ? tr("收起")
-                                          : fillNamed("显示全部 {count} 个", { count: choices.length })}
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                              <select
-                                aria-label={tr("关系方向")}
-                                value={newRelation.direction}
-                                onChange={(event) =>
-                                  setNewRelation((old) =>
-                                    old ? { ...old, direction: event.target.value } : old,
-                                  )
-                                }
-                              >
-                                <option value="candidate-parent">{tr("关联生成为前序")}</option>
-                                <option value="candidate-child">{tr("关联生成为后续")}</option>
-                              </select>
-                              <select
-                                aria-label={tr("关系类型")}
-                                value={newRelation.type}
-                                onChange={(event) =>
-                                  setNewRelation((old) =>
-                                    old ? { ...old, type: event.target.value } : old,
-                                  )
-                                }
-                              >
-                                {relationTypes.map((type) => (
-                                  <option value={type} key={type}>
-                                    {tr(RELATION_LABELS[type] || type)}
-                                  </option>
-                                ))}
-                              </select>
-                              <button
-                                disabled={
-                                  relationBusy ||
-                                  !newRelation.other ||
-                                  newRelation.other === newRelation.anchor
-                                }
-                                onClick={() =>
-                                  runMutationWithToast(
-                                    () =>
-                                      createGenerationRelation(project, {
-                                        childGenerationId:
-                                          newRelation.direction === "candidate-child"
-                                            ? newRelation.other
-                                            : newRelation.anchor,
-                                        parentGenerationId:
-                                          newRelation.direction === "candidate-child"
-                                            ? newRelation.anchor
-                                            : newRelation.other,
-                                        relationType: newRelation.type,
-                                      }),
-                                    "已确认关系",
-                                  )
-                                }
-                              >
-                                {tr("添加")}
-                              </button>
-                            </div>
-                          )
-                        })()}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

@@ -499,7 +499,6 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
       "本页暂存",
       "返回素材库",
       "生成关系",
-      "添加生成关系",
       "版本对比",
       "版本历史",
       "保存关系",
@@ -512,6 +511,7 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
       assert.ok(!html.includes(forbidden), `VersionCanvas must omit "${forbidden}"`);
     }
     assert.match(html, /<g class="suggested">/, "suggested relations still draw as dashed lines");
+    assert.ok(!html.includes("添加生成关系"), "the canvas adds relations by dragging between card dots, not a form");
     assert.ok(!html.includes("可能改自"), "suggested lines carry no label on the board");
   });
 

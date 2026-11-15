@@ -1,7 +1,7 @@
 // GravityPort React UI flow (task 421):
 // 1. Default built mode (DEV=false, no localStorage flag) keeps 版本树 -> 查看 inline.
 // 2. Enabling localStorage "gravityport.dev.version-canvas"="1" routes 查看 directly into VersionCanvas,
-//    hiding the gallery inspector, showing moved 版本对比 / 生成关系 / 添加生成关系 / 版本历史 panels,
+//    hiding the gallery inspector, showing moved 版本对比 / 生成关系 / 版本历史 panels,
 //    confirming a suggested candidate edge via real HTTP APIs, toggling in-memory final status, and returning cleanly.
 // 3. Clearing the flag returns to legacy mode with the confirmed relation persisted and candidate removed.
 export const name = "version-canvas";
@@ -198,7 +198,7 @@ function roundOnSource(config) {
     const canvasText = document.querySelector('.version-canvas')?.textContent || '';
     const sampleAbsent = !canvasText.includes('exampleCanvas') && !canvasText.includes('示例') && !canvasText.includes('coffee');
     const inspectorText = document.querySelector('.vc-inspector')?.textContent || '';
-    const inspectorSectionsPresent = ['生成关系', '添加生成关系', '版本对比', '版本历史']
+    const inspectorSectionsPresent = ['生成关系', '版本对比', '版本历史']
       .every((heading) => inspectorText.includes(heading));
 
     // Suggested edges are unlabeled dashed lines; confirm from the inspector list.
