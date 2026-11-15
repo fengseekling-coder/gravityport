@@ -25,6 +25,13 @@ export async function run(ctx) {
     });
     const child = childCreate.asset;
 
+    const siblingCreate = await ctx.api(server.origin, "POST", "/api/assets/create", {
+      projectId: "default",
+      imagePath: await ctx.makePng("vc-e2e-sibling.png", [72, 140, 96]),
+      prompt: "poster v3 sibling",
+    });
+    const sibling = siblingCreate.asset;
+
     await ctx.api(server.origin, "POST", `/api/assets/default/${encodeURIComponent(parent.id)}/versions`, {
       version_change: "version canvas e2e family item",
     });
@@ -51,6 +58,16 @@ export async function run(ctx) {
       createdAt: "2026-11-14T10:05:00.000Z",
     });
 
+    await ctx.api(server.origin, "POST", "/api/generations", {
+      outputAssetId: sibling.id,
+      provider: "chatgpt",
+      conversationId: "vc-e2e-conv",
+      messageId: "vc-e2e-msg-3",
+      effectivePrompt: "same conversation, no reference",
+      verificationLevel: "observed",
+      createdAt: "2026-11-14T10:10:00.000Z",
+    });
+
     const offResult = await ctx.runInPage(server, roundOffSource({ parentId: parent.id, setFlag: true }), {
       windowSize: [1440, 940],
     });
@@ -58,7 +75,7 @@ export async function run(ctx) {
       throw new Error(`version-canvas gate-off check failed: ${JSON.stringify(offResult)}`);
     }
 
-    const onResult = await ctx.runInPage(server, roundOnSource({ parentId: parent.id, childId: child.id }), {
+    const onResult = await ctx.runInPage(server, roundOnSource({ parentId: parent.id, childId: child.id, siblingId: sibling.id }), {
       windowSize: [1440, 940],
     });
     if (
@@ -70,6 +87,7 @@ export async function run(ctx) {
       || onResult?.confirmedOnCanvas !== true
       || onResult?.finalBadgeUpdated !== true
       || onResult?.returnedToGallery !== true
+      || onResult?.linkedByDrag !== true
     ) {
       throw new Error(`version-canvas gate-on flow failed: ${JSON.stringify(onResult)}`);
     }
@@ -89,9 +107,14 @@ export async function run(ctx) {
     const historyRes = await ctx.api(server.origin, "GET", `/api/assets/default/${encodeURIComponent(parent.id)}/generation-history`);
     const history = historyRes?.history;
     const userConfirmed = (history?.relations || []).some((rel) => rel.verification_level === "user_confirmed");
+    const dragLinkPersisted = (history?.relations || []).some((rel) => (
+      rel.verification_level === "user_confirmed"
+      && rel.relation_type === "edited_from"
+      && rel.evidence?.canvas_link === true
+    ));
     const suggestedLeft = (history?.relation_candidates || []).some((cand) => cand.status === "suggested");
-    if (!userConfirmed || suggestedLeft) {
-      throw new Error(`version-canvas HTTP persistence mismatch: ${JSON.stringify({ userConfirmed, suggestedLeft })}`);
+    if (!userConfirmed || suggestedLeft || !dragLinkPersisted) {
+      throw new Error(`version-canvas HTTP persistence mismatch: ${JSON.stringify({ userConfirmed, suggestedLeft, dragLinkPersisted })}`);
     }
 
     return {
@@ -99,6 +122,7 @@ export async function run(ctx) {
       childId: child.id,
       ...onResult,
       persistedUserConfirmed: userConfirmed,
+      persistedDragLink: dragLinkPersisted,
     };
   } finally {
     await server.stop();
@@ -188,6 +212,31 @@ function roundOnSource(config) {
       && (document.querySelector('.vc-inspector')?.textContent || '').includes('保存关系')
     );
 
+    // Drag from the confirmed child's right dot onto the unlinked sibling card.
+    const nodeEl = (id) => document.querySelector('.vc-node[data-canvas-node="' + id + '"]');
+    await waitFor(() => nodeEl(config.childId) && nodeEl(config.siblingId), 'child and sibling cards on canvas');
+    const solidBefore = document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length;
+    const center = (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+    const port = nodeEl(config.childId).querySelector('.vc-port-out');
+    const stageEl = document.querySelector('.vc-stage');
+    const from = center(port);
+    const to = center(nodeEl(config.siblingId));
+    const pointer = (type, target, at) => target.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: at.x, clientY: at.y,
+    }));
+    pointer('pointerdown', port, from);
+    await sleep(50);
+    pointer('pointermove', stageEl, { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 });
+    await waitFor(() => document.querySelector('.vc-edges .vc-link-draft'), 'draft line follows the pointer');
+    pointer('pointermove', stageEl, to);
+    await waitFor(() => nodeEl(config.siblingId)?.classList.contains('is-link-target'), 'sibling highlights as drop target');
+    pointer('pointerup', stageEl, to);
+    await waitFor(() => (
+      !document.querySelector('.vc-edges .vc-link-draft')
+      && document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length > solidBefore
+    ), 'dragged link becomes a solid edge');
+    const linkedByDrag = true;
+
     const finalBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="设为定稿"]'), 'final toggle button');
     finalBtn.click();
     await waitFor(() => (document.querySelector('.vc-header')?.textContent || '').includes('1 个定稿'), 'header updates final count');
@@ -208,6 +257,7 @@ function roundOnSource(config) {
       confirmedOnCanvas,
       finalBadgeUpdated,
       returnedToGallery,
+      linkedByDrag,
     };
   })()`;
 }

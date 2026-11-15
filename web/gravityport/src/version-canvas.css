@@ -150,6 +150,14 @@
 .vc-node-image .vc-mark-badge { position: absolute; bottom: var(--space-2); right: var(--space-2); background: var(--ui-panel); color: var(--ui-text); padding: var(--space-1) var(--space-2); border-radius: var(--radius-small); display: flex; gap: var(--space-1); align-items: center; }
 .vc-select-number { position: absolute; top: var(--space-2); right: var(--space-2); border-radius: var(--radius-round); width: var(--space-6); height: var(--space-6); display: grid; place-items: center; background: var(--ui-primary); color: var(--ui-primary-text); }
 .vc-port { position: absolute; top: calc(var(--vc-node-image-height) / 2 - var(--space-1)); width: var(--space-2); height: var(--space-2); background: var(--ui-raised); border: var(--border-hairline) solid var(--vc-connector); border-radius: var(--radius-round); }
+.vc-port { cursor: crosshair; z-index: 1; transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease; }
+.vc-port::before { content: ""; position: absolute; inset: calc(-1 * var(--space-2)); border-radius: var(--radius-round); }
+.vc-port:hover, .vc-node.is-link-source .vc-port { background: var(--ui-accent); border-color: var(--ui-accent); transform: scale(1.4); }
+.vc-stage.hand-tool .vc-port { cursor: inherit; }
+.vc-stage.hand-tool .vc-port:hover { background: var(--ui-raised); border-color: var(--vc-connector); transform: none; }
+.vc-node.is-link-target { outline: var(--focus-width) dashed var(--ui-accent); outline-offset: var(--space-1); }
+.vc-edges .vc-link-draft path { stroke: var(--ui-accent); stroke-dasharray: 4 4; }
+.vc-edges .vc-link-draft circle { fill: var(--ui-accent); stroke: var(--ui-accent); }
 .vc-port-in { left: calc(-1 * var(--space-1)); }
 .vc-port-out { right: calc(-1 * var(--space-1)); }
 

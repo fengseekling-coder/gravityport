@@ -194,7 +194,7 @@ export function canvasFromHistory(
       evidence: edge.evidence,
     })
   }
-  for (const relation of history?.relations || []) {
+  for (const relation of [...(history?.relations || []), ...(history?.context_relations || [])]) {
     if (
       !["provider_verified", "user_confirmed"].includes(
         relation.verification_level || "",
@@ -213,7 +213,7 @@ export function canvasFromHistory(
   }
   const best =
     new Map<string, MosaGenerationCandidate>()
-  for (const candidate of history?.relation_candidates || []) {
+  for (const candidate of [...(history?.relation_candidates || []), ...(history?.context_relation_candidates || [])]) {
     if (candidate.status !== "suggested") continue
     const childAssetId = generationToNode.get(candidate.child_generation_id)
     if (!childAssetId) continue
@@ -250,6 +250,60 @@ export async function submitCanvasCandidateAction(
     })
   }
   return dismissGenerationCandidate(project, edge.childGenerationId, edge.parentGenerationId)
+}
+
+// Dragging from a card's side dot onto another card links the two. The right
+// dot drags forward (the dropped card is the child), the left dot drags back
+// (the dropped card is the parent). A suggested edge for the same pair is
+// confirmed instead of duplicated; a pair that already has a confirmed edge in
+// either direction, or a card without a generation record, is refused.
+export type CanvasLinkPlan =
+  | { kind: "self" }
+  | { kind: "exists" }
+  | { kind: "missing" }
+  | { kind: "confirm"; edge: CanvasEdge }
+  | { kind: "create"; parentId: string; childId: string; parentGenerationId: string; childGenerationId: string }
+
+export const CANVAS_LINK_TYPE = "edited_from"
+
+export function planCanvasLink(
+  nodes: Pick<CanvasNode, "id" | "assetId">[],
+  edges: CanvasEdge[],
+  fromId: string,
+  toId: string,
+  side: "in" | "out",
+  generationIdForAsset: (assetId: string) => string,
+): CanvasLinkPlan {
+  if (!toId || fromId === toId) return { kind: "self" }
+  const parentId = side === "out" ? fromId : toId
+  const childId = side === "out" ? toId : fromId
+  const between = edges.filter(
+    (edge) =>
+      (edge.from === parentId && edge.to === childId) ||
+      (edge.from === childId && edge.to === parentId),
+  )
+  if (between.some((edge) => !edge.suggested)) return { kind: "exists" }
+  const suggested = between.find((edge) => edge.suggested && edge.from === parentId && edge.to === childId)
+  if (suggested) return { kind: "confirm", edge: suggested }
+  const parent = nodes.find((item) => item.id === parentId)
+  const child = nodes.find((item) => item.id === childId)
+  const parentGenerationId = parent ? generationIdForAsset(parent.assetId) : ""
+  const childGenerationId = child ? generationIdForAsset(child.assetId) : ""
+  if (!parentGenerationId || !childGenerationId) return { kind: "missing" }
+  return { kind: "create", parentId, childId, parentGenerationId, childGenerationId }
+}
+
+export async function submitCanvasLink(
+  project: string,
+  plan: Extract<CanvasLinkPlan, { kind: "confirm" | "create" }>,
+): Promise<unknown> {
+  if (plan.kind === "confirm") return submitCanvasCandidateAction(project, plan.edge, true)
+  return createGenerationRelation(project, {
+    childGenerationId: plan.childGenerationId,
+    parentGenerationId: plan.parentGenerationId,
+    relationType: CANVAS_LINK_TYPE,
+    evidence: { canvas_link: true },
+  })
 }
 
 export function finalPathIds(

@@ -40,7 +40,9 @@ import {
   canvasFromHistory,
   edgeCurve,
   finalPathIds,
+  planCanvasLink,
   submitCanvasCandidateAction,
+  submitCanvasLink,
   type CanvasEdge,
   type CanvasMark,
   type CanvasNode,
@@ -82,6 +84,15 @@ type Gesture = {
   initialY: number
   node?: string
   moved: boolean
+}
+
+type LinkDraft = {
+  pointer: number
+  from: string
+  side: "in" | "out"
+  x: number
+  y: number
+  target: string
 }
 
 type NodeDraft = {
@@ -177,6 +188,7 @@ export default function VersionCanvas({
   const stage = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const ignoreClick = useRef(false)
+  const [link, setLink] = useState<LinkDraft | null>(null)
   const exportCanvas = useRef<HTMLCanvasElement | null>(null)
   const noteRef = useRef<HTMLInputElement>(null)
 
@@ -388,7 +400,71 @@ export default function VersionCanvas({
     }
     if (!id) stage.current?.setPointerCapture(event.pointerId)
   }
+  const toWorld = (clientX: number, clientY: number) => {
+    const rect = stage.current?.getBoundingClientRect()
+    return {
+      x: (clientX - (rect?.left || 0) - transform.x) / transform.scale,
+      y: (clientY - (rect?.top || 0) - transform.y) / transform.scale,
+    }
+  }
+  const nodeAtPoint = (clientX: number, clientY: number) => {
+    const hit = document
+      .elementFromPoint(clientX, clientY)
+      ?.closest<HTMLElement>("[data-canvas-node]")
+    return hit?.dataset.canvasNode || ""
+  }
+  const beginLink = (event: PointerEvent, id: string, side: "in" | "out") => {
+    if (event.button !== 0 || tool === "hand") return
+    event.stopPropagation()
+    event.preventDefault()
+    setMenu(null)
+    const point = toWorld(event.clientX, event.clientY)
+    setLink({ pointer: event.pointerId, from: id, side, ...point, target: "" })
+    try {
+      stage.current?.setPointerCapture(event.pointerId)
+    } catch {
+      // A pointer that is no longer active cannot be captured; the stage
+      // still receives the move/up events while the pointer is over it.
+    }
+  }
+  const moveLink = (event: PointerEvent) => {
+    if (!link || link.pointer !== event.pointerId) return false
+    const point = toWorld(event.clientX, event.clientY)
+    const over = nodeAtPoint(event.clientX, event.clientY)
+    setLink({ ...link, ...point, target: over && over !== link.from ? over : "" })
+    return true
+  }
+  const finishLink = (event: PointerEvent) => {
+    if (!link || link.pointer !== event.pointerId) return false
+    if (stage.current?.hasPointerCapture(event.pointerId))
+      stage.current.releasePointerCapture(event.pointerId)
+    const draft = link
+    setLink(null)
+    if (event.type === "pointercancel") return true
+    const target = nodeAtPoint(event.clientX, event.clientY)
+    if (!target || target === draft.from) return true
+    const plan = planCanvasLink(
+      nodes,
+      edges,
+      draft.from,
+      target,
+      draft.side,
+      generationIdForAsset,
+    )
+    if (plan.kind === "exists") notify("这两张图之间已经有关系了")
+    else if (plan.kind === "missing") notify("这张图没有生成记录，暂时不能连线")
+    else if (plan.kind === "confirm") changeCandidate(plan.edge, true)
+    else if (plan.kind === "create") {
+      setSelected([plan.childId])
+      runMutationWithToast(
+        () => submitCanvasLink(project, plan),
+        "已添加关系，可在右侧修改类型",
+      )
+    }
+    return true
+  }
   const moveGesture = (event: PointerEvent) => {
+    if (moveLink(event)) return
     const drag = gesture.current
     if (!drag || drag.pointer !== event.pointerId) return
     const dx = event.clientX - drag.x
@@ -408,7 +484,8 @@ export default function VersionCanvas({
         y: drag.initialY + dy,
       }))
   }
-  const finishGesture = () => {
+  const finishGesture = (event: PointerEvent) => {
+    if (finishLink(event)) return
     const drag = gesture.current
     if (drag?.moved) ignoreClick.current = true
     if (drag && stage.current?.hasPointerCapture(drag.pointer))
@@ -571,6 +648,8 @@ export default function VersionCanvas({
       key={item.id}
       className={`vc-node ${selected.includes(item.id) ? "is-selected" : ""} ${
         item.final ? "is-final" : ""
+      } ${link?.target === item.id ? "is-link-target" : ""} ${
+        link?.from === item.id ? "is-link-source" : ""
       }`}
       data-canvas-node={item.id}
       style={{ left: item.x, top: item.y }}
@@ -620,8 +699,16 @@ export default function VersionCanvas({
           </span>
         )}
       </Button>
-      <span className="vc-port vc-port-in" />
-      <span className="vc-port vc-port-out" />
+      <span
+        className="vc-port vc-port-in"
+        title={tr("拖到另一张图上：那张是这张的上一版")}
+        onPointerDown={(event) => beginLink(event, item.id, "in")}
+      />
+      <span
+        className="vc-port vc-port-out"
+        title={tr("拖到另一张图上：那张是这张的下一版")}
+        onPointerDown={(event) => beginLink(event, item.id, "out")}
+      />
     </div>
   )
 
@@ -849,6 +936,22 @@ export default function VersionCanvas({
                     </g>
                   )
                 })}
+                {link &&
+                  (() => {
+                    const from = nodes.find((item) => item.id === link.from)
+                    if (!from) return null
+                    const x1 = link.side === "out" ? from.x + NODE_WIDTH : from.x
+                    const y1 = from.y + NODE_HEIGHT / 2
+                    const bend = link.side === "out" ? 42 : -42
+                    return (
+                      <g className="vc-link-draft">
+                        <path
+                          d={`M ${x1} ${y1} C ${x1 + bend} ${y1}, ${link.x - bend} ${link.y}, ${link.x} ${link.y}`}
+                        />
+                        <circle cx={link.x} cy={link.y} r="3" />
+                      </g>
+                    )
+                  })()}
               </svg>
               {visibleEdges.map((edge) => {
                 const from = nodes.find((item) => item.id === edge.from)!

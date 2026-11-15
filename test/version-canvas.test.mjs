@@ -426,6 +426,61 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
     });
   });
 
+  it("plans drag-to-link from the side dots and posts a user-confirmed relation", async () => {
+    const nodes = [
+      { id: "a1", assetId: "a1" },
+      { id: "a2", assetId: "a2" },
+      { id: "a3", assetId: "a3" },
+      { id: "a4", assetId: "a4" },
+    ];
+    const gen = { a1: "evt1", a2: "evt2", a3: "evt3" };
+    const lookup = (assetId) => gen[assetId] || "";
+    const edges = [
+      { id: "e1", from: "a1", to: "a2", parentGenerationId: "evt1", childGenerationId: "evt2", type: "variant_of", suggested: false },
+      { id: "e2", from: "a2", to: "a3", parentGenerationId: "evt2", childGenerationId: "evt3", type: "derived_from", suggested: true, evidence: { explicit_ref: true } },
+    ];
+    const plan = (from, to, side) => offModel.planCanvasLink(nodes, edges, from, to, side, lookup);
+
+    assert.deepEqual(plan("a1", "a1", "out"), { kind: "self" });
+    assert.deepEqual(plan("a1", "a2", "out"), { kind: "exists" });
+    assert.deepEqual(plan("a2", "a1", "out"), { kind: "exists" }, "a confirmed edge blocks the reverse direction too");
+    assert.deepEqual(plan("a2", "a3", "out"), { kind: "confirm", edge: edges[1] });
+    assert.deepEqual(plan("a3", "a2", "in"), { kind: "confirm", edge: edges[1] }, "left dot drags back to the parent");
+    assert.deepEqual(plan("a1", "a4", "out"), { kind: "missing" });
+    assert.deepEqual(plan("a1", "a3", "out"), {
+      kind: "create", parentId: "a1", childId: "a3", parentGenerationId: "evt1", childGenerationId: "evt3",
+    });
+    assert.deepEqual(plan("a1", "a3", "in"), {
+      kind: "create", parentId: "a3", childId: "a1", parentGenerationId: "evt3", childGenerationId: "evt1",
+    });
+
+    const requests = [];
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      requests.push({ url: String(url), method: init?.method || "GET", body: init?.body ? JSON.parse(init.body) : null });
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    try {
+      await offModel.submitCanvasLink("default", plan("a1", "a3", "out"));
+      await offModel.submitCanvasLink("default", plan("a2", "a3", "out"));
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].method, "POST");
+    assert.match(requests[0].url, /\/api\/generation-relations$/);
+    assert.deepEqual(requests[0].body, {
+      projectId: "default",
+      childGenerationId: "evt3",
+      parentGenerationId: "evt1",
+      relationType: "edited_from",
+      verificationLevel: "user_confirmed",
+      evidence: { canvas_link: true, source: "gravityport-inspector", user_confirmed_relation: true },
+    });
+    assert.equal(requests[1].body.relationType, "derived_from", "confirming a suggestion keeps its suggested type");
+    assert.deepEqual(requests[1].body.evidence, { explicit_ref: true, source: "gravityport-inspector", user_confirmed_relation: true });
+  });
+
   it("renders VersionCanvas with moved inspector features and zero sample artifacts", () => {
     const history = makeHistory();
     const html = renderStatic(

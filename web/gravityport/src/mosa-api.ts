@@ -1273,6 +1273,9 @@ export type MosaGenerationHistory = {
   output_assets?: MosaAsset[]
   relations?: MosaGenerationRelation[]
   relation_candidates?: MosaGenerationCandidate[]
+  /** Relations / suggestions running only between context events (version canvas). */
+  context_relations?: MosaGenerationRelation[]
+  context_relation_candidates?: MosaGenerationCandidate[]
   conversations?: MosaGenerationConversation[]
   context_truncated?: boolean
 }
@@ -1338,6 +1341,8 @@ export async function fetchAssetGenerationHistory(project: string, id: string, s
       output_assets: outputAssets.map(row => normalizeAsset(row, project)),
       relations: Array.isArray(history.relations) ? history.relations as MosaGenerationHistory["relations"] : [],
       relation_candidates: Array.isArray(history.relation_candidates) ? history.relation_candidates as MosaGenerationCandidate[] : [],
+      context_relations: Array.isArray(history.context_relations) ? history.context_relations as MosaGenerationRelation[] : [],
+      context_relation_candidates: Array.isArray(history.context_relation_candidates) ? history.context_relation_candidates as MosaGenerationCandidate[] : [],
       conversations: Array.isArray(history.conversations) ? history.conversations as MosaGenerationConversation[] : [],
       context_truncated: history.context_truncated === true,
     }
