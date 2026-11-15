@@ -10,6 +10,8 @@ import {
 } from "react"
 import Icon from "./Icon"
 import { InspectorRow, RelationThumb } from "./InspectorParts"
+import { ReadingText } from "./ReadingText"
+import { aspectRatioLabel, humanSize } from "./inspector-info"
 import { conversationRoundRows, roundCompareSelection, type ConversationRoundRow } from "./conversation-rounds"
 import { RELATION_LABELS, relationTypes } from "./feature-parity"
 import type { Language } from "./i18n"
@@ -189,6 +191,7 @@ export default function VersionCanvas({
   const gesture = useRef<Gesture | null>(null)
   const ignoreClick = useRef(false)
   const [link, setLink] = useState<LinkDraft | null>(null)
+  const [promptExpanded, setPromptExpanded] = useState(false)
   const exportCanvas = useRef<HTMLCanvasElement | null>(null)
   const noteRef = useRef<HTMLInputElement>(null)
 
@@ -1045,19 +1048,16 @@ export default function VersionCanvas({
 
       {inspector && (
         <aside className="vc-inspector">
-          <div className="vc-inspector-heading">
-            <Text variant="label">
+          <div className="detail-heading vc-inspector-heading">
+            <strong>
               {selected.length === 2 ? tr("已选择 2 张素材") : tr("素材详情")}
-            </Text>
-            <Button
-              variant="quiet"
-              size="small"
-              iconOnly
+            </strong>
+            <button
               aria-label={tr("关闭素材详情")}
               onClick={() => setInspector(false)}
             >
-              <Icon name="close" />
-            </Button>
+              <Icon name="inspector" size={16} />
+            </button>
           </div>
           {selected.length === 2 ? (
             <div className="vc-inspector-content">
@@ -1076,79 +1076,96 @@ export default function VersionCanvas({
             </div>
           ) : (
             <div className="vc-inspector-content" key={node.id}>
-              <Button
-                className="vc-detail-image"
-                variant="quiet"
-                aria-label={tr("预览当前素材")}
-                onClick={() => openImage(node)}
-              >
-                <img src={node.image} alt={node.name} />
-                <span>
-                  <Icon name="expand" size={12} />
-                </span>
-              </Button>
-              <div className="vc-detail-title">
-                <Text as="h2" variant="title">
-                  {node.name}
-                </Text>
-                <Button
-                  variant="quiet"
-                  iconOnly
-                  aria-label={tr(node.final ? "取消定稿" : "设为定稿")}
-                  title={tr(node.final ? "取消定稿" : "设为定稿")}
-                  aria-pressed={node.final}
-                  className={node.final ? "vc-final-icon" : ""}
-                  onClick={() => toggleFinal(node)}
+              <div className="asset-summary">
+                <button
+                  className="summary-image"
+                  aria-label={tr("查看大图")}
+                  onClick={() => openImage(node)}
                 >
-                  <Icon name="flag" />
-                </Button>
-              </div>
-              <Text tone="secondary">
-                {roundTitle(node)}
-                <span className="vc-inline-separator">·</span>
-                {providerName(node.provider)}
-              </Text>
-              <div className="vc-properties">
-                <div>
-                  <Text tone="secondary">{tr("尺寸")}</Text>
-                  <Text>
-                    {node.width} × {node.height}
-                  </Text>
-                </div>
-                <div>
-                  <Text tone="secondary">{tr("来源平台")}</Text>
-                  <Text>{providerName(node.provider)}</Text>
-                </div>
-              </div>
-              <div className="vc-detail-section">
-                <div className="vc-section-heading">
-                  <Text variant="label">{tr("定稿状态")}</Text>
-                  {node.final && (
-                    <span className="vc-final-state">
-                      <Icon name="check" size={12} />
-                      {tr("已定稿")}
+                  <img src={node.image} alt="" />
+                  <Icon name="expand" />
+                </button>
+                <div className="asset-meta">
+                  <div className="asset-title">
+                    <span className="asset-name" title={node.name}>
+                      {node.name}
                     </span>
-                  )}
+                    <button
+                      className={node.final ? "is-final" : ""}
+                      aria-label={tr(node.final ? "取消定稿" : "设为定稿")}
+                      title={tr(node.final ? "取消定稿" : "设为定稿")}
+                      aria-pressed={node.final}
+                      onClick={() => toggleFinal(node)}
+                    >
+                      <Icon name="flag" size={13} />
+                    </button>
+                  </div>
+                  <span className="muted">
+                    {[
+                      roundTitle(node),
+                      providerName(node.provider),
+                      ...(node.final ? [tr("已定稿")] : []),
+                    ].join(" · ")}
+                  </span>
+                  <button
+                    className="summary-preview"
+                    onClick={() => openImage(node)}
+                  >
+                    {tr("查看大图")}
+                    <Icon name="right" size={12} />
+                  </button>
                 </div>
-                <Text as="p" tone="secondary">
-                  {tr(
-                    node.final
-                      ? "最后要用的版本，已标记在画布中。"
-                      : "这张图是最后要用的版本吗？",
-                  )}
-                </Text>
-                <Button
-                  className="vc-full-button"
-                  onClick={() => toggleFinal(node)}
-                >
-                  <Icon name={node.final ? "check" : "flag"} />
-                  {tr(node.final ? "取消定稿" : "设为定稿")}
-                </Button>
               </div>
-              <div className="vc-detail-section">
-                <div className="vc-section-heading">
-                  <Text variant="label">{tr("备注")}</Text>
-                  <Icon name="message" size={12} />
+              <div className="asset-properties">
+                {(
+                  [
+                    ["格式", inspectedAsset.id === node.assetId ? inspectedAsset.format || "—" : "—"],
+                    ["尺寸", node.width > 1 && node.height > 1 ? `${node.width} × ${node.height}` : "—"],
+                    ["宽高比", aspectRatioLabel(node.width, node.height)],
+                    ["大小", inspectedAsset.id === node.assetId ? humanSize(inspectedAsset.size_bytes) : "—"],
+                  ] as [string, string][]
+                )
+                  .filter(([, value]) => value && value !== "—")
+                  .map(([label, value]) => (
+                    <span
+                      className="property-tag"
+                      key={label}
+                      title={`${tr(label)}${language === "en" ? ": " : "："}${tr(value)}`}
+                    >
+                      {tr(value)}
+                    </span>
+                  ))}
+              </div>
+              <section className="detail-section">
+                <div className="field-heading">
+                  <span>{tr("提示词")}</span>
+                  <button
+                    aria-label={tr("复制提示词")}
+                    disabled={!node.prompt}
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(node.prompt)
+                        notify("已复制提示词")
+                      } catch {
+                        notify("无法访问剪贴板，请手动复制。")
+                      }
+                    }}
+                  >
+                    <Icon name="copy" size={16} />
+                  </button>
+                </div>
+                <ReadingText
+                  id={`vc-prompt-${node.id}`}
+                  text={node.prompt || tr("无提示词记录")}
+                  expanded={promptExpanded}
+                  onToggle={() => setPromptExpanded((old) => !old)}
+                  expandLabel={tr("展开提示词")}
+                  collapseLabel={tr("收起")}
+                />
+              </section>
+              <section className="detail-section">
+                <div className="field-heading">
+                  <span>{tr("备注")}</span>
                 </div>
                 <TextField
                   ref={noteRef}
@@ -1161,61 +1178,35 @@ export default function VersionCanvas({
                     patchNode(node.id, { note: event.target.value })
                   }
                 />
-              </div>
-              <div className="vc-detail-section">
-                <div className="vc-section-heading">
-                  <Text variant="label">{tr("标注")}</Text>
-                  <Text tone="secondary">
-                    {node.marks.length || tr("暂无")}
-                  </Text>
+              </section>
+              <section className="detail-section">
+                <div className="field-heading">
+                  <span>{tr("标注")}</span>
+                  <span className="field-actions">
+                    <button
+                      className="section-action"
+                      onClick={() => startAnnotation(node)}
+                    >
+                      {tr(node.marks.length ? "编辑" : "添加")}
+                    </button>
+                  </span>
                 </div>
-                <Text as="p" tone="secondary">
-                  {tr("圈出要改的地方，让下一轮更明确。")}
-                </Text>
-                {node.marks.map((mark, index) => (
-                  <div className="vc-mark-description" key={index}>
-                    <span>{index + 1}</span>
-                    <Text>{mark.text || tr("待补充修改要求")}</Text>
-                  </div>
-                ))}
-                <Button
-                  className="vc-full-button"
-                  onClick={() => startAnnotation(node)}
-                >
-                  <Icon name="annotate" />
-                  {tr(node.marks.length ? "编辑标注" : "添加标注")}
-                </Button>
-              </div>
-              <div className="vc-detail-section">
-                <div className="vc-section-heading">
-                  <Text variant="label">{tr("用户指令")}</Text>
-                  <Button
-                    variant="quiet"
-                    size="small"
-                    iconOnly
-                    aria-label={tr("复制用户指令")}
-                    disabled={!node.prompt}
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(node.prompt)
-                        notify("已复制用户指令")
-                      } catch {
-                        notify("无法访问剪贴板，请手动复制。")
-                      }
-                    }}
-                  >
-                    <Icon name="copy" size={12} />
-                  </Button>
-                </div>
-                <Text as="p" tone="secondary">
-                  {node.prompt || tr("无提示词记录")}
-                </Text>
-              </div>
+                {node.marks.length ? (
+                  node.marks.map((mark, index) => (
+                    <div className="vc-mark-description" key={index}>
+                      <span>{index + 1}</span>
+                      <Text>{mark.text || tr("待补充修改要求")}</Text>
+                    </div>
+                  ))
+                ) : (
+                  <p className="muted">{tr("圈出要改的地方，让下一轮更明确。")}</p>
+                )}
+              </section>
 
               {roundSelection && (
-                <div className="vc-detail-section">
-                  <div className="vc-section-heading">
-                    <Text variant="label">{tr("版本对比")}</Text>
+                <div className="detail-section">
+                  <div className="field-heading">
+                    <span>{tr("版本对比")}</span>
                     <Icon name="compare" size={12} />
                   </div>
                   <VersionCompare
@@ -1242,9 +1233,9 @@ export default function VersionCanvas({
                 </div>
               )}
 
-              <div className="vc-detail-section">
-                <div className="vc-section-heading">
-                  <Text variant="label">{tr("生成关系")}</Text>
+              <div className="detail-section">
+                <div className="field-heading">
+                  <span>{tr("生成关系")}</span>
                   <Icon name="branch" size={12} />
                 </div>
                 {inspectorFetchError.history ? (
@@ -1572,9 +1563,9 @@ export default function VersionCanvas({
               </div>
 
               {(inspectorFetchError.versions || (versions && versions.length > 0)) && (
-                <div className="vc-detail-section">
-                  <div className="vc-section-heading">
-                    <Text variant="label">{tr("版本历史")}</Text>
+                <div className="detail-section">
+                  <div className="field-heading">
+                    <span>{tr("版本历史")}</span>
                     {versions && versions.length > 1 && (
                       <span className="settings-badge">{versions.length}</span>
                     )}

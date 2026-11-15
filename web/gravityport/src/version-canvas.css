@@ -3,7 +3,7 @@
 }
 
 .app .version-canvas {
-  --vc-inspector-width: 268px;
+  --vc-inspector-width: var(--inspector-width, 280px);
   --vc-node-width: 204px;
   --vc-node-image-height: 272px;
   --vc-annotation-width: 720px;
@@ -46,9 +46,7 @@
 .vc-board-actions,
 .vc-path-toggle,
 .vc-memory-status,
-.vc-section-heading,
 .vc-inspector-heading,
-.vc-detail-title,
 .vc-annotation-tools {
   display: flex;
   align-items: center;
@@ -165,22 +163,9 @@
 .vc-inspector { grid-column: 2; grid-row: 2; background: var(--ui-panel); border-left: var(--border-hairline) solid var(--ui-line); display: flex; flex-direction: column; min-height: 0; }
 .vc-inspector-heading { height: var(--space-14); min-height: var(--space-14); padding: 0 var(--space-4); justify-content: space-between; border-bottom: var(--border-hairline) solid var(--ui-line); }
 .vc-inspector-content { overflow-y: auto; flex: 1; min-height: 0; padding: var(--space-4); scrollbar-width: thin; }
-.app .vc-detail-image { width: 100%; height: calc(var(--space-16) * 2 + var(--space-6)); padding: var(--space-2); position: relative; background: var(--ui-inset); border-radius: var(--radius-control); }
-.vc-detail-image > img { height: 100%; width: 100%; object-fit: contain; }
-.vc-detail-image > span { position: absolute; bottom: var(--space-2); right: var(--space-2); background: var(--ui-panel); padding: var(--space-1); border-radius: var(--radius-small); }
-.vc-detail-title { justify-content: space-between; margin-top: var(--space-3); }
-.vc-detail-title > h2 { min-width: 0; overflow-wrap: anywhere; }
-.app .vc-final-icon svg { color: var(--ui-accent); }
+.app .vc-inspector .asset-title .is-final svg { color: var(--ui-accent); fill: currentColor; }
+.vc-inspector .detail-section .muted { margin: 0; }
 .vc-inline-separator { padding: 0 var(--space-2); }
-.vc-properties { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); margin: var(--space-4) 0; }
-.vc-properties > div { padding: var(--space-2); border-radius: var(--radius-control); background: var(--ui-inset); display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
-.vc-properties .ui-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-.vc-detail-section { border-top: var(--border-hairline) solid var(--ui-line); padding: var(--space-4) 0; }
-.vc-section-heading { justify-content: space-between; min-height: var(--space-6); margin-bottom: var(--space-2); }
-.vc-section-heading > svg { color: var(--ui-secondary); }
-.vc-final-state { display: flex; align-items: center; gap: var(--space-1); color: var(--ui-secondary); font-size: var(--type-body-size); }
-.vc-final-state svg { color: var(--ui-accent); }
-.app .vc-full-button { width: 100%; margin-top: var(--space-3); }
 .vc-note-field .ui-field-label { position: absolute; width: var(--border-hairline); height: var(--border-hairline); overflow: hidden; clip-path: inset(50%); }
 .vc-note-field .ui-field-input { height: var(--space-10); background: var(--ui-inset); border-color: transparent; }
 .vc-inspector-footer { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: var(--border-hairline) solid var(--ui-line); color: var(--ui-secondary); }
@@ -289,7 +274,6 @@
 .canvas-brand-mark { width: var(--space-6); height: var(--space-6); }
 
 @media (max-width: 1200px) {
-  .app .version-canvas { --vc-inspector-width: 240px; }
   .vc-legend { flex-direction: column; gap: var(--space-1); }
   .vc-memory-status { display: none; }
 }

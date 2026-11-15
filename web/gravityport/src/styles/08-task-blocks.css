@@ -77,6 +77,9 @@
   object-fit: cover;
   border-radius: inherit;
   display: block;
+}.relation-pair-row .relation-thumb-frame {
+  display: flex;
+  flex-shrink: 0;
 }.relation-pair-row .relation-thumb-link {
   display: flex;
   flex-shrink: 0;
