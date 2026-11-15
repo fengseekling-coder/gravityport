@@ -35,6 +35,11 @@
 }input:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
+}input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):focus-visible,
+textarea:focus-visible {
+  /* Every focused text field counts as focus-visible, so a click into one
+     would draw the green ring; fields show a quiet border instead (below). */
+  outline: none;
 }select:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;

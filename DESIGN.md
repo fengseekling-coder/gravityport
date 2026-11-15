@@ -51,6 +51,7 @@
 | `--ui-raised` | `#ffffff` | `#2c2c2c` | 浮起来的菜单、下拉、提示条 |
 | `--ui-accent` | `#009a1a` | `#39ff14` | 唯一的强调色 |
 | `--focus-ring` | `#009a1a` | `#39ff14` | 焦点框、选中卡片的框 |
+| `--field-focus` | `#0000002e` | `#ffffff33` | 输入框获得焦点时的边框 |
 | `--ui-primary` | `#343434` | `#e3e3e3` | 主按钮底色 |
 | `--ui-primary-text` | `#ffffff` | `#292929` | 主按钮文字 |
 | `--ui-danger` | `#c45050` | `#ef9494` | 危险操作、错误 |
@@ -115,7 +116,7 @@
 
 - 悬停：底色 `--ui-hover`，文字变 `--ui-text`。
 - 选中：底色 `--ui-selected`，字重 500 或 600；侧栏当前项图标变 `--ui-accent`。
-- 焦点：按钮 `outline: 2px solid var(--focus-ring)`、偏移 3px；搜索框 2px 框加 `--ui-raised` 底；画廊里选中框就是焦点框，不再叠第二圈。
+- 焦点：按钮 `outline: 2px solid var(--focus-ring)`、偏移 3px，只在键盘焦点（`:focus-visible`）时出现；输入框（文本框、搜索框、标签输入、提示词编辑）获得焦点不画绿框，只把边框换成 `--field-focus`（浅色 `#0000002e`、深色 `#ffffff33`），搜索框是 1px `--field-focus` 框加 `--ui-raised` 底；画廊里选中框就是焦点框，不再叠第二圈。
 - 禁用：透明度 0.4，不响应悬停。
 - 图片卡片：悬停内圈 2px `--ui-line`；选中 `.asset-selected` 内圈 2px `--focus-ring`；拖放目标缩到 0.985 加 `--ui-accent` 框。侧栏行做拖放目标时内圈 1.5px `--ui-accent`。
 
@@ -135,7 +136,7 @@
 | 安静按钮 | `.toolbar button`、`.detail-heading button` 等 | 无底，悬停才出 `--ui-hover`；纯图标按钮 28 或 32px 见方，必须有 `aria-label` |
 | 分段控件 | `.segmented` + `button.on` | 设置页里底槽 `--ui-inset`（加 1px `--ui-line` 细边）、选中 `--ui-raised` 加轻阴影，按钮高 24px |
 | 开关 | `Switch` / `.ui-switch`；历史实现 `.settings-switch` | 36×20，开时 `--ui-accent`，`role="switch"`；新界面用公共组件 |
-| 搜索框 | `label.search` | 240×32，`--ui-inset` 底，输入时 `--ui-raised` 加 2px 焦点框 |
+| 搜索框 | `label.search` | 240×32，`--ui-inset` 底，输入时 `--ui-raised` 加 1px `--field-focus` 框 |
 | 工具栏下拉 | `ToolbarSelect.tsx` | 列表 `.toolbar-select-menu` 最窄 176px，选项 32px 高，已选项打 `--ui-accent` 勾 |
 | 回收站可腾空间 | `.trash-reclaimable` | 回收站有素材时，「清空回收站」按钮左边 12px `--ui-muted` 一行「清空可腾出约 {size}」，只算非硬链接的原图大小；清空能腾出 0 时也显示（`0 KB`）；不可点、无图标无提示框，回收站空了或后端没给这个字段就不显示 |
 | 列数 | `ColumnControl.tsx` | 工具栏入口沿用安静按钮「四宫格图标 + 当前列数」。弹层 192px，原有轨道和 2/3/4/5/6/8 刻度不变；滑块为 20px 白色圆形，微渐变、高光边缘和柔和投影，悬停轻微放大至 1.04，按住拖动时放大至 1.12 并改变阴影，键盘焦点仍有强调色外环。减少动态效果时关闭缩放与过渡。列数选择、拖动与键盘行为不变 |

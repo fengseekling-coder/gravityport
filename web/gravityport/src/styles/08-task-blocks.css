@@ -218,8 +218,8 @@ body.gp-card-dragging .toast {
   color: var(--ui-muted);
 }.app .feedback-message:focus-visible,
 .app .feedback-contact:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -1px;
+  outline: none;
+  border-color: var(--field-focus);
 }.app .feedback-message-foot {
   display: flex;
   justify-content: flex-end;

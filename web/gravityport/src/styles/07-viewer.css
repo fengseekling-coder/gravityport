@@ -325,6 +325,10 @@ video.black-image,
   resize: vertical;
 }
 
+.app .detail-editor:focus-visible {
+  border-color: var(--field-focus);
+}
+
 .app .prompt-editor-actions {
   display: flex;
   justify-content: flex-end;

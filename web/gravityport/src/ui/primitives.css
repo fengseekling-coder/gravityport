@@ -28,10 +28,13 @@
 .app .ui-button--small { min-height: var(--control-height-small); }
 .app .ui-button--icon { width: var(--control-height); padding: 0; }
 .app .ui-button--icon.ui-button--small { width: var(--control-height-small); }
-.app .ui-button:focus-visible,
-.app .ui-field-input:focus-visible {
+.app .ui-button:focus-visible {
   outline: var(--focus-width) solid var(--focus-ring);
   outline-offset: var(--focus-offset);
+}
+.app .ui-field-input:focus-visible {
+  outline: none;
+  border-color: var(--field-focus);
 }
 .app .ui-button:active:not(:disabled) { transform: translateY(var(--press-offset)); }
 .app .ui-button:disabled {

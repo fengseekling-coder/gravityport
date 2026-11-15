@@ -13,7 +13,7 @@
   color: var(--ui-muted);
 }.app .search:focus-within {
   background: var(--ui-raised);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--field-focus);
 }.app .search input {
   width: 100%;
   min-width: 0;

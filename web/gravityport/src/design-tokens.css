@@ -12,6 +12,7 @@
   --ui-raised: #fff;
   --ui-accent: #009a1a;
   --focus-ring: var(--ui-accent);
+  --field-focus: #0000002e;
   --ui-primary: #343434;
   --ui-primary-text: #fff;
   --ui-danger: #c45050;
@@ -49,6 +50,7 @@
   --ui-raised: #2c2c2c;
   --ui-accent: #39ff14;
   --focus-ring: var(--ui-accent);
+  --field-focus: #ffffff33;
   --ui-primary: #e3e3e3;
   --ui-primary-text: #292929;
   --ui-danger: #ef9494;

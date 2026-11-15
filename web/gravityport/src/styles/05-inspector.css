@@ -126,7 +126,7 @@
   background: var(--ui-inset);
   border-radius: var(--radius-control);
 }.app .tag-editor-controls:focus-within {
-  box-shadow: 0 0 0 1px var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--field-focus);
 }.app .tag-editor input {
   min-width: 0;
   width: 100%;
