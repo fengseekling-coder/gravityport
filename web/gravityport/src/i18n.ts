@@ -136,6 +136,7 @@ const english: Record<string, string> = {
   "共 1 轮": "1 round",
   "当前第 {n} 轮": "Round {n} (current)",
   "第 {n} 轮": "Round {n}",
+  "{name} 的版本树": "Version tree of {name}",
   "当前": "Current",
   "无轮次": "No round",
 

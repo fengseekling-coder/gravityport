@@ -725,9 +725,9 @@ export default function VersionCanvas({
           >
             <Icon name="left" />
           </Button>
-          <Text tone="secondary">{tr("版本树")}</Text>
-          <Icon name="right" size={12} />
-          <Text variant="label">{doc.title}</Text>
+          <Text variant="label" title={doc.title}>
+            {fillNamed("{name} 的版本树", { name: doc.title })}
+          </Text>
           <Text tone="secondary" className="vc-summary">
             {columns.length}{" "}
             {tr(
