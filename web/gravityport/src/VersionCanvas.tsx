@@ -729,16 +729,13 @@ export default function VersionCanvas({
             {fillNamed("{name} 的版本树", { name: doc.title })}
           </Text>
           <Text tone="secondary" className="vc-summary">
-            {columns.length}{" "}
-            {tr(
-              nodes.every((item) => item.round !== null)
-                ? "轮迭代"
-                : "个生成分组",
+            {fillNamed("{n} 张", { n: nodes.length })}
+            {finalCount > 0 && (
+              <>
+                <span>·</span>
+                {finalCount} {tr("个定稿")}
+              </>
             )}
-            <span>·</span>
-            {nodes.length} {tr("张素材")}
-            <span>·</span>
-            {finalCount} {tr("个定稿")}
           </Text>
         </div>
         <div className="vc-header-actions">
