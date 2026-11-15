@@ -140,7 +140,7 @@
 | 工具栏下拉 | `ToolbarSelect.tsx` | 列表 `.toolbar-select-menu` 最窄 176px，选项 32px 高，已选项打 `--ui-accent` 勾 |
 | 回收站可腾空间 | `.trash-reclaimable` | 回收站有素材时，「清空回收站」按钮左边 12px `--ui-muted` 一行「清空可腾出约 {size}」，只算非硬链接的原图大小；清空能腾出 0 时也显示（`0 KB`）；不可点、无图标无提示框，回收站空了或后端没给这个字段就不显示 |
 | 列数 | `ColumnControl.tsx` | 工具栏入口沿用安静按钮「四宫格图标 + 当前列数」。弹层 192px，原有轨道和 2/3/4/5/6/8 刻度不变；滑块为 20px 白色圆形，微渐变、高光边缘和柔和投影，悬停轻微放大至 1.04，按住拖动时放大至 1.12 并改变阴影，键盘焦点仍有强调色外环。减少动态效果时关闭缩放与过渡。列数选择、拖动与键盘行为不变 |
-| 侧栏 | `.sidebar`、`.nav-row`、`.section-toggle` | 行高 36px，当前项 `--ui-selected` 底加 `aria-current="page"`。正在看的堆叠没了自动退回进堆叠前的视图，分组被删退回「所有素材」，分组被改名跟到新名字；都替换当前历史条目，后退不会回到已经不存在的视图 |
+| 侧栏 | `.sidebar`、`.nav-row`、`.section-toggle` | 行高 32px，当前项 `--ui-selected` 底加 `aria-current="page"`。正在看的堆叠没了自动退回进堆叠前的视图，分组被删退回「所有素材」，分组被改名跟到新名字；都替换当前历史条目，后退不会回到已经不存在的视图 |
 | 侧栏更新提醒 | `.update-ready-slot`、`.update-ready-line` | 更新包下好后的单行提醒，在「用户中心」上方：高 32px、12px 字、`--radius-control`，`--ui-hover` 底悬停加深到 `--ui-selected`；左侧 6px `--ui-accent` 圆点，文字 `--ui-secondary`（版本号 `--ui-text` 字重 500）超长省略号截断，右侧「重启更新」`--ui-text` 保持完整；点击整行即重启更新，更新中禁用并显示「正在更新…」，`title`/`aria-label` 保留完整句子；同一版本装失败两次后不再显示，改由系统对话框引导去官网下载 |
 | 图片卡片 | `.asset-card` | 黑底，小标 `.stack-mark` `.video-mark` `.trash-countdown` `.favorite-mark`，名字条 `.card-name`；名字条显示原名（后端 `display_name`：去掉机器加的编号后缀，和搜索同一套规则），库里的真实文件名不变。名字条显示时，收藏心形落在名字条右端、和最后一行对齐，名字给它让出位置。视频卡片封面：界面在后台从视频里抽一帧（跳过片头黑场）存进素材库，之后和图片一样用 `thumbnails/<id>.webp`；抽帧失败或还没完成时，退回显示视频开头附近的某一帧，播放标记始终在 |
 | 拖动缩略图 | `.card-drag-ghost` | 跟着指针的缩略图；拖多张时右下角数量角标 `.card-drag-ghost-count`：`--ui-primary` 底、`--ui-primary-text` 字 |
