@@ -114,6 +114,15 @@ describe("context-menus / asset menu", () => {
 
   // 任务 389（中13 后半）：单选普通卡多一项「在访达中显示 / 在文件资源管理
   // 器中显示」，跟在「在素材库中显示」后面；多选、堆叠卡、回收站都没有。
+  it("open-version-canvas: only with the canvas gate on, single asset, right after open-viewer", () => {
+    assert.ok(!itemIds(buildContextMenu(baseCtx())).includes("open-version-canvas"), "gate off keeps the menu unchanged");
+    const on = buildContextMenu(baseCtx({ versionCanvas: true }));
+    const ids = itemIds(on);
+    assert.deepEqual(ids.slice(0, 3), ["open-viewer", "open-version-canvas", "show-in-library"]);
+    assert.equal(findItem(on, "open-version-canvas").label, "查看版本树");
+    assert.ok(!itemIds(buildContextMenu(baseCtx({ versionCanvas: true, selectionCount: 2 }))).includes("open-version-canvas"), "multi-select has no viewer section");
+  });
+
   it("reveal-in-folder: single asset gets it after show-in-library, per-platform labels", () => {
     const mac = buildContextMenu(baseCtx({ isMac: true }));
     const macItem = findItem(mac, "reveal-in-folder");

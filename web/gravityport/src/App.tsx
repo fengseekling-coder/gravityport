@@ -27,6 +27,7 @@ import { resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { galleryKeyAction, isFocusSearchKey, menuSelectAllTarget, mouseNavDirection, neighbourAssetId, resolveNavHistoryShortcut } from "./gallery-keys"
 import { type GenerationDisplay } from "./version-tree"
+import { VERSION_CANVAS_ENTRY } from "./version-canvas-model"
 import { computeConversationRounds } from "./conversation-rounds"
 import { sanitizeAssetForExport } from "./feature-parity"
 import { describeSource, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
@@ -3791,6 +3792,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // menus own it (task 239).
       clipboardImportable: false,
       unorganizedView: scope === "unorganized",
+      versionCanvas: VERSION_CANVAS_ENTRY && scope !== "trash",
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), ctx.selectionCount)
     setMenu({ x, y, entries, target: "asset", selectionCount: ctx.selectionCount, stackId: "", stackName: "", stackCount: 0 })
@@ -4003,6 +4005,11 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     const ids = [...batchIds]
     // Asset menu
     if (id === "open-viewer") setPreview(true)
+    else if (id === "open-version-canvas") {
+      // The card's onContextMenu already focused the clicked asset.
+      setCanvasSession((old) => old + 1)
+      setCanvasOpen(true)
+    }
     else if (id === "show-in-library") showInLibrary()
     // 任务 389（中13 后半）：卡片右键菜单的「在访达中显示」与检视器里的
     // onOpenLocation 走同一个 revealAssetPath（openLibraryFolder，失败复制路径）。
