@@ -561,8 +561,8 @@ html[lang="en"] .version-compare-fields > div { grid-template-columns: 68px 1fr 
   line-height: var(--space-6);
   margin-bottom: var(--space-5);
 }.settings-nav > button {
-  height: 36px;
-  min-height: 36px;
+  height: 32px;
+  min-height: 32px;
   padding: 0 var(--space-2);
   margin-bottom: var(--space-1);
   border-radius: var(--radius-small);

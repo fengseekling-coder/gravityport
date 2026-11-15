@@ -15,7 +15,7 @@
   overflow-y: auto;
   background: var(--ui-inset);
 }.app .settings-nav > button {
-  height: 36px;
+  height: 32px;
   margin-bottom: var(--space-1);
 }.app .settings-content {
   padding: var(--space-7) var(--space-8) var(--space-6);
