@@ -953,97 +953,36 @@ export default function VersionCanvas({
                     )
                   })()}
               </svg>
-              {visibleEdges.map((edge) => {
-                const from = nodes.find((item) => item.id === edge.from)!
-                const to = nodes.find((item) => item.id === edge.to)!
-                if (to.column - from.column > 1)
+              {/* Suggested edges stay as faint dashed lines without a label;
+                  they are confirmed by dragging along them or from the
+                  inspector's suggestion list. */}
+              {visibleEdges
+                .filter((edge) => !edge.suggested)
+                .map((edge) => {
+                  const from = nodes.find((item) => item.id === edge.from)!
+                  const to = nodes.find((item) => item.id === edge.to)!
+                  if (to.column - from.column > 1)
+                    return (
+                      <div
+                        className="vc-branch-label"
+                        key={edge.id}
+                        style={{
+                          left: from.x + NODE_WIDTH + 42,
+                          top: Math.max(from.y, to.y) + NODE_HEIGHT + 16,
+                        }}
+                      >
+                        <Icon name="branch" size={12} />
+                        {tr("回到这个方向")}
+                      </div>
+                    )
+                  const left = (from.x + NODE_WIDTH + to.x) / 2
+                  const top = (from.y + to.y) / 2 + 136
                   return (
-                    <div
-                      className={`vc-branch-label ${
-                        edge.suggested ? "is-suggested" : ""
-                      }`}
-                      key={edge.id}
-                      style={{
-                        left: from.x + NODE_WIDTH + 42,
-                        top: Math.max(from.y, to.y) + NODE_HEIGHT + 16,
-                      }}
-                    >
-                      {edge.suggested ? (
-                        <>
-                          <Text>{tr("可能改自")}</Text>
-                          <div>
-                            <Button
-                              variant="quiet"
-                              size="small"
-                              disabled={relationBusy}
-                              aria-label={tr("确认关系")}
-                              title={tr("确认关系")}
-                              onClick={() => changeCandidate(edge, true)}
-                            >
-                              <Icon name="check" size={12} />
-                            </Button>
-                            <Button
-                              variant="quiet"
-                              size="small"
-                              disabled={relationBusy}
-                              aria-label={tr("忽略关系")}
-                              title={tr("忽略关系")}
-                              onClick={() => changeCandidate(edge, false)}
-                            >
-                              <Icon name="close" size={12} />
-                            </Button>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <Icon name="branch" size={12} />
-                          {tr("回到这个方向")}
-                        </>
-                      )}
+                    <div className="vc-edge-label" key={edge.id} style={{ left, top }}>
+                      <Text>{relationLabel(edge.type)}</Text>
                     </div>
                   )
-                const left = (from.x + NODE_WIDTH + to.x) / 2
-                const top = (from.y + to.y) / 2 + 136
-                return (
-                  <div
-                    className={`vc-edge-label ${
-                      edge.suggested ? "is-suggested" : ""
-                    }`}
-                    key={edge.id}
-                    style={{ left, top }}
-                  >
-                    {edge.suggested ? (
-                      <>
-                        <Text>{tr("可能改自")}</Text>
-                        <div>
-                          <Button
-                            variant="quiet"
-                            size="small"
-                            disabled={relationBusy}
-                            aria-label={tr("确认关系")}
-                            title={tr("确认关系")}
-                            onClick={() => changeCandidate(edge, true)}
-                          >
-                            <Icon name="check" size={12} />
-                          </Button>
-                          <Button
-                            variant="quiet"
-                            size="small"
-                            disabled={relationBusy}
-                            aria-label={tr("忽略关系")}
-                            title={tr("忽略关系")}
-                            onClick={() => changeCandidate(edge, false)}
-                          >
-                            <Icon name="close" size={12} />
-                          </Button>
-                        </div>
-                      </>
-                    ) : (
-                      <Text>{relationLabel(edge.type)}</Text>
-                    )}
-                  </div>
-                )
-              })}
+                })}
               {visibleNodes.map(renderNode)}
             </div>
           </div>

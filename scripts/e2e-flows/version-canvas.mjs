@@ -201,14 +201,19 @@ function roundOnSource(config) {
     const inspectorSectionsPresent = ['生成关系', '添加生成关系', '版本对比', '版本历史']
       .every((heading) => inspectorText.includes(heading));
 
-    const confirmBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="确认关系"]'), 'suggested edge confirm button');
+    // Suggested edges are unlabeled dashed lines; confirm from the inspector list.
+    await waitFor(() => document.querySelector('.vc-edges g.suggested'), 'suggested edge drawn as a dashed line');
+    const unlabeled = !(document.querySelector('.version-canvas .vc-board-area')?.textContent || '').includes('可能改自');
+    const confirmBtn = await waitFor(() => Array.from(document.querySelectorAll('.vc-inspector button'))
+      .find((button) => button.textContent.trim() === '确认关系'), 'inspector suggestion confirm button');
     confirmBtn.click();
     await waitFor(() => (
-      !document.querySelector('.version-canvas button[aria-label="确认关系"]')
-      && document.querySelectorAll('.vc-edges path:not(.suggested)').length >= 1
+      !document.querySelector('.vc-edges g.suggested')
+      && document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length >= 1
     ), 'suggested candidate becomes solid confirmed edge');
     const confirmedOnCanvas = (
-      !document.querySelector('.version-canvas button[aria-label="确认关系"]')
+      unlabeled
+      && !document.querySelector('.vc-edges g.suggested')
       && (document.querySelector('.vc-inspector')?.textContent || '').includes('保存关系')
     );
 

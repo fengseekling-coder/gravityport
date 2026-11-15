@@ -117,17 +117,10 @@
 .vc-edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .vc-edges path { fill: none; stroke: var(--vc-connector); stroke-width: 1.5; }
 .vc-edges circle { fill: var(--ui-raised); stroke: var(--vc-connector); stroke-width: 1.5; }
-.vc-edges .suggested path { stroke-dasharray: 5 5; }
+.vc-edges .suggested path { stroke-dasharray: 5 5; opacity: 0.5; }
+.vc-edges .suggested circle { opacity: 0.5; }
 .vc-edge-label { position: absolute; transform: translate(-50%, -50%); background: var(--vc-board); z-index: 2; padding: var(--space-1) var(--space-2); color: var(--ui-secondary); white-space: nowrap; }
 .vc-edge-label > .ui-text { color: var(--ui-secondary); }
-.vc-edge-label.is-suggested,
-.vc-branch-label.is-suggested { border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-control); background: var(--ui-raised); display: flex; flex-direction: column; align-items: center; padding: var(--space-2) var(--space-1) var(--space-1); gap: var(--space-1); z-index: 2; }
-.vc-edge-label.is-suggested > div,
-.vc-branch-label.is-suggested > div { display: flex; }
-.app .vc-edge-label .ui-button,
-.app .vc-branch-label .ui-button { padding: 0; width: var(--space-6); min-height: var(--space-6); }
-.vc-edge-label.is-suggested .ui-button:first-child svg,
-.vc-branch-label.is-suggested .ui-button:first-child svg { color: var(--ui-accent); }
 .vc-branch-label { position: absolute; display: flex; align-items: center; gap: var(--space-1); background: var(--vc-board); padding: var(--space-1) var(--space-2); color: var(--ui-secondary); font-size: var(--type-body-size); transform: translateX(-50%); }
 
 .vc-node {

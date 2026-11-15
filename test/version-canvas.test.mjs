@@ -502,7 +502,6 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
       "添加生成关系",
       "版本对比",
       "版本历史",
-      "可能改自",
       "保存关系",
       "删除关系",
       "导出版本树",
@@ -512,6 +511,8 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
     for (const forbidden of ["exampleCanvas", "示例", "coffee"]) {
       assert.ok(!html.includes(forbidden), `VersionCanvas must omit "${forbidden}"`);
     }
+    assert.match(html, /<g class="suggested">/, "suggested relations still draw as dashed lines");
+    assert.ok(!html.includes("可能改自"), "suggested lines carry no label on the board");
   });
 
   it("keeps canvas sources free of sample leftovers and adheres to export/i18n norms", async () => {
