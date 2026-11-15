@@ -253,7 +253,7 @@ function roundOnSource(config) {
     const sib = center(nodeEl(config.siblingId));
     nodeEl(config.siblingId).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: sib.x, clientY: sib.y }));
     const compareItem = await waitFor(() => Array.from(document.querySelectorAll('.vc-context-menu button'))
-      .find((button) => button.textContent.trim() === '对比这两张'), 'compare item in the card menu');
+      .find((button) => button.textContent.trim() === '对比所选素材'), 'compare item in the card menu');
     compareItem.click();
     await waitFor(() => Array.from(document.querySelectorAll('dialog[open]')).some((dialog) => dialog.textContent.includes('版本对比')), 'compare dialog opens');
     const comparedByMenu = !document.querySelector('.vc-board-actions')?.textContent.includes('对比');

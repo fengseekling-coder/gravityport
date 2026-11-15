@@ -584,7 +584,6 @@ const english: Record<string, string> = {
   "候选关系": "Suggested relationships",
   "画布操作说明": "Canvas controls",
   "滚动平移 · Ctrl / ⌘ + 滚动缩放 · 按 0 回到全图 · 从图边的点拖出连线 · Shift 选两张后右键对比 · 双击看大图": "Scroll to pan · Ctrl / ⌘ + scroll to zoom · Press 0 to fit · Drag from a card’s dot to link · Shift-select two, then right-click to compare · Double-click to preview",
-  "对比这两张": "Compare these two",
   "已选择 2 张素材": "2 assets selected",
   "并排查看两个版本，找到这一次的变化。": "Compare two versions side by side and see what changed.",
   "对比所选素材": "Compare selected assets",

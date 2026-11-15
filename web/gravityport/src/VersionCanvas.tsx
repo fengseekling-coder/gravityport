@@ -1441,7 +1441,7 @@ export default function VersionCanvas({
                 }}
               >
                 <Icon name="compare" />
-                {tr("对比这两张")}
+                {tr("对比所选素材")}
               </Button>
               <span className="vc-context-divider" />
             </>
