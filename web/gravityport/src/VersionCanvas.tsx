@@ -657,8 +657,40 @@ export default function VersionCanvas({
           <Text tone="secondary">{tr("版本树")}</Text>
           <Icon name="right" size={12} />
           <Text variant="label">{doc.title}</Text>
+          <Text tone="secondary" className="vc-summary">
+            {columns.length}{" "}
+            {tr(
+              nodes.every((item) => item.round !== null)
+                ? "轮迭代"
+                : "个生成分组",
+            )}
+            <span>·</span>
+            {nodes.length} {tr("张素材")}
+            <span>·</span>
+            {finalCount} {tr("个定稿")}
+          </Text>
         </div>
         <div className="vc-header-actions">
+          <div className="vc-view-tabs" aria-label={tr("版本树视图")}>
+            <Button
+              variant="quiet"
+              aria-pressed={tab === "canvas"}
+              className={tab === "canvas" ? "is-active" : ""}
+              onClick={() => setTab("canvas")}
+            >
+              <Icon name="tree" />
+              {tr("画布")}
+            </Button>
+            <Button
+              variant="quiet"
+              aria-pressed={tab === "list"}
+              className={tab === "list" ? "is-active" : ""}
+              onClick={() => setTab("list")}
+            >
+              <Icon name="list" />
+              {tr("列表")}
+            </Button>
+          </div>
           <span className="vc-memory-status">
             <span />
             {tr("本页暂存")}
@@ -680,51 +712,6 @@ export default function VersionCanvas({
           </Button>
         </div>
       </header>
-
-      <div className="vc-subheader">
-        <div className="vc-project-title">
-          <span className="vc-project-icon">
-            <Icon name="tree" size={24} />
-          </span>
-          <div>
-            <Text as="h1" variant="title">
-              {doc.title}
-            </Text>
-            <Text tone="secondary">
-              {columns.length}{" "}
-              {tr(
-                nodes.every((item) => item.round !== null)
-                  ? "轮迭代"
-                  : "个生成分组",
-              )}
-              <span>·</span>
-              {nodes.length} {tr("张素材")}
-              <span>·</span>
-              {finalCount} {tr("个定稿")}
-            </Text>
-          </div>
-        </div>
-        <div className="vc-view-tabs" aria-label={tr("版本树视图")}>
-          <Button
-            variant="quiet"
-            aria-pressed={tab === "canvas"}
-            className={tab === "canvas" ? "is-active" : ""}
-            onClick={() => setTab("canvas")}
-          >
-            <Icon name="tree" />
-            {tr("画布")}
-          </Button>
-          <Button
-            variant="quiet"
-            aria-pressed={tab === "list"}
-            className={tab === "list" ? "is-active" : ""}
-            onClick={() => setTab("list")}
-          >
-            <Icon name="list" />
-            {tr("列表")}
-          </Button>
-        </div>
-      </div>
 
       <section className="vc-board-area">
         <div className="vc-board-toolbar">

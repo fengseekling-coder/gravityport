@@ -190,8 +190,8 @@ function roundOnSource(config) {
 
     const finalBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="设为定稿"]'), 'final toggle button');
     finalBtn.click();
-    await waitFor(() => (document.querySelector('.vc-subheader')?.textContent || '').includes('1 个定稿'), 'subheader updates final count');
-    const finalBadgeUpdated = (document.querySelector('.vc-subheader')?.textContent || '').includes('1 个定稿');
+    await waitFor(() => (document.querySelector('.vc-header')?.textContent || '').includes('1 个定稿'), 'header updates final count');
+    const finalBadgeUpdated = (document.querySelector('.vc-header')?.textContent || '').includes('1 个定稿');
 
     const backBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="返回素材库"]'), 'back button');
     backBtn.click();

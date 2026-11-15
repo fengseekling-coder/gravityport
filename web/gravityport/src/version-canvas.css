@@ -15,7 +15,7 @@
   --vc-dot: color-mix(in srgb, var(--ui-secondary) 24%, transparent);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--space-14) calc(var(--space-16) + var(--space-4)) minmax(0, 1fr) var(--space-8);
+  grid-template-rows: var(--space-14) minmax(0, 1fr) var(--space-8);
   height: 100dvh;
   min-width: 0;
   overflow: hidden;
@@ -27,8 +27,7 @@
   grid-template-columns: minmax(0, 1fr) var(--vc-inspector-width);
 }
 
-.vc-header,
-.vc-subheader {
+.vc-header {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
@@ -43,7 +42,6 @@
 .vc-header { padding-left: var(--space-3); }
 .vc-breadcrumb,
 .vc-header-actions,
-.vc-project-title,
 .vc-view-tabs,
 .vc-board-actions,
 .vc-path-toggle,
@@ -64,21 +62,9 @@
 .vc-memory-status { color: var(--ui-secondary); margin-right: var(--space-3); white-space: nowrap; }
 .vc-memory-status > span { width: var(--space-1); height: var(--space-1); border-radius: var(--radius-round); background: var(--ui-accent); }
 .vc-divider { width: var(--border-hairline); height: var(--space-4); background: var(--ui-line); margin: 0 var(--space-1); flex-shrink: 0; }
-.vc-project-title { gap: var(--space-3); }
-.vc-project-title, .vc-project-title > div { min-width: 0; }
 .vc-view-tabs { flex-shrink: 0; }
-.vc-project-icon {
-  width: var(--space-10);
-  height: var(--space-10);
-  border: var(--border-hairline) solid var(--ui-line);
-  background: var(--ui-raised);
-  border-radius: var(--radius-control);
-  display: grid;
-  place-items: center;
-  color: var(--ui-secondary);
-}
-.vc-project-title h1 { margin-bottom: var(--space-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vc-project-title .ui-text > span { margin: 0 var(--space-2); }
+.vc-summary { margin-left: var(--space-2); white-space: nowrap; }
+.vc-summary > span { margin: 0 var(--space-2); }
 .vc-view-tabs { padding: var(--space-1); background: var(--ui-inset); border-radius: var(--radius-control); gap: var(--space-1); }
 .app .vc-view-tabs .ui-button.is-active { color: var(--ui-text); background: var(--ui-raised); box-shadow: 0 0 0 var(--border-hairline) var(--ui-line); }
 
@@ -187,7 +173,7 @@
 .app .vc-zoom-value { width: var(--space-14); padding: 0; font-variant-numeric: tabular-nums; }
 .app .vc-help-button { background: var(--ui-raised); border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-round); }
 
-.vc-inspector { grid-column: 2; grid-row: 3; background: var(--ui-panel); border-left: var(--border-hairline) solid var(--ui-line); display: flex; flex-direction: column; min-height: 0; }
+.vc-inspector { grid-column: 2; grid-row: 2; background: var(--ui-panel); border-left: var(--border-hairline) solid var(--ui-line); display: flex; flex-direction: column; min-height: 0; }
 .vc-inspector-heading { height: var(--space-14); min-height: var(--space-14); padding: 0 var(--space-4); justify-content: space-between; border-bottom: var(--border-hairline) solid var(--ui-line); }
 .vc-inspector-content { overflow-y: auto; flex: 1; min-height: 0; padding: var(--space-4); scrollbar-width: thin; }
 .app .vc-detail-image { width: 100%; height: calc(var(--space-16) * 2 + var(--space-6)); padding: var(--space-2); position: relative; background: var(--ui-inset); border-radius: var(--radius-control); }
@@ -319,9 +305,8 @@
   .vc-memory-status { display: none; }
 }
 @media (max-width: 1000px) {
-  .vc-subheader { padding-inline: var(--space-4); }
+  .vc-summary { display: none; }
   .vc-board-toolbar { left: var(--space-3); right: var(--space-3); }
-  .vc-project-icon { display: none; }
   .vc-board-bottom { left: var(--space-3); right: var(--space-3); }
   .vc-help-button { display: none !important; }
   .vc-statusbar > .ui-text { display: none; }
@@ -338,7 +323,6 @@
   .vc-board-bottom { justify-content: center; }
 }
 @media (max-width: 480px) {
-  .app .version-canvas .vc-project-title .ui-text--secondary { display: block; white-space: nowrap; max-width: calc(var(--space-16) * 2); overflow: hidden; text-overflow: ellipsis; }
   .vc-view-tabs .ui-icon { display: none; }
   .app .version-canvas .vc-header-actions > .ui-button--icon, .vc-header-actions > .vc-divider { display: none; }
   .app .version-canvas .vc-board-actions .ui-button { font-size: 0; padding: 0 var(--space-2); }
@@ -349,5 +333,4 @@
   .vc-breadcrumb > .ui-button { width: var(--space-6); }
   .vc-header-actions { gap: 0; }
   .vc-header-actions > .ui-button { padding: 0 var(--space-2); }
-  .vc-project-title .ui-text > span { margin: 0 var(--space-1); }
 }
