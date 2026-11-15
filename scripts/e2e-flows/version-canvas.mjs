@@ -1,11 +1,11 @@
 // GravityPort React UI flow (task 421):
-// 1. Default built mode (DEV=false, no localStorage flag) keeps 版本树 -> 展开 inline.
-// 2. Enabling localStorage "gravityport.dev.version-canvas"="1" routes 展开 directly into VersionCanvas,
+// 1. Default built mode (DEV=false, no localStorage flag) keeps 版本树 -> 查看 inline.
+// 2. Enabling localStorage "gravityport.dev.version-canvas"="1" routes 查看 directly into VersionCanvas,
 //    hiding the gallery inspector, showing moved 版本对比 / 生成关系 / 添加生成关系 / 版本历史 panels,
 //    confirming a suggested candidate edge via real HTTP APIs, toggling in-memory final status, and returning cleanly.
 // 3. Clearing the flag returns to legacy mode with the confirmed relation persisted and candidate removed.
 export const name = "version-canvas";
-export const description = "VERSION_CANVAS_ENTRY gate off->on -> 展开 enters VersionCanvas -> confirm candidate edge -> return -> gate off persists relation";
+export const description = "VERSION_CANVAS_ENTRY gate off->on -> 查看 enters VersionCanvas -> confirm candidate edge -> return -> gate off persists relation";
 
 export async function run(ctx) {
   await ctx.prepare();

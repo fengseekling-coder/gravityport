@@ -78,7 +78,7 @@ export function VersionSection(props: VersionSectionProps) {
                       }
                       setVersionTreeOpen(!versionTreeOpen)
                     }}
-                  >{tr(VERSION_CANVAS_ENTRY && onOpenCanvas ? "展开" : versionTreeOpen ? "收起" : "展开")}</button>
+                  >{tr(VERSION_CANVAS_ENTRY && onOpenCanvas ? "查看" : versionTreeOpen ? "收起" : "查看")}</button>
                 </span>
               })()}
             </div>

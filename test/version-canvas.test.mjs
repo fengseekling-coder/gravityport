@@ -312,7 +312,7 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
       return tree;
     }
     const html = renderStatic(React.createElement(Capture));
-    assert.match(html, />展开</);
+    assert.match(html, />查看</);
     const buttons = findElements(tree, (el) => el.type === "button" && el.props?.className === "section-action");
     assert.equal(buttons.length, 1);
     assert.equal(buttons[0].props["aria-expanded"], false);
@@ -338,10 +338,10 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
     }
     const html = renderStatic(React.createElement(Capture));
     assert.match(html, /class="settings-badge"/, "existing badge count remains intact");
-    assert.match(html, />展开</, "button copy stays 展开 without introducing a new button");
+    assert.match(html, />查看</, "button copy stays 查看 without introducing a new button");
     const buttons = findElements(tree, (el) => el.type === "button" && el.props?.className === "section-action");
     assert.equal(buttons.length, 1);
-    assert.equal(textOf(buttons[0]), "展开");
+    assert.equal(textOf(buttons[0]), "查看");
     assert.equal(buttons[0].props["aria-expanded"], false);
     buttons[0].props.onClick();
     assert.equal(openCalls, 1);

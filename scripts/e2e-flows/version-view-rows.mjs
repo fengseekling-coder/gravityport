@@ -176,7 +176,7 @@ const HELPERS = `
       .find((heading) => heading.querySelector('span')?.textContent === '版本树');
     const openViewer = async () => {
       await waitFor(() => treeHeading() && treeHeading().querySelector('.section-action'), '查看 action');
-      Array.from(treeHeading().querySelectorAll('.section-action')).find((b) => b.textContent.trim() === '展开').click();
+      Array.from(treeHeading().querySelectorAll('.section-action')).find((b) => b.textContent.trim() === '查看').click();
       await waitFor(() => Boolean(region()), '展开的版本树区域');
     };
     const selectCard = async (assetId) => {
