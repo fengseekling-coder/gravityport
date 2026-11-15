@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import Button from "./ui/Button"
 import Switch from "./ui/Switch"
 import {
   feedbackErrorMessage,
@@ -242,11 +243,9 @@ export function FeedbackPanel({ language }: { language: Language }) {
           {sent ? <p className="feedback-status feedback-success" role="status">{tr("已发送反馈")}</p> : null}
           {error ? <p className="feedback-status feedback-error" role="alert">{tr(error)}</p> : null}
         </div>
-        <div className="settings-card-actions">
-          <button type="button" className="settings-action-btn feedback-send" disabled={submitDisabled} onClick={() => void onSubmit()}>
-            {sending ? tr("发送中…") : tr("发送")}
-          </button>
-        </div>
+        <Button variant="primary" className="feedback-send" disabled={submitDisabled} onClick={() => void onSubmit()}>
+          {sending ? tr("发送中…") : tr("发送")}
+        </Button>
       </div>
     </section>
   )
