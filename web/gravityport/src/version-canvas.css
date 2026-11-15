@@ -95,15 +95,17 @@
   pointer-events: none;
 }
 .vc-board-toolbar > * { pointer-events: auto; }
+/* No containers, same as the top bar: a bare switch and a quiet button. */
 .vc-path-toggle {
-  background: var(--ui-panel);
-  border: var(--border-hairline) solid var(--ui-line);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-control);
+  padding: var(--space-1) 0;
   gap: var(--space-2);
+  color: var(--ui-secondary);
 }
+.vc-path-toggle > .ui-text { color: var(--ui-secondary); }
 .vc-path-toggle .ui-switch { transform: scale(.8); transform-origin: left center; margin-right: calc(-1 * var(--space-1)); }
-.vc-board-actions { padding: var(--space-1); background: var(--ui-panel); border-radius: var(--radius-control); border: var(--border-hairline) solid var(--ui-line); gap: 0; }
+.vc-board-actions { gap: 0; }
+.app .vc-board-actions .ui-button { color: var(--ui-secondary); }
+.app .vc-board-actions .ui-button:hover:not(:disabled) { color: var(--ui-text); }
 .vc-stage { position: relative; min-height: 0; flex: 1; overflow: hidden; touch-action: none; user-select: none; }
 .vc-stage.hand-tool, .vc-stage.hand-tool * { cursor: grab; }
 .vc-stage:active.hand-tool, .vc-stage:active.hand-tool * { cursor: grabbing; }
