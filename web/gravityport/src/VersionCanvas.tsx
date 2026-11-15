@@ -1029,79 +1029,16 @@ export default function VersionCanvas({
               {tr("候选关系")}
             </span>
           </div>
-          {tab === "canvas" && (
-            <div className="vc-zoom-toolbar">
-              <Button
-                variant="quiet"
-                iconOnly
-                aria-label={tr("选择工具")}
-                title={`${tr("选择工具")} (V)`}
-                aria-pressed={tool === "select"}
-                className={tool === "select" ? "is-active" : ""}
-                onClick={() => setTool("select")}
-              >
-                <Icon name="cursor" />
-              </Button>
-              <Button
-                variant="quiet"
-                iconOnly
-                aria-label={tr("平移工具")}
-                title={`${tr("平移工具")} (H)`}
-                aria-pressed={tool === "hand"}
-                className={tool === "hand" ? "is-active" : ""}
-                onClick={() => setTool("hand")}
-              >
-                <Icon name="hand" />
-              </Button>
-              <span className="vc-divider" />
-              <Button
-                variant="quiet"
-                iconOnly
-                aria-label={tr("缩小")}
-                onClick={() => zoom(1 / 1.15)}
-              >
-                <Icon name="minus" />
-              </Button>
-              <Button
-                variant="quiet"
-                className="vc-zoom-value"
-                title={tr("恢复 100%")}
-                onClick={() => {
-                  setTransform((old) => ({ ...old, scale: 1 }))
-                }}
-              >
-                {Math.round(transform.scale * 100)}%
-              </Button>
-              <Button
-                variant="quiet"
-                iconOnly
-                aria-label={tr("放大")}
-                onClick={() => zoom(1.15)}
-              >
-                <Icon name="plus" />
-              </Button>
-              <span className="vc-divider" />
-              <Button
-                variant="quiet"
-                iconOnly
-                aria-label={tr("适合画布")}
-                title={`${tr("适合画布")} (0)`}
-                onClick={fit}
-              >
-                <Icon name="expand" />
-              </Button>
-            </div>
-          )}
           <Button
             className="vc-help-button"
             variant="quiet"
             iconOnly
             aria-label={tr("画布操作说明")}
             title={tr(
-              "滚动平移 · Ctrl / ⌘ + 滚动缩放 · Shift 多选 · 双击看大图",
+              "滚动平移 · Ctrl / ⌘ + 滚动缩放 · 按 0 回到全图 · 从图边的点拖出连线 · Shift 多选 · 双击看大图",
             )}
             onClick={() =>
-              notify("滚动平移 · Ctrl / ⌘ + 滚动缩放 · Shift 多选 · 双击看大图")
+              notify("滚动平移 · Ctrl / ⌘ + 滚动缩放 · 按 0 回到全图 · 从图边的点拖出连线 · Shift 多选 · 双击看大图")
             }
           >
             <Icon name="info" />

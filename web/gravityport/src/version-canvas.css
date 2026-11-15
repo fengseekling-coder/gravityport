@@ -160,9 +160,6 @@
 .vc-legend > span { display: flex; align-items: center; gap: var(--space-2); }
 .vc-legend i { width: var(--space-5); height: 0; border-top: var(--border-hairline) solid var(--ui-secondary); }
 .vc-legend i.dashed { border-top-style: dashed; }
-.vc-zoom-toolbar { display: flex; align-items: center; gap: var(--space-1); background: var(--ui-raised); border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-control); padding: var(--space-1); box-shadow: 0 var(--space-1) var(--space-4) var(--ui-line); }
-.app .vc-zoom-toolbar .is-active { background: var(--ui-selected); color: var(--ui-text); }
-.app .vc-zoom-value { width: var(--space-14); padding: 0; font-variant-numeric: tabular-nums; }
 .app .vc-help-button { background: var(--ui-raised); border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-round); }
 
 .vc-inspector { grid-column: 2; grid-row: 2; background: var(--ui-panel); border-left: var(--border-hairline) solid var(--ui-line); display: flex; flex-direction: column; min-height: 0; }
