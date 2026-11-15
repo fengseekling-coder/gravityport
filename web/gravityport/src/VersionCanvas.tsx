@@ -634,7 +634,7 @@ export default function VersionCanvas({
         setMenu({
           node: item.id,
           x: Math.min(event.clientX, window.innerWidth - 216),
-          y: Math.min(event.clientY, window.innerHeight - 210),
+          y: Math.min(event.clientY, window.innerHeight - 260),
         })
       }}
     >
@@ -1426,12 +1426,6 @@ export default function VersionCanvas({
                 </div>
               )}
 
-              {node.assetId && (
-                <Button onClick={() => onOpenAsset(node.assetId)}>
-                  <Icon name="external" />
-                  {tr("在素材库中查看")}
-                </Button>
-              )}
             </div>
           )}
           <div className="vc-inspector-footer">
@@ -1503,6 +1497,19 @@ export default function VersionCanvas({
                 ? "取消定稿"
                 : "设为定稿",
             )}
+          </Button>
+          <span className="vc-context-divider" />
+          <Button
+            variant="quiet"
+            role="menuitem"
+            onClick={() => {
+              const target = nodes.find((item) => item.id === menu.node)
+              setMenu(null)
+              if (target?.assetId) onOpenAsset(target.assetId)
+            }}
+          >
+            <Icon name="folder" />
+            {tr("在素材库中显示")}
           </Button>
         </div>
       )}

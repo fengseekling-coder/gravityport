@@ -600,7 +600,6 @@ const english: Record<string, string> = {
   "待补充修改要求": "Add an instruction",
   "添加标注": "Add annotations",
   "无法访问剪贴板，请手动复制。": "Clipboard unavailable. Please copy manually.",
-  "在素材库中查看": "View in library",
   "画布修改仅保留在当前页面": "Canvas edits stay in this page only",
   "每一次迭代，都有迹可循。": "Every iteration has a story.",
   "Shift 多选 · 双击查看大图": "Shift to multi-select · Double-click to preview",
