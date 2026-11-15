@@ -151,7 +151,7 @@ async function main() {
 
     // 4. Real click on a toolbar control still lands inside the drag row.
     const sort = await session.evaluate(`(() => {
-      const r = document.querySelector('.toolbar .toolbar-select[aria-label="排序"]').getBoundingClientRect();
+      const r = document.querySelector('.toolbar .toolbar-select[aria-label="类型与排序"]').getBoundingClientRect();
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
     })()`);
     execFileSync(helperBin, ["click", String(child.pid), String(sort.x), String(sort.y)], { stdio: ["ignore", "pipe", "pipe"] });
@@ -159,7 +159,7 @@ async function main() {
     const sortAfter = await session.evaluate(`Boolean(document.querySelector(".toolbar-select-menu"))`);
     checks.push({ name: "real click opens a toolbar menu", pass: sortAfter, evidence: { menuOpen: sortAfter } });
     if (!sortAfter) throw new Error("real click on the toolbar sort control did not open its menu — the drag row is eating control clicks");
-    await session.evaluate(`document.querySelector('.toolbar .toolbar-select[aria-label="排序"]').click(); "closed"`);
+    await session.evaluate(`document.querySelector('.toolbar .toolbar-select[aria-label="类型与排序"]').click(); "closed"`);
     await sleep(400);
 
     // 5. Real drag on the empty toolbar strip moves the window (the page

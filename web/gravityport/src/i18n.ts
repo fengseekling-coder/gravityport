@@ -143,7 +143,7 @@ const english: Record<string, string> = {
 
   // ── 工具栏 ──
   "素材类型": "Asset type", "全部类型": "All types", "图片": "Images", "视频": "Videos",
-  "排序": "Sort", "名称排序": "Name", "最新优先": "Newest first", "搜索素材": "Search assets",
+  "排序": "Sort", "类型与排序": "Type and sort", "名称排序": "Name", "最新优先": "Newest first", "搜索素材": "Search assets",
   "清空回收站": "Empty Trash",
 
   // ── 空状态（区域三 EMPTY）──

@@ -166,7 +166,7 @@ function viewGoneSource(stackA, stackACover, stackB, stackBCover, stackCCover, s
     }
     await waitFor(() => document.querySelector('.asset-card[data-asset-id="' + ${JSON.stringify(stackCCover)} + '"] .stack-mark'), 'stack C card visible in 所有素材');
     await enterStack('.asset-card[data-asset-id="' + ${JSON.stringify(stackCCover)} + '"] .stack-mark', 'C');
-    await chooseToolbarOption('素材类型', '视频');
+    await chooseToolbarOption('类型与排序', '视频');
     await sleep(400);
     const emptyText = document.querySelector('.empty-state')?.textContent || '';
     const filteredEmptyState = emptyText.includes('没有匹配的素材') && Boolean(document.querySelector('.empty-state button'));

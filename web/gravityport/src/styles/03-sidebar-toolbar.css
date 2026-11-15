@@ -343,6 +343,16 @@
   line-height: var(--space-4);
   cursor: pointer;
   font-weight: 400;
+}.app .toolbar-select-group + .toolbar-select-group {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--ui-line);
+}.app .toolbar-select-heading {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--ui-muted);
+  cursor: default;
 }.app .toolbar-select-option.active {
   background: var(--ui-selected);
 }.app .toolbar-select-option[aria-selected="true"] {

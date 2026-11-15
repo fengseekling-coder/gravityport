@@ -4652,8 +4652,12 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                     </button>
                   </>
                 )}
-                <ToolbarSelect label={tr("素材类型")} value={assetType} onChange={setAssetType} options={[{ value: "all", label: tr("全部类型") }, { value: "image", label: tr("图片") }, { value: "video", label: tr("视频") }]} />
-                <ToolbarSelect label={tr("排序")} value={sortOrder} onChange={setSortOrder} options={[{ value: "newest", label: tr("最新优先") }, { value: "name", label: tr("名称排序") }]} />
+                <ToolbarSelect label={tr("类型与排序")}
+                  display={(assetType === "all" ? "" : `${tr(assetType === "video" ? "视频" : "图片")} · `) + tr(sortOrder === "name" ? "名称排序" : "最新优先")}
+                  groups={[
+                    { label: tr("素材类型"), value: assetType, onChange: setAssetType, options: [{ value: "all", label: tr("全部类型") }, { value: "image", label: tr("图片") }, { value: "video", label: tr("视频") }] },
+                    { label: tr("排序"), value: sortOrder, onChange: setSortOrder, options: [{ value: "newest", label: tr("最新优先") }, { value: "name", label: tr("名称排序") }] },
+                  ]} />
                 <ColumnControl value={columns} onChange={value => { setColumns(value); writeStoredColumns(columnsStorage(), value) }} language={language} />
                 <label className="search">
                   <input
