@@ -88,6 +88,7 @@ export async function run(ctx) {
       || onResult?.finalBadgeUpdated !== true
       || onResult?.returnedToGallery !== true
       || onResult?.linkedByDrag !== true
+      || onResult?.comparedByMenu !== true
     ) {
       throw new Error(`version-canvas gate-on flow failed: ${JSON.stringify(onResult)}`);
     }
@@ -242,6 +243,25 @@ function roundOnSource(config) {
     ), 'dragged link becomes a solid edge');
     const linkedByDrag = true;
 
+    // Shift-select the pair, right-click one of them, compare.
+    const clickImage = (id, shiftKey) => nodeEl(id).querySelector('.vc-node-image')
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey }));
+    clickImage(config.childId, false);
+    await sleep(100);
+    clickImage(config.siblingId, true);
+    await waitFor(() => (document.querySelector('.vc-inspector')?.textContent || '').includes('已选择 2 张素材'), 'two cards selected');
+    const sib = center(nodeEl(config.siblingId));
+    nodeEl(config.siblingId).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: sib.x, clientY: sib.y }));
+    const compareItem = await waitFor(() => Array.from(document.querySelectorAll('.vc-context-menu button'))
+      .find((button) => button.textContent.trim() === '对比这两张'), 'compare item in the card menu');
+    compareItem.click();
+    await waitFor(() => Array.from(document.querySelectorAll('dialog[open]')).some((dialog) => dialog.textContent.includes('版本对比')), 'compare dialog opens');
+    const comparedByMenu = !document.querySelector('.vc-board-actions')?.textContent.includes('对比');
+    Array.from(document.querySelectorAll('dialog[open] button')).find((button) => button.getAttribute('aria-label') === '关闭')?.click();
+    await waitFor(() => !Array.from(document.querySelectorAll('dialog[open]')).some((dialog) => dialog.textContent.includes('版本对比')), 'compare dialog closes');
+    clickImage(config.childId, false);
+    await waitFor(() => (document.querySelector('.vc-inspector strong')?.textContent || '') === '素材详情', 'back to a single selection');
+
     const finalBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="设为定稿"]'), 'final toggle button');
     finalBtn.click();
     await waitFor(() => (document.querySelector('.vc-header')?.textContent || '').includes('1 个定稿'), 'header updates final count');
@@ -263,6 +283,7 @@ function roundOnSource(config) {
       finalBadgeUpdated,
       returnedToGallery,
       linkedByDrag,
+      comparedByMenu,
     };
   })()`;
 }

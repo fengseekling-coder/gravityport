@@ -100,7 +100,6 @@
 }
 .vc-path-toggle .ui-switch { transform: scale(.8); transform-origin: left center; margin-right: calc(-1 * var(--space-1)); }
 .vc-board-actions { padding: var(--space-1); background: var(--ui-panel); border-radius: var(--radius-control); border: var(--border-hairline) solid var(--ui-line); gap: 0; }
-.app .vc-board-actions .is-active { background: var(--ui-selected); color: var(--ui-text); }
 .vc-stage { position: relative; min-height: 0; flex: 1; overflow: hidden; touch-action: none; user-select: none; }
 .vc-stage.hand-tool, .vc-stage.hand-tool * { cursor: grab; }
 .vc-stage:active.hand-tool, .vc-stage:active.hand-tool * { cursor: grabbing; }
@@ -139,7 +138,6 @@
 .vc-node-image .vc-final-badge { position: absolute; left: var(--space-2); top: var(--space-2); display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: var(--radius-small); background: var(--ui-panel); color: var(--ui-text); font-size: var(--type-body-size); box-shadow: 0 0 0 var(--border-hairline) var(--ui-line); }
 .vc-final-badge svg { color: var(--ui-accent); }
 .vc-node-image .vc-mark-badge { position: absolute; bottom: var(--space-2); right: var(--space-2); background: var(--ui-panel); color: var(--ui-text); padding: var(--space-1) var(--space-2); border-radius: var(--radius-small); display: flex; gap: var(--space-1); align-items: center; }
-.vc-select-number { position: absolute; top: var(--space-2); right: var(--space-2); border-radius: var(--radius-round); width: var(--space-6); height: var(--space-6); display: grid; place-items: center; background: var(--ui-primary); color: var(--ui-primary-text); }
 .vc-port { position: absolute; top: calc(var(--vc-node-image-height) / 2 - var(--space-1)); width: var(--space-2); height: var(--space-2); background: var(--ui-raised); border: var(--border-hairline) solid var(--vc-connector); border-radius: var(--radius-round); }
 .vc-port { cursor: crosshair; z-index: 1; transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease; }
 .vc-port::before { content: ""; position: absolute; inset: calc(-1 * var(--space-2)); border-radius: var(--radius-round); }

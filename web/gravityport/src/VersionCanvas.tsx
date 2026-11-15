@@ -151,7 +151,6 @@ export default function VersionCanvas({
   const [tab, setTab] = useState<"canvas" | "list">("canvas")
   const [tool, setTool] = useState<"select" | "hand">("select")
   const [transform, setTransform] = useState({ x: 24, y: 24, scale: 0.75 })
-  const [compareMode, setCompareMode] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
   const [lightbox, setLightbox] = useState<CanvasNode | null>(null)
   const [annotating, setAnnotating] = useState<CanvasNode | null>(null)
@@ -333,10 +332,7 @@ export default function VersionCanvas({
     const key = (event: KeyboardEvent) => {
       if ((event.target as HTMLElement).closest("input, textarea, select, dialog"))
         return
-      if (event.key === "Escape") {
-        setMenu(null)
-        setCompareMode(false)
-      }
+      if (event.key === "Escape") setMenu(null)
       if (event.code === "Space") {
         event.preventDefault()
         setTool("hand")
@@ -363,15 +359,17 @@ export default function VersionCanvas({
       ignoreClick.current = false
       return
     }
-    if (!additive && !compareMode) {
+    if (!additive) {
       setSelected([id])
       return
     }
-    const next = selected.includes(id)
-      ? selected.filter((item) => item !== id)
-      : [...selected.slice(-1), id]
-    setSelected(next)
-    if (compareMode && next.length === 2) setCompareOpen(true)
+    // Shift / ⌘ keeps at most two cards selected; right-click one of them
+    // to compare the pair.
+    setSelected((old) =>
+      old.includes(id)
+        ? old.filter((item) => item !== id)
+        : [...old.slice(-1), id],
+    )
   }
   const beginGesture = (event: PointerEvent, id?: string) => {
     if (
@@ -630,7 +628,8 @@ export default function VersionCanvas({
       onPointerDown={(event) => beginGesture(event, item.id)}
       onContextMenu={(event) => {
         event.preventDefault()
-        setSelected([item.id])
+        if (!(selected.length === 2 && selected.includes(item.id)))
+          setSelected([item.id])
         setMenu({
           node: item.id,
           x: Math.min(event.clientX, window.innerWidth - 216),
@@ -665,11 +664,6 @@ export default function VersionCanvas({
                 {item.marks.length}
               </>
             )}
-          </span>
-        )}
-        {selected.includes(item.id) && compareMode && (
-          <span className="vc-select-number">
-            {selected.indexOf(item.id) + 1}
           </span>
         )}
       </Button>
@@ -766,23 +760,6 @@ export default function VersionCanvas({
             <Text>{tr("只看定稿路径")}</Text>
           </div>
           <div className="vc-board-actions">
-            <Button
-              variant="quiet"
-              size="small"
-              className={compareMode ? "is-active" : ""}
-              onClick={() => {
-                if (selected.length === 2) setCompareOpen(true)
-                else {
-                  setCompareMode((old) => !old)
-                  notify("请选择两张素材进行对比")
-                }
-              }}
-            >
-              <Icon name="compare" />
-              {tr("对比")}
-              {compareMode && <span>{selected.length}/2</span>}
-            </Button>
-            <span className="vc-divider" />
             <Button
               variant="quiet"
               size="small"
@@ -1008,10 +985,10 @@ export default function VersionCanvas({
             iconOnly
             aria-label={tr("画布操作说明")}
             title={tr(
-              "滚动平移 · Ctrl / ⌘ + 滚动缩放 · 按 0 回到全图 · 从图边的点拖出连线 · Shift 多选 · 双击看大图",
+              "滚动平移 · Ctrl / ⌘ + 滚动缩放 · 按 0 回到全图 · 从图边的点拖出连线 · Shift 选两张后右键对比 · 双击看大图",
             )}
             onClick={() =>
-              notify("滚动平移 · Ctrl / ⌘ + 滚动缩放 · 按 0 回到全图 · 从图边的点拖出连线 · Shift 多选 · 双击看大图")
+              notify("滚动平移 · Ctrl / ⌘ + 滚动缩放 · 按 0 回到全图 · 从图边的点拖出连线 · Shift 选两张后右键对比 · 双击看大图")
             }
           >
             <Icon name="info" />
@@ -1442,7 +1419,7 @@ export default function VersionCanvas({
           <Icon name="tree" size={12} />
           <Text tone="secondary">{tr("每一次迭代，都有迹可循。")}</Text>
         </div>
-        <Text tone="secondary">{tr("Shift 多选 · 双击查看大图")}</Text>
+        <Text tone="secondary">{tr("Shift 选两张后右键对比 · 双击查看大图")}</Text>
       </footer>
 
       {menu && (
@@ -1453,6 +1430,22 @@ export default function VersionCanvas({
           role="menu"
           aria-label={tr("素材操作")}
         >
+          {selected.length === 2 && selected.includes(menu.node) && (
+            <>
+              <Button
+                variant="quiet"
+                role="menuitem"
+                onClick={() => {
+                  setMenu(null)
+                  setCompareOpen(true)
+                }}
+              >
+                <Icon name="compare" />
+                {tr("对比这两张")}
+              </Button>
+              <span className="vc-context-divider" />
+            </>
+          )}
           <Button
             variant="quiet"
             role="menuitem"
