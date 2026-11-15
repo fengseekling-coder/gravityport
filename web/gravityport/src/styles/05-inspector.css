@@ -184,6 +184,24 @@
   overflow: hidden;
 }.app .detail-reading.five-lines:not(.expanded) p {
   -webkit-line-clamp: 5;
+}.app .detail-reading.five-lines.expanded p {
+  max-height: calc(var(--space-5) * 10);
+  overflow-y: auto;
+}.app .detail-reading.placeholder p {
+  color: var(--ui-muted);
+}.app .detail-reading.editable p {
+  margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-small);
+  cursor: text;
+}.app .detail-reading.five-lines.editable.expanded p {
+  max-height: calc(var(--space-5) * 10 + var(--space-1) * 2);
+}.app .detail-reading.editable p:hover {
+  background: var(--ui-hover);
+}.app .detail-reading.editable p:focus {
+  outline: none;
+}.app .detail-reading.editable p:focus-visible {
+  outline: var(--focus-width) solid var(--focus-ring);
 }.app .prompt-provenance {
   margin: var(--space-1) 0 0;
   font-size: 12px;

@@ -4883,7 +4883,6 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             shownPrompt={shownPrompt}
             startPromptEdit={startPromptEdit}
             savePrompt={savePrompt}
-            savingPromptId={savingPromptId}
             promptNoticeInfo={promptNoticeInfo}
             expandedInstruction={expandedInstruction}
             setExpandedInstruction={setExpandedInstruction}

@@ -30,6 +30,8 @@ export type MosaAsset = {
   prompt: string
   prompt2: string
   user_instruction: string
+  /** The user's own note on this asset (stored as curation_note, searchable). */
+  note: string
   introduction: string
   tags: string[]
   palette: string[]
@@ -370,6 +372,7 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     // 任务 377：AI 用 asset_create 带上的 user_prompt 也算「用户指令」，
     // 详情页原来看不到它。
     user_instruction: String(source.user_message || fields.user_message || input.user_prompt || ""),
+    note: String(input.curation_note || ""),
     introduction: String(fields.introduction || fields.description || input.description || ""),
     tags: asStringArray(input.tags),
     palette: asStringArray(input.palette),
@@ -907,6 +910,14 @@ export async function toggleAssetFavorite(project: string, id: string) {
 export async function updateAssetMetadata(project: string, id: string, patch: { tags?: string[]; prompt?: string; references?: MosaReference[] }) {
   const result = await requestJson<{ asset?: JsonValue }>(`/api/assets/${e(project)}/${e(id)}`, {
     method: "PATCH", body: patch as JsonValue,
+  })
+  return normalizeAsset(result.asset || {}, project)
+}
+
+/** Saves the asset note. Only curation_note is sent, so 整理好 stays as it is. */
+export async function updateAssetNote(project: string, id: string, note: string) {
+  const result = await requestJson<{ asset?: JsonValue }>(`/api/assets/${e(project)}/${e(id)}/curation`, {
+    method: "PATCH", body: { curation_note: note },
   })
   return normalizeAsset(result.asset || {}, project)
 }

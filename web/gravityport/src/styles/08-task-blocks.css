@@ -251,8 +251,10 @@ body.gp-card-dragging .toast {
   padding-top: var(--space-1);
 }.app .feedback-submit-status:empty {
   display: none;
-}.app .feedback-send {
+}.app .settings-modal .feedback-send {
   width: 100%;
+  height: var(--control-height);
+  min-height: var(--control-height);
 }.app .feedback-log-view {
   margin: var(--space-2) 0 0;
   max-height: 168px;

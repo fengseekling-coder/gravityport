@@ -1,11 +1,12 @@
 // Inspector details JSX (heading, summary, properties, tags, palette, prompt, user instruction, introduction, references) moved out of App.tsx (task 415). Pure moves; no behavior changes.
+import { useEffect, useState } from "react"
 import Icon from "./Icon"
 import { ThumbMedia, VideoMark } from "./ThumbMedia"
-import { ReadingText } from "./ReadingText"
+import { InlineTextEditor, ReadingText } from "./ReadingText"
 import { aspectRatioLabel, formatVideoDuration, humanSize, resolveReferences, describeSource, promptNotice, trashReasonNotice } from "./inspector-info"
 import { removeTagFromStored } from "./tag-display"
 import { promptEditorActive, type PromptEditTarget } from "./prompt-edit"
-import { updateAssetMetadata, mergeAssetDetail, type MosaAsset, type MosaRecipeHistory } from "./mosa-api"
+import { updateAssetMetadata, updateAssetNote, mergeAssetDetail, type MosaAsset, type MosaRecipeHistory } from "./mosa-api"
 import { errorMessage } from "./error-messages"
 import type { Language } from "./i18n"
 
@@ -47,7 +48,6 @@ export type InspectorDetailsProps = {
   shownPrompt: string
   startPromptEdit: () => void
   savePrompt: () => void
-  savingPromptId: string | null
   promptNoticeInfo: ReturnType<typeof promptNotice>
   expandedInstruction: boolean
   setExpandedInstruction: React.Dispatch<React.SetStateAction<boolean>>
@@ -66,10 +66,32 @@ export function InspectorDetails(props: InspectorDetailsProps) {
     expandedTags, setExpandedTags, tagItems, collapsedTagCount, tagVendor, currentTags,
     addingTag, setAddingTag, tagDraft, setTagDraft, tagError, setTagError,
     promptVariant, setPromptVariant, promptEdit, setPromptEdit,
-    expandedPrompt, setExpandedPrompt, shownPrompt, startPromptEdit, savePrompt, savingPromptId, promptNoticeInfo,
+    expandedPrompt, setExpandedPrompt, shownPrompt, startPromptEdit, savePrompt, promptNoticeInfo,
     expandedInstruction, setExpandedInstruction, expandedIntro, setExpandedIntro,
     recipeHistory, assets, inspectorFetchError,
   } = props
+  // 备注 editor: a draft is bound to the asset it was opened for, like the
+  // prompt draft, and a save always writes to that asset.
+  const [noteEdit, setNoteEdit] = useState<{ project: string; assetId: string; draft: string } | null>(null)
+  const [savingNoteId, setSavingNoteId] = useState<string | null>(null)
+  const [expandedNote, setExpandedNote] = useState(false)
+  useEffect(() => { setNoteEdit(null); setExpandedNote(false) }, [asset.id])
+  const noteEditing = promptEditorActive(noteEdit, project, asset.id)
+  const saveNote = () => {
+    const target = noteEdit
+    if (!target || savingNoteId === target.assetId) return
+    const current = assets.find(a => a.id === target.assetId && a.project_id === target.project)
+    const next = target.draft.trim()
+    if (!current || next === current.note) { setNoteEdit(null); return }
+    setSavingNoteId(target.assetId)
+    updateAssetNote(target.project, target.assetId, next).then(updated => {
+      setAssets(old => old.map(a => a.id === updated.id ? mergeAssetDetail(a, updated) : a))
+      setNoteEdit(old => old && old.assetId === target.assetId && old.project === target.project ? null : old)
+      notify("已保存")
+    }).catch(() => notify("无法保存备注")).finally(() => {
+      setSavingNoteId(old => old === target.assetId ? null : old)
+    })
+  }
   return (
     <>
           <div className="detail-heading">
@@ -197,7 +219,6 @@ export function InspectorDetails(props: InspectorDetailsProps) {
                 </> : tr("提示词")}
               </span>
               <span className="field-actions">
-                {promptVariant === 1 && !promptEditorActive(promptEdit, project, asset?.id) && <button className="section-action" onClick={startPromptEdit}>{tr("编辑")}</button>}
                 <button
                   aria-label={tr("复制提示词")}
                   onClick={async () => {
@@ -211,36 +232,25 @@ export function InspectorDetails(props: InspectorDetailsProps) {
               </span>
             </div>
             {promptVariant === 1 && promptEditorActive(promptEdit, project, asset?.id) && promptEdit ? (
-              <div className="prompt-editor">
-                <textarea
-                  className="detail-editor"
-                  aria-label={tr("编辑提示词")}
-                  value={promptEdit.draft}
-                  autoFocus
-                  rows={6}
-                  onChange={e => setPromptEdit(old => old ? { ...old, draft: e.target.value } : old)}
-                  onKeyDown={e => {
-                    if (e.key === "Escape") { e.stopPropagation(); setPromptEdit(null) }
-                  }}
-                />
-                <div className="prompt-editor-actions">
-                  <button className="neutral-button" onClick={() => setPromptEdit(null)}>{tr("取消")}</button>
-                  <button
-                    className="primary-button"
-                    onClick={savePrompt}
-                    disabled={(!promptEdit.draft.trim() && !asset.prompt) || savingPromptId === promptEdit.assetId}
-                  >{tr("保存")}</button>
-                </div>
-              </div>
+              <InlineTextEditor
+                label={tr("编辑提示词")}
+                value={promptEdit.draft}
+                onChange={draft => setPromptEdit(old => old ? { ...old, draft } : old)}
+                onSave={savePrompt}
+                onCancel={() => setPromptEdit(null)}
+              />
             ) : (
               <>
                 <ReadingText
                   id="asset-prompt"
                   text={shownPrompt || tr(promptNoticeInfo?.key === "webPromptUnavailable" ? "该网页未提供原始提示词" : "无提示词记录")}
+                  placeholder={!shownPrompt}
                   expanded={expandedPrompt}
                   onToggle={() => setExpandedPrompt(!expandedPrompt)}
                   expandLabel={tr("展开提示词")}
                   collapseLabel={tr("收起")}
+                  onActivate={promptVariant === 1 ? startPromptEdit : undefined}
+                  activateLabel={tr("点击编辑")}
                 />
                 {promptVariant === 1 && promptNoticeInfo && promptNoticeInfo.key !== "webPromptUnavailable" && (
                   <p className="prompt-provenance">{tr(promptNoticeInfo.text)}</p>
@@ -259,11 +269,43 @@ export function InspectorDetails(props: InspectorDetailsProps) {
             <ReadingText
               id="asset-instruction"
               text={asset.user_instruction || tr("无用户指令记录")}
+              placeholder={!asset.user_instruction}
               expanded={expandedInstruction}
               onToggle={() => setExpandedInstruction(!expandedInstruction)}
               expandLabel={tr("展开用户指令")}
               collapseLabel={tr("收起")}
             />
+          </section>
+          <section className="detail-section note-section">
+            <div className="field-heading">
+              <span>{tr("备注")}</span>
+              <button aria-label={tr("复制备注")} disabled={!asset.note}
+                onClick={() => writeText(asset.note).then(() => notify("已复制备注")).catch(() => notify("无法复制备注"))}>
+                <Icon name="copy" size={16} />
+              </button>
+            </div>
+            {noteEditing && noteEdit ? (
+              <InlineTextEditor
+                label={tr("编辑备注")}
+                placeholder={tr("添加备注")}
+                value={noteEdit.draft}
+                onChange={draft => setNoteEdit(old => old ? { ...old, draft } : old)}
+                onSave={saveNote}
+                onCancel={() => setNoteEdit(null)}
+              />
+            ) : (
+              <ReadingText
+                id="asset-note"
+                text={asset.note || tr("添加备注")}
+                placeholder={!asset.note}
+                expanded={expandedNote}
+                onToggle={() => setExpandedNote(!expandedNote)}
+                expandLabel={tr("展开备注")}
+                collapseLabel={tr("收起")}
+                onActivate={() => setNoteEdit({ project: asset.project_id, assetId: asset.id, draft: asset.note })}
+                activateLabel={tr("点击编辑")}
+              />
+            )}
           </section>
           {asset.introduction && <section className="detail-section">
             <div className="field-heading">

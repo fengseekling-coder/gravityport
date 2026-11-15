@@ -83,7 +83,7 @@ export async function run(ctx) {
       secondId: roundsAssets[1].id,
     }));
     if (result?.versionRows !== 2 || result?.switchedToChild !== true || result?.generationRowShown !== true
-      || result?.promptEdited !== true || result?.promptPersisted !== true) {
+      || result?.promptEdited !== true || result?.promptPersisted !== true || result?.noteSaved !== true) {
       throw new Error(`version-history result: ${JSON.stringify({ parent: parent.asset.id, child: child.asset?.id, ...result })}`);
     }
     if (result?.roundsDefaultRows !== 3 || result?.roundsExpandedRows !== 4 || result?.roundsBadge !== "4"
@@ -160,22 +160,20 @@ function versionHistorySource(config) {
       'the child version renders in the inspector');
     const switchedToChild = childSelected();
 
-    // Prompt editor: 编辑 -> textarea -> 保存 PATCHes and persists.
-    const editButton = Array.from(document.querySelectorAll('.details .section-action'))
-      .find((button) => button.textContent.trim() === '编辑');
-    if (!editButton) throw new Error('missing 编辑 action');
-    editButton.click();
+    // Prompt editor: click the prompt text -> textarea -> ⌘Enter PATCHes and persists.
+    const promptText = document.querySelector('#asset-prompt');
+    if (!promptText) throw new Error('missing prompt text');
+    promptText.click();
     const editor = await waitFor(() => document.querySelector('.detail-editor') || null, 'prompt editor');
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
     setter.call(editor, 'version flow edited prompt XYZ');
     editor.dispatchEvent(new Event('input', { bubbles: true }));
     await waitFor(() => {
-      if (!document.querySelector('.detail-editor')) return true; // saved: the editor unmounted
-      const save = Array.from(document.querySelectorAll('.prompt-editor-actions .primary-button'))
-        .find((button) => !button.disabled);
-      if (save) save.click();
+      const open = document.querySelector('.detail-editor');
+      if (!open) return true; // saved: the editor unmounted
+      open.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }));
       return false;
-    }, 'save enabled and clicked');
+    }, 'prompt saved with ⌘Enter');
     await waitFor(() => (document.querySelector('#asset-prompt')?.textContent || '').includes('version flow edited prompt XYZ'),
       'edited prompt renders');
     const promptEdited = (document.querySelector('#asset-prompt')?.textContent || '').includes('version flow edited prompt XYZ');
@@ -183,6 +181,18 @@ function versionHistorySource(config) {
       .then((r) => r.json())
       .then((data) => (data.assets || []).some((a) => (a.prompt || '').includes('version flow edited prompt XYZ')));
     const promptPersisted = persisted === true;
+
+    // 备注: click the placeholder, type, ⌘Enter. Saved as curation_note and
+    // leaves the asset's 整理好 flag alone.
+    document.querySelector('#asset-note').click();
+    const noteEditor = await waitFor(() => document.querySelector('.detail-editor') || null, 'note editor');
+    setter.call(noteEditor, 'version flow note ABC');
+    noteEditor.dispatchEvent(new Event('input', { bubbles: true }));
+    noteEditor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }));
+    await waitFor(() => (document.querySelector('#asset-note')?.textContent || '') === 'version flow note ABC', 'note renders');
+    const noteSaved = await fetch('/api/assets?project=default&limit=50')
+      .then((r) => r.json())
+      .then((data) => (data.assets || []).some((a) => a.curation_note === 'version flow note ABC' && a.curated !== true));
 
     // --- Task 144: conversation rounds in the version tree ---
     // Select the second conversation asset (turn 2). Its window is
@@ -222,7 +232,7 @@ function versionHistorySource(config) {
     const roundsSwitchedToThird = treeRowSmalls()[2] === '共 4 轮 · 当前第 3 轮';
 
     return {
-      versionRows, switchedToChild, generationRowShown, promptEdited, promptPersisted,
+      versionRows, switchedToChild, generationRowShown, promptEdited, promptPersisted, noteSaved,
       roundsDefaultRows, roundsSmallLines, roundsBadge, roundsExpandedRows,
       roundsEllipsis, roundsCurrentMarked, roundsSwitchedToThird,
     };
