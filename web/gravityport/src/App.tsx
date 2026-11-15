@@ -77,6 +77,7 @@ import { isVideoUrl, ThumbMedia, VideoMark } from "./ThumbMedia"
 import { GroupDialogs } from "./GroupDialogs"
 import { PINTEREST_ENTRY, SettingsDialog } from "./SettingsDialog"
 import { VersionSection } from "./VersionSection"
+import VersionCanvas from "./VersionCanvas"
 import { InspectorDetails } from "./InspectorDetails"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
@@ -398,6 +399,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // affected section shows 加载失败 instead of its empty text.
   const [inspectorFetchError, setInspectorFetchError] = useState({ versions: false, history: false, recipes: false })
   const [versionTreeOpen, setVersionTreeOpen] = useState(false)
+  const [canvasOpen, setCanvasOpen] = useState(false)
+  const [canvasSession, setCanvasSession] = useState(0)
   // The version compare keeps its selection inside the block (task 217); the
   // blocks remount per asset, so switching assets resets both to defaults.
   // The prompt draft is bound to one concrete asset; it never outlives the
@@ -1150,6 +1153,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const nextCursorRef = useRef<string | null>(null)
   nextCursorRef.current = nextCursor
   const asset = assets.find((a) => a.id === selected) || assets[0]
+  useEffect(() => {
+    if (canvasOpen && !asset) setCanvasOpen(false)
+  }, [canvasOpen, asset])
   // 版本树（任务 144）：有对话时行来自对话轮次计算——默认当前素材前后共三行，
   // 「查看」展开全部；无对话时列表回退到 events（rounds.rows 为空）。
   const versionRounds = useMemo(
@@ -1733,6 +1739,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     setAssets([]); setNextCursor(null)
     setLoadError(null)
     setPreview(false)
+    setCanvasOpen(false)
     setProject(next)
   }
   // ── navigation history ──
@@ -1762,6 +1769,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     if (partial.sortOrder !== undefined) setSortOrder(partial.sortOrder)
     if (partial.assetType !== undefined) setAssetType(partial.assetType)
     setPreview(false)
+    if (partial.active !== undefined || partial.stackId !== undefined || partial.query !== undefined) setCanvasOpen(false)
   }
   // The stack view is gone (dissolved, emptied, or was never there again):
   // back to the pre-stack view — same active/search/sort, stackId cleared —
@@ -2819,7 +2827,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       activeIsEditable: isEditableTarget(document.activeElement),
       // The Pinterest view hides the gallery; its keydown ⌘A returns early
       // without preventDefault, so this menu path must refuse it too.
-      galleryIdle: !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !authorizationActive && !pinterestActive,
+      galleryIdle: !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !authorizationActive && !pinterestActive && !canvasOpen,
       msSinceKeySelectAll: keySelectAllAtRef.current ? Date.now() - keySelectAllAtRef.current : null,
     })
     if (target === "text") document.execCommand("selectAll")
@@ -2834,6 +2842,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       || groupRename || stackRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm
       || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
     const key = (e: KeyboardEvent) => {
+      if (canvasOpen) return
       if (e.key === "Escape") {
         // A live card drag consumes Escape on its own: cancel the gesture,
         // leave selection and dialogs alone.
@@ -3015,14 +3024,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       if (e.button !== 3 && e.button !== 4) return
       e.preventDefault()
       const direction = mouseNavDirection(e.button)
-      if (!direction || overlaysUp || cardDragRef.current || pinterestActive) return
+      if (!direction || overlaysUp || cardDragRef.current || pinterestActive || canvasOpen) return
       navigateHistoryRef.current(direction)
     }
     // The web `copy`/`cut` events carry the desktop menu's 拷贝/剪切 roles
     // (plus any raw ⌘C/⌘X the keydown above did not preventDefault). Same
     // guards, one entry — a preventDefault'ed key never produces the event.
     const onCopy = (event: ClipboardEvent) => {
-      if (overlaysUp || cardDragRef.current || active === "回收站" || pinterestActive) return
+      if (overlaysUp || cardDragRef.current || active === "回收站" || pinterestActive || canvasOpen) return
       if (isEditableTarget(event.target)) return
       if (window.getSelection()?.toString()) return
       if (!selectionIds.length && !preview) return
@@ -3030,7 +3039,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       copySelection()
     }
     const onCut = (event: ClipboardEvent) => {
-      if (overlaysUp || cardDragRef.current || pinterestActive) return
+      if (overlaysUp || cardDragRef.current || pinterestActive || canvasOpen) return
       if (isEditableTarget(event.target)) return
       if (!selectionIds.length || splitSelectionStacks(selectionIds).stackIds.length) return
       event.preventDefault()
@@ -3049,7 +3058,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, schemaNoticeOpen, authorizationActive,
-    groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm, stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds])
+    groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm, stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds, canvasOpen])
   // Fullscreen belongs to the open viewer, never outlives it: the back button,
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
@@ -4387,11 +4396,18 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   return (
     <div
       ref={appRef}
-      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass} ${preview && viewerFullscreen ? "viewer-fullscreen" : ""}`}
+      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass} ${preview && viewerFullscreen ? "viewer-fullscreen" : ""} ${canvasOpen && asset ? "canvas-open" : ""}`}
       onClick={() => menu && setMenu(null)}
     >
       <aside className="sidebar">
         <div className="brandbar">
+          {canvasOpen && asset ? (
+            <img
+              className="canvas-brand-mark"
+              src={appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "/assets/gravityport-mark-dark.svg" : "/assets/gravityport-mark-light.svg"}
+              alt=""
+            />
+          ) : null}
           <strong>GravityPort</strong>
         </div>
         {projects.length > 1 && (
@@ -4544,18 +4560,49 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         setAssets={setAssets} setStackName={setStackName} setSelectedIds={setSelectedIds}
         assignBatchToGroup={assignBatchToGroup}
       />
-      <main
-        className={`workspace ${preview ? "preview-open" : ""}`}
-        onDragOver={event => {
-          if (preview || settings || active === "回收站" || pinterestActive) return
-          event.preventDefault()
-        }}
-        onDrop={event => {
-          if (preview || settings || active === "回收站" || pinterestActive) return
-          event.preventDefault()
-          importDroppedFiles(event.dataTransfer, groupNameForActive(active))
-        }}
-      >
+      {canvasOpen && asset ? (
+        <VersionCanvas
+          key={canvasSession}
+          asset={asset}
+          generationHistory={generationHistory}
+          versions={versions}
+          inspectorFetchError={inspectorFetchError}
+          project={project}
+          language={language}
+          tr={tr}
+          fillNamed={fillNamed}
+          timeLabel={timeLabel}
+          relationPairLine={relationPairLine}
+          providerDisplayLabel={providerDisplayLabel}
+          relationBusy={relationBusy}
+          relationDrafts={relationDrafts}
+          setRelationDrafts={setRelationDrafts}
+          newRelation={newRelation}
+          setNewRelation={setNewRelation}
+          showAllRelationChoices={showAllRelationChoices}
+          setShowAllRelationChoices={setShowAllRelationChoices}
+          mutateRelation={mutateRelation}
+          onClose={() => setCanvasOpen(false)}
+          onOpenAsset={(id) => {
+            setCanvasOpen(false)
+            selectHistoryAsset(id)
+            setDetail(true)
+          }}
+          onSelectVersion={(id) => selectHistoryAsset(id)}
+        />
+      ) : (
+        <main
+          className={`workspace ${preview ? "preview-open" : ""}`}
+          onDragOver={event => {
+            if (preview || settings || active === "回收站" || pinterestActive) return
+            event.preventDefault()
+          }}
+          onDrop={event => {
+            if (preview || settings || active === "回收站" || pinterestActive) return
+            event.preventDefault()
+            importDroppedFiles(event.dataTransfer, groupNameForActive(active))
+          }}
+        >
         <header className="toolbar">
           <div className="toolbar-left">
             {preview ? (
@@ -4787,8 +4834,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           )}
           </>
         )}
-      </main>
-      {detail && asset && !(pinterestActive && !preview) && (
+        </main>
+      )}
+      {!(canvasOpen && asset) && detail && asset && !(pinterestActive && !preview) && (
         <aside className="details">
           <InspectorDetails
             asset={asset}
@@ -4864,6 +4912,11 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             selectHistoryAsset={selectHistoryAsset}
             mutateRelation={mutateRelation}
             providerDisplayLabel={providerDisplayLabel}
+            onOpenCanvas={() => {
+              if (!asset) return
+              setCanvasSession((old) => old + 1)
+              setCanvasOpen(true)
+            }}
           />
           <button
             className="library-location"

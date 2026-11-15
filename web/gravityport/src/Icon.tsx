@@ -37,6 +37,21 @@ const glyphs: Record<string, ReactNode> = {
   check: <path d="m5 12 4.5 4.5L19 7" />,
   enter: <path d="M19 5v8H5m5-5-5 5 5 5" />,
   backspace: <><path d="M9 5h10a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9l-6-7Z" /><path d="m11 9 6 6M11 15l6-6" /></>,
+  tree: <><rect x="3" y="8" width="5" height="7" rx="1.3" /><rect x="16" y="3" width="5" height="7" rx="1.3" /><rect x="16" y="15" width="5" height="7" rx="1.3" /><path d="M8 11.5h4a2 2 0 0 0 2-2v-1a2 2 0 0 1 2-2M8 11.5h4a2 2 0 0 1 2 2v3a2 2 0 0 0 2 2" /></>,
+  branch: <><circle cx="5" cy="5" r="2" /><circle cx="19" cy="5" r="2" /><circle cx="5" cy="19" r="2" /><path d="M5 7v10M7 17c8 0 12-2 12-10" /></>,
+  list: <><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" /></>,
+  compare: <><rect x="3" y="5" width="7" height="14" rx="1.5" /><rect x="14" y="5" width="7" height="14" rx="1.5" /><path d="M12 3v18" /></>,
+  layout: <><rect x="3" y="4" width="7" height="6" rx="1.3" /><rect x="14" y="4" width="7" height="6" rx="1.3" /><rect x="3" y="14" width="7" height="6" rx="1.3" /><rect x="14" y="14" width="7" height="6" rx="1.3" /></>,
+  export: <><path d="M12 15V3m-4 4 4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></>,
+  flag: <><path d="M5 21V4m0 1c5-4 9 4 14 0v10c-5 4-9-4-14 0" /></>,
+  cursor: <path d="m5 3 14 10-7 1-3 7Z" />,
+  hand: <path d="M8 12V6a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v6-3a1.5 1.5 0 0 1 3 0v5c0 5-3 7-7 7-3 0-5-2-6-4l-3-5a1.5 1.5 0 0 1 2.5-1.5L8 13" />,
+  annotate: <><path d="m14 5 5 5M4 20l5-1 12-12a2 2 0 0 0-5-5L4 14Z" /><path d="m4 14 5 5" /></>,
+  undo: <path d="M8 5 3 10l5 5M3 10h10a7 7 0 0 1 7 7" />,
+  document: <><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10Z" /><path d="M13 3v7h7M8 14h8M8 17h5" /></>,
+  lock: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" /></>,
+  local: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 14h18M16 16.5h.01M18 16.5h.01" /></>,
+  chatgpt: <><path d="M12 3a5 5 0 0 1 5 3 5 5 0 0 1 4 7 5 5 0 0 1-5 7 5 5 0 0 1-8 0 5 5 0 0 1-5-7 5 5 0 0 1 4-7 5 5 0 0 1 5-3Z" /><path d="m8 8 4-2 4 2v5l-4 3-4-2V8Zm0 0 8 5M12 6v10M8 14l8-6" /></>,
 }
 
 export default function Icon({ name, size = 16 }: { name: string; size?: number }) {
