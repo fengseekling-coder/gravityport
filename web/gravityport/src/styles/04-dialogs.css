@@ -25,11 +25,12 @@
   border: 0;
   border-radius: 0;
 }.app .detail-heading {
-  font-size: 16px;
+  /* Same size and weight as the sidebar brand name, so the two panel
+     titles at the top of the window read as one level. */
+  font-size: 12px;
   line-height: var(--space-6);
 }.app .detail-heading strong {
   font-weight: 600;
-  letter-spacing: -.3px;
 }.app .detail-heading button {
   color: var(--ui-muted);
   width: var(--space-7);
