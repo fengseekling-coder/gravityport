@@ -102,7 +102,7 @@ export async function renderCanvasExport(
       10,
     )
     ctx.fill()
-    ctx.drawImage(images[index], node.x, node.y, NODE_WIDTH, 254)
+    ctx.drawImage(images[index], node.x, node.y, NODE_WIDTH, NODE_HEIGHT)
     if (options.notes)
       node.marks.forEach((mark, markIndex) => {
         const x = node.x + mark.x * NODE_WIDTH

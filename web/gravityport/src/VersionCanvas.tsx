@@ -585,20 +585,11 @@ export default function VersionCanvas({
         })
       }}
     >
-      <div className="vc-node-topline">
-        <span>
-          <Icon
-            name={item.provider === "chatgpt" ? "chatgpt" : item.provider ? "tree" : "local"}
-            size={12}
-          />
-          {providerName(item.provider)}
-        </span>
-        <span>{item.time}</span>
-      </div>
       <Button
         className="vc-node-image"
         variant="quiet"
         aria-label={`${item.name} · ${roundTitle(item)}`}
+        title={item.prompt ? `${item.name}\n${item.prompt}` : item.name}
         aria-pressed={selected.includes(item.id)}
         onClick={(event) =>
           selectNode(item.id, event.shiftKey || event.metaKey || event.ctrlKey)
@@ -612,10 +603,15 @@ export default function VersionCanvas({
             {tr("定稿")}
           </span>
         )}
-        {item.marks.length > 0 && (
+        {(item.marks.length > 0 || item.note) && (
           <span className="vc-mark-badge">
-            <Icon name="annotate" size={12} />
-            {item.marks.length}
+            {item.note && <Icon name="message" size={12} />}
+            {item.marks.length > 0 && (
+              <>
+                <Icon name="annotate" size={12} />
+                {item.marks.length}
+              </>
+            )}
           </span>
         )}
         {selected.includes(item.id) && compareMode && (
@@ -624,18 +620,6 @@ export default function VersionCanvas({
           </span>
         )}
       </Button>
-      <div className="vc-node-caption">
-        <Text variant="label">{item.name}</Text>
-        <Text as="p" tone="secondary">
-          {item.prompt || tr("无提示词记录")}
-        </Text>
-      </div>
-      {item.note && (
-        <div className="vc-node-note">
-          <Icon name="message" size={12} />
-          <Text>{item.note}</Text>
-        </div>
-      )}
       <span className="vc-port vc-port-in" />
       <span className="vc-port vc-port-out" />
     </div>

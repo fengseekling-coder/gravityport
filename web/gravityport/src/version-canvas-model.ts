@@ -61,7 +61,7 @@ export type CanvasDocument = {
 }
 
 export const NODE_WIDTH = 204
-export const NODE_HEIGHT = 310
+export const NODE_HEIGHT = 272
 export const COLUMN_GAP = 286
 
 export function canvasFromHistory(
