@@ -260,7 +260,7 @@ function roundOnSource(config) {
     Array.from(document.querySelectorAll('dialog[open] button')).find((button) => button.getAttribute('aria-label') === '关闭')?.click();
     await waitFor(() => !Array.from(document.querySelectorAll('dialog[open]')).some((dialog) => dialog.textContent.includes('版本对比')), 'compare dialog closes');
     clickImage(config.childId, false);
-    await waitFor(() => (document.querySelector('.vc-inspector strong')?.textContent || '') === '素材详情', 'back to a single selection');
+    await waitFor(() => Boolean(document.querySelector('.vc-inspector .asset-summary')), 'back to a single selection');
 
     const finalBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="设为定稿"]'), 'final toggle button');
     finalBtn.click();

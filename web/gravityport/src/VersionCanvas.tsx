@@ -996,21 +996,14 @@ export default function VersionCanvas({
         </div>
       </section>
 
+      {/* No heading row: the top bar's panel button shows and hides it. */}
       {inspector && (
-        <aside className="vc-inspector">
-          <div className="detail-heading vc-inspector-heading">
-            <strong>
-              {selected.length === 2 ? tr("已选择 2 张素材") : tr("素材详情")}
-            </strong>
-            <button
-              aria-label={tr("关闭素材详情")}
-              onClick={() => setInspector(false)}
-            >
-              <Icon name="inspector" size={16} />
-            </button>
-          </div>
+        <aside className="vc-inspector" aria-label={tr("素材详情")}>
           {selected.length === 2 ? (
             <div className="vc-inspector-content">
+              <div className="field-heading">
+                <span>{tr("已选择 2 张素材")}</span>
+              </div>
               <div className="vc-compare-thumbs">
                 {selectedNodes.map((item) => (
                   <img src={item.image} alt={item.name} key={item.id} />
