@@ -298,12 +298,12 @@ function contextMenusSource(config) {
         const loosePaths = [await pathOf(config.looseIds[1]), await pathOf(config.looseIds[2])];
         if (stackPaths.length !== 3 || loosePaths.some((path) => !path)) throw new Error('setup paths ' + JSON.stringify({ stackPaths, loosePaths }));
 
-        // Two loose cards: 复制图片 sends both files, 复制路径 two lines, in selection order.
+        // Two loose cards: 复制文件 sends both files, 复制路径 two lines, in selection order.
         cardFor(config.looseIds[1]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         cardFor(config.looseIds[2]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
         await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 2, 'two cards selected');
         await openMenu(cardFor(config.looseIds[1]));
-        await clickMenuItem('复制图片');
+        await clickMenuItem('复制文件');
         await waitFor(() => sent.files.length === 1, 'files sent');
         if (JSON.stringify(sent.files[0]) !== JSON.stringify(loosePaths)) throw new Error('multi files ' + JSON.stringify(sent.files[0]));
         await waitFor(() => (document.querySelector('.toast')?.textContent || '').includes('已复制 2 个素材'), 'files toast');
@@ -322,11 +322,11 @@ function contextMenusSource(config) {
         const mixed = [loosePaths[0], ...stackPaths].join('\\n');
         if (sent.text[1] !== mixed) throw new Error('mixed paths ' + JSON.stringify(sent.text[1]) + ' != ' + JSON.stringify(mixed));
 
-        // Stack card alone: 复制全部图片 / 复制全部路径.
+        // Stack card alone: 复制全部文件 / 复制全部路径.
         cardFor(config.looseIds[3]).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         await waitFor(() => document.querySelectorAll('.asset-card.asset-selected').length === 1, 'single selection');
         await openMenu(cardFor(config.coverId));
-        await clickMenuItem('复制全部图片');
+        await clickMenuItem('复制全部文件');
         await waitFor(() => sent.files.length === 2, 'stack files sent');
         if (JSON.stringify(sent.files[1]) !== JSON.stringify(stackPaths)) throw new Error('stack files ' + JSON.stringify(sent.files[1]));
         await openMenu(cardFor(config.coverId));
@@ -341,7 +341,7 @@ function contextMenusSource(config) {
       await openMenu(cardFor(config.coverId));
       const labels = menuLabels();
       await closeMenu();
-      if (labels.includes('复制全部图片') || !labels.includes('复制全部路径')) throw new Error('browser stack menu ' + JSON.stringify(labels));
+      if (labels.includes('复制全部文件') || !labels.includes('复制全部路径')) throw new Error('browser stack menu ' + JSON.stringify(labels));
       return sent.files.length + sent.text.length;
     });
 

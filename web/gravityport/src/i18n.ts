@@ -170,7 +170,7 @@ const english: Record<string, string> = {
   "新收录或导入的素材将显示在这里。": "Captured or imported assets appear here.",
 
   // ── 右键菜单（区域三 MENU）──
-  "复制图片": "Copy image", "剪切": "Cut", "复制路径": "Copy path",
+  "复制图片": "Copy image", "复制文件": "Copy file", "剪切": "Cut", "复制路径": "Copy path",
   "移出堆叠": "Remove from stack", "堆叠所选": "Stack selection",
   "移到分组": "Move to group", "移出分组": "Remove from group",
   "标为已整理": "Mark as sorted",
@@ -183,7 +183,7 @@ const english: Record<string, string> = {
   "重命名堆叠": "Rename stack", "重命名堆叠…": "Rename stack…",
   "堆叠名称": "Stack name",
   "解散堆叠": "Dissolve stack",
-  "复制全部图片": "Copy all images", "复制全部路径": "Copy all paths",
+  "复制全部文件": "Copy all files", "复制全部路径": "Copy all paths",
   "恢复": "Restore", "恢复 {count} 个素材": "Restore {count} assets",
   "永久删除": "Delete permanently", "永久删除 {count} 个素材": "Delete {count} assets permanently",
   "查看素材": "View asset", "查看堆叠 {name}": "View stack {name}",
@@ -223,6 +223,7 @@ const english: Record<string, string> = {
   "已选择前 {count} 项。已达选择上限。": "Selected the first {count} items. The selection limit was reached.",
   "已复制图片": "Copied image",
   "无法复制图片": "Couldn’t copy image",
+  "无法复制文件": "Couldn’t copy files",
   "已复制 1 个素材": "Copied 1 asset",
   "已复制 {count} 个素材": "Copied {count} assets",
   "已复制 1 个素材，{skipped} 个无法复制": "Copied 1 asset. {skipped} couldn’t be copied.",

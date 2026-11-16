@@ -3689,8 +3689,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     notify(ids.length === 1 ? tr("已剪切 1 个素材") : fillNamed("已剪切 {count} 个素材", { count: ids.length }))
   }
   // Several files onto the system clipboard (task 198): what pastes into
-  // Finder, Explorer, chat apps and web pages as that many files. A single
-  // card's 复制图片 above still copies the pixels.
+  // Finder, Explorer, chat apps and web pages as that many files. The card
+  // menu's 复制文件 uses it for one card too; only a plain browser (no file
+  // clipboard) falls back to copyImage's pixels.
   const copyFiles = async (collect: (limit: number) => Promise<{ paths: string[]; overLimit: boolean }>) => {
     const api = desktopAPI()
     if (!api?.writeClipboardFiles) return
@@ -3698,7 +3699,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       const { paths, overLimit } = await collect(NATIVE_DRAG_MAX_FILES)
       const result = paths.length ? await api.writeClipboardFiles(paths) : null
       const count = Number(result?.count) || 0
-      if (!result?.ok || !count) { notify("无法复制图片"); return }
+      if (!result?.ok || !count) { notify("无法复制文件"); return }
       const skipped = Number(result.skipped) || 0
       if (overLimit) notify(count === 1
         ? fillNamed("已复制前 1 个素材，单次最多复制 {limit} 个", { limit: NATIVE_DRAG_MAX_FILES })
@@ -3707,7 +3708,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         ? fillNamed("已复制 1 个素材，{skipped} 个无法复制", { skipped })
         : fillNamed("已复制 {count} 个素材，{skipped} 个无法复制", { count, skipped }))
       else notify(count === 1 ? tr("已复制 1 个素材") : fillNamed("已复制 {count} 个素材", { count }))
-    } catch { notify("无法复制图片") }
+    } catch { notify("无法复制文件") }
   }
   // Paths as text, one per line, same order and expansion as the files.
   const copyPaths = async (collect: () => Promise<{ paths: string[] }>) => {
@@ -4026,7 +4027,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // 把焦点换到被右键的卡（App.tsx 卡片 onContextMenu 处）。
     else if (id === "reveal-in-folder") void revealAssetPath()
     else if (id === "copy-image") {
-      if (ids.length > 1) void copyFiles(limit => batchFilePaths(ids, { limit }))
+      if (ids.length > 1 || desktopAPI()?.writeClipboardFiles) void copyFiles(limit => batchFilePaths(ids, { limit }))
       else void copyImage()
     }
     else if (id === "cut") {

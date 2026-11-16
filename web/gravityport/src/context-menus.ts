@@ -152,12 +152,14 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
   // members); the prompt copy stays single-only.
   const copySection = isMultiple
     ? [
-        ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "copy-image", label: "复制图片", enLabel: "Copy images", icon: "image" }] : []),
+        ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "copy-image", label: "复制文件", enLabel: "Copy files", icon: "image" }] : []),
         { kind: "item" as const, id: "cut", label: "剪切", icon: "scissors", disabled: hasStacks },
         { kind: "item" as const, id: "copy-path", label: "复制路径", enLabel: "Copy paths", icon: "link" },
       ]
     : [
-        { kind: "item" as const, id: "copy-image", label: "复制图片", icon: "image" },
+        // UI 审查 11-16（用户定）：有文件剪贴板时叫「复制文件」，单张也复制成文件
+        // （同多选和 ⌘C）；浏览器里没有文件剪贴板，仍复制图片画面、叫「复制图片」。
+        { kind: "item" as const, id: "copy-image", label: ctx.canCopyFiles ? "复制文件" : "复制图片", icon: "image" },
         { kind: "item" as const, id: "cut", label: "剪切", icon: "scissors" },
         { kind: "item" as const, id: "copy-prompt", label: "复制提示词", icon: "copy" },
         { kind: "item" as const, id: "copy-path", label: "复制路径", icon: "link" },
@@ -213,7 +215,7 @@ function buildStackMenu(ctx: MenuContext): MenuEntry[] {
       { kind: "item" as const, id: "open-stack", label: "打开堆叠", icon: "layers" },
     ],
     [
-      ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "stack-copy-images", label: "复制全部图片", icon: "image" }] : []),
+      ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "stack-copy-images", label: "复制全部文件", icon: "image" }] : []),
       { kind: "item" as const, id: "stack-copy-paths", label: "复制全部路径", icon: "link" },
     ],
     [

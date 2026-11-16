@@ -150,22 +150,27 @@ describe("context-menus / asset menu", () => {
     assert.equal(ids[1], "|", "one separator after the heading");
     assert.ok(!ids.includes("open-viewer"), "multi-select has no viewer section");
     assert.deepEqual(ids.slice(2, 6), ["copy-image", "cut", "copy-path", "|"],
-      "multi-select copy section: 复制图片, 剪切, 复制路径 (no 复制提示词)");
+      "multi-select copy section: 复制文件, 剪切, 复制路径 (no 复制提示词)");
     assert.ok(ids.includes("HEAD:已选择 {count} 项"));
   });
 
-  it("multi-select with stacks keeps 复制图片 and 复制路径 (stacks expand to members)", () => {
+  it("multi-select with stacks keeps 复制文件 and 复制路径 (stacks expand to members)", () => {
     const entries = buildContextMenu(baseCtx({ selectionCount: 2, selectionHasStacks: true }));
     assert.notEqual(findItem(entries, "copy-image").disabled, true);
     assert.notEqual(findItem(entries, "copy-path").disabled, true);
   });
 
-  it("without a file clipboard (browser) multi-select hides 复制图片 but keeps 复制路径", () => {
+  it("without a file clipboard (browser) multi-select hides 复制文件 but keeps 复制路径", () => {
     const entries = buildContextMenu(baseCtx({ selectionCount: 3, canCopyFiles: false }));
     assert.ok(!itemIds(entries).includes("copy-image"));
     assert.ok(itemIds(entries).includes("copy-path"));
     const single = buildContextMenu(baseCtx({ selectionCount: 1, canCopyFiles: false }));
-    assert.ok(itemIds(single).includes("copy-image"), "single 复制图片 copies pixels and needs no file clipboard");
+    assert.ok(itemIds(single).includes("copy-image"), "single 复制图片 copies pixels in a plain browser and needs no file clipboard");
+    assert.equal(findItem(single, "copy-image").label, "复制图片", "no file clipboard: the single item still copies the picture");
+    const desktopSingle = buildContextMenu(baseCtx({ selectionCount: 1, canCopyFiles: true }));
+    assert.equal(findItem(desktopSingle, "copy-image").label, "复制文件", "with a file clipboard the single item copies the file");
+    const desktopMulti = buildContextMenu(baseCtx({ selectionCount: 3, canCopyFiles: true }));
+    assert.equal(findItem(desktopMulti, "copy-image").label, "复制文件");
   });
 
   it("single-select: no heading", () => {
@@ -260,7 +265,7 @@ describe("context-menus / stack card menu", () => {
     assert.equal(ids[1], "|");
   });
 
-  it("without a file clipboard: 复制全部图片 absent, 复制全部路径 stays", () => {
+  it("without a file clipboard: 复制全部文件 absent, 复制全部路径 stays", () => {
     const ids = itemIds(entries({ canCopyFiles: false }));
     assert.ok(!ids.includes("stack-copy-images"));
     assert.ok(ids.includes("stack-copy-paths"));
