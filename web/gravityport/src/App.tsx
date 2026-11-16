@@ -27,7 +27,7 @@ import { resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { galleryKeyAction, isFocusSearchKey, menuSelectAllTarget, mouseNavDirection, neighbourAssetId, resolveNavHistoryShortcut } from "./gallery-keys"
 import { type GenerationDisplay } from "./version-tree"
-import { VERSION_CANVAS_ENTRY } from "./version-canvas-model"
+import { VERSION_CANVAS_ENTRY, canvasFromHistory } from "./version-canvas-model"
 import { computeConversationRounds } from "./conversation-rounds"
 import { sanitizeAssetForExport } from "./feature-parity"
 import { describeSource, inspectorHeaderLine, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
@@ -1344,7 +1344,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     if (upstream.turnIndex != null && downstream.turnIndex != null) {
       return `${fillNamed(tr("第 {n} 轮"), { n: upstream.turnIndex })} → ${fillNamed(tr("第 {n} 轮"), { n: downstream.turnIndex })}`
     }
-    const clip = (display: GenerationDisplay) => (display.prompt ? display.prompt.slice(0, 12) : tr("无提示词记录"))
+    // UI 审查 11-16：用文件名（去扩展名）认图，截断的提示词看不出是哪两张。
+    const clip = (display: GenerationDisplay) =>
+      display.asset?.name ? display.asset.name.replace(/\.[^.]+$/, "") : display.prompt ? display.prompt.slice(0, 12) : tr("无提示词记录")
     return `${clip(upstream)} → ${clip(downstream)}`
   }
   // Batch outcomes share one toast grammar (任务 359 TOAST-13~15): a full
@@ -3726,14 +3728,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     link.remove()
     notify("已导出")
   }
-  const revealAssetPath = async () => {
-    if (!asset) return
+  const revealAssetPath = async (target: MosaAsset | null = asset) => {
+    if (!target) return
     try {
-      await openLibraryFolder(asset.image_path, true)
+      await openLibraryFolder(target.image_path, true)
       return
     } catch { /* fall through to copying the path */ }
     try {
-      await writeText(asset.image_path || asset.image_url)
+      await writeText(target.image_path || target.image_url)
       notify("无法打开所在位置，已复制路径")
     } catch { notify("无法打开此位置") }
   }
@@ -3763,8 +3765,21 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
 
   // Right-clicking outside the multi-selection targets the clicked card
   // alone; inside it, the whole selection stays the action target.
-  const openAssetMenu = (clicked: MosaAsset, x: number, y: number) => {
+  // UI 审查 11-16：只有一张图的版本树在画布里连不了线，是死路；「查看版本树」
+  // 只给能排出两张以上的图。按画布自己的算法数，取不到记录（或超过 400ms）就不给。
+  const canvasHasTree = async (clicked: MosaAsset): Promise<boolean> => {
+    const history = await Promise.race([
+      fetchAssetGenerationHistory(project, clicked.id).catch(() => null),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 400)),
+    ])
+    return Boolean(history) && canvasFromHistory(history, clicked).nodes.length >= 2
+  }
+
+  const openAssetMenu = async (clicked: MosaAsset, x: number, y: number) => {
     const ids = selectedIds.includes(clicked.id) ? [...batchIds] : [clicked.id]
+    const offerCanvas = VERSION_CANVAS_ENTRY && scope !== "trash" && ids.length === 1
+      ? await canvasHasTree(clicked)
+      : false
     const loaded = assets.filter(entry => ids.includes(entry.id))
     const ctx: MenuContext = {
       target: "asset",
@@ -3786,7 +3801,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // menus own it (task 239).
       clipboardImportable: false,
       unorganizedView: scope === "unorganized",
-      versionCanvas: VERSION_CANVAS_ENTRY && scope !== "trash",
+      versionCanvas: offerCanvas,
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), ctx.selectionCount)
     setMenu({ x, y, entries, target: "asset", selectionCount: ctx.selectionCount, stackId: "", stackName: "", stackCount: 0 })
@@ -4573,6 +4588,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           setRelationDrafts={setRelationDrafts}
           mutateRelation={mutateRelation}
           onClose={() => setCanvasOpen(false)}
+          onRevealAsset={(target) => void revealAssetPath(target)}
           onOpenAsset={(id) => {
             setCanvasOpen(false)
             selectHistoryAsset(id)
@@ -4600,7 +4616,13 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                 <Icon name="left" size={14} />
                 {tr("返回")}</button>
             ) : (
-              <button aria-label={tr("后退")} onClick={() => navigateHistory(-1)}>
+              // UI 审查 11-16：首页、没筛选、没有上一步时无处可退，变灰；悬停写「后退」。
+              <button
+                aria-label={tr("后退")}
+                title={tr("后退")}
+                disabled={navHistory.index <= 0 && active === "所有素材" && !stackId && !query}
+                onClick={() => navigateHistory(-1)}
+              >
                 <Icon name="left" />
               </button>
             )}
@@ -4905,15 +4927,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             selectHistoryAsset={selectHistoryAsset}
             mutateRelation={mutateRelation}
             providerDisplayLabel={providerDisplayLabel}
-            onOpenCanvas={() => {
-              if (!asset) return
+            onOpenCanvas={asset && canvasFromHistory(generationHistory, asset).nodes.length >= 2 ? () => {
               setCanvasSession((old) => old + 1)
               setCanvasOpen(true)
-            }}
+            } : undefined}
           />
           <button
             className="library-location"
-            onClick={revealAssetPath}
+            onClick={() => void revealAssetPath()}
           >
             <strong>{tr("素材路径")}</strong>
             <span title={asset.image_path || asset.image_url}>{assetPathTail ? `…/${assetPathTail}` : "—"}</span>

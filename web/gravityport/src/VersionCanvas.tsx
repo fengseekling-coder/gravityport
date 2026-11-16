@@ -10,6 +10,7 @@ import {
   type SetStateAction,
 } from "react"
 import Icon from "./Icon"
+import ImageViewer from "./ImageViewer"
 import { InspectorRow, RelationThumb } from "./InspectorParts"
 import { InlineTextEditor, ReadingText } from "./ReadingText"
 import { aspectRatioLabel, describeSource, humanSize, inspectorHeaderLine } from "./inspector-info"
@@ -73,6 +74,8 @@ type Props = {
   mutateRelation: (action: () => Promise<unknown>) => Promise<void>
   onClose: () => void
   onOpenAsset: (id: string) => void
+  /** Opens the asset's file location (Finder / Explorer), copying the path as a fallback. */
+  onRevealAsset: (target: MosaAsset) => void
   onSelectVersion: (id: string) => void
 }
 
@@ -121,6 +124,7 @@ export default function VersionCanvas({
   mutateRelation,
   onClose,
   onOpenAsset,
+  onRevealAsset,
   onSelectVersion,
 }: Props) {
   const doc = useMemo(
@@ -154,7 +158,12 @@ export default function VersionCanvas({
   const [tool, setTool] = useState<"select" | "hand">("select")
   const [transform, setTransform] = useState({ x: 24, y: 24, scale: 0.75 })
   const [compareOpen, setCompareOpen] = useState(false)
-  const [lightbox, setLightbox] = useState<CanvasNode | null>(null)
+  // UI 审查 11-16：「查看大图」用主页同一个查看器（缩放、左右翻、全屏），
+  // 在画布里原地打开，关掉回到画布，画布状态不丢。
+  const [viewing, setViewing] = useState<string | null>(null)
+  const [viewerFullscreen, setViewerFullscreen] = useState(false)
+  const viewingRef = useRef<string | null>(null)
+  viewingRef.current = viewing
   const [annotating, setAnnotating] = useState<CanvasNode | null>(null)
   const [marks, setMarks] = useState<CanvasMark[]>([])
   const [menu, setMenu] = useState<{
@@ -211,16 +220,25 @@ export default function VersionCanvas({
       (!finalOnly || !edge.suggested),
   )
   const columns = [...new Set(nodes.map((item) => item.column))]
-  const worldWidth = Math.max(
-    800,
-    ...nodes.map((item) => item.x + NODE_WIDTH + 30),
-  )
-  const worldHeight = Math.max(
-    600,
-    ...nodes.map((item) => item.y + NODE_HEIGHT + 70),
-  )
+  // UI 审查 11-16：世界大小按实际内容算，不再设 800×600 下限；图少时适配视图
+  // 会把它们放在画布正中（最大原尺寸），不再缩在左上角。
+  const worldWidth = Math.max(...nodes.map((item) => item.x + NODE_WIDTH + 30))
+  const worldHeight = Math.max(...nodes.map((item) => item.y + NODE_HEIGHT + 70))
 
   const notify = (text: string) => setMessage(tr(text))
+  // 组里最早一张的生成时间，「11月15日 10:32」/「Nov 15, 10:32」。
+  const roundTime = (members: CanvasNode[]) => {
+    const times = members
+      .map((item) => Date.parse(item.createdAt))
+      .filter((value) => Number.isFinite(value))
+    if (!times.length) return ""
+    const at = new Date(Math.min(...times))
+    const clock = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`
+    if (language === "en") {
+      return `${at.toLocaleString("en-US", { month: "short" })} ${at.getDate()}, ${clock}`
+    }
+    return `${at.getMonth() + 1}月${at.getDate()}日 ${clock}`
+  }
   const patchNode = (id: string, patch: NodeDraft) =>
     setNodeDrafts((old) => ({
       ...old,
@@ -352,6 +370,14 @@ export default function VersionCanvas({
     const key = (event: KeyboardEvent) => {
       if ((event.target as HTMLElement).closest("input, textarea, select, dialog"))
         return
+      if (viewingRef.current) {
+        // The viewer owns the keys while it is open; Esc steps back to the board.
+        if (event.key === "Escape") {
+          setViewerFullscreen(false)
+          setViewing(null)
+        }
+        return
+      }
       if (event.key === "Escape") setMenu(null)
       if (event.code === "Space") {
         event.preventDefault()
@@ -593,7 +619,8 @@ export default function VersionCanvas({
     tr(RELATION_LABELS[type as keyof typeof RELATION_LABELS] || "衍生自")
   const openImage = (item: CanvasNode) => {
     setMenu(null)
-    setLightbox(item)
+    setSelected([item.id])
+    setViewing(item.id)
   }
 
   const inspectedAsset =
@@ -617,9 +644,27 @@ export default function VersionCanvas({
     }
     return ""
   }
-  const candidateList = (generationHistory?.relation_candidates || []).filter(
-    (candidate) =>
-      candidate.status !== "dismissed" && candidate.status !== "confirmed",
+  // UI 审查 11-16：右栏只列跟选中这张图有关的关系和建议；原来列的是进画布那张图的，
+  // 选了别的卡片还显示和它无关的两张图。
+  const nodeGenerationId = generationIdForAsset(node.assetId)
+  const touchesNode = (link: { parent_generation_id: string; child_generation_id: string }) =>
+    Boolean(nodeGenerationId) &&
+    (link.parent_generation_id === nodeGenerationId || link.child_generation_id === nodeGenerationId)
+  // 画布的线来自这张图自己的关系加上旁边几张图之间的（context_*），右栏也一样都算上。
+  const uniqueLinks = <T extends { parent_generation_id: string; child_generation_id: string }>(
+    list: T[],
+    key: (item: T) => string,
+  ) => [...new Map(list.map((item) => [key(item), item])).values()]
+  const nodeRelations = uniqueLinks(
+    [...(generationHistory?.relations || []), ...(generationHistory?.context_relations || [])].filter(touchesNode),
+    (relation) => `${relation.child_generation_id}|${relation.parent_generation_id}|${relation.relation_type}`,
+  )
+  const candidateList = uniqueLinks(
+    [...(generationHistory?.relation_candidates || []), ...(generationHistory?.context_relation_candidates || [])].filter(
+      (candidate) =>
+        candidate.status !== "dismissed" && candidate.status !== "confirmed" && touchesNode(candidate),
+    ),
+    (candidate) => `${candidate.child_generation_id}|${candidate.parent_generation_id}`,
   )
   const roundSelection = roundCompareSelection(
     conversationRoundRows(generationHistory, currentAssetId),
@@ -712,8 +757,87 @@ export default function VersionCanvas({
     </div>
   )
 
+  // Viewer order follows the board: column by column, top to bottom.
+  const viewerOrder = [...visibleNodes].sort((a, b) => a.column - b.column || a.y - b.y)
+  const viewingNode = viewing ? nodes.find((item) => item.id === viewing) || null : null
+  const assetForNode = (item: CanvasNode) =>
+    generationHistory?.output_assets?.find((entry) => entry.id === item.assetId) ||
+    (asset.id === item.assetId ? asset : null)
+  const viewingAsset = viewingNode ? assetForNode(viewingNode) : null
+  const navigateViewer = (direction: number) => {
+    if (!viewingNode || !viewerOrder.length) return
+    const index = viewerOrder.findIndex((item) => item.id === viewingNode.id)
+    const next = viewerOrder[(index + direction + viewerOrder.length) % viewerOrder.length]
+    setSelected([next.id])
+    setViewing(next.id)
+  }
+  const closeViewer = () => {
+    setViewerFullscreen(false)
+    setViewing(null)
+  }
+
   return (
     <main className={`version-canvas ${inspector ? "with-inspector" : ""}`}>
+      {viewingNode ? (
+        <>
+          <header className="vc-header vc-viewer-header">
+            <div className="vc-breadcrumb">
+              <Button variant="quiet" onClick={closeViewer}>
+                <Icon name="left" size={14} />
+                {tr("返回")}
+              </Button>
+            </div>
+            <div className="viewer-title">
+              <strong>{viewingNode.name}</strong>
+              <span>
+                {Math.max(1, viewerOrder.findIndex((item) => item.id === viewingNode.id) + 1)} / {viewerOrder.length}
+              </span>
+            </div>
+            <div className="vc-header-actions">
+              {!inspector && (
+                <Button
+                  variant="quiet"
+                  iconOnly
+                  aria-label={tr("显示素材详情")}
+                  title={tr("显示素材详情")}
+                  onClick={() => setInspector(true)}
+                >
+                  <Icon name="inspector" />
+                </Button>
+              )}
+            </div>
+          </header>
+          <section className={`vc-board-area vc-viewer ${viewerFullscreen ? "is-fullscreen" : ""}`}>
+            <ImageViewer
+              key={viewingNode.id}
+              width={viewingNode.width || 768}
+              height={viewingNode.height || 1024}
+              src={viewingAsset?.preview_url || viewingAsset?.image_url || viewingNode.image}
+              originalSrc={viewingAsset?.mediaKind === "video" ? undefined : viewingAsset?.image_url}
+              isVideo={viewingAsset?.mediaKind === "video"}
+              animated={viewingAsset?.animated}
+              language={language}
+              disabled={!!menu || exportOpen || compareOpen || !!annotating}
+              fullscreen={viewerFullscreen}
+              onNavigate={navigateViewer}
+              onToggleFullscreen={() => setViewerFullscreen((old) => !old)}
+              onContextMenu={(x, y) =>
+                setMenu({
+                  node: viewingNode.id,
+                  x: Math.min(x, window.innerWidth - 216),
+                  y: Math.min(y, window.innerHeight - 260),
+                })
+              }
+              onOpenLocation={() => {
+                if (viewingAsset) onRevealAsset(viewingAsset)
+              }}
+              message=""
+              openLocationLabel={tr(/Mac/.test(navigator.platform) ? "在访达中显示" : "在文件资源管理器中显示")}
+            />
+          </section>
+        </>
+      ) : (
+      <>
       <header className="vc-header">
         <div className="vc-breadcrumb">
           <Button
@@ -803,7 +927,8 @@ export default function VersionCanvas({
             />
             <Text>{tr("只看定稿路径")}</Text>
           </div>
-          <div className="vc-board-actions">
+          {/* UI 审查 11-16：「重新排版」只对画布有用，列表里不显示。 */}
+          {tab === "canvas" && <div className="vc-board-actions">
             <Button
               variant="quiet"
               size="small"
@@ -823,7 +948,7 @@ export default function VersionCanvas({
               <Icon name="layout" />
               {tr("重新排版")}
             </Button>
-          </div>
+          </div>}
         </div>
 
         {tab === "canvas" ? (
@@ -853,7 +978,8 @@ export default function VersionCanvas({
                 width: worldWidth,
                 height: worldHeight,
                 transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-              }}
+                "--vc-scale": transform.scale,
+              } as CSSProperties}
             >
               <div
                 className="vc-timeline-line"
@@ -873,13 +999,15 @@ export default function VersionCanvas({
                     style={{ left: 30 + column * COLUMN_GAP }}
                   >
                     <div className="vc-round-dot">{round || <span />}</div>
+                    {/* UI 审查 11-16：每组写这一轮的时间，不再都叫「生成记录」。 */}
                     <Text variant="label">
                       {round
                         ? fillNamed("第 {n} 轮", { n: round })
-                        : tr("生成记录")}
+                        : roundTime(members) || tr("生成记录")}
                     </Text>
                     <Text tone="secondary">
-                      {members.length} {tr("张素材")}
+                      {round && roundTime(members) ? `${roundTime(members)} · ` : ""}
+                      {fillNamed("{n} 张", { n: members.length })}
                     </Text>
                   </div>
                 )
@@ -981,39 +1109,67 @@ export default function VersionCanvas({
           </div>
         ) : (
           <div className="vc-list-view">
-            {visibleNodes.map((item) => (
-              <Button
-                variant="quiet"
-                className={`vc-list-row ${
-                  selected.includes(item.id) ? "is-active" : ""
-                }`}
-                key={item.id}
-                onClick={(event) => selectNode(item.id, event.shiftKey)}
-                onDoubleClick={() => openImage(item)}
-              >
-                <img src={item.image} alt={item.name} />
-                <span>
-                  <Text variant="label">{item.name}</Text>
-                  <Text as="p" tone="secondary">
-                    {item.prompt || tr("无提示词记录")}
-                  </Text>
-                </span>
-                {item.round !== null && (
-                  <Text tone="secondary">{roundTitle(item)}</Text>
-                )}
-                {item.final && (
-                  <span className="vc-list-final">
-                    <Icon name="check" />
-                    {tr("定稿")}
-                  </span>
-                )}
-                <Icon name="right" size={12} />
-              </Button>
-            ))}
+            {/* UI 审查 11-16：列表按轮分组，每行写出它改自哪张，不只是一串文件名。 */}
+            {columns.map((column) => {
+              const members = visibleNodes.filter((item) => item.column === column)
+              if (!members.length) return null
+              const round = members.every((item) => item.round === members[0].round) ? members[0].round : null
+              return (
+                <section className="vc-list-group" key={column}>
+                  <div className="vc-list-group-head">
+                    <Text variant="label">
+                      {round ? fillNamed("第 {n} 轮", { n: round }) : roundTime(members) || tr("生成记录")}
+                    </Text>
+                    <Text tone="secondary">
+                      {round && roundTime(members) ? `${roundTime(members)} · ` : ""}
+                      {fillNamed("{n} 张", { n: members.length })}
+                    </Text>
+                  </div>
+                  {members.map((item) => {
+                    const parents = visibleEdges
+                      .filter((edge) => edge.to === item.id && !edge.suggested)
+                      .map((edge) => {
+                        const from = nodes.find((other) => other.id === edge.from)
+                        return from ? `${relationLabel(edge.type)} ${from.name}` : ""
+                      })
+                      .filter(Boolean)
+                    return (
+                      <Button
+                        variant="quiet"
+                        className={`vc-list-row ${selected.includes(item.id) ? "is-active" : ""}`}
+                        key={item.id}
+                        onClick={(event) => selectNode(item.id, event.shiftKey)}
+                        onDoubleClick={() => openImage(item)}
+                      >
+                        <img src={item.image} alt={item.name} />
+                        <span>
+                          <Text variant="label">{item.name}</Text>
+                          <Text as="p" tone="secondary">
+                            {item.prompt || tr("无提示词记录")}
+                          </Text>
+                          {parents.length > 0 && (
+                            <Text as="p" tone="secondary" className="vc-list-relation">
+                              {parents.join("、")}
+                            </Text>
+                          )}
+                        </span>
+                        {item.final && (
+                          <span className="vc-list-final">
+                            <Icon name="check" />
+                            {tr("定稿")}
+                          </span>
+                        )}
+                        <Icon name="right" size={12} />
+                      </Button>
+                    )
+                  })}
+                </section>
+              )
+            })}
           </div>
         )}
 
-        <div className="vc-board-bottom">
+        {tab === "canvas" && <div className="vc-board-bottom">
           <div className="vc-legend">
             <span>
               <i />
@@ -1038,10 +1194,11 @@ export default function VersionCanvas({
           >
             <Icon name="info" />
           </Button>
-        </div>
+        </div>}
       </section>
+      </>
+      )}
 
-      {/* No heading row: the top bar's panel button shows and hides it. */}
       {inspector && (
         <aside className="vc-inspector" aria-label={tr("素材详情")}>
           <div className="detail-heading">
@@ -1265,12 +1422,16 @@ export default function VersionCanvas({
                   </Text>
                 ) : (
                   <div className="vc-relation-stack">
-                    {!generationHistory?.events?.length && (
+                    {!generationHistory?.events?.length ? (
                       <Text as="p" tone="secondary">
                         {tr("暂无生成记录")}
                       </Text>
-                    )}
-                    {(generationHistory?.relations || []).map((relation) => {
+                    ) : !nodeRelations.length && !candidateList.length ? (
+                      <Text as="p" tone="secondary">
+                        {tr("这张图还没有生成关系。从图边的点拖到另一张图上即可连线。")}
+                      </Text>
+                    ) : null}
+                    {nodeRelations.map((relation) => {
                       const key = `${relation.child_generation_id}|${relation.parent_generation_id}|${relation.relation_type}`
                       const locked = relation.verification_level === "provider_verified"
                       const upstream = generationDisplay(generationHistory, relation.parent_generation_id, inspectedAsset)
@@ -1606,30 +1767,6 @@ export default function VersionCanvas({
         }
       >
         <Text tone="secondary">{tr("此操作无法撤销。")}</Text>
-      </Dialog>
-
-      <Dialog
-        open={!!lightbox}
-        title={lightbox ? `${lightbox.name} · ${roundTitle(lightbox)}` : ""}
-        closeLabel={tr("关闭")}
-        onClose={() => setLightbox(null)}
-        actions={
-          <Button
-            onClick={() => {
-              if (lightbox) startAnnotation(lightbox)
-              setLightbox(null)
-            }}
-          >
-            <Icon name="annotate" />
-            {tr("添加标注")}
-          </Button>
-        }
-      >
-        {lightbox && (
-          <div className="vc-lightbox">
-            <img src={lightbox.image} alt={lightbox.name} />
-          </div>
-        )}
       </Dialog>
 
       <Dialog

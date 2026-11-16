@@ -600,6 +600,7 @@ const english: Record<string, string> = {
   "待补充修改要求": "Add an instruction",
   "添加标注": "Add annotations",
   "无法访问剪贴板，请手动复制。": "Clipboard unavailable. Please copy manually.",
+  "这张图还没有生成关系。从图边的点拖到另一张图上即可连线。": "This image has no generation relations yet. Drag from a dot on its edge to another image to link them.",
   "无法生成导出预览": "Couldn’t create the export preview",
   "画布修改仅保留在当前页面": "Canvas edits stay in this page only",
   "素材操作": "Asset actions",

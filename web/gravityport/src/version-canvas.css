@@ -24,6 +24,9 @@
   color: var(--ui-text);
 }
 
+/* UI 审查 11-16：浅色主题下点阵原来几乎看不见，调深。 */
+.app:not(.dark) .version-canvas { --vc-dot: color-mix(in srgb, var(--ui-secondary) 48%, transparent); }
+
 .app .version-canvas.with-inspector {
   grid-template-columns: minmax(0, 1fr) var(--vc-inspector-width);
 }
@@ -114,6 +117,8 @@
 .vc-round { position: absolute; top: var(--space-5); display: flex; align-items: center; width: var(--vc-node-width); gap: var(--space-2); }
 .vc-round > .ui-text--secondary { margin-left: auto; background: var(--vc-board); padding-left: var(--space-2); }
 .vc-round > .ui-text--label { background: var(--vc-board); padding-right: var(--space-3); }
+/* UI 审查 11-16：分组标题不随画布缩小到看不清，屏幕上至少 11px。 */
+.vc-round > .ui-text { font-size: max(var(--type-body-size), calc(11px / var(--vc-scale, 1))); white-space: nowrap; }
 .vc-round-dot { background: var(--ui-panel); color: var(--ui-secondary); border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-round); width: var(--space-6); height: var(--space-6); display: grid; place-items: center; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .vc-round-dot > span { width: var(--space-1); height: var(--space-1); background: var(--ui-secondary); border-radius: var(--radius-round); }
 .vc-round-group { position: absolute; width: calc(var(--vc-node-width) + var(--space-7)); border: var(--border-hairline) dashed var(--vc-dot); border-radius: var(--radius-panel); background: var(--ui-inset); pointer-events: none; }
@@ -233,7 +238,8 @@
 .vc-toast > svg { color: var(--ui-accent); }
 .vc-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); z-index: 3; color: var(--ui-secondary); }
 .vc-list-view { overflow: auto; padding: calc(var(--space-16) + var(--space-4)) var(--space-6) var(--space-16); }
-.vc-list-view > .vc-list-row { max-width: calc(var(--space-16) * 12); }
+.vc-list-group { max-width: calc(var(--space-16) * 12); margin-bottom: var(--space-4); }
+.vc-list-group-head { display: flex; align-items: baseline; gap: var(--space-2); padding: 0 var(--space-2) var(--space-2); }
 .app .vc-list-view .vc-list-row { width: 100%; height: auto; display: flex; align-items: center; justify-content: flex-start; text-align: left; white-space: normal; padding: var(--space-2); border-radius: var(--radius-control); background: transparent; margin-bottom: var(--space-1); gap: var(--space-3); }
 .app .vc-list-view .vc-list-row:hover:not(:disabled) { background: var(--ui-hover); }
 .app .vc-list-view .vc-list-row.is-active,
@@ -242,12 +248,16 @@
 .vc-list-row > img { width: var(--space-12); height: var(--space-16); flex-shrink: 0; object-fit: cover; border-radius: var(--radius-small); }
 .vc-list-row > span:first-of-type { flex: 1; min-width: 0; }
 .vc-list-row p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vc-list-row p.vc-list-relation { -webkit-line-clamp: 1; color: var(--ui-muted); }
 .vc-list-final { display: flex; align-items: center; gap: var(--space-1); }
 .vc-list-final > svg { color: var(--ui-accent); }
 
-.version-canvas .ui-dialog:has(.vc-lightbox) { --dialog-width: 620px; }
-.vc-lightbox { display: flex; justify-content: center; }
-.vc-lightbox > img { max-height: 65dvh; width: auto; object-fit: contain; border-radius: var(--radius-control); }
+/* UI 审查 11-16：画布里的「查看大图」用主页同一个查看器，铺满中间栏；全屏时盖住整个窗口。 */
+.vc-viewer { background-image: none; }
+.vc-viewer > .image-viewer { flex: 1; min-height: 0; }
+.vc-viewer.is-fullscreen { position: fixed; inset: 0; z-index: 60; }
+.vc-viewer-header { justify-content: flex-start; }
+.vc-viewer-header > .vc-header-actions { margin-left: auto; }
 .version-canvas .ui-dialog:has(.vc-compare) { --dialog-width: var(--vc-compare-width); }
 .vc-compare { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }
 .vc-compare img { width: 100%; height: min(50dvh, 440px); object-fit: contain; background: var(--ui-inset); border-radius: var(--radius-control); margin-bottom: var(--space-3); }

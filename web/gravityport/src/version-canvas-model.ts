@@ -35,6 +35,8 @@ export type CanvasNode = {
   prompt: string
   provider: string
   time: string
+  /** Raw generation time (ISO), for the round headers on the board. */
+  createdAt: string
   width: number
   height: number
   x: number
@@ -142,6 +144,7 @@ export function canvasFromHistory(
       prompt: event.user_prompt || event.effective_prompt || "",
       provider: event.provider || "",
       time: formatTime ? formatTime(event.created_at) : "",
+      createdAt: event.created_at || "",
       width: asset.width,
       height: asset.height,
       x: 30 + column * COLUMN_GAP,
@@ -166,6 +169,7 @@ export function canvasFromHistory(
       prompt: current.prompt || "",
       provider: "",
       time: "",
+      createdAt: "",
       width: current.width,
       height: current.height,
       x: 30,
