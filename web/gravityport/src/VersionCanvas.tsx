@@ -1390,7 +1390,7 @@ export default function VersionCanvas({
                     </div>
                   ))
                 ) : (
-                  <p className="muted">{tr("圈出要改的地方，让下一轮更明确。")}</p>
+                  <p className="muted">{tr("在图上标出要改的地方，让下一轮更明确。")}</p>
                 )}
               </section>
 
@@ -1850,7 +1850,7 @@ export default function VersionCanvas({
             <div className="vc-annotation-tools">
               <span>
                 <Icon name="annotate" />
-                <Text>{tr("圈选标记")}</Text>
+                <Text>{tr("添加标记")}</Text>
               </span>
               <Button
                 variant="quiet"
@@ -1929,7 +1929,6 @@ export default function VersionCanvas({
       <Dialog
         open={exportOpen}
         title={tr("导出版本树")}
-        description={tr("把创作过程分享出去，私有信息留给自己。")}
         closeLabel={tr("关闭")}
         onClose={() => setExportOpen(false)}
         actions={
