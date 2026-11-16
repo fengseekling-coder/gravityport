@@ -101,7 +101,7 @@ export function PinterestConnectionCardView({
         </div>
       </div>
       <div className="pinterest-connection-copy">
-        <p>{t("浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载，不存入素材库，也不经过 GravityPort 的服务器。")}</p>
+        <p>{t("浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载。")}</p>
         {connectionError ? <p className="pinterest-error-text">{t(connectionError)}</p> : null}
         {disconnectError ? <p className="pinterest-error-text">{t(disconnectError)}</p> : null}
       </div>

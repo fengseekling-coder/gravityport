@@ -12,8 +12,8 @@ import { translate, type Language } from "./i18n.js";
 export const PINTEREST_EN: Record<string, string> = {
   // Guide page / view states
   "连接 Pinterest": "Connect Pinterest",
-  "连接后可在此浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载，不存入素材库，也不经过 GravityPort 的服务器。":
-    "Connect a Pinterest account to browse its boards and Pins here. Content loads directly from Pinterest. It isn’t saved to the library and doesn’t pass through GravityPort’s servers.",
+  "连接后可在此浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载。":
+    "Connect a Pinterest account to browse its boards and Pins here. Content loads directly from Pinterest.",
   "Pinterest 授权已失效": "Pinterest authorization expired",
   "重新连接": "Reconnect",
   "重试": "Retry",
@@ -41,8 +41,8 @@ export const PINTEREST_EN: Record<string, string> = {
   "未连接": "Not connected",
   "已连接": "Connected",
   "已连接 {username}": "Connected as {username}",
-  "浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载，不存入素材库，也不经过 GravityPort 的服务器。":
-    "Browse boards and Pins from a Pinterest account. Content loads directly from Pinterest. It isn’t saved to the library and doesn’t pass through GravityPort’s servers.",
+  "浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载。":
+    "Browse boards and Pins from a Pinterest account. Content loads directly from Pinterest.",
   "需要重新连接": "Needs reconnection",
   "今天已用 {used} / {limit} 次": "{used} of {limit} requests used today",
   "断开 Pinterest？": "Disconnect Pinterest?",
