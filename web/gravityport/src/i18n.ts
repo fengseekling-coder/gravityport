@@ -600,6 +600,7 @@ const english: Record<string, string> = {
   "待补充修改要求": "Add an instruction",
   "添加标注": "Add annotations",
   "无法访问剪贴板，请手动复制。": "Clipboard unavailable. Please copy manually.",
+  "无法生成导出预览": "Couldn’t create the export preview",
   "画布修改仅保留在当前页面": "Canvas edits stay in this page only",
   "素材操作": "Asset actions",
   "编辑备注": "Edit note",

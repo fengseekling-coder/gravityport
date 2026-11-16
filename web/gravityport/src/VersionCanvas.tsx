@@ -270,6 +270,9 @@ export default function VersionCanvas({
   useEffect(() => {
     if (!exportOpen) return
     let cancelled = false
+    // UI 审查 11-16：预览用 blob 地址。App 的内容安全策略只放行 blob:，
+    // 原来的 data: 地址被拦，预览一直是坏图。
+    let previewUrl = ""
     setExportBusy(true)
     setExportError("")
     setExportPreview("")
@@ -284,7 +287,15 @@ export default function VersionCanvas({
       .then((canvas) => {
         if (cancelled) return
         exportCanvas.current = canvas
-        setExportPreview(canvas.toDataURL("image/png"))
+        return new Promise<void>((resolve, reject) =>
+          canvas.toBlob((blob) => {
+            if (!blob) return reject(new Error("无法生成导出预览"))
+            if (cancelled) return resolve()
+            previewUrl = URL.createObjectURL(blob)
+            setExportPreview(previewUrl)
+            resolve()
+          }, "image/png"),
+        )
       })
       .catch((error) => {
         if (!cancelled) setExportError(tr(error.message))
@@ -294,6 +305,7 @@ export default function VersionCanvas({
       })
     return () => {
       cancelled = true
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
     }
     // Snapshot only changes when export options, language, or dialog opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps

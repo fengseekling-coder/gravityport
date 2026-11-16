@@ -299,11 +299,18 @@
 }.app .settings-switch.enabled span {
   transform: translateX(16px);
 }.app .settings-page .segmented {
+  /* UI 审查 11-16：设置页所有分段切换整组 28px，同设置页其他小按钮。 */
+  box-sizing: border-box;
+  height: var(--control-height-small);
   background: var(--ui-inset);
   border: 1px solid var(--ui-line);
   padding: 2px;
 }.app .settings-page .segmented button {
-  min-height: var(--space-6);
+  height: calc(var(--control-height-small) - 6px);
+  min-height: 0;
+  padding: 0 var(--space-2);
+  border-radius: calc(var(--radius-small) - 2px);
+  line-height: var(--type-control-line);
 }.app .settings-page .segmented button.on {
   background: var(--ui-raised);
   box-shadow: 0 1px 3px #00000012;
