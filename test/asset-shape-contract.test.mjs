@@ -107,6 +107,10 @@ const FALLBACK_READ_ALLOWANCE = new Set([
   "gallery.source.generation_request_prompt", "detail.source.generation_request_prompt",
   // source.user_message — user instructions only when a capture recorded one.
   "gallery.source.user_message", "detail.source.user_message",
+  // curation_note — the inspector note (11-15) lives in metadata_json and is
+  // only present once a note has been saved; the seeded rows have none, and
+  // normalizeAsset falls back to "".
+  "gallery.curation_note", "detail.curation_note",
 ]);
 
 // Top-level keys the SQLite gallery rows carry and the legacy JSON backend's
