@@ -64,6 +64,20 @@ export const NODE_WIDTH = 204
 export const NODE_HEIGHT = 272
 export const COLUMN_GAP = 286
 
+/** UI 审查 11-16：卡片贴着图片比例收缩，放在原来 204×272 的格子正中；
+ *  格子位置、行列不变，连线和两侧的点改接到卡片实际的边上。没有尺寸的按整格。 */
+export function nodeBox(node: Pick<CanvasNode, "x" | "y" | "width" | "height">) {
+  const ratio = node.width > 0 && node.height > 0 ? node.width / node.height : NODE_WIDTH / NODE_HEIGHT
+  const width = Math.round(Math.min(NODE_WIDTH, NODE_HEIGHT * ratio))
+  const height = Math.round(Math.min(NODE_HEIGHT, width / ratio))
+  return {
+    x: node.x + Math.round((NODE_WIDTH - width) / 2),
+    y: node.y + Math.round((NODE_HEIGHT - height) / 2),
+    width,
+    height,
+  }
+}
+
 export function canvasFromHistory(
   history: MosaGenerationHistory | null,
   current: MosaAsset,
@@ -324,10 +338,11 @@ export function finalPathIds(
 }
 
 export function edgeCurve(from: CanvasNode, to: CanvasNode): string {
-  const x1 = from.x + NODE_WIDTH
-  const y1 = from.y + 136
-  const x2 = to.x
-  const y2 = to.y + 136
+  const fromBox = nodeBox(from)
+  const x1 = fromBox.x + fromBox.width
+  const y1 = from.y + NODE_HEIGHT / 2
+  const x2 = nodeBox(to).x
+  const y2 = to.y + NODE_HEIGHT / 2
   // Longer branches run below intermediate cards instead of through their images.
   if (to.column - from.column > 1) {
     const bottom = Math.max(from.y, to.y) + NODE_HEIGHT + 30

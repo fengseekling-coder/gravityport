@@ -4,6 +4,7 @@ import {
   edgeCurve,
   NODE_HEIGHT,
   NODE_WIDTH,
+  nodeBox,
   type CanvasEdge,
   type CanvasMark,
   type CanvasNode,
@@ -102,7 +103,9 @@ export async function renderCanvasExport(
       10,
     )
     ctx.fill()
-    ctx.drawImage(images[index], node.x, node.y, NODE_WIDTH, NODE_HEIGHT)
+    // 导出图按原比例画在格子正中，不再拉伸成 3:4（同画布卡片，UI 审查 11-16）。
+    const box = nodeBox(node)
+    ctx.drawImage(images[index], box.x, box.y, box.width, box.height)
     if (options.notes)
       node.marks.forEach((mark, markIndex) => {
         const x = node.x + mark.x * NODE_WIDTH

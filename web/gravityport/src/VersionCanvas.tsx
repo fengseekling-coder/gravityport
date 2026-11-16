@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type Dispatch,
   type PointerEvent,
   type SetStateAction,
@@ -42,6 +43,7 @@ import {
   canvasFromHistory,
   edgeCurve,
   finalPathIds,
+  nodeBox,
   planCanvasLink,
   submitCanvasCandidateAction,
   submitCanvasLink,
@@ -624,7 +626,15 @@ export default function VersionCanvas({
         link?.from === item.id ? "is-link-source" : ""
       }`}
       data-canvas-node={item.id}
-      style={{ left: item.x, top: item.y }}
+      style={(() => {
+        const box = nodeBox(item)
+        return {
+          left: box.x,
+          top: box.y,
+          width: box.width,
+          "--vc-node-image-height": `${box.height}px`,
+        } as CSSProperties
+      })()}
       onPointerDown={(event) => beginGesture(event, item.id)}
       onContextMenu={(event) => {
         event.preventDefault()
@@ -876,11 +886,11 @@ export default function VersionCanvas({
                     >
                       <path d={edgeCurve(from, to)} />
                       <circle
-                        cx={from.x + NODE_WIDTH}
-                        cy={from.y + 136}
+                        cx={nodeBox(from).x + nodeBox(from).width}
+                        cy={from.y + NODE_HEIGHT / 2}
                         r="3"
                       />
-                      <circle cx={to.x} cy={to.y + 136} r="3" />
+                      <circle cx={nodeBox(to).x} cy={to.y + NODE_HEIGHT / 2} r="3" />
                     </g>
                   )
                 })}
@@ -888,7 +898,8 @@ export default function VersionCanvas({
                   (() => {
                     const from = nodes.find((item) => item.id === link.from)
                     if (!from) return null
-                    const x1 = link.side === "out" ? from.x + NODE_WIDTH : from.x
+                    const fromBox = nodeBox(from)
+                    const x1 = link.side === "out" ? fromBox.x + fromBox.width : fromBox.x
                     const y1 = from.y + NODE_HEIGHT / 2
                     const bend = link.side === "out" ? 42 : -42
                     return (

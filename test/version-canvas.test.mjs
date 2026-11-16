@@ -382,6 +382,18 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
     assert.equal(fallback.edges.length, 0);
   });
 
+  it("fits each card to its image inside the fixed slot so tall and wide images get no bars", () => {
+    const { nodeBox, NODE_WIDTH, NODE_HEIGHT, edgeCurve } = onModel;
+    const slot = { x: 100, y: 50 };
+    assert.deepEqual(nodeBox({ ...slot, width: 1080, height: 1920 }), { x: 100 + Math.round((NODE_WIDTH - 153) / 2), y: 50, width: 153, height: NODE_HEIGHT });
+    assert.deepEqual(nodeBox({ ...slot, width: 1920, height: 1080 }), { x: 100, y: 50 + Math.round((NODE_HEIGHT - 115) / 2), width: NODE_WIDTH, height: 115 });
+    assert.deepEqual(nodeBox({ ...slot, width: 0, height: 0 }), { x: 100, y: 50, width: NODE_WIDTH, height: NODE_HEIGHT });
+    const tall = { ...slot, width: 1080, height: 1920, column: 0 };
+    const next = { x: 100 + 286, y: 50, width: 1080, height: 1920, column: 1 };
+    const box = nodeBox(tall);
+    assert.ok(edgeCurve(tall, next).startsWith(`M ${box.x + box.width} ${50 + NODE_HEIGHT / 2} `), "edges start at the card's real right edge");
+  });
+
   it("wires confirm and dismiss actions to generation-relation APIs", async () => {
     const requests = [];
     const origFetch = globalThis.fetch;
