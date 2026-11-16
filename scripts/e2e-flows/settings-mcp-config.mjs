@@ -21,11 +21,12 @@ import { join } from "node:path";
 import { buildMcpClientConfig } from "../../lib/mcp-client-config.mjs";
 
 export const name = "settings-mcp-config";
-export const description = "Settings → 连接 MCP card: three assistants with per-client pre/code/hint (Claude Code and Codex get a message for the agent) -> Codex copy hits the fake clipboard once, switch clears 已复制 at once, button auto-resets in ~2s -> installWarning banner -> available:false leaves only the guide link (not clicked) -> English round";
+export const description = "Settings → 连接 MCP card: four assistants (Other reuses the Claude Desktop config) with per-client pre/code/hint (Claude Code and Codex get a message for the agent) -> Codex copy hits the fake clipboard once, switch clears 已复制 at once, button auto-resets in ~2s -> installWarning banner -> available:false leaves only the guide link (not clicked) -> English round";
 
-const CLIENT_IDS = ["claudeDesktop", "claudeCode", "codex"];
-const CLIENT_LABELS = ["Claude Desktop", "Claude Code", "Codex"];
-const LABEL_BY_ID = { claudeDesktop: "Claude Desktop", claudeCode: "Claude Code", codex: "Codex" };
+const CLIENT_IDS = ["claudeDesktop", "claudeCode", "codex", "other"];
+const CLIENT_LABELS = ["Claude Desktop", "Claude Code", "Codex", "其他"];
+const EN_CLIENT_LABELS = ["Claude Desktop", "Claude Code", "Codex", "Other"];
+const LABEL_BY_ID = { claudeDesktop: "Claude Desktop", claudeCode: "Claude Code", codex: "Codex", other: "其他" };
 
 // The card's copy, pinned in both languages (zh source strings from
 // McpClientConfigCard.tsx, en from web/gravityport/src/i18n.ts).
@@ -33,11 +34,13 @@ const ZH_HINTS = {
   claudeDesktop: "粘贴到 claude_desktop_config.json（Claude 设置 > 开发者 > 编辑配置）。若文件中已有 mcpServers，仅合并 gravityport 这一段。",
   claudeCode: "复制下面这段话，发给 Claude Code，它会自动完成安装。",
   codex: "复制下面这段话，发给 Codex，它会自动完成安装。",
+  other: "Cursor、Windsurf、Cline 等多数助手通用。粘贴到该助手的 MCP 设置中；若已有 mcpServers，仅合并 gravityport 这一段。",
 };
 const EN_HINTS = {
   claudeDesktop: "Paste into claude_desktop_config.json (Claude Settings > Developer > Edit Config). If mcpServers already exists, merge only the gravityport entry.",
   claudeCode: "Copy the message below and send it to Claude Code. It will complete the setup for you.",
   codex: "Copy the message below and send it to Codex. It will complete the setup for you.",
+  other: "Works with most assistants, such as Cursor, Windsurf and Cline. Paste it into the assistant’s MCP settings. If mcpServers already exists, merge only the gravityport entry.",
 };
 const ZH_WARNING = "请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。";
 const ZH_NOTE = "更改存储位置后无需修改此配置，重启 AI 助手即可。GravityPort 无需保持打开。";
@@ -65,8 +68,8 @@ export async function run(ctx) {
 
     // Round 1 (Chinese, available): the full selection and copy walk.
     const zh = await ctx.runInPage(server, cardSource({ config, platform: process.platform, installWarning: null }));
-    assertEqual(zh.clientLabels, CLIENT_LABELS, "three assistant buttons");
-    assertEqual(zh.classes, ["on", "", ""], "selected assistant button carries the on class");
+    assertEqual(zh.clientLabels, CLIENT_LABELS, "four assistant buttons");
+    assertEqual(zh.classes, ["on", "", "", ""], "selected assistant button carries the on class");
     assertEqual(zh.initial.pressed, "Claude Desktop", "Claude Desktop pressed by default");
     assertEqual(zh.initial.attr, "claudeDesktop", "default pre[data-mcp-client]");
     assertEqual(zh.initial.code, config.claudeDesktop, "default code text");
@@ -77,6 +80,10 @@ export async function run(ctx) {
       assertEqual(zh.clients[id].hint, ZH_HINTS[id], `${id} hint`);
       assertEqual(zh.clients[id].pressed, LABEL_BY_ID[id], `${id} pressed`);
     }
+    assertEqual(zh.clients.other.attr, "other", "other pre[data-mcp-client]");
+    assertEqual(zh.clients.other.code, config.claudeDesktop, "Other shows the shared mcpServers config raw");
+    assertEqual(zh.clients.other.hint, ZH_HINTS.other, "other hint");
+    assertEqual(zh.clients.other.pressed, LABEL_BY_ID.other, "other pressed");
     assertEqual(zh.note, ZH_NOTE, "library-move note");
     assertEqual(zh.copy.copiedAfterFirst, [zh.clients.codex.code], "first copy sends exactly the shown Codex message");
     assertEqual(zh.copy.switchClearedImmediately, true, "switching assistants clears 已复制 at once");
@@ -102,7 +109,7 @@ export async function run(ctx) {
     // Round 4: English — language switched on the 常规 page, same walk.
     const en = await ctx.runInPage(server, englishSource({ config, platform: process.platform }));
     assertEqual(en.ariaLabel, "AI assistants (MCP)", "English card label");
-    assertEqual(en.clientLabels, CLIENT_LABELS, "English assistant buttons");
+    assertEqual(en.clientLabels, EN_CLIENT_LABELS, "English assistant buttons");
     assertEqual(en.initial.pressed, "Claude Desktop", "English default assistant");
     assertEqual(en.initial.attr, "claudeDesktop", "English default pre[data-mcp-client]");
     assertEqual(en.initial.code, config.claudeDesktop, "English default code text");
@@ -111,6 +118,8 @@ export async function run(ctx) {
       assertOk(en.clients[id].code.startsWith("Please install the GravityPort MCP server for me") && en.clients[id].code.includes(config[id]), `English ${id} message carries the config`);
       assertEqual(en.clients[id].hint, EN_HINTS[id], `English ${id} hint`);
     }
+    assertEqual(en.clients.other.code, config.claudeDesktop, "English Other shows the shared config raw");
+    assertEqual(en.clients.other.hint, EN_HINTS.other, "English other hint");
     assertEqual(en.copyLabel, "Copy", "English copy button");
     assertEqual(en.note, EN_NOTE, "English library-move note");
 
@@ -201,7 +210,7 @@ function cardSource({ config, platform, installWarning }) {
     const initial = cardState();
 
     const clients = {};
-    for (const [label, id] of [['Claude Code', 'claudeCode'], ['Codex', 'codex']]) {
+    for (const [label, id] of [['Claude Code', 'claudeCode'], ['其他', 'other'], ['Codex', 'codex']]) {
       clientButton(label).click();
       await waitFor(() => selectedId() === id, id + ' selected');
       clients[id] = cardState();
@@ -305,7 +314,7 @@ function englishSource({ config, platform }) {
     const clientLabels = clientButtons().map((b) => b.textContent.trim());
     const initial = cardState();
     const clients = {};
-    for (const [label, id] of [['Claude Code', 'claudeCode'], ['Codex', 'codex']]) {
+    for (const [label, id] of [['Claude Code', 'claudeCode'], ['Codex', 'codex'], ['Other', 'other']]) {
       clientButton(label).click();
       await waitFor(() => selectedId() === id, id + ' selected (English)');
       clients[id] = cardState();

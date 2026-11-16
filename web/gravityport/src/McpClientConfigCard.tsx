@@ -13,7 +13,7 @@ import { handleExternalLinkClick } from "./external-link.js"
 import { translate, type Language } from "./i18n.js"
 import "./mcp-config.css"
 
-export type McpClientId = "claudeDesktop" | "claudeCode" | "codex"
+export type McpClientId = "claudeDesktop" | "claudeCode" | "codex" | "other"
 
 export const MCP_CLIENTS: ReadonlyArray<{ id: McpClientId; label: string; hint: string }> = [
   {
@@ -23,7 +23,26 @@ export const MCP_CLIENTS: ReadonlyArray<{ id: McpClientId; label: string; hint: 
   },
   { id: "claudeCode", label: "Claude Code", hint: "复制下面这段话，发给 Claude Code，它会自动完成安装。" },
   { id: "codex", label: "Codex", hint: "复制下面这段话，发给 Codex，它会自动完成安装。" },
+  {
+    id: "other",
+    label: "其他",
+    hint: "Cursor、Windsurf、Cline 等多数助手通用。粘贴到该助手的 MCP 设置中；若已有 mcpServers，仅合并 gravityport 这一段。",
+  },
 ]
+
+// 11-16：Cursor、Windsurf、Cline 等多数助手认的就是 Claude Desktop 那段
+// mcpServers 配置，「其他」直接复用它，不另生成。
+const CONFIG_SOURCE: Record<McpClientId, "claudeDesktop" | "claudeCode" | "codex"> = {
+  claudeDesktop: "claudeDesktop",
+  claudeCode: "claudeCode",
+  codex: "codex",
+  other: "claudeDesktop",
+}
+
+/** The raw config text behind a client tab. */
+export function mcpClientConfigText(config: McpClientConfig | null | undefined, client: McpClientId): string {
+  return config?.[CONFIG_SOURCE[client]] || ""
+}
 
 // UI 审查 11-16：Claude Code、Codex 能自己跑命令、改文件，所以给一段发给它的话，
 // 由它安装（含重名时先替换）；Claude Desktop 改不了自己的配置文件，仍给配置原文。
@@ -56,7 +75,7 @@ export type McpClientConfigCardViewProps = {
 export function McpClientConfigCardView({ language, config, client, copied, onSelectClient, onCopy }: McpClientConfigCardViewProps) {
   const t = (text: string) => translate(text, language)
   const selected = MCP_CLIENTS.find((entry) => entry.id === client) || MCP_CLIENTS[0]
-  const text = mcpClientCopyText(selected.id, config?.[selected.id] || "", language)
+  const text = mcpClientCopyText(selected.id, mcpClientConfigText(config, selected.id), language)
 
   return (
     <section className="mcp-config-card" aria-label={t("AI 助手（MCP）")}>
@@ -87,7 +106,7 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
                   aria-pressed={entry.id === selected.id}
                   onClick={() => onSelectClient(entry.id)}
                 >
-                  {entry.label}
+                  {t(entry.label)}
                 </button>
               ))}
             </div>
@@ -171,7 +190,7 @@ export function McpClientConfigCard({ language }: { language: Language }) {
   }
 
   const copy = () => {
-    const text = mcpClientCopyText(client, config?.[client] || "", language)
+    const text = mcpClientCopyText(client, mcpClientConfigText(config, client), language)
     if (!text) return
     void writeClipboardText(text).then(() => {
       setCopied(true)
