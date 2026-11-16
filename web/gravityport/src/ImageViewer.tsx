@@ -8,7 +8,8 @@ const CONTROLS_IDLE_MS = 2000
 // the old flat 32px margin) and the floating zoom bar plus this gap at the
 // bottom, so fit never tucks the picture under the bar.
 const FIT_PAD_TOP = 16
-const CONTROLS_GAP = 8
+// UI 审查 11-16：「适合窗口」时画面下沿离缩放条 16px（原来 8px，实测只剩 6px 显挤）。
+const CONTROLS_GAP = 16
 
 export default function ImageViewer({ width, height, src, originalSrc, isVideo, animated, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, onOpenLocation, message, openLocationLabel }: {
   width: number; height: number; src?: string; originalSrc?: string; isVideo?: boolean; animated?: boolean; language: Language; disabled: boolean

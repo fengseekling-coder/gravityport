@@ -181,6 +181,8 @@
   user-select: text;
 }
 
+.web-capture-path > span { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+
 .web-capture-path-actions {
   display: flex;
   align-items: center;

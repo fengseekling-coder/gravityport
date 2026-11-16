@@ -219,7 +219,8 @@
 .vc-toast > svg { color: var(--ui-accent); }
 .vc-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); z-index: 3; color: var(--ui-secondary); }
 .vc-list-view { overflow: auto; padding: var(--space-6) var(--space-6) var(--space-16); }
-.vc-list-group { max-width: calc(var(--space-16) * 12); margin-bottom: var(--space-4); }
+/* UI 审查 11-16：列表限宽后在中间栏居中，不再只占左边一块。 */
+.vc-list-group { max-width: calc(var(--space-16) * 12); margin: 0 auto var(--space-4); }
 .vc-list-group-head { display: flex; align-items: baseline; gap: var(--space-2); padding: 0 var(--space-2) var(--space-2); }
 .app .vc-list-view .vc-list-row { width: 100%; height: auto; display: flex; align-items: center; justify-content: flex-start; text-align: left; white-space: normal; padding: var(--space-2); border-radius: var(--radius-control); background: transparent; margin-bottom: var(--space-1); gap: var(--space-3); }
 .app .vc-list-view .vc-list-row:hover:not(:disabled) { background: var(--ui-hover); }
@@ -261,8 +262,10 @@
 .vc-export-preview > span { font-size: var(--type-body-size); color: var(--ui-secondary); text-align: center; }
 .vc-export-options { display: flex; flex-direction: column; gap: var(--space-3); }
 .vc-export-formats { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); }
-.vc-export-formats > .ui-button { flex: 1; }
-.app .vc-export-formats .is-active { box-shadow: inset 0 0 0 var(--border-hairline) var(--ui-text); color: var(--ui-text); background: var(--ui-selected); }
+/* UI 审查 11-16：格式选项同全 App 的选中写法：无底块，选中的那个字变亮、对勾用强调色。 */
+.app .vc-export-formats .ui-button { color: var(--ui-secondary); }
+.app .vc-export-formats .ui-button.is-active { color: var(--ui-text); }
+.app .vc-export-formats .ui-button.is-active .ui-icon:last-child { color: var(--ui-accent); }
 .vc-export-option { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-1) 0; }
 .vc-export-privacy { display: flex; gap: var(--space-2); border-top: var(--border-hairline) solid var(--ui-line); padding-top: var(--space-4); margin-top: var(--space-2); }
 .vc-export-privacy > svg { margin-top: var(--space-1); color: var(--ui-secondary); }

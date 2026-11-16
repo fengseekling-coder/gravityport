@@ -1966,6 +1966,7 @@ export default function VersionCanvas({
               {(["png", "pdf"] as const).map((value) => (
                 <Button
                   key={value}
+                  variant="quiet"
                   aria-pressed={format === value}
                   className={format === value ? "is-active" : ""}
                   onClick={() => setFormat(value)}

@@ -158,6 +158,8 @@
   gap: var(--space-1);
 }.app .details .palette button {
   height: var(--space-4);
+  /* UI 审查 11-16：和底色相近的色块原来看不出来，每块加一圈细边。 */
+  box-shadow: inset 0 0 0 var(--border-hairline) color-mix(in srgb, var(--ui-secondary) 35%, transparent);
 }.app .details .detail-section {
   margin-top: var(--space-5);
 }.app .details .field-heading {

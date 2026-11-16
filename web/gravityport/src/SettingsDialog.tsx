@@ -196,14 +196,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                       </div>
                       <p className="settings-card-desc">{tr("素材和素材库数据均保存在此位置。")}</p>
                     </div>
-                    {library ? (
-                      <div className="settings-card-sub">
-                        <div className="settings-card-head">
-                          <strong>{tr("存储类型")}</strong>
-                        </div>
-                        <p className="settings-card-desc">{library.storage}</p>
-                      </div>
-                    ) : null}
+                    {/* UI 审查 11-16：去掉「存储类型：sqlite」这一行，开发用的词，用户用不上。 */}
                   </section>
                 </>
               ) : settingTab === "连接" ? (
@@ -334,7 +327,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
                             {block.groups.map((group, groupIndex) => (
                               <div key={groupIndex} className="release-group">
                                 {group.heading ? <h5 className="release-group-heading">{group.heading}</h5> : null}
-                                <ul>
+                                {/* UI 审查 11-16：只有「暂无更新记录」一行时不画列表圆点。 */}
+                                <ul className={!group.heading && group.lines.length === 1 && group.lines[0] === tr("暂无更新记录") ? "release-empty" : undefined}>
                                   {group.lines.map((line, lineIndex) => <li key={lineIndex}>{line}</li>)}
                                 </ul>
                               </div>

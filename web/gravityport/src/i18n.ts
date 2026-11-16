@@ -382,7 +382,6 @@ const english: Record<string, string> = {
   "正在更新…": "Updating…",
   "存储位置": "Storage location", "打开": "Open", "更改…": "Change…",
   "素材和素材库数据均保存在此位置。": "Assets and library data are stored in this location.",
-  "存储类型": "Storage type",
   "已打开存储位置": "Opened storage location",
   "无法打开存储位置，路径已复制": "Couldn’t open storage location. Path copied.",
   "无法打开存储位置。请手动复制路径。": "Couldn’t open storage location. Copy the path manually.",

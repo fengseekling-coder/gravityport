@@ -446,3 +446,12 @@
   color: var(--ui-muted);
   white-space: nowrap;
 }
+
+/* UI 审查 11-16：开发版没有更新记录时只写一句，不带列表圆点。 */
+.app .release-notes ul.release-empty {
+  list-style: none;
+  padding-left: 0;
+}.app .release-notes ul.release-empty li {
+  padding-left: 0;
+  color: var(--ui-muted);
+}

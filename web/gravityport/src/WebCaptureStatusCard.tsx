@@ -8,7 +8,7 @@
  * are pure helpers so the boundary stays testable.
  */
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   fetchProviderDeletionSettings,
   fetchWebCaptureStatus,
@@ -151,8 +151,10 @@ export function WebCaptureStatusCardView({
       <p className="web-capture-step">{t("1. 复制扩展文件夹位置")}</p>
       <div className="web-capture-step-body">
         <code className="web-capture-path">
+          {/* UI 审查 11-16：每段（连同后面的斜杠）是一个整体，只在斜杠后换行，
+              不在「browser-extension」的连字符处断开；单段比一行还长时才在段内折。 */}
           {pathParts.map((part, index) => (
-            <Fragment key={index}>{part}{index < pathParts.length - 1 ? <>/<wbr /></> : null}</Fragment>
+            <span key={index}>{part}{index < pathParts.length - 1 ? "/" : ""}</span>
           ))}
         </code>
         <div className="web-capture-path-actions">
