@@ -32,6 +32,7 @@ export function registerMiscIpc(deps) {
     updateDialogText,
     showSystemDialog,
     getService,
+    getInstallationId,
     getRenameNotice,
     setRenameNotice,
     getCurrentLocale,
@@ -117,9 +118,12 @@ export function registerMiscIpc(deps) {
     };
   });
 
-  // 审查 3-6 甲（任务 318）:the user-profile channel is gone — the installation
-  // ID stays in the main process (anonymous-usage bookkeeping) and is never
-  // handed to the renderer.
+  // 11-16 用户定：导航栏左下角显示安装编号（和官网后台安装明细同一个值）。
+  // 只读、不收参数，只回答主窗口；拿不到时回空串，界面照旧显示「设置」。
+  ipcMain.handle("installation-id", (event) => {
+    if (!trustedRendererEvent(event)) return "";
+    return String(getInstallationId?.() || "");
+  });
 
   // Task 311: the client credential no longer travels in the URL fragment. The
   // renderer asks once before its first request; the main process answers only

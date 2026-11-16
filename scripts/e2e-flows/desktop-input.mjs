@@ -282,6 +282,12 @@ export async function run(ctx) {
       // into view like a real user would.
       await cdp.evaluate(`(() => { const sidebar = document.querySelector(".sidebar"); sidebar.scrollTop = sidebar.scrollHeight; return sidebar.scrollTop; })()`);
       await sleep(200);
+      // 11-16：左下角显示安装编号（前 8 位…后 4 位，悬停看完整编号），点它仍打开设置。
+      await waitFor(cdp, `/^[0-9a-f]{8}…[0-9a-f]{4}$/.test(document.querySelector(".user-button > span")?.textContent || "")`, "nav shows the short installation id");
+      const navId = await cdp.evaluate(`(() => { const b = document.querySelector(".user-button"); return { short: b.querySelector("span").textContent, title: b.getAttribute("title") || "" }; })()`);
+      if (!/^安装编号 [0-9a-f-]{36}$/.test(navId.title) || !navId.title.includes(navId.short.slice(0, 8)) || !navId.title.endsWith(navId.short.slice(-4))) {
+        throw new Error(`nav installation id mismatch: ${JSON.stringify(navId)}`);
+      }
       await clickCenter(cdp, `document.querySelector(".user-button")`);
       await waitFor(cdp, `Boolean(document.querySelector(".settings-modal"))`, "settings open");
       await pressEscape(cdp);

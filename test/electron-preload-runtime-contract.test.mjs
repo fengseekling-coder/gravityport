@@ -26,6 +26,7 @@ const EXPECTED_API_KEYS = [
   "downloadAndInstallUpdate",
   "getBackgroundCaptureState",
   "getClientToken",
+  "getInstallationId",
   "getMcpClientConfig",
   "getRenameNoticeState",
   "getUpdateReady",
@@ -133,7 +134,8 @@ test("preload path, module format, security settings, and API surface are stable
   // 已核实服务 origin 上的主框架回答）。任务 318：user-profile 通道删除
   // （安装 ID 不再暴露给界面），invoke 计数 24 → 23。
   // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 26, "only the twenty-six approved invoke channels remain");
+  // 11-16 用户定：左下角显示安装编号，加只读通道 installation-id（只回主窗口），26 → 27。
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 27, "only the twenty-seven approved invoke channels remain");
   assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
@@ -152,9 +154,14 @@ test("preload path, module format, security settings, and API surface are stable
   const pasteFromClipboardHandler = main.slice(main.indexOf('ipcMain.handle("paste-from-clipboard"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("paste-from-clipboard"')));
   assert.match(pasteFromClipboardHandler, /trustedRendererEvent\(event\)/);
   assert.match(pasteFromClipboardHandler, /event\.sender\.paste\(\)/);
-  // 任务 318：安装 ID 不再暴露给界面——preload 与 main 里都没有这条通道。
+  // 任务 318 删掉的 user-profile 通道不回来；11-16 用户定显示安装编号，改走只读的
+  // installation-id，只回答已核实的主窗口。
   assert.doesNotMatch(preload, /getUserProfile/);
   assert.doesNotMatch(main, /ipcMain\.handle\("user-profile"/);
+  assert.match(preload, /getInstallationId: \(\) => ipcRenderer\.invoke\("installation-id"\)/);
+  const installationIdHandler = main.slice(main.indexOf('ipcMain.handle("installation-id"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("installation-id"')));
+  assert.ok(installationIdHandler.length > 0, "installation-id handler exists");
+  assert.match(installationIdHandler, /if \(!trustedRendererEvent\(event\)\) return "";/);
   // 任务 311：客户端凭据的领取通道。
   assert.match(preload, /getClientToken: \(\) => ipcRenderer\.invoke\("get-client-token"\)/);
   // 任务 116：老用户「已更名」提示的取状态/确认通道。
@@ -231,9 +238,9 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(main, /if \(isolationContext\.qaRun\) return Promise\.resolve\(\{ status: "disabled", currentVersion \}\)/,
     "QA/E2E update checks must stay offline and deterministic");
 
-  // 任务 318：安装 ID 仍在启动早期无条件铸造（文件是统计与「已更名」判定的
-  // 依据），只是不再交给界面——不能出现 `const desktopUserId =` 这种取值写法。
-  assert.match(main, /^ensureInstallationId\(\{ userDataDir: desktopDataDir \}\);$/m);
+  // 任务 318：安装 ID 在启动早期无条件铸造（文件是统计与「已更名」判定的依据）。
+  // 11-16：值留给只读通道 installation-id，不再用旧名 desktopUserId。
+  assert.match(main, /^const desktopInstallationId = ensureInstallationId\(\{ userDataDir: desktopDataDir \}\);$/m);
   assert.ok(
     main.indexOf("ensureInstallationId({ userDataDir: desktopDataDir })") < main.indexOf("app.whenReady()"),
     "the installation id must be minted before the window lifecycle, outside every packaged/QA/telemetry gate",

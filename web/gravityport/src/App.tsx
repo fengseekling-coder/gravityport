@@ -220,6 +220,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const [stackName, setStackName] = useState("")
   const [selected, setSelected] = useState("")
   const [settings, setSettings] = useState(false)
+  // 11-16 用户定：左下角显示安装编号（和官网后台安装明细一样取前 8 位…后 4 位），
+  // 点它仍打开设置；浏览器预览、旧主进程拿不到编号时照旧写「设置」。
+  const [installationId, setInstallationId] = useState("")
+  useEffect(() => {
+    desktopAPI()?.getInstallationId?.()
+      .then((id) => setInstallationId(typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id) ? id : ""))
+      .catch(() => {})
+  }, [])
   const [settingTab, setSettingTab] = useState("常规与外观")
   const [backgroundCapture, setBackgroundCapture] = useState<{ supported: boolean; enabled: boolean }>({ supported: false, enabled: true })
   const [backgroundCaptureBusy, setBackgroundCaptureBusy] = useState(false)
@@ -4547,9 +4555,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             </button>
           </div>
         )}
-        <button className="user-button" onClick={() => setSettings(true)}>
+        <button
+          className={`user-button${installationId ? " has-installation-id" : ""}`}
+          onClick={() => setSettings(true)}
+          aria-label={installationId ? `${tr("设置")} · ${tr("安装编号")} ${installationId}` : undefined}
+          title={installationId ? `${tr("安装编号")} ${installationId}` : undefined}
+        >
           <Icon name="user" size={14} />
-          <span>{tr("设置")}</span>
+          <span>{installationId ? `${installationId.slice(0, 8)}…${installationId.slice(-4)}` : tr("设置")}</span>
           <Icon name="settings" size={14} />
         </button>
       </aside>

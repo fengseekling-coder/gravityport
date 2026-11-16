@@ -56,6 +56,7 @@ const english: Record<string, string> = {
   "用所选素材新建分组…": "New group with selection…",
   "重命名": "Rename", "新建": "Create",
   "设置": "Settings", "存储": "Storage", "关于": "About",
+  "安装编号": "Install ID",
   "让每一次 AI 创作，有迹可循": "Every AI creation leaves a trail",
   "关闭设置": "Close settings", "外观": "Appearance",
   "界面语言": "Language",

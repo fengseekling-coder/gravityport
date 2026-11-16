@@ -122,6 +122,9 @@
   border: 0;
   background: transparent;
   color: var(--ui-secondary);
+}.app .user-button.has-installation-id > span {
+  /* 编号是十六进制串，等宽数字让长度稳定、好核对。 */
+  font-variant-numeric: tabular-nums;
 }.app .user-button:hover {
   background: var(--ui-hover);
   color: var(--ui-text);

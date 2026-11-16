@@ -348,9 +348,9 @@ let renameNotice = evaluateRenameNoticeState({
 // launch and refreshed on every launch after that, before any window exists
 // and outside every packaged/QA/telemetry gate. It stays local-only userData
 // bookkeeping: anonymous usage reports and the old-user rename-notice decision
-// above depend on the file existing (or not). 审查 3-6 甲（任务 318）：the ID is
-// no longer handed to the renderer — there is no user-profile channel anymore.
-ensureInstallationId({ userDataDir: desktopDataDir });
+// above depend on the file existing (or not). 11-16 用户定：左下角显示安装编号
+// （和官网后台安装明细对得上），所以值留着，经只读通道 installation-id 交给界面。
+const desktopInstallationId = ensureInstallationId({ userDataDir: desktopDataDir });
 
 const MAX_CLIPBOARD_TEXT_LENGTH = 1_000_000;
 const MAX_NATIVE_DRAG_FILES = 512;
@@ -714,6 +714,7 @@ function registerIPC() {
     updateDialogText,
     showSystemDialog,
     getService: () => service,
+    getInstallationId: () => desktopInstallationId,
     getRenameNotice: () => renameNotice,
     setRenameNotice: (value) => { renameNotice = value; },
     getCurrentLocale: () => currentLocale,
