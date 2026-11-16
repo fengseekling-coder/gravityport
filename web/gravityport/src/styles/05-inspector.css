@@ -155,9 +155,15 @@
   line-height: var(--space-4);
 }.app .details .palette {
   margin-top: var(--space-2);
-  gap: var(--space-1);
+  /* UI 审查 11-16：色块固定 20px 小方块靠左排，颜色少时不再被拉宽抢视觉；
+     详情栏宽 280px，8 色加间距 216px 正好一行，放不下时换行。 */
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }.app .details .palette button {
-  height: var(--space-4);
+  flex: none;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: var(--space-1);
   /* UI 审查 11-16：和底色相近的色块原来看不出来，每块加一圈细边。 */
   box-shadow: inset 0 0 0 var(--border-hairline) color-mix(in srgb, var(--ui-secondary) 35%, transparent);
 }.app .details .detail-section {
