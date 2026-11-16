@@ -251,10 +251,10 @@ GravityPort 自带 MCP 服务，通过 stdio 通信，不额外占用端口。AI
 
 1. 打开「设置 → 连接」，找到「AI 助手（MCP）」。
 2. 选你用的客户端：Claude Desktop、Claude Code 或 Codex，点「复制」。
-3. 粘贴：
+3. 粘贴或发送：
    - **Claude Desktop**：粘贴到 `claude_desktop_config.json`（Claude 设置 → 开发者 → 编辑配置）。文件里已有 `mcpServers` 的，只把 `gravityport` 这一段并进去。
-   - **Claude Code**：复制的是一条 `claude mcp add-json …`（Windows 是 `claude mcp add …`）命令，在终端里运行一次即可。
-   - **Codex**：粘贴到 `~/.codex/config.toml` 末尾。
+   - **Claude Code**：复制的是一段发给 Claude Code 的话，里面带着 `claude mcp add-json …`（Windows 是 `claude mcp add …`）命令；发给它，它会在终端里运行这条命令，已有同名的 gravityport 会先移除。也可以只把命令复制出来自己在终端运行。
+   - **Codex**：复制的是一段发给 Codex 的话，里面带着要写入 `~/.codex/config.toml` 的配置；发给它，它会写进去，已有 `[mcp_servers.gravityport]` 的会整段替换。也可以只把配置那段自己粘贴到文件末尾。
 4. 重启这个 AI 助手。
 
 配置里写的是 GravityPort 自己的可执行文件（以 `ELECTRON_RUN_AS_NODE=1` 运行 App 内的 `mcp/server.mjs`）和桌面版记录素材库位置的文件 `library-location.json`，而不是素材库路径本身。所以：

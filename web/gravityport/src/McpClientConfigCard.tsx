@@ -21,9 +21,23 @@ export const MCP_CLIENTS: ReadonlyArray<{ id: McpClientId; label: string; hint: 
     label: "Claude Desktop",
     hint: "粘贴到 claude_desktop_config.json（Claude 设置 > 开发者 > 编辑配置）。若文件中已有 mcpServers，仅合并 gravityport 这一段。",
   },
-  { id: "claudeCode", label: "Claude Code", hint: "在终端中运行此命令。" },
-  { id: "codex", label: "Codex", hint: "粘贴到 ~/.codex/config.toml 末尾。" },
+  { id: "claudeCode", label: "Claude Code", hint: "复制下面这段话，发给 Claude Code，它会自动完成安装。" },
+  { id: "codex", label: "Codex", hint: "复制下面这段话，发给 Codex，它会自动完成安装。" },
 ]
+
+// UI 审查 11-16：Claude Code、Codex 能自己跑命令、改文件，所以给一段发给它的话，
+// 由它安装（含重名时先替换）；Claude Desktop 改不了自己的配置文件，仍给配置原文。
+const AGENT_PROMPTS: Partial<Record<McpClientId, string>> = {
+  claudeCode: "请为我安装 GravityPort 的 MCP 服务器：在终端运行下面的命令。若已存在名为 gravityport 的 MCP 服务器，先将其移除再添加。完成后告诉我结果，我会开启新会话使其生效。\n\n```\n{config}\n```",
+  codex: "请为我安装 GravityPort 的 MCP 服务器：将下面的配置写入 ~/.codex/config.toml。若文件中已有 [mcp_servers.gravityport] 一段，用下面的内容替换它，不要改动文件中的其他内容。完成后告诉我结果，我会重启 Codex 使其生效。\n\n```toml\n{config}\n```",
+}
+
+/** What the card shows and copies for a client: the message for an agent, or the raw config. */
+export function mcpClientCopyText(client: McpClientId, configText: string, language: Language): string {
+  const template = AGENT_PROMPTS[client]
+  if (!template || !configText) return configText
+  return translate(template, language).replace("{config}", () => configText)
+}
 
 export const MCP_GUIDE_URL = "https://github.com/fengseekling-coder/gravityport/blob/main/docs/guide.zh-CN.md#mcp-与接口"
 
@@ -42,7 +56,7 @@ export type McpClientConfigCardViewProps = {
 export function McpClientConfigCardView({ language, config, client, copied, onSelectClient, onCopy }: McpClientConfigCardViewProps) {
   const t = (text: string) => translate(text, language)
   const selected = MCP_CLIENTS.find((entry) => entry.id === client) || MCP_CLIENTS[0]
-  const text = config?.[selected.id] || ""
+  const text = mcpClientCopyText(selected.id, config?.[selected.id] || "", language)
 
   return (
     <section className="mcp-config-card" aria-label={t("AI 助手（MCP）")}>
@@ -157,7 +171,7 @@ export function McpClientConfigCard({ language }: { language: Language }) {
   }
 
   const copy = () => {
-    const text = config?.[client]
+    const text = mcpClientCopyText(client, config?.[client] || "", language)
     if (!text) return
     void writeClipboardText(text).then(() => {
       setCopied(true)
