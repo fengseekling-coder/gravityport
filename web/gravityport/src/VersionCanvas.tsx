@@ -265,7 +265,7 @@ export default function VersionCanvas({
     return () => observer.disconnect()
     // Resize fits the board; manual zoom and node moves do not refit it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inspector, tab])
+  }, [inspector, tab, viewing])
 
   useEffect(() => {
     if (!message) return
@@ -364,7 +364,9 @@ export default function VersionCanvas({
     }
     element.addEventListener("wheel", wheel, { passive: false })
     return () => element.removeEventListener("wheel", wheel)
-  }, [tab])
+    // The stage remounts when the big-image viewer closes; reattach then too
+    // (UI 审查 11-16：原来只看 tab，看完大图回来捏合和 ⌘ 滚动失效)。
+  }, [tab, viewing])
 
   useEffect(() => {
     const key = (event: KeyboardEvent) => {

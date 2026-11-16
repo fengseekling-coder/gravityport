@@ -89,6 +89,7 @@ export async function run(ctx) {
       || onResult?.returnedToGallery !== true
       || onResult?.linkedByDrag !== true
       || onResult?.comparedByMenu !== true
+      || onResult?.zoomAfterViewer !== true
     ) {
       throw new Error(`version-canvas gate-on flow failed: ${JSON.stringify(onResult)}`);
     }
@@ -267,6 +268,26 @@ function roundOnSource(config) {
     await waitFor(() => (document.querySelector('.vc-header')?.textContent || '').includes('1 个定稿'), 'header updates final count');
     const finalBadgeUpdated = (document.querySelector('.vc-header')?.textContent || '').includes('1 个定稿');
 
+    // 查看大图 opens the gallery viewer inside the canvas; after 返回 the board
+    // must still pinch / ⌘-scroll zoom (the stage remounts — 11-16 regression).
+    let zoomAfterViewer = false;
+    let zoomStepError = '';
+    try {
+    const worldScale = () => new DOMMatrix(getComputedStyle(document.querySelector('.vc-world')).transform).a;
+    document.querySelector('.vc-inspector .summary-preview').click();
+    await waitFor(() => document.querySelector('.vc-viewer .image-viewer'), 'big-image viewer opens in the canvas');
+    const viewerOpened = Boolean(document.querySelector('.vc-viewer-header .viewer-title'));
+    document.querySelector('.vc-viewer-header button').click();
+    await waitFor(() => document.querySelector('.vc-stage') && !document.querySelector('.vc-viewer'), 'viewer closes back to the board');
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const scaleBefore = worldScale();
+    const stageEl = document.querySelector('.vc-stage');
+    const stageRect = stageEl.getBoundingClientRect();
+    stageEl.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100, clientX: stageRect.left + 100, clientY: stageRect.top + 100 }));
+    await waitFor(() => worldScale() > scaleBefore, 'pinch zoom works after the viewer closes');
+    zoomAfterViewer = viewerOpened && worldScale() > scaleBefore;
+    } catch (error) { zoomStepError = String(error && error.message || error); }
+
     const backBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="返回素材库"]'), 'back button');
     backBtn.click();
     await waitFor(() => !document.querySelector('.version-canvas') && Boolean(document.querySelector('.workspace')), 'canvas closes back to gallery');
@@ -284,6 +305,8 @@ function roundOnSource(config) {
       returnedToGallery,
       linkedByDrag,
       comparedByMenu,
+      zoomAfterViewer,
+      zoomStepError,
     };
   })()`;
 }
