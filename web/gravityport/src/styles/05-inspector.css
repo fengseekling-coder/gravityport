@@ -91,7 +91,7 @@
   font-size: 12px;
   color: var(--ui-muted);
 }.app .details .tags button:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .details .tag-chip {
   /* Bare-text tags: no frame, no horizontal padding, so the first label's
@@ -221,7 +221,7 @@
   color: var(--ui-muted);
 }.app .reading-toggle:hover {
   color: var(--ui-text);
-  background: var(--ui-hover);
+  background: transparent;
 }.app .field-heading .section-action {
   width: auto;
   padding: 0 var(--space-1);

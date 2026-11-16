@@ -85,7 +85,7 @@
   color: var(--ui-secondary);
   background: transparent;
 }.app .viewer-nav:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .viewer-previous {
   left: var(--space-1);
@@ -132,10 +132,10 @@
   line-height: var(--space-4);
   color: var(--ui-secondary);
 }.app .viewer-controls button:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .viewer-controls button.active {
-  background: var(--ui-inset);
+  background: transparent;
   color: var(--ui-text);
 }.app .viewer-controls button:disabled {
   opacity: .35;

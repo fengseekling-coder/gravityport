@@ -23,7 +23,7 @@
 .app .ui-button--primary:hover:not(:disabled) { background: var(--ui-primary); color: var(--ui-primary-text); }
 .app .ui-button--primary:hover:not(:disabled) { filter: brightness(.92); }
 .app .ui-button--quiet { background: transparent; }
-.app .ui-button--quiet:hover:not(:disabled) { background: var(--ui-hover); }
+.app .ui-button--quiet:hover:not(:disabled) { background: transparent; color: var(--ui-text); }
 .app .ui-button--danger { color: var(--ui-danger); }
 .app .ui-button--small { min-height: var(--control-height-small); }
 .app .ui-button--icon { width: var(--control-height); padding: 0; }

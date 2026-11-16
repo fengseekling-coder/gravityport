@@ -64,30 +64,13 @@
 .vc-view-tabs { flex-shrink: 0; }
 .vc-summary { margin-left: var(--space-2); white-space: nowrap; }
 .vc-summary > span { margin: 0 var(--space-2); }
-/* UI 审查 11-16：顶栏右侧三组——画布工具 | 视图切换 | 导出，组间竖线。
-   视图切换是一个切换块（同主页分段控件：底色块里选中的那格抬起），
-   其余是同尺寸的图标按钮；按下状态（只看定稿路径）图标为强调色。 */
-.vc-tool-group { gap: var(--space-1); }
-.vc-view-tabs {
-  gap: 2px;
-  height: var(--control-height);
-  padding: 2px;
-  box-sizing: border-box;
-  border-radius: var(--radius-control);
-  background: var(--ui-inset);
-}
-.app .vc-view-tabs .ui-button--icon {
-  width: calc(var(--control-height) - 4px);
-  height: calc(var(--control-height) - 4px);
-  min-height: 0;
-  border-radius: calc(var(--radius-control) - 2px);
-}
+/* UI 审查 11-16：顶栏右侧三组——画布工具 | 视图切换 | 导出，组间竖线。全部是没有底块的
+   图标按钮（同主页，按钮不带隐藏底色）；当前视图和按下状态（只看定稿路径）图标为强调色。 */
+.vc-tool-group, .vc-view-tabs { gap: var(--space-1); }
 .app .vc-header-actions .ui-button { color: var(--ui-secondary); }
 .app .vc-header-actions .ui-button:hover:not(:disabled),
 .app .vc-header-actions .ui-button.is-active { color: var(--ui-text); }
 .app .vc-header-actions .ui-button.is-active .ui-icon { color: var(--ui-accent); }
-.app .vc-view-tabs .ui-button.is-active,
-.app .vc-view-tabs .ui-button.is-active:hover:not(:disabled) { background: var(--ui-raised); }
 
 .vc-board-area {
   grid-column: 1;

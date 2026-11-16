@@ -46,12 +46,13 @@
   margin: 0;
   flex-shrink: 0;
   border-radius: var(--radius-round);
-  background: var(--ui-selected);
+  /* UI 审查 11-16：去掉圆形底块，同其他弹窗的关闭按钮，悬停只变亮。 */
+  background: transparent;
   color: var(--ui-secondary);
 }.app .settings-heading .modal-close svg {
   opacity: 1;
 }.app .settings-heading .modal-close:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ui-text) 16%, transparent);
+  background: transparent;
   color: var(--ui-text);
 }.app .settings-heading-copy {
   display: flex;

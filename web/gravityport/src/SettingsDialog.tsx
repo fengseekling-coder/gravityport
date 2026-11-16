@@ -110,7 +110,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   <h3>{tr(settingTab === "常规与外观" ? "常规" : settingTab)}</h3>
                 </div>
                 <Button
-                  variant="neutral"
+                  variant="quiet"
                   iconOnly
                   className="modal-close"
                   aria-label={tr("关闭设置")}

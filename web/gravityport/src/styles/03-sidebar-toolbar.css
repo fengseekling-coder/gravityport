@@ -134,10 +134,10 @@
   color: var(--ui-secondary);
   min-height: var(--space-8);
 }.app .toolbar button:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .toolbar select:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .toolbar-right select {
   padding: 0 var(--space-2);

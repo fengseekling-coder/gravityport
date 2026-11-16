@@ -42,10 +42,10 @@
 }.app .asset-title button {
   color: var(--ui-muted);
 }.app .detail-heading button:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .field-heading button:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .prompt-tabs > button {
   /* The fixed square above is for the heading's icon buttons; the
@@ -68,7 +68,7 @@
   line-height: var(--space-4);
   padding: var(--space-1) var(--space-2);
 }.app .tags button:hover {
-  background: var(--ui-selected);
+  background: transparent;
   color: var(--ui-text);
 }.app .palette {
   margin-top: var(--space-3);
@@ -203,7 +203,7 @@
 }.app .modal-close svg {
   opacity: 1;
 }.app .modal-close:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .appearance-option {
   color: var(--ui-secondary);

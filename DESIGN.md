@@ -114,7 +114,7 @@
 
 ## 状态
 
-- 悬停：底色 `--ui-hover`，文字变 `--ui-text`。
+- 悬停：可点的行和带边框的按钮底色 `--ui-hover`，文字变 `--ui-text`；安静按钮（没有底的文字、图标按钮）不出底块，只把文字和图标变 `--ui-text`。
 - 选中：底色 `--ui-selected`，字重 500 或 600；侧栏当前项图标变 `--ui-accent`。
 - 焦点：按钮 `outline: 2px solid var(--focus-ring)`、偏移 3px，只在键盘焦点（`:focus-visible`）时出现；输入框（文本框、搜索框、标签输入、提示词编辑）获得焦点不画绿框，只把边框换成 `--field-focus`（浅色 `#0000002e`、深色 `#ffffff33`），搜索框是 1px `--field-focus` 框加 `--ui-raised` 底；画廊里选中框就是焦点框，不再叠第二圈。
 - 禁用：透明度 0.4，不响应悬停。
@@ -133,7 +133,7 @@
 | --- | --- | --- |
 | 主按钮 | `Button variant="primary"`；历史实现 `.primary-button` | `--ui-primary` 底，高 32px，左右 12px；一个视图最多一个，只给确认框里真正执行的动作 |
 | 普通按钮 | `Button`；历史实现 `.neutral-button` | `--ui-inset` 底、`--ui-secondary` 字，悬停 `--ui-selected` |
-| 安静按钮 | `.toolbar button`、`.detail-heading button` 等 | 无底，悬停才出 `--ui-hover`；纯图标按钮 28 或 32px 见方，必须有 `aria-label` |
+| 安静按钮 | `.toolbar button`、`.detail-heading button`、`.field-heading button`、`Button variant="quiet"`、查看器缩放条和左右箭头、弹窗关闭按钮等 | 无底，悬停也不出底块，只把文字和图标从 `--ui-secondary` 提亮到 `--ui-text`（11-16 用户定：按钮不要隐藏的底块）；按下或当前状态用 `--ui-accent` 图标或 `--ui-text` 文字表示，不加底；纯图标按钮 28 或 32px 见方，必须有 `aria-label`。一整行可点的（侧栏行、菜单项、列表行、关系行）和本身带边框的普通按钮不在此列，照旧有悬停底色 |
 | 分段控件 | `.segmented` + `button.on` | 设置页里底槽 `--ui-inset`（加 1px `--ui-line` 细边）、选中 `--ui-raised` 加轻阴影，按钮高 24px |
 | 开关 | `Switch` / `.ui-switch`；历史实现 `.settings-switch` | 36×20，开时 `--ui-accent`，`role="switch"`；新界面用公共组件 |
 | 搜索框 | `label.search` | 240×32，`--ui-inset` 底，输入时 `--ui-raised` 加 1px `--field-focus` 框 |
