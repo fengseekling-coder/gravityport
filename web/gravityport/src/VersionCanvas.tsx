@@ -256,9 +256,14 @@ export default function VersionCanvas({
 
   useEffect(() => {
     if (!menu) return
-    const close = () => setMenu(null)
-    window.addEventListener("pointerdown", close)
-    return () => window.removeEventListener("pointerdown", close)
+    // UI 审查 11-16：用捕获阶段听，画布平移会拦住冒泡，点空白处原先关不掉；
+    // 点在菜单里面的不算。
+    const close = (event: globalThis.PointerEvent) => {
+      if ((event.target as Element | null)?.closest?.(".vc-context-menu")) return
+      setMenu(null)
+    }
+    window.addEventListener("pointerdown", close, true)
+    return () => window.removeEventListener("pointerdown", close, true)
   }, [menu])
 
   useEffect(() => {
