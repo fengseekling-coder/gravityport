@@ -149,3 +149,23 @@
 .mcp-config-indent {
   display: none;
 }
+
+/* UI 审查 11-16：标题行的助手切换和复制按钮都与「连接 Pinterest」同高（28px）。
+   设置页 .neutral-button 有 32px 最小高度，这里加 .mcp-config-card 压过它。 */
+.app .settings-modal .mcp-config-card .mcp-config-copy-button {
+  min-height: var(--control-height-small);
+}
+
+.app .settings-modal .mcp-config-card .segmented.mcp-config-clients {
+  box-sizing: border-box;
+  height: var(--control-height-small);
+  padding: 2px;
+}
+
+.app .settings-modal .mcp-config-card .segmented.mcp-config-clients button {
+  height: calc(var(--control-height-small) - 6px);
+  min-height: 0;
+  padding: 0 var(--space-2);
+  border-radius: calc(var(--radius-small) - 2px);
+  line-height: var(--type-control-line);
+}
