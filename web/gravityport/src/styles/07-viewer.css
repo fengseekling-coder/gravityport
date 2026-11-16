@@ -386,7 +386,7 @@ video.black-image,
 .app.native-darwin :is(.brandbar, .toolbar, .detail-heading, .vc-header) :is(button, input, select, textarea, a, label, [role="button"], .column-control),
 .modal-layer, .group-dialog-backdrop, .authorization-layer,
 .context-menu, .toolbar-select-menu, .column-popover, .toast,
-.pinterest-detail-backdrop, .pinterest-confirm-backdrop {
+.pinterest-confirm-backdrop {
   -webkit-app-region: no-drag;
 }
 

@@ -11,7 +11,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: var(--space-5) var(--space-8) var(--space-12);
+  padding: 0 0 var(--space-12);
   background: var(--ui-work);
   color: var(--ui-text);
   font-size: var(--type-body-size);
@@ -140,44 +140,63 @@
 }
 
 /* ---- Board grid -------------------------------------------------------- */
+/* Cards are the gallery's: the cover is a real .asset-card (same radius,
+ * hover and selection outline), the name and count sit on one line below. */
 
 .pinterest-board-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: var(--space-4);
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
+  align-content: start;
 }
 
 .pinterest-board-card {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  min-width: 0;
   padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-panel);
-  background: var(--ui-raised);
+  border: 0;
+  background: none;
   text-align: left;
 }
 
 .pinterest-board-card:hover {
-  background: var(--ui-hover);
+  background: none;
 }
 
-.pinterest-board-cover {
+.app .pinterest-board-cover {
+  display: block;
   width: 100%;
   aspect-ratio: 3 / 2;
-  object-fit: cover;
-  display: block;
 }
 
-.pinterest-cover-empty {
-  display: block;
-  background: var(--ui-inset);
+.pinterest-board-card:hover .pinterest-board-cover::after {
+  border-color: var(--ui-line);
+}
+
+.pinterest-board-card:focus-visible {
+  outline: none;
+}
+
+.pinterest-board-card:focus-visible .pinterest-board-cover::after,
+.pinterest-pin-card:focus-visible::after {
+  border-color: var(--focus-ring);
+}
+
+@media (max-width: 480px) {
+  .pinterest-board-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
 }
 
 .pinterest-board-name {
-  padding: 0 var(--space-3);
+  flex: 1;
+  min-width: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--space-4);
   font-weight: var(--type-weight-label);
   color: var(--ui-text);
   overflow: hidden;
@@ -188,45 +207,35 @@
 .pinterest-board-meta {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-3) var(--space-3);
-  color: var(--ui-secondary);
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--space-4);
+  color: var(--ui-secondary-on-work);
+  font-variant-numeric: tabular-nums;
 }
 
+/* Quiet label: plain secondary text on --ui-work, no frame or fill. */
 .pinterest-badge {
   display: inline-flex;
   align-items: center;
-  padding: 1px var(--space-2);
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-small);
-  background: var(--ui-inset);
-  color: var(--ui-secondary);
-  font-size: var(--type-body-size);
-  line-height: 1.4;
+  flex-shrink: 0;
+  color: var(--ui-secondary-on-work);
+}
+
+.pinterest-badge::after {
+  content: "·";
+  margin-left: var(--space-1);
+  color: var(--ui-secondary-on-work);
 }
 
 /* ---- Pin masonry ------------------------------------------------------- */
-
-.pinterest-board-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-}
-
-.pinterest-board-header-name {
-  font-size: var(--type-title-size);
-  font-weight: var(--type-weight-title);
-  color: var(--ui-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* Same gutter and card look as the gallery: the cards are .asset-card. */
 
 .pinterest-pin-columns {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .pinterest-pin-column {
@@ -234,45 +243,12 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .pinterest-pin-card {
-  position: relative;
   display: block;
   width: 100%;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-control);
-  background: var(--ui-raised);
-  text-align: left;
-}
-
-.pinterest-pin-card:hover {
-  background: var(--ui-hover);
-}
-
-.pinterest-pin-cover {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.pinterest-pin-video-badge {
-  position: absolute;
-  top: var(--space-2);
-  left: var(--space-2);
-  background: var(--ui-raised);
-}
-
-.pinterest-pin-title {
-  display: block;
-  padding: var(--space-2) var(--space-3);
-  color: var(--ui-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ---- Paging footer ------------------------------------------------------ */
@@ -296,86 +272,18 @@
   height: 1px;
 }
 
-/* ---- Pin detail overlay -------------------------------------------------- */
+/* ---- Pin detail (right column) ------------------------------------------ */
 
-.pinterest-detail-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  display: grid;
-  place-items: center;
-  padding: var(--space-8);
-  background: var(--ui-work);
-}
-
-.pinterest-detail {
-  display: flex;
-  gap: var(--space-4);
-  max-width: min(920px, 100%);
-  max-height: 100%;
-  overflow: hidden;
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-panel);
-  background: var(--ui-panel);
-  box-shadow: var(--ui-shadow);
-}
-
-.pinterest-detail-media {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--ui-inset);
-}
-
-.pinterest-detail-image {
-  display: block;
-  max-width: 100%;
-  max-height: 80vh;
-  height: auto;
-  object-fit: contain;
-  border-radius: var(--radius-panel);
-}
-
-.pinterest-detail-source {
-  position: absolute;
-  top: var(--space-3);
-  left: var(--space-3);
-  background: var(--ui-raised);
-}
-
-.pinterest-detail-side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  width: 280px;
-  flex-shrink: 0;
-  padding: var(--space-4);
-  overflow-y: auto;
-}
-
-.pinterest-detail-title {
-  margin: 0;
-  font-size: var(--type-title-size);
-  font-weight: var(--type-weight-title);
-  color: var(--ui-text);
-}
-
-.pinterest-detail-description {
-  margin: 0;
-  color: var(--ui-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.pinterest-detail-actions {
+.pinterest-detail-links {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-3);
-  margin-top: auto;
+  gap: var(--space-1);
+}
+
+.pinterest-detail-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ---- Settings connection card --------------------------------------------- */

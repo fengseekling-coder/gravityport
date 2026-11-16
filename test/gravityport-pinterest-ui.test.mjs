@@ -71,6 +71,8 @@ before(async () => {
       '  if (specifier.endsWith(".css")) {',
       '    return { url: "data:text/javascript,export default null;", shortCircuit: true };',
       "  }",
+      // The shared gallery pieces (Icon, ImageViewer) import siblings without an extension.
+      "  if (/^\\.\\.?\\/[^.]*$/.test(specifier)) return next(specifier + \".js\", context);",
       "  return next(specifier, context);",
       "}",
       "",
@@ -268,7 +270,7 @@ describe("PinterestGuide", () => {
     const html = renderStatic(React.createElement(view.PinterestGuide, guideBase));
     assert.match(html, /连接 Pinterest/);
     assert.doesNotMatch(html, /重新连接/);
-    assert.match(html, /连接后可在此浏览 Pinterest 账号中的画板和 Pin/);
+    assert.match(html, /连接后可在此浏览 Pinterest 账号里的画板和 Pin/);
   });
 
   it("switches to Reconnect copy when reconnection is required", () => {
@@ -324,6 +326,21 @@ describe("PinterestBoardGrid", () => {
     assert.match(privateCells[2], /私密/);
   });
 
+  it("renders gallery-style board covers, black empty covers, and column counts", () => {
+    const boards = [
+      { id: "1", name: "有图", description: "", privacy: "PUBLIC", pin_count: 2, cover_url: "https://i.pinimg.com/b.jpg" },
+      { id: "2", name: "无图", description: "", privacy: "PUBLIC", pin_count: 0, cover_url: "" },
+    ];
+    const html = renderStatic(
+      React.createElement(view.PinterestBoardGrid, { ...boardBase, boards, columns: 4 })
+    );
+    assert.match(html, /grid-template-columns:repeat\(4, minmax\(0, 1fr\)\)/);
+    const cards = html.split("pinterest-board-card").slice(1);
+    assert.match(cards[0], /<img class="black-image"/);
+    assert.doesNotMatch(cards[1], /<img/);
+    assert.match(cards[1], /<span class="black-image"/);
+  });
+
   it("shows the empty state for a board-less account", () => {
     const html = renderStatic(
       React.createElement(view.PinterestBoardGrid, { ...boardBase, boards: [] })
@@ -362,12 +379,33 @@ describe("PinterestPinDetail", () => {
       })
     );
 
-  it("marks the source, offers Open in Pinterest, and uses the 1200x image", () => {
-    const html = renderDetail();
-    assert.match(html, /来自 Pinterest/);
+  it("is the gallery right column: heading, summary, source note, Open in Pinterest", () => {
+    const html = renderDetail({ onClose: () => {}, onOpenViewer: () => {} });
+    assert.match(html, /detail-heading/);
+    assert.match(html, /素材详情/);
+    assert.match(html, /asset-summary/);
+    assert.match(html, /class="muted">来自 Pinterest</);
     assert.match(html, /在 Pinterest 打开/);
-    assert.match(html, /src="https:\/\/i\.pinimg\.com\/1200x\/77\.jpg"/);
+    assert.match(html, /src="https:\/\/i\.pinimg\.com\/600x\/77\.jpg"/);
     assert.match(html, /第一行\n第二行/);
+    assert.doesNotMatch(html, /role="dialog"/);
+  });
+
+  it("omits the description section when the Pin has none", () => {
+    const html = renderDetail({ pin: { ...pin, description: "" } });
+    assert.doesNotMatch(html, /pinterest-detail-description/);
+  });
+
+  it("never offers library operations (favorite, tags, move to group)", () => {
+    const html = renderDetail();
+    assert.doesNotMatch(html, /收藏素材|添加标签|提示词|移到分组/);
+  });
+
+  it("shows Open in viewer only while the viewer is closed", () => {
+    const closed = renderDetail({ onOpenViewer: () => {}, viewerOpen: false });
+    assert.match(closed, /class="summary-preview">在查看器中打开/);
+    const opened = renderDetail({ onOpenViewer: () => {}, viewerOpen: true });
+    assert.doesNotMatch(opened, /class="summary-preview">在查看器中打开/);
   });
 
   it("shows the external link domain when present", () => {
@@ -404,12 +442,25 @@ describe("PinterestPinGrid", () => {
     assert.match(html, /此画板中没有 Pin。在 Pinterest 保存 Pin 后将显示在此处/);
   });
 
-  it("shows pin titles below the card", () => {
+  it("puts the Pin title in the hover tooltip, never on the card", () => {
     const titled = makePin("t1", 300, 500, { title: "晨光" });
     const html = renderStatic(
       React.createElement(view.PinterestPinGrid, { ...gridBase, columns: [[titled]] })
     );
-    assert.match(html, /晨光/);
+    assert.match(html, /title="晨光"/);
+    assert.doesNotMatch(html, />晨光</);
+    assert.doesNotMatch(html, /pinterest-pin-title/);
+  });
+
+  it("draws Pin cards as gallery cards and outlines the selected one", () => {
+    const a = makePin("s1", 300, 500);
+    const b = makePin("s2", 300, 300);
+    const html = renderStatic(
+      React.createElement(view.PinterestPinGrid, { ...gridBase, columns: [[a, b]], selectedPinId: "s2" })
+    );
+    assert.equal((html.match(/class="asset-card pinterest-pin-card/g) || []).length, 2);
+    assert.equal((html.match(/asset-selected/g) || []).length, 1);
+    assert.match(html, /aspect-ratio:300 \/ 500/);
   });
 });
 

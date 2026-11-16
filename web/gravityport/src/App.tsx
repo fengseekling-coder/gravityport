@@ -3,7 +3,8 @@ import Icon from "./Icon"
 import ToolbarSelect from "./ToolbarSelect"
 import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
-import { PinterestView } from "./PinterestView"
+import { PINTEREST_CHROME_IDLE, PinterestPinDetail, PinterestView, openExternalPinterestLink, type PinterestChrome, type PinterestViewHandle } from "./PinterestView"
+import { pinterestFormat, pinterestText } from "./pinterest-strings"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } from "./context-menus"
@@ -244,6 +245,11 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // A connect/disconnect from Settings remounts PinterestView so it rereads
   // the status instead of showing boards of an account that is gone.
   const [pinterestViewKey, setPinterestViewKey] = useState(0)
+  // What the Pinterest view reports for the top bar and right column, and the handle it answers to.
+  const [pinterestChrome, setPinterestChrome] = useState<PinterestChrome>(PINTEREST_CHROME_IDLE)
+  const pinterestChromeRef = useRef<PinterestChrome>(PINTEREST_CHROME_IDLE)
+  pinterestChromeRef.current = pinterestChrome
+  const pinterestViewRef = useRef<PinterestViewHandle>(null)
   const pinterestConnectedRef = useRef<boolean | null>(null)
   const onPinterestStatus = (status: PinterestStatus) => {
     const connected = status.connected && !status.needsReconnect
@@ -2897,6 +2903,10 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         else if (viewerFullscreen) setViewerFullscreen(false)
         else if (settings) setSettings(false)
         else if (preview) setPreview(false)
+        else if (pinterestActive) {
+          if (pinterestChromeRef.current.viewing) pinterestViewRef.current?.back()
+          return
+        }
         // A user selection clears first. Inside a stack without one, Esc
         // leaves the stack — a plain goTo, so 后退 can come back to it. Only
         // the app's implicit focus falls through to being cleared.
@@ -3068,8 +3078,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
   useEffect(() => {
-    if (!preview) setViewerFullscreen(false)
-  }, [preview])
+    if (!preview && !pinterestChrome.viewing) setViewerFullscreen(false)
+  }, [preview, pinterestChrome.viewing])
   // ── Task 292: live import cards ──
   // A finished batch puts its cards straight into the loaded gallery instead
   // of waiting for the end-of-import refresh, but only where prepending is
@@ -4421,7 +4431,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   return (
     <div
       ref={appRef}
-      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass} ${preview && viewerFullscreen ? "viewer-fullscreen" : ""} ${canvasOpen && asset ? "canvas-open" : ""}`}
+      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass} ${(preview || pinterestChrome.viewing) && viewerFullscreen ? "viewer-fullscreen" : ""} ${canvasOpen && asset ? "canvas-open" : ""}`}
       onClick={() => menu && setMenu(null)}
     >
       <aside className="sidebar">
@@ -4612,7 +4622,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         />
       ) : (
         <main
-          className={`workspace ${preview ? "preview-open" : ""}`}
+          className={`workspace ${preview || pinterestChrome.viewing ? "preview-open" : ""}`}
           onDragOver={event => {
             if (preview || settings || active === "回收站" || pinterestActive) return
             event.preventDefault()
@@ -4629,6 +4639,15 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
               <button onClick={() => setPreview(false)}>
                 <Icon name="left" size={14} />
                 {tr("返回")}</button>
+            ) : pinterestActive && pinterestChrome.viewing ? (
+              <button onClick={() => pinterestViewRef.current?.back()}>
+                <Icon name="left" size={14} />
+                {tr("返回")}</button>
+            ) : pinterestActive && pinterestChrome.boardName !== null ? (
+              // Pinterest board open: ‹ returns to the board list, like leaving an opened stack.
+              <button aria-label={tr("后退")} title={tr("后退")} onClick={() => pinterestViewRef.current?.back()}>
+                <Icon name="left" />
+              </button>
             ) : (
               // UI 审查 11-16：首页、没筛选、没有上一步时无处可退，变灰；悬停写「后退」。
               <button
@@ -4642,6 +4661,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             )}
           </div>
           {preview && <div className="viewer-title"><strong>{asset?.name}</strong><span>{Math.max(1, visible.findIndex(a => a.id === asset?.id) + 1)} / {visible.length}</span></div>}
+          {pinterestActive && !preview && pinterestChrome.viewing && pinterestChrome.pin && <div className="viewer-title"><strong>{pinterestChrome.pin.title || pinterestChrome.boardName}</strong><span>{pinterestChrome.viewerIndex} / {pinterestChrome.viewerTotal}</span></div>}
+          {pinterestActive && !preview && !pinterestChrome.viewing && pinterestChrome.boardName !== null && <div className="viewer-title"><strong>{pinterestChrome.boardName}</strong><span>{pinterestChrome.pinCount === 1 ? pinterestText("1 个 Pin", language) : pinterestFormat("{count} 个 Pin", { count: pinterestChrome.pinCount }, language)}</span></div>}
           {!preview && stackId && <div className="viewer-title"><strong>{stackName}</strong><span>{visible.length === 1 ? tr("1 个素材") : fillNamed("{count} 个素材", { count: visible.length })}</span></div>}
           <div className="toolbar-right">
             {preview ? (
@@ -4652,7 +4673,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                 {/* UI 审查 11-16：同画廊，详情栏开着时收起按钮在详情栏标题行，关了才在这里出图标。 */}
                 {!detail && <button className="detail-toggle" aria-label={tr("显示素材详情")} title={tr("显示素材详情")} aria-expanded={false} onClick={() => setDetail(true)}><Icon name="inspector" size={16} /></button>}
               </>
-            ) : pinterestActive ? null : (
+            ) : pinterestActive ? (
+              pinterestChrome.boardName === null ? null : (
+                <>
+                  {!pinterestChrome.viewing && <ColumnControl value={columns} onChange={value => { setColumns(value); writeStoredColumns(columnsStorage(), value) }} language={language} />}
+                  {!detail && pinterestChrome.pin && <button className="detail-toggle" aria-label={tr("显示素材详情")} title={tr("显示素材详情")} aria-expanded={false} onClick={() => setDetail(true)}><Icon name="inspector" size={16} /></button>}
+                </>
+              )
+            ) : (
               <>
                 {active === "回收站" && (navigation?.trash ?? 0) > 0 && (
                   <>
@@ -4701,7 +4729,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         ) : pinterestActive ? (
           <PinterestView
             key={pinterestViewKey}
+            ref={pinterestViewRef}
             language={language}
+            columns={columns}
+            fullscreen={viewerFullscreen}
+            onToggleFullscreen={() => setViewerFullscreen(v => !v)}
+            suspended={Boolean(settings || deleting || menu || renameNoticeOpen || schemaNoticeOpen || authorizationActive)}
+            onSelectPin={() => setDetail(true)}
+            onChrome={setPinterestChrome}
             onOpenSettings={() => { setSettingTab("连接"); setSettings(true) }}
           />
         ) : (
@@ -4954,6 +4989,18 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             <span title={asset.image_path || asset.image_url}>{assetPathTail ? `…/${assetPathTail}` : "—"}</span>
             <Icon name="external" size={12} />
           </button>
+        </aside>
+      )}
+      {pinterestActive && !preview && pinterestChrome.pin && detail && (
+        <aside className="details">
+          <PinterestPinDetail
+            language={language}
+            pin={pinterestChrome.pin}
+            onOpen={openExternalPinterestLink}
+            onOpenViewer={() => pinterestViewRef.current?.openViewer()}
+            viewerOpen={pinterestChrome.viewing}
+            onClose={() => setDetail(false)}
+          />
         </aside>
       )}
       {settings && (

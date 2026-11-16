@@ -21,7 +21,6 @@ export const PINTEREST_EN: Record<string, string> = {
   "打开设置": "Open Settings",
 
   // Board grid / Pin grid
-  "全部画板": "All boards",
   "{count} 个 Pin": "{count} Pins",
   "1 个 Pin": "1 Pin",
   "私密": "Private",

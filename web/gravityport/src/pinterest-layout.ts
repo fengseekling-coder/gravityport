@@ -41,8 +41,3 @@ export function layoutPinColumns(pins: PinterestPin[], columnCount: number): Pin
 
   return columns;
 }
-
-/** Column count for a container width with a 220px minimum column width. */
-export function pinterestColumnCount(containerWidth: number): number {
-  return Math.max(1, Math.floor(containerWidth / 220));
-}
