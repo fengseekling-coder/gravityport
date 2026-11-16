@@ -90,6 +90,7 @@ export async function run(ctx) {
       || onResult?.linkedByDrag !== true
       || onResult?.comparedByMenu !== true
       || onResult?.zoomAfterViewer !== true
+      || onResult?.tooltipShown !== true
     ) {
       throw new Error(`version-canvas gate-on flow failed: ${JSON.stringify(onResult)}`);
     }
@@ -288,6 +289,18 @@ function roundOnSource(config) {
     zoomAfterViewer = viewerOpened && worldScale() > scaleBefore;
     } catch (error) { zoomStepError = String(error && error.message || error); }
 
+    // App tooltip (tooltip.ts): hovering an icon-only button shows its name in
+    // the app's own label; the title comes back once the pointer leaves.
+    const exportBtn = document.querySelector('.version-canvas button[aria-label="导出版本树"]');
+    exportBtn.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' }));
+    const tipEl = await waitFor(() => {
+      const el = document.querySelector('.app-tooltip');
+      return el && !el.hidden && el.textContent === '导出版本树' ? el : null;
+    }, 'app tooltip for the export button');
+    const tipInApp = Boolean(tipEl.closest('.app')) && !exportBtn.hasAttribute('title');
+    exportBtn.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse', relatedTarget: document.body }));
+    const tooltipShown = tipInApp && document.querySelector('.app-tooltip').hidden && exportBtn.getAttribute('title') === '导出版本树';
+
     const backBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="返回素材库"]'), 'back button');
     backBtn.click();
     await waitFor(() => !document.querySelector('.version-canvas') && Boolean(document.querySelector('.workspace')), 'canvas closes back to gallery');
@@ -307,6 +320,7 @@ function roundOnSource(config) {
       comparedByMenu,
       zoomAfterViewer,
       zoomStepError,
+      tooltipShown,
     };
   })()`;
 }

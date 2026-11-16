@@ -118,6 +118,7 @@
 - 选中：底色 `--ui-selected`，字重 500 或 600；侧栏当前项图标变 `--ui-accent`。
 - 焦点：按钮 `outline: 2px solid var(--focus-ring)`、偏移 3px，只在键盘焦点（`:focus-visible`）时出现；输入框（文本框、搜索框、标签输入、提示词编辑）获得焦点不画绿框，只把边框换成 `--field-focus`（浅色 `#0000002e`、深色 `#ffffff33`），搜索框是 1px `--field-focus` 框加 `--ui-raised` 底；画廊里选中框就是焦点框，不再叠第二圈。
 - 禁用：透明度 0.4，不响应悬停。
+- 悬停提示：不用浏览器自带的 title 提示（内嵌浏览器不显示、Electron 里慢且是系统样式），由 `tooltip.ts` 统一接管所有带 `title` 的元素：停 400ms 在元素下方 6px 出 `.app-tooltip`（`--ui-raised` 底、细边、`--ui-shadow`、12px 字、最宽 280px、保留换行），贴底边时翻到上方；悬停期间暂时拿下 title，移开、按下、按键、滚动、失焦即放回。图标按钮照旧写 `title` 和 `aria-label` 即可。
 - 图片卡片：悬停内圈 2px `--ui-line`；选中 `.asset-selected` 内圈 2px `--focus-ring`；拖放目标缩到 0.985 加 `--ui-accent` 框。侧栏行做拖放目标时内圈 1.5px `--ui-accent`。
 
 ## 图标
