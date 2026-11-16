@@ -116,7 +116,6 @@
   color: var(--ui-secondary);
 }.app .details .tags .add-tag {
   color: var(--ui-secondary);
-  gap: var(--space-1);
 }.app .tag-editor {
   flex-basis: 100%;
   margin-top: var(--space-1);

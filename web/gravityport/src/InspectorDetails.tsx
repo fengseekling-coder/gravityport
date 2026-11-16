@@ -159,7 +159,7 @@ export function InspectorDetails(props: InspectorDetailsProps) {
             {expandedTags
               ? <button className="tags-toggle" aria-expanded="true" onClick={() => setExpandedTags(false)}>{tr("收起")}</button>
               : (collapsedTagCount < tagItems.length && <button className="tags-toggle" aria-expanded="false" onClick={() => setExpandedTags(true)}>{`+${tagItems.length - collapsedTagCount}`}</button>)}
-            {!addingTag && <button className="add-tag" onClick={() => { setAddingTag(true); setTagError("") }}><Icon name="plus" size={12} />{tr("添加标签")}</button>}
+            {!addingTag && <button className="add-tag" onClick={() => { setAddingTag(true); setTagError("") }}>{tr("添加标签")}</button>}
             {addingTag && <form className="tag-editor" onSubmit={e => {
               e.preventDefault()
               const tag = tagDraft.trim()
@@ -193,7 +193,7 @@ export function InspectorDetails(props: InspectorDetailsProps) {
                 </span>
               ))}
               <button className="tags-toggle" data-tag-measure-toggle>{`+${Math.max(0, tagItems.length - collapsedTagCount)}`}</button>
-              <button className="add-tag" data-tag-measure-add><Icon name="plus" size={12} />{tr("添加标签")}</button>
+              <button className="add-tag" data-tag-measure-add>{tr("添加标签")}</button>
             </div>
           </div>
           {asset.palette.length > 0 && <div className="palette">
