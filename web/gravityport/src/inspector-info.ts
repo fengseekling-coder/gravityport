@@ -293,3 +293,11 @@ export function humanSize(bytes: number | null): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
+
+/** The muted line under the asset name in the inspector: "图片 · Codex · 日期".
+ *  Shared by the gallery inspector and the version canvas inspector. */
+export function inspectorHeaderLine(info: SourceDescription, tr: (text: string) => string): string {
+  const kind = info.kindLabel === "视频" ? "视频" : "图片"
+  const template = info.dateLabel ? `${kind} · {source} · {date}` : `${kind} · {source}`
+  return tr(template).replace("{source}", tr(info.sourceLabel)).replace("{date}", info.dateLabel)
+}

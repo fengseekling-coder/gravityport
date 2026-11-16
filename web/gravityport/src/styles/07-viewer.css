@@ -380,10 +380,10 @@ video.black-image,
    window cannot be moved. Only the three 56px top rows drag; every control in
    them and every overlay that can cover them opts out. Never put a drag region
    on a document the window navigates away from (task 127). */
-.app.native-darwin :is(.brandbar, .toolbar, .detail-heading) {
+.app.native-darwin :is(.brandbar, .toolbar, .detail-heading, .vc-header) {
   -webkit-app-region: drag;
 }
-.app.native-darwin :is(.brandbar, .toolbar, .detail-heading) :is(button, input, select, textarea, a, label, [role="button"], .column-control),
+.app.native-darwin :is(.brandbar, .toolbar, .detail-heading, .vc-header) :is(button, input, select, textarea, a, label, [role="button"], .column-control),
 .modal-layer, .group-dialog-backdrop, .authorization-layer,
 .context-menu, .toolbar-select-menu, .column-popover, .toast,
 .pinterest-detail-backdrop, .pinterest-confirm-backdrop {

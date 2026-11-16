@@ -30,7 +30,7 @@ import { type GenerationDisplay } from "./version-tree"
 import { VERSION_CANVAS_ENTRY } from "./version-canvas-model"
 import { computeConversationRounds } from "./conversation-rounds"
 import { sanitizeAssetForExport } from "./feature-parity"
-import { describeSource, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
+import { describeSource, inspectorHeaderLine, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
 import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
@@ -99,12 +99,6 @@ function loadPreferences() {
 
 /** Inspector header line "kind · source · date". Whole-sentence templates keep
  *  the kind word singular — the bare "图片" key is the filter buttons' plural. */
-function inspectorHeaderLine(info: ReturnType<typeof describeSource>, tr: (text: string) => string): string {
-  const kind = info.kindLabel === "视频" ? "视频" : "图片"
-  const template = info.dateLabel ? `${kind} · {source} · {date}` : `${kind} · {source}`
-  return tr(template).replace("{source}", tr(info.sourceLabel)).replace("{date}", info.dateLabel)
-}
-
 // 任务 359（写死文字 2）：版本树副行里的 provider 原值（chatgpt 等小写代号）
 // 过一遍显示名；型号是设备数据，保留原文。
 const PROVIDER_LABELS: Record<string, string> = {
@@ -4408,13 +4402,6 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     >
       <aside className="sidebar">
         <div className="brandbar">
-          {canvasOpen && asset ? (
-            <img
-              className="canvas-brand-mark"
-              src={appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "/assets/gravityport-mark-dark.svg" : "/assets/gravityport-mark-light.svg"}
-              alt=""
-            />
-          ) : null}
           <strong>GravityPort</strong>
         </div>
         {projects.length > 1 && (

@@ -11,8 +11,8 @@ import {
 } from "react"
 import Icon from "./Icon"
 import { InspectorRow, RelationThumb } from "./InspectorParts"
-import { ReadingText } from "./ReadingText"
-import { aspectRatioLabel, humanSize } from "./inspector-info"
+import { InlineTextEditor, ReadingText } from "./ReadingText"
+import { aspectRatioLabel, describeSource, humanSize, inspectorHeaderLine } from "./inspector-info"
 import { conversationRoundRows, roundCompareSelection, type ConversationRoundRow } from "./conversation-rounds"
 import { RELATION_LABELS, relationTypes } from "./feature-parity"
 import type { Language } from "./i18n"
@@ -186,7 +186,8 @@ export default function VersionCanvas({
   const [link, setLink] = useState<LinkDraft | null>(null)
   const [promptExpanded, setPromptExpanded] = useState(false)
   const exportCanvas = useRef<HTMLCanvasElement | null>(null)
-  const noteRef = useRef<HTMLInputElement>(null)
+  const [noteEdit, setNoteEdit] = useState<{ id: string; draft: string } | null>(null)
+  const [noteExpanded, setNoteExpanded] = useState(false)
 
   useEffect(() => {
     setSelected((old) => {
@@ -587,6 +588,10 @@ export default function VersionCanvas({
     generationHistory?.output_assets?.find((item) => item.id === node.assetId) ||
     asset
   const currentAssetId = inspectedAsset.id
+  // 照主页右栏写「图片 · 来源 · 日期」，用这张图自己的素材数据。
+  const nodeAsset =
+    generationHistory?.output_assets?.find((item) => item.id === node.assetId) ||
+    (asset.id === node.assetId ? asset : null)
   const generationIdForAsset = (assetId: string) => {
     const seen = new Set<string>()
     for (const event of [
@@ -751,16 +756,18 @@ export default function VersionCanvas({
             <Icon name="export" />
             {tr("导出版本树")}
           </Button>
-          <Button
-            variant="quiet"
-            iconOnly
-            aria-label={tr("显示素材详情")}
-            aria-pressed={inspector}
-            title={tr("素材详情")}
-            onClick={() => setInspector((old) => !old)}
-          >
-            <Icon name="inspector" />
-          </Button>
+          {/* UI 审查 11-16：照主页，详情栏开着时开关在详情栏标题行，关了才出现在这里。 */}
+          {!inspector && (
+            <Button
+              variant="quiet"
+              iconOnly
+              aria-label={tr("显示素材详情")}
+              title={tr("显示素材详情")}
+              onClick={() => setInspector(true)}
+            >
+              <Icon name="inspector" />
+            </Button>
+          )}
         </div>
       </header>
 
@@ -1015,6 +1022,12 @@ export default function VersionCanvas({
       {/* No heading row: the top bar's panel button shows and hides it. */}
       {inspector && (
         <aside className="vc-inspector" aria-label={tr("素材详情")}>
+          <div className="detail-heading">
+            <strong>{tr("素材详情")}</strong>
+            <button aria-label={tr("关闭素材详情")} onClick={() => setInspector(false)}>
+              <Icon name="inspector" size={16} />
+            </button>
+          </div>
           {selected.length === 2 ? (
             <div className="vc-inspector-content">
               <div className="field-heading">
@@ -1060,11 +1073,9 @@ export default function VersionCanvas({
                     </button>
                   </div>
                   <span className="muted">
-                    {[
-                      roundTitle(node),
-                      providerName(node.provider),
-                      ...(node.final ? [tr("已定稿")] : []),
-                    ].join(" · ")}
+                    {nodeAsset
+                      ? inspectorHeaderLine(describeSource(nodeAsset, language), tr)
+                      : [roundTitle(node), providerName(node.provider)].join(" · ")}
                   </span>
                   <button
                     className="summary-preview"
@@ -1122,21 +1133,50 @@ export default function VersionCanvas({
                   collapseLabel={tr("收起")}
                 />
               </section>
-              <section className="detail-section">
+              {/* UI 审查 11-16：备注照主页右栏，点文字就地编辑，离开或 ⌘Enter 保存、Esc 取消。 */}
+              <section className="detail-section note-section">
                 <div className="field-heading">
                   <span>{tr("备注")}</span>
+                  <button
+                    aria-label={tr("复制备注")}
+                    disabled={!node.note}
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(node.note)
+                        notify("已复制备注")
+                      } catch {
+                        notify("无法复制备注")
+                      }
+                    }}
+                  >
+                    <Icon name="copy" size={16} />
+                  </button>
                 </div>
-                <TextField
-                  ref={noteRef}
-                  label={tr("素材备注")}
-                  className="vc-note-field"
-                  placeholder={tr("记下这一版的想法…")}
-                  value={node.note}
-                  maxLength={240}
-                  onChange={(event) =>
-                    patchNode(node.id, { note: event.target.value })
-                  }
-                />
+                {noteEdit && noteEdit.id === node.id ? (
+                  <InlineTextEditor
+                    label={tr("编辑备注")}
+                    placeholder={tr("添加备注")}
+                    value={noteEdit.draft}
+                    onChange={(draft) => setNoteEdit((old) => (old ? { ...old, draft } : old))}
+                    onSave={() => {
+                      patchNode(node.id, { note: noteEdit.draft.trim() })
+                      setNoteEdit(null)
+                    }}
+                    onCancel={() => setNoteEdit(null)}
+                  />
+                ) : (
+                  <ReadingText
+                    id={`vc-note-${node.id}`}
+                    text={node.note || tr("添加备注")}
+                    placeholder={!node.note}
+                    expanded={noteExpanded}
+                    onToggle={() => setNoteExpanded((old) => !old)}
+                    expandLabel={tr("展开备注")}
+                    collapseLabel={tr("收起")}
+                    onActivate={() => setNoteEdit({ id: node.id, draft: node.note })}
+                    activateLabel={tr("点击编辑")}
+                  />
+                )}
               </section>
               <section className="detail-section">
                 <div className="field-heading">
@@ -1423,13 +1463,6 @@ export default function VersionCanvas({
         </aside>
       )}
 
-      <footer className="vc-statusbar">
-        <div>
-          <Icon name="tree" size={12} />
-          <Text tone="secondary">{tr("每一次迭代，都有迹可循。")}</Text>
-        </div>
-        <Text tone="secondary">{tr("Shift 选两张后右键对比 · 双击查看大图")}</Text>
-      </footer>
 
       {menu && (
         <div
@@ -1481,7 +1514,8 @@ export default function VersionCanvas({
             onClick={() => {
               setMenu(null)
               setInspector(true)
-              setTimeout(() => noteRef.current?.focus(), 50)
+              const target = nodes.find((item) => item.id === menu?.node)
+              if (target) setNoteEdit({ id: target.id, draft: target.note })
             }}
           >
             <Icon name="message" />

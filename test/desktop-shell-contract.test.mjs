@@ -40,7 +40,7 @@ describe("desktop shell contract", () => {
     // region to be movable at all. Keep it to the native-darwin top rows; any
     // other drag declaration risks swallowing real clicks.
     const rules = [...source.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{[^{}]*app-region:\s*drag/gi)].map(match => match[1].trim());
-    assert.deepEqual(rules, [".app.native-darwin :is(.brandbar, .toolbar, .detail-heading)"]);
+    assert.deepEqual(rules, [".app.native-darwin :is(.brandbar, .toolbar, .detail-heading, .vc-header)"]);
   });
 
   it("GravityPort renders no simulated window control buttons", async () => {

@@ -11,15 +11,16 @@
   --vc-compare-width: 840px;
   --vc-preview-height: 300px;
   --vc-connector: color-mix(in srgb, var(--ui-secondary) 48%, var(--ui-panel));
-  --vc-board: color-mix(in srgb, var(--ui-panel) 90%, var(--ui-work));
+  /* UI 审查 11-16：中间栏照主页用工作区底色，两侧栏更深，三栏分层和主页一致。 */
+  --vc-board: var(--ui-work);
   --vc-dot: color-mix(in srgb, var(--ui-secondary) 24%, transparent);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--space-14) minmax(0, 1fr) var(--space-8);
+  grid-template-rows: var(--space-14) minmax(0, 1fr);
   height: 100dvh;
   min-width: 0;
   overflow: hidden;
-  background: var(--ui-panel);
+  background: var(--vc-board);
   color: var(--ui-text);
 }
 
@@ -28,14 +29,13 @@
 }
 
 .vc-header {
-  grid-column: 1 / -1;
+  grid-column: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-width: 0;
   padding: 0 var(--space-6);
-  border-bottom: var(--border-hairline) solid var(--ui-line);
-  background: var(--ui-panel);
+  background: var(--vc-board);
   gap: var(--space-4);
 }
 
@@ -164,13 +164,12 @@
 .vc-legend i.dashed { border-top-style: dashed; }
 .app .vc-help-button { background: var(--ui-raised); border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-round); }
 
-.vc-inspector { grid-column: 2; grid-row: 2; background: var(--ui-panel); border-left: var(--border-hairline) solid var(--ui-line); display: flex; flex-direction: column; min-height: 0; }
-.vc-inspector-content { overflow-y: auto; flex: 1; min-height: 0; padding: var(--space-4); scrollbar-width: thin; }
+.vc-inspector { grid-column: 2; grid-row: 1 / -1; background: var(--ui-panel); display: flex; flex-direction: column; min-height: 0; }
+.vc-inspector > .detail-heading { height: var(--space-14); padding: 0 var(--space-4); }
+.vc-inspector-content { overflow-y: auto; flex: 1; min-height: 0; padding: 0 var(--space-4) var(--space-4); scrollbar-width: thin; }
 .app .vc-inspector .asset-title .is-final svg { color: var(--ui-accent); fill: currentColor; }
 .vc-inspector .detail-section .muted { margin: 0; }
 .vc-inline-separator { padding: 0 var(--space-2); }
-.vc-note-field .ui-field-label { position: absolute; width: var(--border-hairline); height: var(--border-hairline); overflow: hidden; clip-path: inset(50%); }
-.vc-note-field .ui-field-input { height: var(--space-10); background: var(--ui-inset); border-color: transparent; }
 .vc-inspector-footer { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: var(--border-hairline) solid var(--ui-line); color: var(--ui-secondary); }
 .vc-mark-description { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
 .vc-mark-description > span:first-child { width: var(--space-5); height: var(--space-5); border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-round); display: grid; place-items: center; flex-shrink: 0; }
@@ -226,8 +225,6 @@
   margin-top: var(--space-2);
   padding-top: var(--space-3);
 }
-.vc-statusbar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 0 var(--space-5); border-top: var(--border-hairline) solid var(--ui-line); background: var(--ui-panel); }
-.vc-statusbar > div { display: flex; align-items: center; gap: var(--space-2); color: var(--ui-secondary); }
 
 .vc-context-menu { position: fixed; z-index: 40; width: calc(var(--space-16) * 3); padding: var(--space-1); border-radius: var(--radius-control); background: var(--ui-raised); box-shadow: var(--ui-shadow); border: var(--border-hairline) solid var(--ui-line); animation: surface-in var(--duration-control) var(--ease-out) both; }
 .app .vc-context-menu .ui-button { width: 100%; justify-content: flex-start; }
@@ -278,7 +275,6 @@
 .vc-export-privacy > svg { margin-top: var(--space-1); color: var(--ui-secondary); }
 
 .app.canvas-open .brandbar { gap: var(--space-2); justify-content: flex-start; }
-.canvas-brand-mark { width: var(--space-6); height: var(--space-6); }
 
 @media (max-width: 1200px) {
   .vc-legend { flex-direction: column; gap: var(--space-1); }
@@ -289,8 +285,7 @@
   .vc-board-toolbar { left: var(--space-3); right: var(--space-3); }
   .vc-board-bottom { left: var(--space-3); right: var(--space-3); }
   .vc-help-button { display: none !important; }
-  .vc-statusbar > .ui-text { display: none; }
-}
+  }
 @media (max-width: 800px) {
   .app .version-canvas.with-inspector { grid-template-columns: minmax(0, 1fr); }
   .vc-inspector { display: none; }
