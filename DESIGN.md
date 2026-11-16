@@ -246,6 +246,6 @@
 
 这些是源码现状，改到相关代码时顺手收掉：
 
-- 工具栏的文字和图标原来是浅色 `--ui-secondary` 放在 `--ui-work` 上（3.7:1）；11-16 改用 `--ui-secondary-on-work`（5.0:1），待用户在预览里确认浅色观感。
+- 工具栏的文字和图标原来是浅色 `--ui-secondary` 放在 `--ui-work` 上（3.7:1）；11-16 改用 `--ui-secondary-on-work`（5.0:1），用户看过对比图确认。
 - 深色 `--ui-muted` 放在 `--ui-raised` 上只有 4.4:1，右键菜单的小标题、快捷键提示就是这样；两套主题都要达标，得调深色 `--ui-muted` 本身，会影响全局。
 - `web/gravityport/src/styles/` 前面的原型层里被后面覆盖、不生效的字面量，2026-10-30（任务 316）已按级联核实删掉一批（焦点框旧色、设置导航和详情栏被覆盖的字号内边距、外观预览写死色）。还留着的几处是「颜色已死但声明还承担别的」：`.nav-row`/`.toolbar-right select`/`.search` 的 border 简写（颜色被后面的 `border-color` 覆盖，但线宽线型还靠它）、`.settings-nav h2` 和 `.delete-modal h3` 的 `margin: 0 0 …`（margin-bottom 被覆盖，margin-top 仍生效）。读源码时以计算值为准，改到这几处时整体重构。
