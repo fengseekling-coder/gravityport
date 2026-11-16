@@ -133,7 +133,9 @@
   box-shadow: 0 var(--border-hairline) var(--space-1) var(--ui-line);
   cursor: default;
 }
-.vc-node.is-selected { outline: var(--focus-width) solid var(--ui-accent); outline-offset: var(--space-1); }
+/* UI 审查 11-16：选中框照主页卡片——2px 边画在卡片边缘内侧，不留空隙（原来是卡片外 4px 处一圈）。 */
+.vc-node::after { content: ""; position: absolute; inset: calc(-1 * var(--border-hairline)); border: 2px solid transparent; border-radius: inherit; pointer-events: none; z-index: 2; }
+.vc-node.is-selected::after { border-color: var(--focus-ring); }
 .app .vc-node .vc-node-image { position: relative; width: 100%; height: var(--vc-node-image-height); min-height: 0; padding: 0; border-radius: var(--radius-control); overflow: hidden; background: var(--ui-raised); display: block; }
 .app .vc-node .vc-node-image:hover:not(:disabled) { background: var(--ui-raised); }
 .app .vc-node-image:active { transform: none; }
@@ -142,12 +144,12 @@
 .vc-final-badge svg { color: var(--ui-accent); }
 .vc-node-image .vc-mark-badge { position: absolute; bottom: var(--space-2); right: var(--space-2); background: var(--ui-panel); color: var(--ui-text); padding: var(--space-1) var(--space-2); border-radius: var(--radius-small); display: flex; gap: var(--space-1); align-items: center; }
 .vc-port { position: absolute; top: calc(var(--vc-node-image-height) / 2 - var(--space-1)); width: var(--space-2); height: var(--space-2); background: var(--ui-raised); border: var(--border-hairline) solid var(--vc-connector); border-radius: var(--radius-round); }
-.vc-port { cursor: crosshair; z-index: 1; transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease; }
+.vc-port { cursor: crosshair; z-index: 3; transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease; }
 .vc-port::before { content: ""; position: absolute; inset: calc(-1 * var(--space-2)); border-radius: var(--radius-round); }
 .vc-port:hover, .vc-node.is-link-source .vc-port { background: var(--ui-accent); border-color: var(--ui-accent); transform: scale(1.4); }
 .vc-stage.hand-tool .vc-port { cursor: inherit; }
 .vc-stage.hand-tool .vc-port:hover { background: var(--ui-raised); border-color: var(--vc-connector); transform: none; }
-.vc-node.is-link-target { outline: var(--focus-width) dashed var(--ui-accent); outline-offset: var(--space-1); }
+.vc-node.is-link-target::after { border-style: dashed; border-color: var(--focus-ring); }
 .vc-edges .vc-link-draft path { stroke: var(--ui-accent); stroke-dasharray: 4 4; }
 .vc-edges .vc-link-draft circle { fill: var(--ui-accent); stroke: var(--ui-accent); }
 .vc-port-in { left: calc(-1 * var(--space-1)); }
