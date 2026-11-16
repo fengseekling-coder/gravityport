@@ -479,7 +479,7 @@ const english: Record<string, string> = {
   "3. 点「加载已解压的扩展程序」，选这个文件夹。（Windows：在选择窗口上方的地址栏粘贴位置，按回车。）": "3. Select Load unpacked and choose this folder. (Windows: paste the location into the address bar at the top of the window and press Enter.)",
   "然后在扩展设置里打开「自动收录」。": "Then turn on auto-capture in the extension settings.",
   "也可以去官网下载": "Alternatively, download from the website:",
-  "扩展现在需要手动更新。改成跟随 App 自动更新：": "Your extension currently requires manual updates. Switch to automatic updates with the app:",
+  "按以下步骤重新加载一次扩展，之后将跟随 App 自动更新：": "Reload the extension once using the steps below. After that, it updates automatically with the app:",
   "不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。": "Don’t remove the old extension first. Load this folder directly to preserve queued captures. After switching, you may delete the old extension folder.",
   "（跟随 App 自动更新）": " (automatically updated with the app)",
   "正在更新扩展，一分钟内完成": "Updating the extension; this should finish within a minute.",

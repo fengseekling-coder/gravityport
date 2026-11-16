@@ -246,7 +246,7 @@ export function WebCaptureStatusCardView({
       </div>
       {migrate ? (
         <div className="web-capture-note">
-          <p className="web-capture-lead">{t("扩展现在需要手动更新。改成跟随 App 自动更新：")}</p>
+          <p className="web-capture-lead">{t("按以下步骤重新加载一次扩展，之后将跟随 App 自动更新：")}</p>
           {installationSteps}
           <p className="web-capture-tip">{t("不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。")}</p>
         </div>
