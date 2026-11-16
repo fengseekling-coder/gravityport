@@ -67,7 +67,7 @@ export function PinterestGuide({
     <div className="pinterest-guide">
       {/* 任务 359（MAIN-32d）：引导页标题用名词短语，错误行另用带指令的整句。 */}
       <h2>{needsReconnect ? t("Pinterest 授权已失效") : t("连接 Pinterest")}</h2>
-      <p>{t("连接后可在此浏览 Pinterest 账号中的画板和 Pin。内容仅在此电脑上实时显示，不会存入素材库，也不会上传。")}</p>
+      <p>{t("连接后可在此浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载，不存入素材库，也不经过 GravityPort 的服务器。")}</p>
       {error ? <p className="pinterest-error-text">{error}</p> : null}
       <div className="pinterest-guide-actions">
         {connecting ? (
