@@ -167,7 +167,7 @@ export function WebCaptureStatusCardView({
           「在访达中显示」按钮的 /Win/i.test(navigator.platform) 写法。 */}
       <p className="web-capture-step">{t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform)
         ? "3. 点「加载已解压的扩展程序」，选这个文件夹。（Windows：在选择窗口上方的地址栏粘贴位置，按回车。）"
-        : "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 ⌘⇧G，粘贴位置。）")}</p>
+        : "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 /，粘贴位置。）")}</p>
       <p>{t("然后在扩展设置里打开「自动收录」。")}</p>
     </div>
   )

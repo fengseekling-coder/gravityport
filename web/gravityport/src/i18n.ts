@@ -475,7 +475,7 @@ const english: Record<string, string> = {
   "1. 复制扩展文件夹位置": "1. Copy the extension folder location",
   "复制位置": "Copy location",
   "2. 在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」。": "2. Open chrome://extensions in Chrome and enable Developer mode (top right).",
-  "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 ⌘⇧G，粘贴位置。）": "3. Select Load unpacked and choose this folder. (Mac: press ⌘⇧G in the file picker and paste the path.)",
+  "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 /，粘贴位置。）": "3. Select Load unpacked and choose this folder. (Mac: press / in the file picker and paste the path.)",
   // 任务 389（低18 ①）：第 3 步在 Windows 上也有一句怎么粘贴位置的提示，
   // 句式对齐 Mac 那句。
   "3. 点「加载已解压的扩展程序」，选这个文件夹。（Windows：在选择窗口上方的地址栏粘贴位置，按回车。）": "3. Select Load unpacked and choose this folder. (Windows: paste the location into the address bar at the top of the window and press Enter.)",
