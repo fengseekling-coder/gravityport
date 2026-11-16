@@ -155,7 +155,8 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: var(--space-1);
+  /* 431 验收：封面和画板名之间同画廊卡片间距 8px（原 4px 贴得太紧）。 */
+  gap: var(--space-2);
   min-width: 0;
   padding: 0;
   border: 0;
