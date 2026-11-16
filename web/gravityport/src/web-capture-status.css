@@ -133,6 +133,66 @@
   margin: var(--space-1) 0;
 }
 
+/* UI 审查 11-16：安装步骤。编号悬挂，折行与文字对齐；路径在代码框里整段显示。 */
+.web-capture-lead {
+  color: var(--ui-text);
+}
+
+.web-capture-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+.web-capture-note .web-capture-steps p,
+.web-capture-steps p {
+  margin: 0;
+}
+
+.web-capture-step {
+  padding-left: 1.4em;
+  text-indent: -1.4em;
+}
+
+.web-capture-step-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-left: 1.4em;
+  min-width: 0;
+}
+
+.web-capture-note code.web-capture-path,
+.web-capture-path {
+  display: block;
+  align-self: stretch;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: var(--ui-inset);
+  color: var(--ui-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.web-capture-path-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.web-capture-tip {
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+
 .web-capture-row {
   margin: 0;
   color: var(--ui-secondary);

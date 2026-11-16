@@ -8,7 +8,7 @@
  * are pure helpers so the boundary stays testable.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Fragment, useCallback, useEffect, useRef, useState } from "react"
 import {
   fetchProviderDeletionSettings,
   fetchWebCaptureStatus,
@@ -142,21 +142,30 @@ export function WebCaptureStatusCardView({
     const api = desktopAPI() as { revealManagedExtensionFolder?: () => Promise<unknown> } | null
     void api?.revealManagedExtensionFolder?.()
   }
+  // UI 审查 11-16：步骤各占一行、折行与文字对齐；路径放进代码框，在斜杠处换行，
+  // 两个按钮放在路径下面。文字照旧。
+  const folderPath = managed?.path || ""
+  const pathParts = folderPath.split("/")
   const installationSteps = (
-    <div className="web-capture-note">
-      <p>{t("1. 复制扩展文件夹位置")}</p>
-      <p className="web-capture-row">
-        <code>{managed?.path}</code>
-        <button type="button" className="web-capture-secondary-btn" onClick={copyFolder}>{t("复制位置")}</button>
-        {copied ? <span>{t("已复制")}</span> : null}
-        <button type="button" className="web-capture-secondary-btn" onClick={showFolder}>
-          {t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform) ? "在文件资源管理器中显示" : "在访达中显示")}
-        </button>
-      </p>
-      <p>{t("2. 在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」。")}</p>
+    <div className="web-capture-steps">
+      <p className="web-capture-step">{t("1. 复制扩展文件夹位置")}</p>
+      <div className="web-capture-step-body">
+        <code className="web-capture-path">
+          {pathParts.map((part, index) => (
+            <Fragment key={index}>{part}{index < pathParts.length - 1 ? <>/<wbr /></> : null}</Fragment>
+          ))}
+        </code>
+        <div className="web-capture-path-actions">
+          <button type="button" className="web-capture-secondary-btn" onClick={copyFolder}>{copied ? t("已复制") : t("复制位置")}</button>
+          <button type="button" className="web-capture-secondary-btn" onClick={showFolder}>
+            {t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform) ? "在文件资源管理器中显示" : "在访达中显示")}
+          </button>
+        </div>
+      </div>
+      <p className="web-capture-step">{t("2. 在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」。")}</p>
       {/* 任务 389（低18 ①）：第 3 步的选文件夹提示按系统给一句；判断沿用上面
           「在访达中显示」按钮的 /Win/i.test(navigator.platform) 写法。 */}
-      <p>{t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform)
+      <p className="web-capture-step">{t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform)
         ? "3. 点「加载已解压的扩展程序」，选这个文件夹。（Windows：在选择窗口上方的地址栏粘贴位置，按回车。）"
         : "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 ⌘⇧G，粘贴位置。）")}</p>
       <p>{t("然后在扩展设置里打开「自动收录」。")}</p>
@@ -223,7 +232,7 @@ export function WebCaptureStatusCardView({
         ) : null}
         {!loading && !active && available ? (
           <div className="web-capture-note">
-            <p>{t("安装浏览器扩展（装一次，以后跟随 App 自动更新）：")}</p>
+            <p className="web-capture-lead">{t("安装浏览器扩展（装一次，以后跟随 App 自动更新）：")}</p>
             {installationSteps}
             <small>{t("也可以去官网下载")} <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a></small>
           </div>
@@ -237,9 +246,9 @@ export function WebCaptureStatusCardView({
       </div>
       {migrate ? (
         <div className="web-capture-note">
-          <p>{t("扩展现在需要手动更新。改成跟随 App 自动更新：")}</p>
+          <p className="web-capture-lead">{t("扩展现在需要手动更新。改成跟随 App 自动更新：")}</p>
           {installationSteps}
-          <p>{t("不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。")}</p>
+          <p className="web-capture-tip">{t("不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。")}</p>
         </div>
       ) : null}
       {managedLag ? (

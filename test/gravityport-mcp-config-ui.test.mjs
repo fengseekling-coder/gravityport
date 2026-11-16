@@ -91,7 +91,9 @@ describe("MCP client config card", () => {
     for (const { id, hint } of card.MCP_CLIENTS) {
       const html = decode(render({ client: id }));
       assert.ok(html.includes(`data-mcp-client="${id}"`));
-      assert.ok(html.includes(config[id]), `${id} config is shown verbatim`);
+      // The code block wraps each line for hanging indents; its text is still the config verbatim.
+      const codeText = /<code>([\s\S]*?)<\/code>/.exec(html)?.[1].replace(/<[^>]+>/g, "");
+      assert.equal(codeText, config[id], `${id} config is shown verbatim`);
       assert.ok(html.includes(hint));
       for (const label of ["Claude Desktop", "Claude Code", "Codex"]) assert.ok(html.includes(`>${label}</button>`));
       assert.match(html, new RegExp(`aria-pressed="true"[^>]*>${card.MCP_CLIENTS.find((c) => c.id === id).label}<`));

@@ -100,21 +100,26 @@
   color: var(--ui-text);
 }
 
+.mcp-config-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
 .mcp-config-clients {
   align-self: flex-start;
 }
 
 .mcp-config-code {
-  position: relative;
   min-width: 0;
 }
 
+/* UI 审查 11-16：配置整段显示，长路径折行，不限高、不横向滚动。 */
 .mcp-config-code pre {
   margin: 0;
-  max-height: 220px;
-  overflow: auto;
   padding: var(--space-3);
-  padding-right: calc(var(--space-3) + 72px);
   border: 1px solid var(--ui-line);
   border-radius: var(--radius-small);
   background: var(--ui-inset);
@@ -122,12 +127,19 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
   line-height: 1.6;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   user-select: text;
 }
 
 .mcp-config-copy-button {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
+  flex-shrink: 0;
+}
+
+.mcp-config-line {
+  display: block;
+}
+
+.mcp-config-indent {
+  display: none;
 }

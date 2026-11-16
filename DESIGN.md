@@ -80,7 +80,7 @@
 - 行高：单行控件和列表行 16px，段落 20px（`--type-body-line`），页标题 28px。
 - 只有标题收紧字距：16px 标题 -0.3px（确认框标题 -0.5px），20px 页标题 -0.4px。
 - 计数、尺寸、百分比、列数用 `font-variant-numeric: tabular-nums`。
-- 等宽字只用在两处：反馈页的日志框（11px / 1.5）和连接页 MCP 配置的代码块（11px / 1.6），字体栈 `ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`。
+- 等宽字只用在三处：反馈页的日志框（11px / 1.5）、连接页 MCP 配置的代码块和浏览器扩展卡的文件夹路径（都是 11px / 1.6），字体栈 `ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`。
 
 ## 间距和尺寸
 
@@ -154,8 +154,8 @@
 | 导入结果清单 | `ImportReviewDialog.tsx`、`.import-review` | 手动导入结束后的逐张确认，外观照确认框规格（`--ui-panel` 底、`--radius-panel`、`--ui-shadow`、`surface-in` 320ms、遮罩同确认框）；标题一个问题，下面两节「已在素材库的其他位置」「可能重复」（有内容才显示），像素相同的只给一行只读说明；每行缩略图加宽×高加选项，默认全部保留，节标题右侧「全部…」快捷；行多时先 100 行，底部「再显示 100 条」；底部「取消」+「按所选处理」 |
 | 设置窗口 | `.settings-modal` | 最大 736×560，左栏 176px、导航每行高 32px，内容放在 `.settings-section.settings-card` 卡片里；右上角关闭键用 32px 灰色圆形图标按钮 |
 | 设置卡片 | `.settings-section.settings-card`、`.settings-action-btn`、`.settings-status-dot` | 统一卡片容器：`--ui-inset` 浅灰底、8px 圆角（`--radius-control`）、无描边、内边距 16px、卡片间距 12px；头部 `.settings-card-header > .settings-card-head`（左粗体标题、右操作）配 `.settings-card-desc` 说明，分栏用 `.settings-card-sub`。操作小按钮 `.settings-action-btn` 高 28px、最窄 76px、`--ui-raised` 底加 `--ui-line` 细边。状态小圆点 6px 正圆，已连接用 `--ui-accent`、警告用 `--ui-danger`、未连接用 `--ui-muted` |
-| MCP 配置卡片 | `McpClientConfigCard.tsx`、`mcp-config.css` | 连接页里：`--ui-inset` 底、`--radius-control` 圆角、无描边；右上角无配置时给「使用指南」小按钮；配置代码块 `--ui-inset` 底，右上角复制按钮 |
-| 浏览器扩展卡 | `WebCaptureStatusCard.tsx`、`web-capture-status.css` | 连接页里：`--ui-inset` 底、`--radius-control` 圆角、无描边；标题旁带小圆点状态与版本号，「有新版扩展」链接放标题旁，待重试张数加重试按钮、最近一次错误一行；离线空间快满、因空间不足丢过票据、只剩网址时各一行提示；打开时取一次，刷新按钮手动取 |
+| MCP 配置卡片 | `McpClientConfigCard.tsx`、`mcp-config.css` | 连接页里：`--ui-inset` 底、`--radius-control` 圆角、无描边；右上角无配置时给「使用指南」小按钮；配置代码块 `--ui-inset` 底，整段展开不限高、不横向滚动，长行折行且折出的部分按本行缩进再退两格；复制按钮在助手切换按钮同一行最右边，不压在代码上 |
+| 浏览器扩展卡 | `WebCaptureStatusCard.tsx`、`web-capture-status.css` | 连接页里：`--ui-inset` 底、`--radius-control` 圆角、无描边；标题旁带小圆点状态与版本号，「有新版扩展」链接放标题旁，待重试张数加重试按钮、最近一次错误一行；离线空间快满、因空间不足丢过票据、只剩网址时各一行提示；打开时取一次，刷新按钮手动取。安装/换装步骤：开头一句 `--ui-text`，1–3 步编号悬挂、折行与文字对齐，扩展文件夹路径放等宽代码框（同 MCP 代码块）、在斜杠处换行，「复制位置」「在访达中显示」在路径下方，复制后按钮字变「已复制」；末尾「不要先移除旧扩展…」12px `--ui-muted` |
 | 查看器 | `ImageViewer.tsx`、`.viewer-controls` | 底部缩放条，鼠标不动时淡出；「适合窗口」时画面下沿落在缩放条上方。视频用原生控件（禁全屏/下载/画中画，全屏走缩放条按钮），视频上的按下和双击不触发平移和 1:1 切换；图片先显示预览图，放大或适合窗口时需要的像素超过预览图，就在后台加载原图、解码完再替换（适合窗口时停留 200 毫秒后才加载），失败留在预览图。媒体加载出错（原图被挪走、文件损坏）时台面显示空态：32px 图标、「原图找不到了」一句、一个「打开素材位置」按钮（`.viewer-missing`）。正在看的这张被别处删掉（移到回收站、永久删除、归档）时检视器跳到原位置现在的那一张，没有就回画廊；只是不再符合当前视图（比如在收藏里被取消收藏）的，继续显示，关掉检视器后它才从画廊消失。正在看的这张要被 MCP 或即梦删除同步移进回收站时，先弹授权确认框问（任务 385） |
 | 空状态 | `.empty-state` | 32px 图标 + 一句话 + 一句提示，文案在 `empty-state.ts`。在堆叠里且无搜索词和类型筛选的空态是「这个堆叠已经空了」；正常情况下正在看的堆叠没了会自动退回进堆叠前的视图，这是兜底 |
 | 启动页整理提示 | `desktop/startup.html` `.organizing-note` | 开库慢时骨架启动页里的单行状态「正在整理素材库…」：12px `--muted` 色、居中，压在画廊骨架区顶部，跟随骨架的呼吸动画，不另加动画和控件。页面打开约 1.5 秒还没被真正界面换走才显示（正常快速启动永远看不到）；升级数据库的那次启动由主进程确认升级后立即显示。骨架页开始 10 秒后这行自己带上已用秒数并每秒更新（「正在整理素材库…（已用 N 秒）」，任务 348：升级后那次开库要等一次整理数据库，主进程发不了消息，页面自己计时）。启动页读不到 App 的语言设置，按系统语言显示：中文系统用中文，其他系统用英文（「Organizing your library… (Ns so far)」，骨架里的「资产检视器」写作 Inspector） |

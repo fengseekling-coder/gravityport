@@ -70,6 +70,8 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
           {config.installWarning === "not-in-applications" ? (
             <p className="mcp-config-warning" role="alert">{t("请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。")}</p>
           ) : null}
+          {/* UI 审查 11-16：复制按钮和助手切换同一行，不再压在代码上。 */}
+          <div className="mcp-config-toolbar">
           {/* 任务 359（SET-09c）：按钮组读屏名与卡片标题区分开。 */}
           <div className="segmented mcp-config-clients" role="group" aria-label={t("AI 助手")}>
             {MCP_CLIENTS.map((entry) => (
@@ -84,12 +86,13 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
               </button>
             ))}
           </div>
-          <p className="mcp-config-hint">{t(selected.hint)}</p>
-          <div className="mcp-config-code">
-            <pre data-mcp-client={selected.id}><code>{text}</code></pre>
             <button type="button" className="neutral-button mcp-config-copy-button" onClick={onCopy} disabled={!text}>
               {copied ? t("已复制") : t("复制")}
             </button>
+          </div>
+          <p className="mcp-config-hint">{t(selected.hint)}</p>
+          <div className="mcp-config-code">
+            <pre data-mcp-client={selected.id}><code>{codeLines(text)}</code></pre>
           </div>
           <p className="mcp-config-note">{t("更改存储位置后无需修改此配置，重启 AI 助手即可。GravityPort 无需保持打开。")}</p>
         </>
@@ -100,6 +103,22 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
       )}
     </section>
   )
+}
+
+// UI 审查 11-16：每行一块，缩进用留白画（原空格藏起来但仍在文本里），
+// 折出来的部分再退两格，层次不乱；复制拿的是整段配置原文。
+function codeLines(text: string) {
+  const lines = text.split("\n")
+  return lines.map((line, index) => {
+    const body = line.trimStart()
+    const indent = line.length - body.length
+    return (
+      <span key={index} className="mcp-config-line" style={{ paddingLeft: `${indent + 2}ch`, textIndent: "-2ch" }}>
+        {indent > 0 ? <span className="mcp-config-indent">{line.slice(0, indent)}</span> : null}
+        {index < lines.length - 1 ? `${body}\n` : body}
+      </span>
+    )
+  })
 }
 
 async function writeClipboardText(text: string) {
