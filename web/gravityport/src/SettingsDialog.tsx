@@ -127,7 +127,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
                       <div className="settings-card-head">
                         <strong>{tr("外观")}</strong>
                       </div>
-                      <p className="settings-card-desc">{tr("选择界面配色，或跟随系统自动切换。")}</p>
                     </div>
                     <div className="appearance-options">
                       {["跟随系统", "浅色", "深色"].map((a, i) => (
@@ -164,7 +163,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
                         <strong>{tr("显示素材名称")}</strong>
                         <Switch label={tr("显示素材名称")} checked={cardInfo} onCheckedChange={setCardInfo} />
                       </div>
-                      <p className="settings-card-desc">{tr("在缩略图下方显示素材名称。")}</p>
                     </div>
                   </section>
                   <section className="settings-section settings-card">
@@ -176,7 +174,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
                           <button className={language === "en" ? "on" : ""} aria-pressed={language === "en"} onClick={() => setLanguage("en")}>English</button>
                         </div>
                       </div>
-                      <p className="settings-card-desc">{tr("切换界面、菜单与提示信息的显示语言。")}</p>
                     </div>
                   </section>
                 </>

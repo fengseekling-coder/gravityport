@@ -58,11 +58,8 @@ const english: Record<string, string> = {
   "设置": "Settings", "存储": "Storage", "关于": "About",
   "让每一次 AI 创作，有迹可循": "Every AI creation leaves a trail",
   "关闭设置": "Close settings", "外观": "Appearance",
-  "选择界面配色，或跟随系统自动切换。": "Choose the interface appearance, or follow the system setting.",
   "界面语言": "Language",
-  "切换界面、菜单与提示信息的显示语言。": "Switch the language used for the interface, menus, and messages.",
   "常规": "General", "显示素材名称": "Show asset names",
-  "在缩略图下方显示素材名称。": "Show asset names below thumbnails.",
   "跟随系统": "System", "浅色": "Light", "深色": "Dark",
 
   // ── 检视器头部行（模板键：kind 由 inspectorHeaderLine 拼进键）──
