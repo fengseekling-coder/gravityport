@@ -1476,33 +1476,35 @@ export default function VersionCanvas({
                                 value: type,
                                 label: tr(RELATION_LABELS[type] || type),
                               }))}
-                              onChange={(value) =>
+                              onChange={(value) => {
+                                // UI 审查 11-16（用户定）：选完就保存，不再另点「保存关系」；
+                                // 没存上（失败或正忙）就退回原来的类型，不显示一个没存的状态。
+                                const dropDraft = () =>
+                                  setRelationDrafts((old) => {
+                                    const next = { ...old }
+                                    delete next[key]
+                                    return next
+                                  })
+                                if (value === relation.relation_type) return dropDraft()
                                 setRelationDrafts((old) => ({ ...old, [key]: value }))
-                              }
+                                let saved = false
+                                void mutateRelation(async () => {
+                                  await editGenerationRelation(project, {
+                                    childGenerationId: relation.child_generation_id,
+                                    parentGenerationId: relation.parent_generation_id,
+                                    previousRelationType: relation.relation_type,
+                                    relationType: value,
+                                    evidence: relation.evidence,
+                                  })
+                                  saved = true
+                                }).then(() => (saved ? notify("已保存") : dropDraft()))
+                              }}
                             />
                           )}
                           {locked ? (
                             <small>{tr("已由来源平台验证，无法修改")}</small>
                           ) : (
                             <>
-                              <button
-                                disabled={relationBusy}
-                                onClick={() =>
-                                  runMutationWithToast(
-                                    () =>
-                                      editGenerationRelation(project, {
-                                        childGenerationId: relation.child_generation_id,
-                                        parentGenerationId: relation.parent_generation_id,
-                                        previousRelationType: relation.relation_type,
-                                        relationType: relationDrafts[key] || relation.relation_type,
-                                        evidence: relation.evidence,
-                                      }),
-                                    "已保存",
-                                  )
-                                }
-                              >
-                                {tr("保存关系")}
-                              </button>
                               <button
                                 disabled={relationBusy}
                                 onClick={() =>

@@ -91,6 +91,7 @@ export async function run(ctx) {
       || onResult?.comparedByMenu !== true
       || onResult?.zoomAfterViewer !== true
       || onResult?.tooltipShown !== true
+      || onResult?.typeSavedOnPick !== true
     ) {
       throw new Error(`version-canvas gate-on flow failed: ${JSON.stringify(onResult)}`);
     }
@@ -217,8 +218,21 @@ function roundOnSource(config) {
     const confirmedOnCanvas = (
       unlabeled
       && !document.querySelector('.vc-edges g.suggested')
-      && (document.querySelector('.vc-inspector')?.textContent || '').includes('保存关系')
+      && (document.querySelector('.vc-inspector')?.textContent || '').includes('删除关系')
+      && !(document.querySelector('.vc-inspector')?.textContent || '').includes('保存关系')
     );
+
+    // Picking a relation type saves it at once (no 保存关系 button): choose 变体
+    // in the app dropdown, wait for the 已保存 toast, and the dropdown keeps it
+    // after the history refresh clears the drafts.
+    const typeTrigger = () => document.querySelector('.vc-inspector .generation-relation-editor .toolbar-select');
+    (await waitFor(() => typeTrigger(), 'relation type dropdown')).click();
+    const variantOption = await waitFor(() => Array.from(document.querySelectorAll('.toolbar-select-option'))
+      .find((option) => option.textContent.trim() === '变体'), '变体 option');
+    variantOption.click();
+    await waitFor(() => (document.querySelector('.vc-toast')?.textContent || '').includes('已保存'), 'relation type saved toast');
+    await waitFor(() => (typeTrigger()?.textContent || '').includes('变体'), 'dropdown keeps the saved type');
+    const typeSavedOnPick = (typeTrigger()?.textContent || '').includes('变体');
 
     // Drag from the confirmed child's right dot onto the unlinked sibling card.
     const nodeEl = (id) => document.querySelector('.vc-node[data-canvas-node="' + id + '"]');
@@ -321,6 +335,7 @@ function roundOnSource(config) {
       zoomAfterViewer,
       zoomStepError,
       tooltipShown,
+      typeSavedOnPick,
     };
   })()`;
 }
