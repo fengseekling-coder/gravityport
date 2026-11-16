@@ -508,7 +508,6 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
       }),
     );
     for (const required of [
-      "本页暂存",
       "返回素材库",
       "生成关系",
       "版本对比",
@@ -518,7 +517,14 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
     ]) {
       assert.ok(html.includes(required), `VersionCanvas output missing "${required}"`);
     }
-    for (const forbidden of ["exampleCanvas", "示例", "coffee"]) {
+    for (const forbidden of [
+      "exampleCanvas",
+      "示例",
+      "coffee",
+      "本页暂存",
+      "画布修改仅保留在当前页面",
+      "标注已暂存",
+    ]) {
       assert.ok(!html.includes(forbidden), `VersionCanvas must omit "${forbidden}"`);
     }
     assert.match(html, /<g class="suggested">/, "suggested relations still draw as dashed lines");
@@ -573,6 +579,7 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
         queueMicrotask(() => this.onload && this.onload());
       }
     };
+    const ellipses = [];
     globalThis.document = {
       createElement: () => ({
         width: 0,
@@ -586,7 +593,7 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
           roundRect() {},
           fill() {},
           drawImage() {},
-          ellipse() {},
+          ellipse(x, y) { ellipses.push([x, y]); },
           stroke() {},
           setLineDash() {},
           measureText(t) { return { width: t.length * 6 }; },
@@ -594,10 +601,26 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
       }),
     };
     try {
-      const doc = offModel.canvasFromHistory(makeHistory(), makeAsset("a1", "hero-v1.png"));
+      const historyWithNotes = makeHistory();
+      historyWithNotes.output_assets = historyWithNotes.output_assets.map((item) => ({
+        ...item,
+        note: `note-${item.id}`,
+      }));
+      const doc = offModel.canvasFromHistory(historyWithNotes, {
+        ...makeAsset("a1", "hero-v1.png"),
+        note: "live-current-note",
+      });
+      assert.equal(doc.nodes.find((n) => n.assetId === "a1")?.note, "live-current-note", "canvasFromHistory reads live note on current asset");
+      assert.equal(doc.nodes.find((n) => n.assetId === "a2")?.note, "note-a2", "canvasFromHistory reads output_assets notes");
       await exportMod.renderCanvasExport(doc.title, doc.nodes, doc.edges, { prompts: false, sources: false, notes: true }, "zh");
       assert.ok(!drawnTexts.some((t) => t.includes("sunset bottle on stone")), "prompts stay excluded by default");
       assert.ok(!drawnTexts.some((t) => t.includes("chatgpt")), "sources stay excluded by default");
+
+      ellipses.length = 0;
+      const portrait = { ...doc.nodes[0], width: 900, height: 1600, marks: [{ x: 0.5, y: 0.5, text: "center" }] };
+      const box = offModel.nodeBox(portrait);
+      await exportMod.renderCanvasExport(doc.title, [portrait], [], { prompts: false, sources: false, notes: true }, "zh");
+      assert.deepEqual(ellipses, [[box.x + 0.5 * box.width, box.y + 0.5 * box.height]], "export draws marks relative to nodeBox, not hardcoded 204x254");
     } finally {
       if (origImage === undefined) delete globalThis.Image; else globalThis.Image = origImage;
       if (origDocument === undefined) delete globalThis.document; else globalThis.document = origDocument;

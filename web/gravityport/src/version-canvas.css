@@ -47,7 +47,6 @@
 .vc-header-actions,
 .vc-view-tabs,
 .vc-tool-group,
-.vc-memory-status,
 .vc-annotation-tools {
   display: flex;
   align-items: center;
@@ -58,8 +57,6 @@
 .vc-breadcrumb > .ui-text { white-space: nowrap; }
 .vc-breadcrumb > .ui-text--label { overflow: hidden; text-overflow: ellipsis; }
 .vc-breadcrumb > svg { color: var(--ui-muted); }
-.vc-memory-status { color: var(--ui-secondary); margin-right: var(--space-3); white-space: nowrap; }
-.vc-memory-status > span { width: var(--space-1); height: var(--space-1); border-radius: var(--radius-round); background: var(--ui-accent); }
 .vc-divider { width: var(--border-hairline); height: var(--space-4); background: var(--ui-line); margin: 0 var(--space-1); flex-shrink: 0; }
 .vc-view-tabs { flex-shrink: 0; }
 .vc-summary { margin-left: var(--space-2); white-space: nowrap; }
@@ -151,7 +148,6 @@
 .app .vc-inspector .asset-title .is-final svg { color: var(--ui-accent); fill: currentColor; }
 .vc-inspector .detail-section .muted { margin: 0; }
 .vc-inline-separator { padding: 0 var(--space-2); }
-.vc-inspector-footer { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: var(--border-hairline) solid var(--ui-line); color: var(--ui-secondary); }
 .vc-mark-description { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
 .vc-mark-description > span:first-child { width: var(--space-5); height: var(--space-5); border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-round); display: grid; place-items: center; flex-shrink: 0; }
 .vc-mark-description > .ui-text { min-width: 0; overflow-wrap: anywhere; }
@@ -250,8 +246,21 @@
 .vc-annotation { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); }
 .vc-annotation-tools { width: 100%; justify-content: space-between; border-bottom: var(--border-hairline) solid var(--ui-line); padding-bottom: var(--space-2); }
 .vc-annotation-tools > span { display: flex; align-items: center; gap: var(--space-2); }
-.app .vc-annotation-image { position: relative; display: block; padding: 0; height: min(48dvh, 420px); width: auto; aspect-ratio: 3/4; overflow: hidden; background: var(--ui-primary); cursor: crosshair; border-radius: var(--radius-control); }
-.vc-annotation-image img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.app .vc-annotation .vc-annotation-image {
+  position: relative;
+  display: block;
+  padding: 0;
+  min-height: 0;
+  width: min(100%, calc(min(48dvh, 420px) * var(--vc-annotation-ratio, 0.75)));
+  height: auto;
+  overflow: hidden;
+  background: var(--ui-inset);
+  cursor: crosshair;
+  border-radius: var(--radius-control);
+}
+.app .vc-annotation .vc-annotation-image:hover:not(:disabled) { background: var(--ui-inset); }
+.app .vc-annotation .vc-annotation-image:active { transform: none; }
+.vc-annotation-image img { width: 100%; height: auto; display: block; pointer-events: none; }
 .vc-annotation-mark { position: absolute; width: var(--space-14); height: var(--space-10); border: var(--focus-width) solid var(--ui-danger); border-radius: var(--radius-round); transform: translate(-50%, -50%) rotate(-12deg); pointer-events: none; }
 .vc-annotation-mark > span { position: absolute; right: calc(-1 * var(--space-3)); top: calc(-1 * var(--space-4)); display: grid; place-items: center; width: var(--space-5); height: var(--space-5); color: var(--ui-text); background: var(--ui-panel); border: var(--border-hairline) solid var(--ui-danger); border-radius: var(--radius-round); transform: rotate(12deg); }
 .vc-annotation-fields { width: 100%; display: grid; gap: var(--space-3); }
@@ -274,7 +283,6 @@
 
 @media (max-width: 1200px) {
   .vc-legend { flex-direction: column; gap: var(--space-1); }
-  .vc-memory-status { display: none; }
 }
 @media (max-width: 1000px) {
   .vc-summary { display: none; }

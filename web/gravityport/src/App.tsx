@@ -4611,6 +4611,19 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           relationDrafts={relationDrafts}
           setRelationDrafts={setRelationDrafts}
           mutateRelation={mutateRelation}
+          onAssetUpdated={(updated) => {
+            setAssets((old) => old.map((item) => (item.id === updated.id ? mergeAssetDetail(item, updated) : item)))
+            setGenerationHistory((old) =>
+              old
+                ? {
+                    ...old,
+                    output_assets: old.output_assets?.map((item) =>
+                      item.id === updated.id ? mergeAssetDetail(item, updated) : item,
+                    ),
+                  }
+                : old,
+            )
+          }}
           onClose={() => setCanvasOpen(false)}
           onRevealAsset={(target) => void revealAssetPath(target)}
           onOpenAsset={(id) => {

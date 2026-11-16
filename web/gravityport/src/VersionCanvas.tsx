@@ -19,11 +19,17 @@ import { conversationRoundRows, roundCompareSelection, type ConversationRoundRow
 import { RELATION_LABELS, relationTypes } from "./feature-parity"
 import type { Language } from "./i18n"
 import {
+  clearAssetCanvasPositions,
   createGenerationRelation,
   dismissGenerationCandidate,
   editGenerationRelation,
+  fetchAssetCanvasStates,
   removeGenerationRelation,
+  updateAssetCanvasState,
+  updateAssetNote,
   type MosaAsset,
+  type MosaAssetCanvasState,
+  type MosaAssetCanvasStatePatch,
   type MosaGenerationHistory,
   type MosaVersionRow,
 } from "./mosa-api"
@@ -73,6 +79,7 @@ type Props = {
   relationDrafts: Record<string, string>
   setRelationDrafts: Dispatch<SetStateAction<Record<string, string>>>
   mutateRelation: (action: () => Promise<unknown>) => Promise<void>
+  onAssetUpdated?: (asset: MosaAsset) => void
   onClose: () => void
   onOpenAsset: (id: string) => void
   /** Opens the asset's file location (Finder / Explorer), copying the path as a fallback. */
@@ -87,6 +94,9 @@ type Gesture = {
   initialX: number
   initialY: number
   node?: string
+  assetId?: string
+  lastX?: number
+  lastY?: number
   moved: boolean
 }
 
@@ -123,6 +133,7 @@ export default function VersionCanvas({
   relationDrafts,
   setRelationDrafts,
   mutateRelation,
+  onAssetUpdated,
   onClose,
   onOpenAsset,
   onRevealAsset,
@@ -132,22 +143,41 @@ export default function VersionCanvas({
     () => canvasFromHistory(generationHistory, asset, timeLabel),
     [generationHistory, asset, timeLabel],
   )
+  const docAssetIds = useMemo(
+    () => [...new Set(doc.nodes.map((item) => item.assetId).filter(Boolean))],
+    [doc.nodes],
+  )
+  const docAssetIdsKey = docAssetIds.join("\u0000")
+  const [savedCanvasStates, setSavedCanvasStates] = useState<
+    Record<string, MosaAssetCanvasState>
+  >({})
+  const [savedNotes, setSavedNotes] = useState<Record<string, string>>({})
+  const savedNotesRef = useRef<Record<string, string>>({})
   const [nodeDrafts, setNodeDrafts] = useState<Record<string, NodeDraft>>({})
   const nodes = useMemo(
     () =>
       doc.nodes.map((base) => {
+        const saved = savedCanvasStates[base.assetId]
         const draft = nodeDrafts[base.id]
-        if (!draft) return base
+        const hasSavedNote = Object.hasOwn(savedNotes, base.assetId)
+        const savedPosX =
+          saved && typeof saved.pos_x === "number" && Number.isFinite(saved.pos_x)
+            ? saved.pos_x
+            : undefined
+        const savedPosY =
+          saved && typeof saved.pos_y === "number" && Number.isFinite(saved.pos_y)
+            ? saved.pos_y
+            : undefined
         return {
           ...base,
-          x: draft.x ?? base.x,
-          y: draft.y ?? base.y,
-          final: draft.final ?? base.final,
-          note: draft.note ?? base.note,
-          marks: draft.marks ?? base.marks,
+          x: draft?.x ?? savedPosX ?? base.x,
+          y: draft?.y ?? savedPosY ?? base.y,
+          final: draft?.final ?? (saved ? saved.is_final : base.final),
+          note: draft?.note ?? (hasSavedNote ? savedNotes[base.assetId] : base.note),
+          marks: draft?.marks ?? (saved ? saved.marks : base.marks),
         }
       }),
-    [doc.nodes, nodeDrafts],
+    [doc.nodes, nodeDrafts, savedCanvasStates, savedNotes],
   )
   const edges = doc.edges
   const [selected, setSelected] = useState<string[]>([
@@ -195,9 +225,91 @@ export default function VersionCanvas({
   const ignoreClick = useRef(false)
   const [link, setLink] = useState<LinkDraft | null>(null)
   const [promptExpanded, setPromptExpanded] = useState(false)
+  const [noteEdit, setNoteEdit] = useState<{
+    nodeId: string
+    assetId: string
+    draft: string
+  } | null>(null)
+  const noteEditRef = useRef<{
+    nodeId: string
+    assetId: string
+    draft: string
+  } | null>(null)
+  const noteSeqRef = useRef<Record<string, number>>({})
+  const canvasSeqRef = useRef<Record<string, number>>({})
+  const userInteractedRef = useRef(false)
+  const [restoredLayoutSeq, setRestoredLayoutSeq] = useState(0)
+  const [annotationNaturalSize, setAnnotationNaturalSize] = useState<{
+    width: number
+    height: number
+  } | null>(null)
+  const annotationImgRef = useRef<HTMLImageElement | null>(null)
   const exportCanvas = useRef<HTMLCanvasElement | null>(null)
-  const [noteEdit, setNoteEdit] = useState<{ id: string; draft: string } | null>(null)
   const [noteExpanded, setNoteExpanded] = useState(false)
+
+  useEffect(() => {
+    setAnnotationNaturalSize(null)
+  }, [annotating?.id])
+
+  useEffect(() => {
+    if (restoredLayoutSeq > 0 && !userInteractedRef.current) {
+      fitRef.current()
+    }
+  }, [restoredLayoutSeq])
+
+  useEffect(() => {
+    if (!docAssetIds.length) return
+    const controller = new AbortController()
+    const querySeqSnapshot = new Map(
+      docAssetIds.map((id) => [
+        id,
+        {
+          is_final: canvasSeqRef.current[`${id}:is_final`] || 0,
+          marks: canvasSeqRef.current[`${id}:marks`] || 0,
+          pos: canvasSeqRef.current[`${id}:pos`] || 0,
+        },
+      ]),
+    )
+    void fetchAssetCanvasStates(project, docAssetIds, controller.signal)
+      .then((states) => {
+        if (controller.signal.aborted) return
+        let hasRestoredPositions = false
+        setSavedCanvasStates((old) => {
+          const next = { ...old }
+          for (const [assetId, loaded] of Object.entries(states)) {
+            const snap = querySeqSnapshot.get(assetId)
+            const prev = next[assetId]
+            const finalFresh =
+              (canvasSeqRef.current[`${assetId}:is_final`] || 0) ===
+              (snap?.is_final || 0)
+            const marksFresh =
+              (canvasSeqRef.current[`${assetId}:marks`] || 0) ===
+              (snap?.marks || 0)
+            const posFresh =
+              (canvasSeqRef.current[`${assetId}:pos`] || 0) === (snap?.pos || 0)
+            if (posFresh && loaded.pos_x !== null && loaded.pos_y !== null) {
+              hasRestoredPositions = true
+            }
+            next[assetId] = {
+              is_final: finalFresh
+                ? loaded.is_final
+                : (prev?.is_final ?? loaded.is_final),
+              marks: marksFresh ? loaded.marks : (prev?.marks ?? loaded.marks),
+              pos_x: posFresh ? loaded.pos_x : (prev?.pos_x ?? loaded.pos_x),
+              pos_y: posFresh ? loaded.pos_y : (prev?.pos_y ?? loaded.pos_y),
+              updated_at: loaded.updated_at,
+            }
+          }
+          return next
+        })
+        if (hasRestoredPositions && !userInteractedRef.current) {
+          setRestoredLayoutSeq((old) => old + 1)
+        }
+      })
+      .catch(() => {})
+    return () => controller.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, docAssetIdsKey])
 
   useEffect(() => {
     setSelected((old) => {
@@ -245,6 +357,213 @@ export default function VersionCanvas({
       ...old,
       [id]: { ...(old[id] || {}), ...patch },
     }))
+  const clearNodeDraftFields = (
+    id: string,
+    keys: Array<"x" | "y" | "final" | "note" | "marks">,
+  ) =>
+    setNodeDrafts((old) => {
+      const current = old[id]
+      if (!current) return old
+      const next: NodeDraft = { ...current }
+      for (const key of keys) delete next[key]
+      if (
+        next.x === undefined &&
+        next.y === undefined &&
+        next.final === undefined &&
+        next.note === undefined &&
+        next.marks === undefined
+      ) {
+        const rest = { ...old }
+        delete rest[id]
+        return rest
+      }
+      return { ...old, [id]: next }
+    })
+  const bumpCanvasSeq = (
+    assetId: string,
+    field: "is_final" | "marks" | "pos",
+  ) => {
+    const key = `${assetId}:${field}`
+    const seq = (canvasSeqRef.current[key] || 0) + 1
+    canvasSeqRef.current[key] = seq
+    return seq
+  }
+  const persistCanvasPatch = (
+    item: { id: string; assetId: string },
+    draftPatch: NodeDraft,
+    apiPatch: MosaAssetCanvasStatePatch,
+    fields: Array<"is_final" | "marks" | "pos">,
+    successToast?: string,
+  ) => {
+    const tokens = fields.map((field) => ({
+      field,
+      seq: bumpCanvasSeq(item.assetId, field),
+    }))
+    patchNode(item.id, draftPatch)
+    const draftKeysForMatchingTokens = () =>
+      tokens
+        .filter((token) => canvasSeqRef.current[`${item.assetId}:${token.field}`] === token.seq)
+        .flatMap((token) =>
+          token.field === "pos"
+            ? (["x", "y"] as const)
+            : token.field === "is_final"
+              ? (["final"] as const)
+              : (["marks"] as const),
+        )
+    void updateAssetCanvasState(project, item.assetId, apiPatch)
+      .then((saved) => {
+        const currentTokens = tokens.filter(
+          (token) => canvasSeqRef.current[`${item.assetId}:${token.field}`] === token.seq,
+        )
+        if (currentTokens.length) {
+          setSavedCanvasStates((old) => {
+            const prev = old[item.assetId] || {
+              is_final: false,
+              marks: [],
+              pos_x: null,
+              pos_y: null,
+              updated_at: "",
+            }
+            const next: MosaAssetCanvasState = {
+              ...prev,
+              updated_at: saved.updated_at,
+            }
+            for (const token of currentTokens) {
+              if (token.field === "is_final") next.is_final = saved.is_final
+              else if (token.field === "marks") next.marks = saved.marks
+              else if (token.field === "pos") {
+                next.pos_x = saved.pos_x
+                next.pos_y = saved.pos_y
+              }
+            }
+            return { ...old, [item.assetId]: next }
+          })
+          clearNodeDraftFields(item.id, draftKeysForMatchingTokens())
+          if (successToast) notify(successToast)
+        }
+      })
+      .catch(() => {
+        const currentKeys = draftKeysForMatchingTokens()
+        if (currentKeys.length) clearNodeDraftFields(item.id, currentKeys)
+        notify("没有保存成功")
+      })
+  }
+  const startNoteEdit = (target: CanvasNode) => {
+    const next = { nodeId: target.id, assetId: target.assetId, draft: target.note }
+    noteEditRef.current = next
+    setNoteEdit(next)
+  }
+  const commitNote = (target: { nodeId: string; assetId: string; draft: string }) => {
+    if (noteEditRef.current?.nodeId === target.nodeId) {
+      noteEditRef.current = null
+      setNoteEdit(null)
+    }
+    const baseNote =
+      Object.hasOwn(savedNotesRef.current, target.assetId)
+        ? savedNotesRef.current[target.assetId]
+        : doc.nodes.find((item) => item.assetId === target.assetId)?.note || ""
+    const next = target.draft.trim()
+    if (next === baseNote) return
+    const seq = (noteSeqRef.current[target.assetId] || 0) + 1
+    noteSeqRef.current[target.assetId] = seq
+    patchNode(target.nodeId, { note: next })
+    void updateAssetNote(project, target.assetId, next)
+      .then((updated) => {
+        if (noteSeqRef.current[target.assetId] === seq) {
+          savedNotesRef.current[target.assetId] = updated.note
+          setSavedNotes((old) => ({ ...old, [target.assetId]: updated.note }))
+          clearNodeDraftFields(target.nodeId, ["note"])
+          notify("已保存")
+        }
+        onAssetUpdated?.(updated)
+      })
+      .catch(() => {
+        if (noteSeqRef.current[target.assetId] === seq) {
+          clearNodeDraftFields(target.nodeId, ["note"])
+        }
+        notify("没有保存成功")
+      })
+  }
+  const resetLayout = () => {
+    const assetIds = docAssetIds
+    const prevSavedPos = new Map<string, { pos_x: number | null; pos_y: number | null }>()
+    const prevDraftPos = new Map<string, { x?: number; y?: number }>()
+    const seqs = new Map<string, number>()
+    for (const id of assetIds) {
+      const cur = savedCanvasStates[id]
+      prevSavedPos.set(id, {
+        pos_x: cur?.pos_x ?? null,
+        pos_y: cur?.pos_y ?? null,
+      })
+      seqs.set(id, bumpCanvasSeq(id, "pos"))
+    }
+    for (const item of doc.nodes) {
+      const draft = nodeDrafts[item.id]
+      if (draft && (draft.x !== undefined || draft.y !== undefined)) {
+        prevDraftPos.set(item.id, { x: draft.x, y: draft.y })
+      }
+    }
+    setSavedCanvasStates((old) => {
+      const next = { ...old }
+      for (const id of assetIds) {
+        if (next[id]) next[id] = { ...next[id], pos_x: null, pos_y: null }
+      }
+      return next
+    })
+    setNodeDrafts((old) =>
+      Object.fromEntries(
+        Object.entries(old).map(([id, draft]) => [
+          id,
+          { ...draft, x: undefined, y: undefined },
+        ]),
+      ),
+    )
+    requestAnimationFrame(() => fitRef.current())
+    void clearAssetCanvasPositions(project, assetIds)
+      .then(() => {
+        notify("已恢复自动排版")
+      })
+      .catch(() => {
+        setSavedCanvasStates((old) => {
+          const next = { ...old }
+          for (const id of assetIds) {
+            if (canvasSeqRef.current[`${id}:pos`] !== seqs.get(id)) continue
+            const prev = prevSavedPos.get(id)
+            if (!prev) continue
+            if (next[id]) {
+              next[id] = { ...next[id], pos_x: prev.pos_x, pos_y: prev.pos_y }
+            } else if (prev.pos_x !== null || prev.pos_y !== null) {
+              next[id] = {
+                is_final: false,
+                marks: [],
+                pos_x: prev.pos_x,
+                pos_y: prev.pos_y,
+                updated_at: "",
+              }
+            }
+          }
+          return next
+        })
+        if (prevDraftPos.size) {
+          setNodeDrafts((old) => {
+            const next = { ...old }
+            for (const [nodeId, coords] of prevDraftPos.entries()) {
+              const nodeObj = doc.nodes.find((item) => item.id === nodeId)
+              if (
+                nodeObj &&
+                canvasSeqRef.current[`${nodeObj.assetId}:pos`] !== seqs.get(nodeObj.assetId)
+              ) {
+                continue
+              }
+              next[nodeId] = { ...(next[nodeId] || {}), ...coords }
+            }
+            return next
+          })
+        }
+        requestAnimationFrame(() => fitRef.current())
+        notify("没有保存成功")
+      })
+  }
   const fit = () => {
     if (!stage.current) return
     const { clientWidth: width, clientHeight: height } = stage.current
@@ -331,6 +650,7 @@ export default function VersionCanvas({
   }, [exportOpen, exportOptions, language])
 
   const zoom = (factor: number) => {
+    userInteractedRef.current = true
     const rect = stage.current?.getBoundingClientRect()
     if (!rect) return
     setTransform((old) => {
@@ -354,6 +674,7 @@ export default function VersionCanvas({
     if (!element) return
     const wheel = (event: WheelEvent) => {
       event.preventDefault()
+      userInteractedRef.current = true
       if (event.ctrlKey || event.metaKey)
         zoomRef.current(event.deltaY < 0 ? 1.08 : 1 / 1.08)
       else
@@ -420,6 +741,13 @@ export default function VersionCanvas({
         : [...old.slice(-1), id],
     )
   }
+  const captureStagePointer = (pointerId: number) => {
+    try {
+      stage.current?.setPointerCapture(pointerId)
+    } catch {
+      // Synthetic or ended pointers cannot be captured; stage listeners still receive move/up.
+    }
+  }
   const beginGesture = (event: PointerEvent, id?: string) => {
     if (
       event.button !== 0 ||
@@ -438,9 +766,10 @@ export default function VersionCanvas({
       initialX: moveNode ? target.x : transform.x,
       initialY: moveNode ? target.y : transform.y,
       node: moveNode ? id : undefined,
+      assetId: moveNode ? target.assetId : undefined,
       moved: false,
     }
-    if (!id) stage.current?.setPointerCapture(event.pointerId)
+    if (!id) captureStagePointer(event.pointerId)
   }
   const toWorld = (clientX: number, clientY: number) => {
     const rect = stage.current?.getBoundingClientRect()
@@ -462,12 +791,7 @@ export default function VersionCanvas({
     setMenu(null)
     const point = toWorld(event.clientX, event.clientY)
     setLink({ pointer: event.pointerId, from: id, side, ...point, target: "" })
-    try {
-      stage.current?.setPointerCapture(event.pointerId)
-    } catch {
-      // A pointer that is no longer active cannot be captured; the stage
-      // still receives the move/up events while the pointer is over it.
-    }
+    captureStagePointer(event.pointerId)
   }
   const moveLink = (event: PointerEvent) => {
     if (!link || link.pointer !== event.pointerId) return false
@@ -512,14 +836,16 @@ export default function VersionCanvas({
     const dx = event.clientX - drag.x
     const dy = event.clientY - drag.y
     if (Math.abs(dx) + Math.abs(dy) < 5 && !drag.moved) return
-    if (!drag.moved) stage.current?.setPointerCapture(event.pointerId)
+    if (!drag.moved) captureStagePointer(event.pointerId)
     drag.moved = true
-    if (drag.node)
-      patchNode(drag.node, {
-        x: Math.max(0, drag.initialX + dx / transform.scale),
-        y: Math.max(78, drag.initialY + dy / transform.scale),
-      })
-    else
+    userInteractedRef.current = true
+    if (drag.node) {
+      const nextX = Math.max(0, drag.initialX + dx / transform.scale)
+      const nextY = Math.max(78, drag.initialY + dy / transform.scale)
+      drag.lastX = nextX
+      drag.lastY = nextY
+      patchNode(drag.node, { x: nextX, y: nextY })
+    } else
       setTransform((old) => ({
         ...old,
         x: drag.initialX + dx,
@@ -529,10 +855,24 @@ export default function VersionCanvas({
   const finishGesture = (event: PointerEvent) => {
     if (finishLink(event)) return
     const drag = gesture.current
+    const cancelled = event.type === "pointercancel"
     if (drag?.moved) ignoreClick.current = true
     if (drag && stage.current?.hasPointerCapture(drag.pointer))
       stage.current.releasePointerCapture(drag.pointer)
     gesture.current = null
+    if (!drag?.node || !drag.moved) return
+    if (cancelled) {
+      clearNodeDraftFields(drag.node, ["x", "y"])
+      return
+    }
+    if (drag.assetId && drag.lastX !== undefined && drag.lastY !== undefined) {
+      persistCanvasPatch(
+        { id: drag.node, assetId: drag.assetId },
+        { x: drag.lastX, y: drag.lastY },
+        { pos_x: drag.lastX, pos_y: drag.lastY },
+        ["pos"],
+      )
+    }
   }
   const startAnnotation = (item: CanvasNode) => {
     setMenu(null)
@@ -541,9 +881,15 @@ export default function VersionCanvas({
     setAnnotating(item)
   }
   const toggleFinal = (item: CanvasNode) => {
-    patchNode(item.id, { final: !item.final })
-    notify(item.final ? "已取消定稿标记" : "已设为定稿")
+    const nextFinal = !item.final
     setMenu(null)
+    persistCanvasPatch(
+      item,
+      { final: nextFinal },
+      { is_final: nextFinal },
+      ["is_final"],
+      nextFinal ? "已设为定稿" : "已取消定稿标记",
+    )
   }
   const runMutationWithToast = (
     action: () => Promise<unknown>,
@@ -866,10 +1212,6 @@ export default function VersionCanvas({
           </Text>
         </div>
         <div className="vc-header-actions">
-          <span className="vc-memory-status">
-            <span />
-            {tr("本页暂存")}
-          </span>
           {/* UI 审查 11-16：画布的按钮收成顶栏一行三组，只用图标，组间竖线：
               画布工具（只看定稿路径、重新排版）| 视图切换（画布/列表一个切换块）| 导出。 */}
           <div className="vc-tool-group" aria-label={tr("画布工具")}>
@@ -890,18 +1232,7 @@ export default function VersionCanvas({
                 iconOnly
                 aria-label={tr("重新排版")}
                 title={tr("重新排版")}
-              onClick={() => {
-                  setNodeDrafts((old) =>
-                    Object.fromEntries(
-                      Object.entries(old).map(([id, draft]) => [
-                        id,
-                        { ...draft, x: undefined, y: undefined },
-                      ]),
-                    ),
-                  )
-                  requestAnimationFrame(() => fitRef.current())
-                  notify("已恢复自动排版")
-                }}
+                onClick={resetLayout}
               >
                 <Icon name="layout" />
               </Button>
@@ -1344,17 +1675,25 @@ export default function VersionCanvas({
                     <Icon name="copy" size={16} />
                   </button>
                 </div>
-                {noteEdit && noteEdit.id === node.id ? (
+                {noteEdit && noteEdit.nodeId === node.id ? (
                   <InlineTextEditor
                     label={tr("编辑备注")}
                     placeholder={tr("添加备注")}
                     value={noteEdit.draft}
-                    onChange={(draft) => setNoteEdit((old) => (old ? { ...old, draft } : old))}
+                    onChange={(draft) => {
+                      const next = noteEditRef.current
+                        ? { ...noteEditRef.current, draft }
+                        : { nodeId: node.id, assetId: node.assetId, draft }
+                      noteEditRef.current = next
+                      setNoteEdit(next)
+                    }}
                     onSave={() => {
-                      patchNode(node.id, { note: noteEdit.draft.trim() })
+                      if (noteEditRef.current) commitNote(noteEditRef.current)
+                    }}
+                    onCancel={() => {
+                      noteEditRef.current = null
                       setNoteEdit(null)
                     }}
-                    onCancel={() => setNoteEdit(null)}
                   />
                 ) : (
                   <ReadingText
@@ -1365,7 +1704,7 @@ export default function VersionCanvas({
                     onToggle={() => setNoteExpanded((old) => !old)}
                     expandLabel={tr("展开备注")}
                     collapseLabel={tr("收起")}
-                    onActivate={() => setNoteEdit({ id: node.id, draft: node.note })}
+                    onActivate={() => startNoteEdit(node)}
                     activateLabel={tr("点击编辑")}
                   />
                 )}
@@ -1659,10 +1998,6 @@ export default function VersionCanvas({
 
             </div>
           )}
-          <div className="vc-inspector-footer">
-            <Icon name="local" size={12} />
-            <Text tone="secondary">{tr("画布修改仅保留在当前页面")}</Text>
-          </div>
         </aside>
       )}
 
@@ -1718,7 +2053,7 @@ export default function VersionCanvas({
               setMenu(null)
               setInspector(true)
               const target = nodes.find((item) => item.id === menu?.node)
-              if (target) setNoteEdit({ id: target.id, draft: target.note })
+              if (target) startNoteEdit(target)
             }}
           >
             <Icon name="message" />
@@ -1835,9 +2170,17 @@ export default function VersionCanvas({
             <Button
               variant="primary"
               onClick={() => {
-                if (annotating) patchNode(annotating.id, { marks })
+                if (annotating) {
+                  const nextMarks = marks.map((mark) => ({ ...mark }))
+                  persistCanvasPatch(
+                    annotating,
+                    { marks: nextMarks },
+                    { marks: nextMarks },
+                    ["marks"],
+                    "已保存",
+                  )
+                }
                 setAnnotating(null)
-                notify("标注已暂存")
               }}
             >
               {tr("保存")}
@@ -1865,28 +2208,54 @@ export default function VersionCanvas({
             <Button
               variant="quiet"
               className="vc-annotation-image"
-              style={{
-                aspectRatio: `${annotating.width || 3} / ${annotating.height || 4}`,
-              }}
+              style={
+                {
+                  "--vc-annotation-ratio": String(
+                    annotationNaturalSize &&
+                      annotationNaturalSize.width > 0 &&
+                      annotationNaturalSize.height > 0
+                      ? annotationNaturalSize.width / annotationNaturalSize.height
+                      : annotating.width > 0 && annotating.height > 0
+                        ? annotating.width / annotating.height
+                        : 0.75,
+                  ),
+                } as CSSProperties
+              }
               aria-label={tr("在图片上添加标记")}
               onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect()
-                const keyboard = event.detail === 0
+                const rect = (
+                  annotationImgRef.current || event.currentTarget
+                ).getBoundingClientRect()
+                const keyboard = event.detail === 0 || !rect.width || !rect.height
+                const clamp01 = (value: number) => Math.max(0, Math.min(1, value))
                 setMarks((old) => [
                   ...old,
                   {
                     x: keyboard
                       ? 0.5
-                      : (event.clientX - rect.left) / rect.width,
+                      : clamp01((event.clientX - rect.left) / rect.width),
                     y: keyboard
                       ? 0.5
-                      : (event.clientY - rect.top) / rect.height,
+                      : clamp01((event.clientY - rect.top) / rect.height),
                     text: "",
                   },
                 ])
               }}
             >
-              <img src={annotating.image} alt={annotating.name} />
+              <img
+                ref={annotationImgRef}
+                src={annotating.image}
+                alt={annotating.name}
+                onLoad={(event) => {
+                  const { naturalWidth, naturalHeight } = event.currentTarget
+                  if (naturalWidth > 0 && naturalHeight > 0) {
+                    setAnnotationNaturalSize({
+                      width: naturalWidth,
+                      height: naturalHeight,
+                    })
+                  }
+                }}
+              />
               {marks.map((mark, index) => (
                 <span
                   className="vc-annotation-mark"

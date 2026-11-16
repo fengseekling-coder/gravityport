@@ -824,9 +824,36 @@ const mainCheckoutSchemaVersion = (() => {
   const match = readFileSync(mainCheckoutStore, "utf8").match(/export const CURRENT_SCHEMA_VERSION = (\d+);/);
   return match ? Number(match[1]) : null;
 })();
-const olderMainCheckoutSkip = mainCheckoutSchemaVersion != null && mainCheckoutSchemaVersion < CURRENT_SCHEMA_VERSION
-  ? false
-  : "needs a sibling gravityport checkout on an older schema version (not available here, e.g. in CI)";
+const mainCheckoutLoadSkip = (() => {
+  if (mainCheckoutSchemaVersion == null || mainCheckoutSchemaVersion >= CURRENT_SCHEMA_VERSION) return null;
+  // Actually probe loading the sibling store module in a subprocess: a sibling
+  // checkout without built TypeScript outputs fails on missing .js imports
+  // (e.g. lib/image-decode-client.js) before it can even inspect the schema.
+  const probe = `
+    import { pathToFileURL } from "node:url";
+    try {
+      await import(pathToFileURL(${JSON.stringify(mainCheckoutStore)}).href);
+      console.log("OK");
+    } catch (error) {
+      console.log("ERR " + JSON.stringify({ code: String(error?.code || ""), message: String(error?.message || error) }));
+    }
+  `;
+  try {
+    const out = execFileSync(process.execPath, ["--input-type=module", "-e", probe], { stdio: "pipe" }).toString().trim();
+    if (out === "OK") return null;
+    const match = out.match(/^ERR (.+)$/m);
+    const parsed = match ? JSON.parse(match[1]) : { code: "", message: out };
+    if (parsed.code === "ERR_MODULE_NOT_FOUND" || /Cannot find (?:module|package)/.test(parsed.message)) {
+      return `sibling checkout cannot load its store module (unbuilt TypeScript outputs?): ${parsed.message.split(/\r?\n/)[0]}`;
+    }
+    return `sibling checkout store module failed to load (${parsed.code || "error"}): ${parsed.message.split(/\r?\n/)[0]}`;
+  } catch (error) {
+    return `sibling checkout probe failed: ${String(error?.message || error).split(/\r?\n/)[0]}`;
+  }
+})();
+const olderMainCheckoutSkip = mainCheckoutSchemaVersion == null || mainCheckoutSchemaVersion >= CURRENT_SCHEMA_VERSION
+  ? "needs a sibling gravityport checkout on an older schema version (not available here, e.g. in CI)"
+  : (mainCheckoutLoadSkip ?? false);
 
 test("origin/main code refuses a library carrying the new schema version without touching it", { skip: olderMainCheckoutSkip }, async (t) => {
   // A schema bump means the released code no longer opens a new-code

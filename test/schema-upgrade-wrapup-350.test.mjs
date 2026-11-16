@@ -215,7 +215,7 @@ test("an ok upgrade deletes its snapshot; notes.txt and a symlink stay", async (
   mkdirSync(backupDir(libraryDir), { recursive: true });
   writeFileSync(join(backupDir(libraryDir), "notes.txt"), "keep me");
   writeFileSync(join(backupDir(libraryDir), "target.txt"), "symlink target");
-  symlinkSync(join(backupDir(libraryDir), "target.txt"), join(backupDir(libraryDir), "mosa-before-v18-from-v16.db"));
+  symlinkSync(join(backupDir(libraryDir), "target.txt"), join(backupDir(libraryDir), `mosa-before-v${CURRENT_SCHEMA_VERSION}-from-v16.db`));
 
   const store = createSqliteAssetStore({ projectRoot, managerDir: join(projectRoot, "mosa"), libraryDir });
   t.after(() => { try { store.close(); } catch { /* closed */ } });
@@ -304,7 +304,7 @@ test("a grown violation fails the check, keeps its snapshot and drives the notic
   assert.ok(foreignKeyViolationCount(libraryDir) > 0);
   const failedRecord = await withRawDatabasePromise(libraryDir, (database) => runSchemaUpgradeVerify(database, {
     databasePath: join(libraryDir, "mosa.db"),
-    targetVersion: 18,
+    targetVersion: CURRENT_SCHEMA_VERSION,
     backupPath: snapshot,
     force: true,
   }));
@@ -345,7 +345,7 @@ test("a grown violation fails the check, keeps its snapshot and drives the notic
   assert.equal(afterRecord.status, "ok", "the new upgrade check passes (baseline includes the extra violation)");
   assert.ok(existsSync(afterRecord.backupPath), "the kept name is never auto-deleted, whatever later upgrades verify");
   assert.ok(existsSync(snapshot), "the kept snapshot is still there");
-  assert.equal(keptEntries(libraryDir).filter((entry) => entry.name === "mosa-before-v18-from-v16.db").length, 1,
+  assert.equal(keptEntries(libraryDir).filter((entry) => entry.name === `mosa-before-v${CURRENT_SCHEMA_VERSION}-from-v16.db`).length, 1,
     "exactly the original entry stays on the kept list");
 });
 
@@ -361,7 +361,7 @@ test("a stale file at the official snapshot name is replaced by a fresh pre-upgr
   });
   // The stale snapshot the old code would have reused: same official name,
   // but 10 assets fewer than the real library.
-  const officialName = "mosa-before-v18-from-v16.db";
+  const officialName = `mosa-before-v${CURRENT_SCHEMA_VERSION}-from-v16.db`;
   mkdirSync(backupDir(libraryDir), { recursive: true });
   const stalePath = join(backupDir(libraryDir), officialName);
   withRawDatabase(libraryDir, (database) => {
@@ -474,7 +474,7 @@ test("three concurrent first-time openers all succeed with identical results and
     assert.equal(result.code, 0, `child ${index + 1} exited cleanly (${result.stderr.slice(0, 300)})`);
     assert.ok(result.stdout.includes("child-ok"));
   }
-  assert.equal(withRawDatabase(a.libraryDir, (database) => database.prepare("SELECT value FROM library_meta WHERE key = 'schema_version'").get()?.value), "18");
+  assert.equal(withRawDatabase(a.libraryDir, (database) => database.prepare("SELECT value FROM library_meta WHERE key = 'schema_version'").get()?.value), String(CURRENT_SCHEMA_VERSION));
   const migrations = withRawDatabase(a.libraryDir, (database) =>
     database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version));
   assert.deepEqual(migrations, Array.from({ length: CURRENT_SCHEMA_VERSION }, (_, index) => index + 1), "migrations 1..CURRENT_SCHEMA_VERSION");

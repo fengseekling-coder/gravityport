@@ -108,8 +108,8 @@ export async function renderCanvasExport(
     ctx.drawImage(images[index], box.x, box.y, box.width, box.height)
     if (options.notes)
       node.marks.forEach((mark, markIndex) => {
-        const x = node.x + mark.x * NODE_WIDTH
-        const y = node.y + mark.y * 254
+        const x = box.x + mark.x * box.width
+        const y = box.y + mark.y * box.height
         ctx.strokeStyle = "#b34f30"
         ctx.lineWidth = 2
         ctx.beginPath()

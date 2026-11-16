@@ -20,7 +20,7 @@ export async function run(ctx) {
 
     const childCreate = await ctx.api(server.origin, "POST", "/api/assets/create", {
       projectId: "default",
-      imagePath: await ctx.makePng("vc-e2e-child.png", [164, 92, 62]),
+      imagePath: await ctx.makePng("vc-e2e-child.png", [164, 92, 62], { width: 180, height: 320 }),
       prompt: "poster v2 warmer rim light",
     });
     const child = childCreate.asset;
@@ -81,11 +81,15 @@ export async function run(ctx) {
     if (
       onResult?.canvasMounted !== true
       || onResult?.detailsHidden !== true
-      || onResult?.memoryPillPresent !== true
+      || onResult?.memoryHintAbsent !== true
       || onResult?.sampleAbsent !== true
       || onResult?.inspectorSectionsPresent !== true
       || onResult?.confirmedOnCanvas !== true
       || onResult?.finalBadgeUpdated !== true
+      || onResult?.annotationBoxTightFit !== true
+      || onResult?.cardMovedOnDrag !== true
+      || onResult?.noteSyncedToMainDetails !== true
+      || onResult?.persistedAcrossReopen !== true
       || onResult?.returnedToGallery !== true
       || onResult?.linkedByDrag !== true
       || onResult?.comparedByMenu !== true
@@ -94,6 +98,38 @@ export async function run(ctx) {
       || onResult?.typeSavedOnPick !== true
     ) {
       throw new Error(`version-canvas gate-on flow failed: ${JSON.stringify(onResult)}`);
+    }
+
+    const reloadResult = await ctx.runInPage(server, roundReloadAndReverseEditSource({
+      childId: child.id,
+      autoLeft: onResult.autoLeft,
+      autoTop: onResult.autoTop,
+      draggedLeft: onResult.draggedLeft,
+      draggedTop: onResult.draggedTop,
+    }), {
+      windowSize: [1440, 940],
+    });
+    if (
+      reloadResult?.persistedAfterReload !== true
+      || reloadResult?.mainEditSyncedToCanvas !== true
+      || reloadResult?.resetReturnedToAutoLayout !== true
+    ) {
+      throw new Error(`version-canvas reload/reverse-edit/reset check failed: ${JSON.stringify(reloadResult)}`);
+    }
+
+    const afterResetResult = await ctx.runInPage(server, roundAfterResetSource({
+      childId: child.id,
+      autoLeft: onResult.autoLeft,
+      autoTop: onResult.autoTop,
+    }), {
+      windowSize: [1440, 940],
+    });
+    if (
+      afterResetResult?.resetPersistedAfterReload !== true
+      || afterResetResult?.escCancelled !== true
+      || afterResetResult?.failureRolledBack !== true
+    ) {
+      throw new Error(`version-canvas post-reset reload check failed: ${JSON.stringify(afterResetResult)}`);
     }
 
     const verifyOffResult = await ctx.runInPage(server, roundOffSource({ parentId: parent.id, setFlag: false }), {
@@ -160,6 +196,11 @@ const HELPERS = `
     const versionSection = sections.find((sec) => sec.querySelector('.field-heading')?.textContent?.includes('版本树'));
     return versionSection?.querySelector('button.section-action') || null;
   };
+  const setReactValue = (el, value) => {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
 `;
 
 function roundOffSource(config) {
@@ -198,8 +239,13 @@ function roundOnSource(config) {
     await waitFor(() => Boolean(document.querySelector('.version-canvas')) && document.querySelectorAll('.vc-node').length >= 2, 'VersionCanvas mounts with nodes');
     const canvasMounted = Boolean(document.querySelector('.version-canvas'));
     const detailsHidden = !document.querySelector('.details') && document.querySelector('.app')?.classList.contains('canvas-open');
-    const memoryPillPresent = (document.querySelector('.vc-memory-status')?.textContent || '').includes('本页暂存');
     const canvasText = document.querySelector('.version-canvas')?.textContent || '';
+    const memoryHintAbsent = (
+      !document.querySelector('.vc-memory-status')
+      && !document.querySelector('.vc-inspector-footer')
+      && !canvasText.includes('本页暂存')
+      && !canvasText.includes('画布修改仅保留在当前页面')
+    );
     const sampleAbsent = !canvasText.includes('exampleCanvas') && !canvasText.includes('示例') && !canvasText.includes('coffee');
     const inspectorText = document.querySelector('.vc-inspector')?.textContent || '';
     const inspectorSectionsPresent = ['生成关系', '版本对比', '版本历史']
@@ -288,19 +334,19 @@ function roundOnSource(config) {
     let zoomAfterViewer = false;
     let zoomStepError = '';
     try {
-    const worldScale = () => new DOMMatrix(getComputedStyle(document.querySelector('.vc-world')).transform).a;
-    document.querySelector('.vc-inspector .summary-preview').click();
-    await waitFor(() => document.querySelector('.vc-viewer .image-viewer'), 'big-image viewer opens in the canvas');
-    const viewerOpened = Boolean(document.querySelector('.vc-viewer-header .viewer-title'));
-    document.querySelector('.vc-viewer-header button').click();
-    await waitFor(() => document.querySelector('.vc-stage') && !document.querySelector('.vc-viewer'), 'viewer closes back to the board');
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    const scaleBefore = worldScale();
-    const stageEl = document.querySelector('.vc-stage');
-    const stageRect = stageEl.getBoundingClientRect();
-    stageEl.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100, clientX: stageRect.left + 100, clientY: stageRect.top + 100 }));
-    await waitFor(() => worldScale() > scaleBefore, 'pinch zoom works after the viewer closes');
-    zoomAfterViewer = viewerOpened && worldScale() > scaleBefore;
+      const worldScale = () => new DOMMatrix(getComputedStyle(document.querySelector('.vc-world')).transform).a;
+      document.querySelector('.vc-inspector .summary-preview').click();
+      await waitFor(() => document.querySelector('.vc-viewer .image-viewer'), 'big-image viewer opens in the canvas');
+      const viewerOpened = Boolean(document.querySelector('.vc-viewer-header .viewer-title'));
+      document.querySelector('.vc-viewer-header button').click();
+      await waitFor(() => document.querySelector('.vc-stage') && !document.querySelector('.vc-viewer'), 'viewer closes back to the board');
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const scaleBefore = worldScale();
+      const viewerStageEl = document.querySelector('.vc-stage');
+      const stageRect = viewerStageEl.getBoundingClientRect();
+      viewerStageEl.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100, clientX: stageRect.left + 100, clientY: stageRect.top + 100 }));
+      await waitFor(() => worldScale() > scaleBefore, 'pinch zoom works after the viewer closes');
+      zoomAfterViewer = viewerOpened && worldScale() > scaleBefore;
     } catch (error) { zoomStepError = String(error && error.message || error); }
 
     // App tooltip (tooltip.ts): hovering an icon-only button shows its name in
@@ -315,20 +361,123 @@ function roundOnSource(config) {
     exportBtn.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse', relatedTarget: document.body }));
     const tooltipShown = tipInApp && document.querySelector('.app-tooltip').hidden && exportBtn.getAttribute('title') === '导出版本树';
 
+    // Edit note on child (click #vc-note-<id> -> InlineTextEditor textarea -> ⌘/Ctrl+Enter commits and persists).
+    (await waitFor(() => document.getElementById('vc-note-' + config.childId), 'canvas note text')).click();
+    const noteInput = await waitFor(() => document.querySelector('.vc-inspector .note-section textarea'), 'canvas note textarea');
+    noteInput.focus();
+    setReactValue(noteInput, 'canvas-e2e-note');
+    await sleep(50);
+    noteInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+    await waitFor(() => (
+      !document.querySelector('.vc-inspector .note-section textarea')
+      && (document.getElementById('vc-note-' + config.childId)?.textContent || '') === 'canvas-e2e-note'
+      && (document.querySelector('.vc-toast')?.textContent || '').includes('已保存')
+    ), 'canvas note saved');
+
+    // Open annotation dialog on 9:16 portrait child, verify tight aspect fit, and add a mark.
+    const annotateBtn = await waitFor(() => {
+      const sec = Array.from(document.querySelectorAll('.vc-inspector .detail-section'))
+        .find((el) => el.querySelector('.field-heading')?.textContent?.includes('标注'));
+      return sec?.querySelector('button.section-action') || null;
+    }, 'annotation add button');
+    annotateBtn.click();
+    const annImg = await waitFor(() => {
+      const img = document.querySelector('.vc-annotation-image img');
+      return img && img.complete && img.naturalWidth > 0 ? img : null;
+    }, 'loaded annotation image');
+    await sleep(80);
+    const annBox = document.querySelector('.vc-annotation-image');
+    const boxRect = annBox.getBoundingClientRect();
+    const imgRect = annImg.getBoundingClientRect();
+    const expectedRatio = annImg.naturalWidth / annImg.naturalHeight;
+    const boxRatio = boxRect.width / boxRect.height;
+    const annotationBoxTightFit = (
+      Math.abs(boxRatio - expectedRatio) < 0.03
+      && Math.abs(imgRect.width - boxRect.width) <= 2
+      && Math.abs(imgRect.height - boxRect.height) <= 2
+    );
+    const annotationDebug = {
+      boxWidth: boxRect.width,
+      boxHeight: boxRect.height,
+      imgWidth: imgRect.width,
+      imgHeight: imgRect.height,
+      naturalWidth: annImg.naturalWidth,
+      naturalHeight: annImg.naturalHeight,
+      ratioProp: annBox.style.getPropertyValue('--vc-annotation-ratio'),
+    };
+    annBox.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      detail: 1,
+      clientX: boxRect.left + boxRect.width * 0.35,
+      clientY: boxRect.top + boxRect.height * 0.25,
+    }));
+    const markInput = await waitFor(() => document.querySelector('.vc-annotation-fields input'), 'annotation mark text input');
+    setReactValue(markInput, 'portrait-mark-fix');
+    const annSaveBtn = await waitFor(() => Array.from(document.querySelectorAll('dialog[open] button'))
+      .find((b) => b.textContent.trim() === '保存'), 'annotation dialog save button');
+    annSaveBtn.click();
+    await waitFor(() => (
+      !document.querySelector('dialog[open] .vc-annotation')
+      && (nodeEl(config.childId)?.querySelector('.vc-mark-badge')?.textContent || '').includes('1')
+      && (document.querySelector('.vc-inspector')?.textContent || '').includes('portrait-mark-fix')
+    ), 'annotation persisted to card badge & inspector');
+
+    // Drag child card and release (persists position on pointerup).
+    const dragStageEl = document.querySelector('.vc-stage');
+    const childCard = nodeEl(config.childId);
+    const autoLeft = parseFloat(childCard.style.left);
+    const autoTop = parseFloat(childCard.style.top);
+    const cardStart = center(childCard);
+    const dragDelta = { x: 96, y: 64 };
+    pointer('pointerdown', childCard, cardStart);
+    await sleep(50);
+    pointer('pointermove', dragStageEl, { x: cardStart.x + dragDelta.x, y: cardStart.y + dragDelta.y });
+    await sleep(50);
+    pointer('pointerup', dragStageEl, { x: cardStart.x + dragDelta.x, y: cardStart.y + dragDelta.y });
+    await waitFor(() => Math.abs(parseFloat(nodeEl(config.childId).style.left) - autoLeft) > 20, 'dragged card shifted position');
+    const draggedLeft = parseFloat(nodeEl(config.childId).style.left);
+    const draggedTop = parseFloat(nodeEl(config.childId).style.top);
+    const cardMovedOnDrag = Math.abs(draggedLeft - autoLeft) > 20 && Math.abs(draggedTop - autoTop) > 20;
+    await sleep(250);
+
+    // Close to gallery, verify main InspectorDetails shows the canvas note, then reopen without page refresh.
     const backBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="返回素材库"]'), 'back button');
     backBtn.click();
     await waitFor(() => !document.querySelector('.version-canvas') && Boolean(document.querySelector('.workspace')), 'canvas closes back to gallery');
+    (await waitFor(() => cardById(config.childId), 'child card in gallery')).click();
+    await waitFor(() => (document.querySelector('#asset-note')?.textContent || '').includes('canvas-e2e-note'), 'canvas note synced to main InspectorDetails');
+    const noteSyncedToMainDetails = (document.querySelector('#asset-note')?.textContent || '').includes('canvas-e2e-note');
+
+    (await waitFor(() => findVersionTreeButton(), 'reopen canvas button')).click();
+    await waitFor(() => Boolean(document.querySelector('.version-canvas')) && Boolean(nodeEl(config.childId)), 'VersionCanvas reopens without reload');
+    await waitFor(() => (
+      Boolean(nodeEl(config.childId)?.querySelector('.vc-final-badge'))
+      && (nodeEl(config.childId)?.querySelector('.vc-mark-badge')?.textContent || '').includes('1')
+      && (document.getElementById('vc-note-' + config.childId)?.textContent || '') === 'canvas-e2e-note'
+      && Math.abs(parseFloat(nodeEl(config.childId).style.left) - draggedLeft) <= 2
+      && Math.abs(parseFloat(nodeEl(config.childId).style.top) - draggedTop) <= 2
+    ), 'all 4 edits persist across close and reopen');
+    const persistedAcrossReopen = true;
+
+    const backBtn2 = await waitFor(() => document.querySelector('.version-canvas button[aria-label="返回素材库"]'), 'second back button');
+    backBtn2.click();
+    await waitFor(() => !document.querySelector('.version-canvas') && Boolean(document.querySelector('.workspace')), 'canvas closes second time');
     const returnedToGallery = !document.querySelector('.version-canvas') && Boolean(document.querySelector('.workspace'));
 
-    localStorage.removeItem('gravityport.dev.version-canvas');
     return {
       canvasMounted,
       detailsHidden,
-      memoryPillPresent,
+      memoryHintAbsent,
       sampleAbsent,
       inspectorSectionsPresent,
       confirmedOnCanvas,
       finalBadgeUpdated,
+      annotationBoxTightFit,
+      annotationDebug,
+      cardMovedOnDrag,
+      noteSyncedToMainDetails,
+      persistedAcrossReopen,
       returnedToGallery,
       linkedByDrag,
       comparedByMenu,
@@ -336,6 +485,131 @@ function roundOnSource(config) {
       zoomStepError,
       tooltipShown,
       typeSavedOnPick,
+      autoLeft,
+      autoTop,
+      draggedLeft,
+      draggedTop,
     };
+  })()`;
+}
+
+function roundReloadAndReverseEditSource(config) {
+  return `(async () => {
+    const config = ${JSON.stringify(config)};
+    ${HELPERS}
+    await waitFor(() => document.querySelector('.app') && cardById(config.childId), 'seeded child card after reload');
+    cardById(config.childId).click();
+    await waitFor(() => (document.querySelector('#asset-note')?.textContent || '').includes('canvas-e2e-note'), 'note persisted in main inspector after reload');
+
+    // Edit note from main InspectorDetails -> open canvas -> verify reverse sync & all persisted canvas state.
+    const noteBtn = document.querySelector('#asset-note');
+    noteBtn.click();
+    const noteArea = await waitFor(() => document.querySelector('.note-section textarea'), 'main inspector note textarea');
+    noteArea.focus();
+    setReactValue(noteArea, 'main-inspector-updated-note');
+    await sleep(60);
+    noteArea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+    await waitFor(() => !document.querySelector('.note-section textarea') && (document.querySelector('#asset-note')?.textContent || '').includes('main-inspector-updated-note'), 'main inspector note saved');
+
+    (await waitFor(() => findVersionTreeButton(), 'open canvas after reverse edit')).click();
+    const nodeEl = (id) => document.querySelector('.vc-node[data-canvas-node="' + id + '"]');
+    await waitFor(() => Boolean(document.querySelector('.version-canvas')) && Boolean(nodeEl(config.childId)), 'canvas mounts after reload');
+    await waitFor(() => (
+      Boolean(nodeEl(config.childId)?.querySelector('.vc-final-badge'))
+      && (nodeEl(config.childId)?.querySelector('.vc-mark-badge')?.textContent || '').includes('1')
+      && Math.abs(parseFloat(nodeEl(config.childId).style.left) - config.draggedLeft) <= 2
+      && Math.abs(parseFloat(nodeEl(config.childId).style.top) - config.draggedTop) <= 2
+    ), 'canvas state restored after reload');
+    const persistedAfterReload = true;
+    const mainEditSyncedToCanvas = (document.getElementById('vc-note-' + config.childId)?.textContent || '') === 'main-inspector-updated-note'
+      && (document.querySelector('.vc-inspector')?.textContent || '').includes('portrait-mark-fix');
+
+    // Click 重新排版 -> returns card to auto-layout while keeping final, marks, and note.
+    const resetBtn = await waitFor(() => document.querySelector('.vc-header button[aria-label="重新排版"]'), 'reset layout button');
+    resetBtn.click();
+    await waitFor(() => (document.querySelector('.vc-toast')?.textContent || '').includes('已恢复自动排版'), 'reset layout toast confirms API save');
+    await waitFor(() => (
+      Math.abs(parseFloat(nodeEl(config.childId).style.left) - config.autoLeft) <= 2
+      && Math.abs(parseFloat(nodeEl(config.childId).style.top) - config.autoTop) <= 2
+    ), 'reset layout returns card to auto coordinates');
+    const resetReturnedToAutoLayout = (
+      Boolean(nodeEl(config.childId)?.querySelector('.vc-final-badge'))
+      && (nodeEl(config.childId)?.querySelector('.vc-mark-badge')?.textContent || '').includes('1')
+      && (document.getElementById('vc-note-' + config.childId)?.textContent || '') === 'main-inspector-updated-note'
+    );
+
+    const backBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="返回素材库"]'), 'back after reset');
+    backBtn.click();
+    await waitFor(() => !document.querySelector('.version-canvas'), 'canvas closed after reset');
+    return { persistedAfterReload, mainEditSyncedToCanvas, resetReturnedToAutoLayout };
+  })()`;
+}
+
+function roundAfterResetSource(config) {
+  return `(async () => {
+    const config = ${JSON.stringify(config)};
+    ${HELPERS}
+    await waitFor(() => document.querySelector('.app') && cardById(config.childId), 'seeded child card after post-reset reload');
+    cardById(config.childId).click();
+    (await waitFor(() => findVersionTreeButton(), 'open canvas after reset reload')).click();
+    const nodeEl = (id) => document.querySelector('.vc-node[data-canvas-node="' + id + '"]');
+    await waitFor(() => Boolean(document.querySelector('.version-canvas')) && Boolean(nodeEl(config.childId)), 'canvas mounts post-reset reload');
+    await waitFor(() => (
+      Boolean(nodeEl(config.childId)?.querySelector('.vc-final-badge'))
+      && (nodeEl(config.childId)?.querySelector('.vc-mark-badge')?.textContent || '').includes('1')
+      && (document.getElementById('vc-note-' + config.childId)?.textContent || '') === 'main-inspector-updated-note'
+      && Math.abs(parseFloat(nodeEl(config.childId).style.left) - config.autoLeft) <= 2
+      && Math.abs(parseFloat(nodeEl(config.childId).style.top) - config.autoTop) <= 2
+    ), 'reset position and retained final/marks/note persisted across reload');
+
+    // Esc cancels note edit and reverts to saved note.
+    document.getElementById('vc-note-' + config.childId).click();
+    const noteInput = await waitFor(() => document.querySelector('.vc-inspector .note-section textarea'), 'canvas note textarea for Esc test');
+    noteInput.focus();
+    setReactValue(noteInput, 'discard-by-esc');
+    await sleep(40);
+    noteInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await waitFor(() => !document.querySelector('.vc-inspector .note-section textarea') && (document.getElementById('vc-note-' + config.childId)?.textContent || '') === 'main-inspector-updated-note', 'Esc reverts unsaved note');
+    const escCancelled = (document.getElementById('vc-note-' + config.childId)?.textContent || '') === 'main-inspector-updated-note';
+
+    // Failed save requests show toast "没有保存成功" and roll back local state.
+    const origFetch = window.fetch;
+    window.fetch = async (input, init) => {
+      const target = typeof input === 'string' ? input : input?.url || '';
+      if (target.includes('/canvas-state') || target.includes('/curation')) {
+        return new Response(JSON.stringify({ error: 'simulated failure', code: 'SIMULATED_FAILURE' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return origFetch(input, init);
+    };
+    let failureRolledBack = false;
+    try {
+      const unfinalBtn = document.querySelector('.version-canvas button[aria-label="取消定稿"]');
+      unfinalBtn.click();
+      await waitFor(() => (
+        (document.querySelector('.vc-toast')?.textContent || '').includes('没有保存成功')
+        && Boolean(nodeEl(config.childId)?.querySelector('.vc-final-badge'))
+      ), 'failed final toggle toasts and rolls back');
+
+      document.getElementById('vc-note-' + config.childId).click();
+      const failNote = await waitFor(() => document.querySelector('.vc-inspector .note-section textarea'), 'canvas note textarea for fail rollback');
+      failNote.focus();
+      setReactValue(failNote, 'failed-note-change');
+      await sleep(40);
+      failNote.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+      await waitFor(() => (
+        (document.querySelector('.vc-toast')?.textContent || '').includes('没有保存成功')
+        && !document.querySelector('.vc-inspector .note-section textarea')
+        && (document.getElementById('vc-note-' + config.childId)?.textContent || '') === 'main-inspector-updated-note'
+      ), 'failed note save toasts and rolls back');
+      failureRolledBack = true;
+    } finally {
+      window.fetch = origFetch;
+    }
+
+    localStorage.removeItem('gravityport.dev.version-canvas');
+    return { resetPersistedAfterReload: true, escCancelled, failureRolledBack };
   })()`;
 }
