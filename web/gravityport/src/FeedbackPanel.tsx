@@ -13,7 +13,6 @@ import {
   feedbackErrorMessage,
   fetchFeedbackDiagnostics,
   submitFeedback,
-  type FeedbackAppInfo,
   type FeedbackKind,
 } from "./feedback-api.js"
 import { translate, type Language } from "./i18n.js"
@@ -28,7 +27,6 @@ const KIND_OPTIONS: { value: FeedbackKind; label: string }[] = [
   { value: "idea", label: "建议" },
   { value: "other", label: "其他" },
 ]
-const PLATFORM_LABELS: Record<string, string> = { macos: "macOS", windows: "Windows" }
 
 type FeedbackDraft = { kind: FeedbackKind; message: string; contact: string }
 type LogState = "idle" | "loading" | "ready" | "error"
@@ -72,7 +70,6 @@ export function FeedbackPanel({ language }: { language: Language }) {
   const [showLog, setShowLog] = useState(false)
   const [logState, setLogState] = useState<LogState>("idle")
   const [logText, setLogText] = useState("")
-  const [appInfo, setAppInfo] = useState<FeedbackAppInfo | null>(null)
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
   const [error, setError] = useState("")
@@ -89,7 +86,6 @@ export function FeedbackPanel({ language }: { language: Language }) {
     setLogState("loading")
     const request = fetchFeedbackDiagnostics()
       .then((data) => {
-        setAppInfo(data.app)
         logTextRef.current = data.diagnostics.text
         logStateRef.current = "ready"
         setLogText(data.diagnostics.text)
@@ -103,18 +99,6 @@ export function FeedbackPanel({ language }: { language: Language }) {
       })
     logRequestRef.current = request
     return request
-  }, [])
-
-  // The "automatically attached" line is local-only and cheap; fetch the app
-  // summary as soon as the panel opens.
-  useEffect(() => {
-    const controller = new AbortController()
-    fetchFeedbackDiagnostics(controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) setAppInfo(data.app)
-      })
-      .catch(() => { /* the line stays hidden when the read fails. */ })
-    return () => controller.abort()
   }, [])
 
   useEffect(() => {
@@ -164,14 +148,6 @@ export function FeedbackPanel({ language }: { language: Language }) {
     setShowLog(opening)
     if (opening && logStateRef.current !== "ready") void ensureDiagnostics()
   }
-
-  const autoSummary = appInfo
-    ? [
-      `${appInfo.product} ${appInfo.version}`.trim(),
-      appInfo.platform === "other" ? "" : `${PLATFORM_LABELS[appInfo.platform] || appInfo.platform} ${appInfo.osVersion}`,
-      appInfo.arch,
-    ].filter(Boolean).join(" · ")
-    : ""
 
   return (
     <section className="settings-section settings-card feedback-section" aria-label={tr("反馈")}>
@@ -228,7 +204,6 @@ export function FeedbackPanel({ language }: { language: Language }) {
             <Switch label={tr("附上诊断日志")} checked={includeLog} onCheckedChange={onToggleIncludeLog} />
           </div>
         </div>
-        {autoSummary ? <p className="settings-card-desc">{tr("将自动附上：{summary}").replace("{summary}", autoSummary)}</p> : null}
         {showLog && (
           <pre className="feedback-log-view">
             {logState === "loading" ? tr("正在加载…")

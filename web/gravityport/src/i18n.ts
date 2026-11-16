@@ -426,7 +426,6 @@ const english: Record<string, string> = {
   "附上诊断日志": "Include diagnostic log",
   "查看内容": "View contents",
   "暂无诊断日志": "No diagnostic logs",
-  "将自动附上：{summary}": "Included automatically: {summary}",
   "{count} / 5000": "{count} / 5000",
   "发送": "Send",
   "发送中…": "Sending…",
