@@ -291,14 +291,12 @@
   .vc-inspector { display: none; }
   .vc-breadcrumb > .ui-text--secondary, .vc-breadcrumb > svg { display: none; }
   .vc-header { padding-right: var(--space-3); }
-  .vc-view-tabs .ui-button { padding: 0 var(--space-2); }
   .vc-export { grid-template-columns: 1fr; }
   .vc-export-preview { min-height: 0; max-height: var(--vc-preview-height); }
   .vc-legend { display: none; }
   .vc-board-bottom { justify-content: center; }
 }
 @media (max-width: 480px) {
-  .vc-view-tabs .ui-icon { display: none; }
   .app .version-canvas .vc-header-actions > .ui-button--icon, .vc-header-actions > .vc-divider { display: none; }
   .app .version-canvas .vc-board-actions .ui-button { font-size: 0; padding: 0 var(--space-2); }
   .vc-path-toggle > .ui-text { white-space: nowrap; }

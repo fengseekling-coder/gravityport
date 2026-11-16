@@ -732,29 +732,39 @@ export default function VersionCanvas({
             {tr("本页暂存")}
           </span>
           <div className="vc-view-tabs" aria-label={tr("版本树视图")}>
+            {/* UI 审查 11-16：顶栏三个按钮只留图标，名字放在悬停提示和读屏名里。 */}
             <Button
               variant="quiet"
+              iconOnly
+              aria-label={tr("画布")}
+              title={tr("画布")}
               aria-pressed={tab === "canvas"}
               className={tab === "canvas" ? "is-active" : ""}
               onClick={() => setTab("canvas")}
             >
               <Icon name="tree" />
-              {tr("画布")}
             </Button>
             <Button
               variant="quiet"
+              iconOnly
+              aria-label={tr("列表")}
+              title={tr("列表")}
               aria-pressed={tab === "list"}
               className={tab === "list" ? "is-active" : ""}
               onClick={() => setTab("list")}
             >
               <Icon name="list" />
-              {tr("列表")}
             </Button>
           </div>
           <span className="vc-divider" />
-          <Button variant="quiet" onClick={() => setExportOpen(true)}>
+          <Button
+            variant="quiet"
+            iconOnly
+            aria-label={tr("导出版本树")}
+            title={tr("导出版本树")}
+            onClick={() => setExportOpen(true)}
+          >
             <Icon name="export" />
-            {tr("导出版本树")}
           </Button>
           {/* UI 审查 11-16：照主页，详情栏开着时开关在详情栏标题行，关了才出现在这里。 */}
           {!inspector && (
