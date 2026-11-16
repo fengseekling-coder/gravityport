@@ -9,6 +9,9 @@
   --ui-line: #0000000c;
   --ui-panel: #fafafa;
   --ui-work: #dedede;
+  /* UI 审查 11-16：落在 --ui-work 上的次级文字。浅色 #707070 在 #dedede 上只有 3.7:1，
+     加深到 #5c5c5c（5.0:1）；深色沿用 --ui-secondary（5.7:1）。 */
+  --ui-secondary-on-work: #5c5c5c;
   --ui-raised: #fff;
   --ui-accent: #009a1a;
   --focus-ring: var(--ui-accent);
@@ -47,6 +50,7 @@
   --ui-line: #ffffff0c;
   --ui-panel: #242424;
   --ui-work: #343434;
+  --ui-secondary-on-work: var(--ui-secondary);
   --ui-raised: #2c2c2c;
   --ui-accent: #39ff14;
   --focus-ring: var(--ui-accent);
@@ -115,8 +119,13 @@
   --duration-control: 180ms;
   --duration-dialog: 320ms;
   --duration-spinner: 800ms;
-  --overlay-veil: #00000012;
+  /* UI 审查 11-16：原来深浅都是 7% 黑，深色下几乎看不出两侧变暗；浅色 14%、深色 40%。 */
+  --overlay-veil: #00000024;
   --dialog-width: 380px;
+}
+
+.app.dark {
+  --overlay-veil: #00000066;
 }
 
 /* Compatibility only: new components consume the semantic --ui-* names. */

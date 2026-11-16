@@ -11,6 +11,7 @@ import {
 } from "react"
 import Icon from "./Icon"
 import ImageViewer from "./ImageViewer"
+import ToolbarSelect from "./ToolbarSelect"
 import { InspectorRow, RelationThumb } from "./InspectorParts"
 import { InlineTextEditor, ReadingText } from "./ReadingText"
 import { aspectRatioLabel, describeSource, humanSize, inspectorHeaderLine } from "./inspector-info"
@@ -1006,7 +1007,8 @@ export default function VersionCanvas({
                     key={column}
                     style={{ left: 30 + column * COLUMN_GAP }}
                   >
-                    <div className="vc-round-dot">{round || <span />}</div>
+                    {/* UI 审查 11-16：没有轮次时不再画一个看不懂的小圆点，只有轮次号才显示圆标。 */}
+                    {round ? <div className="vc-round-dot">{round}</div> : null}
                     {/* UI 审查 11-16：每组写这一轮的时间，不再都叫「生成记录」。 */}
                     <Text variant="label">
                       {round
@@ -1264,13 +1266,16 @@ export default function VersionCanvas({
                       ? inspectorHeaderLine(describeSource(nodeAsset, language), tr)
                       : [roundTitle(node), providerName(node.provider)].join(" · ")}
                   </span>
-                  <button
-                    className="summary-preview"
-                    onClick={() => openImage(node)}
-                  >
-                    {tr("查看大图")}
-                    <Icon name="right" size={12} />
-                  </button>
+                  {/* UI 审查 11-16：已经在看大图时不再显示「查看大图」。 */}
+                  {!viewingNode && (
+                    <button
+                      className="summary-preview"
+                      onClick={() => openImage(node)}
+                    >
+                      {tr("查看大图")}
+                      <Icon name="right" size={12} />
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="asset-properties">
@@ -1420,9 +1425,9 @@ export default function VersionCanvas({
               )}
 
               <div className="detail-section">
+                {/* UI 审查 11-16：去掉标题旁只作装饰、看不出意思的分叉图标。 */}
                 <div className="field-heading">
                   <span>{tr("生成关系")}</span>
-                  <Icon name="branch" size={12} />
                 </div>
                 {inspectorFetchError.history ? (
                   <Text as="p" tone="secondary">
@@ -1460,20 +1465,22 @@ export default function VersionCanvas({
                             />
                             <small>{relationPairLine(upstream, downstream)}</small>
                           </span>
-                          <select
-                            disabled={locked || relationBusy}
-                            aria-label={tr("关系类型")}
-                            value={relationDrafts[key] || relation.relation_type}
-                            onChange={(event) =>
-                              setRelationDrafts((old) => ({ ...old, [key]: event.target.value }))
-                            }
-                          >
-                            {relationTypes.map((type) => (
-                              <option key={type} value={type}>
-                                {tr(RELATION_LABELS[type] || type)}
-                              </option>
-                            ))}
-                          </select>
+                          {/* UI 审查 11-16：关系类型用 App 自己的下拉（同主页顶栏），不用系统原生下拉。 */}
+                          {locked ? (
+                            <Text tone="secondary">{relationLabel(relation.relation_type)}</Text>
+                          ) : (
+                            <ToolbarSelect
+                              label={tr("关系类型")}
+                              value={relationDrafts[key] || relation.relation_type}
+                              options={relationTypes.map((type) => ({
+                                value: type,
+                                label: tr(RELATION_LABELS[type] || type),
+                              }))}
+                              onChange={(value) =>
+                                setRelationDrafts((old) => ({ ...old, [key]: value }))
+                              }
+                            />
+                          )}
                           {locked ? (
                             <small>{tr("已由来源平台验证，无法修改")}</small>
                           ) : (
@@ -1537,13 +1544,16 @@ export default function VersionCanvas({
                               onClick={jumpToDisplay(downstream)}
                               label={tr("查看素材")}
                             />
-                            <small>{relationPairLine(upstream, downstream)}</small>
+                            {/* UI 审查 11-16：可信度跟在文件名下面、同一左边，不再顶到缩略图左边。 */}
+                            <span className="vc-relation-names">
+                              <small>{relationPairLine(upstream, downstream)}</small>
+                              <small className="vc-relation-confidence">
+                                {fillNamed("可信度 {percent}%", {
+                                  percent: Math.round((candidate.confidence || 0) * 100),
+                                })}
+                              </small>
+                            </span>
                           </span>
-                          <small>
-                            {fillNamed("可信度 {percent}%", {
-                              percent: Math.round((candidate.confidence || 0) * 100),
-                            })}
-                          </small>
                           <button
                             disabled={relationBusy}
                             onClick={() =>

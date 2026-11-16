@@ -25,6 +25,8 @@ export type InspectorDetailsProps = {
   tagsMeasureRef: React.RefObject<HTMLDivElement | null>
   setDetail: React.Dispatch<React.SetStateAction<boolean>>
   setPreview: React.Dispatch<React.SetStateAction<boolean>>
+  /** The big-image viewer is open: the "open in viewer" link would only repeat it. */
+  previewOpen: boolean
   toggleFavorite: () => Promise<void>
   setAssets: React.Dispatch<React.SetStateAction<MosaAsset[]>>
   expandedTags: boolean
@@ -62,7 +64,7 @@ export function InspectorDetails(props: InspectorDetailsProps) {
   const {
     asset, language, tr, fillNamed, notify, project, writeText, headerLine,
     trashReasonInfo, sourceInfo, tagsRowRef, tagsMeasureRef,
-    setDetail, setPreview, toggleFavorite, setAssets,
+    setDetail, setPreview, previewOpen, toggleFavorite, setAssets,
     expandedTags, setExpandedTags, tagItems, collapsedTagCount, tagVendor, currentTags,
     addingTag, setAddingTag, tagDraft, setTagDraft, tagError, setTagError,
     promptVariant, setPromptVariant, promptEdit, setPromptEdit,
@@ -116,7 +118,8 @@ export function InspectorDetails(props: InspectorDetailsProps) {
               </div>
               <span className="muted">{headerLine}</span>
               {trashReasonInfo && <span className="trash-reason">{tr(trashReasonInfo.text)}</span>}
-              <button className="summary-preview" onClick={() => setPreview(true)}>{tr("在查看器中打开")}<Icon name="right" size={12} /></button>
+              {/* UI 审查 11-16：已经在查看器里时不再显示「在查看器中打开」。 */}
+              {!previewOpen && <button className="summary-preview" onClick={() => setPreview(true)}>{tr("在查看器中打开")}<Icon name="right" size={12} /></button>}
             </div>
           </div>
           <div className="asset-properties">

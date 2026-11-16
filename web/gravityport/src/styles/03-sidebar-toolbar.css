@@ -370,3 +370,15 @@
   cursor: default;
   background: transparent;
 }
+
+/* UI 审查 11-16：查看器的「返回」原来 10px，低于最小字号，也和画布查看器（12px）不一致。 */
+.app .toolbar-left > button {
+  font-size: var(--type-body-size);
+  gap: var(--space-1);
+}
+
+/* UI 审查 11-16：顶栏落在 --ui-work 上，浅色下次级文字用加深的一档才有 4.5:1 以上。 */
+.app .toolbar button,
+.app .toolbar select {
+  color: var(--ui-secondary-on-work);
+}

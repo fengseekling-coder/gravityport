@@ -85,7 +85,7 @@
 }.library-location span {
   font-size: 8px;
 }.modal-layer, .group-dialog-backdrop {
-  background: #00000012;
+  background: var(--overlay-veil);
   animation: veil-in 240ms ease both;
 }.settings-modal {
   animation: surface-in 380ms var(--ease-out) both;

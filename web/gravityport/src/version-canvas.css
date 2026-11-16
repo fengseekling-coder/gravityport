@@ -67,7 +67,7 @@
 /* UI 审查 11-16：顶栏右侧三组——画布工具 | 视图切换 | 导出，组间竖线。全部是没有底块的
    图标按钮（同主页，按钮不带隐藏底色）；当前视图和按下状态（只看定稿路径）图标为强调色。 */
 .vc-tool-group, .vc-view-tabs { gap: var(--space-1); }
-.app .vc-header-actions .ui-button { color: var(--ui-secondary); }
+.app .vc-header-actions .ui-button { color: var(--ui-secondary-on-work); }
 .app .vc-header-actions .ui-button:hover:not(:disabled),
 .app .vc-header-actions .ui-button.is-active { color: var(--ui-text); }
 .app .vc-header-actions .ui-button.is-active .ui-icon { color: var(--ui-accent); }
@@ -90,20 +90,19 @@
 .vc-world { position: absolute; top: 0; left: 0; transform-origin: top left; }
 .vc-timeline-line { position: absolute; top: var(--space-8); left: var(--space-14); height: var(--border-hairline); background: var(--ui-line); }
 .vc-round { position: absolute; top: var(--space-5); display: flex; align-items: center; width: var(--vc-node-width); gap: var(--space-2); }
-.vc-round > .ui-text--secondary { margin-left: auto; background: var(--vc-board); padding-left: var(--space-2); }
+.vc-round > .ui-text--secondary { margin-left: auto; background: var(--vc-board); padding-left: var(--space-2); color: var(--ui-secondary-on-work); }
 .vc-round > .ui-text--label { background: var(--vc-board); padding-right: var(--space-3); }
 /* UI 审查 11-16：分组标题不随画布缩小到看不清，屏幕上至少 11px。 */
 .vc-round > .ui-text { font-size: max(var(--type-body-size), calc(11px / var(--vc-scale, 1))); white-space: nowrap; }
 .vc-round-dot { background: var(--ui-panel); color: var(--ui-secondary); border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-round); width: var(--space-6); height: var(--space-6); display: grid; place-items: center; font-variant-numeric: tabular-nums; flex-shrink: 0; }
-.vc-round-dot > span { width: var(--space-1); height: var(--space-1); background: var(--ui-secondary); border-radius: var(--radius-round); }
 .vc-round-group { position: absolute; width: calc(var(--vc-node-width) + var(--space-7)); border: var(--border-hairline) dashed var(--vc-dot); border-radius: var(--radius-panel); background: var(--ui-inset); pointer-events: none; }
 .vc-edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .vc-edges path { fill: none; stroke: var(--vc-connector); stroke-width: 1.5; }
 .vc-edges circle { fill: var(--ui-raised); stroke: var(--vc-connector); stroke-width: 1.5; }
-.vc-edges .suggested path { stroke-dasharray: 5 5; opacity: 0.5; }
-.vc-edges .suggested circle { opacity: 0.5; }
-.vc-edge-label { position: absolute; transform: translate(-50%, -50%); background: var(--vc-board); z-index: 2; padding: var(--space-1) var(--space-2); color: var(--ui-secondary); white-space: nowrap; }
-.vc-edge-label > .ui-text { color: var(--ui-secondary); }
+.vc-edges .suggested path { stroke-dasharray: 5 5; opacity: 0.8; }
+.vc-edges .suggested circle { opacity: 0.8; }
+.vc-edge-label { position: absolute; transform: translate(-50%, -50%); background: var(--vc-board); z-index: 2; padding: var(--space-1) var(--space-2); color: var(--ui-secondary-on-work); white-space: nowrap; }
+.vc-edge-label > .ui-text { color: var(--ui-secondary-on-work); }
 .vc-branch-label { position: absolute; display: flex; align-items: center; gap: var(--space-1); background: var(--vc-board); padding: var(--space-1) var(--space-2); color: var(--ui-secondary); font-size: var(--type-body-size); transform: translateX(-50%); }
 
 .vc-node {
@@ -140,9 +139,9 @@
 
 .vc-board-bottom { position: absolute; left: var(--space-5); right: var(--space-5); bottom: var(--space-5); display: flex; align-items: center; justify-content: space-between; pointer-events: none; z-index: 4; gap: var(--space-3); }
 .vc-board-bottom > * { pointer-events: auto; }
-.vc-legend { display: flex; gap: var(--space-3); font-size: var(--type-body-size); color: var(--ui-secondary); background: var(--vc-board); border-radius: var(--radius-control); padding: var(--space-1); }
+.vc-legend { display: flex; gap: var(--space-3); font-size: var(--type-body-size); color: var(--ui-secondary-on-work); background: var(--vc-board); border-radius: var(--radius-control); padding: var(--space-1); }
 .vc-legend > span { display: flex; align-items: center; gap: var(--space-2); }
-.vc-legend i { width: var(--space-5); height: 0; border-top: var(--border-hairline) solid var(--ui-secondary); }
+.vc-legend i { width: var(--space-5); height: 0; border-top: var(--border-hairline) solid var(--ui-secondary-on-work); }
 .vc-legend i.dashed { border-top-style: dashed; }
 .app .vc-help-button { background: var(--ui-raised); border: var(--border-hairline) solid var(--ui-line); border-radius: var(--radius-round); }
 
@@ -161,6 +160,11 @@
 .vc-relation-stack { display: flex; flex-direction: column; gap: var(--space-2); }
 .vc-relation-subtitle { font-size: 12px; font-weight: 500; color: var(--ui-secondary); margin: var(--space-2) 0 0; }
 .app .vc-inspector .generation-relation-editor { background: var(--ui-inset); border-color: var(--ui-line); font-size: 12px; }
+/* UI 审查 11-16：关系两端的文件名是这张卡要读的内容，用 --ui-secondary（原来是最淡的 --ui-muted）。 */
+.app .vc-inspector .relation-pair-row small { color: var(--ui-secondary); }
+.vc-relation-names { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+.vc-relation-names > small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: var(--space-4); }
+.app .vc-inspector .relation-pair-row small.vc-relation-confidence { color: var(--ui-muted); }
 .app .vc-inspector .generation-relation-editor button,
 .app .vc-inspector .generation-relation-editor select,
 .app .vc-inspector .generation-relation-create select { font-size: 12px; background: var(--ui-panel); color: var(--ui-text); }
@@ -233,7 +237,9 @@
 .vc-viewer { background-image: none; }
 .vc-viewer > .image-viewer { flex: 1; min-height: 0; }
 .vc-viewer.is-fullscreen { position: fixed; inset: 0; z-index: 60; }
-.vc-viewer-header { justify-content: flex-start; }
+/* 同主页查看器顶栏：「返回」紧凑（4px 内边距、图标与字距 4px），文件名离它 8px + 12px。 */
+.vc-viewer-header { justify-content: flex-start; gap: var(--space-2); }
+.app .vc-viewer-header .vc-breadcrumb > .ui-button { padding: 0 var(--space-1); gap: var(--space-1); min-width: 0; }
 .vc-viewer-header > .vc-header-actions { margin-left: auto; }
 .version-canvas .ui-dialog:has(.vc-compare) { --dialog-width: var(--vc-compare-width); }
 .vc-compare { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }

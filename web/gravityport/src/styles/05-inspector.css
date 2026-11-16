@@ -48,6 +48,8 @@
   font-size: 12px;
   line-height: var(--space-4);
   color: var(--ui-muted);
+  /* UI 审查 11-16：中文按词不拆行，「2026年11月15日」不再被拆成两行，只在「 · 」处换行。 */
+  word-break: keep-all;
 }.app .summary-preview {
   align-self: flex-start;
   margin-top: auto;

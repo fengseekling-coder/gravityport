@@ -19,7 +19,7 @@ const english: Record<string, string> = {
   "在文件资源管理器中显示": "Show in File Explorer",
   "返回": "Back", "后退": "Go back", "回到顶部": "Back to top",
   "移到回收站": "Move to Trash",
-  "隐藏素材详情": "Hide asset details", "显示素材详情": "Show asset details",
+  "显示素材详情": "Show asset details",
 
   // ── 标签（区域四 MAIN-20）──
   "添加标签": "Add tag", "标签名称": "Tag name", "保存标签": "Save tag", "移除标签": "Remove tag",

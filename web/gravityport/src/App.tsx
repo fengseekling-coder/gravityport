@@ -4635,9 +4635,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                 {active !== "回收站" && <button onClick={requestDelete}>
                   <Icon name="trash" size={12} />
                   {tr("移到回收站")}</button>}
-                <button onClick={() => setDetail(!detail)}>
-                  <Icon name="info" size={16} />
-                  {tr(detail ? "隐藏素材详情" : "显示素材详情")}</button>
+                {/* UI 审查 11-16：同画廊，详情栏开着时收起按钮在详情栏标题行，关了才在这里出图标。 */}
+                {!detail && <button className="detail-toggle" aria-label={tr("显示素材详情")} title={tr("显示素材详情")} aria-expanded={false} onClick={() => setDetail(true)}><Icon name="inspector" size={16} /></button>}
               </>
             ) : pinterestActive ? null : (
               <>
@@ -4869,6 +4868,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             tagsMeasureRef={tagsMeasureRef}
             setDetail={setDetail}
             setPreview={setPreview}
+            previewOpen={preview}
             toggleFavorite={toggleFavorite}
             setAssets={setAssets}
             expandedTags={expandedTags}
