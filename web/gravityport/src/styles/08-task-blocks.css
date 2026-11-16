@@ -120,7 +120,7 @@
   box-shadow: inset -3px 0 0 0 var(--ui-accent);
 }.nav-row.side-drop-target {
   background: var(--ui-hover);
-  box-shadow: inset 0 0 0 1.5px var(--ui-accent);
+  box-shadow: inset 0 0 0 var(--selection-width) var(--ui-accent);
 }.nav-row.side-drop-target small {
   color: var(--ui-accent);
 }.card-drag-ghost {

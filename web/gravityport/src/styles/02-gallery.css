@@ -49,9 +49,9 @@
 }.asset-card:hover .black-image {
   inset: 1px;
 }.asset-selected {
-  box-shadow: inset 0 0 0 2px var(--focus-ring);
+  box-shadow: inset 0 0 0 var(--selection-width) var(--focus-ring);
 }.asset-selected:hover {
-  box-shadow: inset 0 0 0 2px var(--focus-ring);
+  box-shadow: inset 0 0 0 var(--selection-width) var(--focus-ring);
 }.asset-selected:hover .black-image {
   inset: 2px;
 }.favorite-mark {
@@ -438,7 +438,7 @@ html[lang="en"] .version-compare-fields > div { grid-template-columns: 68px 1fr 
   content: "";
   position: absolute;
   inset: 0;
-  border: 2px solid transparent;
+  border: var(--selection-width) solid transparent;
   border-radius: inherit;
   pointer-events: none;
   z-index: 2;

@@ -98,6 +98,9 @@
   --radius-round: 50%;
   --border-hairline: 1px;
   --focus-width: 2px;
+  /* UI 审查 11-16：所有「选中」描边（画廊卡片、画布卡片、外观选项、拖放目标）统一 1.5px，
+     画在边缘内侧；键盘焦点框仍用 --focus-width。 */
+  --selection-width: 1.5px;
   --focus-offset: 3px;
   --control-height: var(--space-8);
   --control-height-small: var(--space-7);
