@@ -46,8 +46,7 @@
 .vc-breadcrumb,
 .vc-header-actions,
 .vc-view-tabs,
-.vc-board-actions,
-.vc-path-toggle,
+.vc-tool-group,
 .vc-memory-status,
 .vc-annotation-tools {
   display: flex;
@@ -65,13 +64,30 @@
 .vc-view-tabs { flex-shrink: 0; }
 .vc-summary { margin-left: var(--space-2); white-space: nowrap; }
 .vc-summary > span { margin: 0 var(--space-2); }
-.vc-view-tabs { gap: 0; }
-/* No container: the current view reads from text and icon, like the
-   sidebar's current row (accent icon, full-strength text). */
+/* UI 审查 11-16：顶栏右侧三组——画布工具 | 视图切换 | 导出，组间竖线。
+   视图切换是一个切换块（同主页分段控件：底色块里选中的那格抬起），
+   其余是同尺寸的图标按钮；按下状态（只看定稿路径）图标为强调色。 */
+.vc-tool-group { gap: var(--space-1); }
+.vc-view-tabs {
+  gap: 2px;
+  height: var(--control-height);
+  padding: 2px;
+  box-sizing: border-box;
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
+}
+.app .vc-view-tabs .ui-button--icon {
+  width: calc(var(--control-height) - 4px);
+  height: calc(var(--control-height) - 4px);
+  min-height: 0;
+  border-radius: calc(var(--radius-control) - 2px);
+}
 .app .vc-header-actions .ui-button { color: var(--ui-secondary); }
 .app .vc-header-actions .ui-button:hover:not(:disabled),
-.app .vc-view-tabs .ui-button.is-active { color: var(--ui-text); }
-.app .vc-view-tabs .ui-button.is-active .ui-icon { color: var(--ui-accent); }
+.app .vc-header-actions .ui-button.is-active { color: var(--ui-text); }
+.app .vc-header-actions .ui-button.is-active .ui-icon { color: var(--ui-accent); }
+.app .vc-view-tabs .ui-button.is-active,
+.app .vc-view-tabs .ui-button.is-active:hover:not(:disabled) { background: var(--ui-raised); }
 
 .vc-board-area {
   grid-column: 1;
@@ -85,30 +101,6 @@
   background-image: radial-gradient(var(--vc-dot) .7px, transparent .7px);
   background-size: var(--space-5) var(--space-5);
 }
-.vc-board-toolbar {
-  position: absolute;
-  top: var(--space-4);
-  left: var(--space-5);
-  right: var(--space-5);
-  z-index: 4;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-3);
-  pointer-events: none;
-}
-.vc-board-toolbar > * { pointer-events: auto; }
-/* No containers, same as the top bar: a bare switch and a quiet button. */
-.vc-path-toggle {
-  padding: var(--space-1) 0;
-  gap: var(--space-2);
-  color: var(--ui-secondary);
-}
-.vc-path-toggle > .ui-text { color: var(--ui-secondary); }
-.vc-path-toggle .ui-switch { transform: scale(.8); transform-origin: left center; margin-right: calc(-1 * var(--space-1)); }
-.vc-board-actions { gap: 0; }
-.app .vc-board-actions .ui-button { color: var(--ui-secondary); }
-.app .vc-board-actions .ui-button:hover:not(:disabled) { color: var(--ui-text); }
 .vc-stage { position: relative; min-height: 0; flex: 1; overflow: hidden; touch-action: none; user-select: none; }
 .vc-stage.hand-tool, .vc-stage.hand-tool * { cursor: grab; }
 .vc-stage:active.hand-tool, .vc-stage:active.hand-tool * { cursor: grabbing; }
@@ -237,7 +229,7 @@
 .vc-toast { position: fixed; left: 50%; bottom: calc(var(--space-16) + var(--space-10)); transform: translateX(-50%); background: var(--ui-raised); border: var(--border-hairline) solid var(--ui-line); box-shadow: var(--ui-shadow); z-index: 100; padding: var(--space-3) var(--space-4); border-radius: var(--radius-control); display: flex; align-items: center; gap: var(--space-2); max-width: calc(100vw - var(--space-10)); }
 .vc-toast > svg { color: var(--ui-accent); }
 .vc-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); z-index: 3; color: var(--ui-secondary); }
-.vc-list-view { overflow: auto; padding: calc(var(--space-16) + var(--space-4)) var(--space-6) var(--space-16); }
+.vc-list-view { overflow: auto; padding: var(--space-6) var(--space-6) var(--space-16); }
 .vc-list-group { max-width: calc(var(--space-16) * 12); margin-bottom: var(--space-4); }
 .vc-list-group-head { display: flex; align-items: baseline; gap: var(--space-2); padding: 0 var(--space-2) var(--space-2); }
 .app .vc-list-view .vc-list-row { width: 100%; height: auto; display: flex; align-items: center; justify-content: flex-start; text-align: left; white-space: normal; padding: var(--space-2); border-radius: var(--radius-control); background: transparent; margin-bottom: var(--space-1); gap: var(--space-3); }
@@ -292,7 +284,6 @@
 }
 @media (max-width: 1000px) {
   .vc-summary { display: none; }
-  .vc-board-toolbar { left: var(--space-3); right: var(--space-3); }
   .vc-board-bottom { left: var(--space-3); right: var(--space-3); }
   .vc-help-button { display: none !important; }
   }
@@ -308,9 +299,6 @@
 }
 @media (max-width: 480px) {
   .app .version-canvas .vc-header-actions > .ui-button--icon, .vc-header-actions > .vc-divider { display: none; }
-  .app .version-canvas .vc-board-actions .ui-button { font-size: 0; padding: 0 var(--space-2); }
-  .vc-path-toggle > .ui-text { white-space: nowrap; }
-  .vc-board-actions .ui-icon { width: var(--space-4); }
   .vc-header { gap: var(--space-1); }
   .vc-breadcrumb { gap: 0; }
   .vc-breadcrumb > .ui-button { width: var(--space-6); }

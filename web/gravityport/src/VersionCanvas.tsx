@@ -867,8 +867,45 @@ export default function VersionCanvas({
             <span />
             {tr("本页暂存")}
           </span>
-          <div className="vc-view-tabs" aria-label={tr("版本树视图")}>
-            {/* UI 审查 11-16：顶栏三个按钮只留图标，名字放在悬停提示和读屏名里。 */}
+          {/* UI 审查 11-16：画布的按钮收成顶栏一行三组，只用图标，组间竖线：
+              画布工具（只看定稿路径、重新排版）| 视图切换（画布/列表一个切换块）| 导出。 */}
+          <div className="vc-tool-group" aria-label={tr("画布工具")}>
+            <Button
+              variant="quiet"
+              iconOnly
+              aria-label={tr("只看定稿路径")}
+              title={tr("只看定稿路径")}
+              aria-pressed={finalOnly}
+              className={finalOnly ? "is-active" : ""}
+              onClick={() => setFinalOnly((old) => !old)}
+            >
+              <Icon name="flag" />
+            </Button>
+            {tab === "canvas" && (
+              <Button
+                variant="quiet"
+                iconOnly
+                aria-label={tr("重新排版")}
+                title={tr("重新排版")}
+              onClick={() => {
+                  setNodeDrafts((old) =>
+                    Object.fromEntries(
+                      Object.entries(old).map(([id, draft]) => [
+                        id,
+                        { ...draft, x: undefined, y: undefined },
+                      ]),
+                    ),
+                  )
+                  requestAnimationFrame(() => fitRef.current())
+                  notify("已恢复自动排版")
+                }}
+              >
+                <Icon name="layout" />
+              </Button>
+            )}
+          </div>
+          <span className="vc-divider" />
+          <div className="vc-view-tabs" role="group" aria-label={tr("版本树视图")}>
             <Button
               variant="quiet"
               iconOnly
@@ -918,39 +955,6 @@ export default function VersionCanvas({
       </header>
 
       <section className="vc-board-area">
-        <div className="vc-board-toolbar">
-          <div className="vc-path-toggle">
-            <Switch
-              label={tr("只看定稿路径")}
-              checked={finalOnly}
-              onCheckedChange={setFinalOnly}
-            />
-            <Text>{tr("只看定稿路径")}</Text>
-          </div>
-          {/* UI 审查 11-16：「重新排版」只对画布有用，列表里不显示。 */}
-          {tab === "canvas" && <div className="vc-board-actions">
-            <Button
-              variant="quiet"
-              size="small"
-              onClick={() => {
-                setNodeDrafts((old) =>
-                  Object.fromEntries(
-                    Object.entries(old).map(([id, draft]) => [
-                      id,
-                      { ...draft, x: undefined, y: undefined },
-                    ]),
-                  ),
-                )
-                requestAnimationFrame(() => fitRef.current())
-                notify("已恢复自动排版")
-              }}
-            >
-              <Icon name="layout" />
-              {tr("重新排版")}
-            </Button>
-          </div>}
-        </div>
-
         {tab === "canvas" ? (
           <div
             ref={stage}
@@ -983,10 +987,12 @@ export default function VersionCanvas({
             >
               <div
                 className="vc-timeline-line"
-                style={{ width: Math.max(0, columns.length * COLUMN_GAP - 70) }}
+                style={{ width: visibleNodes.length ? Math.max(0, columns.length * COLUMN_GAP - 70) : 0 }}
               />
               {columns.map((column) => {
-                const members = nodes.filter((item) => item.column === column)
+                // 只看定稿路径时，没有卡片留下的组不显示标题。
+                const members = visibleNodes.filter((item) => item.column === column)
+                if (!members.length) return null
                 const round = members.every(
                   (item) => item.round === members[0].round,
                 )

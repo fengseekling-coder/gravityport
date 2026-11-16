@@ -566,6 +566,7 @@ const english: Record<string, string> = {
   "张素材": "assets",
   "个定稿": "finals",
   "版本树视图": "Version tree view",
+  "画布工具": "Canvas tools",
   "画布": "Canvas",
   "列表": "List",
   "只看定稿路径": "Final paths only",
