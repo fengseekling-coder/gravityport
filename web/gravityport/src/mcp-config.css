@@ -102,14 +102,20 @@
 
 .mcp-config-toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
   min-width: 0;
 }
 
+.mcp-config-toolbar .mcp-config-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: calc((var(--control-height-small) - var(--type-body-line)) / 2);
+}
+
 .mcp-config-clients {
-  align-self: flex-start;
+  flex-shrink: 0;
 }
 
 .mcp-config-code {

@@ -61,6 +61,22 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
                 {t("使用指南")}
               </a>
             </div>
+          ) : config?.available ? (
+            // UI 审查 11-16：助手切换放在标题右侧（没配置时那里是「使用指南」）。
+            // 任务 359（SET-09c）：按钮组读屏名与卡片标题区分开。
+            <div className="segmented mcp-config-clients" role="group" aria-label={t("AI 助手")}>
+              {MCP_CLIENTS.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className={entry.id === selected.id ? "on" : ""}
+                  aria-pressed={entry.id === selected.id}
+                  onClick={() => onSelectClient(entry.id)}
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
           ) : null}
         </div>
         <p className="mcp-config-desc">{t("支持 Claude、Codex 等 AI 助手直接连接与管理素材库。将下方配置粘贴到 AI 助手中，然后重启该助手。")}</p>
@@ -70,27 +86,13 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
           {config.installWarning === "not-in-applications" ? (
             <p className="mcp-config-warning" role="alert">{t("请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。")}</p>
           ) : null}
-          {/* UI 审查 11-16：复制按钮和助手切换同一行，不再压在代码上。 */}
+          {/* UI 审查 11-16：说明和复制按钮同一行，复制不再压在代码上。 */}
           <div className="mcp-config-toolbar">
-          {/* 任务 359（SET-09c）：按钮组读屏名与卡片标题区分开。 */}
-          <div className="segmented mcp-config-clients" role="group" aria-label={t("AI 助手")}>
-            {MCP_CLIENTS.map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                className={entry.id === selected.id ? "on" : ""}
-                aria-pressed={entry.id === selected.id}
-                onClick={() => onSelectClient(entry.id)}
-              >
-                {entry.label}
-              </button>
-            ))}
-          </div>
+            <p className="mcp-config-hint">{t(selected.hint)}</p>
             <button type="button" className="neutral-button mcp-config-copy-button" onClick={onCopy} disabled={!text}>
               {copied ? t("已复制") : t("复制")}
             </button>
           </div>
-          <p className="mcp-config-hint">{t(selected.hint)}</p>
           <div className="mcp-config-code">
             <pre data-mcp-client={selected.id}><code>{codeLines(text)}</code></pre>
           </div>
