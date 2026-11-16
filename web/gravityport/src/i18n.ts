@@ -412,7 +412,6 @@ const english: Record<string, string> = {
   // ── 反馈（区域五 SET-12）──
   "反馈": "Feedback",
   "反馈类型": "Feedback type",
-  "发送遇到的问题或功能建议。": "Send problem reports or feature suggestions.",
   "反馈内容": "Feedback message",
   "联系方式": "Contact",
   "问题": "Problem",

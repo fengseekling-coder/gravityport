@@ -168,7 +168,6 @@ export function FeedbackPanel({ language }: { language: Language }) {
             ))}
           </div>
         </div>
-        <p className="settings-card-desc">{tr("发送遇到的问题或功能建议。")}</p>
       </div>
       <textarea
         className="feedback-message"
