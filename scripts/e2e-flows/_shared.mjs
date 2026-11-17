@@ -84,3 +84,219 @@ export const CHOOSE_PROJECT_SOURCE = TOOLBAR_SELECT_SOURCE + `
       await chooseToolbarSelect(switcher, optionFor, 'project option ' + name, 'project switcher', 'project menu closes');
     }
 `;
+
+const DEFAULT_APP_SHELL_EXPRESSION = "Boolean(document.querySelector('.app'))";
+let reloadTokenSeq = 0;
+
+function resolveCdpEvaluator(cdp, customEvaluate) {
+  if (typeof customEvaluate === "function") return customEvaluate;
+  if (typeof cdp.evaluate === "function") return (expression) => cdp.evaluate(expression);
+  return async (expression) => {
+    const response = await cdp.send("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (response?.exceptionDetails) {
+      throw new Error(
+        "evaluate failed: "
+          + (response.exceptionDetails.exception?.description || response.exceptionDetails.text),
+      );
+    }
+    return response?.result?.value;
+  };
+}
+
+/**
+ * Poll a CDP Runtime.evaluate expression until `match(value)` holds, treating
+ * single stalled or detached-context evaluations as transient retries until
+ * the total deadline expires.
+ */
+export async function waitForCdpExpression(cdp, expression, label, optionsOrTimeoutMs = 20000) {
+  const options = typeof optionsOrTimeoutMs === "number"
+    ? { timeoutMs: optionsOrTimeoutMs }
+    : (optionsOrTimeoutMs || {});
+  const {
+    timeoutMs = 20000,
+    pollIntervalMs = 200,
+    evaluateTimeoutMs = 1500,
+    evaluate: customEvaluate,
+    match = (value) => value === true,
+  } = options;
+  const evaluate = resolveCdpEvaluator(cdp, customEvaluate);
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const attemptTimeoutMs = Math.min(evaluateTimeoutMs, Math.max(200, remainingMs));
+    let timer = null;
+    try {
+      const value = await Promise.race([
+        Promise.resolve(evaluate(expression)),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("evaluate stalled")), attemptTimeoutMs);
+        }),
+      ]);
+      if (match(value)) return value;
+      lastError = null;
+    } catch (error) {
+      lastError = error;
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
+    const waitMs = Math.min(pollIntervalMs, Math.max(0, deadline - Date.now()));
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  throw new Error(`timed out waiting for ${label}${lastError ? `: ${lastError.message}` : ""}`);
+}
+
+/**
+ * Arm Page/Runtime CDP navigation listeners and an old-window marker before
+ * calling `location.reload()`, so `waitForApp()` cannot match the pre-reload DOM
+ * and `trigger()` can be followed by intermediate main-process steps before
+ * awaiting the new app shell.
+ */
+export async function prepareCdpReload(cdp, options = {}) {
+  const evaluate = resolveCdpEvaluator(cdp, options.evaluate);
+  const markerKey = "__e2eReloadMarker";
+  const markerValue = `reload-${Date.now()}-${++reloadTokenSeq}`;
+
+  await cdp.send("Page.enable");
+  await cdp.send("Runtime.enable");
+  await evaluate(`window[${JSON.stringify(markerKey)}] = ${JSON.stringify(markerValue)}`);
+
+  let triggered = false;
+  let contextsCleared = false;
+  let defaultContextCreated = false;
+  let loadEventFired = false;
+  let settleNewContext = null;
+
+  const isNewContextReady = () => (contextsCleared && defaultContextCreated) || loadEventFired;
+
+  const unsubscribe = cdp.onEvent((message) => {
+    if (!triggered) return;
+    if (message.method === "Runtime.executionContextsCleared") {
+      contextsCleared = true;
+      defaultContextCreated = false;
+    } else if (
+      message.method === "Runtime.executionContextCreated"
+      && contextsCleared
+      && message.params?.context?.auxData?.isDefault === true
+    ) {
+      defaultContextCreated = true;
+    } else if (message.method === "Page.loadEventFired") {
+      loadEventFired = true;
+    }
+    if (settleNewContext && isNewContextReady()) {
+      const resolve = settleNewContext;
+      settleNewContext = null;
+      resolve();
+    }
+  });
+
+  const cancel = () => {
+    unsubscribe();
+    if (settleNewContext) {
+      const resolve = settleNewContext;
+      settleNewContext = null;
+      resolve();
+    }
+  };
+
+  const trigger = () => {
+    // In Launch Services QA mode CDP Page.reload can terminate the renderer, so
+    // fire location.reload() without awaiting its stranded evaluate response.
+    contextsCleared = false;
+    defaultContextCreated = false;
+    loadEventFired = false;
+    triggered = true;
+    Promise.resolve(evaluate("location.reload()")).catch(() => {});
+  };
+
+  const waitForApp = async (waitOptions = {}) => {
+    const {
+      expression = DEFAULT_APP_SHELL_EXPRESSION,
+      label = "app shell after reload",
+      timeoutMs = 20000,
+      pollIntervalMs = 200,
+      evaluateTimeoutMs = 1500,
+      match = (value) => value === true,
+    } = waitOptions;
+    if (!triggered) {
+      cancel();
+      throw new Error("prepareCdpReload.waitForApp() called before trigger()");
+    }
+    const deadline = Date.now() + timeoutMs;
+    try {
+      if (!isNewContextReady()) {
+        const remainingForNav = deadline - Date.now();
+        if (remainingForNav <= 0) {
+          throw new Error(`timed out waiting for reload navigation (${label})`);
+        }
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            if (settleNewContext) settleNewContext = null;
+            reject(new Error(`timed out waiting for reload navigation (${label})`));
+          }, remainingForNav);
+          settleNewContext = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          if (isNewContextReady()) {
+            clearTimeout(timer);
+            settleNewContext = null;
+            resolve();
+          }
+        });
+      }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(`timed out waiting for ${label}`);
+      }
+      const markerGuard = `window[${JSON.stringify(markerKey)}] !== ${JSON.stringify(markerValue)}`;
+      return await waitForCdpExpression(
+        cdp,
+        `${markerGuard} && (${expression})`,
+        label,
+        {
+          timeoutMs: remainingMs,
+          pollIntervalMs,
+          evaluateTimeoutMs,
+          evaluate,
+          match,
+        },
+      );
+    } finally {
+      cancel();
+    }
+  };
+
+  return { trigger, waitForApp, cancel };
+}
+
+/**
+ * Reload the active CDP target with `location.reload()` and wait until the new
+ * execution context / load event arrives and `expression` holds.
+ */
+export async function reloadCdpAndWaitForApp(cdp, options = {}) {
+  const {
+    expression = DEFAULT_APP_SHELL_EXPRESSION,
+    label = "app shell after reload",
+    timeoutMs = 20000,
+    pollIntervalMs = 200,
+    evaluateTimeoutMs = 1500,
+    evaluate,
+    match = (value) => value === true,
+  } = options;
+  const reload = await prepareCdpReload(cdp, { evaluate });
+  reload.trigger();
+  return reload.waitForApp({
+    expression,
+    label,
+    timeoutMs,
+    pollIntervalMs,
+    evaluateTimeoutMs,
+    match,
+  });
+}
