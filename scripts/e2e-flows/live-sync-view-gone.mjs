@@ -167,8 +167,16 @@ function viewGoneSource(stackA, stackACover, stackB, stackBCover, stackCCover, s
     await waitFor(() => document.querySelector('.asset-card[data-asset-id="' + ${JSON.stringify(stackCCover)} + '"] .stack-mark'), 'stack C card visible in 所有素材');
     await enterStack('.asset-card[data-asset-id="' + ${JSON.stringify(stackCCover)} + '"] .stack-mark', 'C');
     await chooseToolbarOption('类型与排序', '视频');
-    await sleep(400);
-    const emptyText = document.querySelector('.empty-state')?.textContent || '';
+    // Wait for the empty state itself (435): a fixed sleep reads it empty or
+    // mid-transition on a slow runner. On timeout the error carries the text
+    // read at that moment.
+    const emptyStateText = () => document.querySelector('.empty-state')?.textContent || '';
+    try {
+      await waitFor(() => emptyStateText().includes('没有匹配的素材') && Boolean(document.querySelector('.empty-state button')), 'the no-results empty state (没有匹配的素材 + a button)');
+    } catch (error) {
+      throw new Error(error.message + ' | empty-state=' + JSON.stringify(emptyStateText()));
+    }
+    const emptyText = emptyStateText();
     const filteredEmptyState = emptyText.includes('没有匹配的素材') && Boolean(document.querySelector('.empty-state button'));
     return { dissolveExited, backSkipsDeadStack, emptiedStackExited, deletedGroupFellBack, backFromDeletedGroupLandsSafe, forwardAfterBackSafe, renamedGroupFollowed, filteredEmptyState };
 

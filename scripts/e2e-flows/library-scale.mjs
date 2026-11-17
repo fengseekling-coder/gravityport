@@ -59,13 +59,20 @@ function scaleSource() {
 
     }
     const cardCount = () => document.querySelectorAll('.asset-card').length;
-    async function scrollToMore() {
+    // Keep scrolling for the whole wait: a slow runner (still filling
+    // thumbnails) may need more than a few seconds per page, and a page that
+    // lands after the last nudge would otherwise never trigger the next one
+    // (435; same shape as live-sync-top-pagination). The waitFor after each
+    // call still re-asserts the target on its own.
+    async function scrollToMore(target, label) {
       const scroller = document.querySelector('.asset-grid');
-      const seen = cardCount();
-      for (let step = 0; step < 40; step++) {
+      const deadline = Date.now() + 30000;
+      while (cardCount() < target && Date.now() < deadline) {
         scroller.scrollBy(0, 900);
         await sleep(120);
-        if (cardCount() > seen) break;
+      }
+      if (cardCount() < target) {
+        throw new Error('Timed out waiting for ' + label + ' (' + cardCount() + ' cards loaded, need ' + target + ')');
       }
     }
     window.__observerFired = 0;
@@ -87,13 +94,13 @@ function scaleSource() {
     const initialCards = cardCount();
     const navTotal = await fetch('/api/navigation?project=default').then((r) => r.json()).then((d) => d.navigation.total);
 
-    await scrollToMore();
+    await scrollToMore(${PAGE_SIZE * 2}, 'the second page appends');
     // A scroll parked near the bottom legitimately chain-loads further pages,
     // so this pins "the second page arrived", not a momentary exact count.
     await waitFor(() => cardCount() >= ${PAGE_SIZE * 2}, 'the second page appends');
     const afterFirstScroll = cardCount();
 
-    await scrollToMore();
+    await scrollToMore(${SEED_TOTAL}, 'the library fully loads');
     await waitFor(() => cardCount() >= ${SEED_TOTAL}, 'the library fully loads');
     const afterSecondScroll = cardCount();
     clearInterval(sentinelInterval);

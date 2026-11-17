@@ -154,8 +154,11 @@ function pageSource(config) {
       if (!same(highlighted, [config.stackB[0]])) throw new Error('target highlight: ' + JSON.stringify(highlighted));
       const merged = [...config.stackB, ...config.stackA];
       await waitFor(async () => same(await members(config.stackBId), merged), 'B holds its members then A in order');
-      const toast = document.querySelector('.toast')?.textContent || '';
-      if (!toast.includes('已将 3 个素材合并到堆叠「乙堆叠」')) throw new Error('toast: ' + toast);
+      // Wait for the toast text itself (435): the toast paints a frame or
+      // more after the merge API lands, so a synchronous read can catch it
+      // missing or mid-transition. waitFor's timeout error carries the
+      // toast= tail, i.e. the text read at that moment.
+      await waitFor(() => (document.querySelector('.toast')?.textContent || '').includes('已将 3 个素材合并到堆叠「乙堆叠」'), 'the merge toast (已将 3 个素材合并到堆叠「乙堆叠」)');
       const all = await waitFor(async () => { const list = await stacks(); return list.some((s) => s.id === config.stackAId) ? null : list; }, 'stack A gone');
       const b = all.find((s) => s.id === config.stackBId);
       if (!b || b.cover !== config.stackB[0] || b.name !== '乙堆叠') throw new Error('B changed: ' + JSON.stringify(b));
