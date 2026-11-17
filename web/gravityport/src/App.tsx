@@ -32,7 +32,7 @@ import { VERSION_CANVAS_ENTRY, canvasFromHistory } from "./version-canvas-model"
 import { computeConversationRounds } from "./conversation-rounds"
 import { sanitizeAssetForExport } from "./feature-parity"
 import { describeSource, inspectorHeaderLine, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
-import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, fitTagsInTwoLines } from "./tag-display"
+import { vendorLabelFor, visibleTags, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
   type MasonryModel,
@@ -81,6 +81,7 @@ import { PINTEREST_ENTRY, SettingsDialog } from "./SettingsDialog"
 import { VersionSection } from "./VersionSection"
 import VersionCanvas from "./VersionCanvas"
 import { InspectorDetails } from "./InspectorDetails"
+import { Sidebar } from "./Sidebar"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
 
@@ -4452,148 +4453,29 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass} ${(preview || pinterestChrome.viewing) && viewerFullscreen ? "viewer-fullscreen" : ""} ${canvasOpen && asset ? "canvas-open" : ""}`}
       onClick={() => menu && setMenu(null)}
     >
-      <aside className="sidebar">
-        <div className="brandbar">
-          <strong>GravityPort</strong>
-        </div>
-        {projects.length > 1 && (
-          <div className="sidebar-project">
-            <ToolbarSelect
-              label={tr("项目")}
-              value={project}
-              onChange={switchProject}
-              options={projects.map(p => ({ value: p, label: p }))}
-            />
-          </div>
-        )}
-        <nav className="main-nav" aria-label={tr("素材库")}>
-          {["所有素材", "Pinterest", "待整理", "收藏", "回收站"].filter(label => PINTEREST_ENTRY || label !== "Pinterest").map(
-            (label) => (
-              <button
-                key={label}
-                title={tr(label)}
-                aria-label={tr(label)}
-                aria-current={active === label ? "page" : undefined}
-                className={`nav-row ${active === label ? "selected" : ""} ${label === "待整理" && cardDropSide?.kind === "ungrouped" ? "side-drop-target" : ""}`}
-                {...(label === "待整理" ? { "data-drop-ungroup": "" } : {})}
-                onClick={() => {
-                  goTo({ active: label, stackId: "", stackName: "" })
-                  setSelectedIds([])
-                }}
-              >
-                {label === "Pinterest" ? <span className="brand-icon" aria-hidden="true" /> : <Icon
-                  name={label === "待整理" ? "inbox" : label === "收藏" ? "heart" : label === "回收站" ? "trash" : "grid"}
-                  size={16}
-                />}
-                <span>{tr(label)}</span>
-                <small>
-                  {label === "所有素材"
-                    ? navigation?.total ?? 0
-                    : label === "Pinterest"
-                      // Pinterest stays in Trial access (1,000 calls a day shared
-                      // by every user) until Standard access is approved, so the
-                      // count slot says 即将上线 even after boards have loaded.
-                      ? <span className="nav-soon">{tr("即将上线")}</span>
-                      : label === "待整理"
-                        ? navigation?.unorganized ?? 0
-                        : label === "收藏"
-                          ? navigation?.favorites ?? 0
-                          : navigation?.trash ?? 0}
-                </small>
-              </button>
-            ),
-          )}
-        </nav>
-        {[0, 1].map((section) => (
-          <div className="group-section" key={section}>
-            <div className="section-label">
-              <button
-                className="section-toggle"
-                aria-label={section === 0 ? tr("智能分组") : tr("我的分组")}
-                aria-expanded={expandedSections[section]}
-                aria-controls={`sidebar-group-${section}`}
-                onClick={() => setExpandedSections(old => old.map((value, i) => i === section ? !value : value))}
-              >
-                <span>{section === 0 ? tr("智能分组") : tr("我的分组")}</span>
-                <Icon name={expandedSections[section] ? "down" : "right"} size={12} />
-              </button>
-              {section === 1 && <button
-                className="add-group"
-                aria-label={tr("新建分组")}
-                title={tr("新建分组")}
-                onClick={createNamedGroup}
-              ><Icon name="plus" size={16} /></button>}
-            </div>
-            <nav id={`sidebar-group-${section}`} aria-label={section === 0 ? tr("智能分组") : tr("我的分组")} hidden={!expandedSections[section]}>
-            {(section === 0
-              ? SMART_SOURCE_GROUPS.map(([source, name]) => ({
-                  id: `source:${source}`, name,
-                  count: navigation?.sourceTypes.find(entry => entry[0] === source)?.[1] ?? 0,
-                })).filter(entry => entry.count > 0)
-              : (navigation?.groups || []).map(entry => ({ id: `group:${entry.name}`, name: entry.name, count: entry.count }))
-            ).map((g) => (
-              <button
-                className={`nav-row group-row ${
-                  active === g.id ? "selected" : ""
-                } ${g.id.startsWith("group:") && cardDropSide?.kind === "group" && cardDropSide.name === g.name ? "side-drop-target" : ""}`}
-                key={g.id}
-                title={tr(g.name)}
-                aria-label={tr(g.name)}
-                aria-current={active === g.id ? "page" : undefined}
-                {...(g.id.startsWith("group:") ? { "data-drop-group": g.name } : {})}
-                onClick={() => { goTo({ active: g.id, stackId: "", stackName: "" }); setSelectedIds([]) }}
-                onContextMenu={event => {
-                  if (section !== 1) return
-                  event.preventDefault()
-                  openGroupMenu(g.name, event.clientX, event.clientY)
-                }}
-                onDragOver={event => {
-                  if (g.id.startsWith("group:") && !preview && !settings) event.preventDefault()
-                }}
-                onDrop={event => {
-                  if (!g.id.startsWith("group:") || preview || settings) return
-                  event.preventDefault()
-                  importDroppedFiles(event.dataTransfer, g.name)
-                }}
-              >
-                <Icon name={section === 0 ? "layers" : "folder"} size={16} />
-                <span>{tr(g.name)}</span>
-                <small>{g.count}</small>
-              </button>
-            ))}
-            </nav>
-          </div>
-        ))}
-        {updateReadyLine && (
-          <div className="update-ready-slot">
-            <button
-              className="update-ready-line"
-              disabled={restartPending}
-              title={updateReadyLine.title}
-              aria-label={updateReadyLine.title}
-              onClick={restartToUpdate}
-            >
-              <span className="update-ready-dot" aria-hidden="true" />
-              <span className="update-ready-label">
-                {updateReadyLine.head}
-                {updateReadyLine.versionText && <strong className="update-ready-version">{updateReadyLine.versionText}</strong>}
-                {updateReadyLine.tail}
-              </span>
-              <span className="update-ready-action">{restartPending ? tr("正在更新…") : tr("重启并更新")}</span>
-            </button>
-          </div>
-        )}
-        <button
-          className={`user-button${installationId ? " has-installation-id" : ""}`}
-          onClick={() => setSettings(true)}
-          aria-label={installationId ? `${tr("设置")} · ${tr("安装编号")} ${installationId}` : undefined}
-          title={installationId ? `${tr("安装编号")} ${installationId}` : undefined}
-        >
-          <Icon name="user" size={14} />
-          <span>{installationId ? `${installationId.slice(0, 8)}…${installationId.slice(-4)}` : tr("设置")}</span>
-          <Icon name="settings" size={14} />
-        </button>
-      </aside>
+      <Sidebar
+        tr={tr}
+        projects={projects}
+        project={project}
+        switchProject={switchProject}
+        active={active}
+        goTo={goTo}
+        setSelectedIds={setSelectedIds}
+        cardDropSide={cardDropSide}
+        navigation={navigation}
+        expandedSections={expandedSections}
+        setExpandedSections={setExpandedSections}
+        createNamedGroup={createNamedGroup}
+        updateReadyLine={updateReadyLine}
+        restartPending={restartPending}
+        restartToUpdate={restartToUpdate}
+        installationId={installationId}
+        setSettings={setSettings}
+        preview={preview}
+        settings={settings}
+        importDroppedFiles={importDroppedFiles}
+        openGroupMenu={openGroupMenu}
+      />
       <GroupDialogs
         groupRename={groupRename} setGroupRename={setGroupRename}
         groupDeleteConfirm={groupDeleteConfirm} setGroupDeleteConfirm={setGroupDeleteConfirm}

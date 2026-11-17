@@ -318,6 +318,7 @@ describe("i18n coverage", () => {
       "SettingsDialog.tsx", "GroupDialogs.tsx", "InspectorParts.tsx", "MenuRow.tsx", "ReadingText.tsx", "ThumbMedia.tsx",
       "VersionSection.tsx",
       "InspectorDetails.tsx",
+      "Sidebar.tsx",
     ];
     const used = new Set();
     for (const file of files) {
