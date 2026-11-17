@@ -478,6 +478,23 @@ describe("waitForPinterestConnection — third poll connects", () => {
   });
 });
 
+describe("waitForPinterestConnection — expired authorization", () => {
+  it("keeps polling while the stale token still reports connected with needsReconnect", async () => {
+    let callCount = 0;
+    const fakeFetchStatus = async () => {
+      callCount++;
+      if (callCount < 3) return { connected: true, username: "old", needsReconnect: true };
+      return { connected: true, username: "old", needsReconnect: false };
+    };
+    const result = await pinterestApi.waitForPinterestConnection({
+      fetchStatus: fakeFetchStatus,
+      sleep: async () => {},
+    });
+    assert.equal(callCount, 3);
+    assert.equal(result.needsReconnect, false);
+  });
+});
+
 describe("waitForPinterestConnection — timeout", () => {
   it("throws PINTEREST_CONNECT_TIMEOUT when timeout reached", async () => {
     const fakeFetchStatus = async () => ({ connected: false });
