@@ -110,6 +110,10 @@ function pinterestBrowseSource() {
       return { sameColumnGap: Math.round(b.top - a.bottom), radius: getComputedStyle(qa('.pinterest-pin-card')[0]).borderRadius };
     })();
 
+    // Entering a board focuses the first Pin, like the main gallery: the right column is there from the start.
+    await waitFor(() => qa('.pinterest-pin-card')[0]?.classList.contains('asset-selected') && qa('.pinterest-pin-card.asset-selected').length === 1, 'first Pin focused on entering the board');
+    await waitFor(() => q('.details') && /Pin 0/.test(q('.details').innerText), 'right column shows the first Pin on entering the board');
+
     // 3. Single click: selection outline + right column 素材详情 (no dialog).
     const grid = q('.pinterest-view');
     grid.scrollTop = 120;

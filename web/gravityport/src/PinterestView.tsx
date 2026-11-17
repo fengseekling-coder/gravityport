@@ -580,6 +580,14 @@ export const PinterestView = forwardRef<PinterestViewHandle, PinterestViewProps>
   const selectedIndex = selectedPinId ? pins.findIndex((pin) => pin.id === selectedPinId) : -1;
   const selectedPin = selectedIndex >= 0 ? pins[selectedIndex] : null;
 
+  // Like the main gallery, a board always has a focused Pin: the first one once
+  // the list loads, so the right column is there from the start and clicking
+  // another Pin only swaps its content instead of narrowing the masonry.
+  const firstPinId = pins[0]?.id ?? null;
+  useEffect(() => {
+    if (board && selectedIndex < 0 && firstPinId) setSelectedPinId(firstPinId);
+  }, [board, selectedIndex, firstPinId]);
+
   const openViewerFor = useCallback((pin: PinterestPin) => {
     savedPinsScrollTop.current = scrollRef.current?.scrollTop ?? 0;
     setSelectedPinId(pin.id);
