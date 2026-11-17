@@ -163,6 +163,8 @@ export function isAuthorizedMosaClientRequest(
  * Web Capture routes have their own bearer-token boundary and are
  * intentionally excluded by the runtime before this predicate is applied.
  */
+export const PINTEREST_CALLBACK_PATH = "/api/pinterest/callback";
+
 export const PUBLIC_API_PATHS: ReadonlySet<string> = new Set([
   "/api/health",
   "/api/service-identity",
@@ -174,6 +176,12 @@ export function requiresMosaClientToken(method: unknown, pathname: unknown): boo
   if (verb === "OPTIONS") return false;
   const path = String(pathname || "");
   if (!path.startsWith("/api/")) return false;
+  // The Pinterest OAuth redirect lands here from the user's system browser,
+  // which never holds the client token or cookie. Only GET is exempt; the
+  // handler itself refuses anything without a valid one-time state (PKCE),
+  // so forgery is still rejected. Without this exemption every reconnect
+  // since task 314 ended on MOSA_CLIENT_UNAUTHORIZED.
+  if (verb === "GET" && path === PINTEREST_CALLBACK_PATH) return false;
   return !PUBLIC_API_PATHS.has(path);
 }
 

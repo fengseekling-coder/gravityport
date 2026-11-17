@@ -241,7 +241,10 @@ test("the runtime gate labels same-site browser requests CROSS_SITE_REQUEST whil
     headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" },
   });
   assert.notEqual(pinterest.status, 403, "the callback must not be refused by THIS gate");
-  assert.notEqual(JSON.parse(pinterest.body).code, "CROSS_SITE_REQUEST");
+  // Nor by the client-token gate: the system browser carries no token, so a
+  // 401 here means no user can ever finish connecting Pinterest.
+  assert.notEqual(pinterest.status, 401, "the callback must not require the client token");
+  assert.doesNotMatch(pinterest.body, /CROSS_SITE_REQUEST|MOSA_CLIENT_UNAUTHORIZED/);
 
   // A cross-site POST to the same path is still refused.
   const pinterestPost = await request(runtime.port, "/api/pinterest/callback", {

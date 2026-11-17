@@ -58,6 +58,11 @@ test("management mutations require a high-entropy runtime capability", () => {
   assert.equal(requiresMosaClientToken("POST", "/api/service-identity"), false);
   assert.equal(requiresMosaClientToken("POST", "/api/client-session"), false);
   assert.equal(requiresMosaClientToken("POST", "/api/health"), false, "whitelisted paths are path-scoped, so unknown methods fall through to 404");
+  // The Pinterest OAuth redirect comes back from the system browser with no
+  // client token; only its GET is exempt (the handler checks the PKCE state).
+  assert.equal(requiresMosaClientToken("GET", "/api/pinterest/callback"), false);
+  assert.equal(requiresMosaClientToken("POST", "/api/pinterest/callback"), true);
+  assert.equal(requiresMosaClientToken("GET", "/api/pinterest/status"), true);
   assert.throws(() => normalizeMosaClientToken("too-short"), /32-byte-or-stronger/);
 });
 
