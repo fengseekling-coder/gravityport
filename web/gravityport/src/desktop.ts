@@ -48,6 +48,7 @@ type ElectronAPI = {
   // unavailable/校验原因…），从不返回 error。
   changeLibraryLocation?: () => Promise<{ ok?: boolean; libraryDir?: string; reason?: string }>
   getMcpClientConfig?: () => Promise<McpClientConfig>
+  getInstallationId?: () => Promise<string>
   getBackgroundCaptureState?: () => Promise<{ supported: boolean; enabled: boolean }>
   setBackgroundCapture?: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean }>
   setWindowFullScreen?: (flag: boolean) => Promise<unknown>

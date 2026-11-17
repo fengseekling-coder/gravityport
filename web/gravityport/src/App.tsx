@@ -3,7 +3,8 @@ import Icon from "./Icon"
 import ToolbarSelect from "./ToolbarSelect"
 import ColumnControl from "./ColumnControl"
 import ImageViewer from "./ImageViewer"
-import { PinterestView } from "./PinterestView"
+import { PINTEREST_CHROME_IDLE, PinterestPinDetail, PinterestView, openExternalPinterestLink, type PinterestChrome, type PinterestViewHandle } from "./PinterestView"
+import { pinterestFormat, pinterestText } from "./pinterest-strings"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
 import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } from "./context-menus"
@@ -27,9 +28,10 @@ import { resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { galleryKeyAction, isFocusSearchKey, menuSelectAllTarget, mouseNavDirection, neighbourAssetId, resolveNavHistoryShortcut } from "./gallery-keys"
 import { type GenerationDisplay } from "./version-tree"
+import { VERSION_CANVAS_ENTRY, canvasFromHistory } from "./version-canvas-model"
 import { computeConversationRounds } from "./conversation-rounds"
 import { sanitizeAssetForExport } from "./feature-parity"
-import { describeSource, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
+import { describeSource, inspectorHeaderLine, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
 import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
@@ -77,6 +79,7 @@ import { isVideoUrl, ThumbMedia, VideoMark } from "./ThumbMedia"
 import { GroupDialogs } from "./GroupDialogs"
 import { PINTEREST_ENTRY, SettingsDialog } from "./SettingsDialog"
 import { VersionSection } from "./VersionSection"
+import VersionCanvas from "./VersionCanvas"
 import { InspectorDetails } from "./InspectorDetails"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
@@ -97,12 +100,6 @@ function loadPreferences() {
 
 /** Inspector header line "kind · source · date". Whole-sentence templates keep
  *  the kind word singular — the bare "图片" key is the filter buttons' plural. */
-function inspectorHeaderLine(info: ReturnType<typeof describeSource>, tr: (text: string) => string): string {
-  const kind = info.kindLabel === "视频" ? "视频" : "图片"
-  const template = info.dateLabel ? `${kind} · {source} · {date}` : `${kind} · {source}`
-  return tr(template).replace("{source}", tr(info.sourceLabel)).replace("{date}", info.dateLabel)
-}
-
 // 任务 359（写死文字 2）：版本树副行里的 provider 原值（chatgpt 等小写代号）
 // 过一遍显示名；型号是设备数据，保留原文。
 const PROVIDER_LABELS: Record<string, string> = {
@@ -224,6 +221,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const [stackName, setStackName] = useState("")
   const [selected, setSelected] = useState("")
   const [settings, setSettings] = useState(false)
+  // 11-16 用户定：左下角显示安装编号（和官网后台安装明细一样取前 8 位…后 4 位），
+  // 点它仍打开设置；浏览器预览、旧主进程拿不到编号时照旧写「设置」。
+  const [installationId, setInstallationId] = useState("")
+  useEffect(() => {
+    desktopAPI()?.getInstallationId?.()
+      .then((id) => setInstallationId(typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id) ? id : ""))
+      .catch(() => {})
+  }, [])
   const [settingTab, setSettingTab] = useState("常规与外观")
   const [backgroundCapture, setBackgroundCapture] = useState<{ supported: boolean; enabled: boolean }>({ supported: false, enabled: true })
   const [backgroundCaptureBusy, setBackgroundCaptureBusy] = useState(false)
@@ -240,6 +245,11 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // A connect/disconnect from Settings remounts PinterestView so it rereads
   // the status instead of showing boards of an account that is gone.
   const [pinterestViewKey, setPinterestViewKey] = useState(0)
+  // What the Pinterest view reports for the top bar and right column, and the handle it answers to.
+  const [pinterestChrome, setPinterestChrome] = useState<PinterestChrome>(PINTEREST_CHROME_IDLE)
+  const pinterestChromeRef = useRef<PinterestChrome>(PINTEREST_CHROME_IDLE)
+  pinterestChromeRef.current = pinterestChrome
+  const pinterestViewRef = useRef<PinterestViewHandle>(null)
   const pinterestConnectedRef = useRef<boolean | null>(null)
   const onPinterestStatus = (status: PinterestStatus) => {
     const connected = status.connected && !status.needsReconnect
@@ -398,6 +408,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // affected section shows 加载失败 instead of its empty text.
   const [inspectorFetchError, setInspectorFetchError] = useState({ versions: false, history: false, recipes: false })
   const [versionTreeOpen, setVersionTreeOpen] = useState(false)
+  const [canvasOpen, setCanvasOpen] = useState(false)
+  const [canvasSession, setCanvasSession] = useState(0)
   // The version compare keeps its selection inside the block (task 217); the
   // blocks remount per asset, so switching assets resets both to defaults.
   // The prompt draft is bound to one concrete asset; it never outlives the
@@ -1019,7 +1031,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // Task 384 (审查低-14): the group/stack dialogs join the settings window
     // and the delete confirm in the focus trap. When several are open the
     // topmost one wins (DESIGN.md hierarchy: 填写框 105 > 确认框 45 > 设置 20).
-    const formDialogOpen = Boolean(groupRename || stackRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm)
+    const formDialogOpen = Boolean(groupRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm)
     const confirmDialogOpen = Boolean(deleting || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
     if (!settings && !formDialogOpen && !confirmDialogOpen) return
     const dialog = appRef.current?.querySelector<HTMLElement>(
@@ -1030,16 +1042,20 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       'button:not([disabled]), input, select, [tabindex="0"]',
     ) || [])
     const first = controls()[0]
-    first?.focus()
-    // 带输入框的小框（重命名分组/堆叠、新建分组并移入）落在输入框上并全选
-    // 现有文字；只有按钮的确认框和合并分组的下拉框落在第一个控件（取消/下拉）。
-    if (first instanceof HTMLInputElement && first.type === "text") first.select()
+    if (formDialogOpen || confirmDialogOpen) {
+      first?.focus()
+      // 带输入框的小框（重命名分组、新建分组并移入）落在输入框上并全选
+      // 现有文字；只有按钮的确认框和合并分组的下拉框落在第一个控件（取消/下拉）。
+      if (first instanceof HTMLInputElement && first.type === "text") first.select()
+    } else {
+      dialog?.focus()
+    }
     const trap = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return
       const list = controls()
       const first = list[0]
       const last = list[list.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
         event.preventDefault()
         last?.focus()
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -1052,7 +1068,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       document.removeEventListener("keydown", trap)
       previous?.focus()
     }
-  }, [settings, deleting, groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm,
+  }, [settings, deleting, groupRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm,
     stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds])
   useEffect(() => {
     if (!selected) return
@@ -1146,6 +1162,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const nextCursorRef = useRef<string | null>(null)
   nextCursorRef.current = nextCursor
   const asset = assets.find((a) => a.id === selected) || assets[0]
+  useEffect(() => {
+    if (canvasOpen && !asset) setCanvasOpen(false)
+  }, [canvasOpen, asset])
   // 版本树（任务 144）：有对话时行来自对话轮次计算——默认当前素材前后共三行，
   // 「查看」展开全部；无对话时列表回退到 events（rounds.rows 为空）。
   const versionRounds = useMemo(
@@ -1339,7 +1358,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     if (upstream.turnIndex != null && downstream.turnIndex != null) {
       return `${fillNamed(tr("第 {n} 轮"), { n: upstream.turnIndex })} → ${fillNamed(tr("第 {n} 轮"), { n: downstream.turnIndex })}`
     }
-    const clip = (display: GenerationDisplay) => (display.prompt ? display.prompt.slice(0, 12) : tr("无提示词记录"))
+    // UI 审查 11-16：用文件名（去扩展名）认图，截断的提示词看不出是哪两张。
+    const clip = (display: GenerationDisplay) =>
+      display.asset?.name ? display.asset.name.replace(/\.[^.]+$/, "") : display.prompt ? display.prompt.slice(0, 12) : tr("无提示词记录")
     return `${clip(upstream)} → ${clip(downstream)}`
   }
   // Batch outcomes share one toast grammar (任务 359 TOAST-13~15): a full
@@ -1729,6 +1750,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     setAssets([]); setNextCursor(null)
     setLoadError(null)
     setPreview(false)
+    setCanvasOpen(false)
     setProject(next)
   }
   // ── navigation history ──
@@ -1758,6 +1780,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     if (partial.sortOrder !== undefined) setSortOrder(partial.sortOrder)
     if (partial.assetType !== undefined) setAssetType(partial.assetType)
     setPreview(false)
+    if (partial.active !== undefined || partial.stackId !== undefined || partial.query !== undefined) setCanvasOpen(false)
   }
   // The stack view is gone (dissolved, emptied, or was never there again):
   // back to the pre-stack view — same active/search/sort, stackId cleared —
@@ -2815,7 +2838,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       activeIsEditable: isEditableTarget(document.activeElement),
       // The Pinterest view hides the gallery; its keydown ⌘A returns early
       // without preventDefault, so this menu path must refuse it too.
-      galleryIdle: !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !authorizationActive && !pinterestActive,
+      galleryIdle: !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !authorizationActive && !pinterestActive && !canvasOpen,
       msSinceKeySelectAll: keySelectAllAtRef.current ? Date.now() - keySelectAllAtRef.current : null,
     })
     if (target === "text") document.execCommand("selectAll")
@@ -2830,6 +2853,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       || groupRename || stackRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm
       || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
     const key = (e: KeyboardEvent) => {
+      if (canvasOpen) return
       if (e.key === "Escape") {
         // A live card drag consumes Escape on its own: cancel the gesture,
         // leave selection and dialogs alone.
@@ -2861,8 +2885,13 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         else if (groupCreateWithSelection) setGroupCreateWithSelection(null)
         else if (groupMerge) setGroupMerge(null)
         else if (groupDeleteConfirm) setGroupDeleteConfirm(null)
-        else if (renameNoticeOpen) dismissRenameNotice()
-        else if (schemaNoticeOpen) dismissSchemaUpgradeNotice()
+        // The two notices open on their own (startup check, live post-upgrade
+        // verdict), not from a key or click, so like the authorization queue
+        // they read the render-time refs: an Escape between the notice's
+        // paint and this listener's re-arm saw the stale closure and was
+        // swallowed (task 428, CI run 43628176321, Windows runner).
+        else if (renameNoticeRef.current) dismissRenameNotice()
+        else if (schemaNoticeRef.current) dismissSchemaUpgradeNotice()
         else if (deleting) setDeleting(false)
         else if (stackDissolveConfirm) setStackDissolveConfirm(null)
         else if (stackTrashConfirm) setStackTrashConfirm(null)
@@ -2874,6 +2903,10 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         else if (viewerFullscreen) setViewerFullscreen(false)
         else if (settings) setSettings(false)
         else if (preview) setPreview(false)
+        else if (pinterestActive) {
+          if (pinterestChromeRef.current.viewing) pinterestViewRef.current?.back()
+          return
+        }
         // A user selection clears first. Inside a stack without one, Esc
         // leaves the stack — a plain goTo, so 后退 can come back to it. Only
         // the app's implicit focus falls through to being cleared.
@@ -3006,14 +3039,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       if (e.button !== 3 && e.button !== 4) return
       e.preventDefault()
       const direction = mouseNavDirection(e.button)
-      if (!direction || overlaysUp || cardDragRef.current || pinterestActive) return
+      if (!direction || overlaysUp || cardDragRef.current || pinterestActive || canvasOpen) return
       navigateHistoryRef.current(direction)
     }
     // The web `copy`/`cut` events carry the desktop menu's 拷贝/剪切 roles
     // (plus any raw ⌘C/⌘X the keydown above did not preventDefault). Same
     // guards, one entry — a preventDefault'ed key never produces the event.
     const onCopy = (event: ClipboardEvent) => {
-      if (overlaysUp || cardDragRef.current || active === "回收站" || pinterestActive) return
+      if (overlaysUp || cardDragRef.current || active === "回收站" || pinterestActive || canvasOpen) return
       if (isEditableTarget(event.target)) return
       if (window.getSelection()?.toString()) return
       if (!selectionIds.length && !preview) return
@@ -3021,7 +3054,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       copySelection()
     }
     const onCut = (event: ClipboardEvent) => {
-      if (overlaysUp || cardDragRef.current || pinterestActive) return
+      if (overlaysUp || cardDragRef.current || pinterestActive || canvasOpen) return
       if (isEditableTarget(event.target)) return
       if (!selectionIds.length || splitSelectionStacks(selectionIds).stackIds.length) return
       event.preventDefault()
@@ -3040,13 +3073,13 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, schemaNoticeOpen, authorizationActive,
-    groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm, stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds])
+    groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm, stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds, canvasOpen])
   // Fullscreen belongs to the open viewer, never outlives it: the back button,
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
   useEffect(() => {
-    if (!preview) setViewerFullscreen(false)
-  }, [preview])
+    if (!preview && !pinterestChrome.viewing) setViewerFullscreen(false)
+  }, [preview, pinterestChrome.viewing])
   // ── Task 292: live import cards ──
   // A finished batch puts its cards straight into the loaded gallery instead
   // of waiting for the end-of-import refresh, but only where prepending is
@@ -3674,8 +3707,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     notify(ids.length === 1 ? tr("已剪切 1 个素材") : fillNamed("已剪切 {count} 个素材", { count: ids.length }))
   }
   // Several files onto the system clipboard (task 198): what pastes into
-  // Finder, Explorer, chat apps and web pages as that many files. A single
-  // card's 复制图片 above still copies the pixels.
+  // Finder, Explorer, chat apps and web pages as that many files. The card
+  // menu's 复制文件 uses it for one card too; only a plain browser (no file
+  // clipboard) falls back to copyImage's pixels.
   const copyFiles = async (collect: (limit: number) => Promise<{ paths: string[]; overLimit: boolean }>) => {
     const api = desktopAPI()
     if (!api?.writeClipboardFiles) return
@@ -3683,7 +3717,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       const { paths, overLimit } = await collect(NATIVE_DRAG_MAX_FILES)
       const result = paths.length ? await api.writeClipboardFiles(paths) : null
       const count = Number(result?.count) || 0
-      if (!result?.ok || !count) { notify("无法复制图片"); return }
+      if (!result?.ok || !count) { notify("无法复制文件"); return }
       const skipped = Number(result.skipped) || 0
       if (overLimit) notify(count === 1
         ? fillNamed("已复制前 1 个素材，单次最多复制 {limit} 个", { limit: NATIVE_DRAG_MAX_FILES })
@@ -3692,7 +3726,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         ? fillNamed("已复制 1 个素材，{skipped} 个无法复制", { skipped })
         : fillNamed("已复制 {count} 个素材，{skipped} 个无法复制", { count, skipped }))
       else notify(count === 1 ? tr("已复制 1 个素材") : fillNamed("已复制 {count} 个素材", { count }))
-    } catch { notify("无法复制图片") }
+    } catch { notify("无法复制文件") }
   }
   // Paths as text, one per line, same order and expansion as the files.
   const copyPaths = async (collect: () => Promise<{ paths: string[] }>) => {
@@ -3713,14 +3747,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     link.remove()
     notify("已导出")
   }
-  const revealAssetPath = async () => {
-    if (!asset) return
+  const revealAssetPath = async (target: MosaAsset | null = asset) => {
+    if (!target) return
     try {
-      await openLibraryFolder(asset.image_path, true)
+      await openLibraryFolder(target.image_path, true)
       return
     } catch { /* fall through to copying the path */ }
     try {
-      await writeText(asset.image_path || asset.image_url)
+      await writeText(target.image_path || target.image_url)
       notify("无法打开所在位置，已复制路径")
     } catch { notify("无法打开此位置") }
   }
@@ -3750,8 +3784,21 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
 
   // Right-clicking outside the multi-selection targets the clicked card
   // alone; inside it, the whole selection stays the action target.
-  const openAssetMenu = (clicked: MosaAsset, x: number, y: number) => {
+  // UI 审查 11-16：只有一张图的版本树在画布里连不了线，是死路；「查看版本树」
+  // 只给能排出两张以上的图。按画布自己的算法数，取不到记录（或超过 400ms）就不给。
+  const canvasHasTree = async (clicked: MosaAsset): Promise<boolean> => {
+    const history = await Promise.race([
+      fetchAssetGenerationHistory(project, clicked.id).catch(() => null),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 400)),
+    ])
+    return Boolean(history) && canvasFromHistory(history, clicked).nodes.length >= 2
+  }
+
+  const openAssetMenu = async (clicked: MosaAsset, x: number, y: number) => {
     const ids = selectedIds.includes(clicked.id) ? [...batchIds] : [clicked.id]
+    const offerCanvas = VERSION_CANVAS_ENTRY && scope !== "trash" && ids.length === 1
+      ? await canvasHasTree(clicked)
+      : false
     const loaded = assets.filter(entry => ids.includes(entry.id))
     const ctx: MenuContext = {
       target: "asset",
@@ -3773,6 +3820,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // menus own it (task 239).
       clipboardImportable: false,
       unorganizedView: scope === "unorganized",
+      versionCanvas: offerCanvas,
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), ctx.selectionCount)
     setMenu({ x, y, entries, target: "asset", selectionCount: ctx.selectionCount, stackId: "", stackName: "", stackCount: 0 })
@@ -3985,6 +4033,11 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     const ids = [...batchIds]
     // Asset menu
     if (id === "open-viewer") setPreview(true)
+    else if (id === "open-version-canvas") {
+      // The card's onContextMenu already focused the clicked asset.
+      setCanvasSession((old) => old + 1)
+      setCanvasOpen(true)
+    }
     else if (id === "show-in-library") showInLibrary()
     // 任务 389（中13 后半）：卡片右键菜单的「在访达中显示」与检视器里的
     // onOpenLocation 走同一个 revealAssetPath（openLibraryFolder，失败复制路径）。
@@ -3992,7 +4045,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // 把焦点换到被右键的卡（App.tsx 卡片 onContextMenu 处）。
     else if (id === "reveal-in-folder") void revealAssetPath()
     else if (id === "copy-image") {
-      if (ids.length > 1) void copyFiles(limit => batchFilePaths(ids, { limit }))
+      if (ids.length > 1 || desktopAPI()?.writeClipboardFiles) void copyFiles(limit => batchFilePaths(ids, { limit }))
       else void copyImage()
     }
     else if (id === "cut") {
@@ -4378,7 +4431,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   return (
     <div
       ref={appRef}
-      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass} ${preview && viewerFullscreen ? "viewer-fullscreen" : ""}`}
+      className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass} ${(preview || pinterestChrome.viewing) && viewerFullscreen ? "viewer-fullscreen" : ""} ${canvasOpen && asset ? "canvas-open" : ""}`}
       onClick={() => menu && setMenu(null)}
     >
       <aside className="sidebar">
@@ -4512,9 +4565,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             </button>
           </div>
         )}
-        <button className="user-button" onClick={() => setSettings(true)}>
+        <button
+          className={`user-button${installationId ? " has-installation-id" : ""}`}
+          onClick={() => setSettings(true)}
+          aria-label={installationId ? `${tr("设置")} · ${tr("安装编号")} ${installationId}` : undefined}
+          title={installationId ? `${tr("安装编号")} ${installationId}` : undefined}
+        >
           <Icon name="user" size={14} />
-          <span>{tr("设置")}</span>
+          <span>{installationId ? `${installationId.slice(0, 8)}…${installationId.slice(-4)}` : tr("设置")}</span>
           <Icon name="settings" size={14} />
         </button>
       </aside>
@@ -4535,39 +4593,76 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         setAssets={setAssets} setStackName={setStackName} setSelectedIds={setSelectedIds}
         assignBatchToGroup={assignBatchToGroup}
       />
-      <main
-        className={`workspace ${preview ? "preview-open" : ""}`}
-        onDragOver={event => {
-          if (preview || settings || active === "回收站" || pinterestActive) return
-          event.preventDefault()
-        }}
-        onDrop={event => {
-          if (preview || settings || active === "回收站" || pinterestActive) return
-          event.preventDefault()
-          importDroppedFiles(event.dataTransfer, groupNameForActive(active))
-        }}
-      >
+      {canvasOpen && asset ? (
+        <VersionCanvas
+          key={canvasSession}
+          asset={asset}
+          generationHistory={generationHistory}
+          versions={versions}
+          inspectorFetchError={inspectorFetchError}
+          project={project}
+          language={language}
+          tr={tr}
+          fillNamed={fillNamed}
+          timeLabel={timeLabel}
+          relationPairLine={relationPairLine}
+          providerDisplayLabel={providerDisplayLabel}
+          relationBusy={relationBusy}
+          relationDrafts={relationDrafts}
+          setRelationDrafts={setRelationDrafts}
+          mutateRelation={mutateRelation}
+          onClose={() => setCanvasOpen(false)}
+          onRevealAsset={(target) => void revealAssetPath(target)}
+          onOpenAsset={(id) => {
+            setCanvasOpen(false)
+            selectHistoryAsset(id)
+            setDetail(true)
+          }}
+          onSelectVersion={(id) => selectHistoryAsset(id)}
+        />
+      ) : (
+        <main
+          className={`workspace ${preview || pinterestChrome.viewing ? "preview-open" : ""}`}
+          onDragOver={event => {
+            if (preview || settings || active === "回收站" || pinterestActive) return
+            event.preventDefault()
+          }}
+          onDrop={event => {
+            if (preview || settings || active === "回收站" || pinterestActive) return
+            event.preventDefault()
+            importDroppedFiles(event.dataTransfer, groupNameForActive(active))
+          }}
+        >
         <header className="toolbar">
           <div className="toolbar-left">
             {preview ? (
               <button onClick={() => setPreview(false)}>
                 <Icon name="left" size={14} />
                 {tr("返回")}</button>
+            ) : pinterestActive && pinterestChrome.viewing ? (
+              <button onClick={() => pinterestViewRef.current?.back()}>
+                <Icon name="left" size={14} />
+                {tr("返回")}</button>
+            ) : pinterestActive && pinterestChrome.boardName !== null ? (
+              // Pinterest board open: ‹ returns to the board list, like leaving an opened stack.
+              <button aria-label={tr("后退")} title={tr("后退")} onClick={() => pinterestViewRef.current?.back()}>
+                <Icon name="left" />
+              </button>
             ) : (
-              <>
-                <button aria-label={tr("后退")} onClick={() => navigateHistory(-1)}>
-                  <Icon name="left" />
-                </button>
-                <button
-                  aria-label={tr("前进")}
-                  onClick={() => navigateHistory(1)}
-                >
-                  <Icon name="right" />
-                </button>
-              </>
+              // UI 审查 11-16：首页、没筛选、没有上一步时无处可退，变灰；悬停写「后退」。
+              <button
+                aria-label={tr("后退")}
+                title={tr("后退")}
+                disabled={navHistory.index <= 0 && active === "所有素材" && !stackId && !query}
+                onClick={() => navigateHistory(-1)}
+              >
+                <Icon name="left" />
+              </button>
             )}
           </div>
           {preview && <div className="viewer-title"><strong>{asset?.name}</strong><span>{Math.max(1, visible.findIndex(a => a.id === asset?.id) + 1)} / {visible.length}</span></div>}
+          {pinterestActive && !preview && pinterestChrome.viewing && pinterestChrome.pin && <div className="viewer-title"><strong>{pinterestChrome.pin.title || pinterestChrome.boardName}</strong><span>{pinterestChrome.viewerIndex} / {pinterestChrome.viewerTotal}</span></div>}
+          {pinterestActive && !preview && !pinterestChrome.viewing && pinterestChrome.boardName !== null && <div className="viewer-title"><strong>{pinterestChrome.boardName}</strong><span>{pinterestChrome.pinCount === 1 ? pinterestText("1 个 Pin", language) : pinterestFormat("{count} 个 Pin", { count: pinterestChrome.pinCount }, language)}</span></div>}
           {!preview && stackId && <div className="viewer-title"><strong>{stackName}</strong><span>{visible.length === 1 ? tr("1 个素材") : fillNamed("{count} 个素材", { count: visible.length })}</span></div>}
           <div className="toolbar-right">
             {preview ? (
@@ -4575,11 +4670,17 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                 {active !== "回收站" && <button onClick={requestDelete}>
                   <Icon name="trash" size={12} />
                   {tr("移到回收站")}</button>}
-                <button onClick={() => setDetail(!detail)}>
-                  <Icon name="info" size={16} />
-                  {tr(detail ? "隐藏素材详情" : "显示素材详情")}</button>
+                {/* UI 审查 11-16：同画廊，详情栏开着时收起按钮在详情栏标题行，关了才在这里出图标。 */}
+                {!detail && <button className="detail-toggle" aria-label={tr("显示素材详情")} title={tr("显示素材详情")} aria-expanded={false} onClick={() => setDetail(true)}><Icon name="inspector" size={16} /></button>}
               </>
-            ) : pinterestActive ? null : (
+            ) : pinterestActive ? (
+              pinterestChrome.boardName === null ? null : (
+                <>
+                  {!pinterestChrome.viewing && <ColumnControl value={columns} onChange={value => { setColumns(value); writeStoredColumns(columnsStorage(), value) }} language={language} />}
+                  {!detail && pinterestChrome.pin && <button className="detail-toggle" aria-label={tr("显示素材详情")} title={tr("显示素材详情")} aria-expanded={false} onClick={() => setDetail(true)}><Icon name="inspector" size={16} /></button>}
+                </>
+              )
+            ) : (
               <>
                 {active === "回收站" && (navigation?.trash ?? 0) > 0 && (
                   <>
@@ -4601,8 +4702,12 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                     </button>
                   </>
                 )}
-                <ToolbarSelect label={tr("素材类型")} value={assetType} onChange={setAssetType} options={[{ value: "all", label: tr("全部类型") }, { value: "image", label: tr("图片") }, { value: "video", label: tr("视频") }]} />
-                <ToolbarSelect label={tr("排序")} value={sortOrder} onChange={setSortOrder} options={[{ value: "newest", label: tr("最新优先") }, { value: "name", label: tr("名称排序") }]} />
+                <ToolbarSelect label={tr("类型与排序")}
+                  display={(assetType === "all" ? "" : `${tr(assetType === "video" ? "视频" : "图片")} · `) + tr(sortOrder === "name" ? "名称排序" : "最新优先")}
+                  groups={[
+                    { label: tr("素材类型"), value: assetType, onChange: setAssetType, options: [{ value: "all", label: tr("全部类型") }, { value: "image", label: tr("图片") }, { value: "video", label: tr("视频") }] },
+                    { label: tr("排序"), value: sortOrder, onChange: setSortOrder, options: [{ value: "newest", label: tr("最新优先") }, { value: "name", label: tr("名称排序") }] },
+                  ]} />
                 <ColumnControl value={columns} onChange={value => { setColumns(value); writeStoredColumns(columnsStorage(), value) }} language={language} />
                 <label className="search">
                   <input
@@ -4624,7 +4729,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         ) : pinterestActive ? (
           <PinterestView
             key={pinterestViewKey}
+            ref={pinterestViewRef}
             language={language}
+            columns={columns}
+            fullscreen={viewerFullscreen}
+            onToggleFullscreen={() => setViewerFullscreen(v => !v)}
+            suspended={Boolean(settings || deleting || menu || renameNoticeOpen || schemaNoticeOpen || authorizationActive)}
+            onSelectPin={() => setDetail(true)}
+            onChrome={setPinterestChrome}
             onOpenSettings={() => { setSettingTab("连接"); setSettings(true) }}
           />
         ) : (
@@ -4786,8 +4898,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           )}
           </>
         )}
-      </main>
-      {detail && asset && !(pinterestActive && !preview) && (
+        </main>
+      )}
+      {!(canvasOpen && asset) && detail && asset && !(pinterestActive && !preview) && (
         <aside className="details">
           <InspectorDetails
             asset={asset}
@@ -4804,6 +4917,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             tagsMeasureRef={tagsMeasureRef}
             setDetail={setDetail}
             setPreview={setPreview}
+            previewOpen={preview}
             toggleFavorite={toggleFavorite}
             setAssets={setAssets}
             expandedTags={expandedTags}
@@ -4827,7 +4941,6 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             shownPrompt={shownPrompt}
             startPromptEdit={startPromptEdit}
             savePrompt={savePrompt}
-            savingPromptId={savingPromptId}
             promptNoticeInfo={promptNoticeInfo}
             expandedInstruction={expandedInstruction}
             setExpandedInstruction={setExpandedInstruction}
@@ -4863,15 +4976,31 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             selectHistoryAsset={selectHistoryAsset}
             mutateRelation={mutateRelation}
             providerDisplayLabel={providerDisplayLabel}
+            onOpenCanvas={asset && canvasFromHistory(generationHistory, asset).nodes.length >= 2 ? () => {
+              setCanvasSession((old) => old + 1)
+              setCanvasOpen(true)
+            } : undefined}
           />
           <button
             className="library-location"
-            onClick={revealAssetPath}
+            onClick={() => void revealAssetPath()}
           >
             <strong>{tr("素材路径")}</strong>
             <span title={asset.image_path || asset.image_url}>{assetPathTail ? `…/${assetPathTail}` : "—"}</span>
             <Icon name="external" size={12} />
           </button>
+        </aside>
+      )}
+      {pinterestActive && !preview && pinterestChrome.pin && detail && (
+        <aside className="details">
+          <PinterestPinDetail
+            language={language}
+            pin={pinterestChrome.pin}
+            onOpen={openExternalPinterestLink}
+            onOpenViewer={() => pinterestViewRef.current?.openViewer()}
+            viewerOpen={pinterestChrome.viewing}
+            onClose={() => setDetail(false)}
+          />
         </aside>
       )}
       {settings && (

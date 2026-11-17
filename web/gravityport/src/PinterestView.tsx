@@ -4,12 +4,13 @@
  * PinterestView is the only component the app needs to mount; the exported
  * PinterestGuide / PinterestBoardGrid / PinterestPinGrid / PinterestPinDetail
  * are stateless presentational pieces kept separate so unit tests can render
- * them without network access. No library operations live here: nothing is
- * selectable, no context menu, nothing draggable, and no Pinterest content
- * ever reaches the asset library or localStorage.
+ * them without network access. No library operations live here: no context
+ * menu, nothing draggable, and no Pinterest content ever reaches the asset
+ * library or localStorage. A Pin can be selected (outline, shown in the
+ * gallery's right column by App) and opened in the shared ImageViewer.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   createPinterestPager,
   fetchPinterestStatus,
@@ -22,10 +23,12 @@ import {
   type PinterestStatus,
 } from "./pinterest-api.js";
 import { desktopAPI } from "./desktop.js";
-import { layoutPinColumns, pinterestColumnCount } from "./pinterest-layout.js";
+import { layoutPinColumns } from "./pinterest-layout.js";
 import { pinterestFormat, pinterestText } from "./pinterest-strings.js";
 import { usePinterestConnection } from "./use-pinterest-connection.js";
 import type { Language } from "./i18n.js";
+import Icon from "./Icon";
+import ImageViewer from "./ImageViewer";
 import "./pinterest.css";
 
 type BoardsPager = ReturnType<typeof createPinterestPager<PinterestBoard>>;
@@ -67,7 +70,7 @@ export function PinterestGuide({
     <div className="pinterest-guide">
       {/* 任务 359（MAIN-32d）：引导页标题用名词短语，错误行另用带指令的整句。 */}
       <h2>{needsReconnect ? t("Pinterest 授权已失效") : t("连接 Pinterest")}</h2>
-      <p>{t("连接后可在此浏览 Pinterest 账号中的画板和 Pin。内容仅在此电脑上实时显示，不会存入素材库，也不会上传。")}</p>
+      <p>{t("连接后可在此浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载。")}</p>
       {error ? <p className="pinterest-error-text">{error}</p> : null}
       <div className="pinterest-guide-actions">
         {connecting ? (
@@ -91,6 +94,7 @@ export function PinterestGuide({
 export type PinterestBoardGridProps = {
   language: Language;
   boards: PinterestBoard[];
+  columns?: number;
   loading: boolean;
   error: string;
   onOpenBoard: (board: PinterestBoard) => void;
@@ -105,6 +109,7 @@ function isSecretBoard(board: PinterestBoard): boolean {
 export function PinterestBoardGrid({
   language,
   boards,
+  columns,
   loading,
   error,
   onOpenBoard,
@@ -126,7 +131,10 @@ export function PinterestBoardGrid({
     return <div className="pinterest-inline-state">{t("Pinterest 账号中没有画板。在 Pinterest 创建画板后将显示在此处。")}</div>;
   }
   return (
-    <div className="pinterest-board-grid">
+    <div
+      className="pinterest-board-grid"
+      style={columns ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}
+    >
       {error ? (
         <div className="pinterest-error-row" role="alert">
           <span>{error}</span>
@@ -141,13 +149,15 @@ export function PinterestBoardGrid({
           onClick={() => onOpenBoard(board)}
           draggable={false}
         >
-          {board.cover_url ? (
-            <img className="pinterest-board-cover" src={board.cover_url} alt="" draggable={false} loading="lazy" referrerPolicy="no-referrer" />
-          ) : (
-            <span className="pinterest-board-cover pinterest-cover-empty" aria-hidden="true" />
-          )}
-          <span className="pinterest-board-name">{board.name}</span>
+          <span className="asset-card pinterest-board-cover">
+            {board.cover_url ? (
+              <img className="black-image" src={board.cover_url} alt="" draggable={false} loading="lazy" referrerPolicy="no-referrer" />
+            ) : (
+              <span className="black-image" aria-hidden="true" />
+            )}
+          </span>
           <span className="pinterest-board-meta">
+            <span className="pinterest-board-name">{board.name}</span>
             {isSecretBoard(board) ? <span className="pinterest-badge">{t("私密")}</span> : null}
             <span>
               {board.pin_count === 1
@@ -166,6 +176,10 @@ export type PinterestPinGridProps = {
   columns: PinterestPin[][];
   loading: boolean;
   error: string;
+  /** The selected Pin gets the gallery's selection outline. */
+  selectedPinId?: string | null;
+  onSelectPin?: (pin: PinterestPin) => void;
+  /** Double-click: open the Pin in the shared viewer. */
   onOpenPin: (pin: PinterestPin) => void;
   onRetry: () => void;
 };
@@ -182,25 +196,44 @@ function pinCardImage(pin: PinterestPin): string {
 function PinterestPinCard({
   pin,
   language,
+  selected,
+  onSelectPin,
   onOpenPin,
 }: {
   pin: PinterestPin;
   language: Language;
+  selected: boolean;
+  onSelectPin?: (pin: PinterestPin) => void;
   onOpenPin: (pin: PinterestPin) => void;
 }) {
   const t = (text: string) => pinterestText(text, language);
   const src = pinCardImage(pin);
+  const dims = pin.thumbnail;
+  const ratio = dims && dims.width > 0 && dims.height > 0 ? `${dims.width} / ${dims.height}` : "1 / 1";
+  // The title lives in the hover tooltip (tooltip.ts picks up `title`), never on the card.
   return (
-    <button type="button" className="pinterest-pin-card" onClick={() => onOpenPin(pin)} draggable={false}>
+    <button
+      type="button"
+      className={`asset-card pinterest-pin-card${selected ? " asset-selected" : ""}`}
+      style={{ aspectRatio: ratio }}
+      title={pin.title || undefined}
+      aria-label={pin.title || undefined}
+      aria-pressed={selected}
+      onClick={(event) => {
+        if (event.detail > 1) return;
+        (onSelectPin ?? onOpenPin)(pin);
+      }}
+      onDoubleClick={() => onOpenPin(pin)}
+      draggable={false}
+    >
       {src ? (
-        <img className="pinterest-pin-cover" src={src} alt={pin.title} draggable={false} loading="lazy" referrerPolicy="no-referrer" />
+        <img className="black-image" src={src} alt="" draggable={false} loading="lazy" referrerPolicy="no-referrer" />
       ) : (
-        <span className="pinterest-pin-cover pinterest-cover-empty" aria-hidden="true" />
+        <span className="black-image" aria-hidden="true" />
       )}
       {isVideoPin(pin) ? (
-        <span className="pinterest-badge pinterest-pin-video-badge">{t("视频")}</span>
+        <span className="video-mark" title={t("视频")} aria-label={t("视频")}><Icon name="play" size={12} /></span>
       ) : null}
-      {pin.title ? <span className="pinterest-pin-title">{pin.title}</span> : null}
     </button>
   );
 }
@@ -210,6 +243,8 @@ export function PinterestPinGrid({
   columns,
   loading,
   error,
+  selectedPinId = null,
+  onSelectPin,
   onOpenPin,
   onRetry,
 }: PinterestPinGridProps) {
@@ -241,7 +276,14 @@ export function PinterestPinGrid({
         {columns.map((column, index) => (
           <div className="pinterest-pin-column" key={index}>
             {column.map((pin) => (
-              <PinterestPinCard key={pin.id} pin={pin} language={language} onOpenPin={onOpenPin} />
+              <PinterestPinCard
+                key={pin.id}
+                pin={pin}
+                language={language}
+                selected={pin.id === selectedPinId}
+                onSelectPin={onSelectPin}
+                onOpenPin={onOpenPin}
+              />
             ))}
           </div>
         ))}
@@ -254,6 +296,12 @@ export type PinterestPinDetailProps = {
   language: Language;
   pin: PinterestPin;
   onOpen: (url: string) => Promise<boolean>;
+  /** Open the Pin in the viewer (the summary image, like the gallery's inspector). */
+  onOpenViewer?: () => void;
+  /** The big-image viewer is open: hide the "open in viewer" link, like InspectorDetails. */
+  viewerOpen?: boolean;
+  /** Collapse the right column (its heading button, like the gallery's inspector). */
+  onClose?: () => void;
 };
 
 function externalLinkHost(url: string): string {
@@ -264,41 +312,76 @@ function externalLinkHost(url: string): string {
   }
 }
 
-export function PinterestPinDetail({ language, pin, onOpen }: PinterestPinDetailProps) {
+/**
+ * Right-column contents for the selected Pin. Same structure and class names
+ * as the gallery's InspectorDetails (detail-heading, asset-summary, asset-meta,
+ * detail-section); fields a Pin does not have are simply not drawn.
+ */
+export function PinterestPinDetail({ language, pin, onOpen, onOpenViewer, viewerOpen = false, onClose }: PinterestPinDetailProps) {
   const [openFailed, setOpenFailed] = useState(false);
   const t = (text: string) => pinterestText(text, language);
-  const bigUrl = pin.image?.url || pin.thumbnail?.url || pin.video_cover_url;
+  const thumbUrl = pin.thumbnail?.url || pin.image?.url || pin.video_cover_url;
   const externalHost = pin.link ? externalLinkHost(pin.link) : "";
   const openUrl = async (url: string) => {
     const ok = await onOpen(url);
     setOpenFailed(!ok);
   };
   return (
-    <div className="pinterest-detail" role="dialog" aria-modal="true">
-      <div className="pinterest-detail-media">
-        {bigUrl ? (
-          <img className="pinterest-detail-image" src={bigUrl} alt={pin.title} draggable={false} referrerPolicy="no-referrer" />
-        ) : (
-          <span className="pinterest-detail-image pinterest-cover-empty" aria-hidden="true" />
-        )}
-        <span className="pinterest-badge pinterest-detail-source">{t("来自 Pinterest")}</span>
-      </div>
-      <aside className="pinterest-detail-side">
-        {pin.title ? <h3 className="pinterest-detail-title">{pin.title}</h3> : null}
-        {pin.description ? <p className="pinterest-detail-description">{pin.description}</p> : null}
-        <div className="pinterest-detail-actions">
-          <button type="button" className="pinterest-primary" onClick={() => void openUrl(pin.pin_url)}>
-            {t("在 Pinterest 打开")}
+    <>
+      <div className="detail-heading">
+        <strong>{t("素材详情")}</strong>
+        {onClose ? (
+          <button type="button" aria-label={t("关闭素材详情")} onClick={onClose}>
+            <Icon name="inspector" size={16} />
           </button>
-          {pin.link ? (
-            <button type="button" className="pinterest-link" onClick={() => void openUrl(pin.link)}>
-              {externalHost}
+        ) : null}
+      </div>
+      <div className="asset-summary">
+        <button type="button" className="summary-image" aria-label={t("在查看器中打开")} onClick={onOpenViewer}>
+          {thumbUrl ? (
+            <img src={thumbUrl} alt="" draggable={false} referrerPolicy="no-referrer" />
+          ) : null}
+          {isVideoPin(pin) ? (
+            <span className="video-mark" aria-hidden="true"><Icon name="play" size={12} /></span>
+          ) : null}
+          <Icon name="expand" />
+        </button>
+        <div className="asset-meta">
+          {pin.title ? (
+            <div className="asset-title">
+              <span className="asset-name" title={pin.title}>{pin.title}</span>
+            </div>
+          ) : null}
+          <span className="muted">{t("来自 Pinterest")}</span>
+          {!viewerOpen && onOpenViewer ? (
+            <button type="button" className="summary-preview" onClick={onOpenViewer}>
+              {t("在查看器中打开")}
+              <Icon name="right" size={12} />
             </button>
           ) : null}
         </div>
+      </div>
+      {pin.description ? (
+        <section className="detail-section">
+          <div className="detail-reading expanded">
+            <p className="pinterest-detail-description">{pin.description}</p>
+          </div>
+        </section>
+      ) : null}
+      <section className="detail-section pinterest-detail-links">
+        <button type="button" className="summary-preview" onClick={() => void openUrl(pin.pin_url)}>
+          {t("在 Pinterest 打开")}
+          <Icon name="external" size={12} />
+        </button>
+        {pin.link ? (
+          <button type="button" className="summary-preview" onClick={() => void openUrl(pin.link)}>
+            {externalHost}
+            <Icon name="external" size={12} />
+          </button>
+        ) : null}
         {openFailed ? <p className="pinterest-error-text">{t("无法打开链接")}</p> : null}
-      </aside>
-    </div>
+      </section>
+    </>
   );
 }
 
@@ -329,8 +412,48 @@ export async function openExternalPinterestLink(url: string): Promise<boolean> {
 // Container
 // ============================================================================
 
+/**
+ * What App's top bar and right column need to know about the view. Reported
+ * through onChrome on every change; resets to PINTEREST_CHROME_IDLE on unmount.
+ */
+export type PinterestChrome = {
+  /** Open board, null while the board list (or the guide) is shown. */
+  boardName: string | null;
+  pinCount: number;
+  /** Selected Pin: shown in the right column. */
+  pin: PinterestPin | null;
+  viewing: boolean;
+  viewerIndex: number;
+  viewerTotal: number;
+};
+
+export const PINTEREST_CHROME_IDLE: PinterestChrome = {
+  boardName: null,
+  pinCount: 0,
+  pin: null,
+  viewing: false,
+  viewerIndex: 0,
+  viewerTotal: 0,
+};
+
+/** Commands App's top bar and right column send back into the view. */
+export type PinterestViewHandle = {
+  /** Viewer → board, board → board list. */
+  back: () => void;
+  openViewer: () => void;
+};
+
 export type PinterestViewProps = {
   language: Language;
+  /** Gallery column count (App owns it; its ColumnControl sits in the top bar). */
+  columns: number;
+  fullscreen?: boolean;
+  onToggleFullscreen?: () => void;
+  /** A dialog sits above the view: the viewer ignores keys. */
+  suspended?: boolean;
+  /** Clicking a Pin opens the right column if the user collapsed it. */
+  onSelectPin?: () => void;
+  onChrome?: (chrome: PinterestChrome) => void;
   onOpenSettings?: () => void;
   onBoardCountChange?: (count: number, complete: boolean) => void;
 };
@@ -348,15 +471,18 @@ const EMPTY_PINS_STATE: PinterestPagerState<PinterestPin> = {
   error: null,
 };
 
-export function PinterestView({ language, onOpenSettings, onBoardCountChange }: PinterestViewProps) {
+export const PinterestView = forwardRef<PinterestViewHandle, PinterestViewProps>(function PinterestView(
+  { language, columns, fullscreen = false, onToggleFullscreen, suspended = false, onSelectPin, onChrome, onOpenSettings, onBoardCountChange },
+  handleRef
+) {
   const [statusPhase, setStatusPhase] = useState<"loading" | "ready" | "error">("loading");
   const [status, setStatus] = useState<PinterestStatus | null>(null);
   const [statusError, setStatusError] = useState<unknown>(null);
   const [board, setBoard] = useState<PinterestBoard | null>(null);
-  const [detailPin, setDetailPin] = useState<PinterestPin | null>(null);
+  const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+  const [viewing, setViewing] = useState(false);
   const [boardsState, setBoardsState] = useState<PinterestPagerState<PinterestBoard>>(EMPTY_BOARDS_STATE);
   const [pinsState, setPinsState] = useState<PinterestPagerState<PinterestPin>>(EMPTY_PINS_STATE);
-  const [columnCount, setColumnCount] = useState(3);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const boardsPagerRef = useRef<BoardsPager | null>(null);
@@ -364,6 +490,9 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
   const boardsSentinelRef = useRef<HTMLDivElement | null>(null);
   const pinsSentinelRef = useRef<HTMLDivElement | null>(null);
   const savedBoardsScrollTop = useRef(0);
+  const savedPinsScrollTop = useRef(0);
+  const onChromeRef = useRef(onChrome);
+  onChromeRef.current = onChrome;
   const onBoardCountChangeRef = useRef(onBoardCountChange);
   onBoardCountChangeRef.current = onBoardCountChange;
 
@@ -428,7 +557,8 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
     if (code !== "PINTEREST_RECONNECT_REQUIRED" && code !== "PINTEREST_NOT_CONNECTED") return;
     // Leave the board too: after reconnecting the view starts from the board list.
     setBoard(null);
-    setDetailPin(null);
+    setSelectedPinId(null);
+    setViewing(false);
     setStatus(code === "PINTEREST_RECONNECT_REQUIRED" ? { connected: false, needsReconnect: true } : { connected: false });
   }, [listError]);
 
@@ -438,33 +568,44 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
     onBoardCountChangeRef.current?.(boardsState.items.length, boardsState.done);
   }, [connected, boardsState.items.length, boardsState.done]);
 
-  // Restore the board-list scroll position when coming back from a board.
+  // Restore the board-list scroll position when coming back from a board, and
+  // the Pin scroll position when coming back from the viewer.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = board ? 0 : savedBoardsScrollTop.current;
-  }, [board]);
+    el.scrollTop = board ? (viewing ? 0 : savedPinsScrollTop.current) : savedBoardsScrollTop.current;
+  }, [board, viewing]);
 
-  // Column count follows the container width, 220px per column at minimum.
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const update = () => setColumnCount(pinterestColumnCount(el.clientWidth));
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [board]);
+  const pins = pinsState.items;
+  const selectedIndex = selectedPinId ? pins.findIndex((pin) => pin.id === selectedPinId) : -1;
+  const selectedPin = selectedIndex >= 0 ? pins[selectedIndex] : null;
 
-  // Esc closes the pin detail overlay.
+  // Like the main gallery, a board always has a focused Pin: the first one once
+  // the list loads, so the right column is there from the start and clicking
+  // another Pin only swaps its content instead of narrowing the masonry.
+  const firstPinId = pins[0]?.id ?? null;
   useEffect(() => {
-    if (!detailPin) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDetailPin(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [detailPin]);
+    if (board && selectedIndex < 0 && firstPinId) setSelectedPinId(firstPinId);
+  }, [board, selectedIndex, firstPinId]);
+
+  const openViewerFor = useCallback((pin: PinterestPin) => {
+    savedPinsScrollTop.current = scrollRef.current?.scrollTop ?? 0;
+    setSelectedPinId(pin.id);
+    setViewing(true);
+  }, []);
+
+  const navigateViewer = useCallback(
+    (direction: number) => {
+      if (pins.length === 0) return;
+      const from = selectedIndex < 0 ? 0 : selectedIndex;
+      const next = Math.min(pins.length - 1, Math.max(0, from + direction));
+      setSelectedPinId(pins[next].id);
+      // Close to the end of what is loaded: fetch the next page like scrolling does.
+      const pager = pinsPagerRef.current;
+      if (pager && next >= pins.length - 3 && errorCode(pager.state().error) !== "PINTEREST_QUOTA_LOW") void pager.loadMore();
+    },
+    [pins, selectedIndex]
+  );
 
   const openBoard = useCallback((next: PinterestBoard) => {
     savedBoardsScrollTop.current = scrollRef.current?.scrollTop ?? 0;
@@ -472,13 +613,45 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
     // board's pager effect runs, so they never flash under the new title.
     setPinsState(EMPTY_PINS_STATE);
     setBoard(next);
-    setDetailPin(null);
+    setSelectedPinId(null);
+    setViewing(false);
   }, []);
 
   const closeBoard = useCallback(() => {
     setBoard(null);
-    setDetailPin(null);
+    setSelectedPinId(null);
+    setViewing(false);
   }, []);
+
+  useImperativeHandle(
+    handleRef,
+    () => ({
+      back: () => {
+        if (viewing) setViewing(false);
+        else closeBoard();
+      },
+      openViewer: () => {
+        if (selectedPin) openViewerFor(selectedPin);
+      },
+    }),
+    [viewing, closeBoard, selectedPin, openViewerFor]
+  );
+
+  // Report the top bar / right column state to App before paint so keyboard
+  // listeners reading App's ref never see a stale viewing flag.
+  const boardName = board?.name ?? null;
+  const boardPinCount = board?.pin_count ?? 0;
+  useLayoutEffect(() => {
+    onChromeRef.current?.({
+      boardName,
+      pinCount: boardPinCount,
+      pin: selectedPin,
+      viewing: viewing && selectedPin !== null,
+      viewerIndex: selectedIndex + 1,
+      viewerTotal: pins.length,
+    });
+  }, [boardName, boardPinCount, selectedPin, viewing, selectedIndex, pins.length]);
+  useEffect(() => () => onChromeRef.current?.(PINTEREST_CHROME_IDLE), []);
 
   // Infinite scroll sentinels; QUOTA_LOW stops automatic paging.
   useEffect(() => {
@@ -515,7 +688,7 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [board, pinsState]);
+  }, [board, pinsState, viewing]);
 
   const connection = usePinterestConnection({ onConnected: (next) => setStatus(next) });
 
@@ -556,18 +729,17 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
     const pinsQuotaLow = errorCode(pinsState.error) === "PINTEREST_QUOTA_LOW";
     body = (
       <>
-        <div className="pinterest-board-header">
-          <button type="button" className="pinterest-secondary" onClick={closeBoard}>
-            <span aria-hidden="true">‹</span> {t("全部画板")}
-          </button>
-          <strong className="pinterest-board-header-name">{board.name}</strong>
-        </div>
         <PinterestPinGrid
           language={language}
-          columns={layoutPinColumns(pinsState.items, columnCount)}
+          columns={layoutPinColumns(pinsState.items, columns)}
           loading={pinsState.loading && pinsState.items.length === 0}
           error={pinsState.error && !pinsQuotaLow ? t(pinterestErrorMessage(pinsState.error)) : ""}
-          onOpenPin={setDetailPin}
+          selectedPinId={selectedPinId}
+          onSelectPin={(pin) => {
+            setSelectedPinId(pin.id);
+            onSelectPin?.();
+          }}
+          onOpenPin={openViewerFor}
           onRetry={retryList}
         />
         {pinsState.loading && pinsState.items.length > 0 ? (
@@ -575,16 +747,6 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
         ) : null}
         {pinsQuotaLow ? <div className="pinterest-quota-note">{t(QUOTA_LOW_TEXT)}</div> : null}
         <div ref={pinsSentinelRef} className="pinterest-sentinel" aria-hidden="true" />
-        {detailPin ? (
-          <div
-            className="pinterest-detail-backdrop"
-            onClick={(event) => {
-              if (event.target === event.currentTarget) setDetailPin(null);
-            }}
-          >
-            <PinterestPinDetail language={language} pin={detailPin} onOpen={openExternalPinterestLink} />
-          </div>
-        ) : null}
       </>
     );
   } else {
@@ -594,6 +756,7 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
         <PinterestBoardGrid
           language={language}
           boards={boardsState.items}
+          columns={columns}
           loading={boardsState.loading && boardsState.items.length === 0}
           error={boardsState.error && !boardsQuotaLow ? t(pinterestErrorMessage(boardsState.error)) : ""}
           onOpenBoard={openBoard}
@@ -608,7 +771,29 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
     );
   }
 
-  // Pinterest content is read-only: no selection, no drag, no context menu.
+  // The viewer replaces the Pin grid (as it does the gallery); the grid's
+  // scroll position is restored on the way back. Pinterest content is
+  // read-only: no drag, no context menu.
+  if (board && viewing && selectedPin) {
+    const src = selectedPin.image?.url || selectedPin.thumbnail?.url || selectedPin.video_cover_url;
+    return (
+      <ImageViewer
+        key={selectedPin.id}
+        width={selectedPin.image?.width || 1}
+        height={selectedPin.image?.height || 1}
+        src={src || undefined}
+        language={language}
+        disabled={suspended}
+        fullscreen={fullscreen}
+        onNavigate={navigateViewer}
+        onToggleFullscreen={() => onToggleFullscreen?.()}
+        onContextMenu={() => {}}
+        onOpenLocation={() => {}}
+        message=""
+        openLocationLabel=""
+      />
+    );
+  }
   return (
     <div
       className="pinterest-view"
@@ -618,4 +803,4 @@ export function PinterestView({ language, onOpenSettings, onBoardCountChange }: 
       {body}
     </div>
   );
-}
+});

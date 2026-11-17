@@ -71,7 +71,7 @@ export async function run(ctx) {
     const before = await statusSnapshot(server);
     const round = await ctx.runInPage(server, pageSource());
     const problems = [];
-    if (round?.connectedText !== "已连接") problems.push(`state line ${JSON.stringify(round?.connectedText)}`);
+    if (round?.connectedText !== `已连接 · v${CAPTURED_VERSION}`) problems.push(`badge text ${JSON.stringify(round?.connectedText)}`);
     if (round?.versionShown !== CAPTURED_VERSION) problems.push(`version shown ${JSON.stringify(round?.versionShown)}`);
     if (round?.retryBeforeRefresh !== false) problems.push("retry row visible before the extension reported a queue");
     if (round?.retryAfterRefresh !== true) problems.push("retry row missing after 刷新 with pending: 2");
@@ -310,10 +310,9 @@ function pageSource() {
     nav.click();
     await waitFor(() => document.querySelector('.web-capture-status-card'), 'extension status card');
 
-    const stateLine = () => document.querySelector('.web-capture-status-card .web-capture-state')?.textContent.trim() || '';
-    await waitFor(() => stateLine() === '已连接', '已连接 state line');
     const rows = () => Array.from(document.querySelectorAll('.web-capture-status-card .web-capture-row')).map((el) => el.textContent.trim());
-    await waitFor(() => rows().some((text) => text.includes('${CAPTURED_VERSION}')), 'version row');
+    const badgeText = () => document.querySelector('.web-capture-status-card .web-capture-badge')?.textContent.trim() || '';
+    await waitFor(() => badgeText() === '已连接 · v' + '${CAPTURED_VERSION}', '已连接 version badge');
 
     const retryButton = () => document.querySelector('.web-capture-status-card .web-capture-retry');
     const retryBeforeRefresh = Boolean(retryButton());
@@ -337,7 +336,7 @@ function pageSource() {
     await waitFor(async () => Number((await bridgeStatus()).retryRequestId || 0) === requestIdBefore + 1, 'server retryRequestId +1');
 
     return {
-      connectedText: stateLine(),
+      connectedText: badgeText(),
       versionShown: '${CAPTURED_VERSION}',
       retryBeforeRefresh,
       retryAfterRefresh: true,

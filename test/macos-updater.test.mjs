@@ -297,9 +297,23 @@ test("macOS apply helper models a cross-name replacement with a guarded target a
   assert.match(script, /\[ "\$EXECUTABLE_NAME" = "\$EXEC_NAME" \]/);
   assert.match(script, /mv "\$REPLACEMENT_APP" "\$TARGET_APP"/);
   assert.match(script, /"\$OPEN_BIN" -n "\$TARGET_APP" --args/);
-  assert.match(script, /pgrep -f "\$TARGET_APP\/Contents\/MacOS\/\$EXEC_NAME --mosa-update-ready-file="/);
   assert.match(script, /TRASH_NAME="\$TRASH_DIR\/\$CURRENT_APP_NAME"/);
   assert.match(script, /mv "\$BACKUP_APP" "\$TRASH_NAME"/);
+});
+
+test("macOS apply helper only recognizes the process launched with this run's ready file", () => {
+  const script = macosUpdateHelperScript();
+  const launchArg = script.match(/"\$OPEN_BIN" -n "\$TARGET_APP" --args "([^"]+)"/)?.[1];
+  const pgrepPattern = script.match(/pgrep -f "([^"]+)"/)?.[1];
+  assert.ok(launchArg, "the helper launches the new app with a ready-file argument");
+  assert.ok(pgrepPattern, "the helper looks the new app process up with pgrep -f");
+  // pgrep must key on the exact argument it passed to the launch, ready-file
+  // path included, so a leftover process from an earlier update is not picked.
+  assert.equal(launchArg, "--mosa-update-ready-file=$READY_FILE");
+  assert.ok(
+    pgrepPattern.endsWith(` ${launchArg}`),
+    `pgrep pattern must end with the launch argument, got: ${pgrepPattern}`,
+  );
 });
 
 test("macOS apply helper honors the new app name and pins the production team id", async () => {

@@ -91,9 +91,16 @@ describe("MCP client config card", () => {
     for (const { id, hint } of card.MCP_CLIENTS) {
       const html = decode(render({ client: id }));
       assert.ok(html.includes(`data-mcp-client="${id}"`));
-      assert.ok(html.includes(config[id]), `${id} config is shown verbatim`);
+      // The code block wraps each line for hanging indents; its text is still the config verbatim.
+      const codeText = /<code>([\s\S]*?)<\/code>/.exec(html)?.[1].replace(/<[^>]+>/g, "");
+      const raw = card.mcpClientConfigText(config, id);
+      assert.equal(codeText, card.mcpClientCopyText(id, raw, "zh"), `${id} copy text is shown verbatim`);
+      assert.ok(raw && codeText.includes(raw), `${id} config is inside what is shown`);
+      if (id === "claudeDesktop") assert.equal(codeText, config[id], "Claude Desktop shows the raw config");
+      else if (id === "other") assert.equal(codeText, config.claudeDesktop, "Other shows the shared mcpServers config raw");
+      else assert.ok(codeText.startsWith("请为我安装 GravityPort 的 MCP 服务器"), `${id} shows a message for the agent`);
       assert.ok(html.includes(hint));
-      for (const label of ["Claude Desktop", "Claude Code", "Codex"]) assert.ok(html.includes(`>${label}</button>`));
+      for (const label of ["Claude Desktop", "Claude Code", "Codex", "其他"]) assert.ok(html.includes(`>${label}</button>`));
       assert.match(html, new RegExp(`aria-pressed="true"[^>]*>${card.MCP_CLIENTS.find((c) => c.id === id).label}<`));
     }
   });
@@ -109,11 +116,19 @@ describe("MCP client config card", () => {
     const en = decode(render({ language: "en", client: "codex" }));
     assert.ok(en.includes("AI assistants (MCP)"));
     assert.ok(en.includes("Enable AI assistants such as Claude and Codex to access and manage your library directly. Paste the configuration below into the assistant, then restart it."));
-    assert.ok(en.includes("Paste at the end of ~/.codex/config.toml."));
+    assert.ok(en.includes("Copy the message below and send it to Codex. It will complete the setup for you."));
+    assert.ok(en.includes("Please install the GravityPort MCP server for me: add the configuration below to ~/.codex/config.toml."));
     assert.ok(en.includes("After the storage location changes, this configuration stays valid; restart the assistant to apply it. GravityPort doesn’t need to be open."));
     assert.ok(en.includes(">Copy</button>"));
     assert.ok(decode(render({ language: "en", copied: true })).includes(">Copied</button>"));
     assert.doesNotMatch(en, /[一-鿿]/, "no Chinese left in the English card");
+
+    const other = decode(render({ client: "other" }));
+    assert.ok(other.includes("Cursor、Windsurf、Cline 等多数助手通用。粘贴到该助手的 MCP 设置中；若已有 mcpServers，仅合并 gravityport 这一段。"));
+    const otherEn = decode(render({ language: "en", client: "other" }));
+    assert.ok(otherEn.includes(">Other</button>"));
+    assert.ok(otherEn.includes("Works with most assistants, such as Cursor, Windsurf and Cline."));
+    assert.doesNotMatch(otherEn, /[一-鿿]/, "no Chinese left on the English Other tab");
   });
 
   it("warns before copying from an app outside Applications", () => {

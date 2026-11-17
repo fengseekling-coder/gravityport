@@ -125,9 +125,12 @@ function interactionSafetySource(config) {
       && !document.querySelector('[role="alertdialog"]');
 
     // Backspace/Delete inside the prompt editor must not open the trash dialog.
-    const editButton = () => Array.from(document.querySelectorAll('.details .section-action'))
-      .find((button) => button.textContent.trim() === '编辑');
-    editButton().click();
+    // The prompt text itself opens the in-place editor (no 编辑 button);
+    // Esc cancels, ⌘Enter or leaving the field saves.
+    const openPromptEditor = () => document.querySelector('#asset-prompt').click();
+    const editorKey = (key, init = {}) => document.querySelector('.detail-editor')
+      .dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
+    openPromptEditor();
     const editor = await waitFor(() => document.querySelector('.detail-editor') || null, 'prompt editor opens');
     editor.focus();
     editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }));
@@ -136,7 +139,7 @@ function interactionSafetySource(config) {
     editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
     await sleep(350);
     const deleteGuard = !document.querySelector('[role="alertdialog"]');
-    document.querySelector('.prompt-editor-actions .neutral-button').click();
+    editorKey('Escape');
     await waitFor(() => !document.querySelector('.detail-editor'), 'editor closes on cancel');
     const keyboardGuards = searchSelectAllIgnored && backspaceGuard && deleteGuard;
 
@@ -144,7 +147,7 @@ function interactionSafetySource(config) {
     // Editing A then selecting B discards the draft and never writes it.
     clickCard(cardA());
     await waitFor(() => inspectorPrompt().includes('safety alpha prompt'), 'alpha prompt rendered');
-    editButton().click();
+    openPromptEditor();
     await waitFor(() => document.querySelector('.detail-editor'), 'editor opens for alpha');
     typeInto(document.querySelector('.detail-editor'), 'DRAFT must not leak into beta');
     clickCard(cardB());
@@ -156,10 +159,10 @@ function interactionSafetySource(config) {
     // In-flight save keeps writing to the bound asset while the user moves on.
     clickCard(cardA());
     await waitFor(() => inspectorPrompt().includes('safety alpha prompt'), 'alpha prompt rendered again');
-    editButton().click();
+    openPromptEditor();
     await waitFor(() => document.querySelector('.detail-editor'), 'editor opens for alpha again');
     typeInto(document.querySelector('.detail-editor'), 'safety alpha prompt v2');
-    document.querySelector('.prompt-editor-actions .primary-button').click();
+    editorKey('Enter', { metaKey: true });
     clickCard(cardB());
     let saveLanded = false;
     for (let attempt = 0; attempt < 100 && !saveLanded; attempt += 1) {

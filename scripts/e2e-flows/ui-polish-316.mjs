@@ -3,7 +3,7 @@
 // hover title), the viewer's missing-original empty stage (the reveal button
 // is asserted to exist but never clicked — it would open Finder), the three
 // inspector fetches surfacing 500s as 无法加载 instead of looking like empty
-// data, and the 展开 entry for version families that carry no generation
+// data, and the 查看 entry for version families that carry no generation
 // records (badge stays hidden there; the generation-record control keeps it).
 // Each ctx.runInPage boots a fresh page, so the language preference is
 // persisted at the end of the Chinese round and read at the English boot
@@ -12,7 +12,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 export const name = "ui-polish-316";
-export const description = "missing original shows the viewer empty stage -> three inspector fetches at 500 show 无法加载, never 暂无生成记录 -> version family without records gets 展开 and VersionCompare -> record-keeping control keeps its badge -> English sidebar shows Jimeng, vendor chip translates, role-less reference title translates, role stays raw";
+export const description = "missing original shows the viewer empty stage -> three inspector fetches at 500 show 无法加载, never 暂无生成记录 -> version family without records gets 查看 and VersionCompare -> record-keeping control keeps its badge -> English sidebar shows Jimeng, vendor chip translates, role-less reference title translates, role stays raw";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -146,11 +146,11 @@ export async function run(ctx) {
     expect(errorState.referenceSectionShowsFailure === true, "参考图 section does not show 无法加载 on 500s");
     expect(errorState.emptyTextGone === true, "暂无生成记录 still rendered while the fetches failed");
     const family = zh.family || {};
-    expect(family.viewVisible === true, "version family without records shows no 展开 entry");
+    expect(family.viewVisible === true, "version family without records shows no 查看 entry");
     expect(family.badgeAbsent === true, "version family without records must not show a badge");
     expect(family.comparePresent === true, `VersionCompare did not render: ${JSON.stringify(family)}`);
     const control = zh.control || {};
-    expect(control.viewVisible === true, "generation-record asset lost its 展开 entry");
+    expect(control.viewVisible === true, "generation-record asset lost its 查看 entry");
     expect(control.badgeText === "1", `generation-record badge is ${JSON.stringify(control.badgeText)}`);
     expect(en.sidebarJimeng === true, "English sidebar has no Jimeng group row");
     expect(en.sidebarChineseGone === true, "English sidebar still shows 即梦");
@@ -263,14 +263,14 @@ function zhScenes(config) {
       window.fetch = realFetch;
 
       // Scene 3: a version family with no generation records still gets the
-      // 展开 entry (no badge), and expanding it renders VersionCompare.
+      // 查看 entry (no badge), and expanding it renders VersionCompare.
       await openInspector(config.familyParentId);
       const familyHeading = await waitFor(() => {
         const heading = treeHeading();
-        if (heading && Array.from(heading.querySelectorAll(".section-action")).some((button) => button.textContent.trim() === "展开")) return heading;
+        if (heading && Array.from(heading.querySelectorAll(".section-action")).some((button) => button.textContent.trim() === "查看")) return heading;
         return null;
-      }, "family 展开 entry");
-      const familyView = Array.from(familyHeading.querySelectorAll(".section-action")).find((button) => button.textContent.trim() === "展开");
+      }, "family 查看 entry");
+      const familyView = Array.from(familyHeading.querySelectorAll(".section-action")).find((button) => button.textContent.trim() === "查看");
       familyView.click();
       await waitFor(() => document.querySelector(".version-compare"), "VersionCompare");
       scenes.family = {
@@ -290,7 +290,7 @@ function zhScenes(config) {
         return null;
       }, "control badge");
       scenes.control = {
-        viewVisible: Array.from(controlHeading.querySelectorAll(".section-action")).some((button) => ["展开", "收起"].includes(button.textContent.trim())),
+        viewVisible: Array.from(controlHeading.querySelectorAll(".section-action")).some((button) => ["查看", "收起"].includes(button.textContent.trim())),
         badgeText: (controlHeading.querySelector(".settings-badge")?.textContent || "").trim(),
       };
 

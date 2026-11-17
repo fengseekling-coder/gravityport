@@ -142,23 +142,34 @@ export function WebCaptureStatusCardView({
     const api = desktopAPI() as { revealManagedExtensionFolder?: () => Promise<unknown> } | null
     void api?.revealManagedExtensionFolder?.()
   }
+  // UI 审查 11-16：步骤各占一行、折行与文字对齐；路径放进代码框，在斜杠处换行，
+  // 两个按钮放在路径下面。文字照旧。
+  const folderPath = managed?.path || ""
+  const pathParts = folderPath.split("/")
   const installationSteps = (
-    <div className="web-capture-note">
-      <p>{t("1. 复制扩展文件夹位置")}</p>
-      <p className="web-capture-row">
-        <code>{managed?.path}</code>
-        <button type="button" className="neutral-button" onClick={copyFolder}>{t("复制位置")}</button>
-        {copied ? <span>{t("已复制")}</span> : null}
-        <button type="button" className="neutral-button" onClick={showFolder}>
-          {t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform) ? "在文件资源管理器中显示" : "在访达中显示")}
-        </button>
-      </p>
-      <p>{t("2. 在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」。")}</p>
+    <div className="web-capture-steps">
+      <p className="web-capture-step">{t("1. 复制扩展文件夹位置")}</p>
+      <div className="web-capture-step-body">
+        <code className="web-capture-path">
+          {/* UI 审查 11-16：每段（连同后面的斜杠）是一个整体，只在斜杠后换行，
+              不在「browser-extension」的连字符处断开；单段比一行还长时才在段内折。 */}
+          {pathParts.map((part, index) => (
+            <span key={index}>{part}{index < pathParts.length - 1 ? "/" : ""}</span>
+          ))}
+        </code>
+        <div className="web-capture-path-actions">
+          <button type="button" className="web-capture-secondary-btn" onClick={copyFolder}>{copied ? t("已复制") : t("复制位置")}</button>
+          <button type="button" className="web-capture-secondary-btn" onClick={showFolder}>
+            {t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform) ? "在文件资源管理器中显示" : "在访达中显示")}
+          </button>
+        </div>
+      </div>
+      <p className="web-capture-step">{t("2. 在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」。")}</p>
       {/* 任务 389（低18 ①）：第 3 步的选文件夹提示按系统给一句；判断沿用上面
           「在访达中显示」按钮的 /Win/i.test(navigator.platform) 写法。 */}
-      <p>{t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform)
+      <p className="web-capture-step">{t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform)
         ? "3. 点「加载已解压的扩展程序」，选这个文件夹。（Windows：在选择窗口上方的地址栏粘贴位置，按回车。）"
-        : "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 ⌘⇧G，粘贴位置。）")}</p>
+        : "3. 点「加载已解压的扩展程序」，选这个文件夹。（Mac：在选择窗口按 /，粘贴位置。）")}</p>
       <p>{t("然后在扩展设置里打开「自动收录」。")}</p>
     </div>
   )
@@ -170,6 +181,11 @@ export function WebCaptureStatusCardView({
   const outdated = active && !extensionManaged && !migrate && versionGap !== null && versionGap < 0
   const pending = status?.queue.pending ?? 0
   const lastError = status?.lastError ? status.lastError.slice(0, LAST_ERROR_MAX_CHARS) : ""
+  const stateLabel = loading
+    ? t("正在加载…")
+    : active
+      ? `${t("已连接")} · ${extensionVersion ? `v${extensionVersion}` : t("未知")}`
+      : t("未连接")
   // Offline-storage diagnostics from the extension's queue snapshot
   // (0.15.44+, review 2-2). Older extensions report zeros, so every hint
   // below stays hidden for them.
@@ -183,47 +199,58 @@ export function WebCaptureStatusCardView({
 
   return (
     <section className="web-capture-status-card" aria-label={t("浏览器扩展")}>
-      <div className="web-capture-status-head">
-        <div className="web-capture-status-title">
-          <strong>{t("浏览器扩展")}</strong>
-          <p className="web-capture-state">
-            {loading ? t("正在加载…") : active ? t("已连接") : t("未连接")}
+      <div className="web-capture-header">
+        <div className="web-capture-status-head">
+          <div className="web-capture-status-title">
+            <strong>{t("浏览器扩展")}</strong>
+            <span className={`web-capture-badge ${active ? "is-connected" : ""}`}>
+              {stateLabel}
+            </span>
+            {outdated ? (
+              <a
+                className="web-capture-update-link"
+                href={DOWNLOAD_PAGE_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}
+              >
+                {t("有新版扩展")}
+              </a>
+            ) : null}
+          </div>
+          <div className="web-capture-actions">
+            <button
+              type="button"
+              className="web-capture-secondary-btn web-capture-refresh"
+              onClick={onRefresh}
+              disabled={refreshing}
+            >
+              {t("刷新")}
+            </button>
+          </div>
+        </div>
+        {!loading && active && extensionManaged ? (
+          <p className="web-capture-note">{t("（跟随 App 自动更新）")}</p>
+        ) : null}
+        {!loading && !active && available ? (
+          <div className="web-capture-note">
+            <p className="web-capture-lead">{t("安装浏览器扩展（装一次，以后跟随 App 自动更新）：")}</p>
+            {installationSteps}
+            <small>{t("也可以去官网下载")} <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a></small>
+          </div>
+        ) : null}
+        {!loading && !active && !available ? (
+          <p className="web-capture-note">
+            {t("前往官网安装浏览器扩展，并在扩展设置中开启「自动收录」。")}{" "}
+            <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a>
           </p>
-        </div>
-        <button
-          type="button"
-          className="neutral-button web-capture-refresh"
-          onClick={onRefresh}
-          disabled={refreshing}
-        >
-          {t("刷新")}
-        </button>
+        ) : null}
       </div>
-      {!loading && !active && available ? (
-        <div className="web-capture-note">
-          <p>{t("安装浏览器扩展（装一次，以后跟随 App 自动更新）：")}</p>
-          {installationSteps}
-          <small>{t("也可以去官网下载")} <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a></small>
-        </div>
-      ) : null}
-      {!loading && !active && !available ? (
-        <p className="web-capture-note">
-          {t("前往官网安装浏览器扩展，并在扩展设置中开启「自动收录」。")}{" "}
-          <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a>
-        </p>
-      ) : null}
-      {/* 任务 359（SET-10h）：标签 + 数值不写冒号。 */}
-      {!loading && active ? (
-        <p className="web-capture-row">
-          {t("扩展版本")} {extensionVersion || t("未知")}
-          {extensionManaged ? t("（跟随 App 自动更新）") : null}
-        </p>
-      ) : null}
       {migrate ? (
         <div className="web-capture-note">
-          <p>{t("扩展现在需要手动更新。改成跟随 App 自动更新：")}</p>
+          <p className="web-capture-lead">{t("按以下步骤重新加载一次扩展，之后将跟随 App 自动更新：")}</p>
           {installationSteps}
-          <p>{t("不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。")}</p>
+          <p className="web-capture-tip">{t("不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。")}</p>
         </div>
       ) : null}
       {managedLag ? (
@@ -231,11 +258,6 @@ export function WebCaptureStatusCardView({
           {lagStartedAt !== null && clockMs - lagStartedAt > 5 * 60 * 1000
             ? t("扩展没有自动更新。打开 chrome://extensions，确认扩展已启用、开发者模式开着，然后点扩展上的刷新按钮。")
             : t("正在更新扩展，一分钟内完成")}
-        </p>
-      ) : null}
-      {outdated ? (
-        <p className="web-capture-note">
-          <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("有新版扩展")}</a>
         </p>
       ) : null}
       {!loading && pending > 0 ? (
@@ -246,7 +268,7 @@ export function WebCaptureStatusCardView({
           {" "}
           <button
             type="button"
-            className="neutral-button web-capture-retry"
+            className="web-capture-secondary-btn web-capture-retry"
             onClick={onRetry}
             disabled={retrying}
           >
@@ -284,7 +306,7 @@ export function WebCaptureStatusCardView({
       ) : null}
       <div className="web-capture-toggle">
         <div className="web-capture-toggle-row">
-          <span>{t("同步即梦中的删除")}</span>
+          <span className="web-capture-toggle-label">{t("同步即梦中的删除")}</span>
           <button
             type="button"
             className={`settings-switch ${deletionSyncEnabled === true ? "enabled" : ""}`}

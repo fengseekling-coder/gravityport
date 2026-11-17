@@ -1,0 +1,22 @@
+/* UI 审查 11-16：App 自己的悬停提示（tooltip.ts）。同浮层表面：--ui-raised 底、
+   细边、柔和投影，12px 字；长提示最多 280px 宽自动折行，title 里的换行保留。 */
+.app-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 280px;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-hairline) solid var(--ui-line);
+  border-radius: var(--radius-small);
+  background: var(--ui-raised);
+  box-shadow: var(--ui-shadow);
+  color: var(--ui-text);
+  font-size: 12px;
+  line-height: var(--space-4);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.app-tooltip[hidden] {
+  display: none;
+}

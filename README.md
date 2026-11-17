@@ -75,7 +75,7 @@ GravityPort MCP is a local stdio server built into the desktop app. It opens no 
 
 1. Install GravityPort and open it once.
 2. Go to Settings → Connect → AI assistants (MCP), pick Claude Desktop, Claude Code or Codex, and click Copy.
-3. Paste the config into that client and restart it.
+3. For Claude Desktop, paste the config into its config file. For Claude Code and Codex, send the copied message to the assistant; it installs the server itself (replacing an existing gravityport entry). Then restart the client.
 
 On macOS the config looks like this. On Windows the paths depend on where the app is installed, so use the Copy button in Settings.
 

@@ -1,9 +1,10 @@
 // GravityPort React UI flow: the sidebar Pinterest row opens the live
 // Pinterest view (guide page while not connected) instead of filtering local
-// assets, the gallery chrome and its shortcuts stay out of reach there, and
-// Settings → 连接 hosts the Pinterest connection card.
+// assets; the workspace top bar stays in place while local-library search/grid
+// and the inspector (before a Pin is selected) stay hidden, and Settings → 连接
+// hosts the Pinterest connection card.
 export const name = "pinterest-entry";
-export const description = "Pinterest row -> guide page, no gallery toolbar/inspector -> ⌘A+Delete touch nothing -> 打开设置 lands on 连接 with the connection card and the MCP card";
+export const description = "Pinterest row -> guide page with shared top bar, no local gallery search/inspector -> ⌘A+Delete touch nothing -> 打开设置 lands on 连接 with the connection card and the MCP card";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -46,9 +47,11 @@ function pinterestEntrySource() {
     const baselineSelected = document.querySelectorAll('.asset-card.asset-selected').length;
     navButton('Pinterest').click();
     await waitFor(() => activeNav() === 'Pinterest' && document.querySelector('.pinterest-guide'), 'Pinterest guide page');
-    const galleryHidden = !document.querySelector('.asset-grid') && !document.querySelector('.toolbar .search')
+    const galleryHidden = Boolean(document.querySelector('.toolbar'))
+      && !document.querySelector('.asset-grid')
+      && !document.querySelector('.toolbar .search')
       && !document.querySelector('.details');
-    if (!galleryHidden) throw new Error('gallery chrome still shown in the Pinterest view');
+    if (!galleryHidden) throw new Error('local gallery chrome shown or shared top bar missing in the Pinterest guide view');
     const sidebarCount = navButton('Pinterest').querySelector('small')?.textContent ?? null;
     if (sidebarCount !== '即将上线') throw new Error('Pinterest row should say 即将上线 in the count slot: ' + JSON.stringify(sidebarCount));
 

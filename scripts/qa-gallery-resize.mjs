@@ -355,7 +355,7 @@ try {
     await wait(100);
   }
   assert.equal(firstNewest, "resize-359", "newest-first must land on the latest seeded asset");
-  await clickSelectOption("排序", "名称排序");
+  await clickSelectOption("类型与排序", "名称排序");
   for (let step = 0; step < 60; step += 1) {
     const loaded = await evaluate("(()=>{const grid=document.querySelector('.asset-grid');grid.scrollTop=grid.scrollHeight;grid.dispatchEvent(new Event('scroll'));return Number(grid.dataset.loadedAssets||0)})()");
     if (loaded === 360) break;

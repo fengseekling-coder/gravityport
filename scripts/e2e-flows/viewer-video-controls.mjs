@@ -330,8 +330,9 @@ async function runDesktopPhase(ctx) {
     // windows (Windows runners), then zoom in once: the portrait clip
     // overflows the stage vertically (panning is possible) while side bands
     // of stage background stay visible for the positive-control pan drag.
-    const toolbarDetailButton = `Array.from(document.querySelectorAll('.toolbar-right button')).find((b) => /隐藏素材详情|显示素材详情|Hide details|Show details/.test(b.textContent || ''))`;
-    await evaluate(`(() => { const b = ${toolbarDetailButton}; if (b && /隐藏素材详情|Hide details/.test(b.textContent || '')) b.click(); })()`);
+    // The viewer toolbar no longer repeats the inspector toggle: hide from the
+    // inspector heading, show again from the toolbar icon (UI review 11-16).
+    await evaluate(`(() => { document.querySelector('.details .detail-heading button')?.click(); })()`);
     await sleep(300);
     await evaluate(`Array.from(document.querySelectorAll('.viewer-controls button')).find((b) => b.title === '放大')?.click()`);
     await sleep(300);
@@ -430,7 +431,7 @@ async function runDesktopPhase(ctx) {
     if (!nativeFsButtonBackedOut) desktopFailures.push("clicking the native fullscreen button left an OS fullscreen (exit guard did not revert it)");
 
     // Bring the inspector back for the property-tag checks below.
-    await evaluate(`(() => { const b = ${toolbarDetailButton}; if (b && /显示素材详情|Show details/.test(b.textContent || '')) b.click(); })()`);
+    await evaluate(`(() => { document.querySelector('.toolbar-right .detail-toggle')?.click(); })()`);
     await sleep(300);
     await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });

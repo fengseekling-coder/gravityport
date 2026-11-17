@@ -41,6 +41,7 @@ test("registerClipboardIpc, registerMiscIpc, and registerLibraryLocationIpc regi
     "set-background-capture",
     "set-locale",
     "mcp-client-config",
+    "installation-id",
     "get-client-token",
     "rename-notice-state",
     "acknowledge-rename-notice",

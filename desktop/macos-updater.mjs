@@ -421,7 +421,7 @@ while [ "$i" -lt 480 ]; do
     exit 0
   fi
   if [ -z "$NEW_PID" ]; then
-    NEW_PID=$(/usr/bin/pgrep -f "$TARGET_APP/Contents/MacOS/$EXEC_NAME --mosa-update-ready-file=" | /usr/bin/head -n 1 || true)
+    NEW_PID=$(/usr/bin/pgrep -f "$TARGET_APP/Contents/MacOS/$EXEC_NAME --mosa-update-ready-file=$READY_FILE" | /usr/bin/head -n 1 || true)
   elif ! kill -0 "$NEW_PID" 2>/dev/null; then
     exit 31
   fi

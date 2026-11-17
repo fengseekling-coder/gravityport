@@ -8,7 +8,8 @@ const CONTROLS_IDLE_MS = 2000
 // the old flat 32px margin) and the floating zoom bar plus this gap at the
 // bottom, so fit never tucks the picture under the bar.
 const FIT_PAD_TOP = 16
-const CONTROLS_GAP = 8
+// UI 审查 11-16：「适合窗口」时画面下沿离缩放条 16px（原来 8px，实测只剩 6px 显挤）。
+const CONTROLS_GAP = 16
 
 export default function ImageViewer({ width, height, src, originalSrc, isVideo, animated, language, disabled, fullscreen, onNavigate, onToggleFullscreen, onContextMenu, onOpenLocation, message, openLocationLabel }: {
   width: number; height: number; src?: string; originalSrc?: string; isVideo?: boolean; animated?: boolean; language: Language; disabled: boolean
@@ -249,13 +250,18 @@ export default function ImageViewer({ width, height, src, originalSrc, isVideo, 
       onPointerCancel={() => { drag.current = null; setDragging(false) }}
       onLostPointerCapture={() => { drag.current = null; setDragging(false) }}>
       {src && mediaError
-        ? <div className="viewer-missing" role="status">
-          <Icon name="image" size={32} />
-          <p>{errorProbe && errorProbe.src === displaySrc && errorProbe.undecodable
-            ? tr(isVideo ? "这个视频的编码 App 播放不了" : "这个文件 App 显示不了")
-            : tr("找不到原始文件")}</p>
-          <button onClick={onOpenLocation}>{openLocationLabel}</button>
-        </div>
+        // Until the HEAD probe answers, the stage stays empty: showing "file
+        // not found" first and then switching to the codec message flashed the
+        // wrong reason on screen.
+        ? errorProbe && errorProbe.src === displaySrc
+          ? <div className="viewer-missing" role="status">
+            <Icon name="image" size={32} />
+            <p>{errorProbe.undecodable
+              ? tr(isVideo ? "这个视频的编码 App 播放不了" : "这个文件 App 显示不了")
+              : tr("找不到原始文件")}</p>
+            <button onClick={onOpenLocation}>{openLocationLabel}</button>
+          </div>
+          : null
         : src && isVideo
           ? <video className="viewer-image" src={src} controls autoPlay loop controlsList="nofullscreen nodownload noremoteplayback" disablePictureInPicture onLoadedMetadata={event => probeSize(event.currentTarget)} onError={() => setMediaError(true)} style={{ width: usedWidth * scale, height: usedHeight * scale, transform: mediaTransform }} />
           : src

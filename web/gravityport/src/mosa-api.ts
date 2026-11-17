@@ -30,6 +30,8 @@ export type MosaAsset = {
   prompt: string
   prompt2: string
   user_instruction: string
+  /** The user's own note on this asset (stored as curation_note, searchable). */
+  note: string
   introduction: string
   tags: string[]
   palette: string[]
@@ -370,6 +372,7 @@ export function normalizeAsset(input: JsonValue, project = "default"): MosaAsset
     // 任务 377：AI 用 asset_create 带上的 user_prompt 也算「用户指令」，
     // 详情页原来看不到它。
     user_instruction: String(source.user_message || fields.user_message || input.user_prompt || ""),
+    note: String(input.curation_note || ""),
     introduction: String(fields.introduction || fields.description || input.description || ""),
     tags: asStringArray(input.tags),
     palette: asStringArray(input.palette),
@@ -911,6 +914,14 @@ export async function updateAssetMetadata(project: string, id: string, patch: { 
   return normalizeAsset(result.asset || {}, project)
 }
 
+/** Saves the asset note. Only curation_note is sent, so 整理好 stays as it is. */
+export async function updateAssetNote(project: string, id: string, note: string) {
+  const result = await requestJson<{ asset?: JsonValue }>(`/api/assets/${e(project)}/${e(id)}/curation`, {
+    method: "PATCH", body: { curation_note: note },
+  })
+  return normalizeAsset(result.asset || {}, project)
+}
+
 /** Uploads a renderer-extracted video poster frame; the server re-encodes it
  * to the thumbnail tier and stores it as thumbnails/<id>.webp. Raw-body call
  * for the Blob (requestJson only speaks JSON). */
@@ -1273,6 +1284,9 @@ export type MosaGenerationHistory = {
   output_assets?: MosaAsset[]
   relations?: MosaGenerationRelation[]
   relation_candidates?: MosaGenerationCandidate[]
+  /** Relations / suggestions running only between context events (version canvas). */
+  context_relations?: MosaGenerationRelation[]
+  context_relation_candidates?: MosaGenerationCandidate[]
   conversations?: MosaGenerationConversation[]
   context_truncated?: boolean
 }
@@ -1338,6 +1352,8 @@ export async function fetchAssetGenerationHistory(project: string, id: string, s
       output_assets: outputAssets.map(row => normalizeAsset(row, project)),
       relations: Array.isArray(history.relations) ? history.relations as MosaGenerationHistory["relations"] : [],
       relation_candidates: Array.isArray(history.relation_candidates) ? history.relation_candidates as MosaGenerationCandidate[] : [],
+      context_relations: Array.isArray(history.context_relations) ? history.context_relations as MosaGenerationRelation[] : [],
+      context_relation_candidates: Array.isArray(history.context_relation_candidates) ? history.context_relation_candidates as MosaGenerationCandidate[] : [],
       conversations: Array.isArray(history.conversations) ? history.conversations as MosaGenerationConversation[] : [],
       context_truncated: history.context_truncated === true,
     }

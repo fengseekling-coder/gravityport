@@ -7,8 +7,53 @@ import test from "node:test";
 
 import { createJsonAssetStore } from "../lib/asset-store.mjs";
 import { pngBytes } from "./helpers/managed-media.mjs";
-import { normalizeGenerationEvent, resolveGenerationRelationCandidates } from "../lib/generation-history.mjs";
+import { buildAssetGenerationHistory, normalizeGenerationEvent, resolveGenerationRelationCandidates } from "../lib/generation-history.mjs";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+
+test("asset history returns relations and suggestions that run only between context events", () => {
+  const event = (id, minute) => ({
+    id,
+    output_asset_id: `asset-${id}`,
+    provider: "chatgpt",
+    conversation_id: "conversation-x",
+    message_id: `message-${id}`,
+    created_at: `2026-11-15T10:0${minute}:00.000Z`,
+  });
+  const events = [event("g1", 1), event("g2", 2), event("g3", 3), event("g4", 4), event("g5", 5)];
+  const relation = (parent, child) => ({
+    parent_generation_id: parent,
+    child_generation_id: child,
+    relation_type: "edited_from",
+    verification_level: "user_confirmed",
+    created_at: "2026-11-15T11:00:00.000Z",
+  });
+  const candidate = (parent, child) => ({
+    parent_generation_id: parent,
+    child_generation_id: child,
+    suggested_relation_type: "derived_from",
+    confidence: 0.6,
+    status: "suggested",
+  });
+  const history = buildAssetGenerationHistory({
+    projectId: "default",
+    assetId: "asset-g5",
+    events,
+    // g4 -> g5 is the lineage; g1 -> g2 runs between context events only.
+    relations: [relation("g4", "g5"), relation("g1", "g2")],
+    candidates: [candidate("g2", "g3"), candidate("g3", "g5")],
+  });
+
+  assert.deepEqual(history.events.map((item) => item.id), ["g4", "g5"]);
+  assert.deepEqual(history.context_events.map((item) => item.id), ["g1", "g2", "g3"]);
+  assert.deepEqual(history.relations.map((item) => `${item.parent_generation_id}>${item.child_generation_id}`), ["g4>g5"], "lineage relations stay as before");
+  assert.deepEqual(history.context_relations.map((item) => `${item.parent_generation_id}>${item.child_generation_id}`), ["g1>g2"]);
+  assert.deepEqual(history.relation_candidates.map((item) => `${item.parent_generation_id}>${item.child_generation_id}`), ["g3>g5"], "suggestions touching the lineage stay as before");
+  assert.deepEqual(history.context_relation_candidates.map((item) => `${item.parent_generation_id}>${item.child_generation_id}`), ["g2>g3"]);
+
+  const empty = buildAssetGenerationHistory({ projectId: "default", assetId: "asset-none", events });
+  assert.deepEqual(empty.context_relations, []);
+  assert.deepEqual(empty.context_relation_candidates, []);
+});
 
 test("GPT relation resolver proposes lineage without turning proximity into fact", () => {
   const events = [

@@ -123,9 +123,9 @@ describe("AuthorizationModal interaction contract (source pins)", () => {
     // an Escape between the dialog's paint and the listener's re-arm used to
     // be swallowed (CI run 43613554996).
     const branch = chain.indexOf("if (authorizationQueueRef.current.length > 0) {");
-    assert.equal(chain.slice(0, chain.indexOf("else if (renameNoticeOpen)")).includes("if (authorizationActive) {"), false,
+    assert.equal(chain.slice(0, chain.indexOf("else if (renameNoticeRef.current)")).includes("if (authorizationActive) {"), false,
       "the Escape chain must not gate on the stale authorizationActive closure");
-    const renameBranch = chain.indexOf("else if (renameNoticeOpen)");
+    const renameBranch = chain.indexOf("else if (renameNoticeRef.current)");
     assert.ok(branch >= 0, "the Escape chain denies the authorization head");
     assert.ok(renameBranch > branch, "the authorization branch precedes every other overlay");
     assert.ok(

@@ -114,6 +114,15 @@ describe("context-menus / asset menu", () => {
 
   // 任务 389（中13 后半）：单选普通卡多一项「在访达中显示 / 在文件资源管理
   // 器中显示」，跟在「在素材库中显示」后面；多选、堆叠卡、回收站都没有。
+  it("open-version-canvas: only with the canvas gate on, single asset, right after open-viewer", () => {
+    assert.ok(!itemIds(buildContextMenu(baseCtx())).includes("open-version-canvas"), "gate off keeps the menu unchanged");
+    const on = buildContextMenu(baseCtx({ versionCanvas: true }));
+    const ids = itemIds(on);
+    assert.deepEqual(ids.slice(0, 3), ["open-viewer", "open-version-canvas", "show-in-library"]);
+    assert.equal(findItem(on, "open-version-canvas").label, "查看版本树");
+    assert.ok(!itemIds(buildContextMenu(baseCtx({ versionCanvas: true, selectionCount: 2 }))).includes("open-version-canvas"), "multi-select has no viewer section");
+  });
+
   it("reveal-in-folder: single asset gets it after show-in-library, per-platform labels", () => {
     const mac = buildContextMenu(baseCtx({ isMac: true }));
     const macItem = findItem(mac, "reveal-in-folder");
@@ -141,22 +150,27 @@ describe("context-menus / asset menu", () => {
     assert.equal(ids[1], "|", "one separator after the heading");
     assert.ok(!ids.includes("open-viewer"), "multi-select has no viewer section");
     assert.deepEqual(ids.slice(2, 6), ["copy-image", "cut", "copy-path", "|"],
-      "multi-select copy section: 复制图片, 剪切, 复制路径 (no 复制提示词)");
+      "multi-select copy section: 复制文件, 剪切, 复制路径 (no 复制提示词)");
     assert.ok(ids.includes("HEAD:已选择 {count} 项"));
   });
 
-  it("multi-select with stacks keeps 复制图片 and 复制路径 (stacks expand to members)", () => {
+  it("multi-select with stacks keeps 复制文件 and 复制路径 (stacks expand to members)", () => {
     const entries = buildContextMenu(baseCtx({ selectionCount: 2, selectionHasStacks: true }));
     assert.notEqual(findItem(entries, "copy-image").disabled, true);
     assert.notEqual(findItem(entries, "copy-path").disabled, true);
   });
 
-  it("without a file clipboard (browser) multi-select hides 复制图片 but keeps 复制路径", () => {
+  it("without a file clipboard (browser) multi-select hides 复制文件 but keeps 复制路径", () => {
     const entries = buildContextMenu(baseCtx({ selectionCount: 3, canCopyFiles: false }));
     assert.ok(!itemIds(entries).includes("copy-image"));
     assert.ok(itemIds(entries).includes("copy-path"));
     const single = buildContextMenu(baseCtx({ selectionCount: 1, canCopyFiles: false }));
-    assert.ok(itemIds(single).includes("copy-image"), "single 复制图片 copies pixels and needs no file clipboard");
+    assert.ok(itemIds(single).includes("copy-image"), "single 复制图片 copies pixels in a plain browser and needs no file clipboard");
+    assert.equal(findItem(single, "copy-image").label, "复制图片", "no file clipboard: the single item still copies the picture");
+    const desktopSingle = buildContextMenu(baseCtx({ selectionCount: 1, canCopyFiles: true }));
+    assert.equal(findItem(desktopSingle, "copy-image").label, "复制文件", "with a file clipboard the single item copies the file");
+    const desktopMulti = buildContextMenu(baseCtx({ selectionCount: 3, canCopyFiles: true }));
+    assert.equal(findItem(desktopMulti, "copy-image").label, "复制文件");
   });
 
   it("single-select: no heading", () => {
@@ -251,7 +265,7 @@ describe("context-menus / stack card menu", () => {
     assert.equal(ids[1], "|");
   });
 
-  it("without a file clipboard: 复制全部图片 absent, 复制全部路径 stays", () => {
+  it("without a file clipboard: 复制全部文件 absent, 复制全部路径 stays", () => {
     const ids = itemIds(entries({ canCopyFiles: false }));
     assert.ok(!ids.includes("stack-copy-images"));
     assert.ok(ids.includes("stack-copy-paths"));

@@ -13,7 +13,7 @@
   color: var(--ui-muted);
 }.app .search:focus-within {
   background: var(--ui-raised);
-  box-shadow: 0 0 0 2px var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--field-focus);
 }.app .search input {
   width: 100%;
   min-width: 0;
@@ -25,11 +25,12 @@
   border: 0;
   border-radius: 0;
 }.app .detail-heading {
-  font-size: 16px;
+  /* Same size and weight as the sidebar brand name, so the two panel
+     titles at the top of the window read as one level. */
+  font-size: 12px;
   line-height: var(--space-6);
 }.app .detail-heading strong {
   font-weight: 600;
-  letter-spacing: -.3px;
 }.app .detail-heading button {
   color: var(--ui-muted);
   width: var(--space-7);
@@ -41,10 +42,10 @@
 }.app .asset-title button {
   color: var(--ui-muted);
 }.app .detail-heading button:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .field-heading button:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .prompt-tabs > button {
   /* The fixed square above is for the heading's icon buttons; the
@@ -67,7 +68,7 @@
   line-height: var(--space-4);
   padding: var(--space-1) var(--space-2);
 }.app .tags button:hover {
-  background: var(--ui-selected);
+  background: transparent;
   color: var(--ui-text);
 }.app .palette {
   margin-top: var(--space-3);
@@ -121,6 +122,9 @@
   border: 0;
   background: transparent;
   color: var(--ui-secondary);
+}.app .user-button.has-installation-id > span {
+  /* 编号是十六进制串，等宽数字让长度稳定、好核对。 */
+  font-variant-numeric: tabular-nums;
 }.app .user-button:hover {
   background: var(--ui-hover);
   color: var(--ui-text);
@@ -202,18 +206,8 @@
 }.app .modal-close svg {
   opacity: 1;
 }.app .modal-close:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
-}.app .setting-row {
-  border-top-color: var(--ui-line);
-}.app .setting-row > span {
-  white-space: normal;
-}.app .setting-row small {
-  display: block;
-  margin: var(--space-1) 0 0;
-  font-size: 12px;
-  line-height: var(--space-4);
-  color: var(--ui-muted);
 }.app .appearance-option {
   color: var(--ui-secondary);
 }.app .appearance-option.chosen {
@@ -336,13 +330,6 @@
 
 @media (max-width: 480px) {.app .settings-nav > button {
     font-size: 12px;
-  }.app .setting-row {
-    padding: var(--space-3) 0;
-    row-gap: var(--space-2);
-  }.app .setting-row > span {
-    flex: 1;
-  }.app .setting-row small {
-    max-width: none;
   }.app .delete-actions button {
     min-height: var(--space-10);
   }

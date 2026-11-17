@@ -85,7 +85,7 @@
   color: var(--ui-secondary);
   background: transparent;
 }.app .viewer-nav:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .viewer-previous {
   left: var(--space-1);
@@ -132,10 +132,10 @@
   line-height: var(--space-4);
   color: var(--ui-secondary);
 }.app .viewer-controls button:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .viewer-controls button.active {
-  background: var(--ui-inset);
+  background: transparent;
   color: var(--ui-text);
 }.app .viewer-controls button:disabled {
   opacity: .35;
@@ -307,28 +307,24 @@ video.black-image,
   gap: 6px;
 }
 
-.app .prompt-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
+/* In-place editor for 提示词 / 备注: same type as the text it replaces, grows
+   with its content up to ten lines, then scrolls. */
 .app .detail-editor {
+  display: block;
   width: 100%;
-  min-height: 120px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--panel);
-  color: var(--text);
+  min-height: calc(var(--space-5) * 3 + var(--space-2) * 2 + 2px);
+  max-height: calc(var(--space-5) * 10 + var(--space-2) * 2 + 2px);
+  field-sizing: content;
+  padding: var(--space-2);
+  border: 1px solid var(--field-focus);
+  border-radius: var(--radius-small);
+  background: var(--ui-inset);
+  color: var(--ui-text);
   font: inherit;
-  resize: vertical;
-}
-
-.app .prompt-editor-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  font-size: 12px;
+  line-height: var(--space-5);
+  resize: none;
+  outline: none;
 }
 
 /* Dragging across the gallery is the marquee, never a native text selection:
@@ -384,13 +380,13 @@ video.black-image,
    window cannot be moved. Only the three 56px top rows drag; every control in
    them and every overlay that can cover them opts out. Never put a drag region
    on a document the window navigates away from (task 127). */
-.app.native-darwin :is(.brandbar, .toolbar, .detail-heading) {
+.app.native-darwin :is(.brandbar, .toolbar, .detail-heading, .vc-header) {
   -webkit-app-region: drag;
 }
-.app.native-darwin :is(.brandbar, .toolbar, .detail-heading) :is(button, input, select, textarea, a, label, [role="button"], .column-control),
+.app.native-darwin :is(.brandbar, .toolbar, .detail-heading, .vc-header) :is(button, input, select, textarea, a, label, [role="button"], .column-control),
 .modal-layer, .group-dialog-backdrop, .authorization-layer,
 .context-menu, .toolbar-select-menu, .column-popover, .toast,
-.pinterest-detail-backdrop, .pinterest-confirm-backdrop {
+.pinterest-confirm-backdrop {
   -webkit-app-region: no-drag;
 }
 

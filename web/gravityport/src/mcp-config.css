@@ -4,31 +4,79 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  margin-top: var(--space-5);
+  margin-bottom: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-panel);
-  background: var(--ui-panel);
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
   min-width: 0;
 }
 
-.mcp-config-copy {
+.mcp-config-header {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  min-width: 0;
 }
 
-.mcp-config-copy strong {
+.mcp-config-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--space-6);
+}
+
+.mcp-config-head strong {
+  font-size: var(--type-body-size);
   font-weight: var(--type-weight-title);
+  line-height: var(--type-body-line);
   color: var(--ui-text);
 }
 
-.mcp-config-copy p,
+.mcp-config-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.mcp-guide-button,
+.app .settings-modal .mcp-guide-button,
+.app .settings-modal .mcp-config-copy-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(var(--space-16) + var(--space-3));
+  height: var(--control-height-small);
+  min-height: var(--control-height-small);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-control);
+  background: var(--ui-raised);
+  color: var(--ui-text);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-weight-label);
+  line-height: var(--type-control-line);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.mcp-guide-button:hover,
+.app .settings-modal .mcp-guide-button:hover,
+.app .settings-modal .mcp-config-copy-button:hover:not(:disabled) {
+  background: var(--ui-selected);
+  color: var(--ui-text);
+}
+
+.mcp-config-desc,
 .mcp-config-hint,
 .mcp-config-note,
 .mcp-config-warning {
   margin: 0;
   color: var(--ui-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
 }
 
 .mcp-config-hint,
@@ -52,21 +100,32 @@
   color: var(--ui-text);
 }
 
-.mcp-config-clients {
-  align-self: flex-start;
-}
-
-.mcp-config-code {
-  position: relative;
+.mcp-config-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
   min-width: 0;
 }
 
+.mcp-config-toolbar .mcp-config-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: calc((var(--control-height-small) - var(--type-body-line)) / 2);
+}
+
+.mcp-config-clients {
+  flex-shrink: 0;
+}
+
+.mcp-config-code {
+  min-width: 0;
+}
+
+/* UI 审查 11-16：配置整段显示，长路径折行，不限高、不横向滚动。 */
 .mcp-config-code pre {
   margin: 0;
-  max-height: 220px;
-  overflow: auto;
   padding: var(--space-3);
-  padding-right: calc(var(--space-3) + 72px);
   border: 1px solid var(--ui-line);
   border-radius: var(--radius-small);
   background: var(--ui-inset);
@@ -74,12 +133,26 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
   line-height: 1.6;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   user-select: text;
 }
 
 .mcp-config-copy-button {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
+  flex-shrink: 0;
 }
+
+.mcp-config-line {
+  display: block;
+}
+
+.mcp-config-indent {
+  display: none;
+}
+
+/* UI 审查 11-16：复制按钮与「连接 Pinterest」同高（28px）；设置页 .neutral-button
+   有 32px 最小高度，这里加 .mcp-config-card 压过它。分段切换的高度在 06-settings.css 统一。 */
+.app .settings-modal .mcp-config-card .mcp-config-copy-button {
+  min-height: var(--control-height-small);
+}
+

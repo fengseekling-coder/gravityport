@@ -37,6 +37,9 @@ export type MenuContext = {
   /** Task 304: the 待整理 view (also inside a stack opened from it). Only there
    * do the card menus offer 标为已整理. */
   unorganizedView: boolean
+  /** Task 421 gate: with the version canvas switched on, a single asset card
+   * offers 查看版本树 to open the canvas directly. */
+  versionCanvas?: boolean
 }
 
 /** Drop empty sections and join the rest with one separator each, so the
@@ -140,6 +143,7 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
   // 所以这里天然不会出现在多选、堆叠卡和回收站里。
   const openSection = isMultiple ? null : [
     { kind: "item" as const, id: "open-viewer", label: "在查看器中打开", icon: "external" },
+    ...(ctx.versionCanvas ? [{ kind: "item" as const, id: "open-version-canvas", label: "查看版本树", icon: "tree" }] : []),
     { kind: "item" as const, id: "show-in-library", label: "在素材库中显示", icon: "folder" },
     { kind: "item" as const, id: "reveal-in-folder", label: ctx.isMac ? "在访达中显示" : "在文件资源管理器中显示", icon: "folder" },
   ]
@@ -148,12 +152,14 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
   // members); the prompt copy stays single-only.
   const copySection = isMultiple
     ? [
-        ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "copy-image", label: "复制图片", enLabel: "Copy images", icon: "image" }] : []),
+        ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "copy-image", label: "复制文件", enLabel: "Copy files", icon: "image" }] : []),
         { kind: "item" as const, id: "cut", label: "剪切", icon: "scissors", disabled: hasStacks },
         { kind: "item" as const, id: "copy-path", label: "复制路径", enLabel: "Copy paths", icon: "link" },
       ]
     : [
-        { kind: "item" as const, id: "copy-image", label: "复制图片", icon: "image" },
+        // UI 审查 11-16（用户定）：有文件剪贴板时叫「复制文件」，单张也复制成文件
+        // （同多选和 ⌘C）；浏览器里没有文件剪贴板，仍复制图片画面、叫「复制图片」。
+        { kind: "item" as const, id: "copy-image", label: ctx.canCopyFiles ? "复制文件" : "复制图片", icon: "image" },
         { kind: "item" as const, id: "cut", label: "剪切", icon: "scissors" },
         { kind: "item" as const, id: "copy-prompt", label: "复制提示词", icon: "copy" },
         { kind: "item" as const, id: "copy-path", label: "复制路径", icon: "link" },
@@ -209,7 +215,7 @@ function buildStackMenu(ctx: MenuContext): MenuEntry[] {
       { kind: "item" as const, id: "open-stack", label: "打开堆叠", icon: "layers" },
     ],
     [
-      ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "stack-copy-images", label: "复制全部图片", icon: "image" }] : []),
+      ...(ctx.canCopyFiles ? [{ kind: "item" as const, id: "stack-copy-images", label: "复制全部文件", icon: "image" }] : []),
       { kind: "item" as const, id: "stack-copy-paths", label: "复制全部路径", icon: "link" },
     ],
     [

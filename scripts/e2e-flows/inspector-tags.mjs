@@ -134,7 +134,11 @@ ${PAGE_HELPERS}
     const secondTagText = chips()[1]?.querySelector(':scope > span')?.textContent || '';
     const detailsText = document.querySelector('.details').textContent;
     const leaked = ['auto-archived', 'web-capture', 'manual-capture'].filter((t) => detailsText.includes(t));
-    const promptLeft = document.getElementById('asset-prompt').getBoundingClientRect().left;
+    // The prompt is click-to-edit (11-15): its box reaches 8px past the text so
+    // the hover tint has room, so compare against where the text itself starts.
+    const promptRange = document.createRange();
+    promptRange.selectNodeContents(document.getElementById('asset-prompt'));
+    const promptLeft = promptRange.getClientRects()[0]?.left ?? document.getElementById('asset-prompt').getBoundingClientRect().left;
     const vendorLeft = vendor.getBoundingClientRect().left;
     const chipBackground = getComputedStyle(vendor).backgroundColor;
 

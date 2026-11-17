@@ -7,6 +7,7 @@ import { conversationRoundRows, roundCompareSelection, roundLine, type Conversat
 import { relationTypes, RELATION_LABELS } from "./feature-parity"
 import { createGenerationRelation, editGenerationRelation, removeGenerationRelation, dismissGenerationCandidate,
   type MosaAsset, type MosaVersionRow, type MosaGenerationHistory } from "./mosa-api"
+import { VERSION_CANVAS_ENTRY } from "./version-canvas-model"
 import type { Language } from "./i18n"
 
 export type VersionSectionProps = {
@@ -35,6 +36,7 @@ export type VersionSectionProps = {
   selectHistoryAsset: (id: string) => void
   mutateRelation: (action: () => Promise<unknown>) => Promise<void>
   providerDisplayLabel: (provider: string) => string
+  onOpenCanvas?: () => void
 }
 
 export function VersionSection(props: VersionSectionProps) {
@@ -44,6 +46,7 @@ export function VersionSection(props: VersionSectionProps) {
     relationBusy, relationDrafts, newRelation, showAllRelationChoices, versionTreeOpen,
     setVersionTreeOpen, setNewRelation, setRelationDrafts, setShowAllRelationChoices,
     timeLabel, relationPairLine, roundText, selectHistoryAsset, mutateRelation, providerDisplayLabel,
+    onOpenCanvas,
   } = props
   return (
     <>
@@ -65,7 +68,17 @@ export function VersionSection(props: VersionSectionProps) {
                 if (versionRounds.mode !== "context" && !badgeCount && !hasVersionFamily) return null
                 return <span className="field-actions">
                   {badgeCount ? <span className="settings-badge">{badgeCount}</span> : null}
-                  <button className="section-action" aria-expanded={versionTreeOpen} onClick={() => setVersionTreeOpen(!versionTreeOpen)}>{tr(versionTreeOpen ? "收起" : "展开")}</button>
+                  <button
+                    className="section-action"
+                    aria-expanded={VERSION_CANVAS_ENTRY && onOpenCanvas ? false : versionTreeOpen}
+                    onClick={() => {
+                      if (VERSION_CANVAS_ENTRY && onOpenCanvas) {
+                        onOpenCanvas()
+                        return
+                      }
+                      setVersionTreeOpen(!versionTreeOpen)
+                    }}
+                  >{tr(VERSION_CANVAS_ENTRY && onOpenCanvas ? "查看" : versionTreeOpen ? "收起" : "查看")}</button>
                 </span>
               })()}
             </div>

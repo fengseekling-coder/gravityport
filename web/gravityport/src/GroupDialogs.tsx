@@ -1,5 +1,8 @@
 // Group/stack dialogs moved out of App.tsx (task 395). Pure moves; no behavior changes.
 import Icon from "./Icon"
+import Button from "./ui/Button"
+import Dialog from "./ui/Dialog"
+import TextField from "./ui/TextField"
 import { renameGroup, deleteGroupKeepingAssets, mergeGroups, createGroup, type MosaAsset, type MosaNavigation } from "./mosa-api"
 import { renameStack, dissolveStack, trashStack, assignStackToGroup } from "./library-actions"
 import { describeError } from "./error-messages"
@@ -109,31 +112,41 @@ export function GroupDialogs(props: GroupDialogsProps) {
 
         {/* Stack rename dialog */}
         {stackRename && (
-          <div className="group-dialog-backdrop" role="presentation" onClick={event => { if (event.target === event.currentTarget) setStackRename(null) }}>
-            <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("重命名堆叠")}>
-              <form onSubmit={event => {
-                event.preventDefault()
-                const name = stackRename.draft.trim()
-                if (!name) return
-                renameStack(project, stackRename.stackId, name)
-                  .then(() => {
-                    notify("已重命名堆叠")
-                    setAssets(old => old.map(a => a.stack && a.stack.id === stackRename.stackId ? { ...a, stack: { ...a.stack, name } } : a))
-                    if (stackId === stackRename.stackId) setStackName(name)
-                    setStackRename(null)
-                    scheduleSync()
-                  })
-                  .catch(error => notify(errorMessage(error, language)))
-              }}>
-                <h3>{tr("重命名堆叠")}</h3>
-                <input autoFocus value={stackRename.draft} maxLength={80} onChange={event => setStackRename(old => old ? { ...old, draft: event.target.value } : old)} />
-                <div className="group-dialog-actions">
-                  <button type="button" className="neutral-button" onClick={() => setStackRename(null)}>{tr("取消")}</button>
-                  <button type="submit" className="primary-button">{tr("重命名")}</button>
-                </div>
-              </form>
-            </div>
-          </div>
+          <Dialog
+            open
+            title={tr("重命名堆叠")}
+            closeLabel={tr("关闭")}
+            onClose={() => setStackRename(null)}
+          >
+            <form onSubmit={event => {
+              event.preventDefault()
+              const name = stackRename.draft.trim()
+              if (!name) return
+              renameStack(project, stackRename.stackId, name)
+                .then(() => {
+                  notify("已重命名堆叠")
+                  setAssets(old => old.map(a => a.stack && a.stack.id === stackRename.stackId ? { ...a, stack: { ...a.stack, name } } : a))
+                  if (stackId === stackRename.stackId) setStackName(name)
+                  setStackRename(null)
+                  scheduleSync()
+                })
+                .catch(error => notify(errorMessage(error, language)))
+            }}>
+              <TextField
+                label={tr("堆叠名称")}
+                autoFocus
+                value={stackRename.draft}
+                maxLength={80}
+                onChange={event => setStackRename(old => old ? { ...old, draft: event.target.value } : old)}
+              />
+              <div className="ui-dialog-actions">
+                <Button onClick={() => setStackRename(null)}>{tr("取消")}</Button>
+                <Button variant="primary" type="submit" disabled={!stackRename.draft.trim()}>
+                  {tr("重命名")}
+                </Button>
+              </div>
+            </form>
+          </Dialog>
         )}
 
         {/* Stack dissolve confirmation */}

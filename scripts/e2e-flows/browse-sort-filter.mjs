@@ -74,16 +74,16 @@ function browseSource() {
     const searchCount = cardLabels().length;
 
     // Media-kind filter: images stay, videos endpoint stays empty for seeds.
-    await chooseToolbarOption('素材类型', '视频');
+    await chooseToolbarOption('类型与排序', '视频');
     await waitFor(() => settled() && document.querySelector('.empty-state'), 'video filter empties the grid');
     const videoCount = cardLabels().length;
-    await chooseToolbarOption('素材类型', '图片');
+    await chooseToolbarOption('类型与排序', '图片');
     await waitFor(() => settled() && cardLabels().length === 3, 'image filter restores the grid');
     const imageCount = cardLabels().length;
 
     // Sort: newest first (gamma newest), then by name (alpha first).
     const newestFirstNames = cardLabels();
-    await chooseToolbarOption('排序', '名称排序');
+    await chooseToolbarOption('类型与排序', '名称排序');
     await waitFor(() => settled() && cardLabels()[0] !== newestFirstNames[0], 'name sort reorders');
     const nameSortChanged = cardLabels()[0].includes('alpha');
 

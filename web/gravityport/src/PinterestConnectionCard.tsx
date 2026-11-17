@@ -63,13 +63,18 @@ export function PinterestConnectionCardView({
   else stateLine = t("未连接");
 
   const connectLabel = needsReconnect ? t("重新连接") : t("连接 Pinterest");
+  const badgeClass = [
+    "pinterest-status-badge",
+    connected ? "is-connected" : "",
+    needsReconnect ? "is-warning" : "",
+  ].filter(Boolean).join(" ");
 
   return (
-    <section className="pinterest-connection-card">
+    <section className="pinterest-connection-card" aria-label="Pinterest">
       <div className="pinterest-connection-head">
-        <div className="pinterest-connection-copy">
-          <strong>{stateLine}</strong>
-          <p>{t("在侧栏浏览 Pinterest 账号中的画板和 Pin。内容仅在此电脑上实时显示，不会存入素材库，也不会上传。")}</p>
+        <div className="pinterest-connection-title">
+          <strong>Pinterest</strong>
+          <span className={badgeClass}>{stateLine}</span>
           {connected && status?.quota ? (
             <small>
               {pinterestFormat(
@@ -79,23 +84,26 @@ export function PinterestConnectionCardView({
               )}
             </small>
           ) : null}
-          {connectionError ? <p className="pinterest-error-text">{t(connectionError)}</p> : null}
-          {disconnectError ? <p className="pinterest-error-text">{t(disconnectError)}</p> : null}
         </div>
         <div className="pinterest-connection-actions">
           {connected ? (
-            <button type="button" className="pinterest-secondary" onClick={onRequestDisconnect} disabled={disconnecting}>
+            <button type="button" className="pinterest-card-secondary" onClick={onRequestDisconnect} disabled={disconnecting}>
               {t("断开")}
             </button>
           ) : connecting ? (
             <>
-              <button type="button" className="pinterest-primary" disabled>{t("等待浏览器授权…")}</button>
-              <button type="button" className="pinterest-secondary" onClick={onCancel}>{t("取消")}</button>
+              <button type="button" className="pinterest-card-primary" disabled>{t("等待浏览器授权…")}</button>
+              <button type="button" className="pinterest-card-secondary" onClick={onCancel}>{t("取消")}</button>
             </>
           ) : (
-            <button type="button" className="pinterest-primary" onClick={onStart}>{connectLabel}</button>
+            <button type="button" className="pinterest-card-primary" onClick={onStart}>{connectLabel}</button>
           )}
         </div>
+      </div>
+      <div className="pinterest-connection-copy">
+        <p>{t("浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载。")}</p>
+        {connectionError ? <p className="pinterest-error-text">{t(connectionError)}</p> : null}
+        {disconnectError ? <p className="pinterest-error-text">{t(disconnectError)}</p> : null}
       </div>
       {confirmOpen ? (
         <div

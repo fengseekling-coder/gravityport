@@ -48,6 +48,8 @@
   font-size: 12px;
   line-height: var(--space-4);
   color: var(--ui-muted);
+  /* UI 审查 11-16：中文按词不拆行，「2026年11月15日」不再被拆成两行，只在「 · 」处换行。 */
+  word-break: keep-all;
 }.app .summary-preview {
   align-self: flex-start;
   margin-top: auto;
@@ -91,7 +93,7 @@
   font-size: 12px;
   color: var(--ui-muted);
 }.app .details .tags button:hover {
-  background: var(--ui-hover);
+  background: transparent;
   color: var(--ui-text);
 }.app .details .tag-chip {
   /* Bare-text tags: no frame, no horizontal padding, so the first label's
@@ -114,7 +116,6 @@
   color: var(--ui-secondary);
 }.app .details .tags .add-tag {
   color: var(--ui-secondary);
-  gap: var(--space-1);
 }.app .tag-editor {
   flex-basis: 100%;
   margin-top: var(--space-1);
@@ -126,7 +127,7 @@
   background: var(--ui-inset);
   border-radius: var(--radius-control);
 }.app .tag-editor-controls:focus-within {
-  box-shadow: 0 0 0 1px var(--focus-ring);
+  box-shadow: 0 0 0 1px var(--field-focus);
 }.app .tag-editor input {
   min-width: 0;
   width: 100%;
@@ -153,9 +154,17 @@
   line-height: var(--space-4);
 }.app .details .palette {
   margin-top: var(--space-2);
-  gap: var(--space-1);
+  /* UI 审查 11-16：色块固定 20px 小方块靠左排，颜色少时不再被拉宽抢视觉；
+     详情栏宽 280px，8 色加间距 216px 正好一行，放不下时换行。 */
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }.app .details .palette button {
-  height: var(--space-4);
+  flex: none;
+  width: var(--space-5);
+  height: var(--space-5);
+  border-radius: var(--space-1);
+  /* UI 审查 11-16：和底色相近的色块原来看不出来，每块加一圈细边。 */
+  box-shadow: inset 0 0 0 var(--border-hairline) color-mix(in srgb, var(--ui-secondary) 35%, transparent);
 }.app .details .detail-section {
   margin-top: var(--space-5);
 }.app .details .field-heading {
@@ -184,6 +193,24 @@
   overflow: hidden;
 }.app .detail-reading.five-lines:not(.expanded) p {
   -webkit-line-clamp: 5;
+}.app .detail-reading.five-lines.expanded p {
+  max-height: calc(var(--space-5) * 10);
+  overflow-y: auto;
+}.app .detail-reading.placeholder p {
+  color: var(--ui-muted);
+}.app .detail-reading.editable p {
+  margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-small);
+  cursor: text;
+}.app .detail-reading.five-lines.editable.expanded p {
+  max-height: calc(var(--space-5) * 10 + var(--space-1) * 2);
+}.app .detail-reading.editable p:hover {
+  background: var(--ui-hover);
+}.app .detail-reading.editable p:focus {
+  outline: none;
+}.app .detail-reading.editable p:focus-visible {
+  outline: var(--focus-width) solid var(--focus-ring);
 }.app .prompt-provenance {
   margin: var(--space-1) 0 0;
   font-size: 12px;
@@ -203,7 +230,7 @@
   color: var(--ui-muted);
 }.app .reading-toggle:hover {
   color: var(--ui-text);
-  background: var(--ui-hover);
+  background: transparent;
 }.app .field-heading .section-action {
   width: auto;
   padding: 0 var(--space-1);

@@ -46,3 +46,16 @@ test("SQLite curation persists, is searchable, and does not create a recipe snap
   const search = await store.listAssetPage({ projectId: asset.project_id, query: "excellent silhouette", limit: 20 });
   assert.deepEqual(search.assets.map((item) => item.id), [asset.id]);
 });
+
+test("SQLite curation PATCH keeps fields the caller leaves out", async (t) => {
+  const { store, asset } = await fixture(t);
+  await store.updateCuration(asset.project_id, asset.id, { curated: true, curation_note: "first" });
+  const noteOnly = await store.updateCuration(asset.project_id, asset.id, { curation_note: "second" });
+  assert.equal(noteOnly.curated, true, "saving a note alone must not clear 整理好");
+  assert.equal(noteOnly.curation_note, "second");
+  const flagOnly = await store.updateCuration(asset.project_id, asset.id, { curated: false });
+  assert.equal(flagOnly.curated, false);
+  assert.equal(flagOnly.curation_note, "second", "toggling 整理好 must not clear the note");
+  const cleared = await store.updateCuration(asset.project_id, asset.id, { curation_note: "" });
+  assert.equal(cleared.curation_note, "");
+});

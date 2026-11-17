@@ -567,15 +567,24 @@ async function waitThumbnail(libraryDir, assetId) {
   await waitFor(async () => existsSync(join(libraryDir, "assets", "default", "thumbnails", `${assetId}.webp`)), `thumbnail ${assetId}`);
 }
 
-async function waitForBackfill(libraryDir) {
+/** The perceptual hash row is committed in completeDerivativeJob's
+ * transaction (lib/sqlite-asset-store.mjs), which runs AFTER the child
+ * process has already published the thumbnail file — so waitThumbnail can
+ * fire while similar-check still answers pending. The startup backfill flag
+ * says nothing about assets created after the sweep either. Wait for the
+ * hash rows themselves: the same readiness the import review gets by
+ * polling similar-check until its pending list drains. */
+async function waitForFingerprints(libraryDir, assetIds) {
   await waitFor(async () => {
     const database = new Database(join(libraryDir, "mosa.db"), { readonly: true });
     try {
-      return Boolean(database.prepare("SELECT value FROM library_meta WHERE key = 'perceptual-hash-backfilled'").get());
+      const placeholders = assetIds.map(() => "?").join(",");
+      const rows = database.prepare(`SELECT asset_id FROM asset_perceptual_hashes WHERE asset_id IN (${placeholders})`).all(...assetIds);
+      return rows.length === assetIds.length;
     } finally {
       database.close();
     }
-  }, "backfill done flag");
+  }, `perceptual hash rows for ${assetIds.join(",")}`);
 }
 
 test("import-batch returns already-in-library skips and cleans staged files", async (t) => {
@@ -632,13 +641,13 @@ test("resolve orchestration: identical pair trashes exactly one copy across two 
   const libraryDir = join(root, "library");
   const original = await gradientFile(generated, "original.png", "horizontal");
   await post("/api/assets/create", { projectId: "default", assetId: "original", imagePath: original, prompt: "p" });
-  await waitThumbnail(libraryDir, "original");
   const copy = join(generated, "copy.png");
   await transformTo(original, copy, (p) => p.png({ compressionLevel: 0 }));
   await post("/api/assets/create", { projectId: "default", assetId: "copy", imagePath: copy, prompt: "p" });
-  await waitThumbnail(libraryDir, "copy");
 
-  await waitForBackfill(libraryDir);
+  // The identical verdict compares fingerprints, which commit later than the
+  // thumbnail files the child publishes; wait for both hash rows.
+  await waitForFingerprints(libraryDir, ["original", "copy"]);
   const checkCopy = await (await post("/api/import/similar-check", { projectId: "default", assetIds: ["copy"] })).json();
   assert.deepEqual(checkCopy.identical, [{ newAssetId: "copy", existingAssetId: "original" }]);
   const checkOriginal = await (await post("/api/import/similar-check", { projectId: "default", assetIds: ["original"] })).json();
@@ -761,7 +770,9 @@ test("replace-with-new keeps the library asset's curation and trashes the import
   const bigger = join(generated, "bigger.png");
   await transformTo(base, bigger, (p) => p.resize(150, 150, { fit: "fill" }).png());
   await post("/api/assets/create", { projectId: "default", assetId: "bigger", imagePath: bigger, prompt: "p" });
-  await waitThumbnail(libraryDir, "bigger");
+  // replace-with-new verification needs both perceptual hashes committed;
+  // bigger's thumbnail file can appear before its hash row does.
+  await waitForFingerprints(libraryDir, ["base", "bigger"]);
 
   const resolveResponse = await (await post("/api/import/resolve", {
     projectId: "default",

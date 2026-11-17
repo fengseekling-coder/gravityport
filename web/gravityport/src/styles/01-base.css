@@ -35,6 +35,11 @@
 }input:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
+}input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):focus-visible,
+textarea:focus-visible {
+  /* Every focused text field counts as focus-visible, so a click into one
+     would draw the green ring; fields show a quiet border instead (below). */
+  outline: none;
 }select:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
@@ -395,13 +400,6 @@ img.black-image {
   display: flex;
   align-items: center;
   justify-content: center;
-}.setting-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-top: 1px solid #cbcbcb;
-}.setting-row>span {
-  white-space: nowrap;
 }.segmented {
   display: flex;
   align-items: center;
@@ -566,8 +564,6 @@ img.black-image {
     display: none;
   }.settings-modal {
     min-height: 420px;
-  }.setting-row small {
-    white-space: normal;
   }.asset-grid {
     grid-template-columns: repeat(3,minmax(0,1fr)) !important;
   }.delete-modal {
