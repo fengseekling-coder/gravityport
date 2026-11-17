@@ -45,8 +45,16 @@ async function snapshot(root) {
   return contents;
 }
 
-// The checked-out release-notes.json ships an empty `unreleased`; a real
-// release run starts from one filled by hand first.
+// A real release run starts from an `unreleased` filled by hand first. The
+// copied release-notes.json may already carry notes for the next release, so
+// tests set `unreleased` explicitly instead of relying on the checkout.
+async function emptyUnreleased(root) {
+  const path = join(root, "release-notes.json");
+  const notes = JSON.parse(await readFile(path, "utf8"));
+  notes.unreleased = { zh: {}, en: {} };
+  await writeFile(path, `${JSON.stringify(notes, null, 2)}\n`, "utf8");
+}
+
 async function fillUnreleased(root) {
   const path = join(root, "release-notes.json");
   const notes = JSON.parse(await readFile(path, "utf8"));
@@ -163,6 +171,7 @@ test("release:prepare refuses versions not greater than the current one, changin
 test("an empty unreleased blocks the run unless --allow-empty-notes, which leaves release-notes.json untouched", async () => {
   const root = await makeTempRepo();
   try {
+    await emptyUnreleased(root);
     const before = await snapshot(root);
     await assert.rejects(
       () => releasePrepare({ newVersion: "0.3.16", root, log: () => {} }),
@@ -175,7 +184,7 @@ test("an empty unreleased blocks the run unless --allow-empty-notes, which leave
     assert.equal(report.changedFiles.includes("release-notes.json"), false);
     assert.equal(
       await readFile(join(root, "release-notes.json"), "utf8"),
-      await readFile(join(REPO_ROOT, "release-notes.json"), "utf8"),
+      before["release-notes.json"],
       "release-notes.json must stay byte-identical with --allow-empty-notes",
     );
     assert.equal(JSON.parse(await readFile(join(root, "package.json"), "utf8")).version, "0.3.16");
