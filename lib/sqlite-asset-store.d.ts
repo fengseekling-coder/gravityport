@@ -96,6 +96,28 @@ export interface AssetStackSummary {
   order_locked?: boolean;
 }
 
+export interface StoredCanvasMark {
+  id?: string;
+  x: number;
+  y: number;
+  text: string;
+}
+
+export interface StoredAssetCanvasState {
+  is_final: boolean;
+  marks: StoredCanvasMark[];
+  pos_x: number | null;
+  pos_y: number | null;
+  updated_at: string;
+}
+
+export interface StoredAssetCanvasStatePatch {
+  is_final?: boolean;
+  marks?: Array<Partial<StoredCanvasMark> & { x: number; y: number }>;
+  pos_x?: number | null;
+  pos_y?: number | null;
+}
+
 export interface GroupInfo {
   name: string;
   project_id: string;
@@ -184,6 +206,9 @@ export interface SqliteAssetStore {
   createAsset(params: Record<string, unknown>, options?: Record<string, unknown>): Promise<StoredAsset>;
   updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<StoredAsset>;
   updateCuration(projectId: string, assetId: string, input: Record<string, unknown>): Promise<StoredAsset>;
+  getAssetCanvasStates(projectId: string, assetIds: string[]): Promise<Record<string, StoredAssetCanvasState>>;
+  updateAssetCanvasState(projectId: string, assetId: string, input: StoredAssetCanvasStatePatch): Promise<StoredAssetCanvasState>;
+  clearAssetCanvasPositions(projectId: string, assetIds: string[]): Promise<{ cleared: number }>;
   /** Batch "标为已整理": writes only the curated flag; reports the prior flag and whether the asset was organized before. */
   setAssetsCurated(
     projectId: string,

@@ -21,6 +21,7 @@ import vm from "node:vm";
 import Database from "better-sqlite3";
 
 import {
+  CURRENT_SCHEMA_VERSION,
   STACK_SORT_CREATED_AT_SQL,
   createSqliteAssetStore,
   searchScopeRebuildHelpers,
@@ -373,7 +374,7 @@ test("a schema upgrade verifies in the background: an inherited orphan passes, a
   assert.equal(record.status, "ok", "the snapshot baseline covers the pre-existing orphan");
   assert.equal(record.foreignKeyViolations, 1, "the orphan is counted on the current side");
   assert.equal(record.foreignKeyBaselineViolations, 1, "the same orphan is counted on the baseline side");
-  assert.equal(record.targetVersion, 18, "the record names the target version");
+  assert.equal(record.targetVersion, CURRENT_SCHEMA_VERSION, "the record names the target version");
   assert.ok(record.backupPath, "the record keeps the backup path");
   assert.ok(!existsSync(record.backupPath), "the ok verdict deleted the snapshot (task 350)");
   store.close();

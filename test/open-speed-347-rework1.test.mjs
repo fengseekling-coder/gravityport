@@ -16,7 +16,7 @@ import test from "node:test";
 import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
 
-import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { CURRENT_SCHEMA_VERSION, createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import {
   SCHEMA_UPGRADE_VERIFY_KEY,
   classifySchemaVerifyFailure,
@@ -360,7 +360,7 @@ test("the pending verify record is written synchronously at the upgrade open", a
   const record = JSON.parse(markerValue(libraryDir, SCHEMA_UPGRADE_VERIFY_KEY));
   assert.equal(record.status, "pending");
   assert.ok(record.backupPath && existsSync(record.backupPath), "the pending record names the pre-upgrade snapshot");
-  assert.equal(record.targetVersion, 18);
+  assert.equal(record.targetVersion, CURRENT_SCHEMA_VERSION);
   await store.startDeferredMaintenance();
   assert.equal(JSON.parse(markerValue(libraryDir, SCHEMA_UPGRADE_VERIFY_KEY)).status, "ok", "the App's maintenance finishes the pending check");
 });

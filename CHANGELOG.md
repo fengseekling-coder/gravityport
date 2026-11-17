@@ -2,6 +2,26 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.15 — 2026-11-17 / Preview
+
+### Desktop
+
+- Refreshed design: settings cards, toolbar, details panel, dialogs, switches and text fields share new UI primitives; app-styled hover tooltips replace native titles; one 1.5px inside selection outline; clearer light-theme secondary text and dark-mode dialog veils.
+- Details panel: click the prompt to edit it in place; a new searchable Note (stored as `curation_note`); long prompt, user instruction and note text shows five lines and expands to ten. Saving a note no longer clears the sorted flag.
+- Settings: the MCP card shows its config in full, adds an Other tab (shared `mcpServers` config for Cursor, Windsurf, Cline and similar), and gives Claude Code and Codex a ready-to-send install message; extension install steps are numbered.
+- The sidebar's bottom entry shows the installation ID (full ID on hover) and still opens Settings.
+- Asset type and sort share one toolbar menu; the Forward arrow is removed (shortcut and mouse side button still work). The card menu's Copy image is now Copy file and copies the file for a single card too.
+- Fixes: HEIC/HEIF files carrying an `irot` rotation report upright dimensions on macOS; Escape closes the rename and schema-upgrade notices the moment they appear; an undecodable video no longer flashes "file not found" before the codec message; the macOS update helper only recognizes the app process launched for the current update.
+- Internal reorganization of the SQLite store; no behavior change.
+
+### Web Capture
+
+- Extension 0.15.49: prompt extraction moved into `content-prompt.js`; capture behavior unchanged.
+
+### MCP launcher
+
+- `gravityport-mcp` 0.3.15: version bump only.
+
 ## 0.3.14 — 2026-11-14 / Preview
 
 ### Desktop

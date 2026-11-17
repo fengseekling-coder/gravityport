@@ -150,7 +150,7 @@ export function canvasFromHistory(
       x: 30 + column * COLUMN_GAP,
       y: 98 + row * (NODE_HEIGHT + 48),
       final: false,
-      note: "",
+      note: (asset.id === current.id ? current.note : asset.note) || "",
       marks: [],
     })
   }
@@ -175,7 +175,7 @@ export function canvasFromHistory(
       x: 30,
       y: 98,
       final: false,
-      note: "",
+      note: current.note || "",
       marks: [],
     })
   }

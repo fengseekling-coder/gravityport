@@ -922,6 +922,101 @@ export async function updateAssetNote(project: string, id: string, note: string)
   return normalizeAsset(result.asset || {}, project)
 }
 
+export type MosaCanvasMark = {
+  x: number
+  y: number
+  text: string
+  id?: string
+}
+
+export type MosaAssetCanvasState = {
+  is_final: boolean
+  marks: MosaCanvasMark[]
+  pos_x: number | null
+  pos_y: number | null
+  updated_at: string
+}
+
+export type MosaAssetCanvasStatePatch = {
+  is_final?: boolean
+  marks?: MosaCanvasMark[]
+  pos_x?: number | null
+  pos_y?: number | null
+}
+
+function asCanvasRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function normalizeCanvasState(raw: unknown): MosaAssetCanvasState {
+  const input = asCanvasRecord(raw) || {}
+  const marksRaw = Array.isArray(input.marks) ? input.marks : []
+  const marks: MosaCanvasMark[] = []
+  for (const item of marksRaw) {
+    const entry = asCanvasRecord(item)
+    if (!entry) continue
+    if (typeof entry.x !== "number" || !Number.isFinite(entry.x)) continue
+    if (typeof entry.y !== "number" || !Number.isFinite(entry.y)) continue
+    const mark: MosaCanvasMark = {
+      x: Math.max(0, Math.min(1, entry.x)),
+      y: Math.max(0, Math.min(1, entry.y)),
+      text: typeof entry.text === "string" ? entry.text : "",
+    }
+    if (typeof entry.id === "string" && entry.id) mark.id = entry.id
+    marks.push(mark)
+  }
+  return {
+    is_final: Boolean(input.is_final),
+    marks,
+    pos_x: typeof input.pos_x === "number" && Number.isFinite(input.pos_x) ? input.pos_x : null,
+    pos_y: typeof input.pos_y === "number" && Number.isFinite(input.pos_y) ? input.pos_y : null,
+    updated_at: typeof input.updated_at === "string" ? input.updated_at : "",
+  }
+}
+
+export async function fetchAssetCanvasStates(
+  project: string,
+  assetIds: string[],
+  signal?: AbortSignal,
+): Promise<Record<string, MosaAssetCanvasState>> {
+  if (!assetIds.length) return {}
+  const result = await requestJson<{ states?: JsonValue }>("/api/assets/canvas-state/query", {
+    method: "POST",
+    body: { projectId: project, assetIds },
+    signal,
+  })
+  const rawStates = asCanvasRecord(result.states) || {}
+  const states: Record<string, MosaAssetCanvasState> = {}
+  for (const [id, value] of Object.entries(rawStates)) {
+    states[id] = normalizeCanvasState(value)
+  }
+  return states
+}
+
+export async function updateAssetCanvasState(
+  project: string,
+  id: string,
+  patch: MosaAssetCanvasStatePatch,
+): Promise<MosaAssetCanvasState> {
+  const result = await requestJson<{ state?: JsonValue }>(`/api/assets/${e(project)}/${e(id)}/canvas-state`, {
+    method: "PATCH",
+    body: patch as JsonValue,
+  })
+  return normalizeCanvasState(result.state)
+}
+
+export async function clearAssetCanvasPositions(
+  project: string,
+  assetIds: string[],
+): Promise<{ cleared: number }> {
+  if (!assetIds.length) return { cleared: 0 }
+  const result = await requestJson<{ cleared?: number }>("/api/assets/canvas-state/reset-positions", {
+    method: "POST",
+    body: { projectId: project, assetIds },
+  })
+  return { cleared: Number(result.cleared || 0) }
+}
+
 /** Uploads a renderer-extracted video poster frame; the server re-encodes it
  * to the thumbnail tier and stores it as thumbnails/<id>.webp. Raw-body call
  * for the Blob (requestJson only speaks JSON). */

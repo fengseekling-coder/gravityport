@@ -6,6 +6,48 @@
   },
   "releases": [
     {
+      "version": "0.3.15",
+      "date": "2026-11-17",
+      "zh": {
+        "new": [
+          "详情栏里点提示词即可直接修改；新增「备注」，可随素材一起搜索。",
+          "设置里的 MCP 卡片新增「其他」分页，提供 Cursor、Windsurf、Cline 等助手通用的配置；Claude Code 和 Codex 可复制一段话发给助手，由助手自行完成接入。",
+          "导航栏左下角显示本机的安装编号，鼠标悬停可查看完整编号。"
+        ],
+        "improved": [
+          "界面换上新设计：设置、工具栏、详情栏、对话框和悬停提示统一样式，浅色主题的次要文字更清楚，深色模式下弹窗遮罩更明显。",
+          "工具栏的素材类型和排序合并为一个菜单，按钮上显示当前选择；前进箭头移除，快捷键和鼠标侧键照常可用。",
+          "提示词、用户指令和备注较长时先显示 5 行，可展开查看。",
+          "卡片右键菜单的「复制图片」改为「复制文件」，单张卡片同样复制原文件。",
+          "设置里的 MCP 配置完整显示，浏览器扩展的安装步骤按编号排列。"
+        ],
+        "fixed": [
+          "Mac 上竖拍的 HEIC 照片显示正确的尺寸和比例。",
+          "启动时弹出的改名说明和素材库升级提示，一出现就能用 Esc 关闭。",
+          "无法解码的视频直接说明编码原因，不再先闪出「找不到原始文件」。"
+        ]
+      },
+      "en": {
+        "new": [
+          "Click a prompt in the details panel to edit it in place; a new Note field is searchable along with the asset.",
+          "The MCP card in Settings adds an Other tab with a shared config for Cursor, Windsurf, Cline, and similar assistants; for Claude Code and Codex, copy a message and the assistant sets up the connection itself.",
+          "The bottom-left corner of the sidebar shows this installation's ID; hover to see it in full."
+        ],
+        "improved": [
+          "A refreshed design: Settings, the toolbar, the details panel, dialogs, and hover tooltips share one style; secondary text is easier to read in the light theme, and dialog backdrops are clearer in dark mode.",
+          "Asset type and sort share one toolbar menu that shows the current choice; the Forward arrow is gone, and the shortcut and mouse side button still go forward.",
+          "Long prompts, user instructions, and notes show five lines first and expand on request.",
+          "Copy image in the card menu is now Copy file, and copies the original file for a single card too.",
+          "The MCP config in Settings shows in full, and the browser extension install steps are numbered."
+        ],
+        "fixed": [
+          "Portrait HEIC photos on Mac show the correct size and aspect ratio.",
+          "The rename notice and the library upgrade notice shown at startup close with Esc the moment they appear.",
+          "A video that can't be decoded states the codec reason directly instead of first flashing “Original file not found.”"
+        ]
+      }
+    },
+    {
       "version": "0.3.14",
       "date": "2026-11-14",
       "zh": {
