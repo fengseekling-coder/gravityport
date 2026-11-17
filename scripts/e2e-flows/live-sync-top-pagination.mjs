@@ -77,12 +77,16 @@ function topPaginationSource(targetCardId) {
 
     // 2. 向下滚动使加载素材数量超过 320 张（激活虚拟化窗口）
     const scroller = grid();
-    for (let guard = 0; guard < 30 && loadedCount() <= 320; guard += 1) {
+    // Keep scrolling for the whole wait: a slow runner (still filling
+    // thumbnails) may need more than a few seconds per page, and a page that
+    // lands after the last nudge would otherwise never trigger the next one.
+    const scrollDeadline = Date.now() + 30000;
+    while (loadedCount() <= 320 && Date.now() < scrollDeadline) {
       scroller.scrollTop = scroller.scrollHeight;
       scroller.dispatchEvent(new Event('scroll'));
       await sleep(180);
     }
-    await waitFor(() => loadedCount() > 320, 'loaded more than 320 cards');
+    if (loadedCount() <= 320) throw new Error('Timed out waiting for loaded more than 320 cards (' + loadedCount() + ' loaded)');
     const topLoaded = loadedCount();
 
     // 3. 回到顶部
