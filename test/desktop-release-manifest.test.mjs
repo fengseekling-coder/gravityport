@@ -11,7 +11,7 @@ import {
   releaseManifestBackupTrustFromRepository,
   verifyReleaseManifestSignature,
 } from "../lib/release-manifest-signature.mjs";
-import { prepareDesktopReleaseManifest, resolveManifestNotes } from "../scripts/prepare-desktop-release-manifest.mjs";
+import { assertManifestWithinClientLimit, prepareDesktopReleaseManifest, resolveManifestNotes, UPDATE_MANIFEST_MAX_BYTES } from "../scripts/prepare-desktop-release-manifest.mjs";
 import { removeTestPath } from "./test-cleanup.mjs";
 
 // The backup key is public and committed; only its public half is read here.
@@ -679,6 +679,50 @@ test("release manifest refuses an x64 artifact bound to the arm64 filename", asy
         notes: { zh: "Intel 包", en: "Intel package" },
       }),
       /filename must be MOSA-darwin-x64-0\.3\.0\.zip/,
+    );
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+test("the manifest writer refuses to write a manifest over the client's size limit", () => {
+  // The desktop reader discards any feed larger than UPDATE_MANIFEST_MAX_BYTES
+  // (desktop/update-service.mjs) before parsing it; the writer must fail the
+  // same way instead of publishing something clients can never read.
+  const oversized = {
+    version: "9.9.9",
+    notes: { zh: "超".repeat(9000), en: "x".repeat(9000) },
+  };
+  assert.throws(
+    () => assertManifestWithinClientLimit(oversized),
+    (error) => {
+      assert.match(error.message, /Update manifest is \d+ bytes, over the 16384-byte client limit/);
+      assert.match(error.message, /desktop\/update-service\.mjs/);
+      return true;
+    },
+  );
+});
+
+test("a normally generated manifest fits the client limit with headroom", async () => {
+  const version = "0.2.1-rc.16";
+  const files = await fixtureArtifacts(version);
+  try {
+    const result = await prepareDesktopReleaseManifest({
+      version,
+      macArtifactPath: files.mac,
+      windowsArtifactPath: files.windows,
+      ...signingOptions(version),
+      publishedAt: "2026-09-19T01:00:00Z",
+      notes: { zh: "rc.16 中文说明", en: "rc.16 English notes" },
+    });
+    const size = assertManifestWithinClientLimit(result);
+    assert.ok(
+      size <= UPDATE_MANIFEST_MAX_BYTES,
+      `expected the generated manifest (${size} bytes) to fit ${UPDATE_MANIFEST_MAX_BYTES} bytes`,
+    );
+    assert.ok(
+      size <= UPDATE_MANIFEST_MAX_BYTES / 2,
+      `expected real headroom: manifest is ${size} bytes, limit ${UPDATE_MANIFEST_MAX_BYTES}`,
     );
   } finally {
     await removeTestPath(files.root, { recursive: true, force: true });
