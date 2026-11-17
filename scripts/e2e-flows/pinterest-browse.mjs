@@ -163,6 +163,18 @@ function pinterestBrowseSource() {
     qa('.toolbar-left button').find((button) => button.textContent.includes('返回')).click();
     await waitFor(() => !q('.image-viewer') && qa('.pinterest-pin-card').length === 12, 'Pin grid back after 返回');
 
+    // Mouse side-button back follows the same path as ‹: viewer → Pin grid → board list.
+    const sideBack = () => window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 3 }));
+    qa('.pinterest-pin-card')[1].dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    await waitFor(() => q('.image-viewer'), 'viewer for side-button back');
+    sideBack();
+    await waitFor(() => !q('.image-viewer') && qa('.pinterest-pin-card').length === 12, 'side-button back leaves the viewer for the Pin grid');
+    sideBack();
+    await waitFor(() => qa('.pinterest-board-card').length === 3 && !q('.toolbar .viewer-title'), 'side-button back leaves the board for the board list');
+    if (!/Pinterest/.test((q('.main-nav .nav-row.selected') || {}).textContent || '')) throw new Error('side-button back left the Pinterest view');
+    qa('.pinterest-board-card')[0].click();
+    await waitFor(() => qa('.pinterest-pin-card').length === 12, 'board reopened after side-button back');
+
     // 6. ‹ returns to the board list.
     q('.toolbar-left button[aria-label="后退"]').click();
     await waitFor(() => qa('.pinterest-board-card').length === 3 && !q('.toolbar .viewer-title') && !q('.details'), 'board list back');

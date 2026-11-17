@@ -2852,6 +2852,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     const overlaysUp = Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || authorizationActive || settings
       || groupRename || stackRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm
       || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
+    // Back inside Pinterest (⌘[ / Alt+← / mouse side button) mirrors the
+    // toolbar ‹ there: viewer → Pin grid → board list; at the board list it
+    // falls through to the app history, exactly like that button.
+    const pinterestBack = () => {
+      const chrome = pinterestChromeRef.current
+      if (chrome.viewing || chrome.boardName !== null) pinterestViewRef.current?.back()
+      else navigateHistoryRef.current(-1)
+    }
     const key = (e: KeyboardEvent) => {
       if (canvasOpen) return
       if (e.key === "Escape") {
@@ -2931,8 +2939,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // trigger a gallery shortcut.
       if (isEditableTarget(e.target)) return
       // The Pinterest view hides the gallery: ⌘A then Delete there must not
-      // select and trash library assets nobody can see.
-      if (pinterestActive) return
+      // select and trash library assets nobody can see. Only back passes.
+      if (pinterestActive) {
+        if (resolveNavHistoryShortcut(e, isMacPlatform() ? "mac" : "other") === -1 && !overlaysUp) {
+          e.preventDefault()
+          pinterestBack()
+        }
+        return
+      }
       const plainKey = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
       const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !authorizationActive
       // Back/forward (task 384): ⌘[/⌘] on macOS, Alt+←/→ elsewhere. The
@@ -3039,7 +3053,11 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       if (e.button !== 3 && e.button !== 4) return
       e.preventDefault()
       const direction = mouseNavDirection(e.button)
-      if (!direction || overlaysUp || cardDragRef.current || pinterestActive || canvasOpen) return
+      if (!direction || overlaysUp || cardDragRef.current || canvasOpen) return
+      if (pinterestActive) {
+        if (direction === -1) pinterestBack()
+        return
+      }
       navigateHistoryRef.current(direction)
     }
     // The web `copy`/`cut` events carry the desktop menu's 拷贝/剪切 roles
