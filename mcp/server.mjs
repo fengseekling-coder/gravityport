@@ -56,6 +56,8 @@ import {
   toolDefinitions,
   withToolAnnotations,
 } from "../lib/mcp-server/tool-definitions.mjs";
+import { compactAsset, compactListLimit, compactResultText } from "../lib/mcp-server/compact-results.mjs";
+import { validateSchema } from "../lib/mcp-server/validate-schema.mjs";
 
 const managerDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // Inside the desktop app (ELECTRON_RUN_AS_NODE) the client picks the working
@@ -561,85 +563,6 @@ function assertStackSupport(store) {
   ) {
     throw mcpToolError("ASSET_STACKS_UNAVAILABLE", "Asset stacks are unavailable.", 400);
   }
-}
-
-// Task 376: asset_list / asset_search answers carry a fixed slim field set
-// instead of the full rowToAsset payload (recipe snapshots, palette, runtime
-// URLs and paths made a 100-asset page ~220KB). Full detail stays on
-// asset_get. Field sources (mirroring rowToAsset in lib/sqlite-asset-store.mjs
-// and the shared mediaKindOf rule at lib/sqlite-asset-store.mjs:109):
-//   id ← asset.id; file_name ← asset.asset (the managed file name, the same
-//   key provenance-bundle.mjs exports as file_name); media_kind ← the shared
-//   mediaKindOf rule (source.media_kind || business_fields.media_kind, then
-//   the file extension); width/height ← business_fields.width/height;
-//   prompt_excerpt ← prompt (first 80 characters, "…" when cut, "" when the
-//   asset has no prompt); group ← asset.group; tags/rating/favorite/
-//   created_at/image_path carry over; stack ← the attachStackToAssets summary
-//   reduced to { id, name }, the key dropped when the asset is unstacked.
-// A field whose value is missing on the asset (a video without dimensions, an
-// empty tag list, rating 0, favorite false) is omitted, never placeholdered.
-const PROMPT_EXCERPT_CHARACTERS = 80;
-const COMPACT_QUERY_ECHO_CHARACTERS = 200;
-const COMPACT_LIST_DEFAULT_LIMIT = 20;
-const COMPACT_LIST_MAX_LIMIT = 100;
-const COMPACT_MEDIA_IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"]);
-const COMPACT_MEDIA_VIDEO_EXTENSIONS = new Set([".m4v", ".mov", ".mp4", ".webm"]);
-
-function excerptCharacters(value, maxCharacters) {
-  const text = typeof value === "string" ? value : "";
-  const chars = Array.from(text);
-  return chars.length > maxCharacters ? `${chars.slice(0, maxCharacters).join("")}…` : text;
-}
-
-function compactMediaKind(asset) {
-  const kind = asset?.source?.media_kind || asset?.business_fields?.media_kind;
-  if (kind === "video" || kind === "image") return kind;
-  const match = /\.([a-z0-9]+)(?:$|\?)/i.exec(String(asset?.image_path || ""));
-  const ext = match ? `.${match[1].toLowerCase()}` : "";
-  if (COMPACT_MEDIA_VIDEO_EXTENSIONS.has(ext)) return "video";
-  if (COMPACT_MEDIA_IMAGE_EXTENSIONS.has(ext)) return "image";
-  return "unknown";
-}
-
-function compactAsset(asset) {
-  if (!asset || typeof asset !== "object") return asset;
-  const compact = { id: asset.id };
-  if (asset.asset) compact.file_name = asset.asset;
-  compact.media_kind = compactMediaKind(asset);
-  const width = Number(asset.business_fields?.width);
-  if (Number.isFinite(width) && width > 0) compact.width = width;
-  const height = Number(asset.business_fields?.height);
-  if (Number.isFinite(height) && height > 0) compact.height = height;
-  compact.prompt_excerpt = excerptCharacters(asset.prompt, PROMPT_EXCERPT_CHARACTERS);
-  if (asset.group) compact.group = asset.group;
-  if (Array.isArray(asset.tags) && asset.tags.length) compact.tags = [...asset.tags];
-  const rating = Number(asset.rating);
-  if (Number.isFinite(rating) && rating > 0) compact.rating = rating;
-  if (asset.favorite === true) compact.favorite = true;
-  compact.created_at = asset.created_at;
-  if (asset.stack && typeof asset.stack === "object") {
-    compact.stack = { id: asset.stack.id, name: asset.stack.name };
-  }
-  if (asset.image_path) compact.image_path = asset.image_path;
-  return compact;
-}
-
-function compactListLimit(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return COMPACT_LIST_DEFAULT_LIMIT;
-  return Math.min(Math.floor(parsed), COMPACT_LIST_MAX_LIMIT);
-}
-
-// Task 376: the readable content text leads with the bilingual summary (and,
-// when a next page exists, the paging hint on the same line), then one line
-// per asset on this page: `<id> · <file_name>`.
-function compactResultText({ search, total, count, nextCursor, assets }) {
-  const summary = search
-    ? `找到 ${total} 张，这页 ${count} 张。/ ${total} matches, ${count} on this page.`
-    : `共 ${total} 张，这页 ${count} 张。/ ${total} assets, ${count} on this page.`;
-  const more = nextCursor ? " 还有更多，传 cursor 翻页。/ More results: pass cursor." : "";
-  const lines = [`${summary}${more}`, ...assets.map((asset) => `${asset?.id} · ${asset?.file_name ?? ""}`)];
-  return lines.join("\n");
 }
 
 async function attachStackToAssets(store, project, assets) {
@@ -1267,64 +1190,6 @@ async function handleToolCall(id, params) {
     });
     return;
   }
-}
-
-function validateSchema(schema, value, path) {
-  if (!schema || typeof schema !== "object") return "";
-  if (Array.isArray(schema.anyOf)) {
-    if (schema.anyOf.some((candidate) => !validateSchema(candidate, value, path))) return "";
-    return `${path} does not match any allowed shape.`;
-  }
-  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
-    return `${path} must be one of: ${schema.enum.join(", ")}.`;
-  }
-  if (schema.type === "object") {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return `${path} must be an object.`;
-    for (const required of schema.required || []) {
-      if (!Object.hasOwn(value, required)) return `${path}.${required} is required.`;
-    }
-    const properties = schema.properties || {};
-    if (schema.additionalProperties === false) {
-      const unknown = Object.keys(value).find((key) => !Object.hasOwn(properties, key));
-      if (unknown) return `${path}.${unknown} is not allowed.`;
-    }
-    for (const [key, child] of Object.entries(properties)) {
-      if (!Object.hasOwn(value, key)) continue;
-      const error = validateSchema(child, value[key], `${path}.${key}`);
-      if (error) return error;
-    }
-  } else if (schema.type === "array") {
-    if (!Array.isArray(value)) return `${path} must be an array.`;
-    for (let index = 0; index < value.length; index += 1) {
-      const error = validateSchema(schema.items, value[index], `${path}[${index}]`);
-      if (error) return error;
-    }
-  } else if (schema.type === "string") {
-    if (typeof value !== "string") return `${path} must be a string.`;
-    if (Number.isInteger(schema.minLength) && value.length < schema.minLength) return `${path} must contain at least ${schema.minLength} characters.`;
-    if (Number.isInteger(schema.maxLength) && value.length > schema.maxLength) return `${path} must contain at most ${schema.maxLength} characters.`;
-    if (typeof schema.pattern === "string") {
-      let pattern;
-      try { pattern = new RegExp(schema.pattern); }
-      catch { return `${path} has an invalid schema pattern.`; }
-      if (!pattern.test(value)) return `${path} must match ${schema.pattern}.`;
-    }
-  } else if (schema.type === "boolean") {
-    if (typeof value !== "boolean") return `${path} must be a boolean.`;
-  } else if (schema.type === "integer") {
-    if (!Number.isInteger(value)) return `${path} must be an integer.`;
-  } else if (schema.type === "number") {
-    if (typeof value !== "number" || !Number.isFinite(value)) return `${path} must be a finite number.`;
-  }
-  if (Array.isArray(value)) {
-    if (Number.isInteger(schema.minItems) && value.length < schema.minItems) return `${path} must contain at least ${schema.minItems} items.`;
-    if (Number.isInteger(schema.maxItems) && value.length > schema.maxItems) return `${path} must contain at most ${schema.maxItems} items.`;
-  }
-  if (typeof value === "number") {
-    if (Number.isFinite(schema.minimum) && value < schema.minimum) return `${path} must be >= ${schema.minimum}.`;
-    if (Number.isFinite(schema.maximum) && value > schema.maximum) return `${path} must be <= ${schema.maximum}.`;
-  }
-  return "";
 }
 
 function libraryMovedAway() {
