@@ -61,10 +61,17 @@ export function createCowartAssetBridge(options: { store?: Store; canvasDir?: st
     enabled = true; state.enabled = true;
     try {
       await mkdir(canvasDir, { recursive: true });
-      if (!enabled) return apiStatus();
-      await reconcile();
-      if (!enabled) return apiStatus();
     } catch (error) { enabled = false; state.enabled = false; throw error; }
+    if (!enabled) return apiStatus();
+    try {
+      await reconcile();
+    } catch {
+      // Task 436 B: a failed first scan must not disable the bridge for its
+      // whole lifetime. reconcile() already recorded state.lastError; the
+      // watcher and poller below still start, and the next successful scan
+      // clears lastError again.
+    }
+    if (!enabled) return apiStatus();
     try { watcher = watch(canvasDir, { recursive: true }, () => scheduleReconcile()); watcher.on("error", () => { watcher?.close(); watcher = null; }); } catch { watcher = null; }
     if (!enabled) { watcher?.close(); watcher = null; return apiStatus(); }
     poller = setInterval(() => { if (enabled) reconcile().catch(() => {}); }, pollIntervalMs); return apiStatus();

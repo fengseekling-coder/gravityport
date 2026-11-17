@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
-import { mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
@@ -35,6 +35,7 @@ import { isPromptUserEdited, isThemeUserEdited } from "./user-edit-marker.mjs";
 const IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"]);
 const DEFAULT_PROJECT_ID = "default";
 interface ImageCandidate { imagePath: string; taskId: string | null; fileName: string; fileStem: string; fileStat: Stats; generatedAt: string; }
+interface DeferredObservation { size: number; mtimeMs: number; firstSeenAt: number; }
 type GenerationMetadata = CodexGenerationMetadata;
 interface ImageInfo { width: number | null; height: number | null; ratio: string; mimeType: string; bytes: number; }
 interface StoredAsset {
@@ -49,10 +50,10 @@ interface StoredAsset {
 }
 interface Store extends IngestStore { codexImagesDir: string; assetsRoot: string; updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<IngestAsset>; }
 interface BridgeStatus { imagesDir: string; sessionsDir: string; threadHistoryPath: string | null; enabled: boolean; watching: boolean; watchingImages: boolean; watchingSessions: boolean; polling: boolean; busy: boolean; pendingSessionResults: number; lastSessionBytesRead: number; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastWarning: string | null; }
-interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated?: string[]; candidates: number; sessionBytesRead?: number; queued?: boolean; }
+interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated?: string[]; candidates: number; sessionBytesRead?: number; queued?: boolean; deferred?: number; }
 interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconcile(): Promise<ReconcileResult>; scheduleReconcile(): void; status(): BridgeStatus; }
 
-export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; signal?: AbortSignal; } = {}): Bridge {
+export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; stableWindowMs?: number; nowMs?: () => number; signal?: AbortSignal; } = {}): Bridge {
   const store = options.store;
   if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Codex image bridge requires a GravityPort store.");
   const imagesDir = resolve(options.imagesDir || store.codexImagesDir);
@@ -63,12 +64,16 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
   const projectId = options.projectId || DEFAULT_PROJECT_ID;
   const debounceMs = options.debounceMs != null && Number.isFinite(options.debounceMs) ? Math.max(0, options.debounceMs) : 500;
   const pollIntervalMs = options.pollIntervalMs != null && Number.isFinite(options.pollIntervalMs) ? Math.max(250, options.pollIntervalMs) : 30000;
+  const stableWindowMs = options.stableWindowMs != null && Number.isFinite(options.stableWindowMs) ? Math.max(0, options.stableWindowMs) : 2000;
+  const nowMs = options.nowMs || Date.now;
   const processedSignatures = new Map<string, string>();
+  const deferredObservations = new Map<string, DeferredObservation>();
   const sessionIndex = createCodexSessionIndex({ sessionsDir, threadHistory });
   let imageWatcher: FSWatcher | null = null;
   let sessionWatcher: FSWatcher | null = null;
   let poller: ReturnType<typeof setInterval> | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let stableRescanTimer: ReturnType<typeof setTimeout> | null = null;
   let enabled = false; let reconciling = false; let reconcileAgain = false;
   let activeReconcile: Promise<ReconcileResult> | null = null; let stopPromise: Promise<void> | null = null;
   const state: Omit<BridgeStatus, "watching" | "watchingImages" | "watchingSessions" | "polling" | "busy"> = {
@@ -99,8 +104,12 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
           projectId,
           processedSignatures,
           sessionIndex,
+          stableWindowMs,
+          nowMs,
+          deferredObservations,
           shouldContinue: () => enabled && !options.signal?.aborted,
         });
+        if ((result.deferred || 0) > 0) armStableRescan();
         state.pendingSessionResults = sessionIndex.pendingResults().length;
         state.lastSessionBytesRead = Number(result.sessionBytesRead || 0);
         state.lastScanAt = new Date().toISOString();
@@ -126,24 +135,39 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
     return run;
   }
   function scheduleReconcile(): void { if (!enabled) return; if (timer) clearTimeout(timer); timer = setTimeout(() => { timer = null; if (enabled) reconcile().catch(() => {}); }, debounceMs); }
+  // A deferred candidate must be rescanned roughly one stability window after
+  // it was first seen, even when no fs event or poll fires in between. The
+  // one-shot timer drives scheduleReconcile, so a scan that re-defers simply
+  // re-arms it; stop() clears it.
+  function armStableRescan(): void {
+    if (stableWindowMs <= 0 || stableRescanTimer) return;
+    stableRescanTimer = setTimeout(() => { stableRescanTimer = null; if (enabled) scheduleReconcile(); }, stableWindowMs);
+  }
   async function start(): Promise<BridgeStatus> {
     if (enabled) return apiStatus();
     enabled = true;
     state.enabled = true;
     try {
       await mkdir(imagesDir, { recursive: true });
-      await cleanupCodexSessionRecoveryRoot(store!.assetsRoot).catch(() => {});
-      if (!enabled) return apiStatus();
-      await reconcile();
-      if (!enabled) return apiStatus();
-      ensureWatchers();
-      poller = setInterval(() => { if (enabled) reconcile().catch(() => {}); }, pollIntervalMs);
-      return apiStatus();
     } catch (error) {
       enabled = false;
       state.enabled = false;
       throw error;
     }
+    await cleanupCodexSessionRecoveryRoot(store!.assetsRoot).catch(() => {});
+    if (!enabled) return apiStatus();
+    try {
+      await reconcile();
+    } catch {
+      // Task 436 B: a failed first scan must not disable the bridge for its
+      // whole lifetime. reconcile() already recorded state.lastError; the
+      // watchers and poller below still start, and the next successful scan
+      // clears lastError again.
+    }
+    if (!enabled) return apiStatus();
+    ensureWatchers();
+    poller = setInterval(() => { if (enabled) reconcile().catch(() => {}); }, pollIntervalMs);
+    return apiStatus();
   }
   function stop(): Promise<void> {
     if (stopPromise) return stopPromise;
@@ -152,6 +176,8 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
     reconcileAgain = false;
     if (timer) clearTimeout(timer);
     timer = null;
+    if (stableRescanTimer) clearTimeout(stableRescanTimer);
+    stableRescanTimer = null;
     if (poller) clearInterval(poller);
     poller = null;
     imageWatcher?.close();
@@ -180,7 +206,7 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
   return { start, stop, reconcile, scheduleReconcile, status: apiStatus };
 }
 
-export async function reconcileCodexGeneratedImages(options: { store: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; knownHashes?: Set<string> | null; processedSignatures?: Map<string, string> | null; }): Promise<ReconcileResult> {
+export async function reconcileCodexGeneratedImages(options: { store: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; knownHashes?: Set<string> | null; processedSignatures?: Map<string, string> | null; stableWindowMs?: number; nowMs?: () => number; deferredObservations?: Map<string, DeferredObservation> | null; }): Promise<ReconcileResult> {
   const { store, projectId = DEFAULT_PROJECT_ID } = options;
   const imagesDir = resolve(options.imagesDir || store.codexImagesDir);
   const { codexSessionsDir: sessionsDir, codexThreadHistoryDir } = resolveSourceLocations({
@@ -197,6 +223,9 @@ export async function reconcileCodexGeneratedImages(options: { store: Store; ima
       threadHistory: createCodexThreadHistoryReader({ dir: codexThreadHistoryDir, dbPath: options.threadHistoryPath || null }),
     }),
     knownHashes: options.knownHashes || new Set(),
+    stableWindowMs: options.stableWindowMs,
+    nowMs: options.nowMs,
+    deferredObservations: options.deferredObservations || new Map(),
   });
 }
 
@@ -208,9 +237,15 @@ async function reconcileCodexSources(options: {
   processedSignatures: Map<string, string>;
   sessionIndex: CodexSessionIndex;
   knownHashes?: Set<string>;
+  stableWindowMs?: number;
+  nowMs?: () => number;
+  deferredObservations?: Map<string, DeferredObservation> | null;
   shouldContinue?: () => boolean;
 }): Promise<ReconcileResult> {
   const { store, imagesDir, projectId, processedSignatures, sessionIndex } = options;
+  const stableWindowMs = options.stableWindowMs != null && Number.isFinite(options.stableWindowMs) ? Math.max(0, options.stableWindowMs) : 2000;
+  const nowMs = options.nowMs || Date.now;
+  const deferredObservations = options.deferredObservations || new Map<string, DeferredObservation>();
   const shouldContinue = options.shouldContinue || (() => true);
   if (!shouldContinue()) return { imported: [], skipped: [], updated: [], candidates: 0 };
   const sessionScan = await sessionIndex.scan();
@@ -233,6 +268,7 @@ async function reconcileCodexSources(options: {
   await sessionIndex.prefetchThreadHistory([...threadRequests].map(([taskId, seenPaths]) => ({ taskId, seenPaths })));
   if (!shouldContinue()) return { imported: [], skipped: [], updated: [], candidates: 0, sessionBytesRead: sessionScan.bytesRead };
   pruneProcessedSignatures(processedSignatures, candidates.map((candidate) => candidate.imagePath));
+  pruneDeferredObservations(deferredObservations, candidates.map((candidate) => candidate.imagePath));
   // Dedupe and metadata rules live in the shared ingest gate
   // (lib/library-ingest.mjs, ARCHITECTURE.md §8): this bridge only walks the
   // Codex folders and hands the gate the image plus its session fields.
@@ -260,11 +296,43 @@ async function reconcileCodexSources(options: {
   const imported: unknown[] = [];
   const skipped: Array<{ path: string; reason: string; error?: string }> = [];
   const updated: string[] = [];
+  let deferred = 0;
+  // The walked image path and the session's recorded saved_path can spell
+  // differently for the same file (the images dir may be reached through a
+  // symlink), so both sides are compared on realpath. Memoized per scan.
+  const realPathMemo = new Map<string, string | null>();
+  const realPathOf = async (path: string): Promise<string | null> => {
+    if (!realPathMemo.has(path)) realPathMemo.set(path, await realpath(path).catch(() => null));
+    return realPathMemo.get(path)!;
+  };
 
   for (const candidate of candidates) {
     if (!shouldContinue()) break;
+    if (stableWindowMs > 0) {
+      const observation = deferredObservations.get(candidate.imagePath);
+      const unchanged = Boolean(observation && observation.size === candidate.fileStat.size && observation.mtimeMs === candidate.fileStat.mtimeMs);
+      // Task 436 A: a file last modified before the stability window archives
+      // immediately; one written inside the window (or later) waits until it
+      // has stayed byte- and mtime-identical for a full window since it was
+      // first seen, so a half-written file is never archived. A deferred file
+      // is never recorded into processedSignatures.
+      const stable = !observation
+        ? nowMs() - candidate.fileStat.mtimeMs >= stableWindowMs
+        : unchanged && nowMs() - observation.firstSeenAt >= stableWindowMs;
+      if (!stable) {
+        deferredObservations.set(candidate.imagePath, {
+          size: candidate.fileStat.size,
+          mtimeMs: candidate.fileStat.mtimeMs,
+          firstSeenAt: observation && unchanged ? observation.firstSeenAt : nowMs(),
+        });
+        skipped.push({ path: candidate.imagePath, reason: "not-ready" });
+        deferred += 1;
+        continue;
+      }
+      if (observation) deferredObservations.delete(candidate.imagePath);
+    }
     const task = sessionIndex.metadataForTask(candidate.taskId || "");
-    const generation = metadataForIndexedCandidate(task, candidate);
+    const generation = await metadataForIndexedCandidate(task, candidate, realPathOf);
     await ingestFilesystemCandidate({
       store,
       projectId,
@@ -299,6 +367,7 @@ async function reconcileCodexSources(options: {
     imported,
     skipped,
     updated,
+    deferred,
     candidates: candidates.length + sessionIndex.pendingResults().length,
     sessionBytesRead: sessionScan.bytesRead,
   };
@@ -310,8 +379,25 @@ async function readCodexImageCandidates(imagesDir: string): Promise<ImageCandida
   return candidates.sort((l, r) => l.generatedAt.localeCompare(r.generatedAt));
 }
 
-function metadataForIndexedCandidate(task: CodexTaskMetadata, candidate: ImageCandidate): GenerationMetadata {
-  return task.imageEvents.get(candidate.imagePath) || task.fallback;
+async function metadataForIndexedCandidate(task: CodexTaskMetadata, candidate: ImageCandidate, realPathOf: (path: string) => Promise<string | null>): Promise<GenerationMetadata> {
+  // Task 436 D: the images directory may be reached through a symlink while
+  // the session file records the real spelling of the same file (or the
+  // reverse), so the walked path and the recorded saved_path can spell
+  // differently. The exact recorded path wins as before; on a miss both sides
+  // are compared on realpath. A path that no longer exists keeps its resolved
+  // spelling (realPathOf yields null), and a real miss still lands on
+  // task.fallback unchanged.
+  const exact = task.imageEvents.get(candidate.imagePath);
+  if (exact) return exact;
+  const candidateRealPath = await realPathOf(candidate.imagePath);
+  if (candidateRealPath) {
+    for (const [savedPath, metadata] of task.imageEvents) {
+      if (savedPath === candidate.imagePath) continue;
+      const savedRealPath = await realPathOf(savedPath);
+      if (savedRealPath && savedRealPath === candidateRealPath) return metadata;
+    }
+  }
+  return task.fallback;
 }
 
 async function ingestFilesystemCandidate({
@@ -786,6 +872,10 @@ function candidateSignature(candidate: ImageCandidate, generation: GenerationMet
   return [candidate.fileStat.size, candidate.fileStat.mtimeMs, generation.promptStatus, generation.sessionPath || "", generation.callId || "", generation.generatedAt || "", generation.model || "", generation.prompt, generation.userMessage || ""].join("\u001f");
 }
 function pruneProcessedSignatures(cache: Map<string, string>, livePaths: string[]): void {
+  const live = new Set(livePaths);
+  for (const path of cache.keys()) if (!live.has(path)) cache.delete(path);
+}
+function pruneDeferredObservations(cache: Map<string, DeferredObservation>, livePaths: string[]): void {
   const live = new Set(livePaths);
   for (const path of cache.keys()) if (!live.has(path)) cache.delete(path);
 }

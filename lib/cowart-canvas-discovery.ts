@@ -1,5 +1,6 @@
-import { watch, type FSWatcher } from "node:fs";
-import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { createReadStream, watch, type FSWatcher } from "node:fs";
+import { createInterface } from "node:readline";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveSourceLocations } from "./source-locations.js";
 
@@ -85,7 +86,13 @@ export async function discoverCowartProjectsFromCodexSessions(options: {
     if (options.fullScan === true && details.mtimeMs < cutoff && !dirtyPaths.has(sessionPath)) continue;
     const cached = cache.get(sessionPath);
     let projectDirs: string[];
-    if (cached?.mtimeMs === details.mtimeMs && cached?.size === details.size) { projectDirs = cached.projectDirs; } else { projectDirs = await projectDirsFromSession(sessionPath); cache.set(sessionPath, { mtimeMs: details.mtimeMs, size: details.size, projectDirs }); }
+    if (cached?.mtimeMs === details.mtimeMs && cached?.size === details.size) { projectDirs = cached.projectDirs; } else {
+      // Task 436 C: a session file that cannot be read (mid-write, missing
+      // permissions) skips only itself — no cache entry, so the next round
+      // retries it while the rest of this round carries on.
+      try { projectDirs = await projectDirsFromSession(sessionPath); } catch { continue; }
+      cache.set(sessionPath, { mtimeMs: details.mtimeMs, size: details.size, projectDirs });
+    }
     for (const requestedProjectDir of projectDirs) {
       const candidate = await cowartProjectCandidate(requestedProjectDir, sessionPath, details.mtime);
       if (!candidate) continue;
@@ -97,9 +104,11 @@ export async function discoverCowartProjectsFromCodexSessions(options: {
 }
 
 async function projectDirsFromSession(sessionPath: string): Promise<string[]> {
-  const raw = await readFile(sessionPath, "utf8");
   const contextDirs = new Set<string>(); const explicitDirs = new Set<string>(); let openedDefaultCanvas = false;
-  for (const line of raw.split("\n")) {
+  // Task 436 C: stream the session line by line instead of loading the whole
+  // file into memory; the per-line judgment below is unchanged.
+  const reader = createInterface({ input: createReadStream(sessionPath, "utf8"), crlfDelay: Infinity });
+  for await (const line of reader) {
     if (!line.trim()) continue; let event: Record<string, unknown>; try { event = JSON.parse(line); } catch { continue; }
     if (event?.type === "turn_context" && isAbsoluteString((event.payload as Record<string, unknown>)?.cwd)) { contextDirs.add(resolve((event.payload as Record<string, unknown>).cwd as string)); continue; }
     if (event?.type !== "response_item") continue;
