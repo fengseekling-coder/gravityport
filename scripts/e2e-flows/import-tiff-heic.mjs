@@ -105,13 +105,20 @@ function pageSource(proresId, tiffB64, heicB64, heicAvailable) {
       target.dispatchEvent(event);
     }
     const cardFor = (name) => [...document.querySelectorAll('.asset-card[aria-label]')].find((card) => card.getAttribute('aria-label').includes(name)) || null;
+    // Keep scrolling for the whole wait: with a fixed step budget the scroll
+    // stops, and a card whose row lands after the last nudge would never
+    // mount into the virtual window (439; same shape as live-sync-top-pagination).
     const scrollGrid = async (id) => {
-      const grid = document.querySelector('.asset-grid');
-      for (let step = 0; step < 60; step += 1) {
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
         if (document.querySelector('.asset-grid [data-asset-id="' + id + '"]')) return;
+        const grid = document.querySelector('.asset-grid');
         if (grid) grid.scrollTop += 300;
         await sleep(200);
       }
+      const grid = document.querySelector('.asset-grid');
+      throw new Error('Timed out scrolling to the card (' + document.querySelectorAll('.asset-card').length + ' cards, top='
+        + Math.round(grid ? grid.scrollTop : -1) + ', want ' + id + ')');
     };
     // Waits until the derivative flushed (img src moved to /thumbnails/) and decoded.
     // The card is looked up again on every poll: a gallery refresh after the

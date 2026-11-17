@@ -320,15 +320,27 @@ function stockedLibrarySource() {
 
     // 点击查看：held cards prepend, and the write of scrollTop happens inside
     // the handler before the prepend's re-render reads it.
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      try {
-        const button = document.querySelector('.toast-action');
-        if (!button) break;
-        button.click();
+    // Keep clicking within the deadline (439): while the button is still
+    // there and the view has not returned to the top, click again; once the
+    // button disappears stop clicking and just wait. A missing button without
+    // reaching the top still fails at the deadline, with the live scrollTop.
+    // The waitFor below stays as the independent assertion.
+    const jumpDeadline = Date.now() + 30000;
+    while (Date.now() < jumpDeadline) {
+      if (grid.scrollTop <= 40) break;
+      const button = document.querySelector('.toast-action');
+      if (button) {
+        try {
+          button.click();
+        } catch {}
         await sleep(120);
         if (grid.scrollTop <= 40) break;
-      } catch {}
+      }
       await sleep(200);
+    }
+    if (grid.scrollTop > 40) {
+      throw new Error('Timed out waiting for 查看 to scroll back to the top (scrollTop=' + Math.round(grid.scrollTop)
+        + ', toastAction=' + Boolean(document.querySelector('.toast-action')) + ')');
     }
     await waitFor(() => grid.scrollTop <= 40, 'scroll back at the top', 10000);
     const scrollTopAfterJump = grid.scrollTop;

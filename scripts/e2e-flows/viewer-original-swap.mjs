@@ -149,15 +149,21 @@ function viewerScenes(config) {
       await waitFor(() => !document.querySelector(".image-viewer"), "viewer closed");
     };
     // Gallery virtualizes rows, so scroll the grid until the card is mounted.
+    // Keep scrolling for the whole wait: with a fixed step budget the scroll
+    // stops, and a card whose row lands after the last nudge would never
+    // mount into the virtual window (439; same shape as live-sync-top-pagination).
     const findCard = async (id) => {
-      const grid = document.querySelector(".asset-grid");
-      for (let step = 0; step < 60; step += 1) {
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
         const card = document.querySelector('.asset-grid [data-asset-id="' + id + '"]');
         if (card) return card;
+        const grid = document.querySelector(".asset-grid");
         if (grid) grid.scrollTop += 300;
         await sleep(250);
       }
-      throw new Error("card never mounted for " + id);
+      const grid = document.querySelector(".asset-grid");
+      throw new Error("Timed out scrolling to the card (" + document.querySelectorAll(".asset-card").length + " cards, top="
+        + Math.round(grid ? grid.scrollTop : -1) + ", want " + id + ")");
     };
     const openViewer = async (id) => {
       const card = await findCard(id);
