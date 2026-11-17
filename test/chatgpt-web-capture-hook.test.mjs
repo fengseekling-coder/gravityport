@@ -73,7 +73,7 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.48");
+  assert.equal(manifest.version, "0.15.49");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -102,7 +102,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.48");
+  assert.equal(manifest.version, "0.15.49");
 });
 
 test("surfaces MOSA's own ingest error when pairing repair keeps the same connection", async () => {
