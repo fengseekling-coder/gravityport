@@ -84,6 +84,7 @@ import {
 import { cleanupLegacyVisualData as cleanupLegacyVisualDataDir } from "./legacy-visual-cleanup.mjs";
 import { registerClipboardIpc } from "./ipc/clipboard.mjs";
 import { registerLibraryLocationIpc } from "./ipc/library-location.mjs";
+import { settlePendingOldLibraryCleanup } from "./library-relocation-cleanup.mjs";
 import { createLibraryVolumeWatch } from "./library-volume-watch.mjs";
 import { registerMiscIpc } from "./ipc/misc.mjs";
 import { macosUpdateInstallPromise, registerUpdateIpc, windowsUpdateInstallPromise } from "./ipc/updates.mjs";
@@ -878,6 +879,23 @@ function settleUpdateAttemptOnce() {
     .catch((error) => console.warn(`[GravityPort] update failure notice unavailable: ${error?.message || error}`));
 }
 
+// Task 443 (审查低1 ②): runs once per launch, right after the local service
+// has opened the (possibly relocated) library — the first moment the new
+// location is proven to work. Only then may the old library a relocation left
+// behind be moved to the system trash. The settle call is fail-closed and
+// never throws; the catch below only guards against module-level wiring bugs.
+let oldLibraryCleanupSettled = false;
+function settlePendingOldLibraryCleanupOnce() {
+  if (oldLibraryCleanupSettled) return;
+  oldLibraryCleanupSettled = true;
+  settlePendingOldLibraryCleanup({
+    userDataDir: desktopDataDir,
+    currentLibraryDir: libraryDir,
+    trashItem: (path) => shell.trashItem(path),
+    log: (message) => console.warn(`[MOSA] ${message}`),
+  }).catch((error) => console.warn(`[GravityPort] old library cleanup unavailable: ${error?.message || error}`));
+}
+
 // Returns the blocking result for a version whose installs failed twice (its
 // dialog is already shown), or null when the install may be attempted.
 async function updateFailedTwiceResult(version, currentVersion) {
@@ -1145,6 +1163,10 @@ async function createMainWindow() {
   settleUpdateAttemptOnce();
 
   const activeService = await ensureDesktopService();
+  // Task 443: the relocated library just opened, so the old library left
+  // behind by the move may now be trashed. ensureDesktopService() throwing
+  // (the new library does not open) never reaches this line.
+  settlePendingOldLibraryCleanupOnce();
   if (windowRef.isDestroyed() || mainWindow !== windowRef) return;
   const url = new URL(activeService.url);
   const blockForeignNavigation = (event, targetUrl) => {

@@ -223,8 +223,12 @@ test("preload path, module format, security settings, and API surface are stable
     "the copy starts only after the runtime stopped");
   assert.ok(relocationHandler.indexOf("saveLibraryDir(nextLibraryDir)") > relocationHandler.indexOf("await copyLibraryForRelocationGuarded({"),
     "the persisted location switches only after the copy succeeds");
-  assert.ok(relocationHandler.indexOf("await rm(previousLibraryDir") > relocationHandler.indexOf("saveLibraryDir(nextLibraryDir)"),
-    "the original library is removed only after a successful copy and preference switch");
+  // 任务 443（低1 ②）：handler 不再删除旧库——记录 pending cleanup，等下次
+  // 启动确认新库打开后才移到废纸篓（desktop/library-relocation-cleanup.mjs）。
+  assert.ok(relocationHandler.indexOf("recordPendingOldLibraryCleanup({") > relocationHandler.indexOf("saveLibraryDir(nextLibraryDir)"),
+    "the pending cleanup record is written only after the copy succeeded and the preference switched");
+  assert.doesNotMatch(relocationHandler, /await rm\(previousLibraryDir/,
+    "the handler never deletes the old library itself");
   assert.match(main, /ipcMain\.handle\("write-clipboard-text"/);
   const pasteImageHandler = main.slice(main.indexOf('ipcMain.handle("paste-image"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("paste-image"')));
   assert.match(pasteImageHandler, /trustedRendererEvent\(event\)/);

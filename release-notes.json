@@ -6,7 +6,8 @@
         "Codex、Grok 正在保存的图片和视频会等写完再收进素材库，不再收进半张图。",
         "自动收图在启动时遇到一次读取错误后照常继续收图，不用重启 App。",
         "某个会话记录读不了时，其余 Cowart 画布照常收进素材库。",
-        "Codex 图片文件夹放在别处、用链接指过去时，图片也能配上对应的提示词。"
+        "Codex 图片文件夹放在别处、用链接指过去时，图片也能配上对应的提示词。",
+        "移动素材库后，旧素材库会先保留，等新位置的素材库确认能正常打开后再移到系统废纸篓，不再直接删除。"
       ]
     },
     "en": {
@@ -14,7 +15,8 @@
         "Images and videos that Codex or Grok is still saving are archived once complete, never half-written.",
         "Auto-archiving keeps running after a read error at startup, without restarting the app.",
         "One unreadable session record no longer stops other Cowart canvases from being archived.",
-        "Codex images pair with the right prompt when the images folder is linked from another location."
+        "Codex images pair with the right prompt when the images folder is linked from another location.",
+        "After moving the library, the old library is now kept until the relocated library has been confirmed to open, then moved to the system trash instead of being deleted immediately."
       ]
     }
   },
