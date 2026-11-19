@@ -7,6 +7,7 @@ import test from "node:test";
 import * as desktopI18n from "../desktop/notification-i18n.mjs";
 import { getNotificationTextForAssetsImported, getUpdateNotificationText } from "../desktop/notification-i18n.mjs";
 import { assertPackageLockMatchesManifest } from "./package-lock-contract.mjs";
+import { EXPECTED_PRELOAD_API_KEYS, EXPECTED_PRELOAD_INVOKE_COUNT } from "./helpers/desktop-preload-surface.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const read = (relativePath) => readFile(resolve(root, relativePath), "utf8");
@@ -91,32 +92,9 @@ test("main localizes custom menu labels without changing roles or accelerators",
   assert.match(mainSources, /function pruneInjectedMenuItems\(menu\)/);
   assert.match(mainSources, /child\.type !== "normal" \|\| child\.id\?\.startsWith\(MOSA_MENU_ID_PREFIX\)/);
   assert.match(mainSources, /buildMenuTemplate\(\{/);
-  assert.match(template, /id:\s*"mosa-menu-app"/);
-  assert.match(template, /id:\s*"mosa-menu-file"/);
-  assert.match(template, /id:\s*"mosa-menu-edit"/);
-  assert.match(template, /id:\s*"mosa-menu-view"/);
-  assert.match(template, /id:\s*"mosa-menu-window"/);
-  for (const label of Object.values(DESKTOP_TEXT).slice(0, 5).flatMap(({ zh, en }) => [zh, en])) {
-    assert.doesNotMatch(template, new RegExp(`label\\s*:\\s*${label.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}`));
-  }
-  assert.equal((template.match(/getDesktopText\s*\(/g) || []).length >= 6, true, "all custom labels must use desktop i18n");
-
-  for (const role of [
-    "about", "services", "hide", "hideOthers", "unhide", "quit", "close",
-    "undo", "redo", "cut", "copy", "paste", "pasteAndMatchStyle", "delete",
-    "resetZoom", "zoomIn", "zoomOut", "togglefullscreen", "minimize", "zoom", "front",
-  ]) {
-    assert.match(template, new RegExp(`role\\s*:\\s*"${role}"`), `${role} role remains available`);
-  }
-  // 任务 384：全选不再用 role（改 accelerator + click 转给网页）；拷贝、剪切、
-  // 粘贴的 role 保留在上面列表里。
-  // 2026-09: the "Import Asset" menu item retired with the manual import
-  // modal, so the File menu keeps only Close and the ⌘N accelerator is gone.
-  assert.doesNotMatch(template, /CmdOrCtrl\+N/);
-  assert.doesNotMatch(template, /menu-import/);
-  assert.match(template, /accelerator\s*:\s*"CmdOrCtrl\+F"/);
-  // 351：搜索项的点击回调由 main.mjs 注入，模板保持无 Electron 依赖。
-  assert.match(template, /click:\s*onSearch/);
+  // 任务 444：菜单模板的文字断言（菜单 id、label 不写死、getDesktopText 计数、
+  // role 循环、CmdOrCtrl+N / menu-import 墓碑、CmdOrCtrl+F、click: onSearch）删掉，
+  // test/desktop-menu-template.test.mjs 直接构建模板逐项断言，覆盖更准。
   assert.match(menu, /sendToWindow\("menu-search"\)/);
   assert.match(menu, /pruneInjectedMenuItems\(menu\);/);
   assert.match(menu, /setImmediate\(\(\) =>/);
@@ -164,40 +142,8 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   assertPackageLockMatchesManifest(await read("package-lock.json"), manifest);
   const preload = await read("desktop/preload.cjs");
   const exposedKeys = [...preload.matchAll(/^\s{2}(\w+):/gm)].map((match) => match[1]).sort();
-  assert.deepEqual(exposedKeys, [
-    "acknowledgeRenameNotice",
-    "cancelUpdateDownload",
-    "changeLibraryLocation",
-    "checkForUpdates",
-    "clipboardImportable",
-    "downloadAndInstallUpdate",
-    "getBackgroundCaptureState",
-    "getClientToken",
-    "getInstallationId", // 11-16：左下角显示安装编号（只读通道 installation-id）
-    "getMcpClientConfig",
-    "getRenameNoticeState",
-    "getUpdateReady",
-    "libraryFileFlags",
-    "onMenuSearch",
-    "onMenuSelectAll", // 任务 384：全选不走 role，经 menu-select-all 转给网页
-    "onUpdateDownloadProgress",
-    "onUpdateReady",
-    "onWindowFullScreenChange",
-    "openDownloadPage",
-    "openExternalLink",
-    "openPinterestAuthorize",
-    "pasteFromClipboard",
-    "pasteImage",
-    "reportRendererReady",
-    "revealManagedExtensionFolder",
-    "setBackgroundCapture",
-    "setLocale",
-    "setWindowFullScreen",
-    "startNativeDrag",
-    "writeClipboardFiles",
-    "writeClipboardImage",
-    "writeClipboardText",
-  ]);
+  // 任务 444：清单收敛到 test/helpers/desktop-preload-surface.mjs（原三份逐键一致）。
+  assert.deepEqual(exposedKeys, EXPECTED_PRELOAD_API_KEYS);
   // 任务 96（A6）：第 18 条批准通道 set-window-full-screen。任务 116：第 19/20 条
   // rename-notice-state / acknowledge-rename-notice（老用户「已更名」提示）。任务 135：
   // 第 21 条 open-pinterest-authorize（Pinterest OAuth 授权页）。任务 147：第 22 条
@@ -212,7 +158,7 @@ test("package metadata stays frozen and the runtime preload preserves its approv
   // 界面），24 → 23。
   // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
   // 11-16：只读通道 installation-id（左下角显示安装编号），26 → 27。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 27, "preload keeps the approved invoke channels");
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, EXPECTED_PRELOAD_INVOKE_COUNT, "preload keeps the approved invoke channels");
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.match(preload, /getUpdateReady: \(\) => ipcRenderer\.invoke\("get-update-ready"\)/);
   assert.doesNotMatch(preload, /shell\s*[:.]/, "renderer still receives no generic shell capability");

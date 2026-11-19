@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { extname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { assertPackageLockMatchesManifest } from "./package-lock-contract.mjs";
+import { EXPECTED_PRELOAD_API_KEYS, EXPECTED_PRELOAD_INVOKE_COUNT } from "./helpers/desktop-preload-surface.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const preloadPath = resolve(root, "desktop", "preload.cjs");
@@ -17,40 +18,6 @@ const electronPath = process.platform === "darwin"
   : process.platform === "win32"
     ? resolve(root, "node_modules", "electron", "dist", "electron.exe")
     : resolve(root, "node_modules", "electron", "dist", "electron");
-const EXPECTED_API_KEYS = [
-  "acknowledgeRenameNotice",
-  "cancelUpdateDownload",
-  "changeLibraryLocation",
-  "checkForUpdates",
-  "clipboardImportable",
-  "downloadAndInstallUpdate",
-  "getBackgroundCaptureState",
-  "getClientToken",
-  "getInstallationId",
-  "getMcpClientConfig",
-  "getRenameNoticeState",
-  "getUpdateReady",
-  "libraryFileFlags",
-  "onMenuSearch",
-  "onMenuSelectAll", // 任务 384：全选不走 role，经 menu-select-all 转给网页
-  "onUpdateDownloadProgress",
-  "onUpdateReady",
-  "onWindowFullScreenChange",
-  "openDownloadPage",
-  "openExternalLink",
-  "openPinterestAuthorize",
-  "pasteFromClipboard",
-  "pasteImage",
-  "reportRendererReady",
-  "revealManagedExtensionFolder",
-  "setBackgroundCapture",
-  "setLocale",
-  "setWindowFullScreen",
-  "startNativeDrag",
-  "writeClipboardFiles",
-  "writeClipboardImage",
-  "writeClipboardText",
-];
 // R1 isolation fix (2026-08-09, approved scope) added qa:web/qa:electron/
 // qa:packaged launcher scripts to package.json, so only its dependency
 // sections stay pinned (see the dependency assertions below).
@@ -135,8 +102,8 @@ test("preload path, module format, security settings, and API surface are stable
   // （安装 ID 不再暴露给界面），invoke 计数 24 → 23。
   // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
   // 11-16 用户定：左下角显示安装编号，加只读通道 installation-id（只回主窗口），26 → 27。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 27, "only the twenty-seven approved invoke channels remain");
-  assert.deepEqual(sortedApiKeys(preload), EXPECTED_API_KEYS);
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, EXPECTED_PRELOAD_INVOKE_COUNT, "only the approved invoke channels remain");
+  assert.deepEqual(sortedApiKeys(preload), EXPECTED_PRELOAD_API_KEYS);
   assert.match(preload, /setWindowFullScreen: \(flag\) => ipcRenderer\.invoke\("set-window-full-screen", flag === true\)/);
   assert.match(preload, /onWindowFullScreenChange: \(callback\) =>[\s\S]*?ipcRenderer\.on\("window-full-screen-change"/);
   assert.match(preload, /startNativeDrag: \(paths\) => ipcRenderer\.invoke\("start-native-file-drag", paths\)/);
@@ -147,8 +114,8 @@ test("preload path, module format, security settings, and API surface are stable
   // 任务 239：右键粘贴导入的两个通道——查询只回布尔值，代按粘贴限定主窗口。
   assert.match(preload, /clipboardImportable: \(\) => ipcRenderer\.invoke\("clipboard-importable"\)/);
   assert.match(preload, /pasteFromClipboard: \(\) => ipcRenderer\.invoke\("paste-from-clipboard"\)/);
-  assert.match(main, /ipcMain\.handle\("clipboard-importable"/);
-  assert.match(main, /ipcMain\.handle\("paste-from-clipboard"/);
+  // 任务 444：main 侧「ipcMain.handle("通道"」存在断言删掉——注册面被
+  // test/desktop-ipc-modules.test.mjs 的精确通道清单行为测试覆盖。
   const clipboardImportableHandler = main.slice(main.indexOf('ipcMain.handle("clipboard-importable"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("clipboard-importable"')));
   assert.match(clipboardImportableHandler, /trustedRendererEvent\(event\)/);
   const pasteFromClipboardHandler = main.slice(main.indexOf('ipcMain.handle("paste-from-clipboard"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("paste-from-clipboard"')));
@@ -167,11 +134,8 @@ test("preload path, module format, security settings, and API surface are stable
   // 任务 116：老用户「已更名」提示的取状态/确认通道。
   assert.match(preload, /getRenameNoticeState: \(\) => ipcRenderer\.invoke\("rename-notice-state"\)/);
   assert.match(preload, /acknowledgeRenameNotice: \(\) => ipcRenderer\.invoke\("acknowledge-rename-notice"\)/);
-  assert.match(main, /ipcMain\.handle\("rename-notice-state"/);
-  assert.match(main, /ipcMain\.handle\("acknowledge-rename-notice"/);
   assert.match(preload, /writeClipboardImage: \(path\) => ipcRenderer\.invoke\("write-clipboard-image", path\)/);
   assert.match(preload, /writeClipboardFiles: \(paths\) => ipcRenderer\.invoke\("write-clipboard-files", paths\)/);
-  assert.match(main, /ipcMain\.handle\("write-clipboard-files"/);
   assert.match(preload, /writeClipboardText: \(text\) => ipcRenderer\.invoke\("write-clipboard-text", text\)/);
   assert.match(preload, /checkForUpdates: \(notify = false\) =>[\s\S]*?ipcRenderer\.invoke\("check-for-updates", notify === true\)/);
   assert.match(preload, /cancelUpdateDownload: \(\) => ipcRenderer\.invoke\("cancel-update-download"\)/);
@@ -181,24 +145,14 @@ test("preload path, module format, security settings, and API surface are stable
   // 任务 231：已下好的更新包——查询 + 广播订阅，两个键成对出现。
   assert.match(preload, /getUpdateReady: \(\) => ipcRenderer\.invoke\("get-update-ready"\)/);
   assert.match(preload, /onUpdateReady: \(callback\) =>[\s\S]*?ipcRenderer\.on\("update-ready"/);
-  assert.match(main, /ipcMain\.handle\("get-update-ready"/);
   assert.match(preload, /openDownloadPage: \(\) => ipcRenderer\.invoke\("open-download-page"\)/);
   assert.match(preload, /openPinterestAuthorize: \(url\) => ipcRenderer\.invoke\("open-pinterest-authorize", url\)/);
   assert.match(preload, /openExternalLink: \(url\) => ipcRenderer\.invoke\("open-external-link", url\)/);
   assert.match(preload, /changeLibraryLocation: \(\) => ipcRenderer\.invoke\("change-library-location"\)/);
   assert.doesNotMatch(preload, /openDownloadPage:\s*\([^)]*url/i, "renderer cannot choose an update destination");
   assert.match(main, /MOSA_DOWNLOAD_PAGE_URL/);
-  assert.match(main, /ipcMain\.handle\("check-for-updates"/);
-  assert.match(main, /ipcMain\.handle\("cancel-update-download"/);
-  assert.match(main, /ipcMain\.handle\("renderer-ready"/);
-  assert.match(main, /ipcMain\.handle\("download-and-install-update"/);
-  assert.match(main, /ipcMain\.handle\("open-download-page"/);
-  assert.match(main, /ipcMain\.handle\("open-pinterest-authorize"/);
-  assert.match(main, /ipcMain\.handle\("open-external-link"/);
-  assert.match(main, /ipcMain\.handle\("change-library-location"/);
   // 任务 96（A6）：窗口系统全屏双向同步——渲染层写入通道带主窗口 sender 守卫，
   // enter/leave-full-screen 广播回渲染层。
-  assert.match(main, /ipcMain\.handle\("set-window-full-screen"/);
   const windowFullScreenHandler = main.slice(main.indexOf('ipcMain.handle("set-window-full-screen"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("set-window-full-screen"')));
   assert.match(windowFullScreenHandler, /trustedRendererEvent\(event\)/);
   assert.match(windowFullScreenHandler, /getMainWindow\(\)\.setFullScreen\(flag === true\)/);
@@ -229,14 +183,12 @@ test("preload path, module format, security settings, and API surface are stable
     "the pending cleanup record is written only after the copy succeeded and the preference switched");
   assert.doesNotMatch(relocationHandler, /await rm\(previousLibraryDir/,
     "the handler never deletes the old library itself");
-  assert.match(main, /ipcMain\.handle\("write-clipboard-text"/);
   const pasteImageHandler = main.slice(main.indexOf('ipcMain.handle("paste-image"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("paste-image"')));
   assert.match(pasteImageHandler, /trustedRendererEvent\(event\)/);
   // 任务 311：全部 IPC handler 统一走 isTrustedRendererEvent 守卫（主窗口主框架
   // + 已核实服务 origin）；裸的 sender 比较不允许再出现。
   assert.match(main, /function trustedRendererEvent\(event\)/);
   assert.match(main, /isTrustedRendererEvent\(event, \{ windowRef: mainWindow, serviceOrigin: verifiedServiceOrigin\(\) \}\)/);
-  assert.match(main, /ipcMain\.handle\("get-client-token"/);
   assert.doesNotMatch(main, /event\.sender !== mainWindow\.webContents/);
   assert.match(main, /screenGuard\.openExternal\(MOSA_DOWNLOAD_PAGE_URL\)/);
   assert.match(main, /if \(isolationContext\.qaRun\) return Promise\.resolve\(\{ status: "disabled", currentVersion \}\)/,
@@ -486,9 +438,9 @@ test("real Electron preload smoke (opt-in)", { skip: process.env.MOSA_ELECTRON_P
   }, 20_000));
   assert.match(state.href, /^http:\/\/127\.0\.0\.1:/, "the real app URL finished loading");
   assert.equal(state.hasElectronAPI, true);
-  assert.deepEqual(state.keys, EXPECTED_API_KEYS);
-  assert.deepEqual(state.functionKeys, EXPECTED_API_KEYS);
-  assert.deepEqual(state.keys, EXPECTED_API_KEYS);
+  assert.deepEqual(state.keys, EXPECTED_PRELOAD_API_KEYS);
+  assert.deepEqual(state.functionKeys, EXPECTED_PRELOAD_API_KEYS);
+  // 任务 444：原 487 行与上面第一条重复的 state.keys deepEqual 已删（零损失）。
   assert.equal((stderr.match(/\[MOSA\] preload-error/g) || []).length, 0, output());
   assert.doesNotMatch(stderr, /preload.*(error|failed|syntaxerror|ENOENT)/i, output());
   const preloadIssues = rendererIssues.filter((issue) => /preload/i.test(JSON.stringify(issue)) && !isKnownCdpSandboxStartupNoise(issue));
