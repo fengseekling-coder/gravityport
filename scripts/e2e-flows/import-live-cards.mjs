@@ -325,18 +325,25 @@ function stockedLibrarySource() {
     // button disappears stop clicking and just wait. A missing button without
     // reaching the top still fails at the deadline, with the live scrollTop.
     // The waitFor below stays as the independent assertion.
+    // At least one real click is required: a gallery that is already at the
+    // top before 查看 is clicked must not pass this step.
     const jumpDeadline = Date.now() + 30000;
+    let jumpClicks = 0;
     while (Date.now() < jumpDeadline) {
-      if (grid.scrollTop <= 40) break;
+      if (jumpClicks > 0 && grid.scrollTop <= 40) break;
       const button = document.querySelector('.toast-action');
       if (button) {
         try {
           button.click();
+          jumpClicks += 1;
         } catch {}
         await sleep(120);
-        if (grid.scrollTop <= 40) break;
+        if (jumpClicks > 0 && grid.scrollTop <= 40) break;
       }
       await sleep(200);
+    }
+    if (jumpClicks === 0) {
+      throw new Error('查看 was never clicked before the deadline (scrollTop=' + Math.round(grid.scrollTop) + ')');
     }
     if (grid.scrollTop > 40) {
       throw new Error('Timed out waiting for 查看 to scroll back to the top (scrollTop=' + Math.round(grid.scrollTop)

@@ -8,47 +8,13 @@
 // exactly where it is.
 
 import { open, readFile, rename, rm, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { LIBRARY_DATABASE_FILE } from "../lib/library-location.mjs";
-import { isPathInsideOrEqual, pathsEqual } from "../lib/path-safety.mjs";
+import { containsOrEquals, sameLocation } from "../lib/library-relocation.mjs";
 
 // Written under the userData directory; consumed by settlePendingOldLibraryCleanup
 // on the next launch.
 export const PENDING_OLD_LIBRARY_CLEANUP_RECORD = "pending-old-library-cleanup.json";
-
-// Mirror of the private path-identity helpers in lib/library-relocation.mjs
-// (directoryIdentity / sameLocation / containsOrEquals): path strings alone
-// cannot decide whether two locations overlap on case-insensitive volumes or
-// through symlinks, so filesystem identity (device + inode) is compared along
-// the candidate's ancestry. Those helpers are not exported there and task 443
-// keeps lib/library-relocation.mjs untouched, so the two read-only judgments
-// are repeated here. If that file ever exports them, these copies can go.
-
-async function directoryIdentity(path) {
-  try {
-    const info = await stat(path);
-    return `${info.dev}:${info.ino}`;
-  } catch (error) {
-    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return null;
-    throw error;
-  }
-}
-
-async function sameLocation(left, right) {
-  if (pathsEqual(left, right)) return true;
-  const leftIdentity = await directoryIdentity(left);
-  return Boolean(leftIdentity) && leftIdentity === await directoryIdentity(right);
-}
-
-async function containsOrEquals(parentPath, candidatePath) {
-  if (isPathInsideOrEqual(parentPath, candidatePath)) return true;
-  const parentIdentity = await directoryIdentity(parentPath);
-  if (!parentIdentity) return false;
-  for (let current = resolve(candidatePath); ; current = dirname(current)) {
-    if (await directoryIdentity(current) === parentIdentity) return true;
-    if (dirname(current) === current) return false;
-  }
-}
 
 function recordPathFor(userDataDir) {
   return join(userDataDir, PENDING_OLD_LIBRARY_CLEANUP_RECORD);
