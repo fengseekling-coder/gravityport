@@ -1,10 +1,10 @@
 // Update IPC handlers (check, ready state, download/install, cancel, download page) moved out of desktop/main.mjs registerIPC (task 406). Pure moves; no behavior changes.
 import { mkdir } from "node:fs/promises";
-import { canInstallUpdateInApp, checkForMosaUpdate, macosUpdateArchForHost, MOSA_DOWNLOAD_PAGE_URL } from "../update-service.mjs";
-import { recordUpdateAttempt } from "../update-failures.mjs";
+import { canInstallUpdateInApp as defaultCanInstallUpdateInApp, checkForMosaUpdate as defaultCheckForMosaUpdate, macosUpdateArchForHost, MOSA_DOWNLOAD_PAGE_URL } from "../update-service.mjs";
+import { recordUpdateAttempt as defaultRecordUpdateAttempt } from "../update-failures.mjs";
 import { requiredDownloadBytes, requiredInstallBytes } from "../update-preflight.mjs";
-import { downloadMacosUpdate, launchMacosUpdateHelper } from "../macos-updater.mjs";
-import { downloadWindowsUpdate, launchWindowsUpdateHelper, windowsInstalledExeName } from "../windows-updater.mjs";
+import { downloadMacosUpdate as defaultDownloadMacosUpdate, launchMacosUpdateHelper as defaultLaunchMacosUpdateHelper } from "../macos-updater.mjs";
+import { downloadWindowsUpdate as defaultDownloadWindowsUpdate, launchWindowsUpdateHelper as defaultLaunchWindowsUpdateHelper, windowsInstalledExeName } from "../windows-updater.mjs";
 
 export let macosUpdateInstallPromise = null;
 let macosUpdateDownloadController = null;
@@ -38,6 +38,17 @@ export function registerUpdateIpc(deps) {
     WINDOWS_UPDATE_STAGING_ROOT,
     isolationContext,
     setShuttingDown,
+    // Task 447: module-level imports turned into overridable deps so behavior
+    // tests can drive the install flow with recording fakes. Defaults keep the
+    // production wiring identical (main.mjs still passes none of these).
+    canInstallUpdateInApp = defaultCanInstallUpdateInApp,
+    checkForMosaUpdate = defaultCheckForMosaUpdate,
+    recordUpdateAttempt = defaultRecordUpdateAttempt,
+    downloadMacosUpdate = defaultDownloadMacosUpdate,
+    launchMacosUpdateHelper = defaultLaunchMacosUpdateHelper,
+    downloadWindowsUpdate = defaultDownloadWindowsUpdate,
+    launchWindowsUpdateHelper = defaultLaunchWindowsUpdateHelper,
+    platform = process.platform,
   } = deps;
   ipcMain.handle("check-for-updates", async (event, notify = false) => {
     if (!trustedRendererEvent(event)) return { status: "unavailable", currentVersion: app.getVersion() };
@@ -60,7 +71,7 @@ export function registerUpdateIpc(deps) {
     if (!canInstallUpdateInApp(expectedServiceIdentity.releaseManifestTrust)) {
       return { status: "unsupported", reason: "release-manifest-untrusted", currentVersion: app.getVersion() };
     }
-    if (process.platform === "darwin") {
+    if (platform === "darwin") {
       if (macosUpdateInstallPromise) return macosUpdateInstallPromise;
       updateScheduler.cancelDownload();
       macosUpdateInstallPromise = (async () => {
@@ -144,7 +155,7 @@ export function registerUpdateIpc(deps) {
       })().finally(() => { macosUpdateInstallPromise = null; });
       return macosUpdateInstallPromise;
     }
-    if (process.platform !== "win32") {
+    if (platform !== "win32") {
       return { status: "unsupported", currentVersion: app.getVersion() };
     }
     if (windowsUpdateInstallPromise) return windowsUpdateInstallPromise;
@@ -235,7 +246,7 @@ export function registerUpdateIpc(deps) {
 
   ipcMain.handle("cancel-update-download", async (event) => {
     if (!trustedRendererEvent(event)) return { ok: false };
-    const controller = process.platform === "darwin" ? macosUpdateDownloadController : windowsUpdateDownloadController;
+    const controller = platform === "darwin" ? macosUpdateDownloadController : windowsUpdateDownloadController;
     if (!controller || controller.signal.aborted) return { ok: false };
     controller.abort(new Error("GravityPort update download cancelled by the user."));
     return { ok: true };

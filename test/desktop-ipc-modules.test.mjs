@@ -1,23 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { makeFakeIpcMain } from "./helpers/fake-ipc-main.mjs";
 import { registerClipboardIpc } from "../desktop/ipc/clipboard.mjs";
 import { registerLibraryLocationIpc } from "../desktop/ipc/library-location.mjs";
 import { registerMiscIpc } from "../desktop/ipc/misc.mjs";
 import { macosUpdateInstallPromise, registerUpdateIpc, windowsUpdateInstallPromise } from "../desktop/ipc/updates.mjs";
-
-function makeFakeIpcMain() {
-  const handlers = new Map();
-  return {
-    handlers,
-    channels: () => [...handlers.keys()],
-    handle(channel, fn) {
-      assert.equal(handlers.has(channel), false, `duplicate IPC channel: ${channel}`);
-      assert.equal(typeof fn, "function", `handler for ${channel} must be a function`);
-      handlers.set(channel, fn);
-    },
-  };
-}
 
 test("registerClipboardIpc, registerMiscIpc, and registerLibraryLocationIpc register their exact channel sets", () => {
   const clipboardIpc = makeFakeIpcMain();

@@ -114,13 +114,8 @@ test("preload path, module format, security settings, and API surface are stable
   // 任务 239：右键粘贴导入的两个通道——查询只回布尔值，代按粘贴限定主窗口。
   assert.match(preload, /clipboardImportable: \(\) => ipcRenderer\.invoke\("clipboard-importable"\)/);
   assert.match(preload, /pasteFromClipboard: \(\) => ipcRenderer\.invoke\("paste-from-clipboard"\)/);
-  // 任务 444：main 侧「ipcMain.handle("通道"」存在断言删掉——注册面被
-  // test/desktop-ipc-modules.test.mjs 的精确通道清单行为测试覆盖。
-  const clipboardImportableHandler = main.slice(main.indexOf('ipcMain.handle("clipboard-importable"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("clipboard-importable"')));
-  assert.match(clipboardImportableHandler, /trustedRendererEvent\(event\)/);
-  const pasteFromClipboardHandler = main.slice(main.indexOf('ipcMain.handle("paste-from-clipboard"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("paste-from-clipboard"')));
-  assert.match(pasteFromClipboardHandler, /trustedRendererEvent\(event\)/);
-  assert.match(pasteFromClipboardHandler, /event\.sender\.paste\(\)/);
+  // 任务 447：clipboard-importable / paste-from-clipboard 的守卫行为测试在
+  // test/desktop-ipc-handlers.test.mjs（源码切片断言已删）。
   // 任务 318 删掉的 user-profile 通道不回来；11-16 用户定显示安装编号，改走只读的
   // installation-id，只回答已核实的主窗口。
   assert.doesNotMatch(preload, /getUserProfile/);
@@ -128,7 +123,6 @@ test("preload path, module format, security settings, and API surface are stable
   assert.match(preload, /getInstallationId: \(\) => ipcRenderer\.invoke\("installation-id"\)/);
   const installationIdHandler = main.slice(main.indexOf('ipcMain.handle("installation-id"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("installation-id"')));
   assert.ok(installationIdHandler.length > 0, "installation-id handler exists");
-  assert.match(installationIdHandler, /if \(!trustedRendererEvent\(event\)\) return "";/);
   // 任务 311：客户端凭据的领取通道。
   assert.match(preload, /getClientToken: \(\) => ipcRenderer\.invoke\("get-client-token"\)/);
   // 任务 116：老用户「已更名」提示的取状态/确认通道。
@@ -152,37 +146,15 @@ test("preload path, module format, security settings, and API surface are stable
   assert.doesNotMatch(preload, /openDownloadPage:\s*\([^)]*url/i, "renderer cannot choose an update destination");
   assert.match(main, /MOSA_DOWNLOAD_PAGE_URL/);
   // 任务 96（A6）：窗口系统全屏双向同步——渲染层写入通道带主窗口 sender 守卫，
-  // enter/leave-full-screen 广播回渲染层。
-  const windowFullScreenHandler = main.slice(main.indexOf('ipcMain.handle("set-window-full-screen"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("set-window-full-screen"')));
-  assert.match(windowFullScreenHandler, /trustedRendererEvent\(event\)/);
-  assert.match(windowFullScreenHandler, /getMainWindow\(\)\.setFullScreen\(flag === true\)/);
+  // enter/leave-full-screen 广播回渲染层。任务 447：set-window-full-screen 的
+  // 守卫与 true/false 分支行为测试在 test/desktop-ipc-handlers.test.mjs。
   assert.match(main, /mainWindow\.on\("enter-full-screen"/);
   assert.match(main, /mainWindow\.on\("leave-full-screen"/);
   assert.equal((main.match(/window-full-screen-change/g) || []).length, 2, "enter/leave-full-screen both broadcast the same channel");
-  const relocationHandler = main.slice(main.indexOf('ipcMain.handle("change-library-location"'), main.indexOf('\n\n  // Phase 4C', main.indexOf('ipcMain.handle("change-library-location"')));
-  assert.match(relocationHandler, /trustedRendererEvent\(event\)/, "library relocation validates the sender");
-  assert.match(relocationHandler, /process\.env\.MOSA_LIBRARY_DIR/, "an explicit environment-managed library cannot be overridden in-app");
-  assert.match(relocationHandler, /getService\(\)\?\.mode !== "owned"/, "attached external runtimes cannot be moved by the desktop shell");
-  // Destination inspection (same-dir/nesting/empty-target) and the copy
-  // itself (runtime lock skipped, no overwrites, fail-closed cleanup) live in
-  // lib/library-relocation.mjs and are pinned behaviorally by
-  // test/library-relocation.test.mjs. The handler must still validate before
-  // the confirm dialog and keep the copy -> save -> delete ordering.
-  assert.match(relocationHandler, /validateRelocationTarget\(\{ currentLibraryDir: getLibraryDir\(\), nextLibraryDir \}\)/, "the destination must be validated before copying");
-  assert.ok(relocationHandler.indexOf("if (!validation.ok) return") > -1
-    && relocationHandler.indexOf("if (!validation.ok) return") < relocationHandler.indexOf("await screenGuard.messageBox"),
-    "a rejected target aborts before any copy is attempted");
-  assert.match(relocationHandler, /await stopOwnedRuntime\(\)/, "SQLite and the runtime lock are closed before migration");
-  assert.ok(relocationHandler.indexOf("await copyLibraryForRelocationGuarded({") > relocationHandler.indexOf("await stopOwnedRuntime()"),
-    "the copy starts only after the runtime stopped");
-  assert.ok(relocationHandler.indexOf("saveLibraryDir(nextLibraryDir)") > relocationHandler.indexOf("await copyLibraryForRelocationGuarded({"),
-    "the persisted location switches only after the copy succeeds");
-  // 任务 443（低1 ②）：handler 不再删除旧库——记录 pending cleanup，等下次
-  // 启动确认新库打开后才移到废纸篓（desktop/library-relocation-cleanup.mjs）。
-  assert.ok(relocationHandler.indexOf("recordPendingOldLibraryCleanup({") > relocationHandler.indexOf("saveLibraryDir(nextLibraryDir)"),
-    "the pending cleanup record is written only after the copy succeeded and the preference switched");
-  assert.doesNotMatch(relocationHandler, /await rm\(previousLibraryDir/,
-    "the handler never deletes the old library itself");
+  // 任务 447：change-library-location 的守卫、拒绝路径、成功顺序和复制失败
+  // 收尾全部改成真调 handler 的行为测试（test/desktop-ipc-handlers.test.mjs），
+  // 源码切片断言删除；目标检查与复制本体仍由 test/library-relocation.test.mjs
+  // 行为覆盖。
   const pasteImageHandler = main.slice(main.indexOf('ipcMain.handle("paste-image"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("paste-image"')));
   assert.match(pasteImageHandler, /trustedRendererEvent\(event\)/);
   // 任务 311：全部 IPC handler 统一走 isTrustedRendererEvent 守卫（主窗口主框架
@@ -206,21 +178,11 @@ test("preload path, module format, security settings, and API surface are stable
   assert.doesNotMatch(preload, /showItemInFolder|show-item-in-folder/);
   assert.doesNotMatch(main, /ipcMain\.handle\("show-item-in-folder"/);
 
-  const clipboardHandler = main.slice(main.indexOf('ipcMain.handle("write-clipboard-text"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("write-clipboard-text"')));
-  assert.match(clipboardHandler, /trustedRendererEvent\(event\)/);
-  assert.match(clipboardHandler, /typeof text !== "string"/);
-  assert.match(clipboardHandler, /text\.length > MAX_CLIPBOARD_TEXT_LENGTH/);
-  assert.match(clipboardHandler, /clipboard\.writeText\(text\)/);
-
-  const clipboardImageHandler = main.slice(main.indexOf('ipcMain.handle("write-clipboard-image"'), main.indexOf("\n  });", main.indexOf('ipcMain.handle("write-clipboard-image"')));
-  assert.match(clipboardImageHandler, /trustedRendererEvent\(event\)/);
-  // 任务 318：路径闸门在 clipboard-image-path.mjs——先按字面判库内再碰文件
-  // 系统，库外请求不再能借 missing/not-allowed 之分探测文件存在性。
+  // 任务 447：write-clipboard-text / write-clipboard-image 的守卫、长度上限、
+  // 路径闸门行为测试在 test/desktop-ipc-handlers.test.mjs（真调 handler +
+  // 真 clipboardImageTarget），源码切片断言删除。行为测试自己注入真函数，测不到
+  // main.mjs 是否还接的是 clipboard-image-path.mjs 的闸门，这条接线钉保留。
   assert.match(main, /import \{ clipboardImageTarget \} from "\.\/clipboard-image-path\.mjs";/);
-  assert.match(clipboardImageHandler, /clipboardImageTarget\(path, getLibraryDir\(\)\)/);
-  assert.match(clipboardImageHandler, /nativeImage\.createFromPath\(target\.path\)/);
-  assert.match(clipboardImageHandler, /clipboard\.writeImage\(image\)/);
-  assert.doesNotMatch(clipboardImageHandler, /existsSync/, "existence must be probed only inside the library gate");
 
   assert.match(main, /minWidth: 960,/);
   assert.match(main, /minHeight: 640,/);
