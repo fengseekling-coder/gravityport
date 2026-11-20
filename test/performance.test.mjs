@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat } from "node:fs/promises";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import test from "node:test";
 import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
 import sharp from "sharp";
+import { createDerivativeProcessor, processDerivativeJob } from "../lib/derivative-worker.js";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 
 // Task 347 (audit 261 batch 5): a steady-state 20k library must reopen fast —
@@ -394,4 +395,97 @@ test("200-image batch import stays within budget", { skip: process.env.MOSA_PERF
   // is ceil(3 * 1929.60) = 5789ms to leave headroom on slower CI runners.
   const maxMedianMs = 5789;
   assert.ok(median < maxMedianMs, `batch import 200 median ${median.toFixed(1)}ms exceeded ${maxMedianMs}ms`);
+});
+
+// Task 453: end-to-end derivative throughput at the app's worker concurrency
+// (2) over a 40-image 2048x2048 batch, so the parallel-tier change and any
+// later tweak have a stable before/after baseline that includes the forked
+// worker round-trips, not just the sharp pipelines themselves.
+test("derivative batch 40 x 2048px with worker concurrency 2 stays within budget", { skip: process.env.MOSA_PERF_TEST !== "1" }, async (t) => {
+  const imageCount = 40;
+  const width = 2048;
+  const height = 2048;
+  const channels = 3;
+  const root = await mkdtemp(join(tmpdir(), "mosa-perf-derivative-batch-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const sourceDir = join(root, "sources");
+  const outputDir = join(root, "outputs");
+  await mkdir(sourceDir, { recursive: true });
+
+  // Build one deterministic 2048x2048 noise base, then perturb a distinct row
+  // per image so all 40 PNGs have unique pixels without paying 40 full-frame
+  // PRNG loops. Noise keeps the encode cost honest (worst-case content).
+  const basePixels = Buffer.alloc(width * height * channels);
+  let state = 0x9e3779b9;
+  for (let offset = 0; offset < basePixels.length; offset += 1) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    basePixels[offset] = state >>> 24;
+  }
+  const sourcePaths = [];
+  for (let index = 0; index < imageCount; index += 1) {
+    const pixels = Buffer.from(basePixels);
+    let rowState = ((index + 1) * 2654435761) >>> 0;
+    const rowOffset = index * width * channels;
+    for (let i = 0; i < width * channels; i += 1) {
+      rowState = (Math.imul(rowState, 1664525) + 1013904223) >>> 0;
+      pixels[rowOffset + i] = rowState >>> 24;
+    }
+    const imagePath = join(sourceDir, `batch-${String(index).padStart(2, "0")}.png`);
+    await sharp(pixels, { raw: { width, height, channels } })
+      .png({ compressionLevel: 1 })
+      .toFile(imagePath);
+    sourcePaths.push(imagePath);
+  }
+
+  const completions = [];
+  const store = {
+    async completeDerivativeJob(job, result) { completions.push([job, result]); },
+    async isAssetActive() { return true; },
+  };
+  const processor = createDerivativeProcessor();
+  try {
+    const samples = [];
+    for (let round = 0; round < 3; round += 1) {
+      await rm(outputDir, { recursive: true, force: true });
+      const jobs = [];
+      for (let index = 0; index < imageCount; index += 1) {
+        const id = `perf-derivative-${round}-${String(index).padStart(2, "0")}`;
+        jobs.push({
+          project_id: "default",
+          asset_id: id,
+          original_path: sourcePaths[index],
+          previewPath: join(outputDir, "previews", `${id}.webp`),
+          mediumPath: join(outputDir, "mediums", `${id}.webp`),
+          thumbnailPath: join(outputDir, "thumbnails", `${id}.webp`),
+        });
+      }
+      // At most 2 jobs in flight, mirroring DEFAULT_CONCURRENCY = 2 in
+      // lib/derivative-worker.ts.
+      const pending = [...jobs];
+      const started = performance.now();
+      await Promise.all(Array.from({ length: 2 }, async () => {
+        while (pending.length) {
+          const job = pending.shift();
+          const result = await processDerivativeJob(store, job, { processor });
+          assert.equal(result.ok, true, `derivative job failed: ${String(result.error)}`);
+        }
+      }));
+      samples.push(performance.now() - started);
+    }
+
+    const sorted = [...samples].sort((a, b) => a - b);
+    const median = sorted[1];
+    const perImageMedian = median / imageCount;
+    t.diagnostic(`derivative batch 40 samples=${samples.map((value) => value.toFixed(1)).join(",")} median=${median.toFixed(1)}ms perImageMedian=${perImageMedian.toFixed(2)}ms`);
+    // Loose upper bound for CI runners: ceil(3 * the post-change combined
+    // median). 453 before/after comparison (4+4 alternating rounds on the
+    // same machine, logs 453-perf-前-1..4 / 453-perf-后-1..4): sequential
+    // (commit A) combined median 9181.25ms (229.53ms/image), parallel
+    // (commit B) combined median 6339.25ms (158.48ms/image).
+    // Bound = ceil(3 * 6339.25) = 19018ms.
+    const maxMedianMs = 19018;
+    assert.ok(median < maxMedianMs, `derivative batch 40 median ${median.toFixed(1)}ms exceeded ${maxMedianMs}ms`);
+  } finally {
+    await processor.close();
+  }
 });

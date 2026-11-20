@@ -11,7 +11,7 @@ import {
   publishDerivativeFile,
   removeStaleDerivativeTempFiles,
 } from "./derivative-temp-file.js";
-import { MAX_DERIVATIVE_INPUT_PIXELS } from "./derivative-limits.js";
+import { derivativeTiersRunInParallel, MAX_DERIVATIVE_INPUT_PIXELS } from "./derivative-limits.js";
 
 export { MAX_DERIVATIVE_INPUT_PIXELS };
 
@@ -199,8 +199,21 @@ async function generateDerivatives(job: DerivativeProcessorJob) {
       tempPath: join(dirname(target.finalPath), derivativeTempFileName(basename(target.finalPath))),
     }));
     try {
-      for (const target of staged) {
-        await sharp(decodePath, sharpInputOptions).rotate().resize({ width: target.size, height: target.size, fit: "inside", withoutEnlargement: true }).webp({ quality: target.quality }).toFile(target.tempPath);
+      const encodeTier = (target: (typeof staged)[number]) =>
+        sharp(decodePath, sharpInputOptions).rotate().resize({ width: target.size, height: target.size, fit: "inside", withoutEnlargement: true }).webp({ quality: target.quality }).toFile(target.tempPath);
+      if (derivativeTiersRunInParallel(Number(metadata.width), Number(metadata.height))) {
+        // Task 453: typical images encode all three tiers concurrently (each
+        // tier decodes the original itself). A failing tier must not rush the
+        // cleanup below while the other two are still writing temp files, so
+        // every tier is settled first and only then the first error is
+        // rethrown; oversized images keep the sequential loop above the cap.
+        const settled = await Promise.allSettled(staged.map((target) => encodeTier(target)));
+        const failure = settled.find((outcome) => outcome.status === "rejected");
+        if (failure && failure.status === "rejected") throw failure.reason;
+      } else {
+        for (const target of staged) {
+          await encodeTier(target);
+        }
       }
       for (const target of staged) {
         await publishDerivativeFile(target.tempPath, target.finalPath);
