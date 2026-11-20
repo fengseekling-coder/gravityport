@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, stat } from "node:fs/promises";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
+import sharp from "sharp";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 
 // Task 347 (audit 261 batch 5): a steady-state 20k library must reopen fast —
@@ -307,4 +308,90 @@ test("50k SQLite library uses indexed filters, starts under 3s, and keeps search
   assert.ok(collapsedP95 < 500, `collapsed gallery P95 ${collapsedP95.toFixed(1)}ms exceeded 500ms`);
   assert.ok(slowestFilter[1] < 50,
     `indexed-filter ${slowestFilter[0]} P95 ${slowestFilter[1].toFixed(1)}ms exceeded 50ms; ${[...filterP95ByCase.entries()].map(([name, value]) => `${name}=${value.toFixed(1)}ms`).join(", ")}`);
+});
+
+// Task 450: sequential 200-image batch import benchmark (~1024x1024, >1 MB
+// distinct PNGs) to track the per-image durability cost of fsyncing originals.
+test("200-image batch import stays within budget", { skip: process.env.MOSA_PERF_TEST !== "1" }, async (t) => {
+  const imageCount = 200;
+  const width = 1024;
+  const height = 1024;
+  const channels = 3;
+  const root = await mkdtemp(join(tmpdir(), "mosa-perf-batch-import-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const sourceDir = join(projectRoot, "sources");
+  await mkdir(sourceDir, { recursive: true });
+  await mkdir(join(projectRoot, "generated-images"), { recursive: true });
+
+  // Build one deterministic 1024x1024 base image whose upper half is PRNG noise
+  // (incompressible, so every PNG lands around ~1.5 MB) and lower half is a
+  // smooth gradient, then perturb a distinct row per image so all 200 PNGs have
+  // unique pixels and content hashes without paying 200 full-frame PRNG loops.
+  const basePixels = Buffer.alloc(width * height * channels);
+  let state = 0x9e3779b9;
+  const noiseEnd = width * 512 * channels;
+  for (let offset = 0; offset < noiseEnd; offset += 1) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    basePixels[offset] = state >>> 24;
+  }
+  for (let y = 512; y < height; y += 1) {
+    const rowStart = y * width * channels;
+    for (let x = 0; x < width; x += 1) {
+      const idx = rowStart + x * channels;
+      basePixels[idx] = (x + y) & 255;
+      basePixels[idx + 1] = (x * 2) & 255;
+      basePixels[idx + 2] = (y * 2) & 255;
+    }
+  }
+
+  const sourcePaths = [];
+  for (let index = 0; index < imageCount; index += 1) {
+    const pixels = Buffer.from(basePixels);
+    let rowState = ((index + 1) * 2654435761) >>> 0;
+    const rowOffset = index * width * channels;
+    for (let i = 0; i < width * channels; i += 1) {
+      rowState = (Math.imul(rowState, 1664525) + 1013904223) >>> 0;
+      pixels[rowOffset + i] = rowState >>> 24;
+    }
+    const imagePath = join(sourceDir, `batch-${String(index).padStart(3, "0")}.png`);
+    await sharp(pixels, { raw: { width, height, channels } })
+      .png({ compressionLevel: 1 })
+      .toFile(imagePath);
+    if (index === 0) {
+      const info = await stat(imagePath);
+      assert.ok(info.size >= 1024 * 1024, `expected fixture PNG >= 1 MB, got ${info.size} bytes`);
+    }
+    sourcePaths.push(imagePath);
+  }
+
+  const samples = [];
+  for (let round = 0; round < 3; round += 1) {
+    const managerDir = join(projectRoot, `mosa-${round}`);
+    const libraryDir = join(root, `library-${round}`);
+    await mkdir(libraryDir, { recursive: true });
+    const store = createSqliteAssetStore({ projectRoot, managerDir, libraryDir });
+    try {
+      const started = performance.now();
+      for (let index = 0; index < imageCount; index += 1) {
+        await store.createAsset({
+          imagePath: sourcePaths[index],
+          assetId: `perf-import-${round}-${String(index).padStart(3, "0")}`,
+        });
+      }
+      samples.push(performance.now() - started);
+    } finally {
+      store.close();
+    }
+  }
+
+  const sorted = [...samples].sort((a, b) => a - b);
+  const median = sorted[1];
+  const perImageMedian = median / imageCount;
+  t.diagnostic(`batch import 200 samples=${samples.map((value) => value.toFixed(1)).join(",")} median=${median.toFixed(1)}ms perImageMedian=${perImageMedian.toFixed(2)}ms`);
+  // Combined 4-round medians on this machine: before fsync 1162.35ms
+  // (5.81ms/image), after fsync 1929.60ms (9.65ms/image); loose upper bound
+  // is ceil(3 * 1929.60) = 5789ms to leave headroom on slower CI runners.
+  const maxMedianMs = 5789;
+  assert.ok(median < maxMedianMs, `batch import 200 median ${median.toFixed(1)}ms exceeded ${maxMedianMs}ms`);
 });

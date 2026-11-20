@@ -7,7 +7,8 @@
         "自动收图在启动时遇到一次读取错误后照常继续收图，不用重启 App。",
         "某个会话记录读不了时，其余 Cowart 画布照常收进素材库。",
         "Codex 图片文件夹放在别处、用链接指过去时，图片也能配上对应的提示词。",
-        "移动素材库后，旧素材库会先保留，等新位置的素材库确认能正常打开后再移到系统废纸篓，不再直接删除。"
+        "移动素材库后，旧素材库会先保留，等新位置的素材库确认能正常打开后再移到系统废纸篓，不再直接删除。",
+        "导入的图片和参考图会先确实写进硬盘，再记入素材库；突然断电或死机时，不会留下空白的图片文件。"
       ]
     },
     "en": {
@@ -16,7 +17,8 @@
         "Auto-archiving keeps running after a read error at startup, without restarting the app.",
         "One unreadable session record no longer stops other Cowart canvases from being archived.",
         "Codex images pair with the right prompt when the images folder is linked from another location.",
-        "After moving the library, the old library is now kept until the relocated library has been confirmed to open, then moved to the system trash instead of being deleted immediately."
+        "After moving the library, the old library is now kept until the relocated library has been confirmed to open, then moved to the system trash instead of being deleted immediately.",
+        "Imported images and reference images are now written to disk before they are added to the library, so a sudden power loss or crash no longer leaves an empty image file."
       ]
     }
   },
