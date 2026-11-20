@@ -275,7 +275,6 @@ function sanitizeClientDisplayName(rawName) {
   if (lowered.includes("codex")) return "Codex";
   if (lowered.includes("cursor")) return "Cursor";
   if (lowered.includes("gemini")) return "Gemini";
-  // eslint-disable-next-line no-control-regex
   const cleaned = value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
   return cleaned ? [...cleaned].slice(0, 40).join("") : "";
 }

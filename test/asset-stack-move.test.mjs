@@ -342,3 +342,52 @@ test("the move API validates the batch size, the payload and the target", async 
   assert.equal((await missing.json()).code, "STACK_NOT_FOUND");
   assert.deepEqual(await stackAssets(stackA.id), ["a", "b"], "the rejected batch left the stack untouched");
 });
+
+test("the move API accepts projectId for a non-default project (task 454)", async (t) => {
+  const { runtime, move } = await startMoveRuntime(t);
+  const generated = join(runtime.libraryDir, "..", "generated-images");
+  await writeFile(join(generated, "e.png"), ONE_PIXEL_PNG);
+  const createIn = async (projectId, id) => {
+    const response = await fetch(`${runtime.url}/api/assets/create`, {
+      method: "POST",
+      headers: mutationHeaders(runtime),
+      body: JSON.stringify({
+        projectId,
+        assetId: id,
+        imagePath: join(generated, `${id}.png`),
+        prompt: `prompt ${id}`,
+      }),
+    });
+    assert.equal(response.status, 200);
+    return (await response.json()).asset;
+  };
+  const createStackIn = async (projectId, assetIds, coverAssetId) => {
+    const response = await fetch(`${runtime.url}/api/asset-stacks`, {
+      method: "POST",
+      headers: mutationHeaders(runtime),
+      body: JSON.stringify({ projectId, assetIds, coverAssetId }),
+    });
+    assert.equal(response.status, 201);
+    return (await response.json()).stack;
+  };
+  const stackAssetsIn = async (stackId, project) => (await (await fetch(
+    `${runtime.url}/api/asset-stacks/${encodeURIComponent(stackId)}/assets?project=${encodeURIComponent(project)}&limit=100`,
+  )).json()).assets.map((asset) => asset.id);
+
+  await createIn("default", "a");
+  await createIn("default", "b");
+  await createIn("second", "c");
+  await createIn("second", "d");
+  await createIn("second", "e");
+  const stackDefault = await createStackIn("default", ["a", "b"], "a");
+  const stackSecond = await createStackIn("second", ["c", "d"], "c");
+
+  const response = await move({ projectId: "second", assetIds: ["e"], targetStackId: stackSecond.id });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.target.id, stackSecond.id);
+  assert.deepEqual(body.movedAssetIds, ["e"]);
+  assert.deepEqual(await stackAssetsIn(stackSecond.id, "second"), ["c", "d", "e"],
+    "projectId alone selects the project the assets and the stack live in");
+  assert.deepEqual(await stackAssetsIn(stackDefault.id, "default"), ["a", "b"], "the default project is untouched");
+});
