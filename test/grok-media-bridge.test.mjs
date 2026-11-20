@@ -1225,13 +1225,43 @@ test("keeps the Grok bridge enabled when the first scan fails", async (t) => {
   const status = await bridge.start();
   assert.equal(status.enabled, true);
   assert.match(String(status.lastError || ""), /EACCES/);
+  assert.equal(status.lastErrorCode, "EACCES");
   await chmod(fixture.sessionsDir, 0o755);
   await bridge.reconcile();
   assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
   const after = bridge.status();
   assert.equal(after.enabled, true);
   assert.equal(after.lastError, null);
+  assert.equal(after.lastErrorCode, null);
   assert.equal(after.polling, true);
+});
+
+test("reports sourceFound:false for a missing sessions root without any error", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-source-found-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  // Grok never ran here: the sessions root does not exist and the bridge must
+  // not create it (task 452), so the scan's ENOENT branch can report it.
+  const sessionsDir = join(root, "grok-sessions");
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager") });
+  const bridge = createGrokMediaBridge({ store, sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(async () => { await bridge.stop(); await rm(root, { recursive: true, force: true }); });
+
+  const status = await bridge.start();
+  assert.equal(status.enabled, true);
+  assert.equal(status.lastError, null);
+  assert.equal(status.lastErrorCode, null);
+  assert.equal(status.sourceFound, false);
+
+  // Grok creates its folders on first use; the next scan flips the row to
+  // 正在收录 without any error in between.
+  const mediaDir = join(sessionsDir, WORKSPACE, SESSION_ID, "images");
+  await mkdir(mediaDir, { recursive: true });
+  await writeFile(join(mediaDir, "1.png"), pngFixture(640, 360));
+  await bridge.reconcile();
+  const after = bridge.status();
+  assert.equal(after.lastError, null);
+  assert.equal(after.sourceFound, true);
+  assert.equal(after.totalImported, 1);
 });
 
 async function waitFor(condition, timeoutMs = 4000) {

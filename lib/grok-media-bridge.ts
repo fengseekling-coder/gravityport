@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, watch, type FSWatcher } from "node:fs";
-import { lstat, mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -34,8 +34,8 @@ interface GenerationMetadata { sessionId: string; prompt: string; promptStatus: 
 interface SessionMetadata { sessionId: string; sessionPath: string | null; mediaPrompts: Map<string, GenerationMetadata>; }
 interface CachedSessionMetadata { mtimeMs: number; size: number; metadata: SessionMetadata; warnings: string[]; }
 interface MediaInfo { width: number | null; height: number | null; ratio: string; mimeType: string; bytes: number; media_kind: string; }
-interface BridgeStatus { sessionsDir: string; enabled: boolean; watching: boolean; polling: boolean; busy: boolean; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastWarning: string | null; }
-interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated: string[]; candidates: number; warnings: string[]; queued?: boolean; deferred?: number; }
+interface BridgeStatus { sessionsDir: string; enabled: boolean; watching: boolean; polling: boolean; busy: boolean; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastErrorCode: string | null; lastWarning: string | null; sourceFound: boolean | null; }
+interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated: string[]; candidates: number; warnings: string[]; queued?: boolean; deferred?: number; sourceFound?: boolean; }
 interface DeferredObservation { size: number; mtimeMs: number; firstSeenAt: number; }
 interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconcile(): Promise<ReconcileResult>; scheduleReconcile(): void; status(): BridgeStatus; }
 interface MediaPromptCall { toolName: string; prompt: string; contextUserPrompt: string; userPrompt: string; aspectRatio: string | null; model: string; callId: string; }
@@ -58,13 +58,13 @@ export function createGrokMediaBridge(options: { store?: Store; sessionsDir?: st
   let watcher: FSWatcher | null = null; let poller: ReturnType<typeof setInterval> | null = null; let timer: ReturnType<typeof setTimeout> | null = null; let stableRescanTimer: ReturnType<typeof setTimeout> | null = null;
   let enabled = false; let reconciling = false; let reconcileAgain = false;
   let activeReconcile: Promise<ReconcileResult> | null = null; let stopPromise: Promise<void> | null = null;
-  const state: Omit<BridgeStatus, "watching" | "polling" | "busy"> = { sessionsDir, enabled: false, lastScanAt: null, lastImportedAt: null, lastImportCount: 0, totalImported: 0, lastSkippedCount: 0, lastError: null, lastWarning: null };
+  const state: Omit<BridgeStatus, "watching" | "polling" | "busy"> = { sessionsDir, enabled: false, lastScanAt: null, lastImportedAt: null, lastImportCount: 0, totalImported: 0, lastSkippedCount: 0, lastError: null, lastErrorCode: null, lastWarning: null, sourceFound: null };
   async function reconcile(): Promise<ReconcileResult> {
     if (!enabled) return { imported: [], skipped: [], updated: [], queued: true, candidates: 0, warnings: [] };
     if (reconciling) { reconcileAgain = true; return { imported: [], skipped: [], updated: [], queued: true, candidates: 0, warnings: [] }; }
     reconciling = true;
     const run = (async (): Promise<ReconcileResult> => {
-      try { const result = await reconcileGrokMedia({ store: store!, sessionsDir, projectId, processedSignatures, sessionMetadataCache, stableWindowMs, nowMs, deferredObservations, shouldContinue: () => enabled && !options.signal?.aborted }); if ((result.deferred || 0) > 0) armStableRescan(); state.lastScanAt = new Date().toISOString(); state.lastImportCount = result.imported.length; state.lastSkippedCount = result.skipped.length; state.totalImported += result.imported.length; state.lastError = null; state.lastWarning = result.warnings?.length ? result.warnings.slice(0, 5).join("; ") : null; if (result.imported.length > 0) state.lastImportedAt = state.lastScanAt; return result; } catch (error) { state.lastScanAt = new Date().toISOString(); state.lastError = error instanceof Error ? error.message : String(error); throw error; } finally { reconciling = false; activeReconcile = null; if (reconcileAgain && enabled) { reconcileAgain = false; scheduleReconcile(); } else reconcileAgain = false; }
+      try { const result = await reconcileGrokMedia({ store: store!, sessionsDir, projectId, processedSignatures, sessionMetadataCache, stableWindowMs, nowMs, deferredObservations, shouldContinue: () => enabled && !options.signal?.aborted }); if ((result.deferred || 0) > 0) armStableRescan(); state.lastScanAt = new Date().toISOString(); state.lastImportCount = result.imported.length; state.lastSkippedCount = result.skipped.length; state.totalImported += result.imported.length; state.lastError = null; state.lastErrorCode = null; if (typeof result.sourceFound === "boolean") state.sourceFound = result.sourceFound; state.lastWarning = result.warnings?.length ? result.warnings.slice(0, 5).join("; ") : null; if (result.imported.length > 0) state.lastImportedAt = state.lastScanAt; return result; } catch (error) { state.lastScanAt = new Date().toISOString(); state.lastError = error instanceof Error ? error.message : String(error); state.lastErrorCode = lastErrorCodeOf(error); throw error; } finally { reconciling = false; activeReconcile = null; ensureWatchers(); if (reconcileAgain && enabled) { reconcileAgain = false; scheduleReconcile(); } else reconcileAgain = false; }
     })();
     activeReconcile = run;
     return run;
@@ -82,14 +82,10 @@ export function createGrokMediaBridge(options: { store?: Store; sessionsDir?: st
     if (enabled) return apiStatus();
     enabled = true;
     state.enabled = true;
-    try {
-      await mkdir(sessionsDir, { recursive: true });
-    } catch (error) {
-      enabled = false;
-      state.enabled = false;
-      throw error;
-    }
-    if (!enabled) return apiStatus();
+    // Task 452: the sessions root is Grok's own data — the bridge must not
+    // create it, or an uninstalled Grok could never report sourceFound:false.
+    // The scan's existing ENOENT branch records it instead; ensureWatchers
+    // arms the watcher once the directory really appears.
     try {
       await reconcile();
     } catch {
@@ -99,12 +95,19 @@ export function createGrokMediaBridge(options: { store?: Store; sessionsDir?: st
       // clears lastError again.
     }
     if (!enabled) return apiStatus();
-    try { watcher = watch(sessionsDir, { recursive: true }, () => scheduleReconcile()); watcher.on("error", () => { watcher?.close(); watcher = null; }); } catch { watcher = null; }
-    if (!enabled) { watcher?.close(); watcher = null; return apiStatus(); }
+    ensureWatchers();
     poller = setInterval(() => { if (enabled) reconcile().catch(() => {}); }, pollIntervalMs);
     return apiStatus();
   }
   function stop(): Promise<void> { if (stopPromise) return stopPromise; enabled = false; state.enabled = false; reconcileAgain = false; if (timer) clearTimeout(timer); timer = null; if (stableRescanTimer) clearTimeout(stableRescanTimer); stableRescanTimer = null; if (poller) clearInterval(poller); poller = null; watcher?.close(); watcher = null; const currentReconcile = activeReconcile; stopPromise = Promise.resolve(currentReconcile).catch(() => {}).then(() => {}).finally(() => { stopPromise = null; }); return stopPromise; }
+  // Task 452: the sessions root may not exist yet when the bridge starts (it
+  // is no longer created on start), so a failed watch() is retried after every
+  // scan instead of leaving the bridge poll-only forever. Same shape as the
+  // Codex bridge's ensureWatchers.
+  function ensureWatchers(): void {
+    if (!enabled) return;
+    if (!watcher) watcher = createSessionWatcher(sessionsDir, scheduleReconcile, () => { watcher = null; });
+  }
   function apiStatus(): BridgeStatus { return { ...state, watching: Boolean(watcher), polling: Boolean(poller), busy: reconciling || reconcileAgain || Boolean(timer) }; }
   return { start, stop, reconcile, scheduleReconcile, status: apiStatus };
 }
@@ -115,7 +118,7 @@ export async function reconcileGrokMedia(options: { store: Store; sessionsDir: s
   const nowMs = options.nowMs || Date.now;
   const deferredObservations = options.deferredObservations || new Map<string, DeferredObservation>();
   const root = resolve(sessionsDir); let rootReal: string;
-  try { rootReal = await realpath(root); } catch (error: unknown) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { imported: [], skipped: [], updated: [], candidates: 0, warnings: [] }; throw error; }
+  try { rootReal = await realpath(root); } catch (error: unknown) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { imported: [], skipped: [], updated: [], candidates: 0, warnings: [], sourceFound: false }; throw error; }
   const { candidates, skipped: discoverySkipped } = await readGrokMediaCandidates(root, rootReal);
   if (processedSignatures) pruneProcessedSignatures(processedSignatures, candidates.map((candidate) => candidate.mediaPath));
   pruneDeferredObservations(deferredObservations, candidates.map((candidate) => candidate.mediaPath));
@@ -224,7 +227,7 @@ export async function reconcileGrokMedia(options: { store: Store; sessionsDir: s
       skipped.push({ path: candidate.mediaPath, reason: "import-failed", error: error instanceof Error ? error.message : String(error) });
     }
   }
-  return { imported, skipped, updated, deferred, candidates: candidates.length, warnings };
+  return { imported, skipped, updated, deferred, candidates: candidates.length, warnings, sourceFound: true };
 }
 
 /**
@@ -509,6 +512,20 @@ function ratioFromDimensions(w: number | null, h: number | null): string { if (!
 function gcd(l: number, r: number): number { let a = Math.abs(l); let b = Math.abs(r); while (b) [a, b] = [b, a % b]; return a || 1; }
 function mimeTypeForExtension(ext: string): string { return ({ ".apng": "image/apng", ".avif": "image/avif", ".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp", ".mp4": "video/mp4", ".m4v": "video/x-m4v", ".mov": "video/quicktime", ".webm": "video/webm" } as Record<string, string>)[ext] || "application/octet-stream"; }
 async function walkFiles(root: string): Promise<string[]> { let entries; try { entries = await readdir(root, { withFileTypes: true }); } catch (error: unknown) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return []; throw error; } const files: string[] = []; for (const entry of entries) { if (entry.name.startsWith(".") || entry.name.endsWith(".lock")) continue; const entryPath = join(root, entry.name); if (entry.isSymbolicLink()) { if (!entry.isDirectory()) files.push(entryPath); continue; } if (entry.isDirectory()) files.push(...await walkFiles(entryPath)); else if (entry.isFile()) files.push(entryPath); } return files; }
+function createSessionWatcher(root: string, onChange: () => void, onUnavailable: () => void): FSWatcher | null {
+  try {
+    const sessionWatcher = watch(root, { recursive: true }, onChange);
+    sessionWatcher.on("error", () => {
+      sessionWatcher.close();
+      onUnavailable();
+    });
+    return sessionWatcher;
+  } catch {
+    onUnavailable();
+    return null;
+  }
+}
+function lastErrorCodeOf(error: unknown): string | null { const code = (error as NodeJS.ErrnoException | undefined)?.code; return typeof code === "string" && code ? code : null; }
 export async function sha256File(filePath: string): Promise<string> { const hash = createHash("sha256"); await pipeline(createReadStream(filePath), hash); return hash.digest("hex"); }
 function isSafeChildPath(parent: string, child: string): boolean { const p = relative(resolve(parent), resolve(child)); return Boolean(p) && !p.startsWith("..") && !p.includes(`..${sep}`) && !isAbsolute(p); }
 async function isCanonicalChildPath(parentReal: string, childPath: string): Promise<boolean> { try { return isSafeChildPath(parentReal, await realpath(childPath)); } catch { return false; } }

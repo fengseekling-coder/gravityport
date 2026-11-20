@@ -18,7 +18,7 @@ interface StoredAsset { source?: Record<string, unknown>; id?: string; image_pat
 interface Store extends IngestStore { cowartCanvasDir: string; }
 interface AssetCandidate { canvasDir: string; pageId: string; imagePath: string; assetUrl: string; cowartAssetId: string; shapeId: string | null; shapeMeta: Record<string, unknown>; annotationSourceShapeId: string | null; replacedAiImageHolder: string | null; mosaAssetId: string | null; altText: string; ratio: string; fileSize: number; mtimeMs: number; }
 interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string }>; candidates: number; queued?: boolean; }
-interface BridgeStatus { canvasDir: string; cowartProjectDir: string | null; sourceId: string | null; enabled: boolean; watching: boolean; polling: boolean; busy: boolean; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; }
+interface BridgeStatus { canvasDir: string; cowartProjectDir: string | null; sourceId: string | null; enabled: boolean; watching: boolean; polling: boolean; busy: boolean; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastErrorCode: string | null; }
 interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconcile(): Promise<ReconcileResult>; scheduleReconcile(): void; status(): BridgeStatus; }
 interface CanvasStoreRecord { typeName?: string; type?: string; id?: string; meta?: Record<string, unknown>; props?: Record<string, unknown>; [key: string]: unknown; }
 interface CanvasSnapshot { store?: Record<string, CanvasStoreRecord>; }
@@ -34,7 +34,7 @@ export function createCowartAssetBridge(options: { store?: Store; canvasDir?: st
   const pollIntervalMs = options.pollIntervalMs != null && Number.isFinite(options.pollIntervalMs) ? Math.max(100, options.pollIntervalMs) : 30000;
   const processedSignatures = new Map<string, string>();
   let watcher: FSWatcher | null = null; let poller: ReturnType<typeof setInterval> | null = null; let timer: ReturnType<typeof setTimeout> | null = null; let reconciling = false; let reconcileAgain = false; let enabled = false; let activeReconcile: Promise<ReconcileResult> | null = null; let stopPromise: Promise<void> | null = null;
-  const state: Omit<BridgeStatus, "watching" | "polling" | "busy"> = { canvasDir, cowartProjectDir, sourceId, enabled: false, lastScanAt: null, lastImportedAt: null, lastImportCount: 0, totalImported: 0, lastSkippedCount: 0, lastError: null };
+  const state: Omit<BridgeStatus, "watching" | "polling" | "busy"> = { canvasDir, cowartProjectDir, sourceId, enabled: false, lastScanAt: null, lastImportedAt: null, lastImportCount: 0, totalImported: 0, lastSkippedCount: 0, lastError: null, lastErrorCode: null };
 
   async function reconcile(): Promise<ReconcileResult> {
     if (!enabled) return { imported: [], skipped: [], queued: true, candidates: 0 };
@@ -43,10 +43,10 @@ export function createCowartAssetBridge(options: { store?: Store; canvasDir?: st
     const run = (async (): Promise<ReconcileResult> => {
       try {
         const result = await reconcileCowartAssets({ store, canvasDir, projectId, cowartProjectDir, sourceId, processedSignatures });
-        state.lastScanAt = new Date().toISOString(); state.lastImportCount = result.imported.length; state.lastSkippedCount = result.skipped.length; state.totalImported += result.imported.length; state.lastError = null;
+        state.lastScanAt = new Date().toISOString(); state.lastImportCount = result.imported.length; state.lastSkippedCount = result.skipped.length; state.totalImported += result.imported.length; state.lastError = null; state.lastErrorCode = null;
         if (result.imported.length > 0) state.lastImportedAt = state.lastScanAt;
         return result;
-      } catch (error) { state.lastScanAt = new Date().toISOString(); state.lastError = error instanceof Error ? error.message : String(error); throw error; } finally {
+      } catch (error) { state.lastScanAt = new Date().toISOString(); state.lastError = error instanceof Error ? error.message : String(error); state.lastErrorCode = lastErrorCodeOf(error); throw error; } finally {
         reconciling = false;
         activeReconcile = null;
         if (reconcileAgain && enabled) { reconcileAgain = false; scheduleReconcile(); } else reconcileAgain = false;
@@ -219,3 +219,4 @@ function ratioFromShape(shape: CanvasStoreRecord | null): string {
 function gcd(left: number, right: number): number { let a = Math.abs(left); let b = Math.abs(right); while (b) [a, b] = [b, a % b]; return a || 1; }
 function isSafeChildPath(parent: string, child: string): boolean { const p = relative(parent, child); return Boolean(p) && !p.startsWith("..") && !p.includes(`..${sep}`) && !isAbsolute(p); }
 function isAutomaticImportSuppressed(error: unknown): boolean { return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "AUTOMATIC_IMPORT_SUPPRESSED"); }
+function lastErrorCodeOf(error: unknown): string | null { const code = (error as NodeJS.ErrnoException | undefined)?.code; return typeof code === "string" && code ? code : null; }

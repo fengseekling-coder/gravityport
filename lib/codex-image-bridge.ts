@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
-import { mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
@@ -49,8 +49,8 @@ interface StoredAsset {
   [key: string]: unknown;
 }
 interface Store extends IngestStore { codexImagesDir: string; assetsRoot: string; updateMetadata(projectId: string, assetId: string, metadata: Record<string, unknown>): Promise<IngestAsset>; }
-interface BridgeStatus { imagesDir: string; sessionsDir: string; threadHistoryPath: string | null; enabled: boolean; watching: boolean; watchingImages: boolean; watchingSessions: boolean; polling: boolean; busy: boolean; pendingSessionResults: number; lastSessionBytesRead: number; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastWarning: string | null; }
-interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated?: string[]; candidates: number; sessionBytesRead?: number; queued?: boolean; deferred?: number; }
+interface BridgeStatus { imagesDir: string; sessionsDir: string; threadHistoryPath: string | null; enabled: boolean; watching: boolean; watchingImages: boolean; watchingSessions: boolean; polling: boolean; busy: boolean; pendingSessionResults: number; lastSessionBytesRead: number; lastScanAt: string | null; lastImportedAt: string | null; lastImportCount: number; totalImported: number; lastSkippedCount: number; lastError: string | null; lastErrorCode: string | null; lastWarning: string | null; sourceFound: boolean | null; }
+interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated?: string[]; candidates: number; sessionBytesRead?: number; queued?: boolean; deferred?: number; sourceFound?: boolean; }
 interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconcile(): Promise<ReconcileResult>; scheduleReconcile(): void; status(): BridgeStatus; }
 
 export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; stableWindowMs?: number; nowMs?: () => number; signal?: AbortSignal; } = {}): Bridge {
@@ -89,7 +89,9 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
     totalImported: 0,
     lastSkippedCount: 0,
     lastError: null,
+    lastErrorCode: null,
     lastWarning: null,
+    sourceFound: null,
   };
   async function reconcile(): Promise<ReconcileResult> {
     if (!enabled) return { imported: [], skipped: [], queued: true, candidates: 0 };
@@ -117,12 +119,15 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
         state.lastSkippedCount = result.skipped.length;
         state.totalImported += result.imported.length;
         state.lastError = null;
+        state.lastErrorCode = null;
+        if (typeof result.sourceFound === "boolean") state.sourceFound = result.sourceFound;
         state.lastWarning = threadHistory.warnings().at(-1) || null;
         if (result.imported.length > 0) state.lastImportedAt = state.lastScanAt;
         return result;
       } catch (error) {
         state.lastScanAt = new Date().toISOString();
         state.lastError = error instanceof Error ? error.message : String(error);
+        state.lastErrorCode = lastErrorCodeOf(error);
         throw error;
       } finally {
         reconciling = false;
@@ -147,13 +152,10 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
     if (enabled) return apiStatus();
     enabled = true;
     state.enabled = true;
-    try {
-      await mkdir(imagesDir, { recursive: true });
-    } catch (error) {
-      enabled = false;
-      state.enabled = false;
-      throw error;
-    }
+    // Task 452: the images root is Codex's own data — the bridge must not
+    // create it, or a machine without Codex could never report
+    // sourceFound:false. The scan's ENOENT branch records it instead;
+    // ensureWatchers arms the watchers once the directory really appears.
     await cleanupCodexSessionRecoveryRoot(store!.assetsRoot).catch(() => {});
     if (!enabled) return apiStatus();
     try {
@@ -250,7 +252,7 @@ async function reconcileCodexSources(options: {
   if (!shouldContinue()) return { imported: [], skipped: [], updated: [], candidates: 0 };
   const sessionScan = await sessionIndex.scan();
   if (!shouldContinue()) return { imported: [], skipped: [], updated: [], candidates: 0, sessionBytesRead: sessionScan.bytesRead };
-  const candidates = await readCodexImageCandidates(imagesDir);
+  const { candidates, imagesDirFound } = await readCodexImageCandidates(imagesDir);
   // Warm the thread-history cache for exactly the tasks this scan cares about
   // (their image folders, plus pending session results). The database queries
   // are synchronous, so this happens here in async context with yields, and
@@ -370,13 +372,17 @@ async function reconcileCodexSources(options: {
     deferred,
     candidates: candidates.length + sessionIndex.pendingResults().length,
     sessionBytesRead: sessionScan.bytesRead,
+    // Task 452: whether either Codex data root exists, learned from the walks
+    // this scan already did — no extra disk traversal. Session files found
+    // prove sessionsDir; the images walk proves imagesDir.
+    sourceFound: imagesDirFound || sessionScan.files > 0,
   };
 }
 
-async function readCodexImageCandidates(imagesDir: string): Promise<ImageCandidate[]> {
-  const files = await walkFiles(imagesDir); const candidates: ImageCandidate[] = [];
-  for (const imagePath of files) { if (!IMAGE_EXTENSIONS.has(extname(imagePath).toLowerCase()) || !isSafeChildPath(imagesDir, imagePath)) continue; let fileStat: Stats; try { fileStat = await stat(imagePath); } catch { continue; } if (!fileStat.isFile()) continue; const relativePath = relative(imagesDir, imagePath); const [taskId] = relativePath.split(sep); const fileName = basename(imagePath); candidates.push({ imagePath, taskId: taskId || null, fileName, fileStem: fileName.replace(/\.[^.]+$/, ""), fileStat, generatedAt: fileStat.birthtime.toISOString?.() || fileStat.mtime.toISOString() }); }
-  return candidates.sort((l, r) => l.generatedAt.localeCompare(r.generatedAt));
+async function readCodexImageCandidates(imagesDir: string): Promise<{ candidates: ImageCandidate[]; imagesDirFound: boolean }> {
+  const walk = await walkFilesWithPresence(imagesDir); const candidates: ImageCandidate[] = [];
+  for (const imagePath of walk.files) { if (!IMAGE_EXTENSIONS.has(extname(imagePath).toLowerCase()) || !isSafeChildPath(imagesDir, imagePath)) continue; let fileStat: Stats; try { fileStat = await stat(imagePath); } catch { continue; } if (!fileStat.isFile()) continue; const relativePath = relative(imagesDir, imagePath); const [taskId] = relativePath.split(sep); const fileName = basename(imagePath); candidates.push({ imagePath, taskId: taskId || null, fileName, fileStem: fileName.replace(/\.[^.]+$/, ""), fileStat, generatedAt: fileStat.birthtime.toISOString?.() || fileStat.mtime.toISOString() }); }
+  return { candidates: candidates.sort((l, r) => l.generatedAt.localeCompare(r.generatedAt)), imagesDirFound: walk.rootFound };
 }
 
 async function metadataForIndexedCandidate(task: CodexTaskMetadata, candidate: ImageCandidate, realPathOf: (path: string) => Promise<string | null>): Promise<GenerationMetadata> {
@@ -890,7 +896,12 @@ async function readImageInfo(imagePath: string, fileStat: Stats): Promise<ImageI
 function ratioFromDimensions(width: number | null, height: number | null): string { if (!Number.isFinite(width) || !Number.isFinite(height) || width! <= 0 || height! <= 0) return ""; const d = gcd(width!, height!); return `${width! / d}:${height! / d}`; }
 function gcd(l: number, r: number): number { let a = Math.abs(l); let b = Math.abs(r); while (b) [a, b] = [b, a % b]; return a || 1; }
 function mimeTypeForExtension(ext: string): string { return ({ ".apng": "image/apng", ".avif": "image/avif", ".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp" } as Record<string, string>)[ext] || "application/octet-stream"; }
-async function walkFiles(root: string): Promise<string[]> { let entries; try { entries = await readdir(root, { withFileTypes: true }); } catch (error: unknown) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return []; throw error; } const files: string[] = []; for (const entry of entries) { const entryPath = join(root, entry.name); if (entry.isDirectory()) files.push(...await walkFiles(entryPath)); else if (entry.isFile()) files.push(entryPath); } return files; }
+// Task 452: the top-level walk also reports whether the root itself exists —
+// the existing root-ENOENT branch is the only place sourceFound turns false.
+// Nested ENOENT (a subdirectory vanishing mid-walk) keeps rootFound true.
+async function walkFilesWithPresence(root: string): Promise<{ files: string[]; rootFound: boolean }> { let entries; try { entries = await readdir(root, { withFileTypes: true }); } catch (error: unknown) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { files: [], rootFound: false }; throw error; } const files: string[] = []; for (const entry of entries) { const entryPath = join(root, entry.name); if (entry.isDirectory()) files.push(...await walkFiles(entryPath)); else if (entry.isFile()) files.push(entryPath); } return { files, rootFound: true }; }
+async function walkFiles(root: string): Promise<string[]> { return (await walkFilesWithPresence(root)).files; }
+function lastErrorCodeOf(error: unknown): string | null { const code = (error as NodeJS.ErrnoException | undefined)?.code; return typeof code === "string" && code ? code : null; }
 function createWatcher(root: string, onChange: () => void, onUnavailable: () => void): FSWatcher | null {
   try {
     const watcher = watch(root, { recursive: true }, onChange);

@@ -1,0 +1,176 @@
+/* ---- Settings → 连接: 本机 AI 工具 capture status (task 452) ----------------
+   Card shell and badge follow the browser extension card's tokens; the row
+   ladder, per-row detail groups, and the copy button mirror the approved
+   sample A (素材/桥接状态卡-oil-ui/explore/index.html). */
+
+.bridge-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
+  min-width: 0;
+}
+
+.bridge-status-title {
+  display: flex;
+  align-items: center;
+  min-height: var(--space-6);
+  line-height: var(--type-body-line);
+}
+
+.bridge-status-title strong {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-weight-title);
+  color: var(--ui-text);
+}
+
+.bridge-status-desc {
+  margin: 0;
+  color: var(--ui-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+}
+
+.bridge-status-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.bridge-status-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--ui-line);
+}
+
+.bridge-status-row:first-child {
+  border-top: 0;
+  padding-top: var(--space-1);
+}
+
+.bridge-status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: var(--space-6);
+}
+
+.bridge-status-name {
+  color: var(--ui-text);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-weight-label);
+  line-height: var(--type-body-line);
+}
+
+/* The 6px dot mirrors .web-capture-badge; tone classes swap dot and text. */
+.bridge-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ui-muted);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  white-space: nowrap;
+}
+
+.bridge-status-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-round);
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.bridge-status-badge.is-ok {
+  color: var(--ui-secondary);
+}
+
+.bridge-status-badge.is-ok::before {
+  background: var(--ui-accent);
+  opacity: 1;
+}
+
+.bridge-status-badge.is-warn {
+  color: var(--ui-secondary);
+}
+
+.bridge-status-badge.is-warn::before {
+  background: var(--ui-secondary);
+  opacity: 1;
+}
+
+.bridge-status-badge.is-bad {
+  color: var(--ui-danger);
+}
+
+.bridge-status-badge.is-bad::before {
+  background: var(--ui-danger);
+  opacity: 1;
+}
+
+.bridge-status-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-bottom: var(--space-1);
+  min-width: 0;
+}
+
+.bridge-status-line-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.bridge-status-error {
+  margin: 0;
+  color: var(--ui-danger);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  overflow-wrap: anywhere;
+}
+
+.bridge-status-note {
+  margin: 0;
+  color: var(--ui-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  overflow-wrap: anywhere;
+}
+
+.bridge-status-actions {
+  display: flex;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.bridge-status-copy-btn,
+.app .settings-modal .bridge-status-copy-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--control-height-small);
+  min-height: var(--control-height-small);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-control);
+  background: var(--ui-raised);
+  color: var(--ui-text);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-weight-label);
+  line-height: var(--type-control-line);
+  white-space: nowrap;
+}
+
+.bridge-status-copy-btn:hover:not(:disabled) {
+  background: var(--ui-selected);
+  color: var(--ui-text);
+}

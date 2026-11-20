@@ -152,7 +152,22 @@ test("legacy registry entries without a trusted Cowart canvas stay lazy at start
     assert.equal(source.enabled, false, `untrusted entry must stay lazy: ${source.projectDir}`);
     assert.equal(source.trusted, false, `untrusted entry must be marked untrusted: ${source.projectDir}`);
     assert.ok(source.lastError, `untrusted entry must report a trust error: ${source.projectDir}`);
+    assert.ok(source.lastErrorCode, `untrusted entry must report the trust reason code: ${source.projectDir}`);
   }
+  // Task 452: the reason code rides along with the message so the connection
+  // card can explain what happened instead of showing raw error text.
+  const reasonByProject = new Map([
+    [emptyProject, "canvas-missing"],
+    [noMarkerProject, "canvas-no-markers"],
+    [missingProject, "project-missing"],
+    [symlinkedProject, "canvas-symlink"],
+  ]);
+  for (const source of externalSources) {
+    assert.equal(source.lastErrorCode, reasonByProject.get(source.projectDir), `reason code for ${source.projectDir}`);
+  }
+  // The summary pairs its code with the same entry the summary error comes from.
+  assert.equal(status.lastError, status.sources.find((source) => source.projectDir === emptyProject).lastError);
+  assert.equal(status.lastErrorCode, "canvas-missing");
   const symlinkedSource = externalSources.find((source) => source.projectDir === symlinkedProject);
   assert.match(symlinkedSource.lastError, /symbolic link/);
 

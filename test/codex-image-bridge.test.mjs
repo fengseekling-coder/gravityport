@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, symlink, utimes, writeFile } from "node:fs/promises";
 import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
@@ -918,6 +919,9 @@ test("schedules an automatic rescan roughly one stability window after a defer",
   const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
   const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, stableWindowMs: 60, debounceMs: 10, pollIntervalMs: 60_000 });
   t.after(() => bridge.stop());
+  // Task 452: start() no longer creates Codex's images root, so the test makes
+  // it first (a real Codex install has it) to keep the watcher armed.
+  await mkdir(imagesDir, { recursive: true });
   await bridge.start();
   await mkdir(join(imagesDir, taskId), { recursive: true });
   await writeFile(join(imagesDir, taskId, "rescan.png"), await pngFixture(64, 64));
@@ -943,13 +947,74 @@ test("keeps the Codex bridge enabled when the first scan fails", async (t) => {
   const status = await bridge.start();
   assert.equal(status.enabled, true);
   assert.match(String(status.lastError || ""), /EACCES/);
+  assert.equal(status.lastErrorCode, "EACCES");
   await chmod(imagesDir, 0o755);
   await bridge.reconcile();
   assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
   const after = bridge.status();
   assert.equal(after.enabled, true);
   assert.equal(after.lastError, null);
+  assert.equal(after.lastErrorCode, null);
   assert.equal(after.polling, true);
+});
+
+test("reports sourceFound from the scan's own walks", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-source-found-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  // Neither data root exists yet: the walks hit their ENOENT branch and the
+  // scan stays a clean no-op, so the card can tell「没装」from「没新图」.
+  const missing = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
+  assert.equal(missing.imported.length, 0);
+  assert.equal(missing.sourceFound, false);
+
+  await mkdir(join(imagesDir, "task-found"), { recursive: true });
+  await writeFile(join(imagesDir, "task-found", "found.png"), await pngFixture(64, 64));
+  const present = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
+  assert.equal(present.imported.length, 1);
+  assert.equal(present.sourceFound, true);
+
+  // The running bridge reports the same through status().
+  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(() => bridge.stop());
+  const status = await bridge.start();
+  assert.equal(status.enabled, true);
+  assert.equal(status.lastError, null);
+  assert.equal(status.sourceFound, true);
+});
+
+test("bridge start() does not create the Codex images root and reports sourceFound:false until it appears", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-no-mkdir-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(() => bridge.stop());
+  const started = await bridge.start();
+  assert.equal(started.enabled, true);
+  assert.equal(started.lastError, null);
+  assert.equal(started.lastErrorCode, null);
+  assert.equal(started.sourceFound, false);
+  assert.equal(existsSync(imagesDir), false, "start() must not create Codex's images directory");
+  assert.equal(started.watching, false);
+
+  // Codex shows up later: the next scan flips sourceFound, imports the image
+  // and arms the watchers.
+  await mkdir(join(imagesDir, "task-late"), { recursive: true });
+  await writeFile(join(imagesDir, "task-late", "late.png"), await pngFixture(64, 64));
+  const result = await bridge.reconcile();
+  assert.equal(result.imported.length, 1);
+  const status = bridge.status();
+  assert.equal(status.sourceFound, true);
+  assert.equal(status.lastError, null);
+  assert.equal(status.watching, true);
 });
 
 test("pairs a Codex image with its own generation event when the images dir is reached through a symlink", async (t) => {
