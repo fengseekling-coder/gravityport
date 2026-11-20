@@ -2,6 +2,9 @@
   "schema": 2,
   "unreleased": {
     "zh": {
+      "new": [
+        "在 Chrome 中使用 ChatGPT 的 Dot 时，Dot 发出的图片会自动收进素材库：提示词记录你对 Dot 提出的要求，Dot 的说明一并保存。"
+      ],
       "fixed": [
         "Codex、Grok 正在保存的图片和视频会等写完再收进素材库，不再收进半张图。",
         "自动收图在启动时遇到一次读取错误后照常继续收图，不用重启 App。",
@@ -12,6 +15,9 @@
       ]
     },
     "en": {
+      "new": [
+        "Images that ChatGPT Dot sends in Chrome are now archived automatically, with your request to Dot as the prompt and Dot’s description saved alongside."
+      ],
       "fixed": [
         "Images and videos that Codex or Grok is still saving are archived once complete, never half-written.",
         "Auto-archiving keeps running after a read error at startup, without restarting the app.",
