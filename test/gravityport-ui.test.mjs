@@ -319,6 +319,7 @@ describe("i18n coverage", () => {
       "VersionSection.tsx",
       "InspectorDetails.tsx",
       "Sidebar.tsx",
+      "ConfirmDialogs.tsx",
     ];
     const used = new Set();
     for (const file of files) {
