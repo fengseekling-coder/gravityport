@@ -207,9 +207,17 @@ async function generateDerivatives(job: DerivativeProcessorJob) {
         // cleanup below while the other two are still writing temp files, so
         // every tier is settled first and only then the first error is
         // rethrown; oversized images keep the sequential loop above the cap.
-        const settled = await Promise.allSettled(staged.map((target) => encodeTier(target)));
-        const failure = settled.find((outcome) => outcome.status === "rejected");
-        if (failure && failure.status === "rejected") throw failure.reason;
+        // The error reported is the first one in time, not the first tier in
+        // array order: once one tier fails (an unwritable folder), libvips can
+        // fail the sibling tiers reading the same source with a secondary
+        // "Warning treated as error" (seen on the Linux runner, PR 353), which
+        // would hide the real cause.
+        const failures: unknown[] = [];
+        await Promise.allSettled(staged.map((target) => encodeTier(target).catch((error: unknown) => {
+          failures.push(error);
+          throw error;
+        })));
+        if (failures.length > 0) throw failures[0];
       } else {
         for (const target of staged) {
           await encodeTier(target);
