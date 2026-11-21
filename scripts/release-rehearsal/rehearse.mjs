@@ -96,9 +96,12 @@ function assertSafeWorkDir(workDir, protectedPaths) {
   if (!tmpRoots().some((root) => strictlyInside(root, canonical))) {
     throw new Error(`--work-dir ${workDir} must be inside the system temp directory (${tmpdir()} or /private/tmp) because the rehearsal rm -rf's it at startup`);
   }
+  // Both sides go through the same /tmp spelling: on Linux /private/tmp does
+  // not exist, so a canonical work dir would otherwise never match a
+  // protected path spelled under /tmp.
   for (const protectedPath of protectedPaths) {
-    for (const a of pathVariants(canonical)) {
-      for (const b of pathVariants(protectedPath)) {
+    for (const a of pathVariants(canonical).map(canonicalTmpAlias)) {
+      for (const b of pathVariants(protectedPath).map(canonicalTmpAlias)) {
         if (sameOrContains(a, b) || sameOrContains(b, a)) {
           throw new Error(`--work-dir ${workDir} must not overlap ${protectedPath} (the rehearsal rm -rf's the work dir at startup)`);
         }
