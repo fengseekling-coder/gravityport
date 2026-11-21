@@ -36,6 +36,15 @@ const QA_FLAGS = process.platform === "win32" ? ["--disable-gpu"] : [];
 // Screenshots are flow artifacts and land in tasks/logs/bridge-status/ only.
 
 export async function run(ctx) {
+  // The failure rounds inject EACCES with chmod 000 on the Codex images
+  // folder, which does not block reads on Windows, and the standalone
+  // CDP window never reported ready on the Windows runner (PR 353). The card
+  // text and Windows path handling are covered by bridge-status-card unit
+  // tests; this flow runs on macOS.
+  if (process.platform === "win32") {
+    console.log(`[e2e] flow ${name} skipped on win32: chmod-based EACCES injection is POSIX-only`);
+    return;
+  }
   await ctx.prepare();
   const root = await mkdtemp(join(tmpdir(), "mosa-bridge-status-e2e-"));
   const codexImagesDir = join(root, "codex", "generated_images");
