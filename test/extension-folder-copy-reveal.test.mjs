@@ -90,7 +90,6 @@ test("在访达中显示 selects the extension folder itself, not manifest.json 
   const main = readDesktopMainSources(repositoryRoot);
   const start = main.indexOf('ipcMain.handle("reveal-managed-extension-folder"');
   assert.ok(start >= 0);
-  const handler = main.slice(start, main.indexOf("});", start));
-  assert.match(handler, /shell\.showItemInFolder\(managedBrowserExtensionTarget\)/);
-  assert.doesNotMatch(handler, /showItemInFolder\(manifestPath\)/);
+  // 任务 447：showItemInFolder 收扩展目录本身（而不是 manifest.json）已改成
+  // 真调 handler 的行为测试，在 test/desktop-ipc-handlers.test.mjs。
 });

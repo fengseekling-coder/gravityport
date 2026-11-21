@@ -148,3 +148,39 @@ test("select-all forwards to the page via accelerator + click while copy/cut/pas
   assert.equal(withoutHandler.find((top) => top.id === "mosa-menu-edit").submenu
     .find((item) => item.id === "mosa-menu-select-all").click, undefined);
 });
+
+// 任务 444 验收补：desktop-i18n-contract 原来按源码文字核的 21 个 role、⌘N 墓碑、
+// 自定义标签走 i18n，改成在真模板上核。role 少一个，Electron 自带的编辑/窗口
+// 功能（撤销、缩放、最小化……）就从菜单里消失。
+function flattenItems(template) {
+  return template.flatMap((top) => [top, ...top.submenu]);
+}
+
+test("darwin menu keeps every built-in role, has no ⌘N, and localizes every custom label", () => {
+  const zh = flattenItems(buildMenuTemplate({ platform: "darwin", locale: "zh", onSearch: () => {} }));
+  const en = flattenItems(buildMenuTemplate({ platform: "darwin", locale: "en", onSearch: () => {} }));
+
+  const roles = new Set(zh.map((item) => item.role).filter(Boolean));
+  for (const role of [
+    "about", "services", "hide", "hideOthers", "unhide", "quit", "close",
+    "undo", "redo", "cut", "copy", "paste", "pasteAndMatchStyle", "delete",
+    "resetZoom", "zoomIn", "zoomOut", "togglefullscreen", "minimize", "zoom", "front",
+  ]) {
+    assert.ok(roles.has(role), `${role} role remains available`);
+  }
+
+  assert.equal(zh.some((item) => item.accelerator === "CmdOrCtrl+N"), false, "the retired ⌘N import shortcut stays gone");
+  assert.equal(zh.some((item) => String(item.id || "").includes("menu-import")), false);
+
+  // Items without a role carry our own label; each must come from desktop i18n,
+  // so the zh and en builds differ (the fixed product name is the one exception).
+  assert.equal(zh.length, en.length);
+  const custom = zh
+    .map((item, index) => ({ id: item.id, zh: item.label, en: en[index].label, role: item.role, type: item.type }))
+    .filter((item) => !item.role && item.type !== "separator" && item.zh !== "GravityPort");
+  assert.ok(custom.length >= 6, `expected at least 6 custom labels, got ${custom.length}`);
+  for (const item of custom) {
+    assert.equal(typeof item.zh, "string", `${item.id} has a label`);
+    assert.notEqual(item.zh, item.en, `${item.id} label follows the locale`);
+  }
+});

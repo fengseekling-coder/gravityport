@@ -115,12 +115,17 @@ function raceSource(config) {
     // The default view comes back at its remembered (bottom) position, which
     // may pull page 2 straight away — at least the first page, never alpha's.
     await waitFor(() => loadedCount() >= ${PAGE_SIZE}, 'default project back to at least its first page');
+    // Keep scrolling for the whole wait: a page that lands after the last
+    // nudge would otherwise never trigger the next one, and the waitFor below
+    // cannot scroll (435; same shape as live-sync-top-pagination).
     const grid2 = document.querySelector('.asset-grid');
-    for (let step = 0; step < 40 && loadedCount() < ${TOTAL}; step += 1) {
+    const resumeDeadline = Date.now() + 30000;
+    while (loadedCount() < ${TOTAL} && Date.now() < resumeDeadline) {
       grid2.scrollTop = grid2.scrollHeight;
       grid2.dispatchEvent(new Event('scroll'));
       await sleep(150);
     }
+    if (loadedCount() < ${TOTAL}) throw new Error('Timed out waiting for the scroll to pull all pages (' + loadedCount() + ' loaded, need ' + ${TOTAL} + ')');
     await waitFor(() => loadedCount() === ${TOTAL}, 'pagination completes to 110 after the race');
     const settledClean = loadedCount() === ${TOTAL} && !document.querySelector('.toast');
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -298,6 +298,43 @@ test("regex fallback on an un-stringified JS call still picks only the first val
     [canonicalProjectDirProject],
     "expected regex fallback to discover only the projectDir project",
   );
+});
+
+test("skips an unreadable session file without failing the whole discovery round", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-cowart-unreadable-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const sessionsDir = join(root, "sessions");
+  const goodProject = join(root, "good-project");
+  const blockedProject = join(root, "blocked-project");
+  await Promise.all([
+    writeCanvasMarker(goodProject),
+    writeCanvasMarker(blockedProject),
+    mkdir(sessionsDir, { recursive: true }),
+  ]);
+  await writeSession(join(sessionsDir, "good.jsonl"), goodProject, {
+    type: "mcp_tool_call",
+    name: "mcp__cowart_mcp__render_cowart_canvas_widget",
+    arguments: JSON.stringify({ projectDir: goodProject }),
+  });
+  // 一个读不了的会话文件（权限 000，测完恢复权限再清理），里面也带着一次
+  // 合法 launch：整轮发现不能因为它作废，它自己也不能进缓存。
+  const blockedPath = join(sessionsDir, "blocked.jsonl");
+  await writeSession(blockedPath, blockedProject, {
+    type: "mcp_tool_call",
+    name: "mcp__cowart_mcp__render_cowart_canvas_widget",
+    arguments: JSON.stringify({ projectDir: blockedProject }),
+  });
+  await chmod(blockedPath, 0o000);
+  t.after(async () => { await chmod(blockedPath, 0o644).catch(() => {}); });
+
+  const cache = new Map();
+  const discovered = await discoverCowartProjectsFromCodexSessions({ sessionsDir, fullScan: true, cache });
+  const canonicalGoodProject = await realpath(goodProject);
+  assert.deepEqual(discovered.map((entry) => entry.projectDir), [canonicalGoodProject]);
+
+  // 下一轮还会再试读不了的文件（没写进缓存），整轮仍然只出好文件的项目。
+  const second = await discoverCowartProjectsFromCodexSessions({ sessionsDir, fullScan: true, cache });
+  assert.deepEqual(second.map((entry) => entry.projectDir), [canonicalGoodProject]);
 });
 
 async function writeCanvasMarker(projectDir) {

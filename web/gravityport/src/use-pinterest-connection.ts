@@ -14,6 +14,31 @@ import {
 } from "./pinterest-api.js";
 import { useEffect, useRef, useState } from "react";
 
+function readPinterestConnectOpen(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem("gravityport.dev.pinterest-connect") === "1";
+  } catch {
+    return false;
+  }
+}
+
+// New Pinterest connections stay closed until Pinterest grants Standard
+// access: Trial access shares 1,000 calls a day across every install. Writing
+// localStorage "gravityport.dev.pinterest-connect"="1" opens them on one machine.
+export const PINTEREST_CONNECT_OPEN: boolean = readPinterestConnectOpen();
+
+/**
+ * Whether the guide page and the settings card may offer a connect button.
+ * An account that was connected before and only lost its authorization can
+ * always reconnect; a first connection needs PINTEREST_CONNECT_OPEN.
+ */
+export function pinterestConnectAvailable(
+  status: PinterestStatus | null,
+  open: boolean = PINTEREST_CONNECT_OPEN
+): boolean {
+  return open || status?.needsReconnect === true;
+}
+
 export type PinterestConnectionPhase =
   | { kind: "idle" }
   | { kind: "connecting" }

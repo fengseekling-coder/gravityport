@@ -5,6 +5,7 @@ import { lstat, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile 
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { PIXEL_HASH_VERSION, safePixelDigest } from "./image-pixel-hash.js";
+import { syncDirectory, syncFile } from "./durable-file.js";
 
 // link() goes through the fs/promises default-export object (property lookup
 // at call time, not an ESM binding) so the failure fallback can be exercised
@@ -174,10 +175,17 @@ export function createReferenceAttachmentStore(libraryDir: string) {
     const linked = await tryLinkSource(input.linkSource, contentHash, temporary, dirname(root));
     if (!linked) await writeFile(temporary, input.bytes, { flag: "wx" });
     try {
+      await syncFile(temporary);
+    } catch (error) {
+      await unlink(temporary).catch(() => {});
+      throw error;
+    }
+    try {
       await rename(temporary, filePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
     }
+    await syncDirectory(filesRoot);
     const attachment: ReferenceAttachment = {
       id,
       project_id: projectId,
@@ -503,7 +511,14 @@ function mergeReferenceUsage(existing: ReferenceUsage, incoming: ReferenceUsage)
 async function writeReferenceIndex(indexPath: string, items: ReferenceAttachment[]): Promise<void> {
   const indexTemporary = `${indexPath}.${randomUUID()}.tmp`;
   await writeFile(indexTemporary, `${JSON.stringify(items, null, 2)}\n`, "utf8");
+  try {
+    await syncFile(indexTemporary);
+  } catch (error) {
+    await unlink(indexTemporary).catch(() => {});
+    throw error;
+  }
   await rename(indexTemporary, indexPath);
+  await syncDirectory(dirname(indexPath));
 }
 
 async function withProjectWriteLock<T>(root: string, projectId: string, task: () => Promise<T>): Promise<T> {

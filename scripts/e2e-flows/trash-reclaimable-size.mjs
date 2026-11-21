@@ -14,6 +14,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { reloadCdpAndWaitForApp, waitForCdpExpression } from "./_shared.mjs";
 
 export const name = "trash-reclaimable-size";
 export const description =
@@ -240,23 +241,29 @@ async function runDesktopPhase(ctx, ids) {
     };
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitForValue(expression, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = await evaluate(expression).catch(() => null);
-        if (value) return value;
-        await sleep(150);
-      }
-      const diagnostic = await evaluate(`(() => {
-        const app = document.querySelector('.app');
-        return JSON.stringify({
-          url: location.href,
-          appClasses: app ? app.className : null,
-          bodyChildren: Array.from(document.body.children).map((node) => node.tagName + '.' + String(node.className).split(' ').slice(0, 3).join('.')),
-          navButtons: Array.from(document.querySelectorAll('.main-nav button')).map((entry) => entry.textContent.trim()).slice(0, 8),
-          cards: document.querySelectorAll('.asset-card').length,
+      try {
+        return await waitForCdpExpression(cdp, expression, label, {
+          timeoutMs,
+          pollIntervalMs: 150,
+          evaluate,
+          match: Boolean,
         });
-      })()`).catch((error) => `diagnostic failed: ${error.message}`);
-      throw new Error(`desktop phase timed out waiting for ${label}; state=${diagnostic}`);
+      } catch (error) {
+        const diagnostic = await Promise.race([
+          evaluate(`(() => {
+            const app = document.querySelector('.app');
+            return JSON.stringify({
+              url: location.href,
+              appClasses: app ? app.className : null,
+              bodyChildren: Array.from(document.body.children).map((node) => node.tagName + '.' + String(node.className).split(' ').slice(0, 3).join('.')),
+              navButtons: Array.from(document.querySelectorAll('.main-nav button')).map((entry) => entry.textContent.trim()).slice(0, 8),
+              cards: document.querySelectorAll('.asset-card').length,
+            });
+          })()`),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("diagnostic stalled")), 1500)),
+        ]).catch((diagError) => `diagnostic failed: ${diagError.message}`);
+        throw new Error(`desktop phase timed out waiting for ${label} (${error.message}); state=${diagnostic}`);
+      }
     }
     const capture = async (filename) => {
       const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
@@ -327,13 +334,11 @@ async function runDesktopPhase(ctx, ids) {
     // Light/dark screenshots of the trash toolbar (1280 wide, seeded bounds).
     for (const [appearance, fileName] of [["深色", "383-trash-reclaimable-dark.png"], ["浅色", "383-trash-reclaimable-light.png"]]) {
       await evaluate(`localStorage.setItem("gravityport.preferences", ${JSON.stringify(JSON.stringify({ appearance, cardInfo: false, language: "zh" }))})`);
-      // A reload can strand the evaluate on the detached frame; fire and poll.
-      evaluate("location.reload()").catch(() => {});
-      await waitForValue(`Boolean(document.querySelector('.app'))`, "app shell after reload");
+      await reloadCdpAndWaitForApp(cdp, { label: "app shell after reload", evaluate });
       await waitForValue(
         appearance === "深色"
-          ? `document.querySelector('.app').classList.contains('dark')`
-          : `!document.querySelector('.app').classList.contains('dark')`,
+          ? `Boolean(document.querySelector('.app')?.classList.contains('dark'))`
+          : `Boolean(document.querySelector('.app')) && !document.querySelector('.app').classList.contains('dark')`,
         `${appearance} theme applied`,
       );
       // Every asset is in the trash here, so the default view is EMPTY — the
@@ -432,15 +437,19 @@ async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
 function openCdpSession(url) {
   let idSeq = 0;
   const pending = new Map();
+  const eventHandlers = new Set();
   const socket = new WebSocket(url);
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(String(event.data));
     if (message.id && pending.has(message.id)) {
-      const { resolve, reject } = pending.get(message.id);
+      const { resolve, reject, timer } = pending.get(message.id);
       pending.delete(message.id);
+      clearTimeout(timer);
       if (message.error) reject(new Error(message.error.message));
       else resolve(message.result);
+      return;
     }
+    if (message.method) for (const handler of eventHandlers) handler(message);
   });
   const ready = new Promise((resolveReady, rejectReady) => {
     socket.addEventListener("open", () => resolveReady(), { once: true });
@@ -450,15 +459,19 @@ function openCdpSession(url) {
     send(method, params = {}) {
       const id = ++idSeq;
       return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-        setTimeout(() => {
+        const timer = setTimeout(() => {
           if (pending.has(id)) {
             pending.delete(id);
             reject(new Error(`cdp ${method} timed out`));
           }
         }, 15000);
+        pending.set(id, { resolve, reject, timer });
+        socket.send(JSON.stringify({ id, method, params }));
       });
+    },
+    onEvent(handler) {
+      eventHandlers.add(handler);
+      return () => eventHandlers.delete(handler);
     },
     close() {
       try { socket.close(); } catch {}

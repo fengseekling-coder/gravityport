@@ -1,0 +1,90 @@
+{
+  "items": [
+    {
+      "id": "6b003f74f52081908e2b259925874601",
+      "account_user_id": "user-YU0fRvGOZwTpflnNG0uaP866__21a72e83-1111-2222-3333-444455556666",
+      "role": "user",
+      "content": { "text": "你来生成几张性感的美女图" },
+      "created_at": "2026-11-20T13:30:00.000000Z"
+    },
+    {
+      "id": "6b003f74f52081908e2b259925874602",
+      "account_user_id": "calpico-member-636461663938343",
+      "role": "user",
+      "message_metadata": { "turn_trigger": "chatgpt_messaging" },
+      "content": {
+        "text": "我做三张独立竖图，不拼图。用三种不同的时尚摄影氛围：红裙夜景、黑色西装和日落丝缎。"
+      },
+      "created_at": "2026-11-20T13:31:00.000000Z"
+    },
+    {
+      "id": "6b003f74f52081908e2b259925874603",
+      "account_user_id": "calpico-member-636461663938343",
+      "role": "user",
+      "message_metadata": { "turn_trigger": "chatgpt_messaging" },
+      "preview": "三张独立的 3:4 竖图：红裙夜景、黑色西装、日落丝缎。我最喜欢红裙那张，雨后的霓虹很有电影感。",
+      "created_at": "2026-11-20T13:33:03.634698Z",
+      "updated_at": "2026-11-20T13:33:03.646206Z",
+      "deleted_at": null,
+      "reply_to": null,
+      "request_id": null,
+      "inspector_url": null,
+      "reactions": {},
+      "content": {
+        "text": "三张独立的 3:4 竖图：红裙夜景、黑色西装、日落丝缎。我最喜欢红裙那张，雨后的霓虹很有电影感。",
+        "attachments": [
+          {
+            "attachment_id": "dbe9bb75-25d1-4deb-ba6b-4dc382f813fa",
+            "type": "file",
+            "file_id": "CalpicoFile_92eca72497ac8191aa5abaecbdeead50",
+            "file": {
+              "id": "CalpicoFile_92eca72497ac8191aa5abaecbdeead50",
+              "file_id": "CalpicoFile_92eca72497ac8191aa5abaecbdeead50",
+              "asset_pointer": "sediment://file_00000000aaaa1111bbbb2222cccc3333",
+              "download_url": "https://chatgpt.com/backend-api/estuary/public_content/enc/eyJpZCI6Il9aQ0FBQTExMTFib2IxfQ",
+              "mime_type": "image/png",
+              "name": "红裙夜景.png",
+              "status": "ROOM_PUBLISHED",
+              "image_metadata": null,
+              "permission_set": { "permissions": "read", "version": "v1" }
+            }
+          },
+          {
+            "attachment_id": "dbe9bb75-25d1-4deb-ba6b-4dc382f813fb",
+            "type": "file",
+            "file_id": "CalpicoFile_a95e887a00bb2222cccc3333dddd4444",
+            "file": {
+              "id": "CalpicoFile_a95e887a00bb2222cccc3333dddd4444",
+              "file_id": "CalpicoFile_a95e887a00bb2222cccc3333dddd4444",
+              "asset_pointer": "sediment://file_00000000aaaa2222cccc3333dddd4444",
+              "download_url": "https://chatgpt.com/backend-api/estuary/public_content/enc/eyJpZCI6Il9aQ0FBQTIyMmNvYjJ9",
+              "mime_type": "image/png",
+              "name": "黑色西装.png",
+              "status": "ROOM_PUBLISHED",
+              "image_metadata": null,
+              "permission_set": { "permissions": "read", "version": "v1" }
+            }
+          },
+          {
+            "attachment_id": "dbe9bb75-25d1-4deb-ba6b-4dc382f813fc",
+            "type": "file",
+            "file_id": "CalpicoFile_062a251203cc3333dddd4444eeee5555",
+            "file": {
+              "id": "CalpicoFile_062a251203cc3333dddd4444eeee5555",
+              "file_id": "CalpicoFile_062a251203cc3333dddd4444eeee5555",
+              "asset_pointer": "sediment://file_00000000aaaa3333dddd4444eeee5555",
+              "download_url": "https://chatgpt.com/backend-api/estuary/public_content/enc/eyJpZCI6Il9aQ0FBQTMzM2RvYjN9",
+              "mime_type": "image/png",
+              "name": "日落丝缎.png",
+              "status": "ROOM_PUBLISHED",
+              "image_metadata": null,
+              "permission_set": { "permissions": "read", "version": "v1" }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "prev_cursor": null,
+  "next_cursor": "cursor-next-page"
+}

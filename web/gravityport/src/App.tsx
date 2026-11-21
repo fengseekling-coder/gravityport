@@ -32,7 +32,7 @@ import { VERSION_CANVAS_ENTRY, canvasFromHistory } from "./version-canvas-model"
 import { computeConversationRounds } from "./conversation-rounds"
 import { sanitizeAssetForExport } from "./feature-parity"
 import { describeSource, inspectorHeaderLine, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
-import { SMART_SOURCE_GROUPS, vendorLabelFor, visibleTags, fitTagsInTwoLines } from "./tag-display"
+import { vendorLabelFor, visibleTags, fitTagsInTwoLines } from "./tag-display"
 import {
   buildMasonryModel, galleryImageSizes, galleryModelSignature, locateMasonryWindow, masonryCardCss, masonryExtentCss,
   type MasonryModel,
@@ -70,7 +70,8 @@ import {
   fetchWebCapturePairRequests, decideWebCapturePairRequest, type MosaWebCapturePairRequest,
   fetchLiveDeletionRequests, decideLiveDeletionRequest, reportViewerPresence, type MosaLiveDeletionRequest,
 } from "./mosa-api"
-import { AuthorizationModal, type AuthorizationResult } from "./AuthorizationModal"
+import { type AuthorizationResult } from "./AuthorizationModal"
+import { ConfirmDialogs } from "./ConfirmDialogs"
 import ImportReviewDialog, { type ImportReviewData, type ImportReviewDecision } from "./ImportReviewDialog"
 import type { AlreadyInLibraryEntry } from "./import-pipeline"
 import { VideoPosterQueue } from "./video-poster"
@@ -81,6 +82,7 @@ import { PINTEREST_ENTRY, SettingsDialog } from "./SettingsDialog"
 import { VersionSection } from "./VersionSection"
 import VersionCanvas from "./VersionCanvas"
 import { InspectorDetails } from "./InspectorDetails"
+import { Sidebar } from "./Sidebar"
 
 type Scope = "all" | "favorite" | "unorganized" | "trash"
 
@@ -2852,6 +2854,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     const overlaysUp = Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || authorizationActive || settings
       || groupRename || stackRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm
       || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
+    // Back inside Pinterest (⌘[ / Alt+← / mouse side button) mirrors the
+    // toolbar ‹ there: viewer → Pin grid → board list; at the board list it
+    // falls through to the app history, exactly like that button.
+    const pinterestBack = () => {
+      const chrome = pinterestChromeRef.current
+      if (chrome.viewing || chrome.boardName !== null) pinterestViewRef.current?.back()
+      else navigateHistoryRef.current(-1)
+    }
     const key = (e: KeyboardEvent) => {
       if (canvasOpen) return
       if (e.key === "Escape") {
@@ -2931,8 +2941,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // trigger a gallery shortcut.
       if (isEditableTarget(e.target)) return
       // The Pinterest view hides the gallery: ⌘A then Delete there must not
-      // select and trash library assets nobody can see.
-      if (pinterestActive) return
+      // select and trash library assets nobody can see. Only back passes.
+      if (pinterestActive) {
+        if (resolveNavHistoryShortcut(e, isMacPlatform() ? "mac" : "other") === -1 && !overlaysUp) {
+          e.preventDefault()
+          pinterestBack()
+        }
+        return
+      }
       const plainKey = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey
       const galleryIdle = !preview && !settings && !menu && !deleting && !renameNoticeOpen && !schemaNoticeOpen && !authorizationActive
       // Back/forward (task 384): ⌘[/⌘] on macOS, Alt+←/→ elsewhere. The
@@ -3039,7 +3055,11 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       if (e.button !== 3 && e.button !== 4) return
       e.preventDefault()
       const direction = mouseNavDirection(e.button)
-      if (!direction || overlaysUp || cardDragRef.current || pinterestActive || canvasOpen) return
+      if (!direction || overlaysUp || cardDragRef.current || canvasOpen) return
+      if (pinterestActive) {
+        if (direction === -1) pinterestBack()
+        return
+      }
       navigateHistoryRef.current(direction)
     }
     // The web `copy`/`cut` events carry the desktop menu's 拷贝/剪切 roles
@@ -4434,148 +4454,29 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       className={`app ${appearance === "深色" || (appearance === "跟随系统" && systemDark) ? "dark" : ""} ${nativeChromeClass} ${(preview || pinterestChrome.viewing) && viewerFullscreen ? "viewer-fullscreen" : ""} ${canvasOpen && asset ? "canvas-open" : ""}`}
       onClick={() => menu && setMenu(null)}
     >
-      <aside className="sidebar">
-        <div className="brandbar">
-          <strong>GravityPort</strong>
-        </div>
-        {projects.length > 1 && (
-          <div className="sidebar-project">
-            <ToolbarSelect
-              label={tr("项目")}
-              value={project}
-              onChange={switchProject}
-              options={projects.map(p => ({ value: p, label: p }))}
-            />
-          </div>
-        )}
-        <nav className="main-nav" aria-label={tr("素材库")}>
-          {["所有素材", "Pinterest", "待整理", "收藏", "回收站"].filter(label => PINTEREST_ENTRY || label !== "Pinterest").map(
-            (label) => (
-              <button
-                key={label}
-                title={tr(label)}
-                aria-label={tr(label)}
-                aria-current={active === label ? "page" : undefined}
-                className={`nav-row ${active === label ? "selected" : ""} ${label === "待整理" && cardDropSide?.kind === "ungrouped" ? "side-drop-target" : ""}`}
-                {...(label === "待整理" ? { "data-drop-ungroup": "" } : {})}
-                onClick={() => {
-                  goTo({ active: label, stackId: "", stackName: "" })
-                  setSelectedIds([])
-                }}
-              >
-                {label === "Pinterest" ? <span className="brand-icon" aria-hidden="true" /> : <Icon
-                  name={label === "待整理" ? "inbox" : label === "收藏" ? "heart" : label === "回收站" ? "trash" : "grid"}
-                  size={16}
-                />}
-                <span>{tr(label)}</span>
-                <small>
-                  {label === "所有素材"
-                    ? navigation?.total ?? 0
-                    : label === "Pinterest"
-                      // Pinterest stays in Trial access (1,000 calls a day shared
-                      // by every user) until Standard access is approved, so the
-                      // count slot says 即将上线 even after boards have loaded.
-                      ? <span className="nav-soon">{tr("即将上线")}</span>
-                      : label === "待整理"
-                        ? navigation?.unorganized ?? 0
-                        : label === "收藏"
-                          ? navigation?.favorites ?? 0
-                          : navigation?.trash ?? 0}
-                </small>
-              </button>
-            ),
-          )}
-        </nav>
-        {[0, 1].map((section) => (
-          <div className="group-section" key={section}>
-            <div className="section-label">
-              <button
-                className="section-toggle"
-                aria-label={section === 0 ? tr("智能分组") : tr("我的分组")}
-                aria-expanded={expandedSections[section]}
-                aria-controls={`sidebar-group-${section}`}
-                onClick={() => setExpandedSections(old => old.map((value, i) => i === section ? !value : value))}
-              >
-                <span>{section === 0 ? tr("智能分组") : tr("我的分组")}</span>
-                <Icon name={expandedSections[section] ? "down" : "right"} size={12} />
-              </button>
-              {section === 1 && <button
-                className="add-group"
-                aria-label={tr("新建分组")}
-                title={tr("新建分组")}
-                onClick={createNamedGroup}
-              ><Icon name="plus" size={16} /></button>}
-            </div>
-            <nav id={`sidebar-group-${section}`} aria-label={section === 0 ? tr("智能分组") : tr("我的分组")} hidden={!expandedSections[section]}>
-            {(section === 0
-              ? SMART_SOURCE_GROUPS.map(([source, name]) => ({
-                  id: `source:${source}`, name,
-                  count: navigation?.sourceTypes.find(entry => entry[0] === source)?.[1] ?? 0,
-                })).filter(entry => entry.count > 0)
-              : (navigation?.groups || []).map(entry => ({ id: `group:${entry.name}`, name: entry.name, count: entry.count }))
-            ).map((g) => (
-              <button
-                className={`nav-row group-row ${
-                  active === g.id ? "selected" : ""
-                } ${g.id.startsWith("group:") && cardDropSide?.kind === "group" && cardDropSide.name === g.name ? "side-drop-target" : ""}`}
-                key={g.id}
-                title={tr(g.name)}
-                aria-label={tr(g.name)}
-                aria-current={active === g.id ? "page" : undefined}
-                {...(g.id.startsWith("group:") ? { "data-drop-group": g.name } : {})}
-                onClick={() => { goTo({ active: g.id, stackId: "", stackName: "" }); setSelectedIds([]) }}
-                onContextMenu={event => {
-                  if (section !== 1) return
-                  event.preventDefault()
-                  openGroupMenu(g.name, event.clientX, event.clientY)
-                }}
-                onDragOver={event => {
-                  if (g.id.startsWith("group:") && !preview && !settings) event.preventDefault()
-                }}
-                onDrop={event => {
-                  if (!g.id.startsWith("group:") || preview || settings) return
-                  event.preventDefault()
-                  importDroppedFiles(event.dataTransfer, g.name)
-                }}
-              >
-                <Icon name={section === 0 ? "layers" : "folder"} size={16} />
-                <span>{tr(g.name)}</span>
-                <small>{g.count}</small>
-              </button>
-            ))}
-            </nav>
-          </div>
-        ))}
-        {updateReadyLine && (
-          <div className="update-ready-slot">
-            <button
-              className="update-ready-line"
-              disabled={restartPending}
-              title={updateReadyLine.title}
-              aria-label={updateReadyLine.title}
-              onClick={restartToUpdate}
-            >
-              <span className="update-ready-dot" aria-hidden="true" />
-              <span className="update-ready-label">
-                {updateReadyLine.head}
-                {updateReadyLine.versionText && <strong className="update-ready-version">{updateReadyLine.versionText}</strong>}
-                {updateReadyLine.tail}
-              </span>
-              <span className="update-ready-action">{restartPending ? tr("正在更新…") : tr("重启并更新")}</span>
-            </button>
-          </div>
-        )}
-        <button
-          className={`user-button${installationId ? " has-installation-id" : ""}`}
-          onClick={() => setSettings(true)}
-          aria-label={installationId ? `${tr("设置")} · ${tr("安装编号")} ${installationId}` : undefined}
-          title={installationId ? `${tr("安装编号")} ${installationId}` : undefined}
-        >
-          <Icon name="user" size={14} />
-          <span>{installationId ? `${installationId.slice(0, 8)}…${installationId.slice(-4)}` : tr("设置")}</span>
-          <Icon name="settings" size={14} />
-        </button>
-      </aside>
+      <Sidebar
+        tr={tr}
+        projects={projects}
+        project={project}
+        switchProject={switchProject}
+        active={active}
+        goTo={goTo}
+        setSelectedIds={setSelectedIds}
+        cardDropSide={cardDropSide}
+        navigation={navigation}
+        expandedSections={expandedSections}
+        setExpandedSections={setExpandedSections}
+        createNamedGroup={createNamedGroup}
+        updateReadyLine={updateReadyLine}
+        restartPending={restartPending}
+        restartToUpdate={restartToUpdate}
+        installationId={installationId}
+        setSettings={setSettings}
+        preview={preview}
+        settings={settings}
+        importDroppedFiles={importDroppedFiles}
+        openGroupMenu={openGroupMenu}
+      />
       <GroupDialogs
         groupRename={groupRename} setGroupRename={setGroupRename}
         groupDeleteConfirm={groupDeleteConfirm} setGroupDeleteConfirm={setGroupDeleteConfirm}
@@ -5055,158 +4956,32 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           })}
         </div>
       )}
-      {deleting && (
-        <div className="modal-layer delete-layer">
-          <div className="delete-modal" role="alertdialog" aria-modal="true">
-            <div className="delete-icon">
-              <Icon name="trash" size={26} />
-            </div>
-            <h3>{tr("移到回收站？")}</h3>
-            <p>{tr("移到回收站的素材保留 90 天，期间可恢复。")}</p>
-            <div className="delete-actions">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={skipConfirm}
-                  onChange={(e) => setSkipConfirm(e.target.checked)}
-                />
-                {tr("不再询问")}</label>
-              <button
-                className="neutral-button"
-                onClick={() => setDeleting(false)}
-              >
-                {tr("取消")}</button>
-              <button className="primary-button" onClick={remove}>
-                {tr("移到回收站")}</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {permanentDeleteIds && (
-        <div className="modal-layer delete-layer">
-          <div className="delete-modal" role="alertdialog" aria-modal="true">
-            <div className="delete-icon">
-              <Icon name="trash" size={26} />
-            </div>
-            <h3>{permanentDeleteIds.length > 1 ? fillNamed("永久删除 {count} 个素材？", { count: permanentDeleteIds.length }) : tr("永久删除素材？")}</h3>
-            <p>{tr("此操作无法撤销。")}</p>
-            <div className="delete-actions">
-              <button className="neutral-button" onClick={() => setPermanentDeleteIds(null)}>
-                {tr("取消")}</button>
-              <button className="primary-button" onClick={confirmPermanentDelete}>
-                {tr("永久删除")}</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {emptyTrashConfirm && (
-        <div className="modal-layer delete-layer">
-          <div className="delete-modal" role="alertdialog" aria-modal="true">
-            <div className="delete-icon">
-              <Icon name="trash" size={26} />
-            </div>
-            <h3>{tr("清空回收站？")}</h3>
-            <p>{tr("回收站中的所有素材将被永久删除。此操作无法撤销。")}</p>
-            <div className="delete-actions">
-              <button className="neutral-button" onClick={() => setEmptyTrashConfirm(false)}>
-                {tr("取消")}</button>
-              <button className="primary-button" onClick={confirmEmptyTrash}>
-                {tr("清空回收站")}</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Task 333 — authorization dialog; since task 385 the queue holds both
-          pairing requests and live deletion requests (pairing first). The key
-          prefix tells the two kinds apart in the shared onResult. */}
-      {authorizationQueue.length > 0 && (
-        <AuthorizationModal
-          requests={authorizationQueue.map(({ kind, row }) => (
-            kind === "pair" ? {
-              key: `pair:${row.id}`,
-              title: "允许这个浏览器扩展连接 GravityPort 吗？",
-              consequence: "允许后，这个扩展可以把网页上生成的图和视频存进素材库。",
-              source: row.knownExtension
-                ? (row.extensionVersion
-                  ? fillNamed("来自：GravityPort Web Capture {version}", { version: row.extensionVersion })
-                  : "来自：GravityPort Web Capture")
-                : "来自：一个浏览器扩展",
-              primaryLabel: "允许连接",
-            } : {
-              key: `delete:${row.id}`,
-              title: row.requesterKind === "jimeng"
-                ? "允许「即梦删除同步」删除这张素材吗？"
-                : (row.requesterName
-                  ? fillNamed("允许 {name} 删除这张素材吗？", { name: row.requesterName })
-                  : "允许一个 AI 助手删除这张素材吗？"),
-              consequence: "允许后，这张素材会被移进回收站。",
-              source: row.requesterKind === "jimeng"
-                ? "来自：即梦删除同步"
-                : (row.requesterName
-                  ? fillNamed("来自：{name}（MCP）", { name: row.requesterName })
-                  : "来自：AI 助手（MCP）"),
-              primaryLabel: "允许删除",
-              // One clock: the countdown runs against the server's expiresAt.
-              timeoutSeconds: Math.max(1, Math.ceil((row.expiresAt - (liveDeleteServerNow || Date.now())) / 1000)),
-            }
-          ))}
-          language={language}
-          onResult={(key, result) => {
-            const [kind, id] = key.startsWith("pair:") ? ["pair", key.slice(5)] : ["delete", key.slice(7)]
-            if (kind === "pair") handlePairDecision(id, result)
-            else handleLiveDeleteDecision(id, result)
-          }}
-        />
-      )}
-      {renameNoticeOpen && (
-        <div className="modal-layer" onClick={(e) => { if (e.target === e.currentTarget) dismissRenameNotice() }}>
-          <div className="delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="rename-notice-title">
-            <div className="delete-icon">
-              <Icon name="info" size={26} />
-            </div>
-            <h3 id="rename-notice-title">{tr("MOSA 已更名为 GravityPort")}</h3>
-            <p>{tr("素材、设置和浏览器扩展均保持不变，无需任何操作。")}</p>
-            <div className="delete-actions">
-              <button
-                className="primary-button"
-                onClick={dismissRenameNotice}
-              >
-                {tr("好")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {schemaNotice && (
-        // Task 350: the post-upgrade check failed. Clicking the backdrop does
-        // NOT dismiss (only 知道了 / Esc does) — the kept backup must be seen.
-        <div className="modal-layer">
-          <div className="delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="schema-upgrade-notice-title">
-            <div className="delete-icon">
-              <Icon name="info" size={26} />
-            </div>
-            <h3 id="schema-upgrade-notice-title">{tr("素材库升级检查未通过")}</h3>
-            <p>{tr("GravityPort 可以继续使用。升级前的备份已保留，请勿删除，并在「设置 > 反馈」中报告此问题。")}</p>
-            <div className="delete-actions">
-              <button
-                className="neutral-button"
-                onClick={() => {
-                  openLibraryFolder(schemaNotice.backupPath, true).catch(() => {
-                    // 404 (file gone) and friends keep the dialog open; the
-                    // existing light toast says so.
-                    notify("无法打开此位置")
-                  })
-                }}
-              >
-                {isMacPlatform() ? tr("在访达中显示备份") : tr("在文件资源管理器中显示备份")}
-              </button>
-              <button className="primary-button" onClick={dismissSchemaUpgradeNotice}>
-                {tr("好")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialogs
+        deleting={deleting}
+        setDeleting={setDeleting}
+        skipConfirm={skipConfirm}
+        setSkipConfirm={setSkipConfirm}
+        remove={remove}
+        permanentDeleteIds={permanentDeleteIds}
+        setPermanentDeleteIds={setPermanentDeleteIds}
+        confirmPermanentDelete={confirmPermanentDelete}
+        emptyTrashConfirm={emptyTrashConfirm}
+        setEmptyTrashConfirm={setEmptyTrashConfirm}
+        confirmEmptyTrash={confirmEmptyTrash}
+        authorizationQueue={authorizationQueue}
+        liveDeleteServerNow={liveDeleteServerNow}
+        language={language}
+        handlePairDecision={handlePairDecision}
+        handleLiveDeleteDecision={handleLiveDeleteDecision}
+        renameNoticeOpen={renameNoticeOpen}
+        dismissRenameNotice={dismissRenameNotice}
+        schemaNotice={schemaNotice}
+        dismissSchemaUpgradeNotice={dismissSchemaUpgradeNotice}
+        notify={notify}
+        isMacPlatform={isMacPlatform}
+        tr={tr}
+        fillNamed={fillNamed}
+      />
       {activeImportReview && !importReviewBlocked && (
         <div
           className="modal-layer import-review-layer"

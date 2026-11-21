@@ -1,12 +1,13 @@
-import { watch, type FSWatcher } from "node:fs";
-import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { createReadStream, watch, type FSWatcher } from "node:fs";
+import { createInterface } from "node:readline";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveSourceLocations } from "./source-locations.js";
 
 const DEFAULT_LOOKBACK_DAYS = 14;
 interface Candidate { projectDir: string; canvasDir: string; sessionPath: string; lastSeenAt: string; }
 interface DiscoveryResult { discovered: unknown[]; candidates: Candidate[]; queued: boolean; }
-interface DiscoveryStatus { sessionsDir: string; enabled: boolean; watching: boolean; polling: boolean; lastScanAt: string | null; lastDiscoveredAt: string | null; lastDiscoveredCount: number; totalDiscovered: number; candidateCount: number; lastError: string | null; }
+interface DiscoveryStatus { sessionsDir: string; enabled: boolean; watching: boolean; polling: boolean; lastScanAt: string | null; lastDiscoveredAt: string | null; lastDiscoveredCount: number; totalDiscovered: number; candidateCount: number; lastError: string | null; lastErrorCode: string | null; }
 interface Discovery { start(): Promise<DiscoveryStatus>; stop(): void; reconcile(): Promise<DiscoveryResult>; scheduleReconcile(sessionPath?: string): void; status(): DiscoveryStatus; }
 
 export function createCowartCanvasDiscovery(options: {
@@ -28,7 +29,7 @@ export function createCowartCanvasDiscovery(options: {
   const dirtySessionPaths = new Set<string>();
   let watcher: FSWatcher | null = null; let poller: ReturnType<typeof setInterval> | null = null; let timer: ReturnType<typeof setTimeout> | null = null;
   let reconciling = false; let reconcileAgain = false; let initialScan = true;
-  const state: Omit<DiscoveryStatus, "watching" | "polling"> = { sessionsDir, enabled: false, lastScanAt: null, lastDiscoveredAt: null, lastDiscoveredCount: 0, totalDiscovered: 0, candidateCount: 0, lastError: null };
+  const state: Omit<DiscoveryStatus, "watching" | "polling"> = { sessionsDir, enabled: false, lastScanAt: null, lastDiscoveredAt: null, lastDiscoveredCount: 0, totalDiscovered: 0, candidateCount: 0, lastError: null, lastErrorCode: null };
 
   async function reconcile(): Promise<DiscoveryResult> {
     if (reconciling) { reconcileAgain = true; return { discovered: [], candidates: [], queued: true }; }
@@ -37,17 +38,19 @@ export function createCowartCanvasDiscovery(options: {
       const candidates = await discoverCowartProjectsFromCodexSessions({ sessionsDir, lookbackDays, cache, dirtySessionPaths, fullScan: initialScan });
       initialScan = false; dirtySessionPaths.clear(); state.candidateCount = candidates.length;
       const known = new Set(knownProjectDirs().filter(Boolean).map((v) => resolve(v)));
-      const discovered: unknown[] = []; let discoveryError: string | null = null;
+      const discovered: unknown[] = []; let discoveryError: { message: string; code: string | null } | null = null;
       for (const candidate of candidates) {
         if (known.has(candidate.projectDir)) continue;
         if (managerDir && candidate.projectDir === managerDir) continue;
         if (dedicatedCanvasDir && candidate.canvasDir === dedicatedCanvasDir) continue;
-        try { const result = await options.onDiscover!({ projectDir: candidate.projectDir, discoveredBy: "codex-cowart-launch", discoveredAt: candidate.lastSeenAt }); known.add(candidate.projectDir); discovered.push((result as Record<string, unknown>)?.canvas || (result as Record<string, unknown>)?.project || candidate); } catch (error) { discoveryError = error instanceof Error ? error.message : String(error); }
+        try { const result = await options.onDiscover!({ projectDir: candidate.projectDir, discoveredBy: "codex-cowart-launch", discoveredAt: candidate.lastSeenAt }); known.add(candidate.projectDir); discovered.push((result as Record<string, unknown>)?.canvas || (result as Record<string, unknown>)?.project || candidate); } catch (error) { discoveryError = { message: error instanceof Error ? error.message : String(error), code: lastErrorCodeOf(error) }; }
       }
       state.lastScanAt = new Date().toISOString(); state.lastDiscoveredCount = discovered.length; state.totalDiscovered += discovered.length;
-      if (discovered.length > 0) state.lastDiscoveredAt = state.lastScanAt; state.lastError = discoveryError;
+      if (discovered.length > 0) state.lastDiscoveredAt = state.lastScanAt;
+      state.lastError = discoveryError?.message || null;
+      state.lastErrorCode = discoveryError?.code || null;
       return { discovered, candidates, queued: false };
-    } catch (error) { state.lastScanAt = new Date().toISOString(); state.lastError = error instanceof Error ? error.message : String(error); throw error; } finally { reconciling = false; if (reconcileAgain) { reconcileAgain = false; scheduleReconcile(); } }
+    } catch (error) { state.lastScanAt = new Date().toISOString(); state.lastError = error instanceof Error ? error.message : String(error); state.lastErrorCode = lastErrorCodeOf(error); throw error; } finally { reconciling = false; if (reconcileAgain) { reconcileAgain = false; scheduleReconcile(); } }
   }
 
   function scheduleReconcile(sessionPath?: string): void {
@@ -85,7 +88,13 @@ export async function discoverCowartProjectsFromCodexSessions(options: {
     if (options.fullScan === true && details.mtimeMs < cutoff && !dirtyPaths.has(sessionPath)) continue;
     const cached = cache.get(sessionPath);
     let projectDirs: string[];
-    if (cached?.mtimeMs === details.mtimeMs && cached?.size === details.size) { projectDirs = cached.projectDirs; } else { projectDirs = await projectDirsFromSession(sessionPath); cache.set(sessionPath, { mtimeMs: details.mtimeMs, size: details.size, projectDirs }); }
+    if (cached?.mtimeMs === details.mtimeMs && cached?.size === details.size) { projectDirs = cached.projectDirs; } else {
+      // Task 436 C: a session file that cannot be read (mid-write, missing
+      // permissions) skips only itself — no cache entry, so the next round
+      // retries it while the rest of this round carries on.
+      try { projectDirs = await projectDirsFromSession(sessionPath); } catch { continue; }
+      cache.set(sessionPath, { mtimeMs: details.mtimeMs, size: details.size, projectDirs });
+    }
     for (const requestedProjectDir of projectDirs) {
       const candidate = await cowartProjectCandidate(requestedProjectDir, sessionPath, details.mtime);
       if (!candidate) continue;
@@ -97,9 +106,11 @@ export async function discoverCowartProjectsFromCodexSessions(options: {
 }
 
 async function projectDirsFromSession(sessionPath: string): Promise<string[]> {
-  const raw = await readFile(sessionPath, "utf8");
   const contextDirs = new Set<string>(); const explicitDirs = new Set<string>(); let openedDefaultCanvas = false;
-  for (const line of raw.split("\n")) {
+  // Task 436 C: stream the session line by line instead of loading the whole
+  // file into memory; the per-line judgment below is unchanged.
+  const reader = createInterface({ input: createReadStream(sessionPath, "utf8"), crlfDelay: Infinity });
+  for await (const line of reader) {
     if (!line.trim()) continue; let event: Record<string, unknown>; try { event = JSON.parse(line); } catch { continue; }
     if (event?.type === "turn_context" && isAbsoluteString((event.payload as Record<string, unknown>)?.cwd)) { contextDirs.add(resolve((event.payload as Record<string, unknown>).cwd as string)); continue; }
     if (event?.type !== "response_item") continue;
@@ -195,6 +206,7 @@ export async function inspectTrustedExternalCanvas(requestedProjectDir: string):
 
 function untrustedExternalCanvas(reason: string, message: string): TrustedExternalCanvasInspection { return { trusted: false, reason, message }; }
 async function statIsDirectory(path: string): Promise<boolean> { try { return (await stat(path)).isDirectory(); } catch { return false; } }
+function lastErrorCodeOf(error: unknown): string | null { const code = (error as NodeJS.ErrnoException | undefined)?.code; return typeof code === "string" && code ? code : null; }
 
 async function recentSessionPaths(sessionsDir: string, lookbackDays: number, fullScan: boolean): Promise<string[]> {
   if (fullScan) return walkJsonlFiles(sessionsDir);

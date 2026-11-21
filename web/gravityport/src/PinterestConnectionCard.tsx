@@ -15,7 +15,7 @@ import {
   type PinterestStatus,
 } from "./pinterest-api.js";
 import { pinterestFormat, pinterestText } from "./pinterest-strings.js";
-import { usePinterestConnection } from "./use-pinterest-connection.js";
+import { pinterestConnectAvailable, usePinterestConnection } from "./use-pinterest-connection.js";
 import type { Language } from "./i18n.js";
 import "./pinterest.css";
 
@@ -23,6 +23,8 @@ export type PinterestConnectionCardViewProps = {
   language: Language;
   /** Null while the status request is in flight. */
   status: PinterestStatus | null;
+  /** False while first connections are closed: 即将上线 replaces the button. */
+  connectAvailable: boolean;
   connecting: boolean;
   connectionError: string;
   disconnecting: boolean;
@@ -38,6 +40,7 @@ export type PinterestConnectionCardViewProps = {
 export function PinterestConnectionCardView({
   language,
   status,
+  connectAvailable,
   connecting,
   connectionError,
   disconnecting,
@@ -60,6 +63,7 @@ export function PinterestConnectionCardView({
       ? pinterestFormat("已连接 {username}", { username: `@${status.username}` }, language)
       : t("已连接");
   } else if (needsReconnect) stateLine = t("需要重新连接");
+  else if (!connectAvailable && !connecting) stateLine = t("即将上线");
   else stateLine = t("未连接");
 
   const connectLabel = needsReconnect ? t("重新连接") : t("连接 Pinterest");
@@ -95,9 +99,9 @@ export function PinterestConnectionCardView({
               <button type="button" className="pinterest-card-primary" disabled>{t("等待浏览器授权…")}</button>
               <button type="button" className="pinterest-card-secondary" onClick={onCancel}>{t("取消")}</button>
             </>
-          ) : (
+          ) : connectAvailable ? (
             <button type="button" className="pinterest-card-primary" onClick={onStart}>{connectLabel}</button>
-          )}
+          ) : null}
         </div>
       </div>
       <div className="pinterest-connection-copy">
@@ -187,6 +191,7 @@ export function PinterestConnectionCard({ language, onStatusChange }: PinterestC
     <PinterestConnectionCardView
       language={language}
       status={status}
+      connectAvailable={pinterestConnectAvailable(status)}
       connecting={connection.phase.kind === "connecting"}
       connectionError={connection.phase.kind === "error" ? connection.phase.message : ""}
       disconnecting={disconnecting}

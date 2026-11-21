@@ -21,6 +21,24 @@ import {
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
+// The desktop client refuses to parse an update manifest larger than this:
+// UPDATE_MANIFEST_MAX_BYTES in desktop/update-service.mjs, enforced when it
+// fetches the feed. Keep the two numbers identical — a manifest the client
+// would discard must never be written. (The desktop constant is not
+// exported, so the value is pinned here; the tests keep both paths honest.)
+export const UPDATE_MANIFEST_MAX_BYTES = 16 * 1024;
+
+// Measures exactly the bytes main() writes to disk, which is what the
+// client's fetch sees. Returns the size so tests can assert headroom.
+export function assertManifestWithinClientLimit(manifest) {
+  const payload = `${JSON.stringify(manifest, null, 2)}\n`;
+  const size = Buffer.byteLength(payload, "utf8");
+  if (size > UPDATE_MANIFEST_MAX_BYTES) {
+    throw new Error(`Update manifest is ${size} bytes, over the ${UPDATE_MANIFEST_MAX_BYTES}-byte client limit (desktop/update-service.mjs UPDATE_MANIFEST_MAX_BYTES). Trim the release notes.`);
+  }
+  return size;
+}
+
 export async function prepareDesktopReleaseManifest({
   version,
   macArtifactPath = "",
@@ -290,7 +308,10 @@ async function main() {
     }),
   });
   const output = resolve(args.output);
-  await writeFile(output, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const payload = `${JSON.stringify(manifest, null, 2)}\n`;
+  // Write guard: refuse oversized manifests before anything lands on disk.
+  assertManifestWithinClientLimit(manifest);
+  await writeFile(output, payload, "utf8");
   console.log(JSON.stringify({ ok: true, output, manifest }, null, 2));
 }
 

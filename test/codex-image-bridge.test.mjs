@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { appendFile, copyFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { appendFile, chmod, copyFile, mkdir, mkdtemp, symlink, utimes, writeFile } from "node:fs/promises";
 import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ test("archives Codex generated images with task metadata and avoids duplicates",
   })}\n`);
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
-  const first = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const first = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(first.imported.length, 1);
   assert.equal(first.imported[0].source.type, "codex-generated");
   assert.equal(first.imported[0].source.codex_task_id, taskId);
@@ -52,7 +53,7 @@ test("archives Codex generated images with task metadata and avoids duplicates",
   assert.equal(first.imported[0].business_fields.width, 1024);
   assert.match(first.imported[0].source.content_sha256, /^[a-f0-9]{64}$/);
 
-  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const second = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(second.imported.length, 0);
   assert.equal(second.skipped[0].reason, "already-archived");
 });
@@ -79,7 +80,7 @@ test("recovers an inline Codex image_generation_call result when generated_image
   ].map((event) => JSON.stringify(event)).join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
-  const first = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const first = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(first.imported.length, 1);
   const asset = first.imported[0];
   assert.equal(asset.prompt, revisedPrompt);
@@ -93,7 +94,7 @@ test("recovers an inline Codex image_generation_call result when generated_image
   assert.equal(asset.source.model, "gpt-5.6-terra");
   assert.equal(asset.ratio, "4:3");
 
-  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const second = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(second.imported.length, 0);
   assert.ok(second.skipped.some((item) => item.reason === "already-archived-session-result"));
 });
@@ -122,8 +123,8 @@ test("skips unchanged Codex candidates without touching the asset store twice", 
   };
   const processedSignatures = new Map();
   const sessionsDir = join(root, "sessions");
-  const first = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir, processedSignatures });
-  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir, processedSignatures });
+  const first = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir, processedSignatures });
+  const second = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir, processedSignatures });
 
   assert.equal(first.skipped[0].reason, "already-archived");
   assert.equal(second.skipped[0].reason, "unchanged");
@@ -153,7 +154,7 @@ test("passes automatic ingest mode and continues after a suppressed Codex image"
     },
   };
 
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir: join(root, "sessions") });
+  const result = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir: join(root, "sessions") });
   assert.equal(calls.length, 2);
   assert.deepEqual(calls.map((call) => call.options), [
     { trustedSourceRoots: [imagesDir], ingestMode: "automatic" },
@@ -185,7 +186,7 @@ test("retries a deterministic Codex asset id collision through automatic identit
     },
   };
 
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir: join(root, "sessions") });
+  const result = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir: join(root, "sessions") });
   assert.equal(assetIds.length, 2);
   assert.notEqual(assetIds[1], assetIds[0]);
   assert.match(assetIds[1], new RegExp(`^${assetIds[0]}-[a-f0-9]{8}$`));
@@ -212,7 +213,7 @@ test("upgrades an archived task instruction to the matching image generation pro
   })}\n`);
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
-  await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   const [fallbackAsset] = await store.listAssets({ projectId: "default" });
   assert.equal(fallbackAsset.source.prompt_status, "task-user-prompt");
 
@@ -225,7 +226,7 @@ test("upgrades an archived task instruction to the matching image generation pro
     timestamp: "2026-07-18T22:55:27.133Z",
     payload: { type: "image_generation_end", call_id: "exec-upgrade", saved_path: imagePath, revised_prompt: revisedPrompt },
   })}\n`);
-  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const second = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.deepEqual(second.updated, [fallbackAsset.id]);
   const upgraded = await store.getAsset("default", fallbackAsset.id);
   assert.equal(upgraded.prompt, revisedPrompt);
@@ -267,7 +268,7 @@ test("does not downgrade revised prompt provenance when only task fallback remai
     },
   });
 
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const result = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.deepEqual(result.updated, []);
   const asset = await store.getAsset("default", "verified-provenance");
   assert.equal(asset.prompt, "Verified revised prompt");
@@ -297,7 +298,7 @@ test("archives Codex images with the user's message in source and business field
   ].map((event) => JSON.stringify(event)).join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const result = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(result.imported.length, 1);
   const asset = result.imported[0];
   assert.equal(asset.source.user_message, "帮我做一张书封");
@@ -323,7 +324,7 @@ test("reprocesses an archived Codex image when the session gains a user message 
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
   const processedSignatures = new Map();
-  const options = { store, imagesDir, sessionsDir, processedSignatures };
+  const options = { store, imagesDir, sessionsDir, processedSignatures, stableWindowMs: 0 };
   const first = await reconcileCodexGeneratedImages(options);
   assert.equal(first.imported.length, 1);
   const assetId = first.imported[0].id;
@@ -361,7 +362,7 @@ test("does not guess a user message from the task fallback", async (t) => {
     payload: { type: "message", role: "user", content: [{ type: "input_text", text: "帮我做一张书封" }] },
   })}\n`);
 
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir, threadHistoryPath: join(root, "missing.sqlite") });
+  const result = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir, threadHistoryPath: join(root, "missing.sqlite") });
   assert.deepEqual(result.updated, []);
   const asset = await store.getAsset("default", "no-guess");
   assert.equal(asset.source.user_message, undefined);
@@ -387,7 +388,7 @@ test("archives Codex images from the thread-history database with the turn's use
   fixture.close();
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir, threadHistoryPath: fixture.dbPath });
+  const result = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir, threadHistoryPath: fixture.dbPath });
   assert.equal(result.imported.length, 1);
   const asset = result.imported[0];
   assert.equal(asset.prompt, "Book cover, warm palette, bold serif title.");
@@ -411,7 +412,7 @@ test("upgrades an archived Codex image once the thread-history database appears"
   await writeFile(imagePath, await pngFixture(512, 512));
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
-  const options = { store, imagesDir, sessionsDir, threadHistoryPath: join(root, "absent", "thread_history_1.sqlite") };
+  const options = { store, imagesDir, sessionsDir, stableWindowMs: 0, threadHistoryPath: join(root, "absent", "thread_history_1.sqlite") };
   const first = await reconcileCodexGeneratedImages(options);
   assert.equal(first.imported.length, 1);
   const assetId = first.imported[0].id;
@@ -462,7 +463,7 @@ test("keeps an existing Codex user message even when the session has a newer one
     payload: { type: "message", role: "user", content: [{ type: "input_text", text: "后来的新指令" }] },
   })}\n`);
 
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const result = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.deepEqual(result.updated, []);
   const asset = await store.getAsset("default", "keep-msg");
   assert.equal(asset.source.user_message, "第一次的指令");
@@ -490,7 +491,7 @@ test("does not infer an unmatched image model from the task's final turn", async
   ].map((event) => JSON.stringify(event)).join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const result = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(result.imported.length, 1);
   assert.equal(result.imported[0].source.prompt_status, "task-user-prompt");
   assert.equal(result.imported[0].source.model, null);
@@ -504,7 +505,7 @@ test("watches a later Codex image and stores fallback metadata when no session i
   const imagesDir = join(root, "generated_images");
   const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f05";
   const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: imagesDir });
-  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir: join(root, "sessions"), debounceMs: 10, pollIntervalMs: 100 });
+  const bridge = createCodexImageBridge({ stableWindowMs: 0, store, imagesDir, sessionsDir: join(root, "sessions"), debounceMs: 10, pollIntervalMs: 100 });
   t.after(() => bridge.stop());
   await bridge.start();
 
@@ -536,7 +537,7 @@ test("bridge caches the session index but refreshes metadata after a matching se
   await writeFile(unrelatedPath, "{}\n");
 
   const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
-  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, pollIntervalMs: 60_000 });
+  const bridge = createCodexImageBridge({ stableWindowMs: 0, store, imagesDir, sessionsDir, pollIntervalMs: 60_000 });
   t.after(() => bridge.stop());
   await bridge.start();
   await rm(unrelatedPath);
@@ -572,7 +573,7 @@ test("runtime handoff drains the current Codex import without starting the remai
     completed += 1;
     return asset;
   };
-  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir: join(root, "sessions"), signal: controller.signal });
+  const bridge = createCodexImageBridge({ stableWindowMs: 0, store, imagesDir, sessionsDir: join(root, "sessions"), signal: controller.signal });
   t.after(() => bridge.stop());
   await bridge.start();
   await bridge.stop();
@@ -655,7 +656,7 @@ test("keeps user-edited prompts across Codex reconciliation while untouched asse
   await writeSession("019f776f-f6d5-7692-b9e5-dd280fc09f11", "call-edit", pathA, promptA);
   await writeSession("019f776f-f6d5-7692-b9e5-dd280fc09f12", "call-keep", pathB, promptB);
 
-  const first = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const first = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(first.imported.length, 2);
   const assetA = first.imported.find((asset) => asset.source.codex_task_id === "019f776f-f6d5-7692-b9e5-dd280fc09f11");
   const assetB = first.imported.find((asset) => asset.source.codex_task_id === "019f776f-f6d5-7692-b9e5-dd280fc09f12");
@@ -669,7 +670,7 @@ test("keeps user-edited prompts across Codex reconciliation while untouched asse
   await writeSession("019f776f-f6d5-7692-b9e5-dd280fc09f11", "call-edit", pathA, revisedA);
   await writeSession("019f776f-f6d5-7692-b9e5-dd280fc09f12", "call-keep", pathB, revisedB);
 
-  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const second = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.deepEqual(second.updated, [assetB.id], "only the untouched asset is rewritten");
   const afterA = await store.getAsset("default", assetA.id);
   const afterB = await store.getAsset("default", assetB.id);
@@ -699,7 +700,7 @@ test("a user-renamed Codex asset keeps its theme while its prompt still upgrades
   const promptV1 = "Use case: stylized-concept\nAsset type: neon harbor skyline\nPrimary request: first revision of the prompt.";
   await writeSession(promptV1);
 
-  const first = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const first = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(first.imported.length, 1);
   const asset = first.imported[0];
 
@@ -708,7 +709,7 @@ test("a user-renamed Codex asset keeps its theme while its prompt still upgrades
 
   const promptV2 = "Use case: stylized-concept\nAsset type: neon harbor skyline at dawn\nPrimary request: second revision of the prompt.";
   await writeSession(promptV2);
-  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const second = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.ok(second.updated.includes(asset.id), "the prompt upgrade must still happen");
 
   const after = await store.getAsset("default", asset.id);
@@ -745,7 +746,7 @@ test("a Codex byte rematch of its own archived image upgrades it from the newer 
     type: "response_item",
     payload: { type: "message", role: "user", content: [{ type: "input_text", text: "First pass prompt" }] },
   })}\n`);
-  const first = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const first = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(first.imported.length, 1);
   const archived = first.imported[0];
   assert.equal(archived.source.prompt_status, "task-user-prompt");
@@ -758,7 +759,7 @@ test("a Codex byte rematch of its own archived image upgrades it from the newer 
     { type: "event_msg", timestamp: "2026-10-29T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "call-copy", saved_path: imagePathB, revised_prompt: "Use case: stylized-concept\nAsset type: upgraded remaster\nPrimary request: sharper second pass of the same image." } },
   ].map((event) => JSON.stringify(event)).join("\n") + "\n");
 
-  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const second = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(second.imported.length, 0);
   assert.equal(second.skipped.some((item) => item.reason === "already-archived-same-content"), true);
   assert.deepEqual(second.updated, [archived.id]);
@@ -775,7 +776,7 @@ test("a Codex byte rematch of its own archived image upgrades it from the newer 
   assert.equal(taskBOccurrence.message_id, "call-copy");
   assert.equal(taskBOccurrence.source_path, imagePathB);
 
-  const third = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const third = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(third.imported.length, 0);
   assert.deepEqual(third.updated, [], "a second identical pass writes nothing");
   const reread = await store.getAsset("default", archived.id);
@@ -819,7 +820,7 @@ test("a Codex byte rematch of another channel's image only records an occurrence
     { type: "event_msg", timestamp: "2026-10-29T10:00:00.000Z", payload: { type: "image_generation_end", call_id: "call-web-copy", saved_path: imagePath, revised_prompt: "Codex revised prompt that ranks higher and must not land." } },
   ].map((event) => JSON.stringify(event)).join("\n") + "\n");
 
-  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const result = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(result.imported.length, 0);
   assert.equal(result.skipped.some((item) => item.reason === "already-archived-same-content"), true);
   assert.equal(result.updated.length, 0);
@@ -833,8 +834,214 @@ test("a Codex byte rematch of another channel's image only records an occurrence
   assert.equal(codexOccurrences.length, 1);
   assert.equal(codexOccurrences[0].conversation_id, taskId);
 
-  const second = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir });
+  const second = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
   assert.equal(second.updated.length, 0);
   const reread = await store.getAsset("default", web.asset.id);
   assert.equal(reread.source.capture_occurrences.filter((entry) => entry.provider === "codex").length, 1, "the same observation is recorded once");
+});
+
+test("defers a Codex image written inside the stability window and archives it once unchanged", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-stable-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f21";
+  const imagePath = join(imagesDir, taskId, "late-write.png");
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(imagePath, await pngFixture(320, 200));
+
+  let clock = 1_000_000_000;
+  const nowMs = () => clock;
+  // 文件「刚写完」：mtime 落在稳定窗口内。
+  await utimes(imagePath, new Date(clock - 500), new Date(clock - 500));
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  const processedSignatures = new Map();
+  const deferredObservations = new Map();
+  const options = { store, imagesDir, sessionsDir, processedSignatures, deferredObservations, stableWindowMs: 2000, nowMs };
+
+  const first = await reconcileCodexGeneratedImages(options);
+  assert.equal(first.imported.length, 0);
+  assert.deepEqual(first.skipped, [{ path: imagePath, reason: "not-ready" }]);
+  assert.equal(first.deferred, 1);
+  assert.equal(processedSignatures.size, 0, "a deferred file must not be recorded as processed");
+
+  // 时钟推过稳定窗口、文件没变：再扫一轮收进。
+  clock += 2000;
+  const second = await reconcileCodexGeneratedImages(options);
+  assert.equal(second.imported.length, 1);
+  assert.equal(second.imported[0].source.codex_task_id, taskId);
+  assert.ok(processedSignatures.has(imagePath));
+
+  // 中途文件变大（还在写）：重新计时，这一轮仍不收。
+  clock += 2000;
+  await writeFile(imagePath, await pngFixture(320, 480));
+  await utimes(imagePath, new Date(clock - 100), new Date(clock - 100));
+  const third = await reconcileCodexGeneratedImages(options);
+  assert.equal(third.imported.length, 0);
+  assert.deepEqual(third.skipped, [{ path: imagePath, reason: "not-ready" }]);
+  assert.equal(third.deferred, 1);
+
+  // 再推过一个窗口：这份候选处理完（同路径已归档，不再新建素材）。
+  clock += 2000;
+  const fourth = await reconcileCodexGeneratedImages(options);
+  assert.equal(fourth.imported.length, 0);
+  assert.deepEqual(fourth.skipped, [{ path: imagePath, reason: "already-archived" }]);
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
+});
+
+test("archives a Codex image whose mtime is already outside the stability window immediately", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-old-mtime-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f22";
+  const imagePath = join(imagesDir, taskId, "settled.png");
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(imagePath, await pngFixture(320, 200));
+
+  const clock = 1_000_000_000;
+  // 修改时间早于稳定窗口：第一轮就收，不许给正常情况加延迟。
+  await utimes(imagePath, new Date(clock - 60_000), new Date(clock - 60_000));
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  const result = await reconcileCodexGeneratedImages({ store, imagesDir, sessionsDir, stableWindowMs: 2000, nowMs: () => clock });
+  assert.equal(result.imported.length, 1);
+  assert.deepEqual(result.skipped, []);
+});
+
+test("schedules an automatic rescan roughly one stability window after a defer", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-rescan-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f23";
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, stableWindowMs: 60, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(() => bridge.stop());
+  // Task 452: start() no longer creates Codex's images root, so the test makes
+  // it first (a real Codex install has it) to keep the watcher armed.
+  await mkdir(imagesDir, { recursive: true });
+  await bridge.start();
+  await mkdir(join(imagesDir, taskId), { recursive: true });
+  await writeFile(join(imagesDir, taskId, "rescan.png"), await pngFixture(64, 64));
+  // 推迟后不许再等人来扫：大约一个稳定窗口后要自己再扫一轮并收进。
+  await waitFor(() => bridge.status().totalImported === 1, 4000);
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
+});
+
+test("keeps the Codex bridge enabled when the first scan fails", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-start-err-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const imagePath = join(imagesDir, "task-b", "first-scan.png");
+  await mkdir(join(imagesDir, "task-b"), { recursive: true });
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(imagePath, await pngFixture(64, 64));
+  await chmod(imagesDir, 0o000);
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(async () => { await bridge.stop(); await chmod(imagesDir, 0o755).catch(() => {}); await rm(root, { recursive: true, force: true }); });
+
+  const status = await bridge.start();
+  assert.equal(status.enabled, true);
+  assert.match(String(status.lastError || ""), /EACCES/);
+  assert.equal(status.lastErrorCode, "EACCES");
+  await chmod(imagesDir, 0o755);
+  await bridge.reconcile();
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
+  const after = bridge.status();
+  assert.equal(after.enabled, true);
+  assert.equal(after.lastError, null);
+  assert.equal(after.lastErrorCode, null);
+  assert.equal(after.polling, true);
+});
+
+test("reports sourceFound from the scan's own walks", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-source-found-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  // Neither data root exists yet: the walks hit their ENOENT branch and the
+  // scan stays a clean no-op, so the card can tell「没装」from「没新图」.
+  const missing = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
+  assert.equal(missing.imported.length, 0);
+  assert.equal(missing.sourceFound, false);
+
+  await mkdir(join(imagesDir, "task-found"), { recursive: true });
+  await writeFile(join(imagesDir, "task-found", "found.png"), await pngFixture(64, 64));
+  const present = await reconcileCodexGeneratedImages({ stableWindowMs: 0, store, imagesDir, sessionsDir });
+  assert.equal(present.imported.length, 1);
+  assert.equal(present.sourceFound, true);
+
+  // The running bridge reports the same through status().
+  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(() => bridge.stop());
+  const status = await bridge.start();
+  assert.equal(status.enabled, true);
+  assert.equal(status.lastError, null);
+  assert.equal(status.sourceFound, true);
+});
+
+test("bridge start() does not create the Codex images root and reports sourceFound:false until it appears", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-no-mkdir-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(() => bridge.stop());
+  const started = await bridge.start();
+  assert.equal(started.enabled, true);
+  assert.equal(started.lastError, null);
+  assert.equal(started.lastErrorCode, null);
+  assert.equal(started.sourceFound, false);
+  assert.equal(existsSync(imagesDir), false, "start() must not create Codex's images directory");
+  assert.equal(started.watching, false);
+
+  // Codex shows up later: the next scan flips sourceFound, imports the image
+  // and arms the watchers.
+  await mkdir(join(imagesDir, "task-late"), { recursive: true });
+  await writeFile(join(imagesDir, "task-late", "late.png"), await pngFixture(64, 64));
+  const result = await bridge.reconcile();
+  assert.equal(result.imported.length, 1);
+  const status = bridge.status();
+  assert.equal(status.sourceFound, true);
+  assert.equal(status.lastError, null);
+  assert.equal(status.watching, true);
+});
+
+test("pairs a Codex image with its own generation event when the images dir is reached through a symlink", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-symlink-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const projectRoot = join(root, "project");
+  const managerDir = join(projectRoot, "mosa");
+  const realImagesDir = join(root, "real-images");
+  const linkedImagesDir = join(root, "linked-images");
+  const sessionsDir = join(root, "sessions");
+  const taskId = "019f776f-f6d5-7692-b9e5-dd280fc09f31";
+  await mkdir(join(realImagesDir, taskId), { recursive: true });
+  await symlink(realImagesDir, linkedImagesDir);
+  await writeFile(join(realImagesDir, taskId, "linked.png"), await pngFixture(320, 200));
+  // 会话里记的是真实路径写法，不是软链写法。
+  const realSpelling = join(realImagesDir, taskId, "linked.png");
+  const revisedPrompt = "Asset type: symlink pairing fixture\nPrimary request: pair by the real path spelling.";
+  await mkdir(sessionsDir, { recursive: true });
+  await writeFile(join(sessionsDir, `rollout-test-${taskId}.jsonl`), `${JSON.stringify({
+    type: "event_msg",
+    timestamp: "2026-11-17T10:00:00.000Z",
+    payload: { type: "image_generation_end", call_id: "linked", saved_path: realSpelling, revised_prompt: revisedPrompt },
+  })}\n`);
+
+  const store = createAssetStore({ projectRoot, managerDir, codexImagesDir: linkedImagesDir });
+  const result = await reconcileCodexGeneratedImages({ store, imagesDir: linkedImagesDir, sessionsDir, stableWindowMs: 0 });
+  assert.equal(result.imported.length, 1);
+  assert.equal(result.imported[0].prompt, revisedPrompt);
+  assert.equal(result.imported[0].source.prompt_status, "image-generation-revised-prompt");
 });

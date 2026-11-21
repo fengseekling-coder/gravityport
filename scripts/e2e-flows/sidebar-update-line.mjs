@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { prepareCdpReload, reloadCdpAndWaitForApp, waitForCdpExpression } from "./_shared.mjs";
 
 export const name = "sidebar-update-line";
 export const description =
@@ -231,15 +232,23 @@ export async function run(ctx) {
 // scope without touching desktop/). The interrupted query still answers null
 // — a final reload makes the App ask the doubles.
 async function installUpdateDoubles(cdp, main) {
-  await main.send("Debugger.enable");
-  const breakpoint = await main.send("Debugger.setBreakpointByUrl", {
-    urlRegex: ".*desktop/main\\.mjs$",
-    lineNumber: GET_UPDATE_READY_BREAKPOINT_LINE,
-    columnNumber: 0,
-  });
-  const paused = waitForPaused(main);
+  // Prepare reload navigation tracking while the main process is not paused.
+  const reload = await prepareCdpReload(cdp);
+  let breakpoint = null;
+  let breakpointHit = false;
   try {
-    await reloadAndSettle(cdp);
+    await main.send("Debugger.enable");
+    breakpoint = await main.send("Debugger.setBreakpointByUrl", {
+      urlRegex: ".*desktop/main\\.mjs$",
+      lineNumber: GET_UPDATE_READY_BREAKPOINT_LINE,
+      columnNumber: 0,
+    });
+    const paused = waitForPaused(main);
+    paused.then(() => { breakpointHit = true; }, () => {});
+    // Do NOT wait for the app shell before `await paused`: on reload main.tsx
+    // calls get-client-token -> trustedRendererEvent BEFORE <App /> mounts,
+    // pausing the main process and stalling CDP Runtime.evaluate until resumed.
+    reload.trigger();
     const params = await paused;
     const probe = await main.send("Debugger.evaluateOnCallFrame", {
       callFrameId: params.callFrames[0].callFrameId,
@@ -257,11 +266,15 @@ async function installUpdateDoubles(cdp, main) {
     if (swap.result?.value !== "replaced") {
       throw new Error("registering the QA doubles failed: " + JSON.stringify(swap.result?.value));
     }
+  } catch (error) {
+    reload.cancel();
+    throw new Error(`${error.message} (breakpointHit=${breakpointHit})`);
   } finally {
     // Never leave the main process frozen, whatever went wrong above.
-    if (breakpoint.breakpointId) await main.send("Debugger.removeBreakpoint", { breakpointId: breakpoint.breakpointId }).catch(() => {});
+    if (breakpoint?.breakpointId) await main.send("Debugger.removeBreakpoint", { breakpointId: breakpoint.breakpointId }).catch(() => {});
     await main.send("Debugger.resume").catch(() => {});
   }
+  await reload.waitForApp({ label: "app shell after reload" });
 }
 
 function inspectLine() {
@@ -377,32 +390,11 @@ async function setPreferences(cdp, overrides) {
 }
 
 async function reloadAndSettle(cdp) {
-  // In the GUI-launcher (Launch Services) environment a CDP Page.reload kills
-  // the hidden window's renderer; a plain in-page location.reload() is a
-  // normal navigation and survives. The evaluate's own answer dies with the
-  // navigation — fire it and poll the DOM instead of awaiting it.
-  cdp.evaluate("location.reload()").catch(() => {});
-  await waitForExpression(cdp, `Boolean(document.querySelector('.app'))`, "app shell after reload");
+  await reloadCdpAndWaitForApp(cdp, { label: "app shell after reload" });
 }
 
 async function waitForExpression(cdp, expression, label, timeoutMs = 20000) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError = null;
-  while (Date.now() < deadline) {
-    try {
-      // A reload can strand an evaluate on the detached frame forever; drop
-      // stalled calls and keep polling instead of waiting on them.
-      const value = await Promise.race([
-        cdp.evaluate(expression),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("evaluate stalled")), 1500)),
-      ]);
-      if (value === true) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await sleep(200);
-  }
-  throw new Error(`timed out waiting for ${label}${lastError ? `: ${lastError.message}` : ""}`);
+  await waitForCdpExpression(cdp, expression, label, { timeoutMs });
 }
 
 function assertEqual(actual, expected, label) {

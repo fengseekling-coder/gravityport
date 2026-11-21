@@ -158,15 +158,18 @@ function topPaginationSource(targetCardId) {
     const unsettledAfterMeasurement = (await countUnsettled()).unsettled;
 
     // 5. 再次滚到底部，验证翻页机制未卡死，能正常继续向下翻页加载
+    // Keep scrolling for the whole wait (same as step 2): a page that lands
+    // after the last nudge would otherwise read as pagination being stuck.
     const loadedBeforeScroll = loadedCount();
-    for (let guard = 0; guard < 25; guard += 1) {
+    const resumeDeadline = Date.now() + 30000;
+    while (loadedCount() <= loadedBeforeScroll && Date.now() < resumeDeadline) {
       scroller.scrollTop = scroller.scrollHeight;
       scroller.dispatchEvent(new Event('scroll'));
-      if (loadedCount() > loadedBeforeScroll) break;
       await sleep(200);
     }
     const finalLoaded = loadedCount();
     const paginationContinued = finalLoaded > loadedBeforeScroll;
+    if (!paginationContinued) throw new Error('Timed out waiting for pagination to continue (' + finalLoaded + ' loaded, was ' + loadedBeforeScroll + ')');
 
     return {
       topLoaded,

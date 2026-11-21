@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { once } from "node:events";
 import { access, mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
@@ -125,6 +125,7 @@ test("starts, identifies itself, stops idempotently, and restarts", async (t) =>
   const authHeaders = { "x-mosa-client-token": first.clientToken };
   const bridges = await (await fetch(`${first.url}/api/bridges`, { headers: authHeaders })).json();
   assert.equal(bridges.cowart.sources[0].projectDir, options.cowartProjectDir);
+  assert.equal(bridges.homeDir, homedir(), "task 452: display-only home directory for the Connections card");
   assert.equal(typeof bridges.codex.watchingImages, "boolean");
   assert.equal(typeof bridges.codex.watchingSessions, "boolean");
   assert.equal(typeof bridges.codex.pendingSessionResults, "number");
