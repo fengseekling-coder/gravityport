@@ -3,7 +3,11 @@
   "unreleased": {
     "zh": {
       "new": [
-        "在 Chrome 中使用 ChatGPT 的 Dot 时，Dot 发出的图片会自动收进素材库：提示词记录你对 Dot 提出的要求，Dot 的说明一并保存。"
+        "在 Chrome 中使用 ChatGPT 的 Dot 时，Dot 发出的图片会自动收进素材库：提示词记录你对 Dot 提出的要求，Dot 的说明一并保存。",
+        "设置 →「连接」新增「本机 AI 工具」，显示 Codex、Grok、Cowart 画布的收录状态；无法收录时说明原因和处理方法。"
+      ],
+      "improved": [
+        "导入图片后，缩略图生成得更快。"
       ],
       "fixed": [
         "Codex、Grok 正在保存的图片和视频会等写完再收进素材库，不再收进半张图。",
@@ -11,12 +15,17 @@
         "某个会话记录读不了时，其余 Cowart 画布照常收进素材库。",
         "Codex 图片文件夹放在别处、用链接指过去时，图片也能配上对应的提示词。",
         "移动素材库后，旧素材库会先保留，等新位置的素材库确认能正常打开后再移到系统废纸篓，不再直接删除。",
-        "导入的图片和参考图会先确实写进硬盘，再记入素材库；突然断电或死机时，不会留下空白的图片文件。"
+        "导入的图片和参考图会先确实写进硬盘，再记入素材库；突然断电或死机时，不会留下空白的图片文件。",
+        "从 Codex 收图更稳：建立硬链接失败时会自动改为复制，不再漏收。"
       ]
     },
     "en": {
       "new": [
-        "Images that ChatGPT Dot sends in Chrome are now archived automatically, with your request to Dot as the prompt and Dot’s description saved alongside."
+        "Images that ChatGPT Dot sends in Chrome are now archived automatically, with your request to Dot as the prompt and Dot’s description saved alongside.",
+        "Settings → Connect now has a Local AI tools card that shows whether Codex, Grok and Cowart canvases are being archived, and explains the cause and the fix when they are not."
+      ],
+      "improved": [
+        "Thumbnails appear faster after importing images."
       ],
       "fixed": [
         "Images and videos that Codex or Grok is still saving are archived once complete, never half-written.",
@@ -24,7 +33,8 @@
         "One unreadable session record no longer stops other Cowart canvases from being archived.",
         "Codex images pair with the right prompt when the images folder is linked from another location.",
         "After moving the library, the old library is now kept until the relocated library has been confirmed to open, then moved to the system trash instead of being deleted immediately.",
-        "Imported images and reference images are now written to disk before they are added to the library, so a sudden power loss or crash no longer leaves an empty image file."
+        "Imported images and reference images are now written to disk before they are added to the library, so a sudden power loss or crash no longer leaves an empty image file.",
+        "Archiving from Codex is more reliable: when a hard link can't be created, the image is copied instead of being skipped."
       ]
     }
   },
