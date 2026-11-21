@@ -528,6 +528,9 @@ test("task 346 contract: the quiet switch literal appears only in scripts/packag
         continue;
       }
       if (relative === "scripts/packaged-smoke.mjs" || relative.startsWith("test/")) continue;
+      // task 449: launch-isolated.sh in the rehearsal tooling sends the same
+      // packaged quiet switch (it lived outside the repo before task 449).
+      if (relative === "scripts/release-rehearsal/launch-isolated.sh") continue;
       if (!scannedExtensions.test(entry.name)) continue;
       if (readFileSync(join(repoRoot, relative), "utf8").includes("--gravityport-qa-quiet")) offenders.push(relative);
     }

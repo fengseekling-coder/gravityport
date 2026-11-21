@@ -284,7 +284,7 @@ export function createHookHarness(payload, conversationId = "conversation-test",
     setTimeout,
     clearTimeout,
     document: { documentElement, addEventListener: () => {} },
-    location: { origin: "https://chatgpt.com", pathname: `/c/${conversationId}` },
+    location: { origin: "https://chatgpt.com", pathname: options.pathname || `/c/${conversationId}` },
     window,
   };
   vm.runInNewContext(hookSourceWithInternals, sandbox, { filename: "page-hook.js" });
@@ -300,6 +300,7 @@ export function createHookHarness(payload, conversationId = "conversation-test",
   return {
     events,
     internals: sandbox.__mosaPageHookInternals || null,
+    window,
     requestedUrls,
     requestedInits,
     createdObjectUrls,

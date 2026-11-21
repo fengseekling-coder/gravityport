@@ -819,9 +819,14 @@ async function librarySnapshot(libraryDir) {
 // CI the sibling path resolves to this same checkout (the repository is
 // cloned into a folder named gravityport), so there is no older code to run.
 const mainCheckoutStore = join(mainCheckout, "lib", "sqlite-asset-store.mjs");
+const mainCheckoutSchemaModule = join(mainCheckout, "lib", "sqlite-store", "schema.mjs");
 const mainCheckoutSchemaVersion = (() => {
   if (resolve(mainCheckout) === resolve(repositoryRoot) || !existsSync(mainCheckoutStore)) return null;
-  const match = readFileSync(mainCheckoutStore, "utf8").match(/export const CURRENT_SCHEMA_VERSION = (\d+);/);
+  // Task 445 moved CURRENT_SCHEMA_VERSION into lib/sqlite-store/schema.mjs; once
+  // the main checkout has that split, read the version from there instead.
+  const versionRegex = /export const CURRENT_SCHEMA_VERSION = (\d+);/;
+  const match = readFileSync(mainCheckoutStore, "utf8").match(versionRegex)
+    ?? (existsSync(mainCheckoutSchemaModule) ? readFileSync(mainCheckoutSchemaModule, "utf8").match(versionRegex) : null);
   return match ? Number(match[1]) : null;
 })();
 const mainCheckoutLoadSkip = (() => {

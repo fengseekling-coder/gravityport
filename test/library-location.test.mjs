@@ -411,11 +411,8 @@ describe("packaged userData identity contract", () => {
     assert.doesNotMatch(whitelist, /productName/);
   });
 
-  it("desktop/main.mjs documents the real userData rule instead of the forge claim", async () => {
-    const source = await readFile(join(repositoryRoot, "desktop", "main.mjs"), "utf8");
-    assert.match(source, /productName if present, otherwise name/);
-    assert.doesNotMatch(source, /forge packagerConfig name \("MOSA"\)/);
-  });
+  // 任务 444：删掉「desktop/main.mjs documents the real userData rule instead of
+  // the forge claim」用例——它只钉 main.mjs 的注释文字，Claude 已定删除。
 });
 
 describe("library folder name constants", () => {

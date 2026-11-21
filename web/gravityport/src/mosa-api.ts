@@ -607,6 +607,119 @@ export async function requestWebCaptureRetry(): Promise<number> {
   return Math.max(0, Number(data.retryRequestId || 0))
 }
 
+// Task 452 — GET /api/bridges, the capture snapshot behind the Settings → 连接
+// 本机 AI 工具 card. Field names follow the status() shapes in
+// lib/codex-image-bridge.ts, lib/grok-media-bridge.ts and
+// lib/cowart-bridge-manager.ts. Every field is normalized here so a missing
+// or malformed field degrades to a default instead of crashing the card.
+
+/** Codex / Grok share one status shape (Grok leaves imagesDir empty). */
+export type MosaBridgeToolStatus = {
+  enabled: boolean
+  lastScanAt: string | null
+  lastImportedAt: string | null
+  totalImported: number
+  lastError: string | null
+  lastErrorCode: string | null
+  lastWarning: string | null
+  /** Whether the tool's data folders existed at the last scan; null before the first scan. */
+  sourceFound: boolean | null
+  imagesDir: string
+  sessionsDir: string
+}
+
+export type MosaBridgeCowartSource = {
+  projectDir: string
+  trusted: boolean
+  lastError: string | null
+  lastErrorCode: string | null
+}
+
+export type MosaBridgeCowartStatus = {
+  enabled: boolean
+  lastScanAt: string | null
+  registeredCount: number
+  monitoredCount: number
+  lastError: string | null
+  lastErrorCode: string | null
+  sources: MosaBridgeCowartSource[]
+}
+
+export type MosaBridgeDiscoveryStatus = {
+  lastError: string | null
+  lastErrorCode: string | null
+}
+
+export type MosaBridgesStatus = {
+  /** The user's home directory, only used to show paths as "~/…". */
+  homeDir: string
+  codex: MosaBridgeToolStatus
+  grok: MosaBridgeToolStatus
+  cowart: MosaBridgeCowartStatus
+  cowartDiscovery: MosaBridgeDiscoveryStatus
+}
+
+function serverTimeString(value: unknown): string | null {
+  return typeof value === "string" && value && Number.isFinite(Date.parse(value)) ? value : null
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null
+}
+
+function normalizeBridgeToolStatus(input: JsonValue): MosaBridgeToolStatus {
+  const row = (input && typeof input === "object" && !Array.isArray(input) ? input : {}) as JsonValue
+  return {
+    enabled: row.enabled === true,
+    lastScanAt: serverTimeString(row.lastScanAt),
+    lastImportedAt: serverTimeString(row.lastImportedAt),
+    totalImported: Math.max(0, Number(row.totalImported || 0)),
+    lastError: nullableString(row.lastError),
+    lastErrorCode: nullableString(row.lastErrorCode),
+    lastWarning: nullableString(row.lastWarning),
+    sourceFound: row.sourceFound === true ? true : row.sourceFound === false ? false : null,
+    imagesDir: String(row.imagesDir || ""),
+    sessionsDir: String(row.sessionsDir || ""),
+  }
+}
+
+function normalizeBridgeCowartStatus(input: JsonValue): MosaBridgeCowartStatus {
+  const row = (input && typeof input === "object" && !Array.isArray(input) ? input : {}) as JsonValue
+  const sources = Array.isArray(row.sources) ? row.sources : []
+  return {
+    enabled: row.enabled === true,
+    lastScanAt: serverTimeString(row.lastScanAt),
+    registeredCount: Math.max(0, Number(row.registeredCount || 0)),
+    monitoredCount: Math.max(0, Number(row.monitoredCount || 0)),
+    lastError: nullableString(row.lastError),
+    lastErrorCode: nullableString(row.lastErrorCode),
+    sources: sources.map((entry: unknown) => {
+      const source = (entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {}) as JsonValue
+      return {
+        projectDir: String(source.projectDir || ""),
+        trusted: source.trusted === true,
+        lastError: nullableString(source.lastError),
+        lastErrorCode: nullableString(source.lastErrorCode),
+      }
+    }),
+  }
+}
+
+export async function fetchBridgeStatus(signal?: AbortSignal): Promise<MosaBridgesStatus> {
+  const data = await requestJson<Record<string, JsonValue>>("/api/bridges", { signal })
+  const discovery = (data?.cowartDiscovery && typeof data.cowartDiscovery === "object" ? data.cowartDiscovery : {}) as JsonValue
+  return {
+    homeDir: typeof data?.homeDir === "string" ? data.homeDir : "",
+    codex: normalizeBridgeToolStatus(data?.codex || {}),
+    grok: normalizeBridgeToolStatus(data?.grok || {}),
+    cowart: normalizeBridgeCowartStatus(data?.cowart || {}),
+    cowartDiscovery: {
+      lastError: nullableString(discovery.lastError),
+      lastErrorCode: nullableString(discovery.lastErrorCode),
+    },
+  }
+}
+
 // Task 333 — pairing requests awaiting the user's decision. The server never
 // includes the token or the raw extension origin in these rows.
 export type MosaWebCapturePairRequest = {

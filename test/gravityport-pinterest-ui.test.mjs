@@ -244,6 +244,7 @@ describe("pinterestText — table coverage", () => {
 const guideBase = {
   language: zh,
   needsReconnect: false,
+  connectAvailable: true,
   connecting: false,
   error: "",
   onConnect: noop,
@@ -253,6 +254,7 @@ const guideBase = {
 const cardBase = {
   language: zh,
   status: null,
+  connectAvailable: true,
   connecting: false,
   connectionError: "",
   disconnecting: false,
@@ -296,6 +298,29 @@ describe("PinterestGuide", () => {
     );
     assert.match(html, /正在等待浏览器授权…/);
     assert.match(html, /取消/);
+  });
+
+  it("says 即将上线 and offers no button while first connections are closed", () => {
+    const html = renderStatic(
+      React.createElement(view.PinterestGuide, { ...guideBase, connectAvailable: false })
+    );
+    assert.match(html, /即将上线/);
+    assert.doesNotMatch(html, /连接 Pinterest/);
+    assert.doesNotMatch(html, /pinterest-primary/);
+  });
+});
+
+describe("pinterestConnectAvailable", () => {
+  it("is closed for a first connection and open for a reconnect or the dev switch", () => {
+    assert.equal(connection.pinterestConnectAvailable(null, false), false);
+    assert.equal(connection.pinterestConnectAvailable({ connected: false }, false), false);
+    assert.equal(connection.pinterestConnectAvailable({ connected: true, needsReconnect: true }, false), true);
+    assert.equal(connection.pinterestConnectAvailable({ connected: false, needsReconnect: true }, false), true);
+    assert.equal(connection.pinterestConnectAvailable({ connected: false }, true), true);
+  });
+
+  it("stays closed by default outside a browser", () => {
+    assert.equal(connection.PINTEREST_CONNECT_OPEN, false);
   });
 });
 
@@ -510,6 +535,38 @@ describe("PinterestConnectionCardView", () => {
     assert.match(html, /连接 Pinterest/);
   });
 
+  it("shows 即将上线 and no connect button while first connections are closed", () => {
+    for (const status of [null, { connected: false }]) {
+      const html = renderStatic(
+        React.createElement(card.PinterestConnectionCardView, { ...cardBase, connectAvailable: false, status })
+      );
+      assert.doesNotMatch(html, /连接 Pinterest/);
+      assert.doesNotMatch(html, /pinterest-card-primary/);
+    }
+    const html = renderStatic(
+      React.createElement(card.PinterestConnectionCardView, {
+        ...cardBase,
+        connectAvailable: false,
+        status: { connected: false },
+      })
+    );
+    assert.match(html, /即将上线/);
+    assert.doesNotMatch(html, /未连接/);
+  });
+
+  it("keeps Disconnect for a connected account while first connections are closed", () => {
+    const html = renderStatic(
+      React.createElement(card.PinterestConnectionCardView, {
+        ...cardBase,
+        connectAvailable: false,
+        status: { connected: true, username: "mika" },
+      })
+    );
+    assert.match(html, /已连接 @mika/);
+    assert.match(html, /断开/);
+    assert.doesNotMatch(html, /即将上线/);
+  });
+
   it("shows the username and quota when connected", () => {
     const html = renderStatic(
       React.createElement(card.PinterestConnectionCardView, {
@@ -566,6 +623,15 @@ describe("English rendering contains no Chinese characters", () => {
     const pieces = [
       renderStatic(React.createElement(view.PinterestGuide, { ...guideBase, language: en })),
       renderStatic(React.createElement(view.PinterestGuide, { ...guideBase, language: en, needsReconnect: true })),
+      renderStatic(React.createElement(view.PinterestGuide, { ...guideBase, language: en, connectAvailable: false })),
+      renderStatic(
+        React.createElement(card.PinterestConnectionCardView, {
+          ...cardBase,
+          language: en,
+          connectAvailable: false,
+          status: { connected: false },
+        })
+      ),
       renderStatic(
         React.createElement(view.PinterestBoardGrid, {
           language: en,
@@ -629,6 +695,7 @@ describe("English rendering contains no Chinese characters", () => {
     ];
     const all = pieces.join("");
     assert.doesNotMatch(all, /[一-鿿]/, `Chinese leaked into EN render: ${all.slice(0, 400)}`);
+    assert.match(all, /Coming soon/);
     assert.match(all, /Connected as @ada/);
     assert.match(all, /From Pinterest/);
     assert.match(all, /Open in Pinterest/);

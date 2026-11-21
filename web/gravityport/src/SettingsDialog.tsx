@@ -5,6 +5,7 @@ import Switch from "./ui/Switch"
 import { PinterestConnectionCard } from "./PinterestConnectionCard"
 import { McpClientConfigCard } from "./McpClientConfigCard"
 import { WebCaptureStatusCard } from "./WebCaptureStatusCard"
+import { BridgeStatusCard } from "./BridgeStatusCard"
 import { FeedbackPanel } from "./FeedbackPanel"
 import { desktopAPI, type UpdateReadyState } from "./desktop"
 import { buildUpdateText, type UpdateUiState } from "./app-lifecycle"
@@ -201,6 +202,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
                   <McpClientConfigCard language={language} />
                   <WebCaptureStatusCard language={language} />
+                  <BridgeStatusCard language={language} />
                   {backgroundCapture.supported && (
                     <section className="settings-section settings-card">
                       <div className="settings-card-header">

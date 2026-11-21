@@ -18,6 +18,7 @@ import Database from "better-sqlite3";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { createSqliteAssetStore } from "../../lib/sqlite-asset-store.mjs";
+import { reloadCdpAndWaitForApp, waitForCdpExpression } from "./_shared.mjs";
 
 export const name = "schema-upgrade-notice";
 export const description =
@@ -354,8 +355,7 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
       // The language preference must be in place before the App mounts; the
       // dialog opens after the first screen, so a reload lands it in English.
       await cdp.evaluate(`localStorage.setItem("gravityport.preferences", JSON.stringify({ language: "en" }))`);
-      cdp.evaluate("location.reload()").catch(() => {});
-      await waitForExpression(cdp, "Boolean(document.querySelector('.app'))", "app shell after reload");
+      await reloadCdpAndWaitForApp(cdp, { label: "app shell after reload" });
     }
     const titleWait = language === "en" ? "Library upgrade check failed" : "素材库升级检查未通过";
     await waitForExpression(
@@ -443,6 +443,7 @@ async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
 function openCdpSession(url) {
   let idSeq = 0;
   const pending = new Map();
+  const eventHandlers = new Set();
   const socket = new WebSocket(url);
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(String(event.data));
@@ -453,7 +454,9 @@ function openCdpSession(url) {
       else if (message.result?.exceptionDetails) {
         rejectFn(new Error("evaluate failed: " + (message.result.exceptionDetails.exception?.description || message.result.exceptionDetails.text)));
       } else resolveFn(message.result);
+      return;
     }
+    if (message.method) for (const handler of eventHandlers) handler(message);
   });
   const ready = new Promise((resolveReady, rejectReady) => {
     socket.addEventListener("open", resolveReady, { once: true });
@@ -472,6 +475,10 @@ function openCdpSession(url) {
       const result = await this.send("Runtime.evaluate", { expression, returnByValue: true });
       return result?.result?.value;
     },
+    onEvent(handler) {
+      eventHandlers.add(handler);
+      return () => eventHandlers.delete(handler);
+    },
     close() {
       try { socket.close(); } catch {}
     },
@@ -479,19 +486,5 @@ function openCdpSession(url) {
 }
 
 async function waitForExpression(cdp, expression, label, timeoutMs = 20000) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError = null;
-  while (Date.now() < deadline) {
-    try {
-      const value = await Promise.race([
-        cdp.evaluate(expression),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("evaluate stalled")), 1500)),
-      ]);
-      if (value === true) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await sleep(200);
-  }
-  throw new Error(`Timed out waiting for ${label}${lastError ? ` (${lastError.message})` : ""}`);
+  await waitForCdpExpression(cdp, expression, label, { timeoutMs });
 }

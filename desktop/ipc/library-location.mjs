@@ -1,12 +1,13 @@
 // Library-location IPC handler moved out of desktop/main.mjs registerIPC (task 396). Pure moves; no behavior changes.
 
+import { recordPendingOldLibraryCleanup } from "../library-relocation-cleanup.mjs";
+
 export function registerLibraryLocationIpc(deps) {
   const {
     ipcMain,
     trustedRendererEvent,
     app,
     resolve,
-    rm,
     screenGuard,
     getDesktopText,
     validateRelocationTarget,
@@ -94,14 +95,23 @@ export function registerLibraryLocationIpc(deps) {
       return { ok: false, reason: relocationFailureReason(error) };
     }
 
-    // The new copy and persisted location are now complete. Failure to remove
-    // the old directory must never roll back by deleting the new authoritative
-    // copy; at worst the user is left with a harmless duplicate to remove.
+    // The new copy and persisted location are now complete. Task 443 (审查
+    // 低1 ②): the old library is no longer deleted here — a pending-cleanup
+    // record is written instead, and the old directory is only moved to the
+    // system trash after the next launch has opened the relocated library
+    // (desktop/main.mjs). A record that cannot be written just means the old
+    // library stays where it is, which is harmless.
     setLibraryDir(nextLibraryDir);
     resumeLibraryVolumeWatch?.(nextLibraryDir);
-    await rm(previousLibraryDir, { recursive: true, force: true }).catch((error) => {
-      console.warn(`[MOSA] new library is active but the old directory could not be removed: ${error?.message || error}`);
-    });
+    try {
+      await recordPendingOldLibraryCleanup({
+        userDataDir: app.getPath("userData"),
+        previousLibraryDir,
+        nextLibraryDir,
+      });
+    } catch (error) {
+      console.warn(`[MOSA] old-library cleanup record could not be written; the old library stays in place: ${error?.message || error}`);
+    }
     app.relaunch();
     app.exit(0);
     return { ok: true, restarting: true };

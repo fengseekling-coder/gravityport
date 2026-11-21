@@ -264,6 +264,10 @@
   }
 
   function conversationIdFromUrl() {
+    // Dot pages (/dots/<dotId>) carry a `~` in the id, which the /c/ pattern's
+    // character class would truncate.
+    const dots = location.pathname.match(/\/dots\/([^/?#]+)/);
+    if (dots) return dots[1];
     const match = location.pathname.match(/\/c\/([a-zA-Z0-9-]+)/);
     return match ? match[1] : "";
   }
@@ -428,6 +432,18 @@
     if (src.startsWith("blob:")) return true;
     if (src.startsWith("data:image/")) return !src.startsWith("data:image/svg");
     if (chatGptImageProxyInfo(src)) return true;
+    // Dot rooms serve attachments through the same-origin Estuary proxy with
+    // no id/cid query, so the proxy helper above cannot key them.
+    try {
+      const url = new URL(src, location.href);
+      const host = url.hostname.toLowerCase();
+      if (
+        ["chatgpt.com", "chat.openai.com"].includes(host)
+        && url.pathname.toLowerCase().startsWith("/backend-api/estuary/")
+      ) return true;
+    } catch {
+      return false;
+    }
     try {
       const full = new URL(src, location.href).hostname + src;
       return GENERATION_HOST_HINTS.some((hint) => full.includes(hint));

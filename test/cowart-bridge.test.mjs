@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { pngBytes } from "./helpers/managed-media.mjs";
 import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
@@ -431,4 +431,33 @@ test("a Cowart page asset whose file bytes changed at the same path archives as 
   const assets = await store.listAssets({ projectId: "default" });
   assert.equal(assets.length, 2);
   assert.notEqual(second.imported[0].id, first.imported[0].id);
+});
+
+test("keeps the Cowart bridge enabled when the first scan fails", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-cowart-start-err-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const canvasDir = join(root, "cowart-data", "mosa");
+  const pageDir = join(canvasDir, "pages", "page");
+  const pageAssetsDir = join(pageDir, "assets");
+  await mkdir(pageAssetsDir, { recursive: true });
+  await writeFile(join(pageAssetsDir, "late.png"), await pngBytes());
+  await writeFile(join(pageDir, "cowart-canvas.json"), canvasFixture({
+    "asset:late": { id: "asset:late", typeName: "asset", type: "image", props: { name: "late.png", src: "/page-assets/page/late.png" }, meta: {} },
+    "shape:late": { id: "shape:late", typeName: "shape", type: "image", props: { assetId: "asset:late", w: 100, h: 100, altText: "首扫失败后仍要归档" }, meta: {} },
+  }), "utf8");
+  await chmod(canvasDir, 0o000);
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), cowartCanvasDir: canvasDir });
+  const bridge = createCowartAssetBridge({ store, canvasDir, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(async () => { await bridge.stop(); await chmod(canvasDir, 0o755).catch(() => {}); await rm(root, { recursive: true, force: true }); });
+
+  const status = await bridge.start();
+  assert.equal(status.enabled, true);
+  assert.match(String(status.lastError || ""), /EACCES/);
+  await chmod(canvasDir, 0o755);
+  await bridge.reconcile();
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
+  const after = bridge.status();
+  assert.equal(after.enabled, true);
+  assert.equal(after.lastError, null);
+  assert.equal(after.polling, true);
 });

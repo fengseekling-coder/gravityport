@@ -47,7 +47,13 @@ before(async () => {
   ({ renderModal, renderEmpty } = await import(pathToFileURL(outFile).href));
 
   modalSource = await readFile(join(uiRoot, "src", "AuthorizationModal.tsx"), "utf8");
-  appSource = await readFile(join(uiRoot, "src", "App.tsx"), "utf8");
+  // Task 455 moved the authorization dialog JSX into ConfirmDialogs.tsx; the
+  // source assertions below read both files joined, so the moved lines still
+  // count as app source.
+  appSource = (await Promise.all([
+    readFile(join(uiRoot, "src", "App.tsx"), "utf8"),
+    readFile(join(uiRoot, "src", "ConfirmDialogs.tsx"), "utf8"),
+  ])).join("\n");
 });
 after(async () => {
   await rm(tempRoot, { recursive: true, force: true });

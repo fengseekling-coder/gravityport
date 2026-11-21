@@ -20,6 +20,7 @@ import {
   writeStagedPng,
 } from "../lib/import-staging.mjs";
 import { SUPPORTED_MEDIA_EXTENSIONS } from "../lib/asset-store.mjs";
+import { EXPECTED_PRELOAD_API_KEYS } from "./helpers/desktop-preload-surface.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const ONE_PIXEL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==", "base64");
@@ -245,40 +246,8 @@ test("cleanupOrphanStagedFiles tolerates a missing staging root", async () => {
 test("preload surface and Electron security boundaries stay narrowly approved", async () => {
   const preload = await readFile(join(root, "desktop", "preload.cjs"), "utf8");
   const exposed = [...preload.matchAll(/^\s{2}(\w+):/gm)].map((match) => match[1]).sort();
-  assert.deepEqual(exposed, [
-    "acknowledgeRenameNotice",
-    "cancelUpdateDownload",
-    "changeLibraryLocation",
-    "checkForUpdates",
-    "clipboardImportable", // 任务 239：只回答剪贴板里有没有可导入内容，不传路径和字节
-    "downloadAndInstallUpdate",
-    "getBackgroundCaptureState", // 任务 329：只读，后台收录开关状态
-    "getClientToken", // 任务 311：客户端凭据不进网址片段，主进程只对已核实服务 origin 上的主框架回答
-    "getInstallationId", // 11-16：左下角显示安装编号（只读通道 installation-id）
-    "getMcpClientConfig", // 任务 208：只读，本机 App 路径拼成的 MCP 配置文本
-    "getRenameNoticeState",
-    "getUpdateReady", // 任务 231：只读，主进程已下好并校验的更新包状态
-    "libraryFileFlags", // drop-back guard: which dropped files already live in the library (booleans only)
-    "onMenuSearch",
-    "onMenuSelectAll", // 任务 384：全选不走 role，经 menu-select-all 转给网页
-    "onUpdateDownloadProgress",
-    "onUpdateReady", // 任务 231：主进程广播「已下好」，与 getUpdateReady 成对
-    "onWindowFullScreenChange",
-    "openDownloadPage",
-    "openExternalLink", // 任务 147：第 22 条 open-external-link（Pinterest Pin 外链，仅 http/https）
-    "openPinterestAuthorize", // 任务 135：第 21 条 open-pinterest-authorize（Pinterest 授权页，只放行 https://www.pinterest.com/oauth/）
-    "pasteFromClipboard", // 任务 239：主进程对主窗口执行一次 webContents.paste，导入走渲染层统一 paste 监听
-    "pasteImage",
-    "reportRendererReady",
-    "revealManagedExtensionFolder",
-    "setBackgroundCapture", // 任务 329：布尔开关，主进程核实来源后写设置
-    "setLocale",
-    "setWindowFullScreen",
-    "startNativeDrag",
-    "writeClipboardFiles",
-    "writeClipboardImage",
-    "writeClipboardText",
-  ], "electronAPI surface must match the approved narrow desktop capabilities");
+  // 任务 444：清单收敛到 test/helpers/desktop-preload-surface.mjs（原三份逐键一致）。
+  assert.deepEqual(exposed, EXPECTED_PRELOAD_API_KEYS, "electronAPI surface must match the approved narrow desktop capabilities");
 
   const main = await readFile(join(root, "desktop", "main.mjs"), "utf8");
   assert.doesNotMatch(main, /ipcMain\.handle\("show-item-in-folder"/, "retired Finder IPC must stay removed");

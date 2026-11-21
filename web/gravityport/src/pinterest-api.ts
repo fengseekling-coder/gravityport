@@ -201,7 +201,10 @@ export async function waitForPinterestConnection({
 
     try {
       const status = await fetchStatus(signal);
-      if (status?.connected) {
+      // An expired authorization still reports connected (the stale token is
+      // on disk) together with needsReconnect; returning on that would end
+      // the wait before the user has authorized again.
+      if (status?.connected && !status.needsReconnect) {
         return status;
       }
     } catch (error) {

@@ -178,12 +178,19 @@ function pageSource({ coverId, groupName }) {
       }
     }
     // Nudge until the scroller actually holds the target: early pages are
-    // short, so the first assignment clamps until pagination appends.
+    // short, so the first assignment clamps until pagination appends. Keep
+    // nudging for the whole wait: a page that lands after the last nudge
+    // would otherwise leave the clamp standing (439; same shape as
+    // live-sync-top-pagination).
     async function scrollTo(target, label) {
-      for (let i = 0; i < 80; i += 1) {
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
         grid().scrollTop = target;
         await sleep(150);
         if (Math.abs(grid().scrollTop - target) <= 2) break;
+      }
+      if (Math.abs(grid().scrollTop - target) > 2) {
+        throw new Error('Timed out scrolling to ' + label + ' (top=' + Math.round(grid().scrollTop) + ', want ' + target + ' | ' + scrollState() + ')');
       }
       await settle(label);
     }
@@ -322,7 +329,12 @@ function pageSource({ coverId, groupName }) {
     // Walk to the very bottom: a scroll parked at the edge gets no further
     // scroll events, so each page landing is followed by a small wiggle that
     // re-fires the pagination check until every asset is loaded.
-    for (let i = 0; i < 100 && loaded() < ${PLAIN_TOTAL + 1}; i += 1) {
+    // Keep wiggling for the whole wait (439): with a fixed step budget the
+    // wiggle stops, and a page that lands after the last one would never
+    // re-fire the pagination check. The waitFor below stays as the
+    // independent assertion.
+    const bottomDeadline = Date.now() + 30000;
+    while (loaded() < ${PLAIN_TOTAL + 1} && Date.now() < bottomDeadline) {
       const g = grid();
       const before = loaded();
       g.scrollTop = g.scrollHeight;
@@ -331,14 +343,20 @@ function pageSource({ coverId, groupName }) {
       await sleep(300);
       if (loaded() === before) await sleep(400);
     }
+    if (loaded() < ${PLAIN_TOTAL + 1}) throw new Error('Timed out scrolling to the bottom (' + loaded() + ' loaded, need ' + ${PLAIN_TOTAL + 1} + ' | ' + scrollState() + ')');
     await waitFor(() => loaded() >= ${PLAIN_TOTAL + 1}, 'full window loads for the stack trip');
     // Windowing (>320 assets) mounts only the viewport's cards: walk down to
     // the stack card so it is a real, clickable node.
-    for (let i = 0; i < 60 && !realCard('${coverId}'); i += 1) {
+    // Keep stepping for the whole wait (439): with a fixed step budget the
+    // walk stops, and a row that mounts after the last step would never come
+    // into view. The waitFor below stays as the independent assertion.
+    const coverDeadline = Date.now() + 30000;
+    while (!realCard('${coverId}') && Date.now() < coverDeadline) {
       const g = grid();
       g.scrollTop = Math.min(g.scrollHeight, g.scrollTop + g.clientHeight);
       await sleep(150);
     }
+    if (!realCard('${coverId}')) throw new Error('Timed out scrolling to the stack cover card (' + realCards().length + ' cards, want ${coverId} | ' + scrollState() + ')');
     await waitFor(() => realCard('${coverId}'), 'stack cover card loads');
     const coverEl = realCard('${coverId}');
     const g3 = grid();

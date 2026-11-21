@@ -289,9 +289,25 @@
     return { imageKey, assetId, conversationId };
   }
 
+  // Same-origin Estuary paths beyond the id/cid proxy form above: Dot rooms
+  // serve attachments as /backend-api/estuary/public_content/enc/… with no
+  // query to key an asset from. Checked before the static-asset filters below
+  // because an opaque enc token can contain their words by chance.
+  function isChatGptEstuaryUrl(value) {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase();
+      return ["chatgpt.com", "chat.openai.com"].includes(host)
+        && url.pathname.toLowerCase().startsWith("/backend-api/estuary/");
+    } catch {
+      return false;
+    }
+  }
+
   function isImageishUrl(value) {
     if (!isHttpUrl(value)) return false;
     if (chatGptImageProxyInfo(value)) return true;
+    if (isChatGptEstuaryUrl(value)) return true;
     const lower = value.toLowerCase();
     // Never treat ChatGPT UI static assets as generations.
     if (
@@ -465,6 +481,10 @@
   }
 
   function conversationIdFromLocation() {
+    // Dot pages (/dots/<dotId>) carry a `~` in the id, which the /c/ pattern's
+    // character class would truncate.
+    const dots = location.pathname.match(/\/dots\/([^/?#]+)/);
+    if (dots) return dots[1];
     const match = location.pathname.match(/\/c\/([a-zA-Z0-9-]+)/);
     return match ? match[1] : "";
   }
@@ -1316,6 +1336,84 @@
     }
   }
 
+  // ---- Dot room messages (GET /backend-api/messaging/rooms/<roomId>/messages) ----
+  //
+  // A /dots/<dotId> page fetches its transcript from the messaging API. Human
+  // and Dot both speak with role "user"; the account_user_id prefix tells them
+  // apart ("user-…" vs "calpico-member-…"). The payload carries no generation
+  // fields at all — no prompt, no dalle markers, no oaiusercontent links — so
+  // the generic walkObject rules have nothing to bind; this dedicated parser
+  // emits one record per image attachment instead. The real generation prompt
+  // the Dot sent to its image tool is not present anywhere in the payload, so
+  // the human's latest preceding message travels as generationRequestPrompt
+  // (the request-prompt slot) and the Dot's own words bind as the caption.
+  function isDotRoomMessagesUrl(value) {
+    if (!/^\/dots\//.test(location.pathname)) return false;
+    try {
+      const url = new URL(String(value || ""), location.origin);
+      return url.origin === location.origin
+        && /^\/backend-api\/messaging\/rooms\/[^/]+\/messages$/.test(url.pathname.toLowerCase());
+    } catch {
+      return false;
+    }
+  }
+
+  function emitDotMessageRecords(root) {
+    if (!root || typeof root !== "object" || Array.isArray(root)) return;
+    const items = Array.isArray(root.items) ? root.items : null;
+    if (!items?.length) return;
+    const conversationId = conversationIdFromLocation();
+    let humanPrompt = "";
+    for (const item of items) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      // A deleted message contributes neither attachments nor prompt context.
+      if (item.deleted_at != null && item.deleted_at !== "") continue;
+      const authorId = String(item.account_user_id || "");
+      const isHuman = authorId.startsWith("user-");
+      const isDot = authorId.startsWith("calpico-member-");
+      const caption = cleanPrompt(item.content?.text || "");
+      if (isHuman) {
+        if (caption) humanPrompt = caption;
+        continue;
+      }
+      if (!isDot) continue;
+      const attachments = Array.isArray(item.content?.attachments) ? item.content.attachments : [];
+      for (const attachment of attachments) {
+        const file = attachment?.file && typeof attachment.file === "object" ? attachment.file : null;
+        if (!/^image\//i.test(String(file?.mime_type || ""))) continue;
+        const imageUrl = isHttpUrl(file?.download_url) ? file.download_url : "";
+        const assetId = normalizeAssetId(file?.asset_pointer)
+          || normalizeAssetId(file?.file_id || attachment?.file_id);
+        if (!imageUrl && !assetId) continue;
+        emitPair(caption, imageUrl, {
+          assetId,
+          imageKey: assetId ? `asset:${assetId}` : "",
+          conversationId,
+          messageId: typeof item.id === "string" ? item.id : "",
+          generationRequestPrompt: humanPrompt,
+          imageGenTitle: String(file?.name || ""),
+          promptStatus: caption ? "visible-caption" : "not-available",
+          promptSource: caption ? "dot-message-caption" : "",
+          promptPriority: caption ? 350 : 0,
+          promptScope: caption ? "output" : "",
+          via: "dot-message",
+          isGeneration: true,
+        });
+      }
+    }
+  }
+
+  function harvestDotMessages(text) {
+    if (!text || text.length > 12_000_000) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return;
+    }
+    emitDotMessageRecords(parsed);
+  }
+
   function harvest(text, via) {
     if (!text || text.length < 20) return;
     const maxHarvestBytes = 12_000_000;
@@ -1723,6 +1821,7 @@
           && path === `/backend-api/conversations/${conversationIdFromLocation().toLowerCase()}`)
         || isConversationStream
         || isConversationItem
+        || isDotRoomMessagesUrl(url)
         || path.includes("/backend-api/estuary/")
         || /\/(image|images|imagegen|image-generation|generation)(?:\/|$)/.test(path);
     } catch {
@@ -2084,6 +2183,10 @@
                 if (isCurrentConversationItemUrl(url)) reportConversationTurnBindings(payload);
               })
               .catch(() => {});
+          } else if (isDotRoomMessagesUrl(url)) {
+            clone.text().then((text) => {
+              harvestDotMessages(text);
+            }).catch(() => {});
           } else {
             clone.text().then((text) => {
               harvest(text, "fetch");
@@ -2118,7 +2221,10 @@
               : responseType === "json" && this.response
                 ? JSON.stringify(this.response)
                 : "";
-            if (text) harvest(text, "xhr");
+            if (text) {
+              if (isDotRoomMessagesUrl(url)) harvestDotMessages(text);
+              else harvest(text, "xhr");
+            }
             if (isCurrentConversationItemUrl(url)) reportConversationTurnBindingsFromText(text);
           }
         }

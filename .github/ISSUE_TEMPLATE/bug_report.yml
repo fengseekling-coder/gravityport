@@ -58,7 +58,6 @@ body:
         - Gemini, Flow, or Google AI Studio web capture
         - Grok collection
         - Cowart collection
-        - Local visual search (Visual Pack)
         - MCP server or CLI
         - Library storage, migration, backup, or search
         - Documentation

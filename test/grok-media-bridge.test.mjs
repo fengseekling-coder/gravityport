@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { appendFile, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, realpath, symlink, utimes, writeFile } from "node:fs/promises";
 import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -152,7 +152,7 @@ test("runtime handoff drains the current Grok import without starting the remain
     completed += 1;
     return asset;
   };
-  const bridge = createGrokMediaBridge({ store, sessionsDir: fixture.sessionsDir, signal: controller.signal });
+  const bridge = createGrokMediaBridge({ store, sessionsDir: fixture.sessionsDir, stableWindowMs: 0, signal: controller.signal });
   t.after(() => bridge.stop());
   await bridge.start();
   await bridge.stop();
@@ -179,7 +179,7 @@ test("passes automatic ingest mode and continues after a suppressed Grok media i
   };
 
   const sessionsRoot = await realpath(first.sessionsDir);
-  const result = await reconcileGrokMedia({ store, sessionsDir: first.sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: first.sessionsDir });
   assert.equal(calls.length, 2);
   assert.deepEqual(calls.map((call) => call.options), [
     { trustedSourceRoots: [sessionsRoot], ingestMode: "automatic" },
@@ -207,8 +207,8 @@ test("skips unchanged Grok candidates without re-querying the asset store", asyn
     async createAsset() { throw new Error("create should not run"); },
   };
   const processedSignatures = new Map();
-  const first = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir, processedSignatures });
-  const second = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir, processedSignatures });
+  const first = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir, processedSignatures });
+  const second = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir, processedSignatures });
   assert.equal(first.skipped.some((item) => item.reason === "already-archived"), true);
   assert.equal(second.skipped.some((item) => item.reason === "unchanged"), true);
   assert.equal(sourceLookups, 1);
@@ -249,7 +249,7 @@ test("caches Grok session parsing and ignores unrelated chat mtime churn", async
   };
   const processedSignatures = new Map();
   const sessionMetadataCache = new Map();
-  const options = { store, sessionsDir: fixture.sessionsDir, processedSignatures, sessionMetadataCache };
+  const options = { store, sessionsDir: fixture.sessionsDir, processedSignatures, sessionMetadataCache, stableWindowMs: 0 };
 
   await reconcileGrokMedia(options);
   const updatesAfterFirstReconcile = updates;
@@ -286,7 +286,7 @@ test("retries a deterministic Grok asset id collision through automatic identity
     },
   };
 
-  const result = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(assetIds.length, 2);
   assert.notEqual(assetIds[1], assetIds[0]);
   assert.match(assetIds[1], new RegExp(`^${assetIds[0]}-[a-f0-9]{8}$`));
@@ -304,7 +304,7 @@ test("archives Grok images with tool prompt and avoids duplicates on restart", a
   });
   const store = createAssetStore({ projectRoot, managerDir });
 
-  const first = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const first = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(first.imported.length, 1);
   const asset = first.imported[0];
   assert.equal(asset.source.type, "grok-generated");
@@ -320,11 +320,11 @@ test("archives Grok images with tool prompt and avoids duplicates on restart", a
   assert.equal(asset.business_fields.width, 1280);
   assert.equal(asset.business_fields.height, 720);
 
-  const second = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const second = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(second.imported.length, 0);
   assert.equal(second.skipped.some((item) => item.reason === "already-archived"), true);
 
-  const third = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir, knownHashes: null });
+  const third = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir, knownHashes: null });
   assert.equal(third.imported.length, 0);
 });
 
@@ -356,7 +356,7 @@ test("archives image and video with the same stem without id collision", async (
   ].join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir });
   assert.equal(result.imported.length, 2);
   const ids = result.imported.map((asset) => asset.id).sort();
   assert.equal(new Set(ids).size, 2);
@@ -403,7 +403,7 @@ test("archives Grok videos without running image derivative expectations", async
   ].join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(result.imported.length, 1);
   const asset = result.imported[0];
   assert.equal(asset.source.type, "grok-generated");
@@ -446,7 +446,7 @@ test("uses ordered call-scoped user fallback only for a matched tool result with
   ].join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir });
   assert.equal(result.imported.length, 1);
   assert.equal(result.imported[0].prompt, "fallback user prompt for mecha poster");
   assert.equal(result.imported[0].source.prompt_status, "session-user-prompt");
@@ -499,7 +499,7 @@ test("does not attach a later user prompt to an earlier tool call without tool p
   ].join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir });
   assert.equal(result.imported.length, 2);
   const first = result.imported.find((asset) => asset.source.grok_output_file === "first.png");
   const second = result.imported.find((asset) => asset.source.grok_output_file === "second.png");
@@ -544,7 +544,7 @@ test("orphan media is archived with not-available prompt instead of session fall
   ].join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir });
   assert.equal(result.imported.length, 2);
   const matched = result.imported.find((asset) => asset.source.grok_output_file === "matched.png");
   const orphan = result.imported.find((asset) => asset.source.grok_output_file === "orphan.png");
@@ -579,7 +579,7 @@ test("ambiguous tool matches leave media without a wrong prompt", async (t) => {
   ].join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir });
   assert.equal(result.imported.length, 1);
   assert.equal(result.imported[0].prompt, "");
   assert.equal(result.imported[0].source.prompt_status, "not-available");
@@ -601,6 +601,7 @@ test("records not-ready when a discovered candidate becomes unreadable", async (
   const result = await reconcileGrokMedia({
     store,
     sessionsDir: fixture.sessionsDir,
+    stableWindowMs: 0,
     sha256FileImpl: async (filePath) => {
       const error = new Error("EACCES: permission denied, open " + filePath);
       error.code = "EACCES";
@@ -633,7 +634,7 @@ test("rejects tool-result paths and symlinks that escape the Grok sessions root"
   await symlink(outsideImage, symlinkPath);
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(result.imported.length, 1);
   assert.notEqual(result.imported[0].source.grok_media_path, outsideImage);
   assert.equal(result.imported[0].source.prompt_status, "not-available");
@@ -656,7 +657,7 @@ test("deduplicates by content hash and can upgrade provenance from a later Grok 
     includeChat: false,
   });
   const store = createAssetStore({ projectRoot, managerDir });
-  const first = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const first = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(first.imported.length, 1);
   assert.equal(first.imported[0].source.prompt_status, "not-available");
 
@@ -675,7 +676,7 @@ test("deduplicates by content hash and can upgrade provenance from a later Grok 
     }),
   ].join("\n") + "\n");
 
-  const second = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const second = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(second.imported.length, 0);
   assert.equal(second.skipped.some((item) => item.reason === "already-archived-same-content"), true);
   assert.equal(second.updated.length >= 1, true);
@@ -727,7 +728,7 @@ test("a Grok recapture of another channel's image only records an occurrence", a
   const fixture = await createGrokSessionFixture(root, { toolPrompt: "grok session prompt B" });
   await writeFile(fixture.mediaPath, imageBytes);
 
-  const first = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const first = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(first.imported.length, 0);
   assert.equal(first.skipped.some((item) => item.reason === "already-archived-same-content"), true);
   assert.equal(first.updated.length, 0);
@@ -742,7 +743,7 @@ test("a Grok recapture of another channel's image only records an occurrence", a
   assert.equal(grokOccurrences[0].conversation_id, SESSION_ID);
   assert.equal(grokOccurrences[0].capture_mode, "automatic");
 
-  const second = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const second = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(second.imported.length, 0);
   assert.equal(second.updated.length, 0);
   const reread = await store.getAsset("default", web.asset.id);
@@ -761,7 +762,7 @@ test("bridge start/stop reports health fields and metadata warnings", async (t) 
   ].join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const bridge = createGrokMediaBridge({
+  const bridge = createGrokMediaBridge({ stableWindowMs: 0,
     store,
     sessionsDir: fixture.sessionsDir,
     pollIntervalMs: 60_000,
@@ -858,7 +859,7 @@ test("rejects symlinked chat_history or summary outside the sessions root", asyn
   await symlink(outsideChat, join(fixture.sessionPath, "chat_history.jsonl"));
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(result.imported.length, 1);
   assert.equal(result.imported[0].prompt, "");
   assert.equal(result.imported[0].source.prompt_status, "not-available");
@@ -879,7 +880,7 @@ test("rejects session when summary.json is an out-of-root symlink even with safe
   await symlink(outsideSummary, join(fixture.sessionPath, "summary.json"));
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(result.imported.length, 1);
   assert.equal(result.imported[0].prompt, "");
   assert.equal(result.imported[0].source.prompt_status, "not-available");
@@ -931,7 +932,7 @@ test("records the user message current at each Grok tool call", async (t) => {
   ].join("\n") + "\n");
 
   const store = createAssetStore({ projectRoot, managerDir });
-  const result = await reconcileGrokMedia({ store, sessionsDir });
+  const result = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir });
   assert.equal(result.imported.length, 2);
   const cover = result.imported.find((asset) => asset.source.grok_output_file === "cover.png");
   const poster = result.imported.find((asset) => asset.source.grok_output_file === "poster.png");
@@ -964,7 +965,7 @@ test("reprocesses an archived Grok image when the chat gains a user message and 
 
   const store = createAssetStore({ projectRoot, managerDir });
   const processedSignatures = new Map();
-  const options = { store, sessionsDir, processedSignatures };
+  const options = { store, sessionsDir, processedSignatures, stableWindowMs: 0 };
   const first = await reconcileGrokMedia(options);
   assert.equal(first.imported.length, 1);
   const assetId = first.imported[0].id;
@@ -995,7 +996,7 @@ test("keeps an existing Grok user message even when the chat has a newer one", a
   const managerDir = join(projectRoot, "mosa");
   const fixture = await createGrokSessionFixture(root);
   const store = createAssetStore({ projectRoot, managerDir });
-  const first = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const first = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.equal(first.imported.length, 1);
   const assetId = first.imported[0].id;
   assert.equal(first.imported[0].source.user_message, "Call the image_gen tool with this prompt.");
@@ -1010,7 +1011,7 @@ test("keeps an existing Grok user message even when the chat has a newer one", a
     JSON.stringify({ type: "tool_result", tool_call_id: "call-test-media-1", content: JSON.stringify({ path: fixture.mediaPath, filename: "1.png" }) }),
   ].join("\n") + "\n");
 
-  const second = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir });
+  const second = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: fixture.sessionsDir });
   assert.deepEqual(second.updated, []);
   const asset = await store.getAsset("default", assetId);
   assert.equal(asset.source.user_message, "Call the image_gen tool with this prompt.");
@@ -1063,7 +1064,7 @@ test("keeps user-edited prompts across Grok reconciliation while untouched asset
   await writeFile(fixtureA.mediaPath, pngFixture(640, 480));
   await writeFile(fixtureB.mediaPath, pngFixture(800, 600));
 
-  const first = await reconcileGrokMedia({ store, sessionsDir: root });
+  const first = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: root });
   assert.equal(first.imported.length, 2);
   const assetA = first.imported.find((asset) => asset.source.grok_session_id === "019f8f50-1f0d-7983-ab3f-544a0b5f7571");
   const assetB = first.imported.find((asset) => asset.source.grok_session_id === "019f8f50-1f0d-7983-ab3f-544a0b5f7572");
@@ -1095,7 +1096,7 @@ test("keeps user-edited prompts across Grok reconciliation while untouched asset
   // untouched asset is a superset of the archived one.
   await rewriteChat(fixtureB, "revised tool prompt for the untouched image, with more detail");
 
-  const second = await reconcileGrokMedia({ store, sessionsDir: root });
+  const second = await reconcileGrokMedia({ stableWindowMs: 0, store, sessionsDir: root });
   assert.deepEqual(second.updated, [assetB.id], "only the untouched asset is rewritten");
   const afterA = await store.getAsset("default", assetA.id);
   const afterB = await store.getAsset("default", assetB.id);
@@ -1105,3 +1106,168 @@ test("keeps user-edited prompts across Grok reconciliation while untouched asset
   assert.ok(afterA.source.prompt_user_edited_at);
   assert.ok(afterA.source.theme_user_edited_at);
 });
+
+test("defers a Grok image written inside the stability window and archives it once unchanged", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-stable-img-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const fixture = await createGrokSessionFixture(root);
+  const canonicalMediaPath = await realpath(fixture.mediaPath);
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager") });
+
+  let clock = 1_000_000_000;
+  const nowMs = () => clock;
+  await utimes(fixture.mediaPath, new Date(clock - 500), new Date(clock - 500));
+  const processedSignatures = new Map();
+  const deferredObservations = new Map();
+  const options = { store, sessionsDir: fixture.sessionsDir, processedSignatures, deferredObservations, stableWindowMs: 2000, nowMs };
+
+  const first = await reconcileGrokMedia(options);
+  assert.equal(first.imported.length, 0);
+  assert.ok(first.skipped.some((item) => item.path === canonicalMediaPath && item.reason === "not-ready"), "the fresh image is skipped as not-ready");
+  assert.equal(first.deferred, 1);
+  assert.equal(processedSignatures.size, 0, "a deferred file must not be recorded as processed");
+
+  clock += 2000;
+  const second = await reconcileGrokMedia(options);
+  assert.equal(second.imported.length, 1);
+  assert.equal(second.imported[0].prompt, "一只红色机甲在雨夜城市中行走，电影级灯光，横向构图");
+  assert.ok(processedSignatures.has(canonicalMediaPath));
+
+  clock += 2000;
+  await writeFile(fixture.mediaPath, pngFixture(640, 480));
+  await utimes(fixture.mediaPath, new Date(clock - 100), new Date(clock - 100));
+  const third = await reconcileGrokMedia(options);
+  assert.equal(third.imported.length, 0);
+  assert.ok(third.skipped.some((item) => item.path === canonicalMediaPath && item.reason === "not-ready"), "the rewritten image restarts the stability wait");
+  assert.equal(third.deferred, 1);
+
+  clock += 2000;
+  const fourth = await reconcileGrokMedia(options);
+  assert.equal(fourth.imported.length, 0);
+  assert.ok(fourth.skipped.some((item) => item.path === canonicalMediaPath && item.reason === "already-archived"), "the settled candidate is processed after the new window");
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
+});
+
+test("defers a Grok video written inside the stability window and archives it once unchanged", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-stable-video-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const fixture = await createGrokSessionFixture(root, { includeImage: false, videoName: "clip.mp4" });
+  const canonicalMediaPath = await realpath(fixture.mediaPath);
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager") });
+
+  let clock = 1_000_000_000;
+  const nowMs = () => clock;
+  await utimes(fixture.mediaPath, new Date(clock - 500), new Date(clock - 500));
+  const processedSignatures = new Map();
+  const deferredObservations = new Map();
+  const options = { store, sessionsDir: fixture.sessionsDir, processedSignatures, deferredObservations, stableWindowMs: 2000, nowMs };
+
+  const first = await reconcileGrokMedia(options);
+  assert.equal(first.imported.length, 0);
+  assert.ok(first.skipped.some((item) => item.path === canonicalMediaPath && item.reason === "not-ready"), "the fresh video is skipped as not-ready");
+  assert.equal(first.deferred, 1);
+  assert.equal(processedSignatures.size, 0);
+
+  clock += 2000;
+  const second = await reconcileGrokMedia(options);
+  assert.equal(second.imported.length, 1);
+  assert.equal(second.imported[0].source.media_kind, "video");
+  assert.ok(processedSignatures.has(canonicalMediaPath));
+
+  clock += 2000;
+  await writeFile(fixture.mediaPath, Buffer.concat([tinyMp4(), Buffer.alloc(64, 1)]));
+  await utimes(fixture.mediaPath, new Date(clock - 100), new Date(clock - 100));
+  const third = await reconcileGrokMedia(options);
+  assert.equal(third.imported.length, 0);
+  assert.ok(third.skipped.some((item) => item.path === canonicalMediaPath && item.reason === "not-ready"), "the rewritten video restarts the stability wait");
+
+  clock += 2000;
+  const fourth = await reconcileGrokMedia(options);
+  assert.equal(fourth.imported.length, 0);
+  assert.ok(fourth.skipped.some((item) => item.path === canonicalMediaPath && item.reason === "already-archived"), "the settled candidate is processed after the new window");
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
+});
+
+test("archives a Grok image whose mtime is already outside the stability window immediately", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-old-mtime-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const fixture = await createGrokSessionFixture(root);
+  const clock = 1_000_000_000;
+  await utimes(fixture.mediaPath, new Date(clock - 60_000), new Date(clock - 60_000));
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager") });
+  const result = await reconcileGrokMedia({ store, sessionsDir: fixture.sessionsDir, stableWindowMs: 2000, nowMs: () => clock });
+  assert.equal(result.imported.length, 1);
+  assert.equal(result.skipped.filter((item) => item.reason === "not-ready").length, 0);
+});
+
+test("schedules an automatic rescan roughly one stability window after a defer", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-rescan-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const fixture = await createGrokSessionFixture(root);
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager") });
+  const bridge = createGrokMediaBridge({ store, sessionsDir: fixture.sessionsDir, stableWindowMs: 60, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(() => bridge.stop());
+  await bridge.start();
+  // 推迟后不许再等人来扫：大约一个稳定窗口后要自己再扫一轮并收进。
+  await waitFor(() => bridge.status().totalImported === 1, 4000);
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
+});
+
+test("keeps the Grok bridge enabled when the first scan fails", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-start-err-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const fixture = await createGrokSessionFixture(root);
+  await chmod(fixture.sessionsDir, 0o000);
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager") });
+  const bridge = createGrokMediaBridge({ store, sessionsDir: fixture.sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(async () => { await bridge.stop(); await chmod(fixture.sessionsDir, 0o755).catch(() => {}); await rm(root, { recursive: true, force: true }); });
+
+  const status = await bridge.start();
+  assert.equal(status.enabled, true);
+  assert.match(String(status.lastError || ""), /EACCES/);
+  assert.equal(status.lastErrorCode, "EACCES");
+  await chmod(fixture.sessionsDir, 0o755);
+  await bridge.reconcile();
+  assert.equal((await store.listAssets({ projectId: "default" })).length, 1);
+  const after = bridge.status();
+  assert.equal(after.enabled, true);
+  assert.equal(after.lastError, null);
+  assert.equal(after.lastErrorCode, null);
+  assert.equal(after.polling, true);
+});
+
+test("reports sourceFound:false for a missing sessions root without any error", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-grok-source-found-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  // Grok never ran here: the sessions root does not exist and the bridge must
+  // not create it (task 452), so the scan's ENOENT branch can report it.
+  const sessionsDir = join(root, "grok-sessions");
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager") });
+  const bridge = createGrokMediaBridge({ store, sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(async () => { await bridge.stop(); await rm(root, { recursive: true, force: true }); });
+
+  const status = await bridge.start();
+  assert.equal(status.enabled, true);
+  assert.equal(status.lastError, null);
+  assert.equal(status.lastErrorCode, null);
+  assert.equal(status.sourceFound, false);
+
+  // Grok creates its folders on first use; the next scan flips the row to
+  // 正在收录 without any error in between.
+  const mediaDir = join(sessionsDir, WORKSPACE, SESSION_ID, "images");
+  await mkdir(mediaDir, { recursive: true });
+  await writeFile(join(mediaDir, "1.png"), pngFixture(640, 360));
+  await bridge.reconcile();
+  const after = bridge.status();
+  assert.equal(after.lastError, null);
+  assert.equal(after.sourceFound, true);
+  assert.equal(after.totalImported, 1);
+});
+
+async function waitFor(condition, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for the Grok bridge rescan.");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}

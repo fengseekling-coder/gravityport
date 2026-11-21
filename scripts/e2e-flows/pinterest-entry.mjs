@@ -4,7 +4,7 @@
 // and the inspector (before a Pin is selected) stay hidden, and Settings → 连接
 // hosts the Pinterest connection card.
 export const name = "pinterest-entry";
-export const description = "Pinterest row -> guide page with shared top bar, no local gallery search/inspector -> ⌘A+Delete touch nothing -> 打开设置 lands on 连接 with the connection card and the MCP card";
+export const description = "Pinterest row -> guide page with shared top bar, 即将上线 instead of a connect button, no local gallery search/inspector -> ⌘A+Delete touch nothing -> 打开设置 lands on 连接 with the connection card (即将上线, no connect button) and the MCP card";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -54,6 +54,11 @@ function pinterestEntrySource() {
     if (!galleryHidden) throw new Error('local gallery chrome shown or shared top bar missing in the Pinterest guide view');
     const sidebarCount = navButton('Pinterest').querySelector('small')?.textContent ?? null;
     if (sidebarCount !== '即将上线') throw new Error('Pinterest row should say 即将上线 in the count slot: ' + JSON.stringify(sidebarCount));
+    // First connections are closed until Standard access: the guide says
+    // 即将上线 and offers nothing to click that starts a connection.
+    const guideSoon = document.querySelector('.pinterest-guide .pinterest-status-badge')?.textContent?.trim() ?? null;
+    if (guideSoon !== '即将上线') throw new Error('guide should say 即将上线 while connections are closed: ' + JSON.stringify(guideSoon));
+    if (document.querySelector('.pinterest-guide .pinterest-primary')) throw new Error('guide still offers a connect button while connections are closed');
 
     // ⌘A then Delete in the Pinterest view must not select or trash the
     // hidden gallery's assets.
@@ -71,6 +76,10 @@ function pinterestEntrySource() {
     // AI assistants (MCP) card below it is (task 208).
     if (/MCP/.test(document.querySelector('.settings-modal .pinterest-connection-card').textContent)) throw new Error('Pinterest card still mentions MCP');
     await waitFor(() => document.querySelector('.settings-modal .pinterest-connection-card + .mcp-config-card'), 'AI assistants (MCP) card below the Pinterest card');
+    // Same in Settings once the status has loaded: 即将上线, no connect button.
+    await waitFor(() => document.querySelector('.settings-modal .pinterest-connection-card .pinterest-status-badge')?.textContent?.trim() === '即将上线', 'connection card saying 即将上线');
+    const cardSoon = true;
+    if (document.querySelector('.settings-modal .pinterest-connection-card .pinterest-card-primary')) throw new Error('connection card still offers a connect button while connections are closed');
     key({ key: 'Escape' });
     await waitFor(() => !document.querySelector('.settings-modal'), 'settings closed');
 
@@ -80,7 +89,7 @@ function pinterestEntrySource() {
     const selectedAfter = document.querySelectorAll('.asset-card.asset-selected').length;
     if (selectedAfter > baselineSelected) throw new Error('⌘A in the Pinterest view selected gallery cards: ' + selectedAfter + ' > ' + baselineSelected);
 
-    return { galleryHidden, sidebarCount, activeTab, baselineSelected, selectedAfter };
+    return { galleryHidden, sidebarCount, guideSoon, cardSoon, activeTab, baselineSelected, selectedAfter };
   })()
   `;
 }

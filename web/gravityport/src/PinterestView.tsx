@@ -25,7 +25,7 @@ import {
 import { desktopAPI } from "./desktop.js";
 import { layoutPinColumns } from "./pinterest-layout.js";
 import { pinterestFormat, pinterestText } from "./pinterest-strings.js";
-import { usePinterestConnection } from "./use-pinterest-connection.js";
+import { pinterestConnectAvailable, usePinterestConnection } from "./use-pinterest-connection.js";
 import type { Language } from "./i18n.js";
 import Icon from "./Icon";
 import ImageViewer from "./ImageViewer";
@@ -49,6 +49,8 @@ function errorCode(error: unknown): string {
 export type PinterestGuideProps = {
   language: Language;
   needsReconnect: boolean;
+  /** False while first connections are closed: 即将上线 replaces the button. */
+  connectAvailable: boolean;
   connecting: boolean;
   error: string;
   onConnect: () => void;
@@ -59,6 +61,7 @@ export type PinterestGuideProps = {
 export function PinterestGuide({
   language,
   needsReconnect,
+  connectAvailable,
   connecting,
   error,
   onConnect,
@@ -66,10 +69,11 @@ export function PinterestGuide({
   onOpenSettings,
 }: PinterestGuideProps) {
   const t = (text: string) => pinterestText(text, language);
+  const closed = !connectAvailable && !connecting;
   return (
     <div className="pinterest-guide">
       {/* 任务 359（MAIN-32d）：引导页标题用名词短语，错误行另用带指令的整句。 */}
-      <h2>{needsReconnect ? t("Pinterest 授权已失效") : t("连接 Pinterest")}</h2>
+      <h2>{needsReconnect ? t("Pinterest 授权已失效") : closed ? "Pinterest" : t("连接 Pinterest")}</h2>
       <p>{t("连接后可在此浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载。")}</p>
       {error ? <p className="pinterest-error-text">{error}</p> : null}
       <div className="pinterest-guide-actions">
@@ -78,6 +82,8 @@ export function PinterestGuide({
             <button type="button" className="pinterest-primary" disabled>{t("正在等待浏览器授权…")}</button>
             <button type="button" className="pinterest-secondary" onClick={onCancel}>{t("取消")}</button>
           </>
+        ) : closed ? (
+          <span className="pinterest-status-badge">{t("即将上线")}</span>
         ) : (
           <button type="button" className="pinterest-primary" onClick={onConnect}>
             {needsReconnect ? t("重新连接") : t("连接 Pinterest")}
@@ -718,6 +724,7 @@ export const PinterestView = forwardRef<PinterestViewHandle, PinterestViewProps>
       <PinterestGuide
         language={language}
         needsReconnect={status?.needsReconnect === true}
+        connectAvailable={pinterestConnectAvailable(status)}
         connecting={connection.phase.kind === "connecting"}
         error={connection.phase.kind === "error" ? t(connection.phase.message) : ""}
         onConnect={connection.start}

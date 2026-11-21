@@ -23,6 +23,7 @@ import {
 } from "../desktop/icon-assets.mjs";
 import { desktopLicensesOutputDir } from "../scripts/third-party-licenses.mjs";
 import { WEB_CAPTURE_RUNTIME_FILES } from "../scripts/web-capture-runtime-files.mjs";
+import { EXPECTED_PRELOAD_INVOKE_COUNT } from "./helpers/desktop-preload-surface.mjs";
 
 // Task 396: registerIPC handlers now live in desktop/ipc/*.mjs, so source-text
 // assertions read desktop/main.mjs plus those files.
@@ -797,7 +798,7 @@ test("retired show-in-folder IPC stays removed without expanding renderer author
   // 任务 329：后台收录开关两个通道（只读状态、布尔开关，主进程核实来源），23 → 25。
   // 任务 340：在访达显示扩展文件夹，25 → 26。
   // 11-16：只读通道 installation-id（左下角显示安装编号），26 → 27。
-  assert.equal(preload.split("ipcRenderer.invoke").length - 1, 27, "no invoke channel beyond the currently approved narrow requests");
+  assert.equal(preload.split("ipcRenderer.invoke").length - 1, EXPECTED_PRELOAD_INVOKE_COUNT, "no invoke channel beyond the currently approved narrow requests");
   assert.doesNotMatch(preload, /shell\s*[:.]/, "shell is never exposed to the renderer");
   assert.doesNotMatch(preload, /exec\(|spawn\(|execFile\(/, "no arbitrary command execution");
 

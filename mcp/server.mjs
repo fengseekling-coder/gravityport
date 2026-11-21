@@ -27,6 +27,37 @@ import { acquireMosaRuntimeLock } from "../lib/runtime-lock.js";
 import { hasRelocationMarker } from "../lib/library-relocation.mjs";
 import { redactDiagnostics } from "../lib/diagnostic-log.mjs";
 import { MCP_SERVER_VERSION } from "../lib/version-identities.mjs";
+import {
+  TOOL_ASSET_CREATE,
+  TOOL_ASSET_IMPORT_FOLDER,
+  TOOL_ASSET_LIST,
+  TOOL_ASSET_SEARCH,
+  TOOL_ASSET_GET,
+  TOOL_ASSET_PROVENANCE_EXPORT,
+  TOOL_ASSET_UPDATE_METADATA,
+  TOOL_ASSET_ATTACH_PROMPT,
+  TOOL_ASSET_TRASH,
+  TOOL_ASSET_RESTORE,
+  TOOL_ASSET_DUPLICATE,
+  TOOL_ASSET_VERSION_CREATE,
+  TOOL_ASSET_VERSION_HISTORY,
+  TOOL_ASSET_RECIPE_HISTORY,
+  TOOL_GENERATION_RECORD,
+  TOOL_GENERATION_LIST,
+  TOOL_GENERATION_RELATION_RECORD,
+  TOOL_GENERATION_LINEAGE,
+  TOOL_STACK_CREATE,
+  TOOL_STACK_ADD_ASSETS,
+  TOOL_STACK_RENAME,
+  TOOL_STACK_REMOVE_ASSETS,
+  TOOL_STACK_DISSOLVE,
+  TOOL_STACK_GET,
+  TOOL_STACK_LIST,
+  toolDefinitions,
+  withToolAnnotations,
+} from "../lib/mcp-server/tool-definitions.mjs";
+import { compactAsset, compactListLimit, compactResultText } from "../lib/mcp-server/compact-results.mjs";
+import { validateSchema } from "../lib/mcp-server/validate-schema.mjs";
 
 const managerDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // Inside the desktop app (ELECTRON_RUN_AS_NODE) the client picks the working
@@ -214,116 +245,12 @@ async function closeDirectStore() {
   try { store?.close?.(); } finally { await directStoreLease?.release().catch(() => {}); }
 }
 
-const TOOL_ASSET_CREATE = "asset_create";
-const TOOL_ASSET_IMPORT_FOLDER = "asset_import_folder";
-const TOOL_ASSET_LIST = "asset_list";
-const TOOL_ASSET_SEARCH = "asset_search";
-const TOOL_ASSET_GET = "asset_get";
-const TOOL_ASSET_PROVENANCE_EXPORT = "asset_provenance_export";
-const TOOL_ASSET_UPDATE_METADATA = "asset_update_metadata";
-const TOOL_ASSET_ATTACH_PROMPT = "asset_attach_prompt";
-const TOOL_ASSET_TRASH = "asset_trash";
-const TOOL_ASSET_RESTORE = "asset_restore";
-const TOOL_ASSET_DUPLICATE = "asset_duplicate";
-const TOOL_ASSET_VERSION_CREATE = "asset_version_create";
-const TOOL_ASSET_VERSION_HISTORY = "asset_version_history";
-const TOOL_ASSET_RECIPE_HISTORY = "asset_recipe_history";
-const TOOL_GENERATION_RECORD = "generation_record";
-const TOOL_GENERATION_LIST = "generation_list";
-const TOOL_GENERATION_RELATION_RECORD = "generation_relation_record";
-const TOOL_GENERATION_LINEAGE = "generation_lineage";
-const TOOL_STACK_CREATE = "stack_create";
-const TOOL_STACK_ADD_ASSETS = "stack_add_assets";
-const TOOL_STACK_RENAME = "stack_rename";
-const TOOL_STACK_REMOVE_ASSETS = "stack_remove_assets";
-const TOOL_STACK_DISSOLVE = "stack_dissolve";
-const TOOL_STACK_GET = "stack_get";
-const TOOL_STACK_LIST = "stack_list";
-
-// Task 334: MCP tool annotations. Read tools never write; the only destructive
-// tool is asset_trash (moves to Trash); nothing reaches out to other systems,
-// so every tool declares openWorldHint: false. destructiveHint is spelled out
-// everywhere because the MCP default for a missing hint is true.
-const TOOL_ANNOTATIONS = {
-  [TOOL_ASSET_CREATE]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_ASSET_IMPORT_FOLDER]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_ASSET_LIST]: { readOnlyHint: true, destructiveHint: false },
-  [TOOL_ASSET_SEARCH]: { readOnlyHint: true, destructiveHint: false },
-  [TOOL_ASSET_GET]: { readOnlyHint: true, destructiveHint: false },
-  [TOOL_ASSET_PROVENANCE_EXPORT]: { readOnlyHint: true, destructiveHint: false },
-  [TOOL_ASSET_UPDATE_METADATA]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_ASSET_ATTACH_PROMPT]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_ASSET_TRASH]: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  [TOOL_ASSET_RESTORE]: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  [TOOL_ASSET_DUPLICATE]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_ASSET_VERSION_CREATE]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_ASSET_VERSION_HISTORY]: { readOnlyHint: true, destructiveHint: false },
-  [TOOL_ASSET_RECIPE_HISTORY]: { readOnlyHint: true, destructiveHint: false },
-  [TOOL_GENERATION_RECORD]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_GENERATION_LIST]: { readOnlyHint: true, destructiveHint: false },
-  [TOOL_GENERATION_RELATION_RECORD]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_GENERATION_LINEAGE]: { readOnlyHint: true, destructiveHint: false },
-  [TOOL_STACK_CREATE]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_STACK_ADD_ASSETS]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_STACK_RENAME]: { readOnlyHint: false, destructiveHint: false },
-  [TOOL_STACK_REMOVE_ASSETS]: { readOnlyHint: false, destructiveHint: true },
-  [TOOL_STACK_DISSOLVE]: { readOnlyHint: false, destructiveHint: true },
-  [TOOL_STACK_GET]: { readOnlyHint: true, destructiveHint: false },
-  [TOOL_STACK_LIST]: { readOnlyHint: true, destructiveHint: false },
-};
-
 // Folder import limits; the max-files override is a test knob.
 function importFolderMaxFiles() {
   const parsed = Number.parseInt(process.env.MOSA_MCP_IMPORT_FOLDER_MAX_FILES || "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1000;
 }
 const IMPORT_FOLDER_MAX_DEPTH = 5;
-
-const EXTERNAL_VERIFICATION_SCHEMA = {
-  enum: ["user_confirmed", "observed", "inferred"],
-  description: "Evidence level for this externally supplied record. provider_verified is reserved for trusted GravityPort provider integrations.",
-};
-
-const REFERENCE_SCHEMA = {
-  type: "array",
-  items: {
-    anyOf: [
-      { type: "string" },
-      {
-        type: "object",
-        properties: {
-          asset_id: { type: "string" },
-          sha256: { type: "string" },
-          role: { type: "string" },
-          scope: { type: "array", items: { type: "string" } },
-          applied: { type: "boolean" },
-          allowed_uses: {
-            type: "array",
-            items: { type: "string" },
-            description: "Purposes this reference may serve, for example identity, style, world, wardrobe, composition. Once set, any purpose outside the list is treated as forbidden.",
-          },
-          forbidden_uses: {
-            type: "array",
-            items: { type: "string" },
-            description: "Purposes this reference must not serve. A forbidden use always overrides the same allowed use.",
-          },
-          rights: {
-            type: "object",
-            description: "Rights declarations for the reference image. Unstated fields stay unknown; silence is never recorded as permission.",
-            properties: {
-              copyright: { enum: ["unknown", "owned", "licensed", "third-party"] },
-              portrait_consent: { enum: ["unknown", "granted", "not-required", "denied"] },
-              redistribution: { enum: ["unknown", "allowed", "forbidden"] },
-              attribution: { type: "string" },
-            },
-            additionalProperties: false,
-          },
-        },
-        additionalProperties: true,
-      },
-    ],
-  },
-};
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -348,7 +275,6 @@ function sanitizeClientDisplayName(rawName) {
   if (lowered.includes("codex")) return "Codex";
   if (lowered.includes("cursor")) return "Cursor";
   if (lowered.includes("gemini")) return "Gemini";
-  // eslint-disable-next-line no-control-regex
   const cleaned = value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
   return cleaned ? [...cleaned].slice(0, 40).join("") : "";
 }
@@ -359,406 +285,6 @@ function sendProgressNotification(progressToken, { progress, total, message }) {
     method: "notifications/progress",
     params: { progressToken, progress, total, message },
   });
-}
-
-function toolDefinitions() {
-  return [
-    {
-      name: TOOL_ASSET_CREATE,
-      description: "Copy an image into the GravityPort library and save prompt recipe metadata. The image path must be an absolute path on this machine. Symbolic links are rejected. Only supported image and video formats are imported. Identical bytes already in the library (outside Trash) return the existing asset with deduplicated: true instead of creating a copy.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          imagePath: { type: "string", description: "Absolute path of the image on this machine." },
-          prompt: { type: "string" },
-          user_prompt: { type: "string", description: "Optional user request kept separately from the effective generation prompt." },
-          negative_prompt: { type: "string" },
-          references: REFERENCE_SCHEMA,
-          skill: { type: "string" },
-          style: { type: "string" },
-          ratio: { type: "string" },
-          theme: { type: "string" },
-          business_fields: { type: "object", description: "Stored with the asset but not searchable; put anything that should be findable via search into tags instead." },
-          tags: { type: "array", items: { type: "string" }, description: "Tags saved with the asset; searchable." },
-          favorite: { type: "boolean", description: "Mark the asset as a favorite." },
-          group: { type: "string", description: "Group the asset is filed under; grouping, not a project." },
-          category: { type: "string", description: "Category label shown in the app." },
-          rating: { type: "integer", minimum: 0, maximum: 5, description: "Star rating from 0 (unrated) to 5." },
-          parent_asset_id: { type: "string" },
-          version_change: { type: "string" },
-          sourceType: { type: "string", description: "Optional source type. Defaults to codex-generated for images under <CODEX_HOME>/generated_images (normally the user's .codex/generated_images), and to mcp-agent (an image saved by an AI assistant, shown as \"AI 助手\" in the App) for everything else." },
-          source: {
-            type: "object",
-            description: "Optional generation provenance, such as generation_tool, model, codex_session_id, or codex_thread_id. The original image path and Codex task ID are detected automatically.",
-            additionalProperties: true
-          }
-        },
-        required: ["imagePath"],
-        additionalProperties: true
-      }
-    },
-    {
-      name: TOOL_ASSET_IMPORT_FOLDER,
-      description: "Import every image and video found in a local folder into the GravityPort library, applying the same prompt/sourceType/source to each file. The folder path must be an absolute path on this machine. Symbolic links are skipped; with recursive: true the folder itself is level 1 and its contents are read down to level 5 (at most four subfolder levels below it), and deeper subfolders are skipped; a single call imports at most 1000 files, otherwise it fails and asks for batches. Identical bytes already in the library are reported as deduplicated. Files import one by one; a failed file is reported and does not stop the rest. Files already in the library are listed in duplicates with the existing assetId.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          folderPath: { type: "string", description: "Absolute path of the folder to import." },
-          recursive: { type: "boolean", description: "Also read subfolders (default false; the folder itself is level 1, contents are read down to level 5, deeper subfolders are skipped)." },
-          prompt: { type: "string" },
-          sourceType: { type: "string" },
-          source: {
-            type: "object",
-            description: "Optional generation provenance applied to every imported file, such as generation_tool, model, or codex_session_id.",
-            additionalProperties: true
-          }
-        },
-        required: ["folderPath"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_LIST,
-      description: "List saved GravityPort assets for a project, optionally filtered by search text. Returns compact per-asset summaries with the total count (20 per page by default, at most 100; pass `cursor` to page further); use asset_get for an asset's full recipe and metadata.",
-      inputSchema: {
-        type: "object",
-        properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100, default: 20 }, cursor: { type: "string" } },
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_SEARCH,
-      description: "Search GravityPort visual memory using lexical search and explicit creation-time bounds. Multiple query words are combined with AND: every word must appear for an asset to match; OR is not supported. Returns compact per-asset summaries with the total match count (20 per page by default, at most 100; pass `cursor` to page further); use asset_get for an asset's full recipe and metadata.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Space-separated words; every word must appear (AND). OR is not supported." },
-          createdAfter: { type: "string", description: "Inclusive lower creation-time bound. A date-only value (\"2026-11-07\") means local midnight of that day on this machine; a value with Z or a ±hh:mm offset keeps its explicit zone." },
-          createdBefore: { type: "string", description: "Inclusive upper creation-time bound. A date-only value (\"2026-11-07\") means local midnight of that day, so the bound is \"before Nov 7 starts\" — assets created on Nov 7 itself are outside. A value with Z or a ±hh:mm offset keeps its explicit zone." },
-          // Deprecated: local visual retrieval was removed. Both properties stay
-          // declared so clients with a cached older schema may still send
-          // `visual` / `minScore`; they are accepted and ignored (lexical search runs).
-          visual: { type: "boolean", description: "Deprecated and ignored." },
-          minScore: { type: "number", description: "Deprecated and ignored." },
-          limit: { type: "integer", minimum: 1, maximum: 100 },
-          cursor: { type: "string" },
-        },
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_ASSET_GET,
-      description: "Get one saved asset and its full prompt recipe. asset_list and asset_search return only compact summaries; call this for the full recipe and metadata.",
-      inputSchema: {
-        type: "object",
-        properties: { assetId: { type: "string" } },
-        required: ["assetId"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_PROVENANCE_EXPORT,
-      description: "Export a portable GravityPort provenance bundle plus an unsigned C2PA assertion payload. Prompts and user messages are excluded by default; pass includePrompts: true only when the user explicitly asks to include prompts. Local filesystem paths and usernames are never exported under any circumstances. This does not create a signed Content Credential; a C2PA signer must bind and sign the assertion separately.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          assetId: { type: "string" },
-          includePrompts: {
-            type: "boolean",
-            description: "Whether to include prompts and user messages. Defaults to false; pass true only when the user explicitly requests prompts. Local filesystem paths and usernames are never exported under any circumstances.",
-          },
-        },
-        required: ["assetId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_ASSET_TRASH,
-      description: "Move an asset to Trash. Trashed assets can be restored with asset_restore or inside the GravityPort app, and are permanently purged after 90 days. Use this when the user asks to delete or remove an asset. Do NOT use this when the user asks to archive or stash an asset. If the user is viewing this asset in GravityPort, GravityPort asks the user first and the call waits up to 60 seconds for the answer.",
-      inputSchema: {
-        type: "object",
-        properties: { assetId: { type: "string" } },
-        required: ["assetId"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_RESTORE,
-      description: "Restore an asset from Trash back to the active library.",
-      inputSchema: {
-        type: "object",
-        properties: { assetId: { type: "string" } },
-        required: ["assetId"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_DUPLICATE,
-      description: "Create an independent editable copy that starts a new version root while retaining duplicate provenance.",
-      inputSchema: {
-        type: "object",
-        properties: { assetId: { type: "string" }, assetIdNew: { type: "string" } },
-        required: ["assetId"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_VERSION_CREATE,
-      description: "Save a new recipe version as a child of an existing asset without overwriting the parent.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          assetId: { type: "string", description: "Existing parent asset ID." },
-          assetIdNew: { type: "string", description: "Optional ID for the new version." },
-          imagePath: { type: "string", description: "Optional new image path; must be an absolute path on this machine (any local folder is accepted, same as asset_create). When omitted, the parent image is copied for a recipe-only version." },
-          version_change: { type: "string", minLength: 1, description: "Required summary of what changed from the parent." },
-          prompt: { type: "string" },
-          user_prompt: { type: "string", description: "Optional user request kept separately from the effective generation prompt." },
-          negative_prompt: { type: "string" },
-          references: REFERENCE_SCHEMA,
-          skill: { type: "string" },
-          style: { type: "string" },
-          ratio: { type: "string" },
-          theme: { type: "string" },
-          business_fields: { type: "object", description: "Stored with the asset but not searchable; put anything that should be findable via search into tags instead." },
-          tags: { type: "array", items: { type: "string" } },
-          favorite: { type: "boolean" },
-          group: { type: "string" },
-          category: { type: "string" },
-          rating: { type: "integer", minimum: 0, maximum: 5 },
-          sourceType: { type: "string" },
-          source: {
-            type: "object",
-            description: "Optional provenance for a replacement image, such as generation_tool, model, or codex_session_id.",
-            additionalProperties: true
-          }
-        },
-        required: ["assetId", "version_change"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_VERSION_HISTORY,
-      description: "Read the complete root-to-descendant recipe version tree for an asset, including archived versions.",
-      inputSchema: {
-        type: "object",
-        properties: { assetId: { type: "string" } },
-        required: ["assetId"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_RECIPE_HISTORY,
-      description: "Read immutable generation recipe snapshots for one asset and identify the currently active snapshot.",
-      inputSchema: {
-        type: "object",
-        properties: { assetId: { type: "string" } },
-        required: ["assetId"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_UPDATE_METADATA,
-      description: "Update metadata fields for a saved asset. Pass `references` to record reference rights and permitted uses for a saved asset; that annotation is not a generation input, so it appends a new recipe snapshot.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          assetId: { type: "string" },
-          prompt: { type: "string" },
-          user_prompt: { type: "string" },
-          negative_prompt: { type: "string" },
-          references: REFERENCE_SCHEMA,
-          skill: { type: "string" },
-          style: { type: "string" },
-          ratio: { type: "string" },
-          theme: { type: "string" },
-          business_fields: { type: "object", description: "Stored with the asset but not searchable; put anything that should be findable via search into tags instead. Only the keys you pass are merged into the stored object: a key whose value is null is removed, and every other stored key is kept unchanged." },
-          tags: { type: "array", items: { type: "string" } },
-          favorite: { type: "boolean" },
-          group: { type: "string" },
-          category: { type: "string" },
-          rating: { type: "integer", minimum: 0, maximum: 5 },
-          recipe_change_summary: { type: "string" },
-        },
-        required: ["assetId"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_ASSET_ATTACH_PROMPT,
-      description: "Attach or replace the full prompt recipe for a saved asset.",
-      inputSchema: {
-        type: "object",
-        properties: { assetId: { type: "string" }, prompt: { type: "string" } },
-        required: ["assetId", "prompt"],
-        additionalProperties: false
-      }
-    },
-    {
-      name: TOOL_GENERATION_RECORD,
-      description: "Record one generation occurrence independently from the deduplicated output asset. Use this when an agent knows that a specific generation produced a saved GravityPort asset.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          outputAssetId: { type: "string", description: "Existing GravityPort asset produced by this generation." },
-          provider: { type: "string" },
-          captureContextId: { type: "string", description: "GravityPort/local observation context. This is not a provider generation-call ID. Several generations in one capture context are told apart by providerToolCallId." },
-          providerToolCallId: { type: "string", description: "Provider/runtime tool-call identifier when observed." },
-          providerGenerationCallId: { type: "string", description: "Provider generation-call identifier only when actually supplied by the provider integration." },
-          providerResponseId: { type: "string" },
-          providerAssetId: { type: "string" },
-          conversationId: { type: "string" },
-          messageId: { type: "string" },
-          batchId: { type: "string" },
-          model: { type: "string" },
-          userPrompt: { type: "string" },
-          effectivePrompt: { type: "string" },
-          promptStatus: { type: "string" },
-          captureChannel: { type: "string" },
-          verificationLevel: EXTERNAL_VERIFICATION_SCHEMA,
-          references: REFERENCE_SCHEMA,
-          evidence: { type: "object", additionalProperties: true },
-          createdAt: { type: "string" },
-        },
-        required: ["outputAssetId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_GENERATION_LIST,
-      description: "List generation occurrences, optionally filtered by output asset or provider identifiers.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          assetId: { type: "string" },
-          captureContextId: { type: "string" },
-          providerToolCallId: { type: "string" },
-          providerGenerationCallId: { type: "string" },
-        },
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_GENERATION_RELATION_RECORD,
-      description: "Record an explicit generation-to-generation relationship such as edited_from or variant_of. Do not infer a parent unless the evidence supports it. When verificationLevel is omitted the relation is recorded as user_confirmed (you are asserting it on the user's behalf); pass \"observed\" or \"inferred\" to record a weaker evidence level.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          childGenerationId: { type: "string" },
-          parentGenerationId: { type: "string" },
-          relationType: { enum: ["edited_from", "variant_of", "derived_from", "based_on"], default: "derived_from", description: "How the child relates to the parent; defaults to derived_from when omitted." },
-          verificationLevel: EXTERNAL_VERIFICATION_SCHEMA,
-          evidence: { type: "object", additionalProperties: true },
-          createdAt: { type: "string" },
-        },
-        required: ["childGenerationId", "parentGenerationId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_GENERATION_LINEAGE,
-      description: "Read the connected generation lineage graph around one generation event, including parent/child IDs and evidence-bearing relations.",
-      inputSchema: {
-        type: "object",
-        properties: { generationId: { type: "string" } },
-        required: ["generationId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_STACK_CREATE,
-      description: "Group two or more saved assets into a new stack, the same as stacking a selection in the GravityPort app. coverAssetId defaults to the first asset. name (optional, at most 80 characters) is the stack's display name. An asset can belong to only one stack: if any asset is already in a stack the call fails with ASSET_ALREADY_STACKED and nothing changes; take it out with stack_remove_assets first. To show the same image in several stacks, copy it with asset_duplicate and stack the copy. Archived assets cannot be stacked.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          assetIds: { type: "array", items: { type: "string" }, maxItems: 2000 },
-          coverAssetId: { type: "string" },
-          name: { type: "string", maxLength: 80 },
-        },
-        required: ["assetIds"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_STACK_ADD_ASSETS,
-      description: "Add saved assets to an existing stack, after its current members. Assets already in this stack are skipped and listed in alreadyInStack. If any asset belongs to a different stack the call fails with ASSET_ALREADY_STACKED and nothing changes.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          stackId: { type: "string" },
-          assetIds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 2000 },
-        },
-        required: ["stackId", "assetIds"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_STACK_RENAME,
-      description: "Set a stack's display name (trimmed, 1 to 80 characters). The name is kept even when the stack was created automatically from a conversation.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          stackId: { type: "string" },
-          name: { type: "string", minLength: 1, maxLength: 80 },
-        },
-        required: ["stackId", "name"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_STACK_REMOVE_ASSETS,
-      description: "Take assets out of a stack; the assets stay in the library. Every assetId must belong to this stack, otherwise the call fails with ASSET_NOT_IN_STACK and nothing changes. A stack left with one asset is dissolved (dissolved: true). Assets taken out are not stacked again automatically.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          stackId: { type: "string" },
-          assetIds: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 2000 },
-        },
-        required: ["stackId", "assetIds"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_STACK_DISSOLVE,
-      description: "Dissolve a stack: its assets return to the library as separate assets; nothing is deleted or archived. They are not stacked again automatically.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          stackId: { type: "string" },
-        },
-        required: ["stackId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_STACK_GET,
-      description: "Read one stack: its name, cover, member count, and member asset IDs in stack order. Members in Trash or archived are left out.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          stackId: { type: "string" },
-        },
-        required: ["stackId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: TOOL_STACK_LIST,
-      description: "List the stacks shown in the GravityPort library (two or more visible members), most recently updated first, optionally filtered by text in the stack name.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string" },
-          limit: { type: "integer", minimum: 1, maximum: 200 },
-        },
-        additionalProperties: false,
-      },
-    },
-  ];
-}
-
-function withToolAnnotations(tool) {
-  return { ...tool, annotations: { openWorldHint: false, ...TOOL_ANNOTATIONS[tool.name] } };
 }
 
 function mcpImportError(code, message) {
@@ -1036,85 +562,6 @@ function assertStackSupport(store) {
   ) {
     throw mcpToolError("ASSET_STACKS_UNAVAILABLE", "Asset stacks are unavailable.", 400);
   }
-}
-
-// Task 376: asset_list / asset_search answers carry a fixed slim field set
-// instead of the full rowToAsset payload (recipe snapshots, palette, runtime
-// URLs and paths made a 100-asset page ~220KB). Full detail stays on
-// asset_get. Field sources (mirroring rowToAsset in lib/sqlite-asset-store.mjs
-// and the shared mediaKindOf rule at lib/sqlite-asset-store.mjs:109):
-//   id ← asset.id; file_name ← asset.asset (the managed file name, the same
-//   key provenance-bundle.mjs exports as file_name); media_kind ← the shared
-//   mediaKindOf rule (source.media_kind || business_fields.media_kind, then
-//   the file extension); width/height ← business_fields.width/height;
-//   prompt_excerpt ← prompt (first 80 characters, "…" when cut, "" when the
-//   asset has no prompt); group ← asset.group; tags/rating/favorite/
-//   created_at/image_path carry over; stack ← the attachStackToAssets summary
-//   reduced to { id, name }, the key dropped when the asset is unstacked.
-// A field whose value is missing on the asset (a video without dimensions, an
-// empty tag list, rating 0, favorite false) is omitted, never placeholdered.
-const PROMPT_EXCERPT_CHARACTERS = 80;
-const COMPACT_QUERY_ECHO_CHARACTERS = 200;
-const COMPACT_LIST_DEFAULT_LIMIT = 20;
-const COMPACT_LIST_MAX_LIMIT = 100;
-const COMPACT_MEDIA_IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".gif", ".jpg", ".jpeg", ".png", ".svg", ".webp"]);
-const COMPACT_MEDIA_VIDEO_EXTENSIONS = new Set([".m4v", ".mov", ".mp4", ".webm"]);
-
-function excerptCharacters(value, maxCharacters) {
-  const text = typeof value === "string" ? value : "";
-  const chars = Array.from(text);
-  return chars.length > maxCharacters ? `${chars.slice(0, maxCharacters).join("")}…` : text;
-}
-
-function compactMediaKind(asset) {
-  const kind = asset?.source?.media_kind || asset?.business_fields?.media_kind;
-  if (kind === "video" || kind === "image") return kind;
-  const match = /\.([a-z0-9]+)(?:$|\?)/i.exec(String(asset?.image_path || ""));
-  const ext = match ? `.${match[1].toLowerCase()}` : "";
-  if (COMPACT_MEDIA_VIDEO_EXTENSIONS.has(ext)) return "video";
-  if (COMPACT_MEDIA_IMAGE_EXTENSIONS.has(ext)) return "image";
-  return "unknown";
-}
-
-function compactAsset(asset) {
-  if (!asset || typeof asset !== "object") return asset;
-  const compact = { id: asset.id };
-  if (asset.asset) compact.file_name = asset.asset;
-  compact.media_kind = compactMediaKind(asset);
-  const width = Number(asset.business_fields?.width);
-  if (Number.isFinite(width) && width > 0) compact.width = width;
-  const height = Number(asset.business_fields?.height);
-  if (Number.isFinite(height) && height > 0) compact.height = height;
-  compact.prompt_excerpt = excerptCharacters(asset.prompt, PROMPT_EXCERPT_CHARACTERS);
-  if (asset.group) compact.group = asset.group;
-  if (Array.isArray(asset.tags) && asset.tags.length) compact.tags = [...asset.tags];
-  const rating = Number(asset.rating);
-  if (Number.isFinite(rating) && rating > 0) compact.rating = rating;
-  if (asset.favorite === true) compact.favorite = true;
-  compact.created_at = asset.created_at;
-  if (asset.stack && typeof asset.stack === "object") {
-    compact.stack = { id: asset.stack.id, name: asset.stack.name };
-  }
-  if (asset.image_path) compact.image_path = asset.image_path;
-  return compact;
-}
-
-function compactListLimit(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return COMPACT_LIST_DEFAULT_LIMIT;
-  return Math.min(Math.floor(parsed), COMPACT_LIST_MAX_LIMIT);
-}
-
-// Task 376: the readable content text leads with the bilingual summary (and,
-// when a next page exists, the paging hint on the same line), then one line
-// per asset on this page: `<id> · <file_name>`.
-function compactResultText({ search, total, count, nextCursor, assets }) {
-  const summary = search
-    ? `找到 ${total} 张，这页 ${count} 张。/ ${total} matches, ${count} on this page.`
-    : `共 ${total} 张，这页 ${count} 张。/ ${total} assets, ${count} on this page.`;
-  const more = nextCursor ? " 还有更多，传 cursor 翻页。/ More results: pass cursor." : "";
-  const lines = [`${summary}${more}`, ...assets.map((asset) => `${asset?.id} · ${asset?.file_name ?? ""}`)];
-  return lines.join("\n");
 }
 
 async function attachStackToAssets(store, project, assets) {
@@ -1742,64 +1189,6 @@ async function handleToolCall(id, params) {
     });
     return;
   }
-}
-
-function validateSchema(schema, value, path) {
-  if (!schema || typeof schema !== "object") return "";
-  if (Array.isArray(schema.anyOf)) {
-    if (schema.anyOf.some((candidate) => !validateSchema(candidate, value, path))) return "";
-    return `${path} does not match any allowed shape.`;
-  }
-  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
-    return `${path} must be one of: ${schema.enum.join(", ")}.`;
-  }
-  if (schema.type === "object") {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return `${path} must be an object.`;
-    for (const required of schema.required || []) {
-      if (!Object.hasOwn(value, required)) return `${path}.${required} is required.`;
-    }
-    const properties = schema.properties || {};
-    if (schema.additionalProperties === false) {
-      const unknown = Object.keys(value).find((key) => !Object.hasOwn(properties, key));
-      if (unknown) return `${path}.${unknown} is not allowed.`;
-    }
-    for (const [key, child] of Object.entries(properties)) {
-      if (!Object.hasOwn(value, key)) continue;
-      const error = validateSchema(child, value[key], `${path}.${key}`);
-      if (error) return error;
-    }
-  } else if (schema.type === "array") {
-    if (!Array.isArray(value)) return `${path} must be an array.`;
-    for (let index = 0; index < value.length; index += 1) {
-      const error = validateSchema(schema.items, value[index], `${path}[${index}]`);
-      if (error) return error;
-    }
-  } else if (schema.type === "string") {
-    if (typeof value !== "string") return `${path} must be a string.`;
-    if (Number.isInteger(schema.minLength) && value.length < schema.minLength) return `${path} must contain at least ${schema.minLength} characters.`;
-    if (Number.isInteger(schema.maxLength) && value.length > schema.maxLength) return `${path} must contain at most ${schema.maxLength} characters.`;
-    if (typeof schema.pattern === "string") {
-      let pattern;
-      try { pattern = new RegExp(schema.pattern); }
-      catch { return `${path} has an invalid schema pattern.`; }
-      if (!pattern.test(value)) return `${path} must match ${schema.pattern}.`;
-    }
-  } else if (schema.type === "boolean") {
-    if (typeof value !== "boolean") return `${path} must be a boolean.`;
-  } else if (schema.type === "integer") {
-    if (!Number.isInteger(value)) return `${path} must be an integer.`;
-  } else if (schema.type === "number") {
-    if (typeof value !== "number" || !Number.isFinite(value)) return `${path} must be a finite number.`;
-  }
-  if (Array.isArray(value)) {
-    if (Number.isInteger(schema.minItems) && value.length < schema.minItems) return `${path} must contain at least ${schema.minItems} items.`;
-    if (Number.isInteger(schema.maxItems) && value.length > schema.maxItems) return `${path} must contain at most ${schema.maxItems} items.`;
-  }
-  if (typeof value === "number") {
-    if (Number.isFinite(schema.minimum) && value < schema.minimum) return `${path} must be >= ${schema.minimum}.`;
-    if (Number.isFinite(schema.maximum) && value > schema.maximum) return `${path} must be <= ${schema.maximum}.`;
-  }
-  return "";
 }
 
 function libraryMovedAway() {

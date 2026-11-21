@@ -240,10 +240,16 @@ function pageSource() {
     result.rootUndo = await undoAndMeasure();
 
     // Into the stack: its card sits at the end of the newest-first root.
+    // Keep scrolling for the whole wait: a page that lands after the last
+    // nudge would otherwise never trigger the next one (435).
     const g = grid();
-    for (let i = 0; i < 40 && !document.querySelector('.asset-card .stack-mark'); i += 1) {
+    const stackCardDeadline = Date.now() + 30000;
+    while (!document.querySelector('.asset-card .stack-mark') && Date.now() < stackCardDeadline) {
       g.scrollTop = g.scrollHeight;
       await sleep(250);
+    }
+    if (!document.querySelector('.asset-card .stack-mark')) {
+      throw new Error('Timed out scrolling to the stack card (' + cards().length + ' cards, top=' + Math.round(g.scrollTop) + ')');
     }
     const stackCard = await waitFor(() => document.querySelector('.asset-card .stack-mark')?.closest('.asset-card'), 'stack card');
     stackCard.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
@@ -251,11 +257,16 @@ function pageSource() {
     await sleep(500);
     result.stackMenu = await measure('menu');
     // Past the first page (100): load the whole stack, then trash deep down.
-    for (let i = 0; i < 40 && Number(grid().getAttribute('data-loaded-assets') || 0) < ${STACK_MEMBERS - 1}; i += 1) {
+    // Keep scrolling for the whole wait; when the deadline expires the loaded
+    // count is thrown on directly instead of being read unguarded (435).
+    const deepLoadDeadline = Date.now() + 30000;
+    while (Number(grid().getAttribute('data-loaded-assets') || 0) < ${STACK_MEMBERS - 1} && Date.now() < deepLoadDeadline) {
       grid().scrollTop = grid().scrollHeight;
       await sleep(300);
     }
-    result.stackDeepLoaded = { loaded: Number(grid().getAttribute('data-loaded-assets') || 0) };
+    const deepLoaded = Number(grid().getAttribute('data-loaded-assets') || 0);
+    if (deepLoaded < ${STACK_MEMBERS - 1}) throw new Error('Timed out waiting for the stack to fully load (' + deepLoaded + ' loaded, need ' + ${STACK_MEMBERS - 1} + ')');
+    result.stackDeepLoaded = { loaded: deepLoaded };
     result.stackDeep = await measure('menu', 0.6);
     result.stackKey = await measure('key');
     // Several more cards at different heights: each reflow is a chance for

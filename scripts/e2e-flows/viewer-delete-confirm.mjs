@@ -29,6 +29,7 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
+import { reloadCdpAndWaitForApp, waitForCdpExpression } from "./_shared.mjs";
 
 const DEVELOPMENT_ORIGIN = "chrome-extension://hjcildpmialbefmcdpdooenlojecjpli";
 const CAPTURE_TOKEN = "mosa_e2e_viewer_delete_capture_token";
@@ -343,6 +344,7 @@ async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
 function openCdpSession(url) {
   let idSeq = 0;
   const pending = new Map();
+  const eventHandlers = new Set();
   const socket = new WebSocket(url);
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(String(event.data));
@@ -353,7 +355,9 @@ function openCdpSession(url) {
       else if (message.result?.exceptionDetails) {
         rejectFn(new Error("evaluate failed: " + (message.result.exceptionDetails.exception?.description || message.result.exceptionDetails.text)));
       } else resolveFn(message.result);
+      return;
     }
+    if (message.method) for (const handler of eventHandlers) handler(message);
   });
   const ready = new Promise((resolveReady, rejectReady) => {
     socket.addEventListener("open", resolveReady, { once: true });
@@ -372,28 +376,14 @@ function openCdpSession(url) {
       const result = await this.send("Runtime.evaluate", { expression, returnByValue: true });
       return result?.result?.value;
     },
+    onEvent(handler) {
+      eventHandlers.add(handler);
+      return () => eventHandlers.delete(handler);
+    },
     close() {
       try { socket.close(); } catch {}
     },
   };
-}
-
-async function waitForExpression(cdp, expression, label, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError = null;
-  while (Date.now() < deadline) {
-    try {
-      const value = await Promise.race([
-        cdp.evaluate(expression),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("evaluate stalled")), 1500)),
-      ]);
-      if (value === true) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await sleep(200);
-  }
-  throw new Error(`Timed out waiting for ${label}${lastError ? ` (${lastError.message})` : ""}`);
 }
 
 /**
@@ -442,12 +432,14 @@ async function captureDialogShot({ ctx, theme, cardId, mcp, serverEnv }) {
       await copyFile(logFile, join(SHOT_DIR, `385-desktop-${theme}-main.log`)).catch(() => {});
       throw error;
     });
-    await waitForExpression(cdp, "Boolean(document.querySelector('.app'))", "app shell", 60000);
-    // The preference must exist before the App mounts; a reload lands the theme.
+    await waitForCdpExpression(cdp, "Boolean(document.querySelector('.app'))", "app shell", 60000);
+    // The preference must exist before the App mounts; a reload lands the
+    // theme. reloadCdpAndWaitForApp (433/435) arms the Page/Runtime listeners
+    // first, so the wait cannot match the pre-reload DOM from the old
+    // execution context.
     await cdp.evaluate(`localStorage.setItem("gravityport.preferences", JSON.stringify({ appearance: ${JSON.stringify(theme === "dark" ? "深色" : "浅色")} }))`);
-    cdp.evaluate("location.reload()").catch(() => {});
-    await waitForExpression(cdp, "Boolean(document.querySelector('.app'))", "app shell after reload", 60000);
-    await waitForExpression(
+    await reloadCdpAndWaitForApp(cdp, { timeoutMs: 60000 });
+    await waitForCdpExpression(
       cdp,
       `Boolean(document.querySelector('.asset-card[data-asset-id="${cardId}"]'))`,
       "the card",
@@ -462,8 +454,8 @@ async function captureDialogShot({ ctx, theme, cardId, mcp, serverEnv }) {
     })()`);
     await waitForViewerFile(ctx.libraryDir, { assetId: cardId });
     const call = mcp.callTool("asset_trash", { assetId: cardId });
-    await waitForExpression(cdp, "Boolean(document.querySelector('.authorization-modal'))", "authorization dialog", 30000);
-    await waitForExpression(
+    await waitForCdpExpression(cdp, "Boolean(document.querySelector('.authorization-modal'))", "authorization dialog", 30000);
+    await waitForCdpExpression(
       cdp,
       "document.querySelector('.authorization-modal h3')?.textContent === '允许 Claude 删除这张素材吗？'",
       "the deletion dialog title",
