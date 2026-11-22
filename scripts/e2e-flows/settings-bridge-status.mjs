@@ -144,7 +144,8 @@ async function runWindowRound(ctx, server, { codexSessionsDir, codexImagesDir, w
     const cardText = await cdp.evaluate(`document.querySelector('.bridge-status-card')?.textContent || ''`);
     const problems = [];
     if (!cardText.includes("无法读取 Codex 的文件夹（没有权限）")) problems.push(`permission reason missing: ${JSON.stringify(cardText.slice(0, 400))}`);
-    if (!cardText.includes(`允许 GravityPort 访问 ${resolve(codexImagesDir, "..", "..")}`)) problems.push("fix line missing the shared parent");
+    // macOS EACCES → the Finder Get Info steps, pointing at the images/sessions shared parent (…/codex). Checked with the trailing 「，」 so a deeper or shallower folder cannot pass as a prefix.
+    if (!cardText.includes(`在访达中按 ⇧⌘G 前往 ${resolve(codexImagesDir, "..")}，按 ⌘I 打开简介`)) problems.push(`fix line missing the shared parent: ${JSON.stringify(cardText.slice(0, 600))}`);
     if (!cardText.includes("问题解决后会自动恢复收录。")) problems.push("fix line missing");
     if (problems.length) throw new Error(`bridge status error state: ${problems.join("; ")}`);
 
