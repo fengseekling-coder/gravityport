@@ -301,6 +301,27 @@ test("CJK 「」『』 quoted contents are hidden", () => {
   assert.equal(redactDiagnostics("检测到「张三的分组」和『李四堆叠』", {}), "检测到「<已隐藏>」和『<已隐藏>』");
 });
 
+test("任务 458: AI service keys and key headers are masked", () => {
+  const keys = [
+    "sk-ant-api03-0000000000000000000000000000000000001234",
+    "sk-proj-0000000000000000000000000000000000001234",
+    "sk-test-000000000000000000000000000000004321",
+    "AIzaTEST00000000000000000000000000000001234",
+  ];
+  for (const key of keys) {
+    const redacted = redactDiagnostics(`key ${key} failed`, {});
+    assert.ok(!redacted.includes(key), `${key} must not survive -> ${redacted}`);
+    assert.ok(redacted.includes("<已隐藏>"), `${key} -> ${redacted}`);
+  }
+  const headers = redactDiagnostics("request x-api-key: sk-ant-abc123 and x-goog-api-key: AIzaabc123 sent", {});
+  assert.ok(!headers.includes("sk-ant-abc123"), headers);
+  assert.ok(!headers.includes("AIzaabc123"), headers);
+  assert.ok(headers.includes("x-api-key: <已隐藏>"), headers);
+  assert.ok(headers.includes("x-goog-api-key: <已隐藏>"), headers);
+  // Words that merely contain "sk-" behind a word character are not keys.
+  assert.equal(redactDiagnostics("task-0000 and risk-free", {}), "task-0000 and risk-free");
+});
+
 test("stack traces keep their line/column suffixes", () => {
   assert.equal(
     redactDiagnostics("at Object.<anonymous> (/Users/alice/app.mjs:12:9)", { homeDir: "/Users/alice" }),

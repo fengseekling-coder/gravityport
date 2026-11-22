@@ -52,4 +52,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setWindowFullScreen: (flag) => ipcRenderer.invoke("set-window-full-screen", flag === true),
   onWindowFullScreenChange: (callback) =>
     ipcRenderer.on("window-full-screen-change", (_event, isFullScreen) => callback(isFullScreen === true)),
+  // 任务 458：AI 设置页五个通道。密钥只在主进程存取（safeStorage 加密），
+  // 返回值里只有 last4，原文不回渲染层。
+  aiGetState: () => ipcRenderer.invoke("ai-get-state"),
+  aiSaveKey: (serviceId, key) => ipcRenderer.invoke("ai-save-key", serviceId, key),
+  aiDeleteKey: (serviceId) => ipcRenderer.invoke("ai-delete-key", serviceId),
+  aiTestConnection: (serviceId, purpose) => ipcRenderer.invoke("ai-test-connection", serviceId, purpose),
+  aiUpdateSettings: (payload) => ipcRenderer.invoke("ai-update-settings", payload),
 });

@@ -7,6 +7,8 @@ import { McpClientConfigCard } from "./McpClientConfigCard"
 import { WebCaptureStatusCard } from "./WebCaptureStatusCard"
 import { BridgeStatusCard } from "./BridgeStatusCard"
 import { FeedbackPanel } from "./FeedbackPanel"
+import { AiSettingsPanel } from "./AiSettingsPanel"
+import { AI_SETTINGS_ENTRY } from "./ai-entry"
 import { desktopAPI, type UpdateReadyState } from "./desktop"
 import { buildUpdateText, type UpdateUiState } from "./app-lifecycle"
 import { buildReleaseNoteBlocks } from "./release-notes-view"
@@ -86,9 +88,10 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 ["常规与外观", "sun"],
                 ["存储", "folder"],
                 ["连接", "link"],
+                ["AI", "sparkle"],
                 ["反馈", "message"],
                 ["关于", "info"],
-              ].filter(([label]) => (PINTEREST_ENTRY || label !== "连接")).map(([label, icon]) => (
+              ].filter(([label]) => (PINTEREST_ENTRY || label !== "连接") && (AI_SETTINGS_ENTRY || label !== "AI")).map(([label, icon]) => (
                 <button
                   className={settingTab === label ? "active" : ""}
                   aria-pressed={settingTab === label}
@@ -238,6 +241,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
                     </section>
                   )}
                 </>
+              ) : settingTab === "AI" ? (
+                <AiSettingsPanel language={language} />
               ) : settingTab === "反馈" ? (
                 <FeedbackPanel language={language} />
               ) : (

@@ -52,6 +52,8 @@ const glyphs: Record<string, ReactNode> = {
   lock: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" /></>,
   local: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 14h18M16 16.5h.01M18 16.5h.01" /></>,
   chatgpt: <><path d="M12 3a5 5 0 0 1 5 3 5 5 0 0 1 4 7 5 5 0 0 1-5 7 5 5 0 0 1-8 0 5 5 0 0 1-5-7 5 5 0 0 1 4-7 5 5 0 0 1 5-3Z" /><path d="m8 8 4-2 4 2v5l-4 3-4-2V8Zm0 0 8 5M12 6v10M8 14l8-6" /></>,
+  // 任务 458：AI 设置页的 sparkle（设置左栏「AI」）。四角星，笔画同其他图标。
+  sparkle: <path d="M12 4c.7 3.9 3.4 6.6 7.3 7.3-3.9.7-6.6 3.4-7.3 7.3-.7-3.9-3.4-6.6-7.3-7.3 3.9-.7 6.6-3.4 7.3-7.3Z" />,
 }
 
 export default function Icon({ name, size = 16 }: { name: string; size?: number }) {
