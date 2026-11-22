@@ -2,6 +2,26 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.16 — 2026-11-22 / Preview
+
+### Desktop
+
+- Settings → Connect adds a Local AI tools card showing whether Codex, Grok and Cowart canvases are being archived, with the cause and the fix when they are not; it no longer creates `~/.codex/generated_images` when Codex is not installed.
+- Thumbnails: the three derivative tiers are encoded concurrently for typical images, so thumbnails appear faster after import.
+- Local bridges: files still being written are archived only once complete; a startup read error no longer stops later scans; one unreadable session record no longer blocks other Cowart canvases; symlinked Codex image folders pair with their prompts; failed hard links always fall back to copying.
+- Moving the library keeps the old library until the relocated one opens, then moves it to the system trash.
+- Originals and reference attachments are fsynced before the metadata commit, so a power loss no longer leaves empty image files.
+- MCP: stack move accepts `projectId`; leftover visual-search code removed.
+- Internal reorganization (SQLite schema and derived-column repair, MCP server tool definitions and helpers, sidebar and confirmation dialogs split out of `App.tsx`); release tooling adds `release:prepare` and `release:rehearse`; no behavior change.
+
+### Web Capture
+
+- Extension 0.15.50: images that ChatGPT Dot sends on `chatgpt.com/dots/…` are captured from the page's own messaging rooms response, deduplicated by file ID, with the user's request as the prompt and Dot's text as the description.
+
+### MCP launcher
+
+- `gravityport-mcp` 0.3.16: version bump only.
+
 ## 0.3.15 — 2026-11-17 / Preview
 
 ### Desktop
