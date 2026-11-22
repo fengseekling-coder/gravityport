@@ -6,6 +6,7 @@ export type EmptyStateKind =
   | "favorites-empty"
   | "unorganized-empty"
   | "group-empty"
+  | "learning-library-empty"
   | "stack-empty"
   | "library-empty";
 
@@ -96,6 +97,17 @@ export function deriveEmptyState(ctx: EmptyStateContext): EmptyStateResult | nul
       kind: "group-empty",
       title: "分组中没有素材",
       description: "将素材拖到侧栏中的分组名称上，或右键点击素材并选择「移到分组」。",
+      clearAction: false,
+    };
+  }
+
+  // 7b. Inside a learning library (task 459): a library fills by explicit
+  // adds, never by importing into it.
+  if (active.startsWith("learn:")) {
+    return {
+      kind: "learning-library-empty",
+      title: "这个学习库还没有图片",
+      description: "在图片上右键选择「加入学习库」，或把图片拖到左侧的学习库上。",
       clearAction: false,
     };
   }

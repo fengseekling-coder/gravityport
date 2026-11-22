@@ -40,6 +40,12 @@ export type MenuContext = {
   /** Task 421 gate: with the version canvas switched on, a single asset card
    * offers 查看版本树 to open the canvas directly. */
   versionCanvas?: boolean
+  /** Task 459: sidebar learning libraries for the 加入学习库 submenus; absent
+   * (entry off) means the learning-library entries never render. */
+  learningLibraries?: { id: string; name: string }[]
+  /** Task 459: the gallery is inside a learning-library view, so asset menus
+   * also offer 移出学习库. */
+  learningLibraryView?: boolean
 }
 
 /** Drop empty sections and join the rest with one separator each, so the
@@ -71,6 +77,21 @@ const groupSubmenu = (prefix: string, groups: MenuContext["groups"]): MenuEntry[
       raw: true,
     })))
   }
+  return entries
+}
+
+// Task 459: 加入学习库 submenu — every library first (label is the user's own
+// name, never translated), then 新建学习库… which creates one and adds the
+// selection to it. With no libraries the submenu is just the create entry.
+const learningLibrarySubmenu = (prefix: string, libraries: MenuContext["learningLibraries"]): MenuEntry[] => {
+  const entries: MenuEntry[] = [...(libraries || []).map(library => ({
+    kind: "item" as const,
+    id: `${prefix}:${library.id}`,
+    label: library.name,
+    raw: true,
+  }))]
+  if (libraries?.length) entries.push({ kind: "separator" })
+  entries.push({ kind: "item", id: `${prefix}:create`, label: "新建学习库…" })
   return entries
 }
 
@@ -169,6 +190,10 @@ function buildAssetMenu(ctx: MenuContext): MenuEntry[] {
     { kind: "item", id: "toggle-favorite", label: ctx.favorite ? "取消收藏" : "收藏", icon: "heart" },
     { kind: "item", id: "add-to-group", label: "移到分组", icon: "plus", submenu: groupSubmenu("add-to-group", ctx.groups) },
     { kind: "item", id: "remove-from-group", label: "移出分组", icon: "folder", disabled: !ctx.anyGrouped },
+    // 任务 459：学习库视图里先给「移出学习库」，之后是「加入学习库」；开关关着
+    // （learningLibraries 没传）两项都不出现。
+    ...(ctx.learningLibraries && ctx.learningLibraryView ? [{ kind: "item" as const, id: "remove-from-learning-library", label: "移出学习库" }] : []),
+    ...(ctx.learningLibraries ? [{ kind: "item" as const, id: "add-to-learning-library", label: "加入学习库", submenu: learningLibrarySubmenu("add-to-learning-library", ctx.learningLibraries) }] : []),
     ...(ctx.unorganizedView ? [{ kind: "item" as const, id: "mark-sorted", label: "标为已整理", icon: "check" }] : []),
   ]
 
@@ -221,6 +246,7 @@ function buildStackMenu(ctx: MenuContext): MenuEntry[] {
     [
       { kind: "item" as const, id: "stack-add-to-group", label: "移到分组", icon: "plus", submenu: groupSubmenu("stack-add-to-group", ctx.groups) },
       { kind: "item" as const, id: "stack-remove-from-group", label: "移出分组", icon: "folder" },
+      ...(ctx.learningLibraries ? [{ kind: "item" as const, id: "stack-add-to-learning-library", label: "加入学习库", submenu: learningLibrarySubmenu("stack-add-to-learning-library", ctx.learningLibraries) }] : []),
       ...(ctx.unorganizedView ? [{ kind: "item" as const, id: "stack-mark-sorted", label: "标为已整理", icon: "check" }] : []),
     ],
     [
@@ -290,6 +316,9 @@ export type GroupMenuContext = {
   index: number
   groupCount: number
   exporting: boolean
+  /** Task 459: sidebar learning libraries for 全部加入学习库; absent (entry
+   * off) keeps the group menu exactly as it was. */
+  learningLibraries?: { id: string; name: string }[]
 }
 
 /** Right-click menu for a group under 我的分组 in the sidebar. No heading:
@@ -310,8 +339,18 @@ export function buildGroupMenu(ctx: GroupMenuContext): MenuEntry[] {
     [
       { kind: "item", id: "group-stats", label: "分组统计" },
       { kind: "item", id: "group-export", label: "导出分组…", disabled: ctx.exporting },
+      ...(ctx.learningLibraries ? [{ kind: "item" as const, id: "group-add-to-learning-library", label: "全部加入学习库", submenu: learningLibrarySubmenu("group-add-to-learning-library", ctx.learningLibraries) }] : []),
       ...(ctx.groupCount > 1 ? [{ kind: "item" as const, id: "group-merge", label: "合并分组…" }] : []),
     ],
     [{ kind: "item", id: "group-delete", label: "删除分组", icon: "trash", danger: true }],
+  ])
+}
+
+/** Task 459: right-click menu for a learning-library row under 学习库 in the
+ * sidebar. No heading: the highlighted sidebar row already names it. */
+export function buildLearningLibraryMenu(): MenuEntry[] {
+  return buildSectionedMenu([
+    [{ kind: "item", id: "learning-library-rename", label: "重命名学习库…" }],
+    [{ kind: "item", id: "learning-library-delete", label: "删除学习库", icon: "trash", danger: true }],
   ])
 }

@@ -212,7 +212,9 @@ test("SQLite schema v18 -> v19 migration creates asset_canvas_state and preserve
   t.after(() => inspect.close());
   const versionRow = inspect.prepare("SELECT value FROM library_meta WHERE key = 'schema_version'").get();
   assert.equal(versionRow?.value, String(CURRENT_SCHEMA_VERSION));
-  assert.equal(CURRENT_SCHEMA_VERSION, 19);
+  // 任务 459 升到 v20：本测试只钉「不低于 19」（asset_canvas_state 自 v19 起
+  // 存在），=== 20 的断言由 test/learning-library-store.test.mjs 接替。
+  assert.ok(CURRENT_SCHEMA_VERSION >= 19);
   const tableRow = inspect.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'asset_canvas_state'").get();
   assert.equal(tableRow?.name, "asset_canvas_state");
   const columnNames = inspect.prepare("SELECT name FROM pragma_table_info('asset_canvas_state')").all().map((row) => row.name);
