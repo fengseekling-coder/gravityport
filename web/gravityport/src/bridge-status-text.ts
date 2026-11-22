@@ -70,15 +70,36 @@ const STATUS_TABLE_FIX_KEYS = {
 } as const
 
 /**
- * The reason/fix table from task 452, keyed by lastErrorCode. Unknown codes
- * and code-less errors land on the generic row.
+ * 怎么办 for a permission error, spelled out as the clicks to make (452
+ * follow-up: a bare 「允许 GravityPort 访问」 left people not knowing where to
+ * go). On macOS, EPERM is the privacy gate (Full Disk Access) while EACCES is
+ * the folder's own permissions; on Windows both are the folder's Security tab.
  */
-function toolErrorLine(toolKey: string, dir: string, code: string | null): BridgeIssueLine {
+const PERMISSION_FIX_KEYS = {
+  macPrivacy: "打开「系统设置 → 隐私与安全性 → 完全磁盘访问权限」，允许 GravityPort，问题解决后会自动恢复收录。",
+  macFolder: "在访达中按 ⇧⌘G 前往 {dir}，按 ⌘I 打开简介，在「共享与权限」里把自己的权限改为「读与写」，问题解决后会自动恢复收录。",
+  windowsFolder: "在文件资源管理器中右键 {dir}，打开「属性 → 安全」，给当前用户加上「读取」权限，问题解决后会自动恢复收录。",
+} as const
+
+/** Windows paths carry a drive letter or backslashes; everything else is macOS. */
+function isWindowsPath(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path) || path.includes("\\")
+}
+
+/**
+ * The reason/fix table from task 452, keyed by lastErrorCode. Unknown codes
+ * and code-less errors land on the generic row. `rawDir` is the full path
+ * (used to tell the platform apart); `dir` is what the line displays.
+ */
+function toolErrorLine(toolKey: string, dir: string, rawDir: string, code: string | null): BridgeIssueLine {
   if (code === "EACCES" || code === "EPERM") {
+    const noteKey = isWindowsPath(rawDir)
+      ? PERMISSION_FIX_KEYS.windowsFolder
+      : code === "EPERM" ? PERMISSION_FIX_KEYS.macPrivacy : PERMISSION_FIX_KEYS.macFolder
     return {
       dangerKey: "无法读取 {tool} 的文件夹（没有权限）",
       dangerParams: { tool: toolKey },
-      noteKey: "允许 GravityPort 访问 {dir}，问题解决后会自动恢复收录。",
+      noteKey,
       noteParams: { dir },
     }
   }
@@ -164,7 +185,7 @@ function toolRow(
       badgeKey: "无法收录",
       badgeParams: {},
       tone: "bad",
-      lines: [toolErrorLine(toolKey, homeRelativePath(dir, homeDir), status.lastErrorCode)],
+      lines: [toolErrorLine(toolKey, homeRelativePath(dir, homeDir), dir, status.lastErrorCode)],
       detailText: toolDetailText(nameKey, status),
     }
   }

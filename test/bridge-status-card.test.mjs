@@ -210,7 +210,7 @@ test("reason table: EACCES/EPERM map to the permission pair with the shared pare
   })).codex.lines;
   assert.equal(line.dangerKey, "无法读取 {tool} 的文件夹（没有权限）");
   assert.deepEqual(line.dangerParams, { tool: "Codex" });
-  assert.equal(line.noteKey, "允许 GravityPort 访问 {dir}，问题解决后会自动恢复收录。");
+  assert.equal(line.noteKey, "在访达中按 ⇧⌘G 前往 {dir}，按 ⌘I 打开简介，在「共享与权限」里把自己的权限改为「读与写」，问题解决后会自动恢复收录。", "macOS EACCES points at the folder's own permissions");
   assert.deepEqual(line.noteParams, { dir: "/Users/alice/.codex" }, "codex points at the images/sessions common parent");
 });
 
@@ -221,6 +221,17 @@ test("reason table: EPERM behaves like EACCES and grok points at its sessions di
   assert.equal(line.dangerKey, "无法读取 {tool} 的文件夹（没有权限）");
   assert.deepEqual(line.dangerParams, { tool: "Grok" });
   assert.deepEqual(line.noteParams, { dir: "/Users/alice/.grok/sessions" });
+  assert.equal(line.noteKey, "打开「系统设置 → 隐私与安全性 → 完全磁盘访问权限」，允许 GravityPort，问题解决后会自动恢复收录。", "macOS EPERM is the privacy gate");
+});
+
+test("reason table: permission errors on Windows paths point at the folder's Security tab", () => {
+  for (const code of ["EACCES", "EPERM"]) {
+    const [line] = rowByKey(bridgesStatus({
+      codex: toolStatus({ imagesDir: "C:\\Users\\alice\\.codex\\generated_images", sessionsDir: "C:\\Users\\alice\\.codex\\sessions", lastError: `${code}: x`, lastErrorCode: code }),
+    })).codex.lines;
+    assert.equal(line.noteKey, "在文件资源管理器中右键 {dir}，打开「属性 → 安全」，给当前用户加上「读取」权限，问题解决后会自动恢复收录。", code);
+    assert.deepEqual(line.noteParams, { dir: "C:\\Users\\alice\\.codex" }, code);
+  }
 });
 
 test("home directory shows as ~ in the how-to-fix line while the copy payload keeps the full path", () => {
@@ -429,7 +440,7 @@ test("view renders an error row with the reason, the fix, and the copy button", 
   const html = renderCard({ status });
   assert.match(html, /无法收录/);
   assert.match(html, /无法读取 Codex 的文件夹（没有权限）/, "the reason line arrives filled with the tool name");
-  assert.match(html, /允许 GravityPort 访问 \/Users\/alice\/\.codex，问题解决后会自动恢复收录。/);
+  assert.match(html, /在访达中按 ⇧⌘G 前往 \/Users\/alice\/\.codex，按 ⌘I 打开简介/);
   assert.match(html, /复制详细信息/);
   assert.match(html, /未找到生图记录/, "grok row shows its own state");
 });
