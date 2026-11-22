@@ -1,0 +1,284 @@
+{
+  "code": 0,
+  "message": "Successfully got history view for 00000000-0000-4000-8000-000000000001",
+  "data": [
+    {
+      "id": "1316556494427299877-input",
+      "timestamp": "2026-11-21T16:21:50.709481Z",
+      "type": "user",
+      "action_id": "1316556494427299876",
+      "step_id": "1316556494427299877",
+      "text": "{\"generator_params\":{\"generator_name\":\"seedream/seedream-5-5\",\"input_args\":{\"prompt\":\"A breathtaking young woman warrior goddess, ornate golden winged helmetwith a sculpted face mask covering one eye, long …<+979>\",\"resolution\":\"2K\",\"aspect_ratio\":\"3:4\",\"original_unit_data\":{\"icon\":[16,9],\"count\":1,\"image\":[],\"ratio\":\"3:4\",\"width\":1776,\"height\":2368,\"prompt\":\"A breathtaking young woman warrior goddess, ornate golden winged helmetwith a sculpted face mask covering one eye, long …<+979>\",\"quality\":\"high\",\"rawValue\":\"16:9\",\"paramsText\":\"3:4 · 2K\",\"resolution\":\"2K\",\"isFixedRatio\":true,\"source_image\":[],\"generator_name\":\"seedream/seedream-5-5\",\"generator_type\":\"image\",\"isAdaptiveSize\":false}}},\"original_unit_data\":null}",
+      "thread_meta": {
+        "action_id": "1316556494427299876",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1316556494427299877",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>"
+      }
+    },
+    {
+      "id": "1316556494427299877",
+      "timestamp": "2026-11-21T16:21:50.709481Z",
+      "type": "assistant",
+      "action_id": "1316556494427299876",
+      "step_id": "1316556494427299877",
+      "text": "{\"generator_task_id\":\"22e6259a-3a9c-48d4-b659-970ff4936db3\",\"artifacts\":[{\"type\":\"image\",\"content\":\"https://a.lovart.ai/artifacts/generator/Fake01ArtifactId.png\",\"metadata\":{\"width\":1776,\"format\":\"png\",\"height\":2368,\"background\":\"opaque\",\"artifact_id\":\"Fake01ArtifactId\",\"audit_status\":\"success\",\"audit_artifact_type\":\"image\"}}],\"status\":\"completed\"}",
+      "thread_meta": {
+        "action_id": "1316556494427299876",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1316556494427299877",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>"
+      }
+    },
+    {
+      "id": "1319137907211231237",
+      "timestamp": "2026-11-22T13:13:27.73554Z",
+      "type": "user",
+      "action_id": "1319137907211231234",
+      "step_id": "1319137907211231237",
+      "text": "[@mark:#1:sword hilt]把剑换成金色长枪，其他不变",
+      "trace_id": "<redacted-trace_id>",
+      "mark_list": [
+        {
+          "url": "https://a.lovart.ai/artifacts/generator/Fake01ArtifactId.png",
+          "type": "mark",
+          "label": "#1",
+          "width": 1776,
+          "height": 2368,
+          "points": [
+            0.7098950524737632,
+            0.5215517241379309
+          ],
+          "comment": "",
+          "mark_id": "b75b3701-4f2b-42a2-8feb-025a16161d94",
+          "mark_kind": "area",
+          "mark_type": "image",
+          "element_id": "shape:AzTdj6znBbQuMG4WNKiGD",
+          "object_label": "sword hilt"
+        }
+      ],
+      "thread_meta": {
+        "action_id": "1319137907211231234",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1319137907211231237",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>"
+      }
+    },
+    {
+      "id": "1319137941570969608",
+      "timestamp": "2026-11-22T13:13:37.14628Z",
+      "type": "assistant",
+      "action_id": "1319137907211231234",
+      "step_id": "1319137941570969608",
+      "text": "I'll swap the weapon while locking everything else. Let me pull the image-edit guidance first.\n\n",
+      "trace_id": "<redacted-trace_id>",
+      "thread_meta": {
+        "action_id": "1319137907211231234",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1319137941570969608",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>",
+        "context_window": {
+          "contextWindowSize": 262144,
+          "budgetTokens": 209715,
+          "usedTokens": 48821,
+          "usageRatio": 0.23279689101876355
+        }
+      }
+    },
+    {
+      "id": "call_9c6536d8d5a04e5084c0f07c",
+      "timestamp": "2026-11-22T13:13:37.340279Z",
+      "type": "tool_use",
+      "action_id": "1319137907211231234",
+      "step_id": "1319137941570969608",
+      "status": "success",
+      "tool_call_id": "call_9c6536d8d5a04e5084c0f07c",
+      "name": "skill_file",
+      "trace_id": "<redacted-trace_id>",
+      "thread_meta": {
+        "action_id": "1319137907211231234",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1319137941570969608",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>",
+        "context_window": {
+          "contextWindowSize": 262144,
+          "budgetTokens": 209715,
+          "usedTokens": 48821,
+          "usageRatio": 0.23279689101876355
+        }
+      }
+    },
+    {
+      "id": "1319138250808614918",
+      "timestamp": "2026-11-22T13:13:50.78447Z",
+      "type": "assistant",
+      "action_id": "1319137907211231234",
+      "step_id": "1319138250808614918",
+      "trace_id": "<redacted-trace_id>",
+      "thread_meta": {
+        "action_id": "1319137907211231234",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1319138250808614918",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>",
+        "context_window": {
+          "contextWindowSize": 262144,
+          "budgetTokens": 209715,
+          "usedTokens": 50718,
+          "usageRatio": 0.24184250053644232
+        }
+      }
+    },
+    {
+      "id": "call_2c3e6556ea934648bba7087b",
+      "timestamp": "2026-11-22T13:14:18.244499Z",
+      "type": "tool_use",
+      "action_id": "1319137907211231234",
+      "step_id": "1319138250808614918",
+      "status": "success",
+      "tool_call_id": "call_2c3e6556ea934648bba7087b",
+      "name": "edit_media_v2",
+      "tool_hint": "generate_image_gpt_image_2_5_sunburst",
+      "trace_id": "<redacted-trace_id>",
+      "content": [
+        {
+          "event_data": {
+            "artifact": [
+              {
+                "artifact_id": "Fake02ArtifactId",
+                "artifact_type": "image_info",
+                "channels": null,
+                "consumed": true,
+                "description": "Replace only the sword with a golden long spear (lance). Keep absolutely everything else in the image unchanged: the sam…<+1524>",
+                "external_source": null,
+                "height": 2368,
+                "image_name": "Golden Spear Version",
+                "image_url": "https://a.lovart.ai/artifacts/agent/Fake02ArtifactId.png",
+                "image_with_bbox_url": null,
+                "image_with_point_url": null,
+                "input_args": {
+                  "output_name": "Golden Spear Version",
+                  "prompt": "Replace only the sword with a golden long spear (lance). Keep absolutely everything else in the image unchanged: the sam…<+1219>",
+                  "quality": "medium",
+                  "reference_image_urls": "https://a.lovart.ai/artifacts/generator/Fake01ArtifactId.png",
+                  "routed_model": "generate_image_gpt_image_2_5_sunburst",
+                  "task_type": "edit_image"
+                },
+                "is_vip": false,
+                "masks": null,
+                "metadata": {
+                  "audit_process_uuid": "<redacted-audit_process_uuid>",
+                  "audit_status": "success"
+                },
+                "project_id": "<redacted-project_id>",
+                "prompt_image_list": [
+                  "https://a.lovart.ai/artifacts/generator/Fake01ArtifactId.png"
+                ],
+                "prompt_text": "Replace only the sword with a golden long spear (lance). Keep absolutely everything else in the image unchanged: the sam…<+1524>",
+                "seed": null,
+                "source": "edit_media",
+                "subjects": null,
+                "task_type": "EDIT_SINGLE_IMAGE",
+                "thread_id": "00000000-0000-4000-8000-000000000001",
+                "user_uuid": "<redacted-user_uuid>",
+                "width": 1776
+              }
+            ],
+            "artifact_type": "image_info"
+          },
+          "event_index": 0,
+          "event_type": "tool_artifacts"
+        }
+      ],
+      "stage": [
+        {
+          "event_data": {
+            "kind": "stage",
+            "stage": "tool_stage",
+            "ts_ms": 1795353230966,
+            "biz_no": "<redacted-biz_no>",
+            "tool_name": "edit_media_v2",
+            "tool_call_id": "call_2c3e6556ea934648bba7087b",
+            "billing_status": "PASS",
+            "estimated_cost": 17
+          },
+          "event_index": 0
+        }
+      ],
+      "thread_meta": {
+        "action_id": "1319137907211231234",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1319138250808614918",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>"
+      }
+    },
+    {
+      "id": "1319139659557871620",
+      "timestamp": "2026-11-22T13:14:24.90958Z",
+      "type": "assistant",
+      "action_id": "1319137907211231234",
+      "step_id": "1319139659557871620",
+      "text": "Done — swapped the sword for a golden long spear.\n\n**Result:** `Golden Spear Version` (1776×2368, same 3:4 portrait fram…<+866>",
+      "trace_id": "<redacted-trace_id>",
+      "thread_meta": {
+        "action_id": "1319137907211231234",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1319139659557871620",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>",
+        "context_window": {
+          "contextWindowSize": 262144,
+          "budgetTokens": 209715,
+          "usedTokens": 51174,
+          "usageRatio": 0.24401688005149846
+        }
+      }
+    },
+    {
+      "id": "1319142236538224641-input",
+      "timestamp": "2026-11-22T13:15:54.330842Z",
+      "type": "user",
+      "action_id": "1319142236538224640",
+      "step_id": "1319142236538224641",
+      "text": "{\"generator_params\":{\"generator_name\":\"vertex/nano-banana-2-1\",\"input_args\":{\"prompt\":\"一只橘猫坐在窗台上，水彩风格\",\"resolution\":\"1K\",\"aspect_ratio\":\"1:1\",\"thinking_level\":\"medium\",\"enable_grounding\":false,\"original_unit_data\":{\"count\":1,\"image\":[],\"ratio\":\"1:1\",\"video\":[],\"width\":1024,\"height\":1024,\"prompt\":\"一只橘猫坐在窗台上，水彩风格\",\"video_uri\":[],\"paramsText\":\"1:1 · 1K · medium\",\"resolution\":\"1K\",\"source_image\":[],\"generator_name\":\"vertex/nano-banana-2-1\",\"generator_type\":\"image\",\"isAdaptiveSize\":false,\"thinking_level\":\"medium\",\"enable_grounding\":false}}},\"original_unit_data\":null}",
+      "thread_meta": {
+        "action_id": "1319142236538224640",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1319142236538224641",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>"
+      }
+    },
+    {
+      "id": "1319142236538224641",
+      "timestamp": "2026-11-22T13:15:54.330842Z",
+      "type": "assistant",
+      "action_id": "1319142236538224640",
+      "step_id": "1319142236538224641",
+      "text": "{\"generator_task_id\":\"21ea4ee9-2446-4f31-b513-cc40c984f823\",\"artifacts\":[{\"type\":\"image\",\"content\":\"https://a.lovart.ai/artifacts/generator/Fake03ArtifactId.jpg\",\"metadata\":{\"width\":1024,\"format\":\"jpeg\",\"height\":1024,\"artifact_id\":\"Fake03ArtifactId\",\"audit_status\":\"success\",\"audit_artifact_type\":\"image\"}}],\"status\":\"completed\"}",
+      "thread_meta": {
+        "action_id": "1319142236538224640",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1319142236538224641",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>"
+      }
+    }
+  ]
+}

@@ -102,6 +102,7 @@ const english: Record<string, string> = {
   "Google AI Studio 网页版": "Google AI Studio (web)",
   "即梦网页版": "Jimeng (web)",
   "Midjourney 网页版": "Midjourney (web)",
+  "Lovart 网页版": "Lovart (web)",
   "手动导入": "Manual import",
   "未知来源": "Unknown source",
   "分组": "Group",

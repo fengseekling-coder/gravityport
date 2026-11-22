@@ -29,6 +29,7 @@
     if (host === "labs.google" && FLOW_PATH.test(url.pathname.toLowerCase())) return "flow";
     if (host === "jimeng.jianying.com") return "jimeng";
     if (host === "www.midjourney.com") return "midjourney";
+    if (host === "www.lovart.ai") return "lovart";
     return "";
   }
 

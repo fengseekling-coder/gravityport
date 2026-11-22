@@ -26,6 +26,9 @@
     "https://*.vlabvod.com/*",
     "https://www.midjourney.com/*",
     "https://cdn.midjourney.com/*",
+    "https://www.lovart.ai/*",
+    "https://a.lovart.ai/*",
+    "https://assets-persist.lovart.ai/*",
     "http://127.0.0.1/*",
     "http://localhost/*"
   ],
@@ -81,6 +84,19 @@
     {
       "matches": ["https://www.midjourney.com/*"],
       "js": ["provider-policy.js", "provider-midjourney.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://www.lovart.ai/*"],
+      "js": ["lovart-page-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://www.lovart.ai/*"],
+      "js": ["provider-policy.js", "provider-lovart.js"],
       "run_at": "document_idle",
       "all_frames": false
     }
