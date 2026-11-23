@@ -111,6 +111,19 @@ async function makeDeps(t, { key = FAKE_CLAUDE_KEY, autoSelect = "claude", crede
     libraryDir: join(root, "library"),
     assetsRoot: join(root, "library", "assets"),
     generatedImagesDir: join(root, "generated-images"),
+    // 来源目录全指临时目录、桥全关：不传时会落到本机真实的 ~/.codex、
+    // ~/.grok，测试服务会把用户自己的生图收进临时库（11-23 批次复跑撞上过）。
+    codexImagesDir: join(root, "codex-images"),
+    codexSessionsDir: join(root, "codex-sessions"),
+    grokSessionsDir: join(root, "grok-sessions"),
+    cowartCanvasDir: join(root, "cowart-canvas"),
+    cowartRegistryPath: join(root, "state", "cowart-projects.json"),
+    disabledBridges: ["cowart", "cowartDiscovery", "codex", "grok"],
+    // 中图由测试自己用旁路 store 生成（drainDerivatives）。服务的例行维护（启动后
+    // 1.8 秒：清理没被引用的中图，再启动它自己的中图生成）会和旁路生成抢同
+    // 一批文件——把刚写好的中图当孤儿删掉，或两边同时改名同一个文件。测试
+    // 期间不跑维护（stop() 会清掉这个定时器）。
+    maintenanceStartDelayMs: 10 * 60 * 1000,
     clientToken: CLIENT_TOKEN,
     webCaptureToken: "learning-ipc-capture-token-01234567890abcdef",
   });

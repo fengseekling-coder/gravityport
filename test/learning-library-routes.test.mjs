@@ -59,6 +59,14 @@ test("learning-library routes answer per contract and stay out of the extension 
     libraryDir: join(root, "library"),
     assetsRoot: join(root, "library", "assets"),
     generatedImagesDir: join(root, "generated-images"),
+    // 来源目录全指临时目录、桥全关：不传时会落到本机真实的 ~/.codex、
+    // ~/.grok，测试服务会把用户自己的生图收进临时库（11-23 批次复跑撞上过）。
+    codexImagesDir: join(root, "codex-images"),
+    codexSessionsDir: join(root, "codex-sessions"),
+    grokSessionsDir: join(root, "grok-sessions"),
+    cowartCanvasDir: join(root, "cowart-canvas"),
+    cowartRegistryPath: join(root, "state", "cowart-projects.json"),
+    disabledBridges: ["cowart", "cowartDiscovery", "codex", "grok"],
     clientToken: CLIENT_TOKEN,
     webCaptureToken: CAPTURE_TOKEN,
   });
