@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MOSA_UPDATE_FEED_URL } from "../desktop/update-service.mjs";
-import { buildRehearsalPlan, resolvePrivateKeyPath, RUNTIME_FROM_VERSION } from "../scripts/release-rehearsal/rehearse.mjs";
+import { buildRehearsalPlan, resolvePrivateKeyPath, RUNTIME_FROM_VERSION, stopRehearsalAppUntilQuiet } from "../scripts/release-rehearsal/rehearse.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const script = join(repoRoot, "scripts/release-rehearsal/rehearse.mjs");
@@ -34,8 +34,9 @@ test("C1 local mode with all defaults plans the full isolated rehearsal", () => 
   assert.equal(plan.mode, "local");
   assert.equal(plan.fromApp, "/Applications/GravityPort.app");
   assert.equal(plan.appName, "GravityPort.app");
-  assert.equal(plan.workDir, join(tmpdir(), "gp-rehearsal-local"));
-  assert.equal(plan.rootDir, join(tmpdir(), "gp-rehearsal-local", "root"));
+  // Real spelling of the temp dir (/private/var/… on macOS), see C7.
+  assert.equal(plan.workDir, join(realpathSync(tmpdir()), "gp-rehearsal-local"));
+  assert.equal(plan.rootDir, join(realpathSync(tmpdir()), "gp-rehearsal-local", "root"));
   assert.equal(plan.port, 43617);
   assert.equal(plan.fromVersionSource, "runtime");
   assert.equal(plan.zipPath, join(build, "out/make/update/darwin/arm64/GravityPort-darwin-arm64-0.4.0.zip"));
@@ -94,7 +95,7 @@ test("C2 live mode runs the live script without key, zip, identity or writer-src
 
   assert.deepEqual(plan.steps.map((step) => step.id), LOCAL_STEP_IDS);
   assert.equal(plan.mode, "live");
-  assert.equal(plan.workDir, join(tmpdir(), "gp-rehearsal-live"));
+  assert.equal(plan.workDir, join(realpathSync(tmpdir()), "gp-rehearsal-live"));
   assert.equal(plan.privateKeyPath, null);
 
   const rehearse = plan.steps.find((step) => step.id === "rehearse-update");
@@ -228,4 +229,43 @@ test("C6 the signing key is taken only as a file path; inline key content is ref
   assert.equal(result.status, 1, `exit ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   assert.match(result.stderr, /MOSA_RELEASE_MANIFEST_PRIVATE_KEY_FILE/);
   assert.equal(`${result.stdout}${result.stderr}`.includes("gp449fakeinlinecontent"), false);
+});
+
+test("C7 the work dir is planned in its real spelling, so the updated app's userData matches it (11-22 exit 32)", () => {
+  const build = mkdtempSync(join(tmpdir(), "gp-1123-real-build-"));
+  const privateKey = join(tmpdir(), "gp-1123-real-fake-key.pem");
+  const realBase = mkdtempSync(join(tmpdir(), "gp-1123-real-base-"));
+  const linkBase = join(tmpdir(), `gp-1123-link-${process.pid}-${Date.now()}`);
+  symlinkSync(realBase, linkBase);
+  // The tail does not exist yet; only the existing ancestor is resolved.
+  const plan = buildRehearsalPlan({ build, toVersion: "0.4.0", privateKey, workDir: join(linkBase, "not-yet", "work") });
+  assert.equal(plan.workDir, join(realpathSync(realBase), "not-yet", "work"));
+  assert.equal(plan.rootDir, join(realpathSync(realBase), "not-yet", "work", "root"));
+  const stop = plan.steps.find((step) => step.id === "stop-rehearsal-app");
+  assert.equal(stop.workDir, plan.workDir, "the stop rule matches the same spelling the app is launched from");
+});
+
+test("C8 after a failure, stopping keeps going until the rollback relaunch is gone and the port stays quiet", async () => {
+  // Simulated port: the first check stops the failed app, the install helper
+  // relaunches the old app one check later, then everything stays down.
+  const sequence = [1, 0, 1, 0, 0, 0];
+  const calls = [];
+  const total = await stopRehearsalAppUntilQuiet({ port: 43617, workDir: "/private/tmp/w" }, {
+    stop: (step) => { calls.push(step.port); return sequence.shift() ?? 0; },
+    wait: async () => {},
+    intervalMs: 1000,
+    quietChecks: 3,
+  });
+  assert.equal(total, 2, "both the failed app and the rollback relaunch were stopped");
+  assert.equal(calls.length, 6, "it stops only after three quiet checks in a row");
+
+  // A port that never goes quiet still ends at the timeout.
+  let checks = 0;
+  await stopRehearsalAppUntilQuiet({ port: 43617, workDir: "/private/tmp/w" }, {
+    stop: () => { checks += 1; return 1; },
+    wait: async () => {},
+    intervalMs: 1000,
+    timeoutMs: 5000,
+  });
+  assert.equal(checks, 6, "bounded by the timeout");
 });

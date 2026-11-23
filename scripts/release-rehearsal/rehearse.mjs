@@ -70,11 +70,34 @@ function sameOrContains(outer, inner) {
   return outer === inner || strictlyInside(outer, inner);
 }
 
-// Lexical resolve plus the realpath when the path exists, so a symlinked
-// /Applications or $HOME entry cannot slip past the overlap checks.
+// Lexical resolve plus the real spelling (realpath of the nearest existing
+// ancestor, so a path that does not exist yet still resolves its symlinked
+// parents), so a symlinked /Applications, $HOME or /var entry cannot slip
+// past the overlap checks.
 function pathVariants(path) {
   const resolved = resolve(path);
-  try { return [resolved, realpathSync(resolved)]; } catch { return [resolved]; }
+  return [...new Set([resolved, canonicalWorkDir(resolved)])];
+}
+
+// The work dir in its real spelling. On macOS os.tmpdir() is /var/folders/…,
+// a symlink to /private/var/folders/…; the updated app reports its userData
+// in the real spelling, so a work dir left as /var/… never matches the ready
+// file it waits for (exit 32, 11-22). Realpath the nearest existing ancestor
+// and keep the not-yet-created tail as given.
+function canonicalWorkDir(path) {
+  const resolved = resolve(path);
+  const tail = [];
+  let current = resolved;
+  for (;;) {
+    try {
+      return join(realpathSync(current), ...tail.reverse());
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return resolved;
+      tail.push(basename(current));
+      current = parent;
+    }
+  }
 }
 
 // /tmp is a symlink to /private/tmp on macOS; compare against both spellings.
@@ -159,7 +182,7 @@ export function buildRehearsalPlan(options) {
     throw new Error("local mode needs the path of the release manifest signing key: pass --private-key <pem> or set MOSA_RELEASE_MANIFEST_PRIVATE_KEY_FILE");
   }
 
-  const workDir = resolve(options.workDir ?? join(tmpdir(), mode === "live" ? "gp-rehearsal-live" : "gp-rehearsal-local"));
+  const workDir = canonicalWorkDir(options.workDir ?? join(tmpdir(), mode === "live" ? "gp-rehearsal-live" : "gp-rehearsal-local"));
   assertSafeWorkDir(workDir, [fromApp, build, join(homedir(), "MOSA Library")]);
 
   const feedUrl = options.feedUrl ?? MOSA_UPDATE_FEED_URL;
@@ -269,13 +292,38 @@ async function waitForHealth(step) {
 function stopRehearsalApp(step) {
   const listed = spawnSync("/usr/sbin/lsof", ["-nP", "-t", "-iTCP:" + step.port, "-sTCP:LISTEN"], { encoding: "utf8" });
   const pids = (listed.stdout ?? "").split("\n").map((line) => line.trim()).filter((line) => /^\d+$/.test(line));
+  let stopped = 0;
   for (const pid of pids) {
     if (Number(pid) <= 1) continue;
     const ps = spawnSync("/bin/ps", ["-o", "pid=,command=", "-p", pid], { encoding: "utf8" });
     if (!(ps.stdout ?? "").includes(step.workDir)) continue;
     process.kill(Number(pid), "SIGTERM");
     log("stopped rehearsal app", pid);
+    stopped += 1;
   }
+  return stopped;
+}
+
+// After a failed update the install helper rolls back and relaunches the old
+// app about a second later, i.e. after a one-shot stop has already run (11-22
+// left a rehearsal app behind). Keep stopping until the port has been quiet
+// for a few checks in a row, or the timeout passes.
+export async function stopRehearsalAppUntilQuiet(step, {
+  stop = stopRehearsalApp,
+  wait = sleep,
+  intervalMs = 1000,
+  quietChecks = 3,
+  timeoutMs = 30_000,
+} = {}) {
+  let quiet = 0;
+  let total = 0;
+  for (let waited = 0; quiet < quietChecks && waited <= timeoutMs; waited += intervalMs) {
+    const stopped = stop(step);
+    total += stopped;
+    quiet = stopped > 0 ? 0 : quiet + 1;
+    if (quiet < quietChecks) await wait(intervalMs);
+  }
+  return total;
 }
 
 // Unlike the old shells, a failing step after the launch still stops the
@@ -288,8 +336,8 @@ async function runPlan(plan) {
     await runSteps(plan, () => { launched = true; });
   } catch (error) {
     if (launched && stopStep) {
-      log("step failed; stopping the rehearsal app before exiting");
-      stopRehearsalApp(stopStep);
+      log("step failed; stopping the rehearsal app (and any rollback relaunch) before exiting");
+      await stopRehearsalAppUntilQuiet(stopStep);
     }
     throw error;
   }
