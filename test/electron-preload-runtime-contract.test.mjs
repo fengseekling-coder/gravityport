@@ -10,6 +10,7 @@ import { extname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { assertPackageLockMatchesManifest } from "./package-lock-contract.mjs";
 import { EXPECTED_PRELOAD_API_KEYS, EXPECTED_PRELOAD_INVOKE_COUNT } from "./helpers/desktop-preload-surface.mjs";
+import { isolatedSourceEnv } from "./helpers/isolated-sources.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const preloadPath = resolve(root, "desktop", "preload.cjs");
@@ -342,6 +343,7 @@ test("real Electron preload smoke (opt-in)", { skip: process.env.MOSA_ELECTRON_P
       MOSA_QA_RUN: "1",
       MOSA_DESKTOP_PORT: String(desktopPort),
       MOSA_DISABLE_BRIDGES: "cowart,cowartDiscovery,codex,grok",
+      ...isolatedSourceEnv(userDataDir),
       ELECTRON_ENABLE_LOGGING: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],

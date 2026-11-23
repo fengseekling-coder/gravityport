@@ -31,6 +31,7 @@ function runtimeOptions(root, overrides = {}) {
     generatedImagesDir: join(root, "generated-images"),
     codexImagesDir: join(root, "codex-images"),
     codexSessionsDir: join(root, "codex-sessions"),
+    codexThreadHistoryDir: join(root, "codex-thread-history"),
     grokSessionsDir: join(root, "grok-sessions"),
     cowartCanvasDir: join(root, "cowart-canvas"),
     cowartRegistryPath: join(root, "state", "cowart-projects.json"),
@@ -149,6 +150,7 @@ test("CODEX_HOME drives every default Codex-owned runtime source consistently", 
   const options = runtimeOptions(root, {
     codexImagesDir: undefined,
     codexSessionsDir: undefined,
+    codexThreadHistoryDir: undefined,
     cowartCanvasDir: undefined,
     cowartRegistryPath: undefined,
     env: {
@@ -156,6 +158,7 @@ test("CODEX_HOME drives every default Codex-owned runtime source consistently", 
       CODEX_HOME: codexHome,
       CODEX_GENERATED_IMAGES_DIR: undefined,
       CODEX_SESSIONS_DIR: undefined,
+      CODEX_THREAD_HISTORY_DIR: undefined,
       COWART_MOSA_CANVAS_DIR: undefined,
       MOSA_COWART_REGISTRY_PATH: undefined,
     },
@@ -168,6 +171,7 @@ test("CODEX_HOME drives every default Codex-owned runtime source consistently", 
   const library = await (await fetch(`${runtime.url}/api/library-path`, { headers: authHeaders })).json();
   assert.equal(bridges.codex.imagesDir, join(codexHome, "generated_images"));
   assert.equal(bridges.codex.sessionsDir, join(codexHome, "sessions"));
+  assert.equal(bridges.codex.threadHistoryPath, codexHome);
   assert.equal(library.codexGeneratedImagesDir, join(codexHome, "generated_images"));
   assert.equal(bridges.cowart.sources[0].canvasDir, join(codexHome, "cowart-data", "mosa"));
 });

@@ -10,6 +10,7 @@ import sharp from "sharp";
 
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
 import { acquireMosaRuntimeLock } from "../lib/runtime-lock.js";
+import { isolatedSourceEnv } from "./helpers/isolated-sources.mjs";
 
 test("Generation HTTP API records events, explicit relations, and lineage without accepting provider_verified claims", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-generation-api-"));
@@ -34,6 +35,7 @@ test("Generation HTTP API records events, explicit relations, and lineage withou
       MOSA_PORT: "0",
       MOSA_PROJECT_DIR: root,
       MOSA_LIBRARY_DIR: libraryDir,
+      ...isolatedSourceEnv(root),
       CODEX_GENERATED_IMAGES_DIR: generatedDir,
     },
     stdio: ["ignore", "pipe", "pipe"],

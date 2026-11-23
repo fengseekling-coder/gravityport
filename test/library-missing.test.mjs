@@ -553,6 +553,7 @@ test("the runtime without an explicit libraryDir reports the broken default inst
       generatedImagesDir: join(home, "generated-images"),
       codexImagesDir: join(home, "codex-images"),
       codexSessionsDir: join(home, "codex-sessions"),
+      codexThreadHistoryDir: join(home, "codex-thread-history"),
       grokSessionsDir: join(home, "grok-sessions"),
       cowartCanvasDir: join(home, "cowart-canvas"),
       cowartRegistryPath: join(home, "state", "cowart-projects.json"),

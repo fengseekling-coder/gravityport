@@ -334,6 +334,7 @@ test("9. the App's import-batch refuses a truncated PNG with the same code", asy
     generatedImagesDir: generated,
     codexImagesDir: join(dir, "codex-images"),
     codexSessionsDir: join(dir, "sessions"),
+    codexThreadHistoryDir: join(dir, "codex-thread-history"),
     grokSessionsDir: join(dir, "grok-sessions"),
     cowartCanvasDir: join(dir, "cowart-data"),
     cowartRegistryPath: join(dir, "state", "cowart-projects.json"),

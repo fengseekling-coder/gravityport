@@ -15,6 +15,7 @@ import {
   GENERATION_MESSAGE_BACKFILL_MARKER_KEY,
   backfillGenerationMessageIdsFromAssets,
 } from "../lib/generation-message-binding.mjs";
+import { isolatedSourceEnv } from "./helpers/isolated-sources.mjs";
 
 const REPAIR_MARKER_KEY = "repair_capture_user_message_v1";
 const DEFAULT_CREATED = "2026-05-01T00:00:00.000Z";
@@ -563,6 +564,7 @@ test("generation message binding API: writes, conflicts, idempotency, validation
       MOSA_PORT: "0",
       MOSA_PROJECT_DIR: root,
       MOSA_LIBRARY_DIR: libraryDir,
+      ...isolatedSourceEnv(root),
       CODEX_GENERATED_IMAGES_DIR: generatedDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -807,6 +809,7 @@ test("the capture turn-bindings entry accepts only the web capture token and wri
       MOSA_PORT: "0",
       MOSA_PROJECT_DIR: root,
       MOSA_LIBRARY_DIR: libraryDir,
+      ...isolatedSourceEnv(root),
       CODEX_GENERATED_IMAGES_DIR: generatedDir,
       MOSA_WEB_CAPTURE_TOKEN: CAPTURE_TOKEN,
       MOSA_WEB_CAPTURE_ORIGINS: "chrome-extension://example-extension",

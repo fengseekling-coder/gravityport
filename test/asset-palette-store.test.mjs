@@ -269,6 +269,7 @@ test("GET /api/assets/:project/:asset backfills and returns the palette", async 
     generatedImagesDir,
     codexImagesDir: join(root, "codex-images"),
     codexSessionsDir: join(root, "sessions"),
+    codexThreadHistoryDir: join(root, "codex-thread-history"),
     grokSessionsDir: join(root, "grok-sessions"),
     cowartCanvasDir: join(root, "cowart-data"),
     cowartRegistryPath: join(root, "state", "cowart-projects.json"),

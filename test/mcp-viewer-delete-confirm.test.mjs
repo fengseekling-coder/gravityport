@@ -9,6 +9,7 @@ import test from "node:test";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { createLiveDeletionRequests } from "../lib/live-deletion-requests.mjs";
 import { createMcpWorkspace, startMcpServer, writePngFixture } from "./helpers/mcp-server-harness.mjs";
+import { isolatedSourceOptions } from "./helpers/isolated-sources.mjs";
 
 async function setup(t, { timeoutMs = "1500" } = {}) {
   const workspace = await createMcpWorkspace(t);
@@ -24,6 +25,7 @@ async function setup(t, { timeoutMs = "1500" } = {}) {
     libraryDir: workspace.libraryDir,
     assetsRoot: join(workspace.libraryDir, "assets"),
     generatedImagesDir: workspace.imagesDir,
+    ...isolatedSourceOptions(workspace.root),
   });
   t.after(() => runtime.stop());
   const live = createLiveDeletionRequests({ libraryDir: workspace.libraryDir });

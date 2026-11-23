@@ -123,6 +123,7 @@ test("sqlite: CJK import keeps the readable name, serves the original bytes, sea
     generatedImagesDir: sources,
     codexImagesDir: join(dir, "codex-images"),
     codexSessionsDir: join(dir, "sessions"),
+    codexThreadHistoryDir: join(dir, "codex-thread-history"),
     grokSessionsDir: join(dir, "grok-sessions"),
     cowartCanvasDir: join(dir, "cowart-data"),
     cowartRegistryPath: join(dir, "state", "cowart-projects.json"),

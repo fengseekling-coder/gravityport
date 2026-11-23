@@ -37,6 +37,7 @@ function runtimeOptions(root, overrides = {}) {
     generatedImagesDir: join(root, "generated-images"),
     codexImagesDir: join(root, "codex-images"),
     codexSessionsDir: join(root, "codex-sessions"),
+    codexThreadHistoryDir: join(root, "codex-thread-history"),
     grokSessionsDir: join(root, "grok-sessions"),
     cowartCanvasDir: join(root, "cowart-canvas"),
     cowartRegistryPath: join(root, "state", "cowart-projects.json"),

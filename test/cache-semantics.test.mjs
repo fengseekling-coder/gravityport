@@ -27,8 +27,10 @@ test("static resource cache semantics: no-cache for UI files and immutable for l
     generatedImagesDir: join(root, "generated-images"),
     codexImagesDir: join(root, "codex-images"),
     codexSessionsDir: join(root, "codex-sessions"),
+    codexThreadHistoryDir: join(root, "codex-thread-history"),
     grokSessionsDir: join(root, "grok-sessions"),
     cowartCanvasDir: join(root, "cowart-canvas"),
+    cowartRegistryPath: join(root, "state", "cowart-projects.json"),
     port: 0,
     disabledBridges: [...DISABLEABLE_BRIDGES],
     // Force isolated library dir to prevent lock conflicts with user's real library
