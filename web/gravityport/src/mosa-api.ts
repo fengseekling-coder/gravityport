@@ -85,6 +85,9 @@ export type MosaNavigation = {
   trashReclaimableBytes?: number
   sourceTypes: [string, number][]
   groups: { name: string; count: number; color: string }[]
+  // Task 459: sidebar 学习库 rows. The sqlite backend always sends them while
+  // the JSON backend never does — absent renders an empty section.
+  learningLibraries?: { id: string; name: string; count: number }[]
 }
 
 export type MosaLibraryLocation = {
@@ -103,6 +106,7 @@ export type AssetQuery = {
   mediaKind: "all" | "img" | "video"
   source?: string
   group?: string
+  learningLibrary?: string
   stackId?: string
   cursor?: string
 }
@@ -483,6 +487,12 @@ export async function fetchNavigation(project: string, signal?: AbortSignal): Pr
       const item = entry as JsonValue
       return { name: String(item.name || ""), count: Number(item.count || 0), color: String(item.color || "") }
     }).filter(group => group.name),
+    learningLibraries: Array.isArray(navigation.learningLibraries)
+      ? navigation.learningLibraries.map((entry: unknown) => {
+          const item = entry as JsonValue
+          return { id: String(item.id || ""), name: String(item.name || ""), count: Number(item.count || 0) }
+        }).filter(library => library.id)
+      : undefined,
   }
 }
 
@@ -850,6 +860,7 @@ function buildAssetParams(q: AssetQuery, options: { limit: number; cursor?: stri
   if (q.mediaKind !== "all") params.set("mediaKind", q.mediaKind)
   if (q.source) params.set("source", q.source)
   if (q.group) params.set("group", q.group)
+  if (q.learningLibrary) params.set("learningLibrary", q.learningLibrary)
   if (options.cursor) params.set("cursor", options.cursor)
   return params
 }
@@ -943,6 +954,7 @@ export type MosaGalleryRowsQuery = {
   mediaKind: "all" | "img" | "video"
   source?: string
   group?: string
+  learningLibrary?: string
   stackId?: string
 }
 
@@ -973,6 +985,7 @@ export async function fetchGalleryRows(
     facets: { group: query.group || "" },
     ...(query.mediaKind !== "all" ? { mediaKind: query.mediaKind } : {}),
     ...(query.source ? { source: query.source } : {}),
+    ...(query.learningLibrary ? { learningLibrary: query.learningLibrary } : {}),
     ...(query.stackId ? { stackId: query.stackId } : {}),
     ...(boundaryCursor ? { boundaryCursor } : {}),
     ...(stacks.length ? { affectedStackIds: stacks } : {}),
@@ -1319,6 +1332,74 @@ export function mergeGroups(project: string, source: string, target: string) {
   return requestJson<JsonValue>(`/api/groups/${e(source)}/merge`, {
     method: "POST", body: { projectId: project, into: target },
   })
+}
+
+// ── Learning libraries (task 459): routes stay behind the client-token
+// boundary, so every call goes through the same requestJson gate as groups. ──
+export type MosaLearningLibrary = {
+  id: string
+  name: string
+  count: number
+  createdAt?: string
+  groupCount?: number
+}
+
+function normalizeLearningLibrary(value: JsonValue): MosaLearningLibrary {
+  const item = (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as JsonValue
+  return {
+    id: String(item.id || ""),
+    name: String(item.name || ""),
+    count: Number(item.count || 0),
+    createdAt: item.createdAt === undefined || item.createdAt === null ? undefined : String(item.createdAt),
+    groupCount: item.groupCount === undefined || item.groupCount === null ? undefined : Number(item.groupCount || 0),
+  }
+}
+
+export async function fetchLearningLibrary(project: string, id: string, signal?: AbortSignal): Promise<MosaLearningLibrary> {
+  const data = await requestJson<{ library?: JsonValue }>(`/api/learning-libraries/${e(id)}?project=${e(project)}`, { signal })
+  return normalizeLearningLibrary(data.library || {})
+}
+
+export async function createLearningLibrary(project: string, name: string): Promise<MosaLearningLibrary> {
+  const data = await requestJson<{ library?: JsonValue }>("/api/learning-libraries", {
+    method: "POST", body: { projectId: project, name },
+  })
+  return normalizeLearningLibrary(data.library || {})
+}
+
+export async function renameLearningLibrary(project: string, id: string, name: string): Promise<MosaLearningLibrary> {
+  const data = await requestJson<{ library?: JsonValue }>(`/api/learning-libraries/${e(id)}`, {
+    method: "PATCH", body: { projectId: project, name },
+  })
+  return normalizeLearningLibrary(data.library || {})
+}
+
+export function deleteLearningLibrary(project: string, id: string) {
+  return requestJson<JsonValue>(`/api/learning-libraries/${e(id)}?project=${e(project)}`, { method: "DELETE" })
+}
+
+export async function addToLearningLibrary(
+  project: string,
+  id: string,
+  input: { assetIds?: string[]; stackIds?: string[]; groupName?: string },
+): Promise<{ added: number; alreadyIn: number; skippedVideos: number; missing: number }> {
+  const data = await requestJson<{ added?: number; alreadyIn?: number; skippedVideos?: number; missing?: number }>(
+    `/api/learning-libraries/${e(id)}/members`,
+    { method: "POST", body: { projectId: project, ...input } },
+  )
+  return {
+    added: Number(data.added || 0),
+    alreadyIn: Number(data.alreadyIn || 0),
+    skippedVideos: Number(data.skippedVideos || 0),
+    missing: Number(data.missing || 0),
+  }
+}
+
+export async function removeFromLearningLibrary(project: string, id: string, assetIds: string[]): Promise<{ removed: number }> {
+  const data = await requestJson<{ removed?: number }>(`/api/learning-libraries/${e(id)}/members`, {
+    method: "DELETE", body: { projectId: project, assetIds },
+  })
+  return { removed: Number(data.removed || 0) }
 }
 
 export async function fetchRawGroupAssets(project: string, group: string, signal?: AbortSignal): Promise<JsonValue[]> {

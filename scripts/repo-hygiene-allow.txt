@@ -7,3 +7,4 @@
 
 test/c2pa-production-signer.test.mjs | secret | Fake private-key header with the body "leak", used to prove the signer preflight rejects leaked key material.
 test/desktop-quiet-qa-screen.test.mjs | secret | Fixed hex strings used as fake tokens in the packaged-quiet gate test; they are not real credentials.
+test/diagnostic-log.test.mjs | secret | 任务 458：脱敏规则测试里必须放完整的假 sk-ant-/sk-proj- 密钥串（规则的目标就是这些前缀），全是编造的假值（末尾 1234/4321），不是真凭据。

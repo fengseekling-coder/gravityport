@@ -495,6 +495,14 @@ test("desktop package keeps every required runtime surface", () => {
     "/desktop/web-capture-supervisor.mjs",
     "/desktop/background-capture-launchd.mjs",
     "/desktop/notification-i18n.mjs",
+    // 任务 458:AI 设置页的主进程模块（密钥保存、设置、花费台账、IPC、目录与
+    // 测试连接）必须留在桌面包里。
+    "/desktop/ai/credential-store.mjs",
+    "/desktop/ai/settings-store.mjs",
+    "/desktop/ai/usage-ledger.mjs",
+    "/desktop/ipc/ai.mjs",
+    "/lib/ai/model-catalog.mjs",
+    "/lib/ai/connection-test.mjs",
     "/desktop/platform/index.mjs",
     "/desktop/preload.cjs",
     "/desktop/service-manager.mjs",

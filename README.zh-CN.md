@@ -10,7 +10,7 @@
 > **让每一次 AI 创作，有迹可循**
 > 自动收录 AI 生成的图片与视频，完整保留提示词、参考图、来源与版本记录，全部存储于本地设备。
 
-GravityPort 是一款 AI 素材管理工具，支持 ChatGPT、Gemini、Flow、Google AI Studio、Codex、Grok、即梦。自动收录生成的图片与视频素材，同步保存提示词、参考图与生成来源，所有素材与记录均存储于本地设备。
+GravityPort 是一款 AI 素材管理工具，支持 ChatGPT、Gemini、Flow、Google AI Studio、Codex、Grok、即梦、Lovart。自动收录生成的图片与视频素材，同步保存提示词、参考图与生成来源，所有素材与记录均存储于本地设备。
 
 ![GravityPort 画廊与检视器](docs/images/gravityport-app.webp)
 
@@ -122,7 +122,7 @@ GravityPort MCP 共 25 个工具：
 | 你在哪里创作 | GravityPort 收进什么 |
 | --- | --- |
 | **Codex Desktop** | 生成的图片，以及可得时匹配到的本地生成上下文 |
-| **Chrome 里的 ChatGPT、Gemini、Flow、Google AI Studio、即梦** | 通过本地扩展，可选收录网页生成的可见图片/视频和保守的页面级上下文 |
+| **Chrome 里的 ChatGPT、Gemini、Flow、Google AI Studio、即梦、Lovart** | 通过本地扩展，可选收录网页生成的可见图片/视频和保守的页面级上下文 |
 | **ChatGPT 桌面应用** | 桌面聊天里生成的图片，由同一个扩展（开启自动采集时）借助浏览器里的 ChatGPT 登录收录 |
 | **Grok**（Grok Build CLI） | 本地会话产出的图片和视频，可得时匹配工具上下文 |
 

@@ -3,6 +3,11 @@
 // 互相打架；收敛为这份唯一来源，键名排序、逐键注释取自原三份并集。
 export const EXPECTED_PRELOAD_API_KEYS = Object.freeze([
   "acknowledgeRenameNotice",
+  "aiDeleteKey", // 任务 458：删一把已存的 AI 服务密钥（返回值只有 ok）
+  "aiGetState", // 任务 458：AI 设置页状态（服务/槽位/目录/单价行），密钥只回 last4
+  "aiSaveKey", // 任务 458：存 AI 服务密钥，主进程 safeStorage 加密后落盘
+  "aiTestConnection", // 任务 458：向所选服务要一份模型清单（不收费），原文不回传
+  "aiUpdateSettings", // 任务 458：改三块槽位与自定义服务（主进程逐项校验）
   "cancelUpdateDownload",
   "changeLibraryLocation",
   "checkForUpdates",
@@ -37,5 +42,5 @@ export const EXPECTED_PRELOAD_API_KEYS = Object.freeze([
 ]);
 
 // desktop/preload.cjs 里 ipcRenderer.invoke 的个数，以代码为准（新增批准通道时
-// 这里同步 +1，三份引用方共用）。
-export const EXPECTED_PRELOAD_INVOKE_COUNT = 27;
+// 这里同步 +1，三份引用方共用）。任务 458：AI 设置页五个通道，27 → 32。
+export const EXPECTED_PRELOAD_INVOKE_COUNT = 32;

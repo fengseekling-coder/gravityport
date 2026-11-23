@@ -1,0 +1,304 @@
+{
+  "_说明": "2026-11-22 Claude 在 Lovart 老界面真页面只读查到的字段，按原字段名重建。注意：这是页面内存里整理后的结构（sessions → input / messages[].raw），不是接口原始返回；接口 POST /api/canva/agent/chatHistoryV2?threadId=… 的外层包装没取到（要页面自带的登录令牌，没去碰）。messages[].raw 里的字段名就是接口逐条消息的字段名（raw.type、raw.name、raw.content[].event_type、event_data.artifact[]），可放心按这些字段写；外层包装不要猜，按结构找。账号、项目、图片编号、上传文件名都换成了假值，长文字截短；字段名原样；数值里 imageList 的 coordinates 只核实了第一个数 0.24、points 只核实了第一个数，其余是占位；第二、三个 artifact 的 prompt_text 是占位文字（实测长度写在括号里）；时间戳只有第一组是真的。父子关系、空 artifact_id、错误类型这些结构是实测的。",
+  "sessions": [
+    {
+      "id": "780116462445563904",
+      "input": {
+        "id": "780116462445563904",
+        "timestamp": "2025-11-22T17:04:18Z",
+        "type": "user",
+        "actionId": "780116462445563904",
+        "stepId": "780116462445563905",
+        "text": "[@image:#1:upload_portrait_fake.png] 修复鼻子的变形",
+        "imageList": [
+          {
+            "type": "image",
+            "imageUrl": "https://a.lovart.ai/artifacts/generator/FakeUpload01Ab2c.png",
+            "imageLabel": "#1",
+            "imageWidth": 4312,
+            "imageHeight": 7694,
+            "coordinates": [
+              0.24,
+              0.31,
+              0.52,
+              0.47
+            ],
+            "coordinatesMarkLabel": "人物",
+            "points": [
+              0.3888327432724551,
+              0.4
+            ]
+          }
+        ]
+      },
+      "messages": [
+        {
+          "raw": {
+            "id": "780116462537830400",
+            "timestamp": "2025-11-22T17:05:19Z",
+            "type": "text",
+            "action_id": "780116462445563904",
+            "step_id": "780116462537830400",
+            "text": "我注意到您提到了修复鼻子变形……让我先分析一下这些图片。\n",
+            "tool_call_id": "",
+            "name": "",
+            "thread_id": "00000000-0000-4000-8000-0000000000aa",
+            "status": "success"
+          },
+          "derived": {
+            "phase": "done",
+            "provenance": {
+              "origin": "restore",
+              "lastStage": "session.restore"
+            }
+          }
+        },
+        {
+          "raw": {
+            "id": "780116500000000001",
+            "timestamp": "2025-11-22T17:05:19Z",
+            "type": "tool_use",
+            "action_id": "780116462445563904",
+            "step_id": "780116500000000001",
+            "text": "",
+            "tool_call_id": "call_fake_analyse",
+            "name": "analyse_image",
+            "thread_id": "00000000-0000-4000-8000-0000000000aa",
+            "status": "success",
+            "content": [
+              {
+                "event_index": 0,
+                "event_type": "tool_artifacts",
+                "event_data": {
+                  "artifact": [
+                    {
+                      "artifact_type": "image_info",
+                      "channels": 3,
+                      "description": "这张图片描绘了一个未来主义风格的肖像，主体是一位身着黑色服装、戴着遮眼面罩的人物，背景是鲜艳的红色……",
+                      "height": 7694,
+                      "image_name": "",
+                      "image_url": "https://a.lovart.ai/artifacts/generator/FakeUpload01Ab2c.png",
+                      "is_vip": false,
+                      "project_id": "<redacted-project_id>",
+                      "source": "analyse_image",
+                      "task_type": "OTHER",
+                      "thread_id": "00000000-0000-4000-8000-0000000000aa",
+                      "user_uuid": "<redacted-user_uuid>",
+                      "width": 4312,
+                      "artifact_id": null
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "raw": {
+            "id": "780116500000000002",
+            "timestamp": "2025-11-22T17:05:19Z",
+            "type": "tool_use",
+            "action_id": "780116462445563904",
+            "step_id": "780116500000000002",
+            "text": "",
+            "tool_call_id": "call_fake_err",
+            "name": "generate_image_nano_banana_pro",
+            "thread_id": "00000000-0000-4000-8000-0000000000aa",
+            "status": "success",
+            "content": [
+              {
+                "event_index": 0,
+                "event_type": "error",
+                "event_data": {
+                  "error_type": "API_CONTENT_POLICY",
+                  "error_info": "API Error (provider:API_CONTENT_POLICY): [Content policy violation]…"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "raw": {
+            "id": "780116541785034752",
+            "timestamp": "2025-11-22T17:05:19Z",
+            "type": "tool_use",
+            "action_id": "780116462445563904",
+            "step_id": "780116541785034752",
+            "text": "",
+            "tool_call_id": "call_99aa1a7b9e7344e39326ae8f",
+            "name": "generate_image_nano_banana_pro",
+            "thread_id": "00000000-0000-4000-8000-0000000000aa",
+            "status": "success",
+            "content": [
+              {
+                "event_index": 0,
+                "event_type": "tool_artifacts",
+                "event_data": {
+                  "artifact": [
+                    {
+                      "artifact_id": "FakeAgentArt0001",
+                      "artifact_type": "image_info",
+                      "channels": null,
+                      "description": "",
+                      "height": 2752,
+                      "image_name": "修复后的肖像",
+                      "image_url": "https://a.lovart.ai/artifacts/agent/FakeAgentArt0001.png",
+                      "image_with_bbox_url": null,
+                      "image_with_point_url": null,
+                      "is_vip": false,
+                      "masks": null,
+                      "project_id": "<redacted-project_id>",
+                      "prompt_image_list": [
+                        "https://a.lovart.ai/artifacts/generator/FakeUpload01Ab2c.png"
+                      ],
+                      "prompt_text": "Edit the portrait image to fix and improve the nose area. Make the following corrections to the nose:\n\n1. Nose bridge: Smooth out the nose bridge area…<实测共 1337 字符>",
+                      "seed": null,
+                      "source": "generate_image_nano_banana_pro",
+                      "subjects": null,
+                      "task_type": "EDIT_SINGLE_IMAGE",
+                      "thread_id": "00000000-0000-4000-8000-0000000000aa",
+                      "user_uuid": "<redacted-user_uuid>",
+                      "width": 1536
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "780116600000000000",
+      "input": {
+        "id": "780116600000000000",
+        "timestamp": "2025-11-22T17:20:00Z",
+        "type": "user",
+        "actionId": "780116600000000000",
+        "stepId": "780116600000000001",
+        "text": "鼻子的皮肤过于写实了",
+        "imageList": []
+      },
+      "messages": [
+        {
+          "raw": {
+            "id": "780116600000000009",
+            "timestamp": "2025-11-22T17:05:19Z",
+            "type": "tool_use",
+            "action_id": "780116462445563904",
+            "step_id": "780116600000000009",
+            "text": "",
+            "tool_call_id": "call_fake_child",
+            "name": "generate_image_nano_banana_pro",
+            "thread_id": "00000000-0000-4000-8000-0000000000aa",
+            "status": "success",
+            "content": [
+              {
+                "event_index": 0,
+                "event_type": "tool_artifacts",
+                "event_data": {
+                  "artifact": [
+                    {
+                      "artifact_id": "FakeAgentArt0002",
+                      "artifact_type": "image_info",
+                      "channels": null,
+                      "description": "",
+                      "height": 2752,
+                      "image_name": "修复后的肖像_调整版",
+                      "image_url": "https://a.lovart.ai/artifacts/agent/FakeAgentArt0002.png",
+                      "image_with_bbox_url": null,
+                      "image_with_point_url": null,
+                      "is_vip": false,
+                      "masks": null,
+                      "project_id": "<redacted-project_id>",
+                      "prompt_image_list": [
+                        "https://a.lovart.ai/artifacts/agent/FakeAgentArt0001.png"
+                      ],
+                      "prompt_text": "Refine the nose skin texture to look less hyper-realistic…<实测共 1272 字符>",
+                      "seed": null,
+                      "source": "generate_image_nano_banana_pro",
+                      "subjects": null,
+                      "task_type": "EDIT_SINGLE_IMAGE",
+                      "thread_id": "00000000-0000-4000-8000-0000000000aa",
+                      "user_uuid": "<redacted-user_uuid>",
+                      "width": 1536
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "780116700000000000",
+      "input": {
+        "id": "780116700000000000",
+        "timestamp": "2025-11-23T02:00:00Z",
+        "type": "user",
+        "actionId": "780116700000000000",
+        "stepId": "780116700000000001",
+        "text": "[@image:#1:upload_portrait_fake.png] [@tool:generate_image_nano_banana_pro] 根据这张图的风格和人物形态，生成几种不同人物性别的图片",
+        "imageList": [
+          {
+            "type": "image",
+            "imageUrl": "https://a.lovart.ai/artifacts/generator/FakeUpload01Ab2c.png",
+            "imageLabel": "#1",
+            "imageWidth": 4312,
+            "imageHeight": 7694
+          }
+        ]
+      },
+      "messages": [
+        {
+          "raw": {
+            "id": "780116700000000009",
+            "timestamp": "2025-11-22T17:05:19Z",
+            "type": "tool_use",
+            "action_id": "780116462445563904",
+            "step_id": "780116700000000009",
+            "text": "",
+            "tool_call_id": "call_fake_t2i",
+            "name": "generate_image_nano_banana_pro",
+            "thread_id": "00000000-0000-4000-8000-0000000000aa",
+            "status": "success",
+            "content": [
+              {
+                "event_index": 0,
+                "event_type": "tool_artifacts",
+                "event_data": {
+                  "artifact": [
+                    {
+                      "artifact_id": "FakeAgentArt0003",
+                      "artifact_type": "image_info",
+                      "channels": null,
+                      "description": "",
+                      "height": 2752,
+                      "image_name": "未来感肖像_女性",
+                      "image_url": "https://a.lovart.ai/artifacts/agent/FakeAgentArt0003.png",
+                      "image_with_bbox_url": null,
+                      "image_with_point_url": null,
+                      "is_vip": false,
+                      "masks": null,
+                      "project_id": "<redacted-project_id>",
+                      "prompt_image_list": null,
+                      "prompt_text": "Generate a female version of this futuristic portrait. Create a portrait with these exact characteristics:\n\nCHARACTER: A woman wearing…<实测共 1519 字符>",
+                      "seed": null,
+                      "source": "generate_image_nano_banana_pro",
+                      "subjects": null,
+                      "task_type": "TEXT_TO_IMAGE",
+                      "thread_id": "00000000-0000-4000-8000-0000000000aa",
+                      "user_uuid": "<redacted-user_uuid>",
+                      "width": 1536
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

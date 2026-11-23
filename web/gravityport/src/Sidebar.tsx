@@ -1,8 +1,12 @@
 // Sidebar JSX (brandbar, project switcher, main nav, group sections, update-ready line, settings button) moved out of App.tsx (task 441). Pure moves; no behavior changes.
+// Task 459: third section 学习库 below 我的分组 — library rows take card drops
+// (加入, never move) and carry their own right-click menu; the section, its
+// rows and the card-drop target all vanish with the entry switch off.
 import Icon from "./Icon"
 import ToolbarSelect from "./ToolbarSelect"
 import { SMART_SOURCE_GROUPS } from "./tag-display"
 import { PINTEREST_ENTRY } from "./SettingsDialog"
+import { LEARNING_LIBRARY_ENTRY } from "./learning-library-entry"
 import type { MosaNavigation } from "./mosa-api"
 
 export type SidebarProps = {
@@ -13,11 +17,12 @@ export type SidebarProps = {
   active: string
   goTo: (partial: Partial<{ active: string; stackId: string; stackName: string; query: string; sortOrder: string; assetType: string }>, options?: { replace?: boolean }) => void
   setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>
-  cardDropSide: { kind: "group"; name: string } | { kind: "ungrouped" } | null
+  cardDropSide: { kind: "group"; name: string } | { kind: "ungrouped" } | { kind: "learning-library"; id: string } | null
   navigation: MosaNavigation | null
   expandedSections: boolean[]
   setExpandedSections: React.Dispatch<React.SetStateAction<boolean[]>>
   createNamedGroup: () => void
+  createLearningLibrary: () => void
   updateReadyLine: { title: string; head: string; versionText: string; tail: string } | null
   restartPending: boolean
   restartToUpdate: () => Promise<void>
@@ -27,14 +32,15 @@ export type SidebarProps = {
   settings: boolean
   importDroppedFiles: (dataTransfer: DataTransfer | null, groupName?: string) => void
   openGroupMenu: (name: string, x: number, y: number) => void
+  openLearningLibraryMenu: (id: string, name: string, x: number, y: number) => void
 }
 
 export function Sidebar(props: SidebarProps) {
   const {
     tr, projects, project, switchProject, active, goTo, setSelectedIds, cardDropSide,
-    navigation, expandedSections, setExpandedSections, createNamedGroup,
+    navigation, expandedSections, setExpandedSections, createNamedGroup, createLearningLibrary,
     updateReadyLine, restartPending, restartToUpdate, installationId, setSettings,
-    preview, settings, importDroppedFiles, openGroupMenu,
+    preview, settings, importDroppedFiles, openGroupMenu, openLearningLibraryMenu,
   } = props
   return (
       <aside className="sidebar">
@@ -149,6 +155,51 @@ export function Sidebar(props: SidebarProps) {
             </nav>
           </div>
         ))}
+        {LEARNING_LIBRARY_ENTRY && (
+          <div className="group-section">
+            <div className="section-label">
+              <button
+                className="section-toggle"
+                aria-label={tr("学习库")}
+                aria-expanded={expandedSections[2]}
+                aria-controls="sidebar-learning-libraries"
+                onClick={() => setExpandedSections(old => old.map((value, i) => i === 2 ? !value : value))}
+              >
+                <span>{tr("学习库")}</span>
+                <Icon name={expandedSections[2] ? "down" : "right"} size={12} />
+              </button>
+              <button
+                className="add-group"
+                aria-label={tr("新建学习库")}
+                title={tr("新建学习库")}
+                onClick={createLearningLibrary}
+              ><Icon name="plus" size={16} /></button>
+            </div>
+            <nav id="sidebar-learning-libraries" aria-label={tr("学习库")} hidden={!expandedSections[2]}>
+              {(navigation?.learningLibraries || []).map((library) => (
+                <button
+                  className={`nav-row group-row ${
+                    active === `learn:${library.id}` ? "selected" : ""
+                  } ${cardDropSide?.kind === "learning-library" && cardDropSide.id === library.id ? "side-drop-target" : ""}`}
+                  key={library.id}
+                  title={tr(library.name)}
+                  aria-label={tr(library.name)}
+                  aria-current={active === `learn:${library.id}` ? "page" : undefined}
+                  data-drop-learning-library={library.id}
+                  onClick={() => { goTo({ active: `learn:${library.id}`, stackId: "", stackName: "" }); setSelectedIds([]) }}
+                  onContextMenu={event => {
+                    event.preventDefault()
+                    openLearningLibraryMenu(library.id, library.name, event.clientX, event.clientY)
+                  }}
+                >
+                  <Icon name="book" size={16} />
+                  <span>{tr(library.name)}</span>
+                  <small>{library.count}</small>
+                </button>
+              ))}
+            </nav>
+          </div>
+        )}
         {updateReadyLine && (
           <div className="update-ready-slot">
             <button

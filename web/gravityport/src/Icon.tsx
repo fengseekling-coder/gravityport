@@ -17,6 +17,7 @@ const glyphs: Record<string, ReactNode> = {
   folder: <path d="M4 7V5.5A1.5 1.5 0 0 1 5.5 4H10l2.5 3h6A1.5 1.5 0 0 1 20 8.5v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5Z" />,
   inbox: <><path d="m4 13 2.5-8h11l2.5 8v5.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5V13Z" /><path d="M4 13h5l1.5 3h3l1.5-3h5" /></>,
   bookmark: <path d="M6 5.5A1.5 1.5 0 0 1 7.5 4h9A1.5 1.5 0 0 1 18 5.5V20l-6-4-6 4Z" />,
+  book: <><path d="M4 6.5A1.5 1.5 0 0 1 5.5 5H10a2.5 2.5 0 0 1 2 1 2.5 2.5 0 0 1 2-1h4.5A1.5 1.5 0 0 1 20 6.5v11a1.5 1.5 0 0 1-1.5 1.5H14a2.5 2.5 0 0 0-2 1 2.5 2.5 0 0 0-2-1H5.5A1.5 1.5 0 0 1 4 17.5Z" /><path d="M12 6v14" /></>,
   layers: <><path d="m12 4 8 4-8 4-8-4ZM4 12l8 4 8-4M4 16l8 4 8-4" /></>,
   copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M15.5 5.5v-1A1.5 1.5 0 0 0 14 3H4.5A1.5 1.5 0 0 0 3 4.5V14a1.5 1.5 0 0 0 1.5 1.5h1" /></>,
   scissors: <><circle cx="6.5" cy="7" r="2.5" /><circle cx="6.5" cy="17" r="2.5" /><path d="m8.5 8.5 11 11M8.5 15.5l11-11" /></>,
@@ -52,6 +53,8 @@ const glyphs: Record<string, ReactNode> = {
   lock: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" /></>,
   local: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 14h18M16 16.5h.01M18 16.5h.01" /></>,
   chatgpt: <><path d="M12 3a5 5 0 0 1 5 3 5 5 0 0 1 4 7 5 5 0 0 1-5 7 5 5 0 0 1-8 0 5 5 0 0 1-5-7 5 5 0 0 1 4-7 5 5 0 0 1 5-3Z" /><path d="m8 8 4-2 4 2v5l-4 3-4-2V8Zm0 0 8 5M12 6v10M8 14l8-6" /></>,
+  // 任务 458：AI 设置页的 sparkle（设置左栏「AI」）。四角星，笔画同其他图标。
+  sparkle: <path d="M12 4c.7 3.9 3.4 6.6 7.3 7.3-3.9.7-6.6 3.4-7.3 7.3-.7-3.9-3.4-6.6-7.3-7.3 3.9-.7 6.6-3.4 7.3-7.3Z" />,
 }
 
 export default function Icon({ name, size = 16 }: { name: string; size?: number }) {

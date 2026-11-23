@@ -6,6 +6,26 @@
   },
   "releases": [
     {
+      "version": "0.3.17",
+      "date": "2026-11-23",
+      "zh": {
+        "new": [
+          "在 Chrome 中使用 Lovart 时，Agent 模式和图像模式新生成的图片会自动收进素材库，并记下 Lovart 改写后实际发给模型的提示词、输入的原话、模型和底图；装扩展之前生成的图可在图片上右键手动保存。"
+        ],
+        "fixed": [
+          "浏览器扩展设置页的「重新配对」点一次、在 GravityPort 里允许后即可连上。"
+        ]
+      },
+      "en": {
+        "new": [
+          "Images generated in Lovart's Agent and image modes are saved to the library automatically in Chrome, along with the prompt Lovart actually sent to the model, the original request, the model and the base image. Images made before the extension was installed can be saved from the right-click menu."
+        ],
+        "fixed": [
+          "Re-pair on the browser extension's settings page connects after one click and an approval in GravityPort."
+        ]
+      }
+    },
+    {
       "version": "0.3.16",
       "date": "2026-11-22",
       "zh": {

@@ -10,7 +10,7 @@ English | [简体中文](README.zh-CN.md)
 > **Every AI creation leaves a trail**
 > 自动收录 AI 生成的图片与视频，完整保留提示词、参考图、来源与版本记录，全部存储于本地设备。
 
-GravityPort is an AI asset manager for ChatGPT, Gemini, Flow, Google AI Studio, Codex, Grok, and Jimeng. It automatically captures generated images and videos into your library, preserves prompts, reference images, and provenance with every asset, and stores all assets and metadata locally on your device.
+GravityPort is an AI asset manager for ChatGPT, Gemini, Flow, Google AI Studio, Codex, Grok, Jimeng, and Lovart. It automatically captures generated images and videos into your library, preserves prompts, reference images, and provenance with every asset, and stores all assets and metadata locally on your device.
 
 ![GravityPort gallery with the Inspector open](docs/images/gravityport-app.webp)
 
@@ -122,7 +122,7 @@ GravityPort MCP provides 25 tools:
 | You create in | GravityPort keeps |
 | --- | --- |
 | **Codex Desktop** | Generated images and the matching local generation context when available |
-| **ChatGPT, Gemini, Flow, Google AI Studio, or Jimeng in Chrome** | Optional visible web-generated images/videos and conservative page-scoped context through the local extension |
+| **ChatGPT, Gemini, Flow, Google AI Studio, Jimeng, or Lovart in Chrome** | Optional visible web-generated images/videos and conservative page-scoped context through the local extension |
 | **ChatGPT desktop app** | Images from desktop chats, picked up by the same extension (auto capture on) through your browser's ChatGPT session |
 | **Grok** (Grok Build CLI) | Images and videos from local sessions, with matched tool context when available |
 

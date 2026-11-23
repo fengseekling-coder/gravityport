@@ -10,8 +10,10 @@ export const WEB_CAPTURE_RUNTIME_FILES = Object.freeze([
   "options.js",
   "page-hook.js",
   "jimeng-page-hook.js",
+  "lovart-page-hook.js",
   "provider-jimeng.js",
   "provider-midjourney.js",
+  "provider-lovart.js",
   "provider-policy.js",
   "provider-sites.js",
 ]);

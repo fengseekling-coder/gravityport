@@ -7,7 +7,7 @@ import { PINTEREST_CHROME_IDLE, PinterestPinDetail, PinterestView, openExternalP
 import { pinterestFormat, pinterestText } from "./pinterest-strings"
 import type { PinterestStatus } from "./pinterest-api"
 import { translate, type Language } from "./i18n"
-import { buildContextMenu, buildGroupMenu, type MenuContext, type MenuEntry } from "./context-menus"
+import { buildContextMenu, buildGroupMenu, buildLearningLibraryMenu, type MenuContext, type MenuEntry } from "./context-menus"
 import { createStack, renameStack, dissolveStack, removeAssetsFromStack, addAssetsToStack, reorderStack, assignStackToGroup, trashStack, restoreAssets, permanentlyDeleteAssets, emptyTrash, listStackMemberIds, listStackMemberPaths, dropAssetsOnCard } from "./library-actions"
 import { planStackDropUndo, runStackDropUndo } from "./stack-drop-undo"
 import { describeError, importFailureTail, messageForErrorCode, errorMessage } from "./error-messages"
@@ -29,6 +29,8 @@ import { isEditableTarget } from "./keyboard"
 import { galleryKeyAction, isFocusSearchKey, menuSelectAllTarget, mouseNavDirection, neighbourAssetId, resolveNavHistoryShortcut } from "./gallery-keys"
 import { type GenerationDisplay } from "./version-tree"
 import { VERSION_CANVAS_ENTRY, canvasFromHistory } from "./version-canvas-model"
+import { LEARNING_LIBRARY_ENTRY, learningLibraryIdForActive, learningLibraryIdFromDropRow } from "./learning-library-entry"
+import { LearningLibraryPanel } from "./LearningLibraryPanel"
 import { computeConversationRounds } from "./conversation-rounds"
 import { sanitizeAssetForExport } from "./feature-parity"
 import { describeSource, inspectorHeaderLine, promptNotice, trashReasonNotice, SOURCE_LABEL_MAP, humanSize } from "./inspector-info"
@@ -60,6 +62,7 @@ import {
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite, setAssetsCurated,
   toggleAssetFavorite, updateAssetMetadata, uploadVideoPoster, moveAssetsToTrash, setAssetsGroup,
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
+  createLearningLibrary, renameLearningLibrary, deleteLearningLibrary, fetchLearningLibrary, addToLearningLibrary as addAssetsToLearningLibrary, removeFromLearningLibrary as removeAssetsFromLearningLibrary,
   moveAssetsToStack, openLibraryFolder,
   fetchSchemaUpgradeNotice, acknowledgeSchemaUpgradeNotice,
   fetchLibraryRevision, fetchLibraryChanges, fetchGalleryRows, readMutationState,
@@ -134,7 +137,7 @@ type CardDragGesture = {
 type CardDragFinish = { dragIds: string[]; pressedId: string; stackIds: string[]; insideStack: boolean }
 
 type CardDropTarget = { cardId: string; placement: "before" | "after"; mode: "stack-target" | "reorder" }
-type CardSideTarget = { kind: "group"; name: string } | { kind: "ungrouped" }
+type CardSideTarget = { kind: "group"; name: string } | { kind: "ungrouped" } | { kind: "learning-library"; id: string }
 
 function sideDropTargetAt(x: number, y: number): CardSideTarget | null {
   const element = document.elementFromPoint(x, y)
@@ -143,6 +146,10 @@ function sideDropTargetAt(x: number, y: number): CardSideTarget | null {
     const name = groupRow.getAttribute("data-drop-group") || ""
     return name ? { kind: "group", name } : null
   }
+  // 任务 459：拖到侧栏学习库行是「加入」，不是移动；堆叠整叠加入。访达拖文件
+  // 到学习库行不支持（行上没有原生 drop 处理，自然不响应）。
+  const libraryRowId = learningLibraryIdFromDropRow(element)
+  if (libraryRowId) return { kind: "learning-library", id: libraryRowId }
   if (element?.closest?.("[data-drop-ungroup]")) return { kind: "ungrouped" }
   return null
 }
@@ -306,7 +313,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // The context menu carries its target with it: stack menus act on the
   // right-clicked stack without touching the selection, so the handlers read
   // the menu state instead of guessing from the focused asset.
-  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[]; target: MenuContext["target"] | "group"; selectionCount: number; stackId: string; stackName: string; stackCount: number; groupName?: string } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[]; target: MenuContext["target"] | "group" | "learning-library"; selectionCount: number; stackId: string; stackName: string; stackCount: number; groupName?: string; learningLibrary?: { id: string; name: string } } | null>(null)
   // The menu clamps into the window by its real rendered size, not a row
   // estimate: the effect measures after mount and corrects before paint.
   const menuRef = useRef<HTMLDivElement>(null)
@@ -324,7 +331,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const [debouncedQuery, setDebouncedQuery] = useState("")
   const [columns, setColumns] = useState(() => resolveInitialColumns(readStoredColumns(columnsStorage()), window.innerWidth))
   const [toast, setToast] = useState<ToastState>(null)
-  const [expandedSections, setExpandedSections] = useState([true, true])
+  const [expandedSections, setExpandedSections] = useState([true, true, true])
   const [groupRename, setGroupRename] = useState<{ original: string; draft: string } | null>(null)
   const [stackRename, setStackRename] = useState<{ stackId: string; initialName: string; draft: string } | null>(null)
   const [stackDissolveConfirm, setStackDissolveConfirm] = useState<{ stackId: string; stackCount: number } | null>(null)
@@ -340,6 +347,20 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const [groupDeleteConfirm, setGroupDeleteConfirm] = useState<string | null>(null)
   const [groupMerge, setGroupMerge] = useState<{ source: string; target: string } | null>(null)
   const [exportingGroup, setExportingGroup] = useState("")
+  // 任务 459：学习库对话框三件套（照分组的填写框/确认框），加上学习库视图右栏
+  // 页签的当前项与顶栏就地改名的编辑态。
+  const [learningLibraryCreate, setLearningLibraryCreate] = useState<{
+    draft: string
+    error: string
+    // 新建后接着把这份来源加进去：右键「新建学习库…」带来的所选 / 堆叠 / 整组。
+    pending: { assetIds?: string[]; stackIds?: string[]; groupName?: string } | null
+  } | null>(null)
+  const [learningLibraryRename, setLearningLibraryRename] = useState<{ id: string; original: string; draft: string; error: string } | null>(null)
+  const [learningLibraryDeleteConfirm, setLearningLibraryDeleteConfirm] = useState<{ id: string; name: string } | null>(null)
+  const [learnTab, setLearnTab] = useState<"guide" | "details">("guide")
+  const learnTabUserSetRef = useRef(false)
+  const [learnLibraryNameEditing, setLearnLibraryNameEditing] = useState(false)
+  const [learnLibraryNameDraft, setLearnLibraryNameDraft] = useState("")
   const [skipConfirm, setSkipConfirm] = useState(preferences.skipTrashConfirm)
   // 「不再提醒」persists across sessions like the preference it is.
   useEffect(() => {
@@ -535,10 +556,14 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const pinterestActive = PINTEREST_ENTRY && active === "Pinterest"
   const source = active.startsWith("source:") ? active.slice(7) : undefined
   const group = active.startsWith("group:") ? active.slice(6) : undefined
+  // 任务 459：learn:<id> 是学习库视图——图墙按 learningLibrary 过滤、堆叠不折叠，
+  // 搜索和类型筛选照常可用（都在这个学习库的范围内）。
+  const learningLibraryId = learningLibraryIdForActive(active) || undefined
   const mediaKind = assetType === "image" ? "img" : assetType === "video" ? "video" : "all"
   const buildQuery = (cursor?: string): AssetQuery => ({
     project, q: debouncedQuery, scope, mediaKind, sort: sortOrder as AssetQuery["sort"],
-    ...(source ? { source } : {}), ...(group ? { group } : {}), ...(stackId ? { stackId } : {}),
+    ...(source ? { source } : {}), ...(group ? { group } : {}), ...(learningLibraryId ? { learningLibrary: learningLibraryId } : {}),
+    ...(stackId ? { stackId } : {}),
     ...(cursor ? { cursor } : {}),
   })
   // ── Review 2-6: incremental library sync ──
@@ -1033,7 +1058,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // Task 384 (审查低-14): the group/stack dialogs join the settings window
     // and the delete confirm in the focus trap. When several are open the
     // topmost one wins (DESIGN.md hierarchy: 填写框 105 > 确认框 45 > 设置 20).
-    const formDialogOpen = Boolean(groupRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm)
+    const formDialogOpen = Boolean(groupRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm
+      || learningLibraryCreate || learningLibraryRename || learningLibraryDeleteConfirm)
     const confirmDialogOpen = Boolean(deleting || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
     if (!settings && !formDialogOpen && !confirmDialogOpen) return
     const dialog = appRef.current?.querySelector<HTMLElement>(
@@ -1071,6 +1097,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       previous?.focus()
     }
   }, [settings, deleting, groupRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm,
+    learningLibraryCreate, learningLibraryRename, learningLibraryDeleteConfirm,
     stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds])
   useEffect(() => {
     if (!selected) return
@@ -1900,6 +1927,13 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // carries the evidence, so the stats are the source of truth; falls back to
   // 所有素材 with the history entry replaced.
   const groupLivenessCheck = (nav: MosaNavigation) => {
+    // 任务 459：正在看的学习库被删了 → 退回「所有素材」，替换当前历史条目
+    // （照分组被删的做法，走同一个 exitDeletedGroupView 出口）。
+    if (active.startsWith("learn:")) {
+      const id = active.slice("learn:".length)
+      if ((nav.learningLibraries || []).some(entry => entry.id === id)) return
+      return exitDeletedGroupView()
+    }
     if (!active.startsWith("group:")) return
     const name = active.slice("group:".length)
     if (nav.groups.some(entry => entry.name.toLowerCase() === name.toLowerCase())) return
@@ -1984,7 +2018,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     loadedCardIds: assetsRef.current.map(item => item.id),
     query: {
       project, scope, query: debouncedQuery, sort: sortOrder, mediaKind,
-      ...(source ? { source } : {}), ...(group ? { group } : {}), ...(stackId ? { stackId } : {}),
+      ...(source ? { source } : {}), ...(group ? { group } : {}),
+      ...(learningLibraryId ? { learningLibrary: learningLibraryId } : {}),
+      ...(stackId ? { stackId } : {}),
     },
     viewedId: selected,
     viewerOpen: preview,
@@ -2262,6 +2298,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // click the browser then fires must not reselect it (or Shift-range from
       // it). A sweep from the background never clicks a card.
       if (dragging && startCard) suppressCardDragClickRef.current = true
+      // 任务 459：学习库视图里点图墙空白处（无位移的空白按下）取消选择，右栏
+      // 随之从「详情」切回「手册」；其他视图保持原行为（点空白不清选择）。
+      if (!dragging && !startCard && learningLibraryId) applySelection([], "")
       marqueeRef.current = null
       setMarquee(null)
       window.removeEventListener("pointermove", move)
@@ -2630,6 +2669,22 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     }
   }
   const runSideDrop = async (side: CardSideTarget, gesture: CardDragFinish) => {
+    // 任务 459：拖到侧栏学习库行 = 加入（不挪动原分组和堆叠）；拖的是堆叠就
+    // 整叠加入。计数提示条与右键「加入学习库」共用一个拼句。
+    if (side.kind === "learning-library") {
+      cardDragMutationRef.current = true
+      try {
+        const libraryName = (navigation?.learningLibraries || []).find(entry => entry.id === side.id)?.name || ""
+        const outcome = await addAssetsToLearningLibrary(project, side.id, {
+          assetIds: gesture.dragIds,
+          stackIds: gesture.stackIds,
+        })
+        notify(learningLibraryAddedMessage(outcome, libraryName))
+        scheduleSync()
+      } catch (error) { notify(learningLibraryFailureText("无法加入学习库", error)) }
+      finally { cardDragMutationRef.current = false }
+      return
+    }
     const groupName = side.kind === "group" ? side.name : ""
     cardDragMutationRef.current = true
     try {
@@ -2853,6 +2908,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // the viewer stay live.
     const overlaysUp = Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || authorizationActive || settings
       || groupRename || stackRename || groupMerge || groupCreateWithSelection || groupDeleteConfirm
+      || learningLibraryCreate || learningLibraryRename || learningLibraryDeleteConfirm
       || stackDissolveConfirm || stackTrashConfirm || emptyTrashConfirm || permanentDeleteIds)
     // Back inside Pinterest (⌘[ / Alt+← / mouse side button) mirrors the
     // toolbar ‹ there: viewer → Pin grid → board list; at the board list it
@@ -2895,6 +2951,10 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         else if (groupCreateWithSelection) setGroupCreateWithSelection(null)
         else if (groupMerge) setGroupMerge(null)
         else if (groupDeleteConfirm) setGroupDeleteConfirm(null)
+        // 任务 459：学习库的三个小框加入同一条 Esc 链，每个 Esc 等于点「取消」。
+        else if (learningLibraryRename) setLearningLibraryRename(null)
+        else if (learningLibraryCreate) setLearningLibraryCreate(null)
+        else if (learningLibraryDeleteConfirm) setLearningLibraryDeleteConfirm(null)
         // The two notices open on their own (startup check, live post-upgrade
         // verdict), not from a key or click, so like the authorization queue
         // they read the render-time refs: an Escape between the notice's
@@ -3093,7 +3153,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, deleting, menu, viewerFullscreen, assets, asset, stackId, active, language, selectedIds, selected, selectionIds, preview, skipConfirm, renameNoticeOpen, schemaNoticeOpen, authorizationActive,
-    groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm, stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds, canvasOpen])
+    groupRename, stackRename, groupMerge, groupCreateWithSelection, groupDeleteConfirm, stackDissolveConfirm, stackTrashConfirm, emptyTrashConfirm, permanentDeleteIds, canvasOpen,
+    learningLibraryCreate, learningLibraryRename, learningLibraryDeleteConfirm])
   // Fullscreen belongs to the open viewer, never outlives it: the back button,
   // Esc, a view switch, a project switch or a deleted asset all close the
   // viewer through setPreview(false), and the next viewer opens windowed.
@@ -3496,7 +3557,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       const targetIsEditable = isEditableTarget(event.target)
       const hasOverlay = Boolean(menu || deleting || renameNoticeOpen || schemaNoticeOpen || permanentDeleteIds || emptyTrashConfirm
         || groupDeleteConfirm || groupMerge || groupRename || stackRename || stackDissolveConfirm
-        || stackTrashConfirm || groupStats || groupCreateWithSelection || authorizationActive)
+        || stackTrashConfirm || groupStats || groupCreateWithSelection || authorizationActive
+        || learningLibraryCreate || learningLibraryRename || learningLibraryDeleteConfirm)
       // Task 384: the desktop menu's 粘贴 (role paste) fires this same event.
       // With a cut pending, move the cut assets first — the same entry as the
       // keydown ⌘V, whose preventDefault keeps it from firing this event too.
@@ -3533,7 +3595,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importing, library, active, project, stackId, settings, pinterestActive, menu, deleting, renameNoticeOpen, schemaNoticeOpen,
     permanentDeleteIds, emptyTrashConfirm, groupDeleteConfirm, groupMerge, groupRename, stackRename,
-    stackDissolveConfirm, stackTrashConfirm, groupStats, groupCreateWithSelection, language, debouncedQuery, assetType, authorizationActive])
+    stackDissolveConfirm, stackTrashConfirm, groupStats, groupCreateWithSelection, language, debouncedQuery, assetType, authorizationActive,
+    learningLibraryCreate, learningLibraryRename, learningLibraryDeleteConfirm])
   const navigateAsset = async (direction: number) => {
     if (!visible.length) return
     const index = visible.findIndex(a => a.id === selected)
@@ -3800,6 +3863,34 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     })
 
   const menuGroups = () => (navigation?.groups || []).map(item => ({ name: item.name, color: item.color }))
+  // 任务 459：右键菜单学习库子菜单的数据。开关关着时返回 undefined——图片、
+  // 堆叠、分组菜单里学习库那一项整段不出现；开着但一个学习库都没有时给空
+  // 数组，子菜单只剩「新建学习库…」。
+  const learningLibraryMenuEntries = () => {
+    if (!LEARNING_LIBRARY_ENTRY) return undefined
+    return (navigation?.learningLibraries || []).map(entry => ({ id: entry.id, name: entry.name }))
+  }
+  // 任务 459：加入/移出学习库的计数提示条（句式照 DESIGN.md 文案一节）。
+  // added>0 主句 + 已在其中的接一句 + 视频跳过接一句；全都已在给单句；只有
+  // 视频被跳过时整条就是视频句；什么都没发生（候选全失效）不出提示条。
+  const learningLibraryAddedMessage = (outcome: { added: number; alreadyIn: number; skippedVideos: number }, libraryName: string) => {
+    if (outcome.added > 0) {
+      let text = fillNamed("已将 {n} 个素材加入「{name}」", { n: outcome.added, name: libraryName })
+      if (outcome.alreadyIn) text += fillNamed("，{m} 个已在其中", { m: outcome.alreadyIn })
+      if (outcome.skippedVideos) text += fillNamed("，{k} 个视频未加入", { k: outcome.skippedVideos })
+      return text
+    }
+    if (outcome.alreadyIn > 0) return fillNamed("{m} 个素材已在「{name}」中", { m: outcome.alreadyIn, name: libraryName })
+    if (outcome.skippedVideos > 0) return fillNamed("{k} 个视频未加入", { k: outcome.skippedVideos })
+    return ""
+  }
+  // 任务 459：失败句「无法 X」，有原因的放句末括号（错误码 → 人话）。
+  const learningLibraryFailureText = (base: string, error: unknown) => {
+    const code = (error as { code?: string } | null)?.code || ""
+    const reason = code === "LEARNING_LIBRARY_NAME_TAKEN" ? tr("已有同名的学习库")
+      : code === "LEARNING_LIBRARY_NOT_FOUND" ? tr("学习库不存在") : ""
+    return reason ? `${base}（${reason}）` : base
+  }
   const isMacPlatform = () => navigator.platform.startsWith("Mac")
 
   // Right-clicking outside the multi-selection targets the clicked card
@@ -3841,6 +3932,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       clipboardImportable: false,
       unorganizedView: scope === "unorganized",
       versionCanvas: offerCanvas,
+      learningLibraries: learningLibraryMenuEntries(),
+      learningLibraryView: Boolean(learningLibraryId),
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), ctx.selectionCount)
     setMenu({ x, y, entries, target: "asset", selectionCount: ctx.selectionCount, stackId: "", stackName: "", stackCount: 0 })
@@ -3865,6 +3958,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       canCopyFiles: typeof desktopAPI()?.writeClipboardFiles === "function",
       clipboardImportable: false,
       unorganizedView: scope === "unorganized",
+      learningLibraries: learningLibraryMenuEntries(),
     }
     const entries = translateMenuEntries(buildContextMenu(ctx), 0)
     setMenu({ x, y, entries, target: "stack", selectionCount: 0, stackId: stack.id, stackName: stack.name || cardName, stackCount: stack.count })
@@ -3915,8 +4009,24 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
 
   const openGroupMenu = (name: string, x: number, y: number) => {
     const names = (navigation?.groups || []).map(item => item.name)
-    const entries = translateMenuEntries(buildGroupMenu({ index: names.indexOf(name), groupCount: names.length, exporting: Boolean(exportingGroup) }), 0)
+    const entries = translateMenuEntries(buildGroupMenu({
+      index: names.indexOf(name), groupCount: names.length, exporting: Boolean(exportingGroup),
+      learningLibraries: learningLibraryMenuEntries(),
+    }), 0)
     setMenu({ x, y, entries, target: "group", selectionCount: 0, stackId: "", stackName: "", stackCount: 0, groupName: name })
+  }
+
+  // 任务 459：侧栏学习库行的右键菜单（重命名 / 删除）。
+  const openLearningLibraryMenu = (id: string, name: string, x: number, y: number) => {
+    const entries = translateMenuEntries(buildLearningLibraryMenu(), 0)
+    setMenu({ x, y, entries, target: "learning-library", selectionCount: 0, stackId: "", stackName: "", stackCount: 0, learningLibrary: { id, name } })
+  }
+
+  const runLearningLibraryMenuAction = (library: { id: string; name: string }, id: string) => {
+    if (id === "learning-library-rename") {
+      setLearningLibraryRename({ id: library.id, original: library.name, draft: library.name, error: "" })
+    }
+    else if (id === "learning-library-delete") setLearningLibraryDeleteConfirm({ id: library.id, name: library.name })
   }
 
   // Sidebar group menu — every action reads the group the menu was opened on.
@@ -3958,8 +4068,85 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       const other = navigation?.groups.find(item => item.name !== name)
       if (other) setGroupMerge({ source: name, target: other.name })
     }
+    // 任务 459：整个分组的图（含堆叠成员）加入学习库，不挪动原分组。
+    else if (id.startsWith("group-add-to-learning-library:")) {
+      void runAddToLearningLibrary(id.slice("group-add-to-learning-library:".length), { groupName: name })
+    }
     else if (id === "group-delete") setGroupDeleteConfirm(name)
   }
+
+  // 任务 459：菜单与拖放共用的加入/移出。加入不挪动原分组和堆叠；移出只
+  // 在学习库视图的菜单里出现。两种都靠通用同步刷新（侧栏数字和图墙）。
+  const learningLibraryNameFor = (libraryId: string) =>
+    (navigation?.learningLibraries || []).find(entry => entry.id === libraryId)?.name || ""
+  const runAddToLearningLibrary = async (libraryId: string, source: { assetIds?: string[]; stackIds?: string[]; groupName?: string }) => {
+    try {
+      const outcome = await addAssetsToLearningLibrary(project, libraryId, source)
+      const message = learningLibraryAddedMessage(outcome, learningLibraryNameFor(libraryId))
+      if (message) notify(message)
+      scheduleSync()
+    } catch (error) {
+      notify(learningLibraryFailureText("无法加入学习库", error))
+    }
+  }
+  const runRemoveFromLearningLibrary = async (libraryId: string, assetIds: string[]) => {
+    try {
+      const outcome = await removeAssetsFromLearningLibrary(project, libraryId, assetIds)
+      if (outcome.removed) {
+        notify(fillNamed("已将 {n} 个素材移出「{name}」", { n: outcome.removed, name: learningLibraryNameFor(libraryId) }))
+      }
+      scheduleSync()
+    } catch (error) {
+      notify(learningLibraryFailureText("无法移出学习库", error))
+    }
+  }
+  // 侧栏 + 号：只有新建，不带待加入的来源。
+  const openLearningLibraryCreate = () => setLearningLibraryCreate({
+    draft: `新学习库 ${(navigation?.learningLibraries || []).length + 1}`,
+    error: "",
+    pending: null,
+  })
+  // 学习库页顶栏：一行「{n} 张 · 来自 {m} 个分组」。n 跟侧栏数字走；m（来自
+  // 几个分组）导航统计里没有，进学习库视图后随导航刷新取一次单库详情。
+  const learnLibraryGroupCountRef = useRef(0)
+  const learnLibraryHeader = (() => {
+    const navLibrary = (navigation?.learningLibraries || []).find(entry => entry.id === learningLibraryId)
+    if (!learningLibraryId || !navLibrary) return null
+    return { count: navLibrary.count, groupCount: learnLibraryGroupCountRef.current }
+  })()
+  useEffect(() => {
+    if (!learningLibraryId) { setLearnLibraryNameEditing(false); return }
+    let cancelled = false
+    fetchLearningLibrary(project, learningLibraryId)
+      .then(library => { if (!cancelled) learnLibraryGroupCountRef.current = library.groupCount || 0 })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [project, learningLibraryId, navigation])
+  // 顶栏名字点一下就地改名：回车或失焦保存、Esc 取消；规则和失败提示同重命名。
+  const commitLearnLibraryName = () => {
+    setLearnLibraryNameEditing(false)
+    if (!learningLibraryId) return
+    const next = learnLibraryNameDraft.trim()
+    const current = (navigation?.learningLibraries || []).find(entry => entry.id === learningLibraryId)?.name || ""
+    if (!next || next === current) return
+    renameLearningLibrary(project, learningLibraryId, next)
+      .then(() => {
+        notify(fillNamed("已将学习库重命名为「{name}」", { name: next }))
+        scheduleSync()
+      })
+      .catch(error => notify(learningLibraryFailureText("无法重命名学习库", error)))
+  }
+  // 右栏页签：用户点了页签就照用户点的，直到下一次选择变化（effect 里重置）。
+  const setLearnTabByUser = (tab: "guide" | "details") => {
+    learnTabUserSetRef.current = true
+    setLearnTab(tab)
+  }
+  // 默认「手册」；选中图片自动切「详情」，取消选择切回「手册」。用户自己点过
+  // 页签时本 effect 仍会在下一次选择变化时重置回跟随选择。
+  useEffect(() => {
+    learnTabUserSetRef.current = false
+    setLearnTab(selected ? "details" : "guide")
+  }, [selected])
 
   // Shared paste: ⌘V and both menu paste entries move the cut ids into the
   // target stack, or back out to loose assets when the target is null.
@@ -4050,6 +4237,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     setMenu(null)
     if (!target) return
     if (target.target === "group") { if (target.groupName) runGroupMenuAction(target.groupName, id); return }
+    if (target.target === "learning-library") { if (target.learningLibrary) runLearningLibraryMenuAction(target.learningLibrary, id); return }
     const ids = [...batchIds]
     // Asset menu
     if (id === "open-viewer") setPreview(true)
@@ -4121,6 +4309,36 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     }
     else if (id.startsWith("add-to-group:")) assignSelectionToGroup(id.slice("add-to-group:".length))
     else if (id === "remove-from-group") assignSelectionToGroup("")
+    // 任务 459：加入学习库（所选里有堆叠时整叠加入）、移出学习库、三个入口
+    // 的「新建学习库…」。三种来源共用同一个对话框，建好接着把来源加进去。
+    // :create 必须先于 add-to-learning-library: 前缀匹配（否则 "create" 会被
+    // 当成学习库 id）。
+    else if (id === "add-to-learning-library:create" || id === "stack-add-to-learning-library:create" || id === "group-add-to-learning-library:create") {
+      const pending = id.startsWith("stack-")
+        ? { stackIds: target.stackId ? [target.stackId] : [] }
+        : id.startsWith("group-")
+          ? { groupName: target.groupName || "" }
+          : (() => { const { plainIds, stackIds } = splitSelectionStacks(ids); return { assetIds: plainIds, stackIds } })()
+      setLearningLibraryCreate({
+        draft: `新学习库 ${(navigation?.learningLibraries || []).length + 1}`,
+        error: "",
+        pending,
+      })
+    }
+    else if (id.startsWith("add-to-learning-library:")) {
+      const { plainIds, stackIds } = splitSelectionStacks(ids)
+      void runAddToLearningLibrary(id.slice("add-to-learning-library:".length), { assetIds: plainIds, stackIds })
+    }
+    else if (id === "remove-from-learning-library") {
+      if (!learningLibraryId) return
+      void runRemoveFromLearningLibrary(learningLibraryId, ids)
+    }
+    else if (id.startsWith("stack-add-to-learning-library:")) {
+      void runAddToLearningLibrary(id.slice("stack-add-to-learning-library:".length), { stackIds: [target.stackId] })
+    }
+    else if (id.startsWith("group-add-to-learning-library:")) {
+      void runAddToLearningLibrary(id.slice("group-add-to-learning-library:".length), { groupName: target.groupName || "" })
+    }
     else if (id === "mark-sorted") {
       const { plainIds, stackIds } = splitSelectionStacks(ids)
       void markSorted(asset?.project_id || project, plainIds, stackIds)
@@ -4467,6 +4685,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         expandedSections={expandedSections}
         setExpandedSections={setExpandedSections}
         createNamedGroup={createNamedGroup}
+        createLearningLibrary={openLearningLibraryCreate}
         updateReadyLine={updateReadyLine}
         restartPending={restartPending}
         restartToUpdate={restartToUpdate}
@@ -4476,6 +4695,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         settings={settings}
         importDroppedFiles={importDroppedFiles}
         openGroupMenu={openGroupMenu}
+        openLearningLibraryMenu={openLearningLibraryMenu}
       />
       <GroupDialogs
         groupRename={groupRename} setGroupRename={setGroupRename}
@@ -4494,6 +4714,110 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         setAssets={setAssets} setStackName={setStackName} setSelectedIds={setSelectedIds}
         assignBatchToGroup={assignBatchToGroup}
       />
+      {/* 任务 459：学习库的填写框 ×2（新建 / 重命名，照分组的历史实现
+      .group-dialog）和确认框（照「删除分组」）。重名红字显示在输入框下、
+      不关框；Esc 走上面的通用 Esc 链。 */}
+      {learningLibraryCreate && (
+        <div className="group-dialog-backdrop" role="presentation" onClick={event => { if (event.target === event.currentTarget) setLearningLibraryCreate(null) }}>
+          <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("新建学习库")}>
+            <form onSubmit={event => {
+              event.preventDefault()
+              const name = learningLibraryCreate.draft.trim()
+              if (!name) return
+              const pending = learningLibraryCreate.pending
+              createLearningLibrary(project, name)
+                .then(async created => {
+                  if (pending && (pending.assetIds?.length || pending.stackIds?.length || pending.groupName)) {
+                    const outcome = await addAssetsToLearningLibrary(project, created.id, pending)
+                    const message = learningLibraryAddedMessage(outcome, created.name)
+                    if (message) notify(message)
+                  } else {
+                    notify(fillNamed("已新建学习库「{name}」", { name: created.name }))
+                  }
+                  setLearningLibraryCreate(null)
+                  scheduleSync()
+                })
+                .catch(error => {
+                  if ((error as { code?: string } | null)?.code === "LEARNING_LIBRARY_NAME_TAKEN") {
+                    setLearningLibraryCreate(old => old ? { ...old, error: tr("已有同名的学习库") } : old)
+                  } else notify(learningLibraryFailureText("无法新建学习库", error))
+                })
+            }}>
+              <h3>{tr("新建学习库")}</h3>
+              <input
+                autoFocus
+                aria-label={tr("名称")}
+                value={learningLibraryCreate.draft}
+                maxLength={80}
+                onChange={event => setLearningLibraryCreate(old => old ? { ...old, draft: event.target.value, error: "" } : old)}
+              />
+              {learningLibraryCreate.error && <p className="group-dialog-error" role="alert">{learningLibraryCreate.error}</p>}
+              <div className="group-dialog-actions">
+                <button type="button" className="neutral-button" onClick={() => setLearningLibraryCreate(null)}>{tr("取消")}</button>
+                <button type="submit" className="primary-button">{tr("新建")}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {learningLibraryRename && (
+        <div className="group-dialog-backdrop" role="presentation" onClick={event => { if (event.target === event.currentTarget) setLearningLibraryRename(null) }}>
+          <div className="group-dialog" role="dialog" aria-modal="true" aria-label={tr("重命名学习库")}>
+            <form onSubmit={event => {
+              event.preventDefault()
+              const name = learningLibraryRename.draft.trim()
+              if (!name || name === learningLibraryRename.original) { setLearningLibraryRename(null); return }
+              renameLearningLibrary(project, learningLibraryRename.id, name)
+                .then(() => {
+                  notify(fillNamed("已将学习库重命名为「{name}」", { name }))
+                  scheduleSync()
+                  setLearningLibraryRename(null)
+                })
+                .catch(error => {
+                  if ((error as { code?: string } | null)?.code === "LEARNING_LIBRARY_NAME_TAKEN") {
+                    setLearningLibraryRename(old => old ? { ...old, error: tr("已有同名的学习库") } : old)
+                  } else notify(learningLibraryFailureText("无法重命名学习库", error))
+                })
+            }}>
+              <h3>{tr("重命名学习库")}</h3>
+              <input
+                autoFocus
+                aria-label={tr("名称")}
+                value={learningLibraryRename.draft}
+                maxLength={80}
+                onChange={event => setLearningLibraryRename(old => old ? { ...old, draft: event.target.value, error: "" } : old)}
+              />
+              {learningLibraryRename.error && <p className="group-dialog-error" role="alert">{learningLibraryRename.error}</p>}
+              <div className="group-dialog-actions">
+                <button type="button" className="neutral-button" onClick={() => setLearningLibraryRename(null)}>{tr("取消")}</button>
+                <button type="submit" className="primary-button">{tr("重命名")}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {learningLibraryDeleteConfirm && (
+        <div className="group-dialog-backdrop" role="presentation" onClick={event => { if (event.target === event.currentTarget) setLearningLibraryDeleteConfirm(null) }}>
+          <div className="group-dialog" role="dialog" aria-modal="true" aria-label={fillNamed("删除学习库「{name}」吗？", { name: learningLibraryDeleteConfirm.name })}>
+            <h3>{fillNamed("删除学习库「{name}」吗？", { name: learningLibraryDeleteConfirm.name })}</h3>
+            <p>{tr("图片不会被删除，仍留在原来的分组和堆叠中。")}</p>
+            <div className="group-dialog-actions">
+              <button className="neutral-button" onClick={() => setLearningLibraryDeleteConfirm(null)}>{tr("取消")}</button>
+              <button className="primary-button" onClick={() => {
+                const target = learningLibraryDeleteConfirm
+                deleteLearningLibrary(project, target.id)
+                  .then(() => {
+                    notify(fillNamed("已删除学习库「{name}」", { name: target.name }))
+                    if (active === `learn:${target.id}`) goTo({ active: "所有素材" }, { replace: true })
+                    scheduleSync()
+                    setLearningLibraryDeleteConfirm(null)
+                  })
+                  .catch(error => notify(learningLibraryFailureText("无法删除学习库", error)))
+              }}>{tr("删除")}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {canvasOpen && asset ? (
         <VersionCanvas
           key={canvasSession}
@@ -4578,6 +4902,40 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           {pinterestActive && !preview && pinterestChrome.viewing && pinterestChrome.pin && <div className="viewer-title"><strong>{pinterestChrome.pin.title || pinterestChrome.boardName}</strong><span>{pinterestChrome.viewerIndex} / {pinterestChrome.viewerTotal}</span></div>}
           {pinterestActive && !preview && !pinterestChrome.viewing && pinterestChrome.boardName !== null && <div className="viewer-title"><strong>{pinterestChrome.boardName}</strong><span>{pinterestChrome.pinCount === 1 ? pinterestText("1 个 Pin", language) : pinterestFormat("{count} 个 Pin", { count: pinterestChrome.pinCount }, language)}</span></div>}
           {!preview && stackId && <div className="viewer-title"><strong>{stackName}</strong><span>{visible.length === 1 ? tr("1 个素材") : fillNamed("{count} 个素材", { count: visible.length })}</span></div>}
+          {/* 任务 459：学习库页顶栏——名字点一下就地改名，右边一行「{n} 张 · 来自 {m} 个分组」（m 为 0 只写张数）。 */}
+          {!preview && learningLibraryId && (() => {
+            const navLibrary = (navigation?.learningLibraries || []).find(entry => entry.id === learningLibraryId)
+            const name = learnLibraryNameEditing ? learnLibraryNameDraft : (navLibrary?.name || "")
+            const n = learnLibraryHeader?.count ?? 0
+            const m = learnLibraryHeader?.groupCount ?? 0
+            return (
+              <div className="viewer-title learn-library-title">
+                {learnLibraryNameEditing ? (
+                  <input
+                    className="learn-library-name-input"
+                    aria-label={tr("名称")}
+                    autoFocus
+                    value={learnLibraryNameDraft}
+                    maxLength={80}
+                    onChange={event => setLearnLibraryNameDraft(event.target.value)}
+                    onBlur={commitLearnLibraryName}
+                    onKeyDown={event => {
+                      if (event.key === "Enter") { event.preventDefault(); commitLearnLibraryName() }
+                      else if (event.key === "Escape") setLearnLibraryNameEditing(false)
+                    }}
+                  />
+                ) : (
+                  <button
+                    className="learn-library-name"
+                    title={tr("重命名学习库")}
+                    aria-label={tr("重命名学习库")}
+                    onClick={() => { setLearnLibraryNameDraft(navLibrary?.name || ""); setLearnLibraryNameEditing(true) }}
+                  >{name}</button>
+                )}
+                <span>{m > 0 ? `${fillNamed("{n} 张", { n })} · ${fillNamed("来自 {m} 个分组", { m })}` : fillNamed("{n} 张", { n })}</span>
+              </div>
+            )
+          })()}
           <div className="toolbar-right">
             {preview ? (
               <>
@@ -4786,6 +5144,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                 if (!empty) return null
                 const icon = empty.kind === "trash-empty" ? "trash"
                   : empty.kind === "favorites-empty" ? "heart"
+                  : empty.kind === "learning-library-empty" ? "book"
                   : empty.kind === "library-empty" ? "plus"
                   : empty.kind === "no-results" ? "search" : "folder"
                 return (
@@ -4814,8 +5173,41 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         )}
         </main>
       )}
-      {!(canvasOpen && asset) && detail && asset && !(pinterestActive && !preview) && (
+      {/* 任务 459：学习库视图右栏在没有选中图片时也要开着（「手册」页签是空
+      的设计手册和学习记录）；别的视图保持原来的 detail && asset 条件。 */}
+      {!(canvasOpen && asset) && detail && !(pinterestActive && !preview) && (LEARNING_LIBRARY_ENTRY && learningLibraryId ? true : Boolean(asset)) && (
         <aside className="details">
+          {/* 任务 459：学习库视图里右栏顶部多一行页签「手册」「详情」，别的视图
+          没有这行。默认「手册」，选中图片自动切「详情」（effect 跟随选择）；
+          页签平的、当前项亮字 + 强调色图标。 */}
+          {LEARNING_LIBRARY_ENTRY && learningLibraryId && (
+            <div className="learn-library-tabs" role="tablist" aria-label={tr("学习库")}>
+              <button
+                role="tab"
+                aria-selected={learnTab === "guide"}
+                className={`learn-library-tab ${learnTab === "guide" ? "on" : ""}`}
+                onClick={() => setLearnTabByUser("guide")}
+              >
+                <Icon name="book" size={14} />
+                <span>{tr("手册")}</span>
+              </button>
+              <button
+                role="tab"
+                aria-selected={learnTab === "details"}
+                className={`learn-library-tab ${learnTab === "details" ? "on" : ""}`}
+                onClick={() => setLearnTabByUser("details")}
+              >
+                <Icon name="inspector" size={14} />
+                <span>{tr("详情")}</span>
+              </button>
+            </div>
+          )}
+          {/* 「手册」页签是学习库面板；详情页签没图可看时只剩页签行。「手册」
+          面板里的说明文字也兜住「点了详情但还没选图」的空档。 */}
+          {LEARNING_LIBRARY_ENTRY && learningLibraryId && (learnTab === "guide" || !asset) ? (
+            <LearningLibraryPanel tr={tr} />
+          ) : asset ? (
+          <>
           <InspectorDetails
             asset={asset}
             language={language}
@@ -4903,6 +5295,8 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             <span title={asset.image_path || asset.image_url}>{assetPathTail ? `…/${assetPathTail}` : "—"}</span>
             <Icon name="external" size={12} />
           </button>
+          </>
+          ) : null}
         </aside>
       )}
       {pinterestActive && !preview && pinterestChrome.pin && detail && (

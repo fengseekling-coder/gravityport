@@ -58,6 +58,21 @@ const EXTERNAL_LINK_ALLOWLIST = [
     hosts: ["discord.gg"],
     pathPrefix: "/rArXAShSkQ",
   },
+  {
+    // 任务 458:where the user creates an API key for each AI provider (the AI
+    // settings page's 获取密钥 link). Exact hosts + path prefixes keep every
+    // other page on these hosts behind the confirm dialog.
+    hosts: ["platform.claude.com"],
+    pathPrefix: "/settings/keys",
+  },
+  {
+    hosts: ["platform.openai.com"],
+    pathPrefix: "/api-keys",
+  },
+  {
+    hosts: ["aistudio.google.com"],
+    pathPrefix: "/apikey",
+  },
 ];
 
 function allowlistMatch(parsed) {

@@ -2,6 +2,21 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.17 — 2026-11-23 / Preview
+
+### Desktop
+
+- Release tooling: `release:rehearse` resolves its work directory to the real `/private/…` path and waits for a rolled-back app to quit before exiting; no behavior change.
+
+### Web Capture
+
+- Extension 0.15.51: Lovart (`www.lovart.ai`) Agent and image-mode images are captured from the page's own conversation history responses and chat WebSocket text frames, with the rewritten prompt, the user's request, the model, size, base and reference images; images from before auto-import was first seen on can be saved from the right-click menu. Lovart and Midjourney are listed on the options page.
+- Re-pair on the options page works when the page is opened in a tab: pairing requests from the extension's own page are no longer rejected as page scripts.
+
+### MCP launcher
+
+- `gravityport-mcp` 0.3.17: version bump only.
+
 ## 0.3.16 — 2026-11-22 / Preview
 
 ### Desktop

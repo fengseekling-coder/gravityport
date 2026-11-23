@@ -49,7 +49,7 @@ const MOSA_AUTO_REPAIR_MIN_INTERVAL_MS = 10 * 60 * 1000;
 const serviceIdentityVerifiedUntil = new Map();
 let serviceIdentityState = "unknown";
 let pairingFlowPromise = null;
-const WEB_IMAGE_PROVIDERS = new Set(["chatgpt", "gemini", "flow", "google-ai-studio", "jimeng", "midjourney"]);
+const WEB_IMAGE_PROVIDERS = new Set(["chatgpt", "gemini", "flow", "google-ai-studio", "jimeng", "midjourney", "lovart"]);
 const WEB_VIDEO_PROVIDERS = new Set(["flow", "google-ai-studio", "jimeng", "midjourney"]);
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 96 * 1024 * 1024;
@@ -65,6 +65,10 @@ const REMOTE_MEDIA_HOSTS = new Set([
   "generativelanguage.googleapis.com",
   "flow-content.google",
   "cdn.midjourney.com",
+  // Lovart serves its images from these two hosts; both are exact names — a
+  // lookalike suffix host must not pass.
+  "a.lovart.ai",
+  "assets-persist.lovart.ai",
 ]);
 let settingsMigration;
 let queueDrainPromise;
@@ -164,8 +168,13 @@ function providerForPageUrl(value) {
   return globalThis.MosaProviderPolicy?.providerForPageUrl(value) || "";
 }
 
+// The extension's own pages (options, popup). The options page opens in a tab
+// (options_ui.open_in_tab), so sender.tab is no reason to refuse: what tells
+// an extension page from a content script is the sender URL — a content
+// script reports the web page's URL, never chrome-extension://<this id>/.
+// (Refusing on sender.tab silently broke the options page's 「重新配对」.)
 function extensionPageSender(sender) {
-  if (!sender || sender.id !== chrome.runtime.id || sender.tab) return false;
+  if (!sender || sender.id !== chrome.runtime.id) return false;
   return String(sender.url || "").startsWith(`chrome-extension://${chrome.runtime.id}/`);
 }
 
@@ -884,7 +893,7 @@ async function mosaReachable() {
 
 async function prefetchQueuedMediaBytes(payload, replayPayload, id) {
   try {
-    const fetched = await fetchMediaAsBase64(payload.imageUrl, { publicMedia: false, mediaKind: "image" });
+    const fetched = await fetchMediaAsBase64(payload.imageUrl, { publicMedia: payload.provider === "lovart", mediaKind: "image" });
     const bytes = base64ToBytes(fetched.mediaBase64);
     await captureMediaPut({
       key: `capture:${id}`,
@@ -2519,7 +2528,9 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
     if (mediaKind === "video") {
       return streamRemoteVideoToMosa(payload, mediaUrl, { baseUrl, token });
     }
-    const fetched = await fetchMediaAsBase64(mediaUrl, { publicMedia: false, mediaKind, binary: mediaKind === "video" });
+    // Lovart's media URLs are public and unsigned, so they are fetched
+    // without credentials; other providers keep the cookie-bearing modes.
+    const fetched = await fetchMediaAsBase64(mediaUrl, { publicMedia: provider === "lovart", mediaKind, binary: mediaKind === "video" });
     if (mediaKind === "video" && fetched.mediaBytes) mediaBinaryParts = [fetched.mediaBytes];
     else mediaBase64 = fetched.mediaBase64;
     mimeType = fetched.mimeType || mimeType;
@@ -2673,6 +2684,7 @@ async function refreshContextMenus() {
       "https://aistudio.google.com/*",
       "https://jimeng.jianying.com/*",
       "https://www.midjourney.com/*",
+      "https://www.lovart.ai/*",
     ],
   });
   chrome.contextMenus.create({

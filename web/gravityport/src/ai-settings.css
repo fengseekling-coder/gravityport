@@ -1,0 +1,151 @@
+/* 任务 458：AI 设置页（AiSettingsPanel.tsx）专用样式。颜色只用 --ui-*，
+   间距只用 --space-*，字号 12 / 16，字重 400 / 500 / 600；小按钮沿用
+   .settings-action-btn，分段控件沿用 .segmented，下拉沿用 ToolbarSelect。 */
+
+/* 页顶说明（不带卡片）。 */
+.app .ai-panel-desc {
+  padding: 0 var(--space-1);
+}
+
+/* 卡片内行：左标签 + 内容。 */
+.app .ai-card .ai-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+}
+.app .ai-card .ai-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.app .ai-card .ai-row-label {
+  width: var(--space-16);
+  flex-shrink: 0;
+  color: var(--ui-secondary);
+  font-size: 12px;
+  line-height: var(--space-7);
+  font-weight: 400;
+}
+.app .ai-card .toolbar-select {
+  flex-shrink: 0;
+}
+
+/* 「逐张分析 / 汇总手册」两个下拉并排。 */
+.app .ai-card .ai-model-pair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.app .ai-card .ai-model-pair .toolbar-select {
+  min-width: 176px;
+}
+
+/* 密钥行：密码输入框 + 小按钮 + 右侧「获取密钥」小链接。 */
+.app .ai-card .ai-key-input {
+  width: 216px;
+}
+.app .ai-text-input {
+  box-sizing: border-box;
+  height: var(--space-7);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-control);
+  background: var(--ui-raised);
+  color: var(--ui-text);
+  font-size: 12px;
+  line-height: var(--space-5);
+}
+.app .ai-text-input:focus {
+  outline: none;
+  border-color: var(--field-focus);
+  box-shadow: 0 0 0 1px var(--field-focus);
+}
+.app .ai-card .ai-key-saved {
+  color: var(--ui-text);
+  font-size: 12px;
+  font-weight: 400;
+}
+.app .ai-card .ai-key-link {
+  margin-left: auto;
+  color: var(--ui-secondary);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.app .ai-card .ai-key-link:hover {
+  color: var(--ui-text);
+}
+
+/* 测试连接行：与上面各行的内容对齐（标签宽 64px + 间距 8px）。 */
+.app .ai-card .ai-test-row {
+  padding-left: calc(var(--space-16) + var(--space-2));
+}
+
+/* 状态行：6px 圆点 + 文字，样式照设置卡的状态圆点。 */
+.app .ai-card .ai-status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ui-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  min-width: 0;
+}
+.app .ai-card .ai-status-sub {
+  color: var(--ui-muted);
+}
+.app .ai-card .ai-status-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: var(--radius-round);
+  background: var(--ui-muted);
+}
+.app .ai-card .ai-status-dot.ok {
+  background: var(--ui-accent);
+}
+.app .ai-card .ai-status-dot.error {
+  background: var(--ui-danger);
+}
+
+/* 单价和本月：12px --ui-muted，分析和汇总卡里多行纵向排。 */
+.app .ai-card .ai-price-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.app .ai-card .ai-price-line {
+  color: var(--ui-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* 错误小字。 */
+.app .ai-card .ai-error-line {
+  color: var(--ui-danger);
+  font-size: 12px;
+  font-weight: 400;
+  width: 100%;
+}
+
+/* 「添加其它服务…」就地展开的表单。 */
+.app .ai-card .ai-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
+}
+.app .ai-card .ai-add-form .ai-text-input {
+  width: 260px;
+}
+.app .ai-card .ai-add-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}

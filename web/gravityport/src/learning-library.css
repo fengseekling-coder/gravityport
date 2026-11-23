@@ -1,0 +1,101 @@
+/* 任务 459：学习库视图的样式。顶栏标题（点一下就地改名）、右栏页签行、
+   「手册」页签的两段空状态。颜色只用 --ui-*、间距只用 --space-*、字号
+   12/16/20、字重 400/500/600；按钮和页签平的，悬停不出底块（安静按钮），
+   当前态用强调色图标 + 亮字表示。 */
+
+/* ── 顶栏：学习库名字 + 「{n} 张 · 来自 {m} 个分组」 ── */
+.app .learn-library-title .learn-library-name {
+  max-width: 320px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 16px;
+  line-height: var(--space-6);
+  font-weight: 600;
+  text-align: left;
+}
+.app .learn-library-title .learn-library-name-input {
+  width: 220px;
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  font-size: 16px;
+  line-height: var(--space-6);
+  font-weight: 600;
+  border: 1px solid var(--field-focus);
+  border-radius: var(--radius-control);
+  background: var(--ui-inset);
+}
+.app .learn-library-title .learn-library-name-input:focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
+}
+
+/* ── 右栏页签行：手册 / 详情（以后能再加一项） ── */
+.app .learn-library-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-shrink: 0;
+  height: var(--space-14);
+  padding: 0 var(--space-4);
+}
+.app .learn-library-tabs .learn-library-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  line-height: var(--space-4);
+  font-weight: 500;
+  color: var(--ui-secondary);
+}
+.app .learn-library-tabs .learn-library-tab svg {
+  color: var(--ui-secondary);
+}
+.app .learn-library-tabs .learn-library-tab:hover,
+.app .learn-library-tabs .learn-library-tab:hover svg {
+  color: var(--ui-text);
+}
+.app .learn-library-tabs .learn-library-tab.on,
+.app .learn-library-tabs .learn-library-tab.on svg {
+  color: var(--ui-text);
+}
+.app .learn-library-tabs .learn-library-tab.on svg {
+  color: var(--ui-accent);
+}
+.app .learn-library-tabs .learn-library-tab:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ── 「手册」页签：两段空状态 ── */
+.app .learn-library-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-4) 0;
+}
+.app .learn-library-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.app .learn-library-heading {
+  margin: 0 0 var(--space-1);
+  font-size: 12px;
+  line-height: var(--space-4);
+  font-weight: 600;
+  color: var(--ui-secondary);
+}
+.app .learn-library-empty-title {
+  margin: 0;
+  font-size: 12px;
+  line-height: var(--space-4);
+  font-weight: 500;
+  color: var(--ui-text);
+}
+.app .learn-library-empty-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: var(--space-5);
+  color: var(--ui-muted);
+}

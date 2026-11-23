@@ -22,6 +22,11 @@ test("allowlisted destinations open without a dialog", () => {
     // semantics (same as the GitHub entry) keep sub-paths open too.
     "https://discord.gg/rArXAShSkQ",
     "https://discord.gg/rArXAShSkQ/extra",
+    // 任务 458:the three API-key consoles linked from the AI settings page's
+    // 获取密钥 (exact hosts + path prefixes; sibling pages stay on the dialog).
+    "https://platform.claude.com/settings/keys",
+    "https://platform.openai.com/api-keys",
+    "https://aistudio.google.com/apikey",
   ];
   for (const url of allowed) {
     const decision = externalLinkDecision(url);
@@ -45,6 +50,10 @@ test("everything else http/https asks for confirmation, including http to allowl
     // URL (other invites, other Discord hosts) still asks for confirmation.
     "https://discord.gg/OtherInviteCode",
     "https://discord.com/invite/rArXAShSkQ",
+    // 任务 458:same three hosts, other paths still ask for confirmation.
+    "https://platform.claude.com/docs",
+    "https://platform.openai.com/docs",
+    "https://aistudio.google.com/compare",
   ];
   for (const url of confirmed) {
     const decision = externalLinkDecision(url);

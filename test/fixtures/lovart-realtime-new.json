@@ -1,0 +1,507 @@
+{
+  "_说明": "2026-11-22 Claude 在 Lovart 新界面（canda）真页面只读记录的 WebSocket 文字帧，按原结构重建；账号、项目、图片编号已换成假值，长提示词截短。每条 frame 在真页面上是一条 JSON 字符串消息。一次 Agent 出图约 40 条，这里只留和入库有关的；服务端还有 thread_start、action_start、step_start、content_block_delta/stop、step_end、action_end、thread_end、message_stop、notification 等，解析时要能安全忽略。",
+  "frames": [
+    {
+      "_方向": "客户端发出（Agent 模式，带圈选）",
+      "frame": {
+        "role": "client",
+        "type": "chat-canda",
+        "send_timestamp": "1795353207428",
+        "req_uuid": "<redacted>",
+        "signature": "<redacted>",
+        "data": {
+          "version": 1,
+          "event": "start",
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "metadata": {},
+          "project_id": "<redacted-project_id>",
+          "messages": [
+            {
+              "role": "user",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "[@mark:#1:sword hilt]把剑换成金色长枪，其他不变",
+                  "text_source": "input"
+                },
+                {
+                  "mark_type": "image",
+                  "url": "https://a.lovart.ai/artifacts/generator/Fake01ArtifactId.png",
+                  "width": 1776,
+                  "height": 2368,
+                  "comment": "",
+                  "object_label": "sword hilt",
+                  "element_id": "shape:AzTdj6znBbQuMG4WNKiGD",
+                  "mark_id": "b75b3701-4f2b-42a2-8feb-025a16161d94",
+                  "mark_kind": "area",
+                  "points": [
+                    0.7098950524737632,
+                    0.5215517241379309
+                  ],
+                  "label": "#1",
+                  "type": "mark"
+                }
+              ]
+            }
+          ],
+          "tool_config": {
+            "prefer_tool_categories": {}
+          },
+          "extra": {
+            "canvas_context": {
+              "version": 1,
+              "mentioned": [],
+              "selected": []
+            }
+          },
+          "agent_config": {
+            "plus": []
+          },
+          "ref_frame_ids": [
+            "977f6524-6cae-47e8-87d7-e0603223d478"
+          ],
+          "thread_meta": "<实测此处还有 thread_meta，未取全>"
+        }
+      }
+    },
+    {
+      "_方向": "服务端推回：对话开始",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "error_message": "",
+            "thread_id": "00000000-0000-4000-8000-000000000001",
+            "error_code": 0,
+            "event": "create_chat",
+            "status": "success",
+            "timestamp": "2026-11-22T21:13:27.690319465+08:00"
+          },
+          "action_id": "1319137907211231234",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "1319137907211231237",
+          "type": "create_chat_status",
+          "msg_id": "250247308397084672",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1319137907211231234",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          }
+        },
+        "send_timestamp": "1795353207690",
+        "req_uuid": "<redacted>",
+        "type": "chat"
+      }
+    },
+    {
+      "_方向": "服务端推回：Agent 读改写指南（不入库，忽略）",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "content_block": {
+              "input": {
+                "skill_name": "canda/generator-guidance",
+                "relative_path": "references/image/prompt-rewrite.md"
+              },
+              "name": "skill_file",
+              "id": "call_9c6536d8d5a04e5084c0f07c",
+              "type": "tool_use"
+            },
+            "index": 2
+          },
+          "action_id": "1319137907211231234",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "1319137941570969608",
+          "type": "content_block_start",
+          "step_id": "1319137941570969608",
+          "msg_id": "250247348368801792",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1319137907211231234",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          },
+          "parent_message_id": "1319137941570969606"
+        },
+        "send_timestamp": "1795353230966",
+        "req_uuid": "<redacted>",
+        "type": "chat"
+      }
+    },
+    {
+      "_方向": "服务端推回：Agent 调改图工具（改写后的提示词、选的模型、底图、标记点）",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "content_block": {
+              "input": {
+                "output_name": "Golden Spear Version",
+                "tool_hint": "generate_image_gpt_image_2_5_sunburst",
+                "task_type": "edit_image",
+                "edit_annotations": [
+                  {
+                    "image_index": 1,
+                    "point": [
+                      0.7098950524737632,
+                      0.5215517241379309
+                    ]
+                  }
+                ],
+                "prompt": "Replace only the sword with a golden long spear (lance). Keep absolutely everything else in the image unchanged: the same woman, her facial features, expression, skin tone, long flowing dark hair, the ornate golden winged crown and golden half-mask over one eye, the gold-and-jade shoulder armor, the white fur-trimmed dress with teal and gold embroidery, the red silk ribbons in the foreground, the cherry blossom trees, the distant pavilion and stone statue, the warm sunset backlight, the drifting…<实测共 1339 字符，后面截掉>",
+                "reference_image_urls": "https://a.lovart.ai/artifacts/generator/Fake01ArtifactId.png",
+                "quality": "medium"
+              },
+              "name": "edit_media_v2",
+              "id": "call_2c3e6556ea934648bba7087b",
+              "type": "tool_use"
+            },
+            "index": 2
+          },
+          "action_id": "1319137907211231234",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "1319138250808614918",
+          "type": "content_block_start",
+          "step_id": "1319138250808614918",
+          "msg_id": "250247413258878976",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1319137907211231234",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          }
+        },
+        "send_timestamp": "1795353230966",
+        "req_uuid": "<redacted>",
+        "type": "chat"
+      }
+    },
+    {
+      "_方向": "服务端推回：预估点数（不入库，忽略）",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "content_block": {
+              "stage": [
+                {
+                  "event_data": {
+                    "tool_name": "edit_media_v2",
+                    "stage": "tool_stage",
+                    "biz_no": "<redacted-biz_no>",
+                    "kind": "stage",
+                    "estimated_cost": 17,
+                    "tool_call_id": "call_2c3e6556ea934648bba7087b",
+                    "billing_status": "PASS",
+                    "ts_ms": 1795353230966
+                  },
+                  "event_index": 0
+                }
+              ],
+              "name": "edit_media_v2",
+              "id": "call_2c3e6556ea934648bba7087b",
+              "type": "tool_stage"
+            },
+            "index": 3
+          },
+          "action_id": "1319137907211231234",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "1319138250808614918",
+          "type": "content_block_start",
+          "step_id": "1319138250808614918",
+          "msg_id": "250247413258878976",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1319137907211231234",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          },
+          "parent_message_id": "1319138250808614918"
+        },
+        "send_timestamp": "1795353230966",
+        "req_uuid": "<redacted>",
+        "type": "chat"
+      }
+    },
+    {
+      "_方向": "服务端推回：出图结果（Agent）。artifact 里其余字段（prompt_image_list、task_type、width、height、image_name 等）实测在历史样本里有，实时帧里未逐项核对，按历史样本补",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "content_block": {
+              "name": "edit_media_v2",
+              "id": "call_2c3e6556ea934648bba7087b",
+              "type": "tool_event",
+              "content": [
+                {
+                  "event_type": "tool_artifacts",
+                  "event_data": {
+                    "artifact": [
+                      {
+                        "metadata": {
+                          "audit_status": "success",
+                          "audit_process_uuid": "<redacted>"
+                        },
+                        "artifact_type": "image_info",
+                        "prompt_text": "Replace only the sword with a golden long spear (lance). Keep absolutely everything else in the image unchanged: the same woman, her facial features, expression, skin tone, long flowing dark hair, the ornate golden winged crown and golden half-mask over one eye, the gold-and-jade shoulder armor, the white fur-trimmed dress with teal and gold embroidery, the red silk ribbons in the foreground, the cherry blossom trees, the distant pavilion and stone statue, the warm sunset backlight, the drifting…<实测共 1339 字符，后面截掉>",
+                        "image_url": "https://a.lovart.ai/artifacts/agent/Fake02ArtifactId.png",
+                        "is_vip": false,
+                        "description": "Replace only the sword with a golden long spear (lance). Keep absolutely everything else in the image unchanged: the same woman, her facial features, expression, skin tone, long flowing dark hair, the ornate golden winged crown and golden half-mask over one eye, the gold-and-jade shoulder armor, the white fur-trimmed dress with teal and gold embroidery, the red silk ribbons in the foreground, the cherry blossom trees, the distant pavilion and stone statue, the warm sunset backlight, the drifting…<实测共 1339 字符，后面截掉>",
+                        "source": "edit_media",
+                        "artifact_id": "Fake02ArtifactId",
+                        "input_args": {
+                          "output_name": "Golden Spear Version",
+                          "routed_model": "generate_image_gpt_image_2_5_sunburst",
+                          "task_type": "edit_image",
+                          "prompt": "Replace only the sword with a golden long spear (lance). Keep absolutely everything else in the image unchanged: the same woman, her facial features, expression, skin tone, long flowing dark hair, the ornate golden winged crown and golden half-mask over one eye, the gold-and-jade shoulder armor, the white fur-trimmed dress with teal and gold embroidery, the red silk ribbons in the foreground, the cherry blossom trees, the distant pavilion and stone statue, the warm sunset backlight, the drifting…<实测共 1339 字符，后面截掉>",
+                          "reference_image_urls": "https://a.lovart.ai/artifacts/generator/Fake01ArtifactId.png",
+                          "quality": "medium"
+                        }
+                      }
+                    ]
+                  },
+                  "event_index": 0
+                }
+              ]
+            },
+            "index": 4
+          },
+          "action_id": "1319137907211231234",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "1319138250808614918",
+          "type": "content_block_start",
+          "step_id": "1319138250808614918",
+          "msg_id": "250247413258878976",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1319137907211231234",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          }
+        },
+        "send_timestamp": "1795353230966",
+        "req_uuid": "<redacted>",
+        "type": "chat"
+      }
+    },
+    {
+      "_方向": "客户端发出（图像模式，直接选模型）",
+      "frame": {
+        "role": "client",
+        "type": "chat-canda-generator",
+        "send_timestamp": "1795353332828",
+        "req_uuid": "<redacted>",
+        "signature": "<redacted>",
+        "data": {
+          "version": 1,
+          "event": "start",
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "metadata": {},
+          "project_id": "<redacted-project_id>",
+          "thread_id_type": 6,
+          "generator_params": {
+            "generator_name": "vertex/nano-banana-2-1",
+            "input_args": {
+              "prompt": "一只橘猫坐在窗台上，水彩风格",
+              "aspect_ratio": "1:1",
+              "resolution": "1K",
+              "thinking_level": "medium",
+              "enable_grounding": false,
+              "original_unit_data": {
+                "generator_name": "vertex/nano-banana-2-1",
+                "prompt": "一只橘猫坐在窗台上，水彩风格",
+                "width": 1024,
+                "height": 1024,
+                "ratio": "1:1",
+                "isAdaptiveSize": false,
+                "resolution": "1K",
+                "image": [],
+                "video": [],
+                "video_uri": [],
+                "thinking_level": "medium",
+                "enable_grounding": false,
+                "count": 1,
+                "source_image": [],
+                "generator_type": "image",
+                "paramsText": "1:1 · 1K · medium"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "_方向": "服务端推回：图像模式开始生成",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "content_block": {
+              "name": "vertex/nano-banana-2-1",
+              "id": "21ea4ee9-2446-4f31-b513-cc40c984f823",
+              "type": "generator_event",
+              "content": [
+                {
+                  "event_type": "generator_start",
+                  "event_data": {
+                    "generator_type": "image",
+                    "input_args": {
+                      "aspect_ratio": "1:1",
+                      "original_unit_data": {
+                        "image": [],
+                        "generator_name": "vertex/nano-banana-2-1",
+                        "enable_grounding": false,
+                        "count": 1,
+                        "video": [],
+                        "resolution": "1K",
+                        "isAdaptiveSize": false,
+                        "video_uri": [],
+                        "generator_type": "image",
+                        "thinking_level": "medium",
+                        "source_image": [],
+                        "width": 1024,
+                        "paramsText": "1:1 · 1K · medium",
+                        "prompt": "一只橘猫坐在窗台上，水彩风格",
+                        "height": 1024,
+                        "ratio": "1:1"
+                      },
+                      "thinking_level": "medium",
+                      "enable_grounding": false,
+                      "prompt": "一只橘猫坐在窗台上，水彩风格",
+                      "resolution": "1K"
+                    },
+                    "generator_task_id": "21ea4ee9-2446-4f31-b513-cc40c984f823"
+                  },
+                  "event_index": 0
+                }
+              ]
+            },
+            "index": 2
+          },
+          "action_id": "1319142236538224640",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "evt_1319142236538224641",
+          "type": "content_block_start",
+          "step_id": "1319142236538224641",
+          "msg_id": "250247413258878976",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1319137907211231234",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          }
+        },
+        "send_timestamp": "1795353230966",
+        "req_uuid": "<redacted>",
+        "type": "chat"
+      }
+    },
+    {
+      "_方向": "服务端推回：图像模式出图结果",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "content_block": {
+              "extra": {
+                "outputs": [
+                  {
+                    "kind": "image",
+                    "url": "https://a.lovart.ai/artifacts/generator/Fake03ArtifactId.jpg"
+                  }
+                ],
+                "inputs": []
+              },
+              "name": "vertex/nano-banana-2-1",
+              "id": "21ea4ee9-2446-4f31-b513-cc40c984f823",
+              "type": "generator_event",
+              "content": [
+                {
+                  "event_type": "generator_artifacts",
+                  "event_data": {
+                    "artifacts": [
+                      {
+                        "metadata": {
+                          "format": "jpeg",
+                          "width": 1024,
+                          "audit_artifact_type": "image",
+                          "audit_status": "success",
+                          "artifact_id": "Fake03ArtifactId",
+                          "height": 1024
+                        },
+                        "type": "image",
+                        "content": "https://a.lovart.ai/artifacts/generator/Fake03ArtifactId.jpg"
+                      }
+                    ]
+                  },
+                  "event_index": 0
+                }
+              ]
+            },
+            "index": 2
+          },
+          "action_id": "1319142236538224640",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "evt_1319142236538224642",
+          "type": "content_block_start",
+          "step_id": "1319142236538224641",
+          "msg_id": "250247923424657408",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1319137907211231234",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          }
+        },
+        "send_timestamp": "1795353230966",
+        "req_uuid": "<redacted>",
+        "type": "chat"
+      }
+    }
+  ]
+}

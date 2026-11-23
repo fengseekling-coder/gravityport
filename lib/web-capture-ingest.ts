@@ -96,6 +96,13 @@ const PROVIDER_CONFIG = {
     tempPrefix: "midjourney",
     assetIdPrefix: "web-midjourney",
   },
+  lovart: {
+    label: "Lovart",
+    sourceType: "web-lovart",
+    skill: "Lovart web capture",
+    tempPrefix: "lovart",
+    assetIdPrefix: "web-lovart",
+  },
 } as const;
 const ALLOWED_PROVIDERS = new Set(Object.keys(PROVIDER_CONFIG));
 type ProviderId = keyof typeof PROVIDER_CONFIG;

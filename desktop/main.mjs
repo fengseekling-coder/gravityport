@@ -3,7 +3,7 @@ import "../lib/apply-env-aliases.mjs";
 // activation policy before any heavy import lets the process check in with
 // Launch Services as a regular app. See desktop/quiet-test-mode.mjs.
 import "./quiet-test-mode.mjs";
-import { app, BrowserWindow, dialog, ipcMain, clipboard, nativeImage, net, session, shell, Notification } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, clipboard, nativeImage, net, safeStorage, session, shell, Notification } from "electron";
 import { evaluateQuietQaRunForElectronApp, createScreenGuard } from "./quiet-qa-screen.mjs";
 import { writeFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { access, readdir, rm, stat } from "node:fs/promises";
@@ -84,6 +84,9 @@ import {
 import { cleanupLegacyVisualData as cleanupLegacyVisualDataDir } from "./legacy-visual-cleanup.mjs";
 import { registerClipboardIpc } from "./ipc/clipboard.mjs";
 import { registerLibraryLocationIpc } from "./ipc/library-location.mjs";
+import { registerAiIpc } from "./ipc/ai.mjs";
+import { chooseAiEncryption, createAiCredentialStore } from "./ai/credential-store.mjs";
+import { createAiSettingsStore } from "./ai/settings-store.mjs";
 import { settlePendingOldLibraryCleanup } from "./library-relocation-cleanup.mjs";
 import { createLibraryVolumeWatch } from "./library-volume-watch.mjs";
 import { registerMiscIpc } from "./ipc/misc.mjs";
@@ -684,9 +687,20 @@ async function syncPackagedBackgroundAgent(enabled) {
 function registerIPC() {
   if (ipcRegistered) return;
   ipcRegistered = true;
+  // 任务 458：AI 密钥只放在 userData，加密层由 quietQaRun 选择——QA 运行用
+  // 本进程内可逆的替身，正式运行才用 Electron safeStorage（Mac 钥匙串、
+  // Windows 系统加密），替身绝不会在正式运行里被选中。
+  const aiCredentialStore = createAiCredentialStore({
+    dir: desktopDataDir,
+    encryption: chooseAiEncryption({ quietQaRun, safeStorage }),
+  });
+  const aiSettingsStore = createAiSettingsStore({ dir: desktopDataDir });
   const deps = {
     ipcMain,
     trustedRendererEvent,
+    aiCredentialStore,
+    aiSettingsStore,
+    aiOutboundFetch: serviceOutboundFetch,
     access,
     join,
     dirname,
@@ -769,6 +783,7 @@ function registerIPC() {
   registerClipboardIpc(deps);
   registerUpdateIpc(deps);
   registerLibraryLocationIpc(deps);
+  registerAiIpc(deps);
 }
 
 function runAnonymousUsageReport() {

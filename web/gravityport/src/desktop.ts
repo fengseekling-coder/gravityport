@@ -22,6 +22,57 @@ export type UpdateReadyState = {
   notes?: { zh?: string; en?: string }
 }
 
+// 任务 458：AI 设置页的状态与各通道载荷。密钥原文永远不出主进程，
+// 界面只见到 last4 和最近一次测试的归类结果。
+export type AiLastTest = {
+  ok: boolean
+  code: string
+  at: string
+  models: string[]
+  display?: { message: string; template: string; params: Record<string, string>; modelCount?: number; missingModel?: string }
+}
+
+export type AiServiceState = {
+  id: string
+  label: string
+  format: string
+  baseUrl?: string
+  hasKey: boolean
+  last4: string
+  keyUrl?: string
+  lastTest?: AiLastTest | null
+}
+
+export type AiSlotState = {
+  serviceId: string
+  model: string
+  summaryModel?: string
+}
+
+export type AiCatalogModel = {
+  id: string
+  label: string
+  service: string
+  slots: string[]
+  defaults: string[]
+  source?: string
+  checkedAt?: string
+}
+
+export type AiPriceLine = {
+  template: string
+  params: Record<string, string>
+}
+
+export type AiState = {
+  available: boolean
+  services: AiServiceState[]
+  slots: { analysis: AiSlotState; brain: AiSlotState; image: AiSlotState }
+  catalog: { services: AiServiceState[]; models: AiCatalogModel[] }
+  priceLines: { analysis: AiPriceLine[]; brain: AiPriceLine[]; image: AiPriceLine[] }
+  monthTotals: { analysis: number; brain: number; image: number }
+}
+
 type ElectronAPI = {
   pasteImage?: () => Promise<unknown>
   writeClipboardText?: (text: string) => Promise<unknown>
@@ -57,6 +108,12 @@ type ElectronAPI = {
   onMenuSelectAll?: (callback: () => void) => unknown
   openPinterestAuthorize?: (url: string) => Promise<{ ok?: boolean }>
   openExternalLink?: (url: string) => Promise<{ ok?: boolean }>
+  // 任务 458：AI 设置页五个通道；浏览器里没有这些方法，设置页整页降级。
+  aiGetState?: () => Promise<AiState>
+  aiSaveKey?: (serviceId: string, key: string) => Promise<{ ok: boolean; last4?: string; reason?: string }>
+  aiDeleteKey?: (serviceId: string) => Promise<{ ok: boolean }>
+  aiTestConnection?: (serviceId: string, purpose: "text" | "image") => Promise<{ ok: boolean; code?: string; message?: string; template?: string; params?: Record<string, string>; modelCount?: number; missingModel?: string }>
+  aiUpdateSettings?: (payload: { slots?: Record<string, Partial<AiSlotState>>; customServices?: Array<{ id?: string; label: string; format: "openai" | "claude"; baseUrl: string }> }) => Promise<{ ok: boolean; state?: AiState; reason?: string }>
   [key: string]: unknown
 }
 

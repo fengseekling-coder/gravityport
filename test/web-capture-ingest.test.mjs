@@ -1774,7 +1774,7 @@ test("web capture token gate rejects bad credentials", async () => {
     const disabled = createWebCaptureIngest({ store, libraryDir, token: "", allowedOrigins: ["chrome-extension://approved"] });
     assert.equal(disabled.status().enabled, false);
     assert.equal(disabled.status().tokenConfigured, false);
-    assert.deepEqual(disabled.status().providers, ["chatgpt", "gemini", "flow", "google-ai-studio", "jimeng", "midjourney"]);
+    assert.deepEqual(disabled.status().providers, ["chatgpt", "gemini", "flow", "google-ai-studio", "jimeng", "midjourney", "lovart"]);
     await assert.rejects(
       () => disabled.ingest({ provider: "chatgpt", imageBase64: SAMPLE_PNG_BASE64 }, ""),
       (error) => error?.statusCode === 503 && error?.code === "WEB_CAPTURE_DISABLED",

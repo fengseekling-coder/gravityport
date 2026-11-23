@@ -16,6 +16,7 @@ export const SOURCE_LABEL_MAP: Record<string, string> = {
   "web-google-ai-studio": "Google AI Studio 网页版",
   "web-jimeng": "即梦网页版",
   "web-midjourney": "Midjourney 网页版",
+  "web-lovart": "Lovart 网页版",
   "mcp-agent": "AI 助手",
   "local-file": "手动导入",
 }
@@ -193,7 +194,7 @@ export function promptNotice(asset: MosaAsset): PromptNotice {
   const provider = String((source as Record<string, unknown>).provider || "")
 
   // Check if web source with no prompt available
-  const isWebSource = /^web-(?:chatgpt|gemini|flow|google-ai-studio|jimeng|midjourney)$/.test(sourceType)
+  const isWebSource = /^web-(?:chatgpt|gemini|flow|google-ai-studio|jimeng|midjourney|lovart)$/.test(sourceType)
   const promptUnavailable = isWebSource && promptStatus === "not-available"
 
   if (!asset.prompt && promptUnavailable) {
