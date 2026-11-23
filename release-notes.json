@@ -1,8 +1,16 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {},
-    "en": {}
+    "zh": {
+      "improved": [
+        "重新设计浏览器扩展设置页，集中展示与 GravityPort 的连接状态，并新增英文界面。"
+      ]
+    },
+    "en": {
+      "improved": [
+        "Redesigned the browser extension settings page to surface the connection status with GravityPort, and added an English interface."
+      ]
+    }
   },
   "releases": [
     {
