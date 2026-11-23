@@ -212,13 +212,15 @@ test("错误分类：401/403/429（retry-after 0）/500/529/400/连不上；分�
   }
   try {
     const cases = [
-      [401, "auth", { error: { type: "authentication_error", message: `bad key ${WRONG_ENV_KEY} leaked in body` } }],
+      // 401 的响应体里放传进去的完整假密钥（服务把收到的密钥原样回显的最坏情况）。
+      [401, "auth", { error: { type: "authentication_error", message: `bad key ${FAKE_KEY} leaked in body` } }],
       [403, "auth", { error: { type: "permission_error", message: "denied" } }],
       [429, "rate-limit", { error: { type: "rate_limit_error", message: "slow down" } }],
       [500, "server", { error: { type: "api_error", message: "boom" } }],
       [529, "server", { error: { type: "overloaded_error", message: "overloaded" } }],
       [400, "rejected", { error: { type: "invalid_request_error", message: "bad image" } }],
     ];
+    const outcomes = [];
     for (const [status, expectedCode, payload] of cases) {
       const { outcome } = await analyzeWith(() => jsonResponse(status, payload, {
         "retry-after": "0",
@@ -226,6 +228,8 @@ test("错误分类：401/403/429（retry-after 0）/500/529/400/连不上；分�
       }));
       assert.equal(outcome.ok, false);
       assert.equal(outcome.code, expectedCode, `HTTP ${status} → ${expectedCode}`);
+      assert.equal(outcome.costUsd, 0, `HTTP ${status}: no response body was billed`);
+      outcomes.push(outcome);
     }
     // 连不上：fetch 直接抛（SDK 包成 APIConnectionError）。
     const { outcome: refusedOutcome } = await analyzeWith(() => {
@@ -237,8 +241,11 @@ test("错误分类：401/403/429（retry-after 0）/500/529/400/连不上；分�
     // 401 假响应体里放了完整假密钥：分类结果和 console 一个字都不能带它。
     assert.equal(Anthropic.AuthenticationError !== undefined, true);
     const serialized = consoleCalls.join("\n");
-    assert.ok(!serialized.includes(WRONG_ENV_KEY), "console must not carry the fake key");
-    assert.ok(!JSON.stringify(refusedOutcome).includes(WRONG_ENV_KEY), "outcome must not carry the fake key");
+    for (const key of [FAKE_KEY, WRONG_ENV_KEY]) {
+      assert.ok(!serialized.includes(key), "console must not carry the fake key");
+      assert.ok(!JSON.stringify(outcomes).includes(key), "classified outcomes must not carry the fake key");
+      assert.ok(!JSON.stringify(refusedOutcome).includes(key), "outcome must not carry the fake key");
+    }
   } finally {
     for (const [method, original] of Object.entries(originals)) console[method] = original;
   }
@@ -271,6 +278,7 @@ test("汇总：带 betas + fallbacks、走流式、effort medium；引用 usage.
     ? sseMessageResponse({
       text: "not json",
       stopReason: "end_turn",
+      model: "claude-sonnet-5-5",
     })
     : sseMessageResponse({
       text: JSON.stringify(GOOD_GUIDE),
@@ -283,7 +291,8 @@ test("汇总：带 betas + fallbacks、走流式、effort medium；引用 usage.
   assert.equal(fallbackOutcome.outcome.fallbackUsed, true);
   assert.equal(fallbackOutcome.outcome.billedModel, "claude-sonnet-5");
   assert.equal(fallbackOutcome.outcome.costModel, "claude-sonnet-5-5");
-  assert.ok(Math.abs(fallbackOutcome.outcome.costUsd - ((1000 * 2 + 500 * 10) / 1e6)) < 1e-12);
+  // 第一次解析失败的那条回答（默认 usage 10 入 / 20 出）也收费，一并算进来。
+  assert.ok(Math.abs(fallbackOutcome.outcome.costUsd - ((1000 * 2 + 500 * 10) / 1e6 + (10 * 2 + 20 * 10) / 1e6)) < 1e-12);
 });
 
 test("汇总 refusal → refusal；两次解析失败 → summary-error", async () => {
@@ -294,4 +303,41 @@ test("汇总 refusal → refusal；两次解析失败 → summary-error", async 
   assert.equal(bad.outcome.ok, false);
   assert.equal(bad.outcome.code, "summary-error");
   assert.equal(bad.calls.length, 2, "summary retries once");
+});
+
+// 463 验收补：服务端对被拒、截断的回答照样收费，这几次的钱必须算进来，
+// 花费上限才准。
+test("花费：refusal 那条回答照样计价；max_tokens 截断后重试成功 → 两次回答都计价；HTTP 错误没有回答 → 0", async () => {
+  const refused = await analyzeWith(() => jsonResponse(200, {
+    id: "msg_r", type: "message", role: "assistant", model: "claude-haiku-5-5",
+    content: [{ type: "text", text: "I cannot." }],
+    stop_reason: "refusal", usage: { input_tokens: 2000, output_tokens: 100 },
+  }));
+  assert.equal(refused.outcome.ok, false);
+  assert.equal(refused.outcome.code, "refusal");
+  assert.ok(Math.abs(refused.outcome.costUsd - (2000 * 0.1 + 100 * 0.5) / 1e6) < 1e-12, `refusal cost ${refused.outcome.costUsd}`);
+
+  const truncatedThenOk = await analyzeWith((_call, index) => (index === 1
+    ? jsonResponse(200, {
+      id: "msg_t", type: "message", role: "assistant", model: "claude-haiku-5-5",
+      content: [{ type: "text", text: "{\"subject\": \"cut" }],
+      stop_reason: "max_tokens", usage: { input_tokens: 2276, output_tokens: 4000 },
+    })
+    : jsonResponse(200, {
+      id: "msg_ok", type: "message", role: "assistant", model: "claude-haiku-5-5",
+      content: [{ type: "text", text: JSON.stringify(GOOD_NOTE) }],
+      stop_reason: "end_turn", usage: { input_tokens: 2276, output_tokens: 900 },
+    })));
+  assert.equal(truncatedThenOk.calls.length, 2);
+  assert.equal(truncatedThenOk.calls[1].body.max_tokens, 8000);
+  assert.equal(truncatedThenOk.outcome.ok, true);
+  const expected = (2276 * 0.1 + 4000 * 0.5) / 1e6 + (2276 * 0.1 + 900 * 0.5) / 1e6;
+  assert.ok(Math.abs(truncatedThenOk.outcome.costUsd - expected) < 1e-12, `both attempts billed, got ${truncatedThenOk.outcome.costUsd}`);
+  assert.equal(truncatedThenOk.outcome.usage.output_tokens, 4900);
+
+  const summaryRefused = await summarizeWith(() => sseMessageResponse({
+    text: "I cannot.", stopReason: "refusal", model: "claude-sonnet-5-5", usage: { input_tokens: 5000, output_tokens: 300 },
+  }));
+  assert.equal(summaryRefused.outcome.ok, false);
+  assert.ok(Math.abs(summaryRefused.outcome.costUsd - (5000 * 2 + 300 * 10) / 1e6) < 1e-12, "a refused summary is still billed");
 });

@@ -26,8 +26,9 @@ async function loadTrackedFiles() {
 test("@anthropic-ai/sdk 只在 desktop/ai/claude-client.mjs、package.json、package-lock.json 里出现", async () => {
   const files = await loadTrackedFiles();
   for (const [path, text] of files) {
-    // 本文件自己的测试名里带着这个名字，跳过自己。
-    if (path === "test/ai-learning-isolation.test.mjs") continue;
+    // 测试不进安装包：test/ai-claude-client.test.mjs 要用 SDK 的错误类核分类，
+    // 本文件自己的测试名里也带着这个名字。只管产品代码。
+    if (path.startsWith("test/")) continue;
     if (!text.includes("@anthropic-ai/sdk")) continue;
     assert.ok(
       path === "desktop/ai/claude-client.mjs" || path === "package.json" || path === "package-lock.json",

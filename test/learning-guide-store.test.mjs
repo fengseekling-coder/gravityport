@@ -645,3 +645,59 @@ test("图库过滤: learningLibrary+learningEntry narrows to the entry's sources
   const plain = await store.listAssetPage({ projectId: "default", query: "", sort: "newest", limit: 50 });
   assert.deepEqual(entryOnly.assets.map((asset) => asset.id), plain.assets.map((asset) => asset.id), "learningEntry without learningLibrary is a no-op");
 });
+
+// ── 463 验收补 ──
+test("另一个学习库暂停着不挡（BUSY 只看 running/pausing）；暂停时 addCostUsd 记进 run；记录列表不带逐张条目、openRun 带；隔了一次学习的手动改动另起一条记录", async (t) => {
+  const { sourcePath, store } = await createStore(t, "mosa-guide-acceptance-");
+  const a = await seedLearnableImage(store, sourcePath, "ka");
+  const b = await seedLearnableImage(store, sourcePath, "kb");
+  const libA = await makeLibrary(store, { libraryName: "甲", assetIds: [a] });
+  const libB = await makeLibrary(store, { libraryName: "乙", assetIds: [b] });
+
+  // 甲：running → paused（自动暂停时补记一笔没落到条目上的花费）。
+  const runA = await startRun(store, libA, { assetIds: [a] });
+  const pausedA = await store.transitionLearningRun({ projectId: "default", runId: runA.id, to: "paused", reason: "summary-error", addCostUsd: 0.0123 });
+  assert.equal(pausedA.status, "paused");
+  assert.ok(Math.abs(pausedA.costUsd - 0.0123) < 1e-12, `paused run carries the extra cost, got ${pausedA.costUsd}`);
+  await assert.rejects(
+    () => store.transitionLearningRun({ projectId: "default", runId: runA.id, to: "running", estimateUsd: 0.1, capUsd: 0.2, addCostUsd: 0.01 }),
+    (error) => error.code === "LEARNING_RUN_BAD_TRANSITION",
+    "addCostUsd only rides along with paused / failed",
+  );
+
+  // 甲暂停着，乙照样能开始学习；甲自己再开 → LEARNING_RUN_OPEN。
+  const runB = await startRun(store, libB, { assetIds: [b] });
+  assert.equal(runB.status, "running");
+  await assert.rejects(() => startRun(store, libA, { assetIds: [a] }), (error) => error.code === "LEARNING_RUN_OPEN");
+  // 乙在跑（running），甲之外的第三个库 → BUSY。
+  const libC = await makeLibrary(store, { libraryName: "丙" });
+  await assert.rejects(() => startRun(store, libC, { assetIds: [] }), (error) => error.code === "LEARNING_RUN_BUSY" && error.busyLibraryId === libB.id);
+
+  // 记录列表只带计数；没结束的那条带逐张条目。
+  const stateA = await store.getLearningState("default", libA.id);
+  assert.equal(stateA.runs.length, 1);
+  assert.equal(stateA.runs[0].items, undefined, "run list carries counts, not per-image items");
+  assert.equal(stateA.runs[0].counts.byStatus.pending, 1);
+  assert.deepEqual(stateA.openRun.items.map((item) => item.assetId), [a]);
+
+  // 手动改一次 → 一条 edit；接着学完一次；30 分钟内再改 → 另起一条（不并进学习之前那条）。
+  await store.transitionLearningRun({ projectId: "default", runId: runB.id, to: "paused", reason: "user" });
+  await store.transitionLearningRun({ projectId: "default", runId: runB.id, to: "canceled" });
+  const g0 = await store.getLearningState("default", libB.id);
+  await store.addGuideEntry({ projectId: "default", libraryId: libB.id, baseRevision: g0.guide.revision, section: "mood", text: "第一笔" });
+  const learn = await startRun(store, libB, { assetIds: [b] });
+  await store.recordLearningItemResult({ projectId: "default", runId: learn.id, assetId: b, status: "done", fingerprint: "f", note: {
+    subject: "s", style_keywords: [], palette: [], composition: "", camera: "", lighting: "", material: "", character: "", mood_keywords: [], prompt_techniques: [], has_text: false,
+  }, serviceId: "claude", model: "claude-haiku-5-5", costUsd: 0 });
+  await store.transitionLearningRun({ projectId: "default", runId: learn.id, to: "running" });
+  await store.applyGeneratedGuide({ projectId: "default", runId: learn.id, entries: [{ section: "mood", text: "学来的", swatches: [], sourceAssetIds: [b] }], language: "zh" });
+  const g1 = await store.getLearningState("default", libB.id);
+  await store.addGuideEntry({ projectId: "default", libraryId: libB.id, baseRevision: g1.guide.revision, section: "mood", text: "第二笔" });
+  // 两笔都用真时钟、相隔不到 30 分钟：只因为中间隔了一次学习才另起一条。
+  const g2 = await store.getLearningState("default", libB.id);
+  const edits = g2.runs.filter((row) => row.kind === "edit");
+  assert.equal(edits.length, 2, "an edit after a learn run starts a new record");
+  assert.deepEqual(edits.map((row) => row.change.added), [1, 1]);
+  assert.equal(g2.runs[0].kind, "edit", "newest record first");
+  assert.equal(g2.runs[1].kind, "learn");
+});

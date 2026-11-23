@@ -74,30 +74,63 @@ export function usageToCost(model, usage) {
 // 兜底被实际用到时按 Sonnet 5.5 算（回报里写明）。
 const FALLBACK_BILLING_MODEL = "claude-sonnet-5-5";
 
+/** 一条回答按哪个模型计价：走了服务端兜底按兜底模型，否则按回答里的模型。 */
+function billingModelOf(message, requestedModel) {
+  const iterations = Array.isArray(message?.usage?.iterations) ? message.usage.iterations : [];
+  const fallbackEntry = iterations.find((entry) => entry?.type === "fallback_message" && entry.model);
+  const billedModel = fallbackEntry ? fallbackEntry.model : (message?.model || requestedModel);
+  if (usageToCost(billedModel, {}) !== null) return { billedModel, costModel: billedModel, fallbackUsed: Boolean(fallbackEntry) };
+  return { billedModel, costModel: fallbackEntry ? FALLBACK_BILLING_MODEL : billedModel, fallbackUsed: Boolean(fallbackEntry) };
+}
+
+/**
+ * 这次调用里收到的每一条回答都要算钱：被拒（refusal）、截断（max_tokens）、
+ * 解析失败后重试的那几次服务端照样收费，不算进来花费上限就会偏低（463 验收）。
+ * 一条回答都没收到（HTTP 错误、连不上）才是 0。
+ */
+function messagesCost(messages, requestedModel) {
+  let costUsd = 0;
+  let costKnown = true;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const message of messages) {
+    const { costModel } = billingModelOf(message, requestedModel);
+    const cost = usageToCost(costModel, message?.usage);
+    if (cost === null) costKnown = false;
+    else costUsd += cost;
+    inputTokens += Number(message?.usage?.input_tokens || 0);
+    outputTokens += Number(message?.usage?.output_tokens || 0);
+  }
+  return { costUsd, costKnown, inputTokens, outputTokens };
+}
+
 /**
  * 一次结构化补全。stop_reason refusal → refusal；解析失败或 max_tokens 截断
  * → 用 retryMaxTokens 重试一次，还不行 → bad-output。解析成功即算数（服务
  * 端 schema 已约束结构）。send 由调用方给（分析走 create，汇总走流式）。
+ * 返回值带 messages：收到的每一条回答（算钱用）。
  */
 async function createStructuredMessage({ send, createParams, retryMaxTokens }) {
   let attemptParams = createParams;
   let retried = false;
+  const messages = [];
   for (;;) {
     let message;
     try {
       message = await send(attemptParams);
     } catch (error) {
-      return { ok: false, code: classifyClaudeError(error), error };
+      return { ok: false, code: classifyClaudeError(error), error, messages };
     }
-    if (message.stop_reason === "refusal") return { ok: false, code: "refusal", message };
+    messages.push(message);
+    if (message.stop_reason === "refusal") return { ok: false, code: "refusal", message, messages };
     const parsed = parseStructuredOutput(message);
-    if (parsed) return { ok: true, note: parsed, message };
+    if (parsed) return { ok: true, note: parsed, message, messages };
     if (!retried) {
       retried = true;
       attemptParams = { ...attemptParams, ...(retryMaxTokens ? { max_tokens: retryMaxTokens } : {}) };
       continue;
     }
-    return { ok: false, code: "bad-output", message };
+    return { ok: false, code: "bad-output", message, messages };
   }
 }
 
@@ -126,17 +159,18 @@ export async function analyzeImage(client, { model, image, metadata, signal, sys
     createParams: params,
     retryMaxTokens: 8000,
   });
+  const spent = messagesCost(result.messages, model);
+  const usage = { input_tokens: spent.inputTokens, output_tokens: spent.outputTokens };
   if (!result.ok) {
-    return { ok: false, code: result.code, costUsd: 0, usage: null, model };
+    return { ok: false, code: result.code, costUsd: spent.costUsd, costKnown: spent.costKnown, usage, model };
   }
   const message = result.message;
-  const costUsd = usageToCost(message.model || model, message.usage);
   return {
     ok: true,
     note: result.note,
-    usage: message.usage,
-    costUsd: costUsd === null ? 0 : costUsd,
-    costKnown: costUsd !== null,
+    usage,
+    costUsd: spent.costUsd,
+    costKnown: spent.costKnown,
     model: message.model || model,
   };
 }
@@ -164,30 +198,23 @@ export async function summarizeGuide(client, { model, userContent, signal, syste
     send: (attemptParams) => client.beta.messages.stream(attemptParams, { timeout: 600_000, signal }).finalMessage(),
     createParams: params,
   });
+  const spent = messagesCost(result.messages, model);
+  const usage = { input_tokens: spent.inputTokens, output_tokens: spent.outputTokens };
   if (!result.ok) {
-    // 汇总的解析失败按 summary-error 交回（refusal / 错误分类原样）。
+    // 汇总的解析失败按 summary-error 交回（refusal / 错误分类原样）；已收到的
+    // 回答照样计价交回，由调用方记账、计入这次学习的花费。
     const code = result.code === "bad-output" ? "summary-error" : result.code;
-    return { ok: false, code, usage: null };
+    return { ok: false, code, usage, costUsd: spent.costUsd, costKnown: spent.costKnown };
   }
-  const message = result.message;
-  const parsed = result.note;
-  // 汇总走了兜底（usage.iterations 里有 fallback_message 条目）时按实际模型
-  // 计费模型算钱。
-  let billedModel = message.model || model;
-  const iterations = Array.isArray(message.usage?.iterations) ? message.usage.iterations : [];
-  const fallbackEntry = iterations.find((entry) => entry?.type === "fallback_message" && entry.model);
-  if (fallbackEntry) billedModel = fallbackEntry.model;
-  const costKnown = usageToCost(billedModel, { inputTokens: 0, outputTokens: 0 });
-  const costModel = costKnown === null ? FALLBACK_BILLING_MODEL : billedModel;
-  const costUsd = usageToCost(costModel, message.usage);
+  const { billedModel, costModel, fallbackUsed } = billingModelOf(result.message, model);
   return {
     ok: true,
-    guide: parsed,
-    usage: message.usage,
-    costUsd: costUsd === null ? 0 : costUsd,
-    costKnown: costUsd !== null,
+    guide: result.note,
+    usage,
+    costUsd: spent.costUsd,
+    costKnown: spent.costKnown,
     billedModel,
     costModel,
-    fallbackUsed: Boolean(fallbackEntry),
+    fallbackUsed,
   };
 }

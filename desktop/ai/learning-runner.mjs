@@ -132,7 +132,7 @@ export function createLearningRunner({
   async function quote({ project, libraryId, runId = null, language = "en" }) {
     await sweepInterrupted(project, libraryId);
     if (active && active.libraryId !== libraryId) {
-      return blocked("busy", { libraryId: active.libraryId, libraryName: active.libraryName || "" });
+      return blocked("busy", { libraryId: active.libraryId, libraryName: await activeLibraryName(project) });
     }
     const resolved = await resolveServiceAndKey();
     if (resolved.failure) return blocked(resolved.failure);
@@ -226,6 +226,22 @@ export function createLearningRunner({
     };
   }
 
+  /**
+   * 正在学的那个库叫什么。开始学习时是异步去取的，刚开始那一下可能还没回来：
+   * 没有就当场取一次（报价和状态的「另一个学习库正在学」都要带名字）。
+   */
+  async function activeLibraryName(project) {
+    const context = active;
+    if (!context) return "";
+    if (context.libraryName) return context.libraryName;
+    const client = serviceBoundClient();
+    if (!client) return "";
+    const response = await client.getLibrary(project, context.libraryId).catch(() => null);
+    const name = String(response?.payload?.library?.name || "");
+    if (name && active === context) context.libraryName = name;
+    return name;
+  }
+
   /** 开始前再核一次密钥和服务；核不过返回 blocked 原因。 */
   async function preflight(entry) {
     const resolved = await resolveServiceAndKey();
@@ -242,7 +258,7 @@ export function createLearningRunner({
     const failure = await preflight(entry);
     if (failure) return { ok: false, reason: failure };
     const client = serviceBoundClient();
-    const createResponse = await client.createRun(entry.projectId, entry.libraryId, {
+    const createBody = {
       assetIds: entry.assetIds,
       serviceId: entry.serviceId,
       analysisModel: entry.analysisModel,
@@ -250,7 +266,17 @@ export function createLearningRunner({
       language: entry.language,
       estimateUsd: entry.estimateUsd,
       capUsd: entry.capUsd,
-    }).catch(() => null);
+    };
+    let createResponse = await client.createRun(entry.projectId, entry.libraryId, createBody).catch(() => null);
+    // 挡路的是别的学习库里一条「运行中」的残留（App 崩了、换过库；preflight
+    // 已保证本进程此刻没在跑）：就地改成「中断」再建一次。扫尾平时只扫正在看
+    // 的那个库，不在这里收拾的话，用户得先回到那个库才能学别的。
+    if (createResponse?.payload?.code === "LEARNING_RUN_BUSY" && createResponse.payload.openRunId && !active) {
+      const staleRunId = String(createResponse.payload.openRunId);
+      console.info(`[MOSA] learning run ${staleRunId} was left running; marking paused (interrupted).`);
+      await client.patchRun(entry.projectId, staleRunId, { to: "paused", reason: "interrupted" }).catch(() => null);
+      createResponse = await client.createRun(entry.projectId, entry.libraryId, createBody).catch(() => null);
+    }
     if (!createResponse?.ok) {
       const code = String(createResponse?.payload?.code || "");
       if (code === "LEARNING_RUN_BUSY") {
@@ -301,6 +327,10 @@ export function createLearningRunner({
       rateLimited: false,
       // 用户点了暂停：先同步置位（不等 HTTP 往返），派单循环立刻停止派新。
       pausingNow: false,
+      pausePromise: null,
+      // 已经花掉、但还没落到条目或手册上的钱（汇总失败、分批汇总半途停下、
+      // 分析中途报错前已收到的回答）。暂停 / 失败时随状态变化一起记进 run。
+      unrecordedCostUsd: 0,
       detached: false,
       finished: false,
     };
@@ -338,7 +368,10 @@ export function createLearningRunner({
       if (pendingIds.length > 0) {
         await analyzePhase(context, pendingIds);
         if (context.detached || context.finished) return;
-        if (context.run.status === "pausing") {
+        // 用户点了暂停就按暂停收尾，不看 context.run.status：最后几张的回写可能
+        // 比暂停那次 PATCH 先到服务、后回到这里，手上的 run 会是过时的 running。
+        if (context.pausingNow || context.run.status === "pausing") {
+          if (context.pausePromise) await context.pausePromise;
           await settlePause(context);
           return;
         }
@@ -390,7 +423,7 @@ export function createLearningRunner({
         try {
           if (context.detached) return;
           // 每派一张新图前算「已花 + 这一步的估计」，超上限暂停（over-budget）。
-          if (Number(context.run.costUsd || 0) + perImageEstimateUsd(analysisModel) > capUsd) {
+          if (Number(context.run.costUsd || 0) + context.unrecordedCostUsd + perImageEstimateUsd(analysisModel) > capUsd) {
             pausedReason = "over-budget";
             return;
           }
@@ -418,6 +451,9 @@ export function createLearningRunner({
             }
             return;
           }
+          // 取输入要一次 HTTP 往返：这期间点了暂停 / 出了别的暂停原因，就不再
+          // 发这张的 Claude 请求（还没花钱），条目留 pending，继续时重做。
+          if (pausedReason || context.pausingNow || context.run.status === "pausing") return;
           const client = createClient({ apiKey: key, baseURL: context.entry.baseUrl, outboundFetch });
           const outcome = await analyzeImage(client, {
             model: analysisModel,
@@ -456,10 +492,18 @@ export function createLearningRunner({
             await recordLedger(outcome.costUsd || 0);
             return;
           }
+          // 走到这里的都没把结果记到条目上（这张留 pending）；中途已收到的回答
+          // 照样收费，先记账、随暂停记进 run。
+          if (Number(outcome.costUsd) > 0) {
+            context.unrecordedCostUsd += Number(outcome.costUsd);
+            await recordLedger(outcome.costUsd);
+          }
           if (outcome.code === "rate-limit") {
             if (!context.rateLimited) {
-              // 第一次：并发降到 1 接着跑；同一次学习里再碰到就暂停。
+              // 第一次：并发降到 1，这张放回队尾重做，接着跑；同一次学习里
+              // 再碰到就暂停。
               context.rateLimited = true;
+              pendingIds.push(assetId);
               return;
             }
             pausedReason = "rate-limit";
@@ -505,16 +549,32 @@ export function createLearningRunner({
   async function pauseRun(context, reason) {
     const clean = PAUSE_REASONS.has(reason) ? reason : "unknown";
     if (context.run.status === "running" || context.run.status === "pausing") {
-      const patched = await context.client.patchRun(context.projectId, context.runId, { to: "paused", reason: clean }).catch(() => null);
-      if (patched?.payload?.run) context.run = patched.payload.run;
+      const patched = await context.client.patchRun(context.projectId, context.runId, {
+        to: "paused", reason: clean, ...unrecordedCostBody(context),
+      }).catch(() => null);
+      if (patched?.ok && patched.payload?.run) {
+        context.run = patched.payload.run;
+        context.unrecordedCostUsd = 0;
+      }
       logRun(context, `paused (${clean}).`);
     }
   }
 
+  function unrecordedCostBody(context) {
+    return context.unrecordedCostUsd > 0 ? { addCostUsd: context.unrecordedCostUsd } : {};
+  }
+
   /** 用户暂停：手上的请求都回来后 pausing → paused（user）。 */
   async function settlePause(context) {
-    const patched = await context.client.patchRun(context.projectId, context.runId, { to: "paused" }).catch(() => null);
-    if (patched?.payload?.run) context.run = patched.payload.run;
+    // pausing → paused 时服务保留原因 user；暂停那次 PATCH 没落地（还在
+    // running）时这一条就是带原因 user 的 running → paused。
+    const patched = await context.client.patchRun(context.projectId, context.runId, {
+      to: "paused", reason: "user", ...unrecordedCostBody(context),
+    }).catch(() => null);
+    if (patched?.ok && patched.payload?.run) {
+      context.run = patched.payload.run;
+      context.unrecordedCostUsd = 0;
+    }
     active = null;
     context.finished = true;
     logRun(context, `paused (${context.run.pauseReason || "user"}).`);
@@ -562,50 +622,57 @@ export function createLearningRunner({
    */
   async function summarizePhase(context) {
     const languageCode = context.entry.language || "en";
-    // 开始汇总前算「已花 + 这一步的估计」，超上限暂停（over-budget）。
     const capUsd = Number(context.run.capUsd ?? Number.POSITIVE_INFINITY);
     const summaryEstimate = tokenCostUsd(context.entry.summaryModel, {
       inputTokens: SUMMARY_FIXED_INPUT_TOKENS,
       outputTokens: SUMMARY_OUTPUT_TOKENS,
     }) || 0;
-    if (Number(context.run.costUsd || 0) + summaryEstimate > capUsd) {
-      await pauseRun(context, "over-budget");
+    const stop = async (reason) => {
+      await pauseRun(context, reason);
       active = null;
       context.finished = true;
-      return;
-    }
-    if (context.run.phase === "analyze") {
-      const phaseResponse = await context.client.patchRun(context.projectId, context.runId, { to: "running" }).catch(() => null);
-      if (!phaseResponse?.ok) {
-        await pauseRun(context, "library-unavailable");
-        active = null;
-        context.finished = true;
-        return;
-      }
-      context.run = phaseResponse.payload.run;
-    }
+    };
+    // 先取笔记再转阶段：「一张都没学成、也没有旧笔记」只能在 analyze 阶段转
+    // failed（状态机那张表），先转了 summarize 就再也转不过去，run 会卡在
+    // running。
     const notesResponse = await context.client.listNotes(context.projectId, context.libraryId).catch(() => null);
     if (!notesResponse?.ok) {
-      await pauseRun(context, "library-unavailable");
-      active = null;
-      context.finished = true;
+      await stop("library-unavailable");
       return;
     }
     const notes = Array.isArray(notesResponse.payload?.notes) ? notesResponse.payload.notes : [];
     const contextText = notesResponse.payload?.context || { locked: [], removed: [] };
     if (notes.length === 0) {
-      // 一张都没学成且库里没有任何能汇总的笔记。
-      await context.client.patchRun(context.projectId, context.runId, { to: "failed", reason: "nothing-learned" }).catch(() => {});
-      active = null;
-      context.finished = true;
-      logRun(context, "failed (nothing-learned).");
+      if (context.run.phase === "analyze") {
+        const failed = await context.client.patchRun(context.projectId, context.runId, {
+          to: "failed", reason: "nothing-learned", ...unrecordedCostBody(context),
+        }).catch(() => null);
+        if (failed?.ok && failed.payload?.run) context.run = failed.payload.run;
+        active = null;
+        context.finished = true;
+        logRun(context, "failed (nothing-learned).");
+        return;
+      }
+      // 已在汇总阶段（暂停后继续时笔记全没了：图都移出了学习库）：停下等用户放弃。
+      await stop("summary-error");
       return;
+    }
+    // 开始汇总前算「已花 + 这一步的估计」，超上限暂停（over-budget）。
+    if (Number(context.run.costUsd || 0) + context.unrecordedCostUsd + summaryEstimate > capUsd) {
+      await stop("over-budget");
+      return;
+    }
+    if (context.run.phase === "analyze") {
+      const phaseResponse = await context.client.patchRun(context.projectId, context.runId, { to: "running" }).catch(() => null);
+      if (!phaseResponse?.ok) {
+        await stop("library-unavailable");
+        return;
+      }
+      context.run = phaseResponse.payload.run;
     }
     const key = await credentialStore.readForRequest(context.entry.serviceId);
     if (!key) {
-      await pauseRun(context, "no-key");
-      active = null;
-      context.finished = true;
+      await stop("no-key");
       return;
     }
     if (serviceChanged(context)) {
@@ -618,12 +685,16 @@ export function createLearningRunner({
     let guide = null;
     let usage = null;
     let costUsd = 0;
+    const overBudget = () => Number(context.run.costUsd || 0) + context.unrecordedCostUsd + costUsd + summaryEstimate > capUsd;
     const summarizeOnce = async (content, systemPrompt) => {
       const outcome = await summarizeGuide(client, {
         model: context.entry.summaryModel,
         userContent: content,
         systemPrompt,
       });
+      // 成败都按收到的回答记账（失败的那几次服务端照样收费）。
+      costUsd += Number(outcome.costUsd || 0);
+      await recordLedger(outcome.costUsd);
       if (!outcome.ok) throw outcome;
       return outcome;
     };
@@ -631,12 +702,13 @@ export function createLearningRunner({
       if (notes.length > chunkSize) {
         const partials = [];
         for (let start = 0; start < notes.length; start += chunkSize) {
+          // 分批汇总每一次都先核上限（第一批在上面已经核过）。
+          if (start > 0 && overBudget()) throw { code: "over-budget" };
           const outcome = await summarizeOnce(buildUserContent(notes.slice(start, start + chunkSize), { locked: [], removed: [] }), fillLanguage(SUMMARY_SYSTEM_PROMPT, languageCode));
           partials.push(outcome.guide);
           usage = outcome.usage;
-          costUsd += outcome.costUsd;
-          await recordLedger(outcome.costUsd);
         }
+        if (overBudget()) throw { code: "over-budget" };
         const mergedContent = [
           "<partial_guides>",
           ...partials.map((partial, index) => `<partial index="${index + 1}">\n${JSON.stringify(partial)}\n</partial>`),
@@ -646,22 +718,21 @@ export function createLearningRunner({
         const outcome = await summarizeOnce(mergedContent, fillLanguage(MERGE_SYSTEM_PROMPT, languageCode));
         guide = outcome.guide;
         usage = outcome.usage;
-        costUsd += outcome.costUsd;
-        await recordLedger(outcome.costUsd);
       } else {
         const outcome = await summarizeOnce(buildUserContent(notes, contextText), fillLanguage(SUMMARY_SYSTEM_PROMPT, languageCode));
         guide = outcome.guide;
         usage = outcome.usage;
-        costUsd = outcome.costUsd;
-        await recordLedger(outcome.costUsd);
       }
     } catch (outcomeOrError) {
       const code = outcomeOrError?.code || "unknown";
+      // 这次汇总已花的钱（含成功的分批）没落到手册上，随暂停记进 run；继续时
+      // 汇总整个重做。
+      context.unrecordedCostUsd += costUsd;
       // 汇总失败（summary-error、refusal）→ 暂停，继续时只重做汇总。
-      await pauseRun(context, code === "summary-error" || code === "refusal" || !PAUSE_REASONS.has(code) ? "summary-error" : code);
-      active = null;
-      context.finished = true;
-      logRun(context, `summary failed (${code}).`);
+      const reason = code === "over-budget" ? "over-budget"
+        : (code === "summary-error" || code === "refusal" || !PAUSE_REASONS.has(code) ? "summary-error" : code);
+      await stop(reason);
+      logRun(context, `summary stopped (${code}).`);
       return;
     }
     const normalized = normalizeGuideEntries(guide, { validRefs });
@@ -681,15 +752,15 @@ export function createLearningRunner({
       language: context.entry.language || "en",
       inputTokens: Number(usage?.input_tokens || 0),
       outputTokens: Number(usage?.output_tokens || 0),
-      costUsd,
+      costUsd: costUsd + context.unrecordedCostUsd,
       droppedNoSource: normalized.droppedNoSource,
     }).catch(() => null);
     if (!guideResponse?.ok) {
-      await pauseRun(context, "library-unavailable");
-      active = null;
-      context.finished = true;
+      context.unrecordedCostUsd += costUsd;
+      await stop("library-unavailable");
       return;
     }
+    context.unrecordedCostUsd = 0;
     context.run = guideResponse.payload.run;
     active = null;
     context.finished = true;
@@ -699,10 +770,15 @@ export function createLearningRunner({
   /** 立刻改 pausing、不再派新的；手上的请求照常等回来、照常记结果和花费。 */
   async function pause({ runId }) {
     if (!active || active.runId !== String(runId)) return { ok: false };
-    active.pausingNow = true;
-    if (active.run.status === "running") {
-      const patched = await active.client.patchRun(active.projectId, active.runId, { to: "pausing", reason: "user" }).catch(() => null);
-      if (patched?.payload?.run) active.run = patched.payload.run;
+    const context = active;
+    context.pausingNow = true;
+    if (context.run.status === "running" && !context.pausePromise) {
+      context.pausePromise = context.client.patchRun(context.projectId, context.runId, { to: "pausing", reason: "user" })
+        .then((patched) => {
+          if (patched?.ok && patched.payload?.run) context.run = patched.payload.run;
+        })
+        .catch(() => {});
+      await context.pausePromise;
     }
     return { ok: true };
   }
@@ -727,15 +803,8 @@ export function createLearningRunner({
   async function status({ project, libraryId }) {
     await sweepInterrupted(project, libraryId);
     const busyElsewhere = active && active.libraryId !== libraryId
-      ? { libraryId: active.libraryId, libraryName: active.libraryName || "" }
+      ? { libraryId: active.libraryId, libraryName: await activeLibraryName(project) }
       : null;
-    if (busyElsewhere && !busyElsewhere.libraryName) {
-      const client = serviceBoundClient();
-      if (client) {
-        const response = await client.getLibrary(project, busyElsewhere.libraryId).catch(() => null);
-        if (response?.payload?.library) busyElsewhere.libraryName = String(response.payload.library.name || "");
-      }
-    }
     let run = null;
     if (active && active.libraryId === libraryId) {
       run = shapeStatusRun(active.run);
