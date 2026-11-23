@@ -87,8 +87,10 @@ function tableList(libraryDir) {
   }
 }
 
-test("CURRENT_SCHEMA_VERSION is 20 and a fresh library carries both learning-library tables and indexes", async (t) => {
-  assert.equal(CURRENT_SCHEMA_VERSION, 20);
+test("CURRENT_SCHEMA_VERSION is at least 20 and a fresh library carries both learning-library tables and indexes", async (t) => {
+  // 任务 463：版本升到 21（learning-guide 表），这里放宽为 >= 20，=== 21 由
+  // test/learning-guide-store.test.mjs 接替钉住。
+  assert.ok(CURRENT_SCHEMA_VERSION >= 20);
   const { libraryDir, store } = await createStore(t);
   await store.ensureProject("default");
   const { tables, indexes, columns } = tableList(libraryDir);
@@ -128,7 +130,9 @@ test("a v19 library upgrades to v20 on open and keeps every pre-existing row int
   assert.deepEqual(indexes, ["learning_libraries_project_name_ci_idx", "learning_library_members_asset_idx"]);
   const version = new Database(sqliteDatabasePath(libraryDir), { readonly: true })
     .prepare("SELECT value FROM library_meta WHERE key = 'schema_version'").get().value;
-  assert.equal(version, "20");
+  // 任务 463：版本升到 21，这个升级测试的落点跟着 CURRENT 走（=== 21 由
+  // test/learning-guide-store.test.mjs 钉住）。
+  assert.equal(version, "21");
   const groups = await reopened.listGroups("default");
   assert.equal(groups.groups.find((group) => group.name === "旧分组")?.count, 1, "pre-existing data survives");
 });

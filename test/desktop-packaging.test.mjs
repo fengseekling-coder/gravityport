@@ -503,6 +503,15 @@ test("desktop package keeps every required runtime surface", () => {
     "/desktop/ipc/ai.mjs",
     "/lib/ai/model-catalog.mjs",
     "/lib/ai/connection-test.mjs",
+    // 任务 463：学习后台的主进程模块（Claude 客户端、提示词、runner、服务
+    // HTTP 封装、IPC、纯 schema/cost 模块）也必须留在桌面包里。
+    "/desktop/ai/claude-client.mjs",
+    "/desktop/ai/learning-prompts.mjs",
+    "/desktop/ai/learning-runner.mjs",
+    "/desktop/ai/learning-service-client.mjs",
+    "/desktop/ipc/ai-learning.mjs",
+    "/lib/ai/learning-schema.mjs",
+    "/lib/ai/learning-cost.mjs",
     "/desktop/platform/index.mjs",
     "/desktop/preload.cjs",
     "/desktop/service-manager.mjs",
