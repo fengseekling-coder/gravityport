@@ -281,11 +281,17 @@
       || trimmed(context?.toolHint)
       || trimmed(context?.pendingTool?.model)
       || legacyModelFor(context?.name, artifact.source);
+    // Images the user attached to the message are the base image only when
+    // the artifact itself says it edited one. A TEXT_TO_IMAGE artifact made
+    // from a chat that also carries an upload ("generate in this style") has
+    // no parent; the artifact's own prompt_image_list / reference_image_urls
+    // always count.
+    const userImagesAreBase = trimmed(artifact.task_type).toUpperCase() !== "TEXT_TO_IMAGE";
     const referenceUrls = dedupeReferenceUrls([
       ...collectUrlList(artifact.prompt_image_list),
       ...collectUrlList(inputArgs.reference_image_urls),
-      ...(context?.userInput?.markUrls || []),
-      ...(context?.userInput?.imageUrls || []),
+      ...(userImagesAreBase ? context?.userInput?.markUrls || [] : []),
+      ...(userImagesAreBase ? context?.userInput?.imageUrls || [] : []),
       ...(context?.pendingTool?.referenceUrls || []),
     ], media.url);
     return {
@@ -413,10 +419,9 @@
   }
 
   // The legacy page-memory shape (sessions[].input + sessions[].messages[]
-  // .raw) pairs each record with its own session's input text. Attached
-  // input images only count as references when the message's action id
-  // really matches the input's (raw action ids repeat across sessions on the
-  // legacy shape); artifact-owned prompt_image_list always counts.
+  // .raw) pairs each record with its own session's input. Whether the
+  // input's attached images are a base image is decided per artifact by its
+  // task_type (see buildAgentRecord), not by comparing action ids.
   function recordsFromSessions(sessions) {
     const records = [];
     let visited = 0;
@@ -431,11 +436,7 @@
           ? message.raw
           : null;
         if (!raw) continue;
-        const actionMatches = Boolean(sessionInput.actionKey)
-          && trimmed(raw.action_id, 128) === sessionInput.actionKey;
-        const userInputForRecord = actionMatches
-          ? sessionInput
-          : { ...sessionInput, markUrls: [], imageUrls: [] };
+        const userInputForRecord = sessionInput;
         const agentArtifacts = agentArtifactsFromContent(raw);
         if (agentArtifacts) {
           const context = agentContextFromOwner(raw, userInputForRecord);

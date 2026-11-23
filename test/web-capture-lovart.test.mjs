@@ -394,6 +394,62 @@ test("legacy-UI sessions sample: per-session user words, artifact-owned referenc
   assert.equal(third.model, "generate_image_nano_banana_pro");
 });
 
+// ---- 11-23 acceptance additions: the base-image rule follows the artifact's
+// own task_type (not action-id coincidences), refresh never re-sends, and the
+// media host check is an exact match.
+
+test("legacy-UI: a TEXT_TO_IMAGE artifact never takes the chat upload as its base image, even when action ids match", () => {
+  const consistent = JSON.parse(JSON.stringify(historyOld));
+  // Real pages give every raw message its own session's action id; make the
+  // fixture consistent so the rule cannot lean on a mismatch.
+  const sessions = (function findSessions(node) {
+    if (!node || typeof node !== "object") return null;
+    if (Array.isArray(node.sessions)) return node.sessions;
+    for (const value of Object.values(node)) {
+      const found = findSessions(value);
+      if (found) return found;
+    }
+    return null;
+  })(consistent);
+  assert.ok(Array.isArray(sessions) && sessions.length >= 3, "fixture has legacy sessions");
+  for (const session of sessions) {
+    for (const message of session.messages || []) {
+      if (message?.raw) message.raw.action_id = session.input.actionId;
+    }
+  }
+  const { records } = lovart.extractLovartHistory(JSON.stringify(consistent));
+  const byId = Object.fromEntries(records.map((record) => [record.providerAssetId, record]));
+  assert.deepEqual(Array.from(byId.FakeAgentArt0001.referenceUrls, (url) => lovart.referenceIdForUrl(url)), ["ref:FakeUpload01Ab2c"],
+    "an EDIT_SINGLE_IMAGE artifact keeps the uploaded portrait as its base");
+  assert.deepEqual(Array.from(byId.FakeAgentArt0002.referenceUrls, (url) => lovart.referenceIdForUrl(url)), ["ref:FakeAgentArt0001"]);
+  assert.equal(byId.FakeAgentArt0003.referenceUrls.length, 0,
+    "TEXT_TO_IMAGE with a style upload in the chat has no base image");
+});
+
+test("a refreshed Lovart page never re-sends images it already handed over", async () => {
+  const baseline = { lovartAutoCaptureBaselineAtV1: Date.parse("2026-11-01T00:00:00Z") };
+  const first = lovartPage({ storage: baseline });
+  await first.deliver("lovart-api-response", JSON.stringify(historyNew));
+  assert.equal(first.mediaCaptures().length, 3);
+  const persisted = first.localStore.get("lovartCapturedAssetIdsV1");
+  assert.ok(Array.isArray(persisted) && persisted.length >= 3, `seen ids were persisted (${JSON.stringify(persisted)})`);
+
+  const refreshed = lovartPage({ storage: { ...baseline, lovartCapturedAssetIdsV1: persisted } });
+  await refreshed.deliver("lovart-api-response", JSON.stringify(historyNew));
+  assert.equal(refreshed.mediaCaptures().length, 0, "the same history after a refresh sends nothing again");
+});
+
+test("Lovart media hosts are matched exactly, never by substring", () => {
+  for (const host of ["a.lovart.ai", "assets-persist.lovart.ai", "A.LOVART.AI"]) {
+    assert.equal(lovart.isLovartMediaHost(host), true, host);
+  }
+  for (const host of ["a.lovart.ai.evil.example", "evil-a.lovart.ai", "xa.lovart.ai", "lovart.ai", "www.lovart.ai", ""]) {
+    assert.equal(lovart.isLovartMediaHost(host), false, host);
+  }
+  assert.equal(lovart.mediaUrlInfo("https://a.lovart.ai.evil.example/artifacts/generator/Fake01ArtifactId.png"), null);
+  assert.ok(lovart.mediaUrlInfo("https://a.lovart.ai/artifacts/generator/Fake01ArtifactId.png"));
+});
+
 // ---- Test 5: the page hook forwards only the two history endpoints and the
 // socket's text frames, never binary, other hosts, or the socket address.
 
