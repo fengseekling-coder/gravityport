@@ -240,6 +240,66 @@ test("删掉自定义服务：密钥一起删，用到它的槽位退回「未�
   assert.ok(!JSON.stringify(removed).includes(FAKE_CUSTOM_KEY));
 });
 
+test("自定义服务改了地址或格式：服务留着，旧密钥和旧测试结果删掉（11-23）", async (t) => {
+  const deps = await makeAiDeps(t);
+  const handlers = deps.handlers;
+  const added = await handlers.get("ai-update-settings")(trustedEvent, {
+    customServices: [{ label: "中转", format: "openai", baseUrl: "https://relay.example/v1" }],
+  });
+  const customId = added.state.services.find((service) => service.id.startsWith("custom-")).id;
+  await handlers.get("ai-save-key")(trustedEvent, customId, FAKE_CUSTOM_KEY);
+  await handlers.get("ai-test-connection")(trustedEvent, customId, "text");
+  const credentialPath = join(deps.dir, "ai-credentials.json");
+  assert.ok(readFileSync(credentialPath, "utf8").includes(customId));
+
+  // 只改标签：密钥留着。
+  const relabeled = await handlers.get("ai-update-settings")(trustedEvent, {
+    customServices: [{ id: customId, label: "中转二", format: "openai", baseUrl: "https://relay.example/v1" }],
+  });
+  assert.equal(relabeled.state.services.find((service) => service.id === customId).hasKey, true, "只改标签不删密钥");
+
+  // 改地址：服务还在，密钥和测试结果没了，测试连接不会把旧密钥发到新地址。
+  const moved = await handlers.get("ai-update-settings")(trustedEvent, {
+    customServices: [{ id: customId, label: "中转二", format: "openai", baseUrl: "https://elsewhere.example/v1" }],
+  });
+  const service = moved.state.services.find((entry) => entry.id === customId);
+  assert.ok(service, "服务还在");
+  assert.equal(service.hasKey, false, "改地址后密钥删掉");
+  assert.equal(service.lastTest, null, "旧测试结果作废");
+  assert.ok(!readFileSync(credentialPath, "utf8").includes(customId));
+  deps.fetchCalls.length = 0;
+  await handlers.get("ai-test-connection")(trustedEvent, customId, "text");
+  assert.equal(deps.fetchCalls.length, 1);
+  assert.ok(!JSON.stringify(deps.fetchCalls[0].init.headers).includes(FAKE_CUSTOM_KEY.slice(-12)), "新地址拿不到旧密钥");
+
+  // 改格式同理。
+  await handlers.get("ai-save-key")(trustedEvent, customId, FAKE_CUSTOM_KEY);
+  const reformatted = await handlers.get("ai-update-settings")(trustedEvent, {
+    customServices: [{ id: customId, label: "中转二", format: "claude", baseUrl: "https://elsewhere.example/v1" }],
+  });
+  assert.equal(reformatted.state.services.find((entry) => entry.id === customId).hasKey, false, "改格式后密钥删掉");
+});
+
+test("换密钥后旧的测试结果清掉；地址带 ?查询 或 #片段 拒收（11-23）", async (t) => {
+  const deps = await makeAiDeps(t);
+  const handlers = deps.handlers;
+  await handlers.get("ai-save-key")(trustedEvent, "openai", FAKE_OPENAI_KEY);
+  await handlers.get("ai-test-connection")(trustedEvent, "openai", "text");
+  let state = await handlers.get("ai-get-state")(trustedEvent);
+  assert.ok(state.services.find((service) => service.id === "openai").lastTest, "测过一次");
+  await handlers.get("ai-save-key")(trustedEvent, "openai", FAKE_CLAUDE_KEY);
+  state = await handlers.get("ai-get-state")(trustedEvent);
+  assert.equal(state.services.find((service) => service.id === "openai").lastTest, null, "换密钥后要重新测");
+
+  const rejected = await handlers.get("ai-update-settings")(trustedEvent, {
+    customServices: [
+      { label: "带查询", format: "openai", baseUrl: "https://relay.example/v1?x=1" },
+      { label: "带片段", format: "openai", baseUrl: "https://relay.example/v1#a" },
+    ],
+  });
+  assert.equal(rejected.state.services.some((service) => service.id.startsWith("custom-")), false);
+});
+
 test("ai-get-state 的单价行：分析和汇总两行单价 + 本月合计，出图/大脑一行带本月", async (t) => {
   const deps = await makeAiDeps(t);
   const handlers = deps.handlers;

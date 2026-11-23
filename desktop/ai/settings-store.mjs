@@ -35,7 +35,8 @@ export function emptyAiSettings() {
 
 /**
  * 自定义服务地址：只收 https://，或 http:// 且主机是 localhost / 127.0.0.1 /
- * [::1]；不许带 user:pass@；最长 2048。file:///、javascript: 等一律拒。
+ * [::1]；不许带 user:pass@、?查询、#片段；最长 2048。file:///、javascript:
+ * 等一律拒。
  */
 export function isValidCustomServiceUrl(url) {
   if (typeof url !== "string") return false;
@@ -48,6 +49,8 @@ export function isValidCustomServiceUrl(url) {
     return false;
   }
   if (parsed.username !== "" || parsed.password !== "") return false;
+  // 地址后面要拼 /models 等路径，带 ?查询 或 #片段 会拼坏，直接拒。
+  if (parsed.search !== "" || parsed.hash !== "" || trimmed.includes("?") || trimmed.includes("#")) return false;
   if (parsed.protocol === "https:") return true;
   if (parsed.protocol === "http:") return CUSTOM_URL_LOOPBACK_HOSTS.has(parsed.hostname);
   return false;
@@ -188,6 +191,15 @@ export function createAiSettingsStore({ dir }) {
       return settings;
     },
 
+    /** 换了密钥：清掉这一家旧的测试结果，免得旧的「连接正常」挂在新密钥上。 */
+    async clearTest(serviceId) {
+      const settings = await this.read();
+      if (!(serviceId in settings.lastTests)) return settings;
+      delete settings.lastTests[serviceId];
+      await writeSettings(settings);
+      return settings;
+    },
+
     /** 记录最近一次测试连接的结果（models 只有模型 id，不含密钥）。 */
     async recordTest(serviceId, result) {
       const settings = await this.read();
@@ -207,10 +219,13 @@ export function createAiSettingsStore({ dir }) {
      * 发 id），slots 逐项校验（不认识的服务/模型丢弃该项、保留原值）。
      * 被删掉（或校验不过被丢）的自定义服务：用到它的槽位退回「未选择」；
      * 返回值带 removedCustomIds，调用方（desktop/ipc/ai.mjs）负责连密钥一起删。
+     * 同一个 id 改了地址或格式：服务留着，但旧密钥是填给旧地址的，不能跟着
+     * 发到新地址——id 进 rekeyedCustomIds，调用方删掉它的密钥，用户重新填。
      */
     async applyUpdate({ slots, customServices } = {}) {
       const settings = await this.read();
       const previousCustomIds = settings.customServices.map((entry) => entry.id);
+      const previousById = new Map(settings.customServices.map((entry) => [entry.id, entry]));
 
       if (Array.isArray(customServices)) {
         const seen = new Set();
@@ -226,6 +241,14 @@ export function createAiSettingsStore({ dir }) {
 
       const removedCustomIds = previousCustomIds.filter((id) => !settings.customServices.some((entry) => entry.id === id));
       const removed = new Set(removedCustomIds);
+      const rekeyedCustomIds = settings.customServices
+        .filter((entry) => {
+          const previous = previousById.get(entry.id);
+          return previous && (previous.baseUrl !== entry.baseUrl || previous.format !== entry.format);
+        })
+        .map((entry) => entry.id);
+      // 删掉的、改了地址的：旧的测试结果都作废。
+      for (const id of [...removedCustomIds, ...rekeyedCustomIds]) delete settings.lastTests[id];
 
       // 删掉的自定义服务：用到它的槽位退回「未选择」。
       for (const role of ["analysis", "brain", "image"]) {
@@ -244,7 +267,7 @@ export function createAiSettingsStore({ dir }) {
       }
 
       await writeSettings(settings);
-      return { settings, removedCustomIds };
+      return { settings, removedCustomIds, rekeyedCustomIds };
     },
   };
 }

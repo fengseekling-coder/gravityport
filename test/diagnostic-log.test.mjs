@@ -320,6 +320,8 @@ test("任务 458: AI service keys and key headers are masked", () => {
   assert.ok(headers.includes("x-goog-api-key: <已隐藏>"), headers);
   // Words that merely contain "sk-" behind a word character are not keys.
   assert.equal(redactDiagnostics("task-0000 and risk-free", {}), "task-0000 and risk-free");
+  // Short ordinary words that start with sk- / AIza are not keys either (11-23).
+  assert.equal(redactDiagnostics("using sk-learn and AIzaline", {}), "using sk-learn and AIzaline");
 });
 
 test("stack traces keep their line/column suffixes", () => {

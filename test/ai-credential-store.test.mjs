@@ -137,7 +137,7 @@ test("chooseAiEncryption：quietQaRun=false 拿到 safeStorage 包装、true 才
   assert.notEqual(real.encrypt, stub.encrypt);
 });
 
-test("safeStorage 适配层：Linux basic_text / unknown 后端算不可用", (t) => {
+test("safeStorage 适配层：Linux 只认系统钥匙串后端，basic_text / unknown / 空值算不可用", (t) => {
   const makeFake = (backend) => ({
     isEncryptionAvailable: () => true,
     getSelectedStorageBackend: () => backend,
@@ -147,9 +147,14 @@ test("safeStorage 适配层：Linux basic_text / unknown 后端算不可用", (t
   assert.equal(createSafeStorageAiEncryption(makeFake("kwallet"), { platform: "linux" }).isAvailable(), true);
   assert.equal(createSafeStorageAiEncryption(makeFake("basic_text"), { platform: "linux" }).isAvailable(), false);
   assert.equal(createSafeStorageAiEncryption(makeFake("unknown"), { platform: "linux" }).isAvailable(), false);
-  // 单子只点了 basic_text / unknown 两种；其余后端值（含 Electron 未就绪时的
-  // ""）不在此列——是否收紧留给 Claude 裁（见回报「我的建议」）。
-  assert.equal(createSafeStorageAiEncryption(makeFake(""), { platform: "linux" }).isAvailable(), true);
+  assert.equal(createSafeStorageAiEncryption(makeFake("gnome_libsecret"), { platform: "linux" }).isAvailable(), true);
+  assert.equal(createSafeStorageAiEncryption(makeFake("kwallet6"), { platform: "linux" }).isAvailable(), true);
+  // Electron 未就绪时的 ""、undefined、以后新出的未知值：一律不可用（11-23 Claude 裁）。
+  assert.equal(createSafeStorageAiEncryption(makeFake(""), { platform: "linux" }).isAvailable(), false);
+  assert.equal(createSafeStorageAiEncryption(makeFake(undefined), { platform: "linux" }).isAvailable(), false);
+  assert.equal(createSafeStorageAiEncryption(makeFake("some_future_backend"), { platform: "linux" }).isAvailable(), false);
+  // Linux 上连查后端的方法都没有：不可用。
+  assert.equal(createSafeStorageAiEncryption({ isEncryptionAvailable: () => true }, { platform: "linux" }).isAvailable(), false);
   // 非 Linux 平台不查后端（注入本机平台时 basic_text 也可用——后端规则只在 Linux）。
   assert.equal(createSafeStorageAiEncryption(makeFake("basic_text"), { platform: "darwin" }).isAvailable(), true);
   // isEncryptionAvailable 本身为假（或抛错）时不可用。

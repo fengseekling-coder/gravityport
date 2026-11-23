@@ -32,10 +32,14 @@ export function createQaAiEncryptionStub() {
   };
 }
 
+// Linux 上只认真正的系统钥匙串后端。basic_text 只是明文混淆，unknown、""
+// （Electron 未就绪时）和以后新出的值都按不可用处理：宁可误报「不可用」，
+// 也不把「系统加密」变成空话。
+const LINUX_SECURE_BACKENDS = new Set(["gnome_libsecret", "gnome_keyring", "kwallet", "kwallet5", "kwallet6"]);
+
 /**
- * 正式实现：包 Electron 的 safeStorage。Linux 上选不到可用的后端
- * （basic_text / unknown）时也算不可用——那两种后端只是明文混淆，不能算
- * 「系统加密」。platform 可注入，测试用它钉住 Linux 的后端规则。
+ * 正式实现：包 Electron 的 safeStorage。Linux 上后端不在 LINUX_SECURE_BACKENDS
+ * 里时也算不可用。platform 可注入，测试用它钉住 Linux 的后端规则。
  */
 export function createSafeStorageAiEncryption(safeStorage, { platform = process.platform } = {}) {
   return {
@@ -43,9 +47,9 @@ export function createSafeStorageAiEncryption(safeStorage, { platform = process.
       try {
         if (!safeStorage || typeof safeStorage.isEncryptionAvailable !== "function") return false;
         if (!safeStorage.isEncryptionAvailable()) return false;
-        if (platform === "linux" && typeof safeStorage.getSelectedStorageBackend === "function") {
-          const backend = safeStorage.getSelectedStorageBackend();
-          if (backend === "basic_text" || backend === "unknown") return false;
+        if (platform === "linux") {
+          if (typeof safeStorage.getSelectedStorageBackend !== "function") return false;
+          if (!LINUX_SECURE_BACKENDS.has(safeStorage.getSelectedStorageBackend())) return false;
         }
         return true;
       } catch {

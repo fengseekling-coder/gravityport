@@ -151,6 +151,8 @@ export function registerAiIpc(deps) {
     // 第一次存某一家的密钥：还「未选择」的块自动选这一家和它的默认模型
     //（出图块只在这一家能出图时才自动选），只填一家也能用。
     if (!hadKey) await aiSettingsStore.autoSelectService(serviceId);
+    // 新密钥还没测过：旧的测试结果不能挂在它身上。
+    await aiSettingsStore.clearTest(serviceId);
     return { ok: true, last4: result.last4 };
   });
 
@@ -215,12 +217,13 @@ export function registerAiIpc(deps) {
   ipcMain.handle("ai-update-settings", async (event, payload) => {
     if (!trustedRendererEvent(event)) return { ok: false };
     if (!payload || typeof payload !== "object") return { ok: false };
-    // 自定义服务被删（或校验不过被丢）：连它的密钥一起删。
-    const { removedCustomIds } = await aiSettingsStore.applyUpdate({
+    // 自定义服务被删（或校验不过被丢）：连它的密钥一起删。改了地址或格式的：
+    // 服务留着，密钥删掉——密钥是填给旧地址的，不能跟着发到新地址。
+    const { removedCustomIds, rekeyedCustomIds } = await aiSettingsStore.applyUpdate({
       slots: payload.slots,
       customServices: payload.customServices,
     });
-    for (const id of removedCustomIds) {
+    for (const id of [...removedCustomIds, ...rekeyedCustomIds]) {
       await aiCredentialStore.remove(id);
     }
     return { ok: true, state: await buildAiState() };
