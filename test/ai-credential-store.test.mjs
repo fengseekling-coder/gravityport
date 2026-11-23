@@ -113,8 +113,11 @@ test("加密不可用时拒收且不落盘", async (t) => {
 
 test("chooseAiEncryption：quietQaRun=false 拿到 safeStorage 包装、true 才是替身", async (t) => {
   const fakeSafeStorageCalls = [];
+  // Shaped like Electron's real safeStorage, including the backend query that
+  // the Linux rule reads; without it this test only passed on macOS/Windows.
   const fakeSafeStorage = {
     isEncryptionAvailable: () => true,
+    getSelectedStorageBackend: () => "gnome_libsecret",
     encryptString: (text) => {
       fakeSafeStorageCalls.push(text);
       return Buffer.from("safe", "utf8");
