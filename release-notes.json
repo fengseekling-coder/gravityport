@@ -1,8 +1,16 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {},
-    "en": {}
+    "zh": {
+      "new": [
+        "在 Chrome 中使用 Lovart 时，Agent 模式和图像模式新生成的图片会自动收进素材库，并记下 Lovart 改写后实际发给模型的提示词、你输入的原话、模型和底图；装扩展前的旧图可在图片上右键手动保存。"
+      ]
+    },
+    "en": {
+      "new": [
+        "Images generated in Lovart (Agent and image modes) are now archived automatically in Chrome, with the prompt Lovart actually sent to the model, your own words, the model and the base image; older images can be saved from the right-click menu."
+      ]
+    }
   },
   "releases": [
     {
