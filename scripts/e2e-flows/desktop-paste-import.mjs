@@ -16,6 +16,8 @@
 // offers no blank-area 粘贴; and Finder-style copies without a media file
 // (webloc / txt, always carrying the file icon TIFF) offer no 粘贴 either,
 // while notes.txt + a png offers exactly one import of that png (task 245).
+//
+// 任务 461：整条流程占用真实系统剪贴板，只在 MOSA_E2E_SYSTEM_CLIPBOARD=1（CI）时跑。
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { copyFile, readFile, writeFile, mkdir, rm } from "node:fs/promises";
@@ -26,6 +28,10 @@ import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 
 export const name = "desktop-paste-import";
 export const description = "real desktop paste-to-import: system-clipboard files/images via ⌘V and the blank-area menu 粘贴 land in the browsed view (group/stack), hidden views point at 所有素材, trash-free skips stay silent, library files never import twice";
+// Task 461: the whole run owns the real system clipboard (write, paste, and
+// the finally-block clear), so the runner skips it unless
+// MOSA_E2E_SYSTEM_CLIPBOARD=1.
+export const systemClipboard = "flow";
 
 const SEED_COUNT = 4;
 const GROUP_NAME = "e2e-paste-group-239";

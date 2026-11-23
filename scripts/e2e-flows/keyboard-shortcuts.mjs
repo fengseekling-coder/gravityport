@@ -34,6 +34,10 @@ import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 
 export const name = "keyboard-shortcuts";
 export const description = "real desktop shell: ⌘C copies selection files to the system clipboard (toast + paste dedupe), text selection keeps ⌘C on text, execCommand copy rides the web copy event, ⌘[/⌘] and mouse side buttons step history, viewer back closes only the viewer, Esc exits stacks, group dialogs trap Tab and cancel on Esc";
+// Task 461: the first four steps drive the REAL system clipboard (⌘C files,
+// ⌘V dedupe, ⌘C text, execCommand copy); the rest never touch it. Without
+// MOSA_E2E_SYSTEM_CLIPBOARD=1 exactly those four steps skip loudly.
+export const systemClipboard = "steps";
 
 const SEED_COUNT = 5;
 const GROUP_NAME = "e2e-shortcuts-group-384";
@@ -110,6 +114,10 @@ export async function run(ctx) {
         console.error(`[keyboard-shortcuts] FAIL: ${label}: ${error.message}`);
       }
     };
+    // Task 461: a step that drives the REAL system clipboard only runs when
+    // the runner granted it; otherwise it never keys or reads the clipboard
+    // and is skipped loudly (the verdict records the skip).
+    const systemStep = (label, fn) => (ctx.systemClipboard ? step(label, fn) : ctx.skipStep(label, "system-clipboard"));
     // The sidebar and grid update through the live library stream; every
     // trusted click waits for that stream to settle first (desktop-input
     // pattern — a re-render replacing a node mid-click loses the click).
@@ -176,7 +184,7 @@ export async function run(ctx) {
     await waitFor(cdp, `document.querySelectorAll('.asset-card').length >= 4`, "seeded grid", 20000);
 
     // ── 1. ⌘C with two cards: file paths on the OS clipboard + toast ──
-    await step("⌘C on two cards copies their file paths with the 已复制 toast", async () => {
+    await systemStep("⌘C on two cards copies their file paths with the 已复制 toast", async () => {
       await dispatchClick(cdp, await cardCenter(seeded.ids[0]));
       await waitFor(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 1`, "first card selected");
       await dispatchClick(cdp, await cardCenter(seeded.ids[1]), { modifiers: 4 });
@@ -191,7 +199,7 @@ export async function run(ctx) {
     });
 
     // ── 2. ⌘V of those same library files: import dedupe, count unchanged ──
-    await step("⌘V pasting the copied library files dedupes with the 已在素材库中 toast", async () => {
+    await systemStep("⌘V pasting the copied library files dedupes with the 已在素材库中 toast", async () => {
       const before = await ctx.api(origin, "GET", "/api/assets?project=default&limit=1000");
       const beforeCount = (before.assets || []).length;
       await dispatchPasteCommand(cdp);
@@ -202,7 +210,7 @@ export async function run(ctx) {
     });
 
     // ── 3. a selected prompt range keeps ⌘C on the text path ──
-    await step("⌘C with a selected prompt range copies the text, not files", async () => {
+    await systemStep("⌘C with a selected prompt range copies the text, not files", async () => {
       await dispatchClick(cdp, await cardCenter(seeded.ids[2]));
       await waitFor(cdp, `Boolean(document.querySelector('#asset-prompt'))`, "inspector prompt visible");
       const selected = await cdp.evaluate(`(() => {
@@ -227,7 +235,7 @@ export async function run(ctx) {
     });
 
     // ── 4. the web copy event (menu 拷贝 role's path) copies the file ──
-    await step("document.execCommand('copy') with one card lands its file path", async () => {
+    await systemStep("document.execCommand('copy') with one card lands its file path", async () => {
       await dispatchClick(cdp, await cardCenter(seeded.ids[0]));
       await waitFor(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 1`, "one card selected");
       await cdp.send("Runtime.evaluate", {

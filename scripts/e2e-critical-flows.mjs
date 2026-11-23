@@ -12,6 +12,7 @@ import sharp from "sharp";
 import { launchDesktopGui } from "./desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "./desktop-runtime-paths.mjs";
 import { createCriticalUiFlowSource, createTrashUiFlowSource, E2E_DROP_GROUP_NAME } from "./e2e-ui-flow.mjs";
+import { systemClipboardAllowed, systemClipboardPlan } from "./e2e-system-clipboard.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
 import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
 
@@ -23,6 +24,12 @@ const flowsDir = join(rootDir, "scripts", "e2e-flows");
 // MOSA_E2E_ONLY=groups,trash runs only the named flows (built-in names: web,
 // electron, stack, trash; plugin flows use their exported name). Development
 // aid only — CI always runs everything.
+// Task 461: flows that need the REAL system clipboard declare it
+// (`export const systemClipboard = "flow" | "steps"`). Without
+// MOSA_E2E_SYSTEM_CLIPBOARD=1 the runner skips "flow" ones entirely and
+// "steps" ones skip those steps; naming a "flow" one explicitly refuses the
+// run instead of taking over the machine's clipboard. CI (desktop.yml e2e
+// jobs) sets the variable.
 const onlyFlows = new Set(String(process.env.MOSA_E2E_ONLY || "").split(",").map((name) => name.trim()).filter(Boolean));
 // Optional verdict sink for long native CI/local runs whose process output
 // cannot always be retained by the remote runner. Unset in ordinary CI.
@@ -85,6 +92,13 @@ if (wantsList) {
   for (const name of sortedSelectableNames.filter(selected)) console.log(name);
   process.exit(0);
 }
+// Task 461: system-clipboard flows only run where nobody is using the
+// clipboard (CI). Read once, up front; `true` deserves a loud warning even
+// on CI.
+const systemClipboardGranted = systemClipboardAllowed(process.env);
+if (systemClipboardGranted) {
+  console.log("[e2e] MOSA_E2E_SYSTEM_CLIPBOARD=1: system-clipboard flows will overwrite and clear the system clipboard — CI / unattended machines only");
+}
 const ELECTRON_QA_FLAGS = process.platform === "win32" ? ["--disable-gpu"] : [];
 const QA_CLIENT_TOKEN = "mosa_e2e_client_token_0123456789abcdefghijklmnop";
 
@@ -139,6 +153,9 @@ await Promise.all([
 ]);
 
 let verdict = { ok: false, storage: "sqlite", flows: [], restartVerified: false, error: "incomplete" };
+// Task 461: every system-clipboard flow/step this machine skipped, reported
+// in the verdict so a green run never silently drops clipboard coverage.
+const skippedSystemClipboard = [];
 try {
   const flowsRun = [];
   if (selected("web")) {
@@ -174,10 +191,10 @@ try {
   flowsRun.push(...await runPluginFlows());
 
   if (!flowsRun.length) throw new Error(`MOSA_E2E_ONLY matched no flow: ${[...onlyFlows].join(",")}`);
-  verdict = { ok: true, storage: "sqlite", flows: flowsRun, restartVerified: true };
+  verdict = { ok: true, storage: "sqlite", flows: flowsRun, restartVerified: true, skipped: skippedSystemClipboard, systemClipboard: systemClipboardGranted };
   console.log(JSON.stringify(verdict));
 } catch (error) {
-  verdict = { ok: false, storage: "sqlite", flows: [], restartVerified: false, error: String(error?.message || error) };
+  verdict = { ok: false, storage: "sqlite", flows: [], restartVerified: false, error: String(error?.message || error), skipped: skippedSystemClipboard, systemClipboard: systemClipboardGranted };
   throw error;
 } finally {
   if (resultFile) await writeFile(resultFile, `${JSON.stringify(verdict, null, 2)}\n`);
@@ -205,6 +222,18 @@ async function runPluginFlows() {
     }
     names.add(flow.name);
     if (!selected(flow.name)) continue;
+    // Task 461: a system-clipboard flow only runs where the clipboard is
+    // granted (CI). Skipped ones still show up in the verdict; naming one
+    // explicitly without the grant refuses instead of grabbing the clipboard.
+    const plan = systemClipboardPlan({ flow: flow.name, declared: flow.systemClipboard, allowed: systemClipboardGranted, explicitlyNamed: onlyFlows.has(flow.name) });
+    if (plan === "skip") {
+      console.log(`[e2e] flow ${flow.name} skipped: needs the real system clipboard (set MOSA_E2E_SYSTEM_CLIPBOARD=1 on CI only)`);
+      skippedSystemClipboard.push({ flow: flow.name, step: null, reason: "system-clipboard" });
+      continue;
+    }
+    if (plan === "refuse") {
+      throw new Error(`E2E flow ${flow.name} needs the real system clipboard; it only runs with MOSA_E2E_SYSTEM_CLIPBOARD=1 (CI). Refusing to take over this machine's clipboard.`);
+    }
     console.log(`[e2e] flow ${flow.name}: ${flow.description || file}`);
     const ctx = createFlowContext(flow.name);
     try {
@@ -234,6 +263,13 @@ function createFlowContext(flowName) {
     ...dirs,
     rootDir,
     token: QA_CLIENT_TOKEN,
+    // Task 461: whether the runner granted the real system clipboard; flows
+    // gate their clipboard steps on this and report skips through skipStep.
+    systemClipboard: systemClipboardGranted,
+    skipStep(label, reason) {
+      console.log(`[e2e] flow ${flowName} step skipped (${reason}): ${label}`);
+      skippedSystemClipboard.push({ flow: flowName, step: label, reason });
+    },
     // Failure report for every server this flow started: whether it is still
     // running or how and when it exited, whether the flow itself stopped it,
     // and the tail of its stderr/stdout.

@@ -98,6 +98,8 @@ jobs:
       - name: Run e2e shard ${{ matrix.shard }}
         env:
           MOSA_E2E_RESULT_FILE: ${{ github.workspace }}/e2e-verdict.json
+          # 任务 461：CI 机器没人用剪贴板，占用系统剪贴板的流程只在这里跑
+          MOSA_E2E_SYSTEM_CLIPBOARD: "1"
         run: |
           set -o pipefail
           npm run test:e2e -- --shard ${{ matrix.shard }} 2>&1 | tee e2e-output.log
@@ -149,6 +151,8 @@ jobs:
       - name: Run e2e shard ${{ matrix.shard }}
         env:
           MOSA_E2E_RESULT_FILE: ${{ github.workspace }}/e2e-verdict.json
+          # 任务 461：CI 机器没人用剪贴板，占用系统剪贴板的流程只在这里跑
+          MOSA_E2E_SYSTEM_CLIPBOARD: "1"
         shell: pwsh
         run: |
           npm run test:e2e -- --shard ${{ matrix.shard }} 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath e2e-output.log

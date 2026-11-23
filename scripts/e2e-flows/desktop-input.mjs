@@ -20,6 +20,10 @@ import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 
 export const name = "desktop-input";
 export const description = "real desktop window: trusted CDP input drives nav/cards/viewer/search/sort/settings/scroll/context-menu/keyboard; 56px top strip, no simulated traffic lights";
+// Task 461: exactly one step puts real files on the system clipboard
+// (write-clipboard-files bridge); without MOSA_E2E_SYSTEM_CLIPBOARD=1 that
+// one step skips loudly and everything else runs as usual.
+export const systemClipboard = "steps";
 
 const SEED_COUNT = 60;
 
@@ -102,6 +106,10 @@ export async function run(ctx) {
       const after = await cdp.evaluate(`window.__inputLog.filter((e) => e.trusted).length`);
       if (after <= before) throw new Error("no trusted input event reached the DOM during this step");
     };
+    // Task 461: a step that drives the REAL system clipboard only runs when
+    // the runner granted it; otherwise it is skipped loudly (the verdict
+    // records the skip).
+    const systemStep = (label, fn) => (ctx.systemClipboard ? step(label, fn) : ctx.skipStep(label, "system-clipboard"));
 
     await step("top strip is 56px with no simulated traffic lights", async () => {
       const layout = await cdp.evaluate(`(() => {
@@ -338,7 +346,7 @@ export async function run(ctx) {
 
     // Task 198: the real preload + main bridge puts several library files on
     // the system clipboard and refuses paths outside the library.
-    await step("write-clipboard-files puts library files on the system clipboard", async () => {
+    await systemStep("write-clipboard-files puts library files on the system clipboard", async () => {
       const page = await ctx.api(origin, "GET", "/api/assets?project=default&limit=2");
       const paths = (page.assets || []).map((asset) => asset.image_path).filter(Boolean);
       if (paths.length !== 2) throw new Error(`expected 2 library paths, got ${JSON.stringify(paths)}`);
