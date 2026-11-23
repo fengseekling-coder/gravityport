@@ -219,15 +219,16 @@ test("2. renders every state row with expected data-state, title, buttons, and A
     assert.equal(h.fetchCalls.length, 0, "legacy dev token never sends network probes");
   }
 
-  // outdated
+  // outdated（旧版 GravityPort：没有身份接口，但 /api/health 答是 GravityPort）
   {
     const h = await createOptionsHarness({
       storageLocal: [["mosaBaseUrl", BASE_URL], ["mosaToken", "tok-old"]],
-      fetchHandler: async (url) => (
-        new URL(url).pathname === "/api/web-capture/identity"
-          ? { ok: false, status: 404, json: async () => ({ error: "not found" }) }
-          : undefined
-      ),
+      fetchHandler: async (url) => {
+        const { pathname } = new URL(url);
+        if (pathname === "/api/web-capture/identity") return { ok: false, status: 404, json: async () => ({ error: "not found" }) };
+        if (url === `${BASE_URL}/api/health`) return { ok: true, status: 200, json: async () => ({ product: "mosa", productVersion: "0.2.9" }) };
+        return undefined;
+      },
     });
     assert.equal(h.elements.connection.dataset.state, "outdated");
     assert.equal(h.elements.connection.getAttribute("role"), "alert");
@@ -661,4 +662,102 @@ test("9. switches between English and Chinese based on chrome.i18n.getUILanguage
   const zhKeys = Object.keys(zh.strings.zh).sort();
   const enKeys = Object.keys(zh.strings.en).sort();
   assert.deepEqual(enKeys, zhKeys, "STRINGS.zh and STRINGS.en must have identical key sets");
+});
+
+// 10. 460 验收补：身份接口 404 时先问 /api/health 再下结论；同一地址健康却核不了身份不报「换了端口」；
+//     令牌不出现在页面文字里；等待批准期间设置变化不触发检查。
+test("10. identity 404 consults /api/health before saying outdated; healthy saved origin with a failed identity probe is an error, not moved; the token never reaches page text; storage changes during waiting do not re-check", async () => {
+  const health = (product, version = "0.3.17") => ({ ok: true, status: 200, json: async () => ({ product, productVersion: version }) });
+  const identity404 = { ok: false, status: 404, json: async () => ({ error: "Not found" }) };
+
+  // 404 + 存的地址上不是 GravityPort、五个端口也没有 → not-gravityport（不是「版本太旧」），也不带令牌发请求。
+  {
+    const h = await createOptionsHarness({
+      storageLocal: [["mosaBaseUrl", BASE_URL], ["mosaToken", "tok-404"]],
+      fetchHandler: async (url) => {
+        if (url === `${BASE_URL}/api/web-capture/identity`) return identity404;
+        if (url === `${BASE_URL}/api/health`) return { ok: false, status: 404, json: async () => ({}) };
+        return undefined;
+      },
+    });
+    assert.equal(h.elements.connection.dataset.state, "not-gravityport");
+    assert.ok(h.elements.connectionDetail.textContent.includes("127.0.0.1:43517"));
+    assert.ok(!h.fetchCalls.some((call) => JSON.stringify(call).toLowerCase().includes("authorization")), "no token is sent to a non-GravityPort listener");
+  }
+
+  // 404 + 存的地址上不是 GravityPort、另一个端口上有 → moved 到那个端口。
+  {
+    const h = await createOptionsHarness({
+      storageLocal: [["mosaBaseUrl", BASE_URL], ["mosaToken", "tok-404"]],
+      fetchHandler: async (url) => {
+        if (url === `${BASE_URL}/api/web-capture/identity`) return identity404;
+        if (url === `${BASE_URL}/api/health`) return health("something-else");
+        if (url === "http://127.0.0.1:43519/api/health") return health("mosa");
+        return undefined;
+      },
+    });
+    assert.equal(h.elements.connection.dataset.state, "moved");
+    assert.ok(h.elements.connectionDetail.textContent.includes("127.0.0.1:43519"));
+  }
+
+  // 404 + 存的地址上确实是 GravityPort → outdated。
+  {
+    const h = await createOptionsHarness({
+      storageLocal: [["mosaBaseUrl", BASE_URL], ["mosaToken", "tok-404"]],
+      fetchHandler: async (url) => {
+        if (url === `${BASE_URL}/api/web-capture/identity`) return identity404;
+        if (url === `${BASE_URL}/api/health`) return health("mosa", "0.2.9");
+        return undefined;
+      },
+    });
+    assert.equal(h.elements.connection.dataset.state, "outdated");
+  }
+
+  // 身份接口连不上、同一个地址的 /api/health 却答是 GravityPort → error（不说「换了端口」）。
+  {
+    const h = await createOptionsHarness({
+      storageLocal: [["mosaBaseUrl", BASE_URL], ["mosaToken", "tok-flaky"]],
+      fetchHandler: async (url) => (url === `${BASE_URL}/api/health` ? health("mosa") : undefined),
+    });
+    assert.equal(h.elements.connection.dataset.state, "error");
+    assert.equal(h.elements.connectionDetail.textContent, "无法完成检查（GravityPort 没有回应身份核验，稍后再试）。");
+  }
+
+  // 已连接时，令牌只在高级里的密码框里，任何元素的文字都不含它。
+  {
+    const token = "tok-secret-0000000000000000000000000000";
+    const h = await createOptionsHarness({
+      storageLocal: [["mosaBaseUrl", BASE_URL], ["mosaToken", token]],
+      fetchHandler: makeConnectedHandler(BASE_URL, token, "0.3.17"),
+    });
+    assert.equal(h.elements.connection.dataset.state, "connected");
+    assert.equal(h.elements.mosaToken.value, token);
+    for (const [id, element] of Object.entries(h.elements)) {
+      assert.ok(!String(element.textContent || "").includes(token), `#${id} text must not carry the token`);
+    }
+  }
+
+  // 等待批准期间 storage.onChanged（比如后台在写别的设置）不触发检查。
+  {
+    let releaseWait;
+    const waiting = await createOptionsHarness({
+      storageLocal: [["mosaBaseUrl", BASE_URL], ["mosaToken", ""]],
+      respond: async (msg) => (
+        msg?.type === "mosa.repairPairing"
+          ? new Promise((resolve) => { releaseWait = resolve; })
+          : undefined
+      ),
+      fetchHandler: async (url) => (url === `${BASE_URL}/api/health` ? health("mosa") : undefined),
+    });
+    waiting.click("connectionAction");
+    await waiting.flush();
+    assert.equal(waiting.elements.connection.dataset.state, "waiting");
+    const callsDuringWait = waiting.fetchCalls.length;
+    waiting.triggerStorageChange({ mosaBaseUrl: { oldValue: BASE_URL, newValue: "http://127.0.0.1:43518" } }, "local");
+    await waiting.flush();
+    assert.equal(waiting.fetchCalls.length, callsDuringWait, "no probes while waiting for approval");
+    assert.equal(waiting.elements.connection.dataset.state, "waiting");
+    releaseWait({ ok: false });
+    await waiting.flush();
+  }
 });

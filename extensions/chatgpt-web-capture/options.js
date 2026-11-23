@@ -71,6 +71,7 @@ const STRINGS = {
     invalidUrlError: "GravityPort 地址无效。",
     nonLocalUrlError: "地址必须是本机地址，例如 http://127.0.0.1:43517。",
     legacyTokenError: "该开发用令牌（Token）已失效。清空此项以自动连接，或填写 GravityPort 当前使用的令牌。",
+    identityUnreachable: "GravityPort 没有回应身份核验，稍后再试",
   },
   en: {
     docTitle: "GravityPort extension settings",
@@ -125,6 +126,7 @@ const STRINGS = {
     invalidUrlError: "Enter a valid GravityPort address.",
     nonLocalUrlError: "Use a local address, such as http://127.0.0.1:43517.",
     legacyTokenError: "This development token no longer works. Clear it to connect automatically, or enter the token GravityPort uses now.",
+    identityUnreachable: "GravityPort didn’t answer the identity check; try again in a moment",
   },
 };
 
@@ -641,19 +643,28 @@ async function evaluateConnection({ populateForm = false, overrideSettings = nul
       return { state: "reconnect" };
     }
     if (verdict === "outdated") {
-      return { state: "outdated" };
+      // 身份接口 404 只说明「这个地址不认识身份核验」：旧版 GravityPort 是这样，
+      // 占了这个端口的别的本机程序也是这样。先问 /api/health，确实是
+      // GravityPort 才算版本太旧；不是的话按「存的地址上没有 GravityPort」往下查，
+      // 免得叫用户去下载一个其实不需要的新版。
+      const savedHealth = await probeHealth(baseUrl);
+      if (savedHealth.isMosa) {
+        return { state: "outdated" };
+      }
     }
-    // verdict === "offline"
+    // verdict === "offline"，或 404 但这个地址上不是 GravityPort
     const { foundMosa, byOrigin } = await scanDiscoveryPorts(baseUrl);
     const savedHealth = byOrigin.get(baseUrl);
     if (foundMosa && foundMosa.origin !== baseUrl) {
       return { state: "moved", host: formatHost(foundMosa.origin) };
     }
-    if (!foundMosa && savedHealth?.reachable && !savedHealth.isMosa) {
-      return { state: "not-gravityport", host: formatHost(baseUrl) };
-    }
     if (foundMosa) {
-      return { state: "moved", host: formatHost(foundMosa.origin) };
+      // 存的地址健康检查答了是 GravityPort，身份核验却没连上：多半是瞬时的，
+      // 不能说「换了端口（现在还是同一个地址）」。
+      return { state: "error", detail: t("identityUnreachable") };
+    }
+    if (savedHealth?.reachable && !savedHealth.isMosa) {
+      return { state: "not-gravityport", host: formatHost(baseUrl) };
     }
     return { state: "offline" };
   }

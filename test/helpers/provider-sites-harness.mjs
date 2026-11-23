@@ -575,6 +575,22 @@ export function createProviderPolicyHarness() {
  */
 export async function createOptionsHarness(options = {}) {
   const clock = { now: options.clockStart ?? 1_700_000_000_000 };
+  // 460 验收：「页面安静了」不能靠数固定圈数（6 圈 setImmediate）——身份核验
+  // 的 HMAC 在别的线程里算，机器一忙就不够，状态还停在 checking。改成等在途
+  // 的 fetch 和 WebCrypto 运算都落地、再连续空转几圈。chrome.runtime 消息不算
+  // 在途：等待批准时测试故意让它一直挂着。
+  let pending = 0;
+  const trackPending = (promise) => {
+    pending += 1;
+    return Promise.resolve(promise).finally(() => { pending -= 1; });
+  };
+  const settle = async () => {
+    let idle = 0;
+    for (let round = 0; round < 5000 && idle < 6; round += 1) {
+      await setImmediate();
+      idle = pending === 0 ? idle + 1 : 0;
+    }
+  };
 
   const sandbox = {
     URL,
@@ -592,7 +608,15 @@ export async function createOptionsHarness(options = {}) {
     Uint8Array,
     Boolean,
     btoa: globalThis.btoa,
-    crypto: globalThis.crypto,
+    // 真 WebCrypto（HMAC 身份核验照真跑），但记下在途的运算：它在别的线程里
+    // 算，机器一忙就要好几圈事件循环才回来，settle() 要等它们都落地。
+    crypto: {
+      getRandomValues: (array) => globalThis.crypto.getRandomValues(array),
+      subtle: {
+        importKey: (...args) => trackPending(globalThis.crypto.subtle.importKey(...args)),
+        sign: (...args) => trackPending(globalThis.crypto.subtle.sign(...args)),
+      },
+    },
     AbortController: globalThis.AbortController,
     TextEncoder: globalThis.TextEncoder,
     navigator: { language: options.navigatorLanguage ?? "zh-CN" },
@@ -739,19 +763,19 @@ export async function createOptionsHarness(options = {}) {
     removeEventListener: (type, listener) => removeListener(winListeners, type, listener),
   };
   sandbox.chrome = chromeObj;
-  sandbox.fetch = async (url, init = {}) => {
+  sandbox.fetch = (url, init = {}) => trackPending((async () => {
     fetchCalls.push({ url: String(url), init });
     if (options.fetchHandler) {
       const custom = await options.fetchHandler(String(url), init);
       if (custom) return custom;
     }
     throw new Error("offline in this harness");
-  };
+  })());
 
   const context = vm.createContext(sandbox);
   vm.runInContext(optionsSource, context, { filename: "options.js" });
   if (options.autoFlush !== false) {
-    await flush();
+    await settle();
   }
 
   return {
@@ -802,6 +826,6 @@ export async function createOptionsHarness(options = {}) {
     advanceClock: (ms) => {
       clock.now += ms;
     },
-    flush,
+    flush: settle,
   };
 }
