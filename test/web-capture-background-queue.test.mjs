@@ -6,6 +6,7 @@
 // 7-day expiry — is exercised end to end.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 
@@ -1086,6 +1087,31 @@ test("a page content script cannot ask for a re-pair, but the extension's own pa
   assert.equal(fromOptions?.ok, true);
   assert.equal(fromOptions.settings.mosaToken, "paired-token");
   assert.equal(fromOptions.settings.mosaBaseUrl, BASE_URL);
+
+  // The real options page opens in a tab (options_ui.open_in_tab), so Chrome
+  // fills sender.tab; it is still the extension's own page (11-23: the button
+  // was rejected without a single request, so pairing never started).
+  const manifest = JSON.parse(await readFile(new URL("../extensions/chatgpt-web-capture/manifest.json", import.meta.url), "utf8"));
+  assert.equal(manifest.options_ui?.open_in_tab, true, "this test mirrors the shipped options page");
+  const fromOptionsTab = await harness.dispatchMessage({ type: "mosa.repairPairing" }, {
+    id: RUNTIME_ID,
+    url: `chrome-extension://${RUNTIME_ID}/options.html`,
+    tab: { id: 42, url: `chrome-extension://${RUNTIME_ID}/options.html` },
+    frameId: 0,
+  });
+  assert.equal(fromOptionsTab?.ok, true, "the options page in its tab can re-pair");
+  assert.equal(fromOptionsTab.settings.mosaToken, "paired-token");
+
+  // A content script in a tab still reports the web page URL and stays refused,
+  // even when it claims the extension's id.
+  const spoofedPage = await harness.dispatchMessage({ type: "mosa.repairPairing" }, {
+    id: RUNTIME_ID,
+    url: CHATGPT_TAB_URL,
+    tab: { id: 7, url: CHATGPT_TAB_URL },
+    frameId: 0,
+  });
+  assert.equal(spoofedPage?.ok, false);
+  assert.match(spoofedPage.error, /unsupported sender/);
 });
 
 test("discovery probes each port with a 3 s budget, and a cold start that answers late still pairs", async () => {

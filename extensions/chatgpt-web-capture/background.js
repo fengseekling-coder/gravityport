@@ -168,8 +168,13 @@ function providerForPageUrl(value) {
   return globalThis.MosaProviderPolicy?.providerForPageUrl(value) || "";
 }
 
+// The extension's own pages (options, popup). The options page opens in a tab
+// (options_ui.open_in_tab), so sender.tab is no reason to refuse: what tells
+// an extension page from a content script is the sender URL — a content
+// script reports the web page's URL, never chrome-extension://<this id>/.
+// (Refusing on sender.tab silently broke the options page's 「重新配对」.)
 function extensionPageSender(sender) {
-  if (!sender || sender.id !== chrome.runtime.id || sender.tab) return false;
+  if (!sender || sender.id !== chrome.runtime.id) return false;
   return String(sender.url || "").startsWith(`chrome-extension://${chrome.runtime.id}/`);
 }
 
