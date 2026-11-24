@@ -345,7 +345,7 @@ GET  /api/generations/:generationId/lineage
 
 `GET /api/generations` 可按 `project`、`asset`、`captureContext`、`providerToolCallId`、`providerGenerationCallId` 过滤。`PATCH /api/generation-relations` 可修正用户可管理的关系类型，`DELETE /api/generation-relations` 可解除错误关系；`provider_verified` 关系不能通过这些公共管理接口修改或删除。HTTP API 与 MCP 使用相同的 verification 规则。
 
-资产检视器会把已确认的 Generation Relation 和“可能相关但尚未确认”的生成分开显示。ChatGPT Relation Resolver 会结合 conversation、生成先后、修改型提示词、参考图/provider asset 等信号保存 `relation_candidates` 和置信度，但不会仅凭这些线索自动写入版本树。用户可以对候选点「确认关系」或「忽略候选」，也可以用「添加生成关系」在同一对话里手动选另一张图、关系方向（「关联项为上游 / 下游」）和关系类型，再点「确认添加」；只有显式确认后才以 `user_confirmed` 关系进入生成谱系。被忽略的候选保留 dismissed 状态，后续解析不会反复建议同一对关系。点生成树里的行可以跳到对应输出素材；非 `provider_verified` 的关系可以改类型后「保存关系」或「删除关系」，`provider_verified` 关系显示「提供方验证关系不可修改」。
+资产检视器会把已确认的 Generation Relation 和“可能相关但尚未确认”的生成分开显示。ChatGPT Relation Resolver 会结合 conversation、生成先后、修改型提示词、参考图/provider asset 等信号保存 `relation_candidates` 和置信度，但不会仅凭这些线索自动写入版本树。用户可以对候选点「确认关系」或「忽略候选」，也可以用「添加生成关系」在同一对话里手动选另一张图、关系方向（「关联项为上游 / 下游」）和关系类型，再点「确认添加」；只有显式确认后才以 `user_confirmed` 关系进入生成谱系。被忽略的候选保留 dismissed 状态，后续解析不会反复建议同一对关系。Lovart 网页收录是例外：当新图使用的底图已在同一素材库里作为 Lovart 收录图片存在时，入库会按底图编号自动写入一条 `observed` 的「改自」关系，无需手动确认；这条关系可以改类型或删除，删除后不会再自动连回。点生成树里的行可以跳到对应输出素材；非 `provider_verified` 的关系可以改类型后「保存关系」或「删除关系」，`provider_verified` 关系显示「提供方验证关系不可修改」。
 
 ## 健康检查与维护
 

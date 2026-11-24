@@ -2241,6 +2241,15 @@ function base64ToBytes(value) {
 }
 
 function captureRequestPayload(payload, { mediaKind, mimeType, mediaUrl = "", finalMediaUrl = "", provider } = {}) {
+  const rawReferenceProviderAssetIds = payload.referenceProviderAssetIds;
+  const referenceProviderAssetIds = Array.isArray(rawReferenceProviderAssetIds)
+    ? rawReferenceProviderAssetIds
+      .filter((item) => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => item.slice(0, 160))
+      .slice(0, 8)
+    : undefined;
   return {
     provider,
     prompt: payload.prompt || "",
@@ -2269,6 +2278,7 @@ function captureRequestPayload(payload, { mediaKind, mimeType, mediaUrl = "", fi
     providerGenerationCallId: payload.providerGenerationCallId || "",
     providerResponseId: payload.providerResponseId || "",
     providerAssetId: payload.providerAssetId || "",
+    ...(referenceProviderAssetIds !== undefined ? { reference_provider_asset_ids: referenceProviderAssetIds } : {}),
     model: payload.model || "",
     captureMode: payload.captureMode === "manual" ? "manual" : "automatic",
     capturedAt: payload.capturedAt || new Date().toISOString(),

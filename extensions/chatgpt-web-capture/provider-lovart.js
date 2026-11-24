@@ -814,6 +814,11 @@ function friendlyCaptureError(message) {
 
   function basePayload(record) {
     const prompt = record.prompt || "";
+    const referenceProviderAssetIds = [];
+    for (const referenceUrl of record.referenceUrls || []) {
+      const refId = referenceIdForUrl(referenceUrl);
+      if (refId && !referenceProviderAssetIds.includes(refId)) referenceProviderAssetIds.push(refId);
+    }
     return {
       provider: "lovart",
       mediaKind: "image",
@@ -832,6 +837,7 @@ function friendlyCaptureError(message) {
       generationContextId: record.messageId || "",
       messageId: record.messageId || "",
       providerAssetId: record.providerAssetId || "",
+      referenceProviderAssetIds,
       generationStatus: "completed",
       imageUrl: record.mediaUrl,
       width: record.width || 0,
@@ -1045,6 +1051,13 @@ function friendlyCaptureError(message) {
   function manualPayload(mediaUrl, learned) {
     const info = mediaUrlInfo(mediaUrl);
     const prompt = learned?.prompt || "";
+    const referenceProviderAssetIds = [];
+    if (learned) {
+      for (const referenceUrl of learned.referenceUrls || []) {
+        const refId = referenceIdForUrl(referenceUrl);
+        if (refId && !referenceProviderAssetIds.includes(refId)) referenceProviderAssetIds.push(refId);
+      }
+    }
     return {
       provider: "lovart",
       mediaKind: "image",
@@ -1063,6 +1076,7 @@ function friendlyCaptureError(message) {
       generationContextId: learned?.messageId || "",
       messageId: learned?.messageId || "",
       providerAssetId: learned?.providerAssetId || info?.id || "",
+      ...(learned ? { referenceProviderAssetIds } : {}),
       generationStatus: "completed",
       // A learned record carries the full-size URL; the clicked thumbnail may
       // be the same image behind resize query parameters.

@@ -169,7 +169,7 @@ Generation Event，而不是复用 `parent_asset_id`。普通 HTTP/MCP 调用方
 修改语义、参考图/provider asset 等信号会形成置信度与 evidence，但不会直接写入版本树。
 候选可以被用户确认或忽略，用户也可以手动添加关系；确认后才通过 Generation
 Relation 写入 `user_confirmed` 边，被否决的候选会持久化为 dismissed，后续解析不会反复
-弹回。公共管理面可以创建、修改或删除非 `provider_verified` 关系，官方验证关系保持只读。
+弹回。公共管理面可以创建、修改或删除非 `provider_verified` 关系，官方验证关系保持只读。Lovart 网页收录是例外：Lovart 在页面数据里写明了每张生成图使用的底图编号（`ref:<X>`），入库时若同一项目里已有对应编号的 Lovart 网页生成记录，会自动写入一条 `observed` 的 `edited_from` 关系（并同步记一条 `confirmed` 候选）；该关系可在界面改类型或删除，删除后候选翻为 `dismissed`，后续重收不再自动连回。
 
 服务声明的 MCP server version 为 `0.2.0`；产品版本仍以 `package.json` 为准。
 
@@ -679,6 +679,7 @@ Codex、Grok、Cowart 和手动导入不写。
   `source.duplicated_from` / `versioned_from`，HTTP `/duplicate` `/versions` 与 MCP 可建。
 - **智能堆叠**：`asset_stacks`（origin `auto` / `manual`）；同会话满 2 张自动建堆。
 - **版本树候选**：`generation_relation_candidates`，只对同对话打分，用户确认才成为实线关系。
+- **Lovart 底图关系**：`generation_relations`，Lovart 网页收图入库时按底图编号（`ref:<X>` 精确匹配同项目 Lovart 记录的 `provider_asset_id`）自动写入 `observed` 的 `edited_from` 关系，并同步记 `confirmed` 候选；可改可删，删后记 `dismissed` 不再自动连回。
 
 ### 8.3 元数据谁说了算
 
@@ -739,7 +740,7 @@ image」），只跟着真升级的提示词重算，且永不覆盖用户改过
 | 待整理 | 没整理过的图（定义见 `lib/asset-organized.mjs`）；自动堆叠不算整理，按堆叠成一张卡 | 算出来；「标为已整理」 | — |
 | 收藏 | `favorite = 1` 或 `rating > 0` | 手动心形；打分只有 MCP 能写 | — |
 | 标签 | `tags` / `asset_tags` | 手动；系统标签隐藏 | 多个 |
-| 版本树 | 对话轮次（推算）、确认关系 `generation_relations`、候选关系、版本历史 `parent_asset_id` | 手动确认 / 自动猜 / MCP 与 HTTP | 多对多（现状） |
+| 版本树 | 对话轮次（推算）、确认关系 `generation_relations`、候选关系、版本历史 `parent_asset_id` | 手动确认 / 自动猜 / Lovart 按底图编号自动连 / MCP 与 HTTP | 多对多（现状） |
 | 归档 | `assets.archived = 1`（历史残留，373 后由一次性修复挪进回收站） | 历史 MCP 与 HTTP | 界面没有入口和视图 |
 | 项目 | `project_id` | MCP / HTTP | 一张图 1 个 |
 

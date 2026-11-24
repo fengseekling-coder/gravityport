@@ -20,6 +20,9 @@ function readVersionCanvasEntry(): boolean {
 // 仅在开发模式或写入 localStorage "gravityport.dev.version-canvas"="1" 时开启。
 export const VERSION_CANVAS_ENTRY: boolean = readVersionCanvasEntry()
 
+// Keep in sync with LOVART_BASE_IMAGE_RESOLVER in lib/generation-history.mjs.
+export const LOVART_BASE_IMAGE_RESOLVER = "lovart-base-image-v1"
+
 export type CanvasMark = {
   x: number
   y: number
@@ -213,10 +216,14 @@ export function canvasFromHistory(
     })
   }
   for (const relation of [...(history?.relations || []), ...(history?.context_relations || [])]) {
+    const isLovartAutoBaseImage =
+      relation.verification_level === "observed" &&
+      relation.evidence?.resolver === LOVART_BASE_IMAGE_RESOLVER
     if (
       !["provider_verified", "user_confirmed"].includes(
         relation.verification_level || "",
-      )
+      ) &&
+      !isLovartAutoBaseImage
     )
       continue
     addEdge({
