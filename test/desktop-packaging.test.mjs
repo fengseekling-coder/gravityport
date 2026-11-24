@@ -12,6 +12,8 @@ import forgeConfig, {
   macReleasePackagingConfig,
   packageIgnorePatterns,
   packageIgnorePatternsForTarget,
+  runtimeDependencyClosure,
+  shippedRuntimePackages,
   preparePackagedRuntime,
   resolveDesktopPackagingTarget,
   windowsReleasePackagingConfig,
@@ -307,6 +309,37 @@ test("both targets copy the generated license and browser extension folders into
   }
   assert.equal(resolveDesktopPackagingTarget({ platform: "darwin", env: {}, argv: [] }).libvipsPackage, "sharp-libvips-darwin-arm64");
   assert.equal(resolveDesktopPackagingTarget({ platform: "win32", env: {}, argv: [] }).libvipsPackage, "sharp-win32-x64");
+});
+
+test("app.asar allowlist is the runtime dependency closure, without types, maps or the SDK's sources", () => {
+  // 463 added @anthropic-ai/sdk while the hand-kept list stayed at
+  // better-sqlite3 + sharp, so an installed app could not have started.
+  const closure = runtimeDependencyClosure();
+  for (const name of ["@anthropic-ai/sdk", "@opentelemetry/api", "standardwebhooks", "better-sqlite3", "sharp"]) {
+    assert.ok(closure.includes(name), `${name} is a runtime package`);
+  }
+  assert.equal(shippedRuntimePackages().includes("node-addon-api"), false, "build-only packages are removed after pruning");
+  for (const platform of ["darwin", "win32"]) {
+    const target = resolveDesktopPackagingTarget({ platform, env: {}, argv: [] });
+    const patterns = packageIgnorePatternsForTarget(target);
+    const ignored = (path) => patterns.some((pattern) => pattern.test(path));
+    for (const name of closure) {
+      assert.equal(ignored(`/node_modules/${name}/package.json`), false, `${name} ships on ${platform}`);
+    }
+    assert.equal(ignored("/node_modules/@anthropic-ai"), false);
+    assert.equal(ignored("/node_modules/@anthropic-ai/sdk/client.mjs"), false);
+    assert.equal(ignored("/node_modules/@anthropic-ai/sdk/client.d.mts"), true);
+    assert.equal(ignored("/node_modules/@anthropic-ai/sdk/client.mjs.map"), true);
+    assert.equal(ignored("/node_modules/@anthropic-ai/sdk/src/client.ts"), true);
+    assert.equal(ignored("/node_modules/@anthropic-ai/sdk/bin/cli"), true);
+    // Packages outside the closure stay out (zod is the SDK's optional peer).
+    assert.equal(ignored("/node_modules/zod/package.json"), true);
+  }
+  const injected = packageIgnorePatternsForTarget(
+    resolveDesktopPackagingTarget({ platform: "darwin", arch: "arm64", env: {}, argv: [] }),
+    { runtimePackages: ["better-sqlite3"] },
+  );
+  assert.equal(injected.some((pattern) => pattern.test("/node_modules/@anthropic-ai/sdk/package.json")), true);
 });
 
 test("Windows Forge config omits mac signing and selects Windows native runtime packages", () => {

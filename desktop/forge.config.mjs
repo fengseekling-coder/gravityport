@@ -2,6 +2,7 @@ import { MakerZIP } from "@electron-forge/maker-zip";
 import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
+import { readFileSync } from "node:fs";
 import { access, copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -298,12 +299,83 @@ export async function preparePackagedRuntime(buildPath, target = resolveDesktopP
   await writeFile(manifestPath, `${JSON.stringify(runtimeManifest, null, 2)}\n`);
 }
 
+/**
+ * Every package the shipped code can load: the production dependency closure
+ * of package.json "dependencies", read from the installed tree (a nested copy
+ * under a package's own node_modules ships with that package). The app.asar
+ * allowlist and the packaged-runtime verifier both derive from it, so a new
+ * runtime dependency cannot be left out silently. 463 added the Claude SDK
+ * while the old hand-kept list stayed at better-sqlite3 + sharp; the packaged
+ * smoke still passed because out/ sits inside the repository and Node's module
+ * lookup climbed into the repository's node_modules — an installed app would
+ * have failed to start.
+ */
+export function runtimeDependencyClosure({ projectRoot = DESKTOP_PROJECT_ROOT } = {}) {
+  const readManifest = (dir) => JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+  const topLevel = new Set();
+  const seenDirs = new Set();
+  const pending = Object.keys(readManifest(projectRoot).dependencies || {})
+    .map((name) => ({ name, fromDir: projectRoot }));
+  while (pending.length) {
+    const { name, fromDir } = pending.pop();
+    const nestedDir = join(fromDir, "node_modules", ...name.split("/"));
+    const hoistedDir = join(projectRoot, "node_modules", ...name.split("/"));
+    let dir = hoistedDir;
+    if (fromDir !== projectRoot) {
+      try {
+        readManifest(nestedDir);
+        dir = nestedDir;
+      } catch { /* hoisted */ }
+    }
+    if (seenDirs.has(dir)) continue;
+    seenDirs.add(dir);
+    let manifest;
+    try {
+      manifest = readManifest(dir);
+    } catch (error) {
+      throw new Error(`Runtime dependency ${name} is not installed under node_modules; run npm ci before packaging.`, { cause: error });
+    }
+    if (dir === hoistedDir) topLevel.add(name);
+    for (const dependency of Object.keys(manifest.dependencies || {})) pending.push({ name: dependency, fromDir: dir });
+  }
+  return [...topLevel].sort();
+}
+
+/** Runtime packages that must be present in app.asar (build-only ones are removed after pruning). */
+export function shippedRuntimePackages({ projectRoot = DESKTOP_PROJECT_ROOT } = {}) {
+  const removed = new Set(COMMON_BUILD_ONLY_RUNTIME_PATHS);
+  return runtimeDependencyClosure({ projectRoot }).filter((name) => !removed.has(`node_modules/${name}`));
+}
+
+function nodeModulesAllowPattern(packageNames) {
+  const unscoped = [];
+  const scoped = new Map();
+  for (const name of [...new Set(packageNames)].sort()) {
+    if (name.startsWith("@")) {
+      const [scope, packageName] = name.split("/");
+      if (!scoped.has(scope)) scoped.set(scope, []);
+      scoped.get(scope).push(packageName);
+    } else {
+      unscoped.push(name);
+    }
+  }
+  const allowed = [];
+  if (unscoped.length) allowed.push(`(?:${unscoped.map(escapeRegex).join("|")})(?:/|$)`);
+  // The packager matches directory entries too, so the bare scope folder stays allowed.
+  for (const [scope, packageNames] of scoped) {
+    allowed.push(`${escapeRegex(scope)}(?:/(?:${packageNames.map(escapeRegex).join("|")})(?:/|$)|$)`);
+  }
+  return new RegExp(`^/node_modules/(?!${allowed.join("|")}).+`);
+}
+
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function packageIgnorePatternsForTarget(target = resolveDesktopPackagingTarget()) {
-  const allowedImagePackages = ["colour", ...target.sharpPackages].map(escapeRegex).join("|");
+export function packageIgnorePatternsForTarget(
+  target = resolveDesktopPackagingTarget(),
+  { runtimePackages = runtimeDependencyClosure() } = {},
+) {
   return [
   // The desktop bundle has one runtime surface plus the MCP server. Everything else at the
   // repository root is development, documentation, or another distribution.
@@ -322,7 +394,12 @@ export function packageIgnorePatternsForTarget(target = resolveDesktopPackagingT
   /^\/desktop\/(?:forge\.config\.mjs|icon-assets\.mjs|entitlements\.mac\.plist)$/,
   /^\/lib\/.*(?:\.ts|\.js\.map)$/,
   /^\/node_modules\/\.package-lock\.json$/,
-  new RegExp(`^/node_modules/(?!(?:better-sqlite3|detect-libc|node-addon-api|semver|sharp)(?:/|$)|@img(?:/(?:${allowedImagePackages})(?:/|$)|$)).+`),
+  // Runtime packages only: the dependency closure plus this target's Sharp
+  // natives (optional dependencies, so not in the closure).
+  nodeModulesAllowPattern([...runtimePackages, ...target.sharpPackages.map((name) => `@img/${name}`)]),
+  // Type declarations, source maps and the SDK's TypeScript sources and CLI never load at runtime.
+  /^\/node_modules\/.+\.(?:map|d\.[cm]?ts)$/,
+  /^\/node_modules\/@anthropic-ai\/sdk\/(?:src|bin)(?:\/|$)/,
   ];
 }
 

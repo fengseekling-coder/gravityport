@@ -177,6 +177,12 @@ describe("package licenses", () => {
     const lgpl = await readPackageLicense(await writePackage(modules, "b", { license: "LGPL-3.0-or-later", licenseFile: null }));
     assert.equal(lgpl.text, null);
     await assert.rejects(readPackageLicense(await writePackage(modules, "c", { licenseFile: null })), /c@1\.0\.0 has no license file \(license: MIT\)/);
+    // A package without a license file uses the text kept in the repository for it.
+    const projectRoot = await freshDir("project");
+    await writeFixture(projectRoot, "desktop/licenses/packages/c.txt", "Upstream Apache-2.0 text\n");
+    const kept = await readPackageLicense(await writePackage(modules, "c", { licenseFile: null }), { projectRoot });
+    assert.equal(kept.text, "Upstream Apache-2.0 text");
+    assert.equal(kept.license, "MIT");
   });
 
   it("reports every package without a license in one error", async () => {
