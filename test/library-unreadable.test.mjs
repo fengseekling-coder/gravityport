@@ -152,9 +152,13 @@ test("a lock held past the retry budget reports SQLITE_LIBRARY_BUSY in about 3 s
   assert.match(records[0], /SQLITE_BUSY/);
 
   // 锁放掉之后，同样的调用恢复正常返回 true，也不再记失败日志。
+  // 先挂上 exit 再叫它放锁：worker 发完 "released" 立刻退出，机器一忙 exit
+  // 会赶在 `await released` 之后的那一拍之前到，晚挂的 once(exit) 就永远等不到，
+  // 事件循环空了整个文件被取消（PR #357 第四轮 verify）。
+  const exited = once(worker, "exit");
   worker.postMessage("release");
   await released;
-  await once(worker, "exit");
+  await exited;
   const { result, records: recordsAfterRelease } = withCapturedConsoleError(() => hasCompletedSqliteLibrary(libraryDir));
   assert.equal(result, true);
   assert.deepEqual(recordsAfterRelease, []);
