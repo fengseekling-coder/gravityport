@@ -448,6 +448,51 @@ test("resolveLovartBaseImageRelations covers forward, reverse, multi-parent, gua
   assert.equal(earliest.relations.length, 1);
   assert.equal(earliest.relations[0].parent_generation_id, "gen-p0");
   assert.equal(earliest.relations[0].child_generation_id, "gen-c1-a");
+
+  // Two library copies of one Lovart image (same number, different assets):
+  // only the earliest copy becomes the parent, in either arrival order.
+  const parentCopy = { ...parent1, id: "gen-p1-copy", output_asset_id: "asset-p1-copy", created_at: "2026-11-24T09:02:00.000Z" };
+  const copiesForward = resolveLovartBaseImageRelations({
+    projectId: "default",
+    changedEvent: child1,
+    events: [parentCopy, parent1, child1],
+    relations: [],
+    candidates: [],
+    now,
+  });
+  assert.deepEqual(copiesForward.relations.map((item) => item.parent_generation_id), ["gen-p1"]);
+  const laterCopyArrives = resolveLovartBaseImageRelations({
+    projectId: "default",
+    changedEvent: parentCopy,
+    events: [parent1, child1, parentCopy],
+    relations: copiesForward.relations,
+    candidates: copiesForward.candidates,
+    now,
+  });
+  assert.equal(laterCopyArrives.relations.length, 0);
+  // An older copy that lands after the child was already linked to a newer
+  // copy does not become a second parent for the same number.
+  const olderCopy = { ...parent1, id: "gen-p1-older", output_asset_id: "asset-p1-older", created_at: "2026-11-24T08:00:00.000Z" };
+  const linkedToP1 = copiesForward.relations;
+  const olderCopyArrives = resolveLovartBaseImageRelations({
+    projectId: "default",
+    changedEvent: olderCopy,
+    events: [parent1, child1, olderCopy],
+    relations: linkedToP1,
+    candidates: copiesForward.candidates,
+    now,
+  });
+  assert.equal(olderCopyArrives.relations.length, 0);
+  // Nor after the user dismissed the link to the first copy.
+  const dismissedThenCopy = resolveLovartBaseImageRelations({
+    projectId: "default",
+    changedEvent: olderCopy,
+    events: [parent1, child1, olderCopy],
+    relations: [],
+    candidates: copiesForward.candidates.map((item) => ({ ...item, status: "dismissed" })),
+    now,
+  });
+  assert.equal(dismissedThenCopy.relations.length, 0);
 });
 
 // ---- 2. Both stores (JSON & SQLite) via recordGenerationEvent ----
@@ -640,6 +685,79 @@ for (const [storeName, createStore] of [
       cycHist.relations.some((r) => r.child_generation_id === cycNode.id && r.parent_generation_id === child2.id),
       false,
       "cycle relation must be skipped without throwing",
+    );
+  });
+
+  test(`${storeName} store links only Lovart parents: a non-Lovart image with the same number is ignored, and of two Lovart copies only the earliest is the parent`, async (t) => {
+    const root = await mkdtemp(join(tmpdir(), `mosa-lovart-copies-${storeName.toLowerCase()}-`));
+    deferTestPathRemoval(root, { recursive: true, force: true });
+    let store;
+    t.after(() => { store?.close?.(); });
+    await mkdir(join(root, "input"), { recursive: true });
+    store = createStore(root);
+    await store.ensureProject("default");
+    const assets = [];
+    for (let i = 0; i < 5; i += 1) {
+      const p = join(root, "input", `img-${i + 1}.jpg`);
+      await writeFile(p, await noiseImage(40 + i, 320, 320));
+      assets.push(await store.createAsset({ projectId: "default", assetId: `copies-a${i + 1}`, imagePath: p }));
+    }
+
+    // A Jimeng image whose own number happens to equal the Lovart reference.
+    await store.recordGenerationEvent({
+      project_id: "default",
+      output_asset_id: assets[0].id,
+      id: "gen-jimeng-same-number",
+      provider: "jimeng",
+      capture_channel: "chrome-extension",
+      provider_asset_id: "SharedNumber1",
+      created_at: "2026-11-24T07:00:00.000Z",
+    });
+    await store.recordGenerationEvent({
+      project_id: "default",
+      output_asset_id: assets[1].id,
+      id: "gen-lovart-child-of-shared",
+      provider: "lovart",
+      capture_channel: "chrome-extension",
+      provider_asset_id: "LovartChildShared",
+      references: [{ provider_asset_id: "ref:SharedNumber1" }],
+      created_at: "2026-11-24T07:01:00.000Z",
+    });
+    assert.equal((await store.getAssetGenerationHistory("default", assets[1].id)).relations.length, 0);
+
+    // Two Lovart copies of one image (full-size capture + resized manual save).
+    const firstCopy = await store.recordGenerationEvent({
+      project_id: "default",
+      output_asset_id: assets[2].id,
+      id: "gen-copy-first",
+      provider: "lovart",
+      capture_channel: "chrome-extension",
+      provider_asset_id: "LovartBase1",
+      created_at: "2026-11-24T07:10:00.000Z",
+    });
+    const child = await store.recordGenerationEvent({
+      project_id: "default",
+      output_asset_id: assets[3].id,
+      id: "gen-copy-child",
+      provider: "lovart",
+      capture_channel: "chrome-extension",
+      provider_asset_id: "LovartEdit1",
+      references: [{ provider_asset_id: "ref:LovartBase1" }],
+      created_at: "2026-11-24T07:12:00.000Z",
+    });
+    await store.recordGenerationEvent({
+      project_id: "default",
+      output_asset_id: assets[4].id,
+      id: "gen-copy-second",
+      provider: "lovart",
+      capture_channel: "chrome-extension",
+      provider_asset_id: "LovartBase1",
+      created_at: "2026-11-24T07:15:00.000Z",
+    });
+    const hist = await store.getAssetGenerationHistory("default", assets[3].id);
+    assert.deepEqual(
+      hist.relations.map((item) => [item.child_generation_id, item.parent_generation_id]),
+      [[child.id, firstCopy.id]],
     );
   });
 }
