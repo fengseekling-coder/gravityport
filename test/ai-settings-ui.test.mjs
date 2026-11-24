@@ -1,6 +1,6 @@
 // AI settings UI pure functions (task 468): visibleServiceIds, addableServices,
 // connectedServiceIds, modelGroups, analysisCostMultiple, priceWithoutMonth,
-// formatMonthUsd, testPurposeFor, and useRowNote. The real TypeScript module
+// formatMonthUsd, testPurposeFor, and rowNoteFor. The real TypeScript module
 // (web/gravityport/src/ai-settings-model.ts) is compiled with tsc and imported
 // directly — nothing is hand-copied.
 import { execFileSync } from "node:child_process";
@@ -23,7 +23,8 @@ let analysisCostMultiple;
 let priceWithoutMonth;
 let formatMonthUsd;
 let testPurposeFor;
-let useRowNote;
+let rowNoteFor;
+let slotChoiceFor;
 
 before(async () => {
   const compileRoot = await mkdtemp(join(tmpdir(), "mosa-ai-settings-ui-"));
@@ -46,7 +47,8 @@ before(async () => {
     priceWithoutMonth,
     formatMonthUsd,
     testPurposeFor,
-    useRowNote,
+    rowNoteFor,
+    slotChoiceFor,
   } = mod);
   after(async () => {
     await rm(compileRoot, { recursive: true, force: true });
@@ -227,7 +229,8 @@ describe("ai-settings-model: modelGroups", () => {
             ok: true,
             code: "ok",
             at: "2026-11-24T00:00:00Z",
-            models: ["flow-model-a", "flow-model-b"],
+            // gpt-image-2 is a catalog image model: it must not show up under analysis.
+            models: ["flow-model-a", "flow-model-b", "gpt-image-2"],
           },
         },
       ],
@@ -389,13 +392,13 @@ describe("ai-settings-model: priceWithoutMonth, formatMonthUsd, testPurposeFor",
   });
 });
 
-describe("ai-settings-model: useRowNote", () => {
+describe("ai-settings-model: rowNoteFor", () => {
   it("returns each of the seven note kinds with expected tone and params", () => {
     // 1. no-key
     const noKeyState = makeState({
       slots: { brain: { serviceId: "claude", model: "claude-haiku-5-5" } },
     });
-    assert.deepEqual(useRowNote(noKeyState, "brain"), {
+    assert.deepEqual(rowNoteFor(noKeyState, "brain"), {
       kind: "no-key",
       tone: "danger",
       params: { serviceId: "claude", service: "Claude" },
@@ -412,7 +415,7 @@ describe("ai-settings-model: useRowNote", () => {
       },
       slots: { image: { serviceId: "openai", model: "gpt-image-2" } },
     });
-    assert.deepEqual(useRowNote(testFailedState, "image"), {
+    assert.deepEqual(rowNoteFor(testFailedState, "image"), {
       kind: "test-failed",
       tone: "danger",
       params: { serviceId: "openai", service: "OpenAI" },
@@ -423,19 +426,19 @@ describe("ai-settings-model: useRowNote", () => {
       servicePatches: { openai: { hasKey: true, last4: "x9Lm" } },
       slots: { analysis: { serviceId: "openai", model: "gpt-5-nano", summaryModel: "gpt-5-mini" } },
     });
-    assert.deepEqual(useRowNote(unsupportedState, "analysis"), {
+    assert.deepEqual(rowNoteFor(unsupportedState, "analysis"), {
       kind: "learning-unsupported",
       tone: "danger",
       params: { service: "OpenAI" },
     });
-    assert.equal(useRowNote(unsupportedState, "summary"), null);
+    assert.equal(rowNoteFor(unsupportedState, "summary"), null);
 
     // 4. analysis-expensive
     const expensiveState = makeState({
       servicePatches: { claude: { hasKey: true, last4: "7Q2F" } },
       slots: { analysis: { serviceId: "claude", model: "claude-sonnet-5-5", summaryModel: "claude-sonnet-5-5" } },
     });
-    assert.deepEqual(useRowNote(expensiveState, "analysis"), {
+    assert.deepEqual(rowNoteFor(expensiveState, "analysis"), {
       kind: "analysis-expensive",
       tone: "danger",
       params: { n: "20", reference: "Claude Haiku 5.5", referenceId: "claude-haiku-5-5" },
@@ -448,7 +451,7 @@ describe("ai-settings-model: useRowNote", () => {
       ],
       slots: { analysis: { serviceId: "custom-c", model: "claude-haiku-5-5", summaryModel: "claude-opus-5-5" } },
     });
-    assert.deepEqual(useRowNote(learningUnknownState, "summary"), {
+    assert.deepEqual(rowNoteFor(learningUnknownState, "summary"), {
       kind: "learning-unknown-price",
       tone: "danger",
       params: { model: "claude-opus-5-5" },
@@ -461,7 +464,7 @@ describe("ai-settings-model: useRowNote", () => {
       ],
       slots: { brain: { serviceId: "custom-c", model: "claude-opus-5-5" } },
     });
-    assert.deepEqual(useRowNote(brainUnknownState, "brain"), {
+    assert.deepEqual(rowNoteFor(brainUnknownState, "brain"), {
       kind: "unknown-price",
       tone: "info",
       params: { model: "claude-opus-5-5" },
@@ -472,7 +475,7 @@ describe("ai-settings-model: useRowNote", () => {
       servicePatches: { claude: { hasKey: true, last4: "7Q2F" } },
       slots: { analysis: { serviceId: "claude", model: "claude-haiku-5-5", summaryModel: "claude-sonnet-5-5" } },
     });
-    assert.deepEqual(useRowNote(claudeOnlyState, "image"), {
+    assert.deepEqual(rowNoteFor(claudeOnlyState, "image"), {
       kind: "image-needs-service",
       tone: "info",
       params: {},
@@ -483,7 +486,7 @@ describe("ai-settings-model: useRowNote", () => {
     const noKeyAndExpensive = makeState({
       slots: { analysis: { serviceId: "claude", model: "claude-sonnet-5-5", summaryModel: "claude-sonnet-5-5" } },
     });
-    assert.equal(useRowNote(noKeyAndExpensive, "analysis")?.kind, "no-key");
+    assert.equal(rowNoteFor(noKeyAndExpensive, "analysis")?.kind, "no-key");
 
     const unsupportedAndUnknown = makeState({
       customServices: [
@@ -491,6 +494,30 @@ describe("ai-settings-model: useRowNote", () => {
       ],
       slots: { analysis: { serviceId: "custom-o", model: "flow-model-a", summaryModel: "flow-model-b" } },
     });
-    assert.equal(useRowNote(unsupportedAndUnknown, "analysis")?.kind, "learning-unsupported");
+    assert.equal(rowNoteFor(unsupportedAndUnknown, "analysis")?.kind, "learning-unsupported");
+  });
+});
+
+describe("ai-settings-model: slotChoiceFor", () => {
+  it("switching analysis to another service also switches the summary model to that service's default", () => {
+    const state = makeState({
+      slots: { analysis: { serviceId: "gemini", model: "gemini-2.5-flash-lite", summaryModel: "gemini-3.5-flash-lite" } },
+    });
+    assert.deepEqual(slotChoiceFor(state, "analysis", "claude", "claude-sonnet-5-5"), {
+      slot: "analysis",
+      patch: { serviceId: "claude", model: "claude-sonnet-5-5", summaryModel: "claude-sonnet-5-5" },
+    });
+    assert.deepEqual(slotChoiceFor(state, "analysis", "gemini", "gemini-3.5-flash-lite"), {
+      slot: "analysis",
+      patch: { model: "gemini-3.5-flash-lite" },
+    });
+    assert.deepEqual(slotChoiceFor(state, "summary", "gemini", "gemini-3.5-flash-lite"), {
+      slot: "analysis",
+      patch: { summaryModel: "gemini-3.5-flash-lite" },
+    });
+    assert.deepEqual(slotChoiceFor(state, "image", "openai", "gpt-image-2"), {
+      slot: "image",
+      patch: { serviceId: "openai", model: "gpt-image-2" },
+    });
   });
 });

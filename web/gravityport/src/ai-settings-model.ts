@@ -265,18 +265,41 @@ export function modelGroups(
       }
 
       // 预设服务只列单价表里的模型；自定义服务追加测试清单里不在表里的 id。
+      // 在表里、但属于别的用途或别家的 id（如出图模型出现在逐张分析里）不列。
       if (isCustomService(service)) {
         for (const id of service.lastTest?.models ?? []) {
-          if (!id || seen.has(id)) continue
+          if (!id || seen.has(id) || allCatalogIds.has(id)) continue
           seen.add(id)
-          const hint = allCatalogIds.has(id) ? undefined : tr("单价未知")
-          options.push(hint ? { value: id, label: id, hint } : { value: id, label: id })
+          options.push({ value: id, label: id, hint: tr("单价未知") })
         }
       }
     }
 
     return { serviceId: service.id, heading, options }
   })
+}
+
+export type SlotChoice = {
+  slot: SlotId
+  patch: Partial<{ serviceId: string; model: string; summaryModel: string }>
+}
+
+/**
+ * 选了某一行下拉里的一个模型之后要写回哪个槽、写什么（任务 468 第三节 B.5）：
+ * 逐张分析换到另一家 → 连同汇总手册换成那家的默认汇总模型；同一家只改模型；
+ * 汇总手册只改 summaryModel（它挂在 analysis 槽上）；对话大脑、出图写服务和模型。
+ */
+export function slotChoiceFor(state: AiState, role: ModelRole, serviceId: string, modelId: string): SlotChoice {
+  if (role === "analysis") {
+    if (serviceId !== state.slots.analysis?.serviceId) {
+      const nextService = state.services.find((entry) => entry.id === serviceId)
+      const summaryModel = nextService ? defaultModelFor(state, nextService, "summary") : ""
+      return { slot: "analysis", patch: { serviceId, model: modelId, summaryModel } }
+    }
+    return { slot: "analysis", patch: { model: modelId } }
+  }
+  if (role === "summary") return { slot: "analysis", patch: { summaryModel: modelId } }
+  return { slot: role, patch: { serviceId, model: modelId } }
 }
 
 export function priceWithoutMonth(line: AiPriceLine): AiPriceLine {
@@ -298,7 +321,7 @@ export function testPurposeFor(state: AiState, serviceId: string): "text" | "ima
   return usedForImage && !usedForText ? "image" : "text"
 }
 
-export function useRowNote(state: AiState, role: ModelRole): UseRowNote | null {
+export function rowNoteFor(state: AiState, role: ModelRole): UseRowNote | null {
   const slot: SlotId = role === "summary" ? "analysis" : role
   const slotState = state.slots[slot]
   const serviceId = slotState?.serviceId || ""

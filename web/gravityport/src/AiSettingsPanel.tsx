@@ -14,14 +14,14 @@ import {
   ADD_CUSTOM_SERVICE_VALUE,
   addableServices,
   connectedServiceIds,
-  defaultModelFor,
   formatMonthUsd,
   isCustomService,
   isOllamaService,
   modelGroups,
   priceWithoutMonth,
   testPurposeFor,
-  useRowNote,
+  rowNoteFor,
+  slotChoiceFor,
   visibleServiceIds,
   type ModelRole,
   type SlotId,
@@ -138,9 +138,13 @@ export function AiSettingsPanel({ language }: { language: Language }) {
         setKeyError((previous) => ({ ...previous, [service.id]: "" }))
         setOpened((previous) => previous.filter((id) => id !== service.id))
         setSavingFor(null)
-        const nextState = await refresh()
-        if (nextState) {
-          await runTest(service.id, testPurposeFor(nextState, service.id))
+        try {
+          const nextState = await refresh()
+          if (nextState) {
+            await runTest(service.id, testPurposeFor(nextState, service.id))
+          }
+        } catch {
+          // 密钥已经存好；自动测试出错只影响这一行的状态，不能报成「没有保存成功」。
         }
         return
       }
@@ -291,21 +295,8 @@ export function AiSettingsPanel({ language }: { language: Language }) {
 
   const handleSelectModel = async (role: ModelRole, serviceId: string, modelId: string) => {
     if (!state) return
-    if (role === "analysis") {
-      if (serviceId !== state.slots.analysis.serviceId) {
-        const nextService = state.services.find((entry) => entry.id === serviceId)
-        const summaryModel = nextService ? defaultModelFor(state, nextService, "summary") : ""
-        await updateSlot("analysis", { serviceId, model: modelId, summaryModel })
-      } else {
-        await updateSlot("analysis", { model: modelId })
-      }
-      return
-    }
-    if (role === "summary") {
-      await updateSlot("analysis", { summaryModel: modelId })
-      return
-    }
-    await updateSlot(role, { serviceId, model: modelId })
+    const choice = slotChoiceFor(state, role, serviceId, modelId)
+    await updateSlot(choice.slot, choice.patch)
   }
 
   if (loadFailed) {
@@ -634,7 +625,7 @@ export function AiSettingsPanel({ language }: { language: Language }) {
       onChange: (modelId) => void handleSelectModel(role, group.serviceId, modelId),
     }))
 
-    const rawNote = state ? useRowNote(state, role) : null
+    const rawNote = state ? rowNoteFor(state, role) : null
     const showNote = Boolean(
       rawNote && available && (connectedIds.length > 0 || Boolean(currentService)),
     )
