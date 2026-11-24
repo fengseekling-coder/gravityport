@@ -259,6 +259,19 @@ export async function run(ctx) {
     if (!entryChipText.includes("的来源 · 2 张")) {
       throw new Error(`unexpected entry filter chip text: ${entryChipText}`);
     }
+    // 窄窗口（≤1000px）里顶栏小字会藏起来，过滤标签和它的 × 不能跟着藏
+    // （Windows CI 的窗口就比 1000 窄，464 曾在那里点空）。
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 960, height: 760, deviceScaleFactor: 1, mobile: false });
+    try {
+      await waitFor(
+        cdp,
+        `(() => { const r = document.querySelector('.learn-filter-clear')?.getBoundingClientRect(); return Boolean(r && r.width > 0 && r.right <= window.innerWidth); })()`,
+        "filter chip and its clear button stay visible in a 960px window",
+      );
+      await centerOf(cdp, `document.querySelector('.learn-filter-clear')`);
+    } finally {
+      await cdp.send("Emulation.clearDeviceMetricsOverride", {});
+    }
     await clickCenter(cdp, `document.querySelector('.learn-filter-clear')`);
     await waitFor(
       cdp,
@@ -797,14 +810,30 @@ async function waitFor(cdp, expression, label, timeoutMs = 20000) {
 }
 
 async function centerOf(cdp, elementExpression) {
+  // 点之前核对：元素看得见、中心点落在它自己身上。被藏起来（display:none 时
+  // 中心是 0,0）或被别的东西盖住时，直接说清楚，而不是点空以后等超时。
   const point = await cdp.evaluate(`(() => {
     const el = ${elementExpression};
     if (!el) return null;
     el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     const r = el.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    const x = r.x + r.width / 2;
+    const y = r.y + r.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return {
+      x,
+      y,
+      visible: r.width > 0 && r.height > 0,
+      onTarget: Boolean(hit && (hit === el || el.contains(hit))),
+      hit: hit ? hit.tagName.toLowerCase() + (hit.className && typeof hit.className === 'string' ? '.' + hit.className.trim().split(/\\s+/).join('.') : '') : null,
+      rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
+      viewport: [window.innerWidth, window.innerHeight],
+    };
   })()`);
   if (!point) throw new Error(`element not found: ${elementExpression}`);
+  if (!point.visible || !point.onTarget) {
+    throw new Error(`element not clickable: ${elementExpression}; ${JSON.stringify(point)}`);
+  }
   return point;
 }
 

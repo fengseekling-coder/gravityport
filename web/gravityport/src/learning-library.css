@@ -51,9 +51,24 @@
   line-height: var(--space-4);
   color: var(--ui-text);
   white-space: nowrap;
-  flex-shrink: 0;
+  /* 顶栏挤的时候标签文字省略，× 始终留在框里能点。 */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.app .learn-filter-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 窄窗口（≤1000px）里顶栏标题后的小字会整段藏起来（07-viewer.css），过滤
+   标签也是 span，不能跟着藏：不然图墙被过滤了却看不到、也清不掉。 */
+@media (max-width: 1000px) {
+  .app .viewer-title > .learn-filter-chip {
+    display: inline-flex;
+  }
 }
 .app .learn-filter-clear {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

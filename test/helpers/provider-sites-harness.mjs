@@ -763,11 +763,26 @@ export async function createOptionsHarness(options = {}) {
     removeEventListener: (type, listener) => removeListener(winListeners, type, listener),
   };
   sandbox.chrome = chromeObj;
+  // 读响应体也算在途：测试里的假服务常在 json() 里才算身份证明（真 WebCrypto，
+  // 在别的线程里跑），fetch 本身早已落地。不跟着它，CI 机器一忙 settle() 就会
+  // 在证明回来之前收工，状态还停在 checking（PR #357 的 verify 两条）。
+  const BODY_READERS = new Set(["json", "text", "arrayBuffer", "blob"]);
+  const trackBody = (response) => {
+    if (!response || typeof response !== "object") return response;
+    return new Proxy(response, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (typeof value !== "function") return value;
+        if (BODY_READERS.has(property)) return (...args) => trackPending(value.apply(target, args));
+        return value.bind(target);
+      },
+    });
+  };
   sandbox.fetch = (url, init = {}) => trackPending((async () => {
     fetchCalls.push({ url: String(url), init });
     if (options.fetchHandler) {
       const custom = await options.fetchHandler(String(url), init);
-      if (custom) return custom;
+      if (custom) return trackBody(custom);
     }
     throw new Error("offline in this harness");
   })());
