@@ -824,29 +824,32 @@ test("pairing waits for the App user: 202 starts polling, approval stores the to
   await sleep(20);
   harness.localStore.delete("mosaToken");
   let approved = false;
-  let polls = 0;
+  let posts = 0;
+  let gets = 0;
+  // The worker polls by re-sending POST /pair (Chrome sends no Origin on a
+  // GET, so GET /pair/<id> cannot be used): 202 while waiting, 200 + token
+  // once the user approved.
   harness.fetchHarness.setAppHandler((url) => {
     if (url.pathname === "/api/web-capture/pair") {
-      return jsonRoute({ product: "mosa", status: "pending", requestId: "req-confirm-1", expiresInMs: 120000 }, 202);
-    }
-    if (url.pathname === "/api/web-capture/pair/req-confirm-1") {
-      polls += 1;
+      posts += 1;
       return approved
-        ? jsonRoute({ product: "mosa", status: "approved", token: "confirmed-token" })
-        : jsonRoute({ status: "pending" });
+        ? jsonRoute({ product: "mosa", token: "confirmed-token" })
+        : jsonRoute({ product: "mosa", status: "pending", requestId: "req-confirm-1", expiresInMs: 120000 }, 202);
     }
+    if (url.pathname.startsWith("/api/web-capture/pair/")) gets += 1;
     return null;
   });
   const extensionPage = { id: RUNTIME_ID, url: `chrome-extension://${RUNTIME_ID}/options.html` };
 
   const pending = harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPage);
-  // The worker polls every 2 s; approve between two polls.
-  await waitFor(async () => polls >= 1, { label: "first pairing poll" });
+  // The worker re-sends every 2 s; approve between two polls.
+  await waitFor(async () => posts >= 2, { label: "first pairing poll" });
   approved = true;
   const response = await pending;
   assert.equal(response?.ok, true);
   assert.equal(response.settings.mosaToken, "confirmed-token", "the polled approval stores the token");
-  assert.ok(polls >= 1, "the worker polled instead of holding one request open");
+  assert.ok(posts >= 3, "the worker polled instead of holding one request open");
+  assert.equal(gets, 0, "no GET /pair/<id>");
 
   // Denial: the worker stops and stores nothing.
   const harness2 = await createHarness({ appOnline: true });
@@ -854,16 +857,18 @@ test("pairing waits for the App user: 202 starts polling, approval stores the to
   harness2.localStore.delete("mosaToken");
   harness2.fetchHarness.setAppHandler((url) => {
     if (url.pathname === "/api/web-capture/pair") {
-      return jsonRoute({ product: "mosa", status: "pending", requestId: "req-confirm-2", expiresInMs: 120000 }, 202);
+      const first = harness2.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/pair")).length === 1;
+      return first
+        ? jsonRoute({ product: "mosa", status: "pending", requestId: "req-confirm-2", expiresInMs: 120000 }, 202)
+        : jsonRoute({ error: "denied", code: "WEB_CAPTURE_PAIRING_DENIED" }, 403);
     }
-    if (url.pathname === "/api/web-capture/pair/req-confirm-2") return jsonRoute({ status: "denied" });
     return null;
   });
   const denied = await harness2.dispatchMessage({ type: "mosa.repairPairing" }, extensionPage);
   assert.equal(denied?.settings?.mosaToken || "", "", "a denial stores no token");
-  const denialPairPosts = harness2.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/pair") && !request.url.includes("/pair/")).length;
-  const denialPolls = harness2.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/pair/req-confirm-2")).length;
-  assert.equal(denialPolls, denialPairPosts, "each discovery round polls at most once after a denial — the wait ends there");
+  await sleep(1_800);
+  const denialPairPosts = harness2.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/pair")).length;
+  assert.equal(denialPairPosts, 2, "one POST opens the request, one poll sees the denial; the wait ends there and no retry round re-asks");
 });
 
 test("two concurrent pairing callers share one flow and send one POST /pair", async () => {

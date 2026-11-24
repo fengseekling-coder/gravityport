@@ -36,6 +36,8 @@ test("task 466: clicking Connect on the settings page is not absorbed by an olde
 
   let finished = false;
   let pairPosts = 0;
+  let confirmationOpened = false;
+  let confirmationsOpened = 0;
   let gateEntered = false;
   let resolveGateEntered = null;
   const gateEnteredPromise = new Promise((resolve) => {
@@ -65,16 +67,21 @@ test("task 466: clicking Connect on the settings page is not absorbed by an olde
     }
     if (url.pathname === "/api/web-capture/pair") {
       pairPosts += 1;
+      // The App merges a re-sent POST from the same Origin into the request
+      // that is already waiting; the user clicked Allow right away, so the
+      // re-send (the extension's poll) collects the token. Only the first POST
+      // opens a confirmation.
+      if (confirmationOpened) {
+        return jsonRoute({ product: "mosa", token: "user-token" });
+      }
+      confirmationOpened = true;
+      confirmationsOpened += 1;
       return jsonRoute({
         product: "mosa",
         status: "pending",
         requestId: "req-user",
         expiresInMs: 120000,
       }, 202);
-    }
-    if (url.pathname === "/api/web-capture/pair/req-user") {
-      if (finished) return jsonRoute({ status: "expired" });
-      return jsonRoute({ product: "mosa", status: "approved", token: "user-token" });
     }
     return null;
   });
@@ -87,7 +94,7 @@ test("task 466: clicking Connect on the settings page is not absorbed by an olde
     await Promise.race([gateEnteredPromise, sleep(500)]);
 
     harness.fetchHarness.setAppOnline(true);
-    const postsBeforeClick = pairPosts;
+    const confirmationsBeforeClick = confirmationsOpened;
 
     const click = harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPageSender());
     click.catch(() => {});
@@ -104,7 +111,7 @@ test("task 466: clicking Connect on the settings page is not absorbed by an olde
 
     assert.equal(response?.ok, true, "the click was absorbed by an older background attempt");
     assert.equal(response?.settings?.mosaToken, "user-token");
-    assert.equal(pairPosts - postsBeforeClick, 1, "clicking Connect must send its own single POST /api/web-capture/pair");
+    assert.equal(confirmationsOpened - confirmationsBeforeClick, 1, "clicking Connect must open its own single confirmation in the App");
     assert.equal(harness.localStore.get("mosaToken"), "user-token");
   } finally {
     finished = true;
@@ -129,15 +136,14 @@ test("task 466: with no token stored, background entrypoints never pair and inst
   harness.fetchHarness.setAppHandler((url) => {
     if (url.pathname === "/api/web-capture/pair") {
       pairPosts += 1;
+      // After the test, answer "denied" so a pre-fix background attempt ends.
+      if (finished) return jsonRoute({ error: "denied" }, 403);
       return jsonRoute({
         product: "mosa",
         status: "pending",
         requestId: "req-bg",
         expiresInMs: 120000,
       }, 202);
-    }
-    if (url.pathname === "/api/web-capture/pair/req-bg") {
-      return jsonRoute({ status: finished ? "expired" : "pending" });
     }
     return null;
   });
@@ -202,4 +208,69 @@ test("task 466: with no token stored, background entrypoints never pair and inst
     finished = true;
     await sleep(30);
   }
+});
+
+// 466 acceptance: Chrome sends no Origin on a GET from the extension, and the
+// App binds a pairing request to the Origin that created it, so the worker
+// polls by re-sending POST /pair (always sent with the Origin) instead of
+// GET /pair/<id>.
+function pairingPollHandler(counters, { requestId, expiresInMs, tokenOnPost = Infinity }) {
+  return (url, init) => {
+    if (url.pathname.startsWith("/api/web-capture/pair/")) {
+      counters.gets += 1;
+      return jsonRoute({ error: "Cross-origin requests are not allowed." }, 403);
+    }
+    if (url.pathname === "/api/web-capture/pair") {
+      assert.equal(String(init?.method || "GET"), "POST");
+      counters.posts += 1;
+      if (counters.posts >= tokenOnPost) return jsonRoute({ product: "mosa", token: "polled-token" });
+      return jsonRoute({ product: "mosa", status: "pending", requestId, expiresInMs }, 202);
+    }
+    return null;
+  };
+}
+
+test("466 验收：pairing polls by re-sending POST, never GET /pair/<id>, and stops before the window ends", async () => {
+  const harness = await createBackgroundHarness({ emptyStorage: true, appOnline: true });
+  const counters = { posts: 0, gets: 0 };
+  // Window 5.5 s, poll every 2 s, stop when under 1 s remain:
+  //   t=0 first POST (202), t~2 s POST (3.5 s left), t~4 s POST (1.5 s left),
+  //   t~6 s: under 1 s left -> no send, give up.
+  // So exactly 3 POSTs, and no retry round after the window (a re-POST then
+  // would open a second confirmation in the App). 5.5 s rather than a round
+  // 7 s keeps every check away from the 1 s boundary, and the whole run under
+  // the harness's 8 s message limit.
+  harness.fetchHarness.setAppHandler(pairingPollHandler(counters, { requestId: "req-window", expiresInMs: 5500 }));
+  const response = await withTimeout(
+    harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPageSender()),
+    15000,
+    "repairPairing to give up",
+  );
+  assert.equal(response?.ok, false, "nobody approved: not connected");
+  assert.equal(counters.gets, 0, "never GET /pair/<id>");
+  assert.equal(counters.posts, 3, "first POST plus two polls inside the window");
+  await sleep(2300);
+  assert.equal(counters.posts, 3, "no further POST after the window, including no discovery retry round");
+  assert.equal(harness.localStore.get("mosaToken") || "", "");
+});
+
+test("466 验收：a poll POST that returns 200 with the token connects and stores it", async () => {
+  const harness = await createBackgroundHarness({
+    emptyStorage: true,
+    appOnline: true,
+    delayOverrides: { 2000: 5 },
+  });
+  const counters = { posts: 0, gets: 0 };
+  // POST 1 opens the confirmation (202), polls 1 and 2 still 202, poll 3 is 200.
+  harness.fetchHarness.setAppHandler(pairingPollHandler(counters, { requestId: "req-approve", expiresInMs: 120000, tokenOnPost: 4 }));
+  const response = await withTimeout(
+    harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPageSender()),
+    5000,
+    "repairPairing",
+  );
+  assert.equal(response?.ok, true);
+  assert.equal(response.settings.mosaToken, "polled-token");
+  assert.equal(harness.localStore.get("mosaToken"), "polled-token");
+  assert.equal(counters.gets, 0, "never GET /pair/<id>");
+  assert.equal(counters.posts, 4);
 });
