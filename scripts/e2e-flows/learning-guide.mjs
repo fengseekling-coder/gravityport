@@ -261,23 +261,27 @@ export async function run(ctx) {
     }
     // 窄窗口（≤1000px）里顶栏小字会藏起来，过滤标签和它的 × 不能跟着藏
     // （Windows CI 的窗口就比 1000 窄，464 曾在那里点空）。
+    // 清过滤这一下就在 960 宽里点：量坐标和点击在同一个布局里。撤掉视口覆盖
+    // 是异步生效的，先撤再点会点到旧坐标上（PR #357 第二轮 macOS CI）。
+    const fullWidth = await cdp.evaluate(`window.innerWidth`);
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: 960, height: 760, deviceScaleFactor: 1, mobile: false });
     try {
+      await waitFor(cdp, `window.innerWidth === 960`, "viewport narrowed to 960px");
       await waitFor(
         cdp,
         `(() => { const r = document.querySelector('.learn-filter-clear')?.getBoundingClientRect(); return Boolean(r && r.width > 0 && r.right <= window.innerWidth); })()`,
         "filter chip and its clear button stay visible in a 960px window",
       );
-      await centerOf(cdp, `document.querySelector('.learn-filter-clear')`);
+      await clickCenter(cdp, `document.querySelector('.learn-filter-clear')`);
+      await waitFor(
+        cdp,
+        `document.querySelectorAll('.asset-card:not(.asset-card-virtual-placeholder)').length === 3 && !document.querySelector('.learn-filter-chip')`,
+        "gallery returns to 3 cards after clearing entry filter",
+      );
     } finally {
       await cdp.send("Emulation.clearDeviceMetricsOverride", {});
+      await waitFor(cdp, `window.innerWidth === ${Number(fullWidth)}`, "viewport restored after the 960px check");
     }
-    await clickCenter(cdp, `document.querySelector('.learn-filter-clear')`);
-    await waitFor(
-      cdp,
-      `document.querySelectorAll('.asset-card:not(.asset-card-virtual-placeholder)').length === 3 && !document.querySelector('.learn-filter-chip')`,
-      "gallery returns to 3 cards after clearing entry filter",
-    );
 
     // Click the learning log row -> filter chip shows 只看 ... 学的 3 张.
     await clickCenter(cdp, `document.querySelector('.learn-log-clickable')`);
