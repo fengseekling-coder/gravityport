@@ -341,3 +341,72 @@ test("花费：refusal 那条回答照样计价；max_tokens 截断后重试成�
   assert.equal(summaryRefused.outcome.ok, false);
   assert.ok(Math.abs(summaryRefused.outcome.costUsd - (5000 * 2 + 300 * 10) / 1e6) < 1e-12, "a refused summary is still billed");
 });
+
+// ── 467：SDK 不替学习重试 + retry-after 解析 ──
+
+test("467：C1 SDK 不替学习重试", async () => {
+  const rateLimit = await analyzeWith(() => jsonResponse(429, {
+    type: "error", error: { type: "rate_limit_error", message: "slow down" },
+  }, { "retry-after": "7" }));
+  assert.equal(rateLimit.calls.length, 1, "429 must not be retried by SDK");
+  assert.equal(rateLimit.outcome.ok, false);
+  assert.equal(rateLimit.outcome.code, "rate-limit");
+  assert.equal(rateLimit.outcome.retryAfterMs, 7000);
+  assert.equal(rateLimit.outcome.costUsd, 0);
+
+  const server500 = await analyzeWith(() => jsonResponse(500, {
+    type: "error", error: { type: "api_error", message: "boom" },
+  }));
+  assert.equal(server500.calls.length, 1, "500 must not be retried by SDK");
+  assert.equal(server500.outcome.ok, false);
+  assert.equal(server500.outcome.code, "server");
+  assert.equal(server500.outcome.retryAfterMs, null);
+  assert.equal(server500.outcome.costUsd, 0);
+
+  const server529 = await analyzeWith(() => jsonResponse(529, {
+    type: "error", error: { type: "overloaded_error", message: "overloaded" },
+  }));
+  assert.equal(server529.calls.length, 1, "529 must not be retried by SDK");
+  assert.equal(server529.outcome.ok, false);
+  assert.equal(server529.outcome.code, "server");
+  assert.equal(server529.outcome.retryAfterMs, null);
+  assert.equal(server529.outcome.costUsd, 0);
+
+  const network = await analyzeWith(() => {
+    throw new TypeError("fetch failed");
+  });
+  assert.equal(network.calls.length, 1, "network error must not be retried by SDK");
+  assert.equal(network.outcome.ok, false);
+  assert.equal(network.outcome.code, "network");
+  assert.equal(network.outcome.retryAfterMs, null);
+  assert.equal(network.outcome.costUsd, 0);
+
+  const summary429 = await summarizeWith(() => jsonResponse(429, {
+    type: "error", error: { type: "rate_limit_error", message: "slow down" },
+  }, { "retry-after-ms": "1500" }));
+  assert.equal(summary429.calls.length, 1, "summary 429 must not be retried by SDK");
+  assert.equal(summary429.outcome.ok, false);
+  assert.equal(summary429.outcome.code, "rate-limit");
+  assert.equal(summary429.outcome.retryAfterMs, 1500);
+  assert.equal(summary429.outcome.costUsd, 0);
+});
+
+test("467：C2 解析 retry-after", async () => {
+  const { retryAfterMsFromHeaders } = await import("../desktop/ai/claude-client.mjs");
+  assert.equal(typeof retryAfterMsFromHeaders, "function", "retryAfterMsFromHeaders must be exported");
+  const nowMs = Date.parse("Tue, 24 Nov 2026 20:00:00 GMT");
+
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after-ms": "1500" }), nowMs), 1500);
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after": "2" }), nowMs), 2000);
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after": "1.5" }), nowMs), 1500);
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after-ms": "0", "retry-after": "4" }), nowMs), 4000);
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after-ms": "abc", "retry-after": "3" }), nowMs), 3000);
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after": "Tue, 24 Nov 2026 20:00:05 GMT" }), nowMs), 5000);
+
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after": "Tue, 24 Nov 2026 19:59:55 GMT" }), nowMs), null);
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after": "0" }), nowMs), null);
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after": "-3" }), nowMs), null);
+  assert.equal(retryAfterMsFromHeaders(new Headers({ "retry-after": "soon" }), nowMs), null);
+  assert.equal(retryAfterMsFromHeaders(new Headers(), nowMs), null);
+  assert.equal(retryAfterMsFromHeaders(undefined, nowMs), null);
+});

@@ -124,7 +124,17 @@ function makeFakeClaudeFetch(overrides = {}) {
   return { calls, fetchImpl };
 }
 
-async function makeHarness(t, { analyze, summarize, summarizeText, concurrency = 4, chunkSize = 300, now } = {}) {
+async function makeHarness(t, {
+  analyze,
+  summarize,
+  summarizeText,
+  concurrency = 4,
+  chunkSize = 300,
+  now,
+  transientRetryLimit,
+  transientMaxWaitMs,
+  transientDefaultWaitMs,
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), "mosa-learning-runner-"));
   deferTestPathRemoval(root, { recursive: true, force: true });
   const runtime = await startMosaRuntime({
@@ -174,6 +184,9 @@ async function makeHarness(t, { analyze, summarize, summarizeText, concurrency =
     concurrency,
     chunkSize,
     ...(now ? { now } : {}),
+    ...(transientRetryLimit !== undefined ? { transientRetryLimit } : {}),
+    ...(transientMaxWaitMs !== undefined ? { transientMaxWaitMs } : {}),
+    ...(transientDefaultWaitMs !== undefined ? { transientDefaultWaitMs } : {}),
   });
   const serviceClient = createLearningServiceClient({ port: runtime.port, clientToken: CLIENT_TOKEN });
   return { root, sourcesDir, runtime, runner, serviceClient, calls, fetchImpl, credentialStore, settingsStore, setCurrentService: (value) => { currentService = value; } };
@@ -728,10 +741,22 @@ function analyzeRefused(usage = { input_tokens: 2000, output_tokens: 100 }) {
   }), { status: 200, headers: { "content-type": "application/json" } });
 }
 
-function rateLimited() {
+function rateLimited(headers = {}) {
   return new Response(JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "slow down" } }), {
-    status: 429, headers: { "content-type": "application/json", "retry-after": "0" },
+    status: 429,
+    headers: { "content-type": "application/json", ...headers },
   });
+}
+
+function assetIdFromAnalyzeCall(entry) {
+  const text = entry?.body?.messages?.[0]?.content?.[1]?.text;
+  assert.equal(typeof text, "string", "analyze request carries a text metadata block");
+  const match = text.match(/<asset_metadata>\n([\s\S]*?)\n<\/asset_metadata>/);
+  assert.ok(match, `missing <asset_metadata> block in ${text}`);
+  const meta = JSON.parse(match[1]);
+  assert.equal(typeof meta.prompt, "string", "metadata has prompt");
+  assert.ok(meta.prompt.startsWith("prompt "), `unexpected prompt format: ${meta.prompt}`);
+  return meta.prompt.slice("prompt ".length);
 }
 
 function readLedgerAnalysis(harness) {
@@ -739,41 +764,59 @@ function readLedgerAnalysis(harness) {
   return raw.months[Object.keys(raw.months)[0]].analysis;
 }
 
-test("限流：第一次 429（SDK 重试完仍 429）那张放回队尾重做、并发降到 1、全部 done", async (t) => {
-  // 并发 1，请求顺序确定。SDK maxRetries 2：一张图的一次分析 = 3 个请求。
+function readLedgerAnalysisOrZero(harness) {
+  try {
+    return readLedgerAnalysis(harness);
+  } catch (error) {
+    if (error?.code === "ENOENT") return 0;
+    throw error;
+  }
+}
+
+test("467：R4 第一次限流放回队尾", async (t) => {
   const harness = await makeHarness(t, {
     concurrency: 1,
-    analyze: (_entry, analyzeIndex) => (analyzeIndex <= 3 ? rateLimited() : analyzeOk()),
+    analyze: (_entry, analyzeIndex) => (analyzeIndex === 1 ? rateLimited({ "retry-after-ms": "300" }) : analyzeOk()),
   });
   const ids = ["q1", "q2", "q3"];
   await seedImagesViaRuntime(harness, ids);
   await drainDerivatives(harness);
-  const libraryId = await makeLibraryWithImages(harness, { libraryName: "限流", imageIds: ids });
+  const libraryId = await makeLibraryWithImages(harness, { libraryName: "限流R4", imageIds: ids });
   const quote = await harness.runner.quote({ project: "default", libraryId });
   const started = await harness.runner.start({ quoteToken: quote.quoteToken });
   assert.equal(started.ok, true);
-  const run = await waitForRunStatus(harness, started.runId, ["done", "paused", "failed"], "rate-limit once");
+  const run = await waitForRunStatus(harness, started.runId, ["done", "paused", "failed"], "R4 rate-limit once");
   assert.equal(run.status, "done", `first 429 must not stop the run: ${JSON.stringify(run)}`);
   assert.equal(run.doneCount, 3, "the rate-limited image was re-queued and learned");
-  assert.equal(harness.calls.filter((call) => call.kind === "analyze").length, 3 + 3);
+  const analyzeCalls = harness.calls.filter((call) => call.kind === "analyze");
+  assert.equal(analyzeCalls.length, 4);
+  const seenIds = analyzeCalls.map(assetIdFromAnalyzeCall);
+  assert.equal(new Set(seenIds.slice(0, 3)).size, 3, `first 3 requests must cover 3 distinct images: ${JSON.stringify(seenIds)}`);
+  assert.deepEqual(new Set(seenIds.slice(0, 3)), new Set(ids));
+  assert.equal(seenIds[3], seenIds[0], `re-queued image must run last: ${JSON.stringify(seenIds)}`);
+  const gapMs = analyzeCalls[1].at - analyzeCalls[0].at;
+  t.diagnostic(`R4 gap after 429 (retry-after-ms: 300): ${gapMs} ms; order=${seenIds.join(",")}`);
+  assert.ok(gapMs >= 280, `expected 2nd request >= 280 ms after 1st, got ${gapMs} ms`);
 });
 
-test("限流两次：q1 的 3 次 429 → 放回队尾；q2 成功；q3 又 3 次 429 → paused/rate-limit，两张留 pending", async (t) => {
-  const ids = ["q1", "q2", "q3"];
-  const harness2 = await makeHarness(t, {
+test("467：R5 中间夹着成功不暂停", async (t) => {
+  const ids = ["q1", "q2", "q3", "q4"];
+  const harness = await makeHarness(t, {
     concurrency: 1,
-    analyze: (_entry, analyzeIndex) => (analyzeIndex <= 3 || (analyzeIndex >= 5 && analyzeIndex <= 7) ? rateLimited() : analyzeOk()),
+    analyze: (_entry, analyzeIndex) => ([1, 3, 5].includes(analyzeIndex) ? rateLimited({ "retry-after-ms": "100" }) : analyzeOk()),
   });
-  await seedImagesViaRuntime(harness2, ids);
-  await drainDerivatives(harness2);
-  const libraryId2 = await makeLibraryWithImages(harness2, { libraryName: "限流两次", imageIds: ids });
-  const quote2 = await harness2.runner.quote({ project: "default", libraryId: libraryId2 });
-  const started2 = await harness2.runner.start({ quoteToken: quote2.quoteToken });
-  const run2 = await waitForRunStatus(harness2, started2.runId, ["done", "paused", "failed"], "rate-limit twice");
-  assert.equal(run2.status, "paused");
-  assert.equal(run2.pauseReason, "rate-limit");
-  assert.equal(run2.counts.byStatus.pending, 2, "both rate-limited images stay pending for the resume");
-  assert.equal(run2.doneCount, 1);
+  await seedImagesViaRuntime(harness, ids);
+  await drainDerivatives(harness);
+  const libraryId = await makeLibraryWithImages(harness, { libraryName: "限流R5", imageIds: ids });
+  const quote = await harness.runner.quote({ project: "default", libraryId });
+  const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+  assert.equal(started.ok, true);
+  const run = await waitForRunStatus(harness, started.runId, ["done", "paused", "failed"], "R5 interleaved 429");
+  assert.equal(run.status, "done", `interleaved 429 must not pause: ${JSON.stringify(run)}`);
+  assert.equal(run.doneCount, 4);
+  assert.equal(run.pauseReason, "");
+  const analyzeCalls = harness.calls.filter((call) => call.kind === "analyze");
+  assert.equal(analyzeCalls.length, 7);
 });
 
 test("一张都没学成、库里也没有旧笔记 → failed/nothing-learned（不卡在 running）；被拒的回答照样计价，记进 run 和台账", async (t) => {
@@ -875,4 +918,360 @@ test("别的学习库里残留一条 running（App 崩过）：在这个库开�
   assert.equal(staleAfter.payload.run.pauseReason, "interrupted");
   const done = await waitForRunStatus(harness, started.runId, ["done", "paused", "failed"], "fresh library");
   assert.equal(done.status, "done", "a paused run in another library does not block this one");
+});
+
+// ── 467：限流冷却与暂停打断冷却 ──
+
+function summarizeOkSse() {
+  const events = [
+    { type: "message_start", message: { id: "msg_s", type: "message", role: "assistant", model: "claude-sonnet-5-5", content: [], stop_reason: null, usage: { input_tokens: 51000, output_tokens: 0 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: JSON.stringify(GOOD_GUIDE) } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 6000 } },
+    { type: "message_stop" },
+  ];
+  return new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), {
+    status: 200, headers: { "content-type": "text/event-stream" },
+  });
+}
+
+async function waitForRunStatusFast(harness, runId, statuses, maxWaitMs, failMessage) {
+  const deadline = Date.now() + maxWaitMs;
+  for (;;) {
+    const got = await harness.serviceClient.getRun("default", runId);
+    const run = got.payload?.run;
+    if (run && statuses.includes(run.status)) return run;
+    if (Date.now() > deadline) {
+      throw new Error(`${failMessage} (status=${run?.status}, pauseReason=${run?.pauseReason})`);
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+}
+
+test("467：R1 暂停穿透限流", async (t) => {
+  let alwaysRateLimit = true;
+  const harness = await makeHarness(t, {
+    concurrency: 4,
+    analyze: () => (alwaysRateLimit ? rateLimited({ "retry-after": "10" }) : analyzeOk()),
+  });
+  const ids = ["rl1", "rl2", "rl3", "rl4", "rl5", "rl6"];
+  await seedImagesViaRuntime(harness, ids);
+  await drainDerivatives(harness);
+  const libraryId = await makeLibraryWithImages(harness, { libraryName: "R1限流暂停", imageIds: ids });
+
+  const quote = await harness.runner.quote({ project: "default", libraryId });
+  assert.equal(quote.ok, true);
+  const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+  assert.equal(started.ok, true);
+  const runId = started.runId;
+
+  const waitFirstDeadline = Date.now() + 10000;
+  while (harness.calls.filter((call) => call.kind === "analyze").length < 1) {
+    if (Date.now() > waitFirstDeadline) throw new Error("never saw first analyze request");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+
+  const t0 = Date.now();
+  const pauseResult = await harness.runner.pause({ runId });
+  assert.equal(pauseResult.ok, true);
+  const pausedRun = await waitForRunStatusFast(harness, runId, ["paused"], 5000, "pause took > 5 s");
+  const elapsedMs = Date.now() - t0;
+  t.diagnostic(`R1 pause -> paused: ${elapsedMs} ms`);
+  assert.ok(elapsedMs <= 2000, `expected pause -> paused <= 2000 ms, got ${elapsedMs} ms`);
+  assert.equal(pausedRun.pauseReason, "user");
+  assert.equal(pausedRun.items.filter((item) => item.status === "pending").length, 6);
+  assert.equal(pausedRun.costUsd, 0);
+  assert.equal(readLedgerAnalysisOrZero(harness), 0);
+
+  const analyzeCallsAtPaused = harness.calls.filter((call) => call.kind === "analyze").length;
+  await new Promise((resolveWait) => setTimeout(resolveWait, 1500));
+  assert.equal(
+    harness.calls.filter((call) => call.kind === "analyze").length,
+    analyzeCallsAtPaused,
+    "no new analyze requests within 1.5 s after paused",
+  );
+
+  alwaysRateLimit = false;
+  const resumeQuote = await harness.runner.quote({ project: "default", libraryId, runId });
+  assert.equal(resumeQuote.ok, true);
+  assert.equal(resumeQuote.kind, "resume");
+  assert.equal(resumeQuote.counts.newCount, 6);
+  const resumed = await harness.runner.resume({ runId, quoteToken: resumeQuote.quoteToken });
+  assert.equal(resumed.ok, true);
+  const doneRun = await waitForRunStatus(harness, runId, ["done", "paused", "failed"], "R1 resume");
+  assert.equal(doneRun.status, "done");
+});
+
+test("467：R2 连续 3 击自动暂停", async (t) => {
+  const harness = await makeHarness(t, {
+    concurrency: 1,
+    analyze: () => rateLimited({ "retry-after": "1" }),
+  });
+  const ids = ["r2a", "r2b", "r2c"];
+  await seedImagesViaRuntime(harness, ids);
+  await drainDerivatives(harness);
+  const libraryId = await makeLibraryWithImages(harness, { libraryName: "R2三击暂停", imageIds: ids });
+  const quote = await harness.runner.quote({ project: "default", libraryId });
+  const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+  assert.equal(started.ok, true);
+
+  const run = await waitForRunStatus(harness, started.runId, ["paused", "done", "failed"], "R2 three strikes");
+  assert.equal(run.status, "paused");
+  assert.equal(run.pauseReason, "rate-limit");
+  const analyzeCalls = harness.calls.filter((call) => call.kind === "analyze");
+  assert.equal(analyzeCalls.length, 3);
+  const gap1 = analyzeCalls[1].at - analyzeCalls[0].at;
+  const gap2 = analyzeCalls[2].at - analyzeCalls[1].at;
+  t.diagnostic(`R2 gaps: ${gap1} ms, ${gap2} ms`);
+  assert.ok(gap1 >= 980, `expected gap1 >= 980 ms, got ${gap1} ms`);
+  assert.ok(gap2 >= 980, `expected gap2 >= 980 ms, got ${gap2} ms`);
+  assert.equal(run.items.filter((item) => item.status === "pending").length, 3);
+  assert.equal(run.costUsd, 0);
+});
+
+test("467：R3 让等太久就不等", async (t) => {
+  const harness = await makeHarness(t, {
+    concurrency: 1,
+    analyze: () => rateLimited({ "retry-after": "61" }),
+  });
+  const ids = ["r3a", "r3b"];
+  await seedImagesViaRuntime(harness, ids);
+  await drainDerivatives(harness);
+  const libraryId = await makeLibraryWithImages(harness, { libraryName: "R3长等待直停", imageIds: ids });
+  const quote = await harness.runner.quote({ project: "default", libraryId });
+  const t0 = Date.now();
+  const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+  assert.equal(started.ok, true);
+
+  const run = await waitForRunStatusFast(harness, started.runId, ["paused", "done", "failed"], 5000, "R3 did not pause within 5 s");
+  const elapsedMs = Date.now() - t0;
+  t.diagnostic(`R3 start -> paused: ${elapsedMs} ms`);
+  assert.ok(elapsedMs <= 2000, `expected pause within 2000 ms, got ${elapsedMs} ms`);
+  assert.equal(run.status, "paused");
+  assert.equal(run.pauseReason, "rate-limit");
+  assert.equal(harness.calls.filter((call) => call.kind === "analyze").length, 1);
+});
+
+test("467：R6 一波 429 只算一击，之后一次一张", async (t) => {
+  const firstWaveSentAt = [];
+  let first429ReturnedAt = 0;
+  let inFlightAfterFirst429 = 0;
+  let maxInFlightAfterFirst429 = 0;
+  const harness = await makeHarness(t, {
+    concurrency: 4,
+    analyze: async (_entry, analyzeIndex) => {
+      if (analyzeIndex <= 4) {
+        firstWaveSentAt.push(Date.now());
+        await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+        if (!first429ReturnedAt) first429ReturnedAt = Date.now();
+        return rateLimited({ "retry-after-ms": "300" });
+      }
+      const afterFirst429 = first429ReturnedAt > 0;
+      if (afterFirst429) {
+        inFlightAfterFirst429 += 1;
+        if (inFlightAfterFirst429 > maxInFlightAfterFirst429) maxInFlightAfterFirst429 = inFlightAfterFirst429;
+      }
+      try {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+        return analyzeOk();
+      } finally {
+        if (afterFirst429) inFlightAfterFirst429 -= 1;
+      }
+    },
+  });
+  const ids = ["r6a", "r6b", "r6c", "r6d", "r6e", "r6f"];
+  await seedImagesViaRuntime(harness, ids);
+  await drainDerivatives(harness);
+  const libraryId = await makeLibraryWithImages(harness, { libraryName: "R6一波四张", imageIds: ids });
+  const quote = await harness.runner.quote({ project: "default", libraryId });
+  const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+  assert.equal(started.ok, true);
+
+  const run = await waitForRunStatus(harness, started.runId, ["done", "paused", "failed"], "R6 wave of 429");
+  assert.equal(firstWaveSentAt.length, 4);
+  assert.ok(first429ReturnedAt > 0);
+  assert.ok(
+    firstWaveSentAt.every((sentAt) => sentAt <= first429ReturnedAt),
+    `all 4 first-wave requests must be sent before first 429 returns: ${JSON.stringify({ firstWaveSentAt, first429ReturnedAt })}`,
+  );
+  assert.equal(run.status, "done", `wave of 429 must count as 1 strike: ${JSON.stringify(run)}`);
+  assert.equal(run.doneCount, 6);
+  assert.equal(harness.calls.filter((call) => call.kind === "analyze").length, 10);
+  assert.equal(maxInFlightAfterFirst429, 1, `expected concurrency 1 after 429, got max in-flight ${maxInFlightAfterFirst429}`);
+  t.diagnostic(`R6 maxInFlightAfterFirst429=${maxInFlightAfterFirst429}`);
+});
+
+test("467：R7 服务出错、连不上", async (t) => {
+  await t.test("(a) 一律回 500，不带 retry-after → paused/server，请求正好 3 个，间隔各 >= 80 ms", async (subT) => {
+    const harness = await makeHarness(subT, {
+      concurrency: 1,
+      transientDefaultWaitMs: 100,
+      analyze: () => new Response(JSON.stringify({ type: "error", error: { type: "api_error", message: "boom" } }), {
+        status: 500, headers: { "content-type": "application/json" },
+      }),
+    });
+    const ids = ["r7a1", "r7a2", "r7a3"];
+    await seedImagesViaRuntime(harness, ids);
+    await drainDerivatives(harness);
+    const libraryId = await makeLibraryWithImages(harness, { libraryName: "R7a-500", imageIds: ids });
+    const quote = await harness.runner.quote({ project: "default", libraryId });
+    const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+    const run = await waitForRunStatus(harness, started.runId, ["paused", "done", "failed"], "R7a 500");
+    assert.equal(run.status, "paused");
+    assert.equal(run.pauseReason, "server");
+    const analyzeCalls = harness.calls.filter((call) => call.kind === "analyze");
+    assert.equal(analyzeCalls.length, 3);
+    const gap1 = analyzeCalls[1].at - analyzeCalls[0].at;
+    const gap2 = analyzeCalls[2].at - analyzeCalls[1].at;
+    subT.diagnostic(`R7a 500 gaps: ${gap1} ms, ${gap2} ms`);
+    assert.ok(gap1 >= 80, `expected gap1 >= 80 ms, got ${gap1} ms`);
+    assert.ok(gap2 >= 80, `expected gap2 >= 80 ms, got ${gap2} ms`);
+  });
+
+  await t.test("(b) 一律抛 TypeError(\"fetch failed\") → paused/network，正好 3 个", async (subT) => {
+    const harness = await makeHarness(subT, {
+      concurrency: 1,
+      transientDefaultWaitMs: 100,
+      analyze: () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    const ids = ["r7b1", "r7b2", "r7b3"];
+    await seedImagesViaRuntime(harness, ids);
+    await drainDerivatives(harness);
+    const libraryId = await makeLibraryWithImages(harness, { libraryName: "R7b-network", imageIds: ids });
+    const quote = await harness.runner.quote({ project: "default", libraryId });
+    const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+    const run = await waitForRunStatus(harness, started.runId, ["paused", "done", "failed"], "R7b network");
+    assert.equal(run.status, "paused");
+    assert.equal(run.pauseReason, "network");
+    assert.equal(harness.calls.filter((call) => call.kind === "analyze").length, 3);
+  });
+
+  await t.test("(c) 第 1 个回 529、其余正常 → done，请求 4 个", async (subT) => {
+    const harness = await makeHarness(subT, {
+      concurrency: 1,
+      transientDefaultWaitMs: 100,
+      analyze: (_entry, analyzeIndex) => (analyzeIndex === 1
+        ? new Response(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "overloaded" } }), {
+          status: 529, headers: { "content-type": "application/json" },
+        })
+        : analyzeOk()),
+    });
+    const ids = ["r7c1", "r7c2", "r7c3"];
+    await seedImagesViaRuntime(harness, ids);
+    await drainDerivatives(harness);
+    const libraryId = await makeLibraryWithImages(harness, { libraryName: "R7c-529", imageIds: ids });
+    const quote = await harness.runner.quote({ project: "default", libraryId });
+    const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+    const run = await waitForRunStatus(harness, started.runId, ["done", "paused", "failed"], "R7c 529");
+    assert.equal(run.status, "done");
+    assert.equal(harness.calls.filter((call) => call.kind === "analyze").length, 4);
+  });
+});
+
+test("467：R8 正在生成的不打断、照实记账", async (t) => {
+  const harness = await makeHarness(t, {
+    concurrency: 4,
+    analyze: async () => {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1000));
+      return analyzeOk({ input_tokens: 2276, output_tokens: 800 });
+    },
+  });
+  const ids = ["r8a", "r8b", "r8c", "r8d", "r8e", "r8f"];
+  await seedImagesViaRuntime(harness, ids);
+  await drainDerivatives(harness);
+  const libraryId = await makeLibraryWithImages(harness, { libraryName: "R8在途不打断", imageIds: ids });
+  const quote = await harness.runner.quote({ project: "default", libraryId });
+  const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+  assert.equal(started.ok, true);
+
+  const waitFourDeadline = Date.now() + 10000;
+  while (harness.calls.filter((call) => call.kind === "analyze").length < 4) {
+    if (Date.now() > waitFourDeadline) throw new Error("never reached 4 in-flight analyze requests");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  const pauseResult = await harness.runner.pause({ runId: started.runId });
+  assert.equal(pauseResult.ok, true);
+
+  const run = await waitForRunStatus(harness, started.runId, ["paused", "done", "failed"], "R8 pause in-flight");
+  assert.equal(run.status, "paused");
+  assert.equal(run.pauseReason, "user");
+  assert.equal(run.doneCount, 4);
+  assert.equal(run.items.filter((item) => item.status === "pending").length, 2);
+  assert.equal(harness.calls.filter((call) => call.kind === "analyze").length, 4);
+  const expectedCost = 4 * ((2276 * 0.1 + 800 * 0.5) / 1e6);
+  assert.ok(Math.abs(run.costUsd - expectedCost) < 1e-9, `run.costUsd ${run.costUsd} vs expected ${expectedCost}`);
+  assert.ok(Math.abs(readLedgerAnalysis(harness) - expectedCost) < 1e-9, `ledger ${readLedgerAnalysis(harness)} vs expected ${expectedCost}`);
+});
+
+test("467：R9a 汇总碰到限流重试成功", async (t) => {
+  const harness = await makeHarness(t, {
+    analyze: () => analyzeOk(),
+    summarize: (_entry, summarizeIndex) => (summarizeIndex === 1
+      ? rateLimited({ "retry-after-ms": "200" })
+      : summarizeOkSse()),
+  });
+  const ids = ["r9a1", "r9a2"];
+  await seedImagesViaRuntime(harness, ids);
+  await drainDerivatives(harness);
+  const libraryId = await makeLibraryWithImages(harness, { libraryName: "R9a汇总限流", imageIds: ids });
+  const quote = await harness.runner.quote({ project: "default", libraryId });
+  const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+  assert.equal(started.ok, true);
+
+  const run = await waitForRunStatus(harness, started.runId, ["done", "paused", "failed"], "R9a summary retry");
+  assert.equal(run.status, "done");
+  const summarizeCalls = harness.calls.filter((call) => call.kind === "summarize");
+  assert.equal(summarizeCalls.length, 2);
+  const gapMs = summarizeCalls[1].at - summarizeCalls[0].at;
+  t.diagnostic(`R9a summarize retry gap: ${gapMs} ms`);
+  assert.ok(gapMs >= 180, `expected 2nd summarize >= 180 ms after 1st, got ${gapMs} ms`);
+});
+
+test("467：R9b 汇总碰到长限流直接暂停", async (t) => {
+  let summaryRateLimit = true;
+  let firstSummarizeAt = 0;
+  const harness = await makeHarness(t, {
+    analyze: () => analyzeOk(),
+    summarize: () => {
+      if (!firstSummarizeAt) firstSummarizeAt = Date.now();
+      return summaryRateLimit ? rateLimited({ "retry-after": "61" }) : summarizeOkSse();
+    },
+  });
+  const ids = ["r9b1", "r9b2"];
+  await seedImagesViaRuntime(harness, ids);
+  await drainDerivatives(harness);
+  const libraryId = await makeLibraryWithImages(harness, { libraryName: "R9b汇总长限流", imageIds: ids });
+  const quote = await harness.runner.quote({ project: "default", libraryId });
+  const started = await harness.runner.start({ quoteToken: quote.quoteToken });
+  assert.equal(started.ok, true);
+
+  const waitAnalyzeDeadline = Date.now() + 15000;
+  for (;;) {
+    const got = await harness.serviceClient.getRun("default", started.runId);
+    if (got.payload?.run?.doneCount === 2) break;
+    if (Date.now() > waitAnalyzeDeadline) throw new Error("R9b analyze phase never completed");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  const t0 = firstSummarizeAt || Date.now();
+  const pausedRun = await waitForRunStatusFast(harness, started.runId, ["paused", "done", "failed"], 5000, "R9b summary did not pause within 5 s");
+  const elapsedMs = Date.now() - t0;
+  t.diagnostic(`R9b analyze done -> summary paused: ${elapsedMs} ms`);
+  assert.ok(elapsedMs <= 2000, `expected summary pause within 2000 ms, got ${elapsedMs} ms`);
+  assert.equal(pausedRun.status, "paused");
+  assert.equal(pausedRun.pauseReason, "rate-limit");
+  assert.equal(harness.calls.filter((call) => call.kind === "summarize").length, 1);
+
+  summaryRateLimit = false;
+  const resumeQuote = await harness.runner.quote({ project: "default", libraryId, runId: started.runId });
+  assert.equal(resumeQuote.ok, true);
+  assert.equal(resumeQuote.counts.newCount, 0);
+  const resumed = await harness.runner.resume({ runId: started.runId, quoteToken: resumeQuote.quoteToken });
+  assert.equal(resumed.ok, true);
+  const doneRun = await waitForRunStatus(harness, started.runId, ["done", "paused", "failed"], "R9b resume");
+  assert.equal(doneRun.status, "done");
+  assert.equal(harness.calls.filter((call) => call.kind === "analyze").length, 2, "analyze request count unchanged on summary resume");
 });

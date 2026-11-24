@@ -21,9 +21,38 @@ export function createClaudeClient({ apiKey, baseURL, outboundFetch }) {
     apiKey,
     authToken: null,
     baseURL,
-    maxRetries: 2,
+    // 这个客户端只给学习用；SDK 的重试会照 retry-after 睡、没有上限、暂停叫不醒，
+    // 一律交给 runner 处理（见 @anthropic-ai/sdk/client.mjs 第 884–914 行）。
+    maxRetries: 0,
     fetch: (url, init) => outboundFetch(url, { ...init, redirect: "error", credentials: "omit" }),
   });
+}
+
+/**
+ * 解析响应头里的 retry-after-ms / retry-after（与 SDK client.mjs 887–904 行一致）。
+ * 先看 retry-after-ms（浮点毫秒），没有/无效/为 0 再看 retry-after（浮点秒数或 HTTP 日期）。
+ * 结果为有限正数时返回毫秒数，否则返回 null；不设上限（上限由 runner 决定）。
+ */
+export function retryAfterMsFromHeaders(headers, nowMs = Date.now()) {
+  if (!headers || typeof headers.get !== "function") return null;
+  let timeoutMs;
+  const retryAfterMsHeader = headers.get("retry-after-ms");
+  if (retryAfterMsHeader) {
+    const parsedMs = parseFloat(retryAfterMsHeader);
+    if (Number.isFinite(parsedMs) && parsedMs > 0) timeoutMs = parsedMs;
+  }
+  if (timeoutMs === undefined) {
+    const retryAfterHeader = headers.get("retry-after");
+    if (retryAfterHeader) {
+      const parsedSeconds = parseFloat(retryAfterHeader);
+      if (!Number.isNaN(parsedSeconds)) {
+        timeoutMs = parsedSeconds * 1000;
+      } else {
+        timeoutMs = Date.parse(retryAfterHeader) - nowMs;
+      }
+    }
+  }
+  return Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : null;
 }
 
 /** 错误按类判断（只用 instanceof 和 status），永不按错误文字判断。 */
@@ -119,7 +148,10 @@ async function createStructuredMessage({ send, createParams, retryMaxTokens }) {
     try {
       message = await send(attemptParams);
     } catch (error) {
-      return { ok: false, code: classifyClaudeError(error), error, messages };
+      const retryAfterMs = error instanceof Anthropic.APIError
+        ? retryAfterMsFromHeaders(error.headers)
+        : null;
+      return { ok: false, code: classifyClaudeError(error), retryAfterMs, error, messages };
     }
     messages.push(message);
     if (message.stop_reason === "refusal") return { ok: false, code: "refusal", message, messages };
@@ -162,7 +194,15 @@ export async function analyzeImage(client, { model, image, metadata, signal, sys
   const spent = messagesCost(result.messages, model);
   const usage = { input_tokens: spent.inputTokens, output_tokens: spent.outputTokens };
   if (!result.ok) {
-    return { ok: false, code: result.code, costUsd: spent.costUsd, costKnown: spent.costKnown, usage, model };
+    return {
+      ok: false,
+      code: result.code,
+      retryAfterMs: result.retryAfterMs ?? null,
+      costUsd: spent.costUsd,
+      costKnown: spent.costKnown,
+      usage,
+      model,
+    };
   }
   const message = result.message;
   return {
@@ -204,7 +244,14 @@ export async function summarizeGuide(client, { model, userContent, signal, syste
     // 汇总的解析失败按 summary-error 交回（refusal / 错误分类原样）；已收到的
     // 回答照样计价交回，由调用方记账、计入这次学习的花费。
     const code = result.code === "bad-output" ? "summary-error" : result.code;
-    return { ok: false, code, usage, costUsd: spent.costUsd, costKnown: spent.costKnown };
+    return {
+      ok: false,
+      code,
+      retryAfterMs: result.retryAfterMs ?? null,
+      usage,
+      costUsd: spent.costUsd,
+      costKnown: spent.costKnown,
+    };
   }
   const { billedModel, costModel, fallbackUsed } = billingModelOf(result.message, model);
   return {

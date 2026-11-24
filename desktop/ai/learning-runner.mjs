@@ -23,6 +23,13 @@ import { ANALYSIS_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT, MERGE_SYSTEM_PROMPT, fil
 import { recordAiUsage } from "./usage-ledger.mjs";
 
 const QUOTE_TOKEN_TTL_MS = 10 * 60 * 1000;
+// 连续几「击」可重试错误就暂停（等于原来 SDK 1 次 + 重试 2 次，改为整次学习一起算）。
+const TRANSIENT_RETRY_LIMIT = 3;
+// 服务让等得比这还久（额度用完、按天限），就不等，直接暂停。
+const TRANSIENT_MAX_WAIT_MS = 60_000;
+// 没给 retry-after 时的默认冷却时长。
+const TRANSIENT_DEFAULT_WAIT_MS = 2_000;
+const TRANSIENT_ERROR_CODES = new Set(["rate-limit", "server", "network"]);
 const PAUSE_REASONS = new Set([
   "user", "interrupted", "auth", "no-key", "rate-limit", "network", "server",
   "unknown", "over-budget", "library-unavailable", "summary-error",
@@ -53,6 +60,9 @@ export function createLearningRunner({
   now = () => Date.now(),
   concurrency = 4,
   chunkSize = SUMMARY_CHUNK_SIZE,
+  transientRetryLimit = TRANSIENT_RETRY_LIMIT,
+  transientMaxWaitMs = TRANSIENT_MAX_WAIT_MS,
+  transientDefaultWaitMs = TRANSIENT_DEFAULT_WAIT_MS,
 }) {
   const quoteTokens = new Map();
   const knownRuns = new Map(); // runId → { projectId, libraryId }（abandon 只拿到 runId）
@@ -325,6 +335,10 @@ export function createLearningRunner({
       client,
       entry,
       rateLimited: false,
+      transientStrikes: 0,
+      strikeEpoch: 0,
+      cooldownUntil: 0,
+      wake: null,
       // 用户点了暂停：先同步置位（不等 HTTP 往返），派单循环立刻停止派新。
       pausingNow: false,
       pausePromise: null,
@@ -393,31 +407,55 @@ export function createLearningRunner({
     const capUsd = Number(context.run.capUsd ?? Number.POSITIVE_INFINITY);
     const analysisModel = context.entry.analysisModel;
 
+    let cooldownTimer = null;
+    const clearCooldownTimer = () => {
+      if (cooldownTimer) {
+        clearTimeout(cooldownTimer);
+        cooldownTimer = null;
+      }
+    };
+
     await new Promise((resolveLoop) => {
       // 暂停类标志（用户暂停 / 自动暂停 / 换库脱钩）只停止「派新的」；落停
       // 必须等手上的都回来（workers === 0），它们的结果和花费照常记（D.4）。
       const settled = () => pausedReason || context.pausingNow || context.run.status === "pausing" || context.detached;
       const maybeFinish = () => {
         if (workers === 0 && ((next >= pendingIds.length && !context.detached) || settled())) {
+          clearCooldownTimer();
+          context.wake = null;
           resolveLoop();
         }
       };
       const pump = () => {
-        while (
-          !pausedReason && !context.pausingNow && context.run.status !== "pausing" && !context.detached
-          && workers < (context.rateLimited ? 1 : concurrency)
-          && next < pendingIds.length
-        ) {
-          const assetId = pendingIds[next];
-          next += 1;
-          workers += 1;
-          void processOne(assetId).finally(() => {
-            workers -= 1;
+        if (!settled() && next < pendingIds.length) {
+          const remainingMs = context.cooldownUntil - Date.now();
+          if (remainingMs > 0) {
+            if (!cooldownTimer) {
+              cooldownTimer = setTimeout(() => {
+                cooldownTimer = null;
+                pump();
+              }, remainingMs);
+            }
             maybeFinish();
-            pump();
-          });
+            return;
+          }
+          const limit = (context.rateLimited || context.transientStrikes > 0) ? 1 : concurrency;
+          while (!settled() && Date.now() >= context.cooldownUntil && workers < limit && next < pendingIds.length) {
+            const assetId = pendingIds[next];
+            next += 1;
+            workers += 1;
+            void processOne(assetId).finally(() => {
+              workers -= 1;
+              maybeFinish();
+              pump();
+            });
+          }
         }
         maybeFinish();
+      };
+      context.wake = () => {
+        clearCooldownTimer();
+        pump();
       };
       const processOne = async (assetId) => {
         try {
@@ -454,7 +492,14 @@ export function createLearningRunner({
           // 取输入要一次 HTTP 往返：这期间点了暂停 / 出了别的暂停原因，就不再
           // 发这张的 Claude 请求（还没花钱），条目留 pending，继续时重做。
           if (pausedReason || context.pausingNow || context.run.status === "pausing") return;
+          // 取输入期间进入冷却：不发 Claude 请求，放回队尾重做（不放回会留 pending 导致转汇总 409）。
+          if (Date.now() < context.cooldownUntil) {
+            pendingIds.push(assetId);
+            return;
+          }
+          const sentEpoch = context.strikeEpoch;
           const client = createClient({ apiKey: key, baseURL: context.entry.baseUrl, outboundFetch });
+          // 不传 signal：已经发出去的请求不打断，避免服务端已算完收费却拿不到 usage（照实计价、不白扔快做完的分析）。
           const outcome = await analyzeImage(client, {
             model: analysisModel,
             image: input.payload.image,
@@ -464,6 +509,7 @@ export function createLearningRunner({
           if (context.detached) return;
           const usageTokens = outcome.usage || {};
           if (outcome.ok) {
+            context.transientStrikes = 0;
             await recordResult(context, assetId, {
               status: "done",
               fingerprint: input.payload.fingerprint,
@@ -478,6 +524,7 @@ export function createLearningRunner({
             return;
           }
           if (outcome.code === "refusal" || outcome.code === "bad-output" || outcome.code === "rejected") {
+            context.transientStrikes = 0;
             // 这一张记失败，接着跑下一张。bad-output 的放大重试已在 client 里做过。
             await recordResult(context, assetId, {
               status: "failed",
@@ -498,15 +545,20 @@ export function createLearningRunner({
             context.unrecordedCostUsd += Number(outcome.costUsd);
             await recordLedger(outcome.costUsd);
           }
-          if (outcome.code === "rate-limit") {
-            if (!context.rateLimited) {
-              // 第一次：并发降到 1，这张放回队尾重做，接着跑；同一次学习里
-              // 再碰到就暂停。
-              context.rateLimited = true;
-              pendingIds.push(assetId);
+          if (TRANSIENT_ERROR_CODES.has(outcome.code)) {
+            pendingIds.push(assetId);
+            if (outcome.code === "rate-limit") context.rateLimited = true;
+            if (sentEpoch !== context.strikeEpoch) return;
+            context.strikeEpoch += 1;
+            context.transientStrikes += 1;
+            const waitMs = outcome.retryAfterMs ?? transientDefaultWaitMs;
+            if (context.transientStrikes >= transientRetryLimit || waitMs > transientMaxWaitMs) {
+              logRun(context, `${outcome.code}: strike ${context.transientStrikes}/${transientRetryLimit}, pausing.`);
+              pausedReason = outcome.code;
               return;
             }
-            pausedReason = "rate-limit";
+            logRun(context, `${outcome.code}: strike ${context.transientStrikes}/${transientRetryLimit}, waiting ${waitMs} ms.`);
+            context.cooldownUntil = Date.now() + waitMs;
             return;
           }
           pausedReason = PAUSE_REASONS.has(outcome.code) ? outcome.code : "unknown";
@@ -687,16 +739,29 @@ export function createLearningRunner({
     let costUsd = 0;
     const overBudget = () => Number(context.run.costUsd || 0) + context.unrecordedCostUsd + costUsd + summaryEstimate > capUsd;
     const summarizeOnce = async (content, systemPrompt) => {
-      const outcome = await summarizeGuide(client, {
-        model: context.entry.summaryModel,
-        userContent: content,
-        systemPrompt,
-      });
-      // 成败都按收到的回答记账（失败的那几次服务端照样收费）。
-      costUsd += Number(outcome.costUsd || 0);
-      await recordLedger(outcome.costUsd);
-      if (!outcome.ok) throw outcome;
-      return outcome;
+      let strikes = 0;
+      for (;;) {
+        const outcome = await summarizeGuide(client, {
+          model: context.entry.summaryModel,
+          userContent: content,
+          systemPrompt,
+        });
+        // 成败都按收到的回答记账（失败的那几次服务端照样收费）。
+        costUsd += Number(outcome.costUsd || 0);
+        await recordLedger(outcome.costUsd);
+        if (outcome.ok) return outcome;
+        if (!TRANSIENT_ERROR_CODES.has(outcome.code)) throw outcome;
+        strikes += 1;
+        const waitMs = outcome.retryAfterMs ?? transientDefaultWaitMs;
+        if (strikes >= transientRetryLimit || waitMs > transientMaxWaitMs) {
+          logRun(context, `${outcome.code}: strike ${strikes}/${transientRetryLimit}, pausing.`);
+          throw outcome;
+        }
+        logRun(context, `${outcome.code}: strike ${strikes}/${transientRetryLimit}, waiting ${waitMs} ms.`);
+        // 汇总阶段的等待不被暂停打断（463：汇总中途不打断、照常落地）。
+        await new Promise((resolveWait) => setTimeout(resolveWait, waitMs));
+        if (serviceChanged(context)) throw { detached: true };
+      }
     };
     try {
       if (notes.length > chunkSize) {
@@ -724,6 +789,11 @@ export function createLearningRunner({
         usage = outcome.usage;
       }
     } catch (outcomeOrError) {
+      if (outcomeOrError?.detached) {
+        context.detached = true;
+        active = null;
+        return;
+      }
       const code = outcomeOrError?.code || "unknown";
       // 这次汇总已花的钱（含成功的分批）没落到手册上，随暂停记进 run；继续时
       // 汇总整个重做。
@@ -772,14 +842,17 @@ export function createLearningRunner({
     if (!active || active.runId !== String(runId)) return { ok: false };
     const context = active;
     context.pausingNow = true;
+    let pendingPatch = null;
     if (context.run.status === "running" && !context.pausePromise) {
       context.pausePromise = context.client.patchRun(context.projectId, context.runId, { to: "pausing", reason: "user" })
         .then((patched) => {
           if (patched?.ok && patched.payload?.run) context.run = patched.payload.run;
         })
         .catch(() => {});
-      await context.pausePromise;
+      pendingPatch = context.pausePromise;
     }
+    context.wake?.();
+    if (pendingPatch) await pendingPatch;
     return { ok: true };
   }
 
