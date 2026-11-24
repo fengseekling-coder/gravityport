@@ -115,8 +115,7 @@ export async function run(ctx) {
     await waitFor(cdp, `document.querySelectorAll('.asset-card').length === 1`, "seeded gallery");
 
     // Round 1: no switch — settings nav has no AI row.
-    await clickCenter(cdp, `document.querySelector('.user-button')`);
-    await waitFor(cdp, `document.querySelector('.settings-modal')`, "settings open");
+    await openSettings(cdp, "settings open");
     const navWithoutSwitch = await cdp.evaluate(`(() => ({
       labels: Array.from(document.querySelectorAll('.settings-nav button')).map((button) => button.textContent.trim()),
       hasAi: Array.from(document.querySelectorAll('.settings-nav button')).some((button) => button.textContent.trim() === 'AI'),
@@ -131,8 +130,7 @@ export async function run(ctx) {
     await cdp.evaluate(`location.reload()`);
     await waitForRendererReady(cdp);
     await waitFor(cdp, `document.querySelectorAll('.asset-card').length === 1`, "gallery after reload");
-    await clickCenter(cdp, `document.querySelector('.user-button')`);
-    await waitFor(cdp, `document.querySelector('.settings-modal')`, "settings open again");
+    await openSettings(cdp, "settings open again");
     await waitFor(cdp, `Array.from(document.querySelectorAll('.settings-nav button')).some((button) => button.textContent.trim() === 'AI')`, "AI nav row appears");
     await clickCenter(cdp, `Array.from(document.querySelectorAll('.settings-nav button')).find((button) => button.textContent.trim() === 'AI')`);
     await waitFor(cdp, `document.querySelectorAll('.settings-modal .ai-card').length === 3`, "three AI cards");
@@ -291,6 +289,36 @@ async function centerOf(cdp, elementExpression) {
   })()`);
   if (!point) throw new Error(`element not found: ${elementExpression}`);
   return point;
+}
+
+// 刷新后左下角的用户按钮要等它真能接住点击再点：PR #357 第四轮 macOS CI
+// 在刷新后点了一下、设置窗口没开，单点一次又不核对，只剩一句超时。先等它
+// 看得见、中心点落在它自己身上；点了 3 秒没开，记下点上去的是什么再点一次。
+async function openSettings(cdp, label) {
+  const button = `document.querySelector('.user-button')`;
+  await waitFor(cdp, `(() => {
+    const el = ${button};
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) return false;
+    const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return Boolean(hit && (hit === el || el.contains(hit)));
+  })()`, `${label}: user button clickable`);
+  await clickCenter(cdp, button);
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (await cdp.evaluate(`Boolean(document.querySelector('.settings-modal'))`)) return;
+    await sleep(150);
+  }
+  const probe = await cdp.evaluate(`(() => {
+    const el = ${button};
+    const r = el ? el.getBoundingClientRect() : null;
+    const hit = r ? document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) : null;
+    return { rect: r ? [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] : null, hit: hit ? hit.tagName.toLowerCase() + '.' + String(hit.className || '').trim().split(/\\s+/).join('.') : null, active: document.activeElement?.tagName || null };
+  })()`);
+  console.log(`[e2e] settings-ai ${label}: first click did not open settings, retrying once ${JSON.stringify(probe)}`);
+  await clickCenter(cdp, button);
+  await waitFor(cdp, `document.querySelector('.settings-modal')`, label);
 }
 
 async function clickCenter(cdp, elementExpression) {
