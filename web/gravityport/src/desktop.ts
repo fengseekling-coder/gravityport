@@ -55,6 +55,10 @@ export type AiCatalogModel = {
   service: string
   slots: string[]
   defaults: string[]
+  pricing?:
+    | { kind: "tokens"; input: number; output: number; tier?: { thresholdTokens: number; input: number; output: number } }
+    | { kind: "openai-image"; imageInput?: number; imageOutput?: number; textInput?: number; textOutput?: number }
+    | { kind: "per-image"; perImage: number }
   source?: string
   checkedAt?: string
 }

@@ -125,19 +125,36 @@ export async function run(ctx) {
       cdp,
       `Array.from(document.querySelectorAll('.settings-nav button')).find((b) => b.textContent.trim() === 'AI')`,
     );
-    await waitFor(cdp, `document.querySelectorAll('.settings-modal .ai-card').length === 3`, "three AI cards");
-
-    // Add Claude-format custom service in first card (分析和汇总).
-    await clickCenter(cdp, `document.querySelector('.ai-card .ai-row .toolbar-select')`);
     await waitFor(
       cdp,
-      `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).some((el) => el.textContent.includes('添加其它服务'))`,
-      "add-service menu option",
+      `Boolean(document.querySelector('.settings-modal .ai-services')) && Boolean(document.querySelector('.settings-modal .ai-uses'))`,
+      "AI settings two cards",
     );
-    await clickCenter(
+
+    // Add Claude-format custom service via quick-add or header menu -> 其它服务….
+    await waitFor(
       cdp,
-      `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).find((el) => el.textContent.includes('添加其它服务'))`,
+      `Boolean(document.querySelector('.ai-add-select .toolbar-select')) || Array.from(document.querySelectorAll('.ai-quick-add .settings-action-btn')).some((el) => el.textContent.includes('其它服务'))`,
+      "add-service trigger ready",
     );
+    const hasHeaderAdd = await cdp.evaluate(`Boolean(document.querySelector('.ai-add-select .toolbar-select'))`);
+    if (hasHeaderAdd) {
+      await clickCenter(cdp, `document.querySelector('.ai-add-select .toolbar-select')`);
+      await waitFor(
+        cdp,
+        `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).some((el) => el.textContent.includes('其它服务'))`,
+        "other-service menu option",
+      );
+      await clickCenter(
+        cdp,
+        `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).find((el) => el.textContent.includes('其它服务'))`,
+      );
+    } else {
+      await clickCenter(
+        cdp,
+        `Array.from(document.querySelectorAll('.ai-quick-add .settings-action-btn')).find((el) => el.textContent.includes('其它服务'))`,
+      );
+    }
     await waitFor(cdp, `Boolean(document.querySelector('.ai-add-form'))`, "add service form open");
     await clickCenter(cdp, `document.querySelector('.ai-add-form input.ai-text-input')`);
     await cdp.send("Input.insertText", { text: FAKE_SERVICE_NAME });
@@ -155,28 +172,52 @@ export async function run(ctx) {
     await waitFor(cdp, `!document.querySelector('.ai-add-form')`, "add service form closed");
     await waitFor(
       cdp,
-      `Array.from(document.querySelectorAll('.ai-card .ai-row .toolbar-select span')).some((el) => el.textContent.trim() === ${JSON.stringify(FAKE_SERVICE_NAME)})`,
-      "custom Claude service selected",
+      `Boolean(document.querySelector('.ai-service-row.editing .ai-key-input'))`,
+      "custom Claude service row in edit mode",
     );
-    // Save fake key.
-    await clickCenter(cdp, `document.querySelector('.ai-card .ai-key-input')`);
+    // Save fake key -> auto-tests and auto-selects Claude Haiku 5.5 / Sonnet 5.5.
+    await clickCenter(cdp, `document.querySelector('.ai-service-row.editing .ai-key-input')`);
     await cdp.send("Input.insertText", { text: FAKE_KEY });
     await clickCenter(
       cdp,
-      `Array.from(document.querySelectorAll('.ai-card .ai-key-row .settings-action-btn')).find((b) => b.textContent.trim() === '保存')`,
+      `Array.from(document.querySelectorAll('.ai-service-row.editing .settings-action-btn')).find((b) => b.textContent.trim() === '保存')`,
     );
     await waitFor(
       cdp,
-      `Array.from(document.querySelectorAll('.ai-key-saved')).some((el) => el.textContent.includes('尾号 5678'))`,
-      "fake key saved last4 5678",
+      `Array.from(document.querySelectorAll('.ai-service-row')).some((el) => el.textContent.includes('尾号 5678') && el.textContent.includes('连接正常'))`,
+      "fake key saved last4 5678 and auto-test ok",
     );
-    // Verify analysis & summary models default to Claude Haiku 5.5 / Claude Sonnet 5.5.
-    const modelTexts = await cdp.evaluate(
-      `Array.from(document.querySelectorAll('.ai-card .ai-model-pair .toolbar-select span')).map((el) => el.textContent.trim())`,
+    // Verify analysis & summary rows default to Claude Haiku 5.5 / Claude Sonnet 5.5.
+    await waitFor(
+      cdp,
+      `(document.querySelector('.ai-use-row[data-role="analysis"] .toolbar-select > span')?.textContent || '').includes('Claude Haiku 5.5') && (document.querySelector('.ai-use-row[data-role="summary"] .toolbar-select > span')?.textContent || '').includes('Claude Sonnet 5.5')`,
+      "analysis and summary defaults to Haiku 5.5 / Sonnet 5.5",
     );
-    if (!modelTexts.some((t) => t.includes("Haiku 5.5")) || !modelTexts.some((t) => t.includes("Sonnet 5.5"))) {
-      throw new Error(`unexpected Claude model defaults: ${JSON.stringify(modelTexts)}`);
-    }
+    // Switch analysis to Claude Sonnet 5.5 -> 20x cost warning appears -> click switch-back button -> returns to Haiku.
+    await clickCenter(cdp, `document.querySelector('.ai-use-row[data-role="analysis"] .toolbar-select')`);
+    await waitFor(
+      cdp,
+      `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).some((el) => el.textContent.includes('Claude Sonnet 5.5'))`,
+      "Sonnet 5.5 option in analysis menu",
+    );
+    await clickCenter(
+      cdp,
+      `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).find((el) => el.textContent.includes('Claude Sonnet 5.5'))`,
+    );
+    await waitFor(
+      cdp,
+      `(document.querySelector('.ai-use-row[data-role="analysis"] .ai-note')?.textContent || '').includes('单价是 Claude Haiku 5.5 的 20 倍')`,
+      "20x cost warning appears on analysis row",
+    );
+    await clickCenter(
+      cdp,
+      `Array.from(document.querySelectorAll('.ai-use-row[data-role="analysis"] .ai-note-action')).find((b) => b.textContent.includes('换回 Claude Haiku 5.5'))`,
+    );
+    await waitFor(
+      cdp,
+      `!document.querySelector('.ai-use-row[data-role="analysis"] .ai-note') && (document.querySelector('.ai-use-row[data-role="analysis"] .toolbar-select > span')?.textContent || '').includes('Claude Haiku 5.5')`,
+      "20x warning cleared and analysis switched back to Haiku 5.5",
+    );
     await clickCenter(cdp, `document.querySelector('.settings-modal .modal-close')`);
     await waitFor(cdp, `!document.querySelector('.settings-modal')`, "settings closed");
 
@@ -515,7 +556,7 @@ export async function run(ctx) {
     );
     await waitFor(
       cdp,
-      `Boolean(document.querySelector('.settings-modal')) && document.querySelectorAll('.settings-modal .ai-card').length === 3`,
+      `Boolean(document.querySelector('.settings-modal')) && Boolean(document.querySelector('.settings-modal .ai-uses'))`,
       "Settings opens directly on AI tab",
     );
     await clickCenter(cdp, `document.querySelector('.settings-modal .modal-close')`);

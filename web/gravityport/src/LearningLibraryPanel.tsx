@@ -719,8 +719,8 @@ export function LearningLibraryPanel({
   const blockedMessage = (blocked: LearningBlockedState): string => {
     switch (blocked.blocked) {
       case "encryption-unavailable": return tr("这台电脑无法加密保存密钥，暂时不能学习。")
-      case "no-service": return tr("还没有设置「分析和汇总」用哪家服务。")
-      case "unsupported-service": return tr("学习暂时只支持 Claude，请在 AI 设置里把「分析和汇总」换成 Claude。")
+      case "no-service": return tr("还没有设置「学习」用哪家服务。")
+      case "unsupported-service": return tr("学习暂时只支持 Claude，请在 AI 设置里把「学习」换成 Claude 的模型。")
       case "no-key": return fillNamed("还没有填 {service} 的密钥。", { service: blocked.serviceLabel || "Claude" })
       case "unknown-price": return fillNamed("{model} 不在单价表里，无法估算花费。", { model: blocked.modelLabel || tr("所选模型") })
       case "busy": return fillNamed("「{name}」正在学习，学完再开始。", { name: blocked.libraryName || tr("另一个学习库") })

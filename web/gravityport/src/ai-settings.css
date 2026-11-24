@@ -1,138 +1,255 @@
-/* 任务 458：AI 设置页（AiSettingsPanel.tsx）专用样式。颜色只用 --ui-*，
-   间距只用 --space-*，字号 12 / 16，字重 400 / 500 / 600；小按钮沿用
-   .settings-action-btn，分段控件沿用 .segmented，下拉沿用 ToolbarSelect。 */
+/* 任务 468：AI 设置页（AiSettingsPanel.tsx）专用样式。
+   颜色只用 --ui-*，间距只用 --space-*，圆角只用 --radius-*，字号 12px，
+   字重 400 / 500 / 600；卡片沿用 .settings-section.settings-card，
+   小按钮沿用 .settings-action-btn，分段沿用 .segmented，下拉沿用 ToolbarSelect。 */
 
-/* 页顶说明（不带卡片）。 */
-.app .ai-panel-desc {
-  padding: 0 var(--space-1);
-}
-
-/* 卡片内行：左标签 + 内容。 */
-.app .ai-card .ai-card-body {
+.app .ai-settings {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding-top: var(--space-3);
 }
-.app .ai-card .ai-row {
-  display: flex;
+
+/* ── 服务卡头「添加服务」：保持安静按钮（无边无底）。 ── */
+.app .ai-settings .ai-add-select .toolbar-select {
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-.app .ai-card .ai-row-label {
-  width: var(--space-16);
-  flex-shrink: 0;
+  gap: var(--space-1);
+  height: var(--space-6);
+  min-height: var(--space-6);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
   color: var(--ui-secondary);
-  font-size: 12px;
-  line-height: var(--space-7);
-  font-weight: 400;
+  font-size: var(--type-body-size);
+  line-height: var(--type-control-line);
+  font-weight: var(--type-weight-regular);
+  cursor: pointer;
 }
-.app .ai-card .toolbar-select {
+.app .ai-settings .ai-add-select .toolbar-select:hover:not(:disabled),
+.app .ai-settings .ai-add-select .toolbar-select.open {
+  background: transparent;
+  color: var(--ui-text);
+}
+.app .ai-settings .ai-add-select .toolbar-select > svg {
+  color: var(--ui-muted);
   flex-shrink: 0;
 }
 
-/* 「逐张分析 / 汇总手册」两个下拉并排。 */
-.app .ai-card .ai-model-pair {
+/* ── 服务列表与服务行 ── */
+.app .ai-settings .ai-service-list {
+  display: flex;
+  flex-direction: column;
+}
+.app .ai-settings .ai-service-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-wrap: wrap;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--ui-line);
+  min-width: 0;
 }
-.app .ai-card .ai-model-pair .toolbar-select {
-  min-width: 176px;
+.app .ai-settings .ai-service-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.app .ai-settings .ai-service-row:last-child {
+  padding-bottom: 0;
+}
+.app .ai-settings .ai-service-row.editing {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
 }
 
-/* 密钥行：密码输入框 + 小按钮 + 右侧「获取密钥」小链接。 */
-.app .ai-card .ai-key-input {
-  width: 216px;
+.app .ai-settings .ai-service-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
-.app .ai-text-input {
+.app .ai-settings .ai-service-main.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-height-small);
+}
+.app .ai-settings .ai-service-main.inline .ai-service-name {
+  flex-shrink: 0;
+}
+.app .ai-settings .ai-service-main.inline .ai-status-line {
+  min-width: 0;
+  overflow: hidden;
+}
+.app .ai-settings .ai-service-main.inline .ai-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app .ai-settings .ai-service-name {
+  color: var(--ui-text);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-weight-label);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app .ai-settings .ai-service-meta {
+  color: var(--ui-muted);
+  font-weight: var(--type-weight-regular);
+}
+
+.app .ai-settings .ai-service-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* 编辑态三行 */
+.app .ai-settings .ai-service-edit-head,
+.app .ai-settings .ai-service-edit-input,
+.app .ai-settings .ai-service-edit-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.app .ai-settings .ai-service-edit-head,
+.app .ai-settings .ai-service-edit-foot {
+  justify-content: space-between;
+}
+.app .ai-settings .ai-service-hint {
+  color: var(--ui-muted);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-weight-regular);
+}
+
+.app .ai-settings .ai-text-input {
   box-sizing: border-box;
-  height: var(--space-7);
+  height: var(--control-height-small);
   padding: 0 var(--space-2);
   border: 1px solid var(--ui-line);
   border-radius: var(--radius-control);
   background: var(--ui-raised);
   color: var(--ui-text);
-  font-size: 12px;
-  line-height: var(--space-5);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  min-width: 0;
 }
-.app .ai-text-input:focus {
+.app .ai-settings .ai-text-input:focus {
   outline: none;
   border-color: var(--field-focus);
   box-shadow: 0 0 0 1px var(--field-focus);
 }
-.app .ai-card .ai-key-saved {
-  color: var(--ui-text);
-  font-size: 12px;
-  font-weight: 400;
+.app .ai-settings .ai-key-input {
+  flex: 1;
 }
-.app .ai-card .ai-key-link {
-  margin-left: auto;
+
+.app .ai-settings .ai-key-link {
+  flex-shrink: 0;
   color: var(--ui-secondary);
-  font-size: 12px;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.app .ai-card .ai-key-link:hover {
+.app .ai-settings .ai-key-link:hover {
   color: var(--ui-text);
 }
 
-/* 测试连接行：与上面各行的内容对齐（标签宽 64px + 间距 8px）。 */
-.app .ai-card .ai-test-row {
-  padding-left: calc(var(--space-16) + var(--space-2));
+.app .ai-settings .ai-danger-link {
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-danger);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-weight-label);
+  cursor: pointer;
+}
+.app .ai-settings .ai-danger-link:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.app .ai-settings .ai-danger-link:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: default;
 }
 
-/* 状态行：6px 圆点 + 文字，样式照设置卡的状态圆点。 */
-.app .ai-card .ai-status-line {
+/* ── 状态圆点与状态行 ── */
+.app .ai-settings .ai-status-line {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   color: var(--ui-secondary);
-  font-size: 12px;
-  font-weight: 400;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-weight-regular);
   min-width: 0;
 }
-.app .ai-card .ai-status-sub {
+.app .ai-settings .ai-status-line.ai-status-error {
+  align-items: flex-start;
+  color: var(--ui-text);
+}
+.app .ai-settings .ai-status-line.ai-status-error .ai-status-dot {
+  margin-top: 7px;
+}
+.app .ai-settings .ai-status-text {
+  min-width: 0;
+}
+.app .ai-settings .ai-status-sub {
   color: var(--ui-muted);
 }
-.app .ai-card .ai-status-dot {
+.app .ai-settings .ai-status-dot {
   width: 6px;
   height: 6px;
   flex-shrink: 0;
   border-radius: var(--radius-round);
   background: var(--ui-muted);
 }
-.app .ai-card .ai-status-dot.ok {
+.app .ai-settings .ai-status-dot.ok {
   background: var(--ui-accent);
 }
-.app .ai-card .ai-status-dot.error {
+.app .ai-settings .ai-status-dot.error {
   background: var(--ui-danger);
 }
+.app .ai-settings .ai-status-dot.busy {
+  background: var(--ui-muted);
+}
 
-/* 单价和本月：12px --ui-muted，分析和汇总卡里多行纵向排。 */
-.app .ai-card .ai-price-row {
+/* ── 空态与加密不可用的快速添加行 ── */
+.app .ai-settings .ai-empty-line {
+  margin: 0;
+  color: var(--ui-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+}
+.app .ai-settings .ai-quick-add {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
 }
-.app .ai-card .ai-price-line {
+.app .ai-settings .ai-quick-add-label {
   color: var(--ui-muted);
-  font-size: 12px;
-  font-weight: 400;
+  font-size: var(--type-body-size);
+  line-height: var(--control-height-small);
+  margin-right: var(--space-1);
+}
+.app .settings-modal .ai-settings .ai-quick-add-btn {
+  min-width: 0;
+  padding: 0 var(--space-3);
 }
 
-/* 错误小字。 */
-.app .ai-card .ai-error-line {
-  color: var(--ui-danger);
-  font-size: 12px;
-  font-weight: 400;
-  width: 100%;
-}
-
-/* 「添加其它服务…」就地展开的表单。 */
-.app .ai-card .ai-add-form {
+/* ── 自定义服务就地表单 ── */
+.app .ai-settings .ai-add-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -141,11 +258,192 @@
   border-radius: var(--radius-control);
   background: var(--ui-inset);
 }
-.app .ai-card .ai-add-form .ai-text-input {
-  width: 260px;
-}
-.app .ai-card .ai-add-actions {
+.app .ai-settings .ai-form-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
+}
+.app .ai-settings .ai-form-label {
+  width: var(--space-16);
+  flex-shrink: 0;
+  color: var(--ui-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--control-height-small);
+  font-weight: var(--type-weight-regular);
+}
+.app .ai-settings .ai-add-form .ai-text-input {
+  flex: 1;
+  max-width: 260px;
+}
+.app .ai-settings .ai-add-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: calc(var(--space-16) + var(--space-2));
+}
+
+/* ── 用途卡 ── */
+.app .ai-settings .ai-month-total,
+.app .ai-settings .ai-month-text {
+  color: var(--ui-muted);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-weight-regular);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.app .ai-settings .ai-use-row .ai-month-text {
+  line-height: var(--control-height-small);
+}
+.app .ai-settings .ai-month-spacer {
+  display: block;
+}
+
+.app .ai-settings .ai-use-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.app .ai-settings .ai-use-group-bordered {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--ui-line);
+}
+.app .ai-settings .ai-use-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.app .ai-settings .ai-use-group-head strong {
+  color: var(--ui-text);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-weight-label);
+}
+
+.app .ai-settings .ai-use-row {
+  display: grid;
+  grid-template-columns: var(--space-16) minmax(0, 1fr) auto;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  align-items: start;
+}
+.app .ai-settings .ai-use-label {
+  color: var(--ui-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--control-height-small);
+  font-weight: var(--type-weight-regular);
+}
+.app .ai-settings .ai-use-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* AI 页里的模型下拉：描边字段样式（只在 .ai-settings 下生效，不影响工具栏）。 */
+.app .ai-settings .ai-use-control .toolbar-select {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 236px;
+  max-width: 100%;
+  height: var(--control-height-small);
+  min-height: var(--control-height-small);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--radius-control);
+  background: var(--ui-raised);
+  color: var(--ui-text);
+  font-size: var(--type-body-size);
+  line-height: var(--type-control-line);
+  font-weight: var(--type-weight-regular);
+  cursor: pointer;
+}
+.app .ai-settings .ai-use-control .toolbar-select:hover:not(:disabled) {
+  background: var(--ui-selected);
+  color: var(--ui-text);
+}
+.app .ai-settings .ai-use-control .toolbar-select:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: default;
+}
+.app .ai-settings .ai-use-control .toolbar-select > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.app .ai-settings .ai-use-control .toolbar-select > svg {
+  flex-shrink: 0;
+  color: var(--ui-muted);
+}
+.app .ai-settings .ai-select-sub,
+.app .ai-settings .ai-select-placeholder {
+  color: var(--ui-muted);
+}
+
+.app .ai-settings .ai-price-line {
+  color: var(--ui-muted);
+  font-size: var(--type-body-size);
+  line-height: var(--type-control-line);
+  font-weight: var(--type-weight-regular);
+}
+
+/* ── 行内提示（红点/灰点） ── */
+.app .ai-settings .ai-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-weight-regular);
+  min-width: 0;
+}
+.app .ai-settings .ai-note .ai-status-dot {
+  margin-top: 7px;
+}
+.app .ai-settings .ai-note-danger {
+  color: var(--ui-text);
+}
+.app .ai-settings .ai-note-info {
+  color: var(--ui-secondary);
+}
+.app .ai-settings .ai-note-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.app .ai-settings .ai-note-text {
+  min-width: 0;
+}
+.app .ai-settings .ai-note-actions {
+  display: flex;
+  align-items: center;
+}
+.app .ai-settings .ai-note-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-weight-label);
+  cursor: pointer;
+}
+.app .ai-settings .ai-note-action:hover:not(:disabled) {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.app .ai-settings .ai-error-line {
+  width: 100%;
 }
