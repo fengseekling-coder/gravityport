@@ -1801,8 +1801,9 @@ async function discoverAndPairMosa() {
 async function runDiscoverAndPairMosa() {
   const first = await discoverAndPairMosaOnce();
   if (first) return first;
-  // `false`: the App answered and the user (or the clock) ended the request.
-  // Asking again would only open a second confirmation.
+  // `false`: the App answered — it refused, was busy, or the user (or the
+  // clock) ended the request. Asking again would only fight the user or open a
+  // second confirmation.
   if (first === false) return null;
   // A cold-started GravityPort (Windows) can take longer than one probe round
   // to start listening, so probe the whole port list once more after a pause.
@@ -1821,9 +1822,10 @@ async function discoverAndPairMosaOnce() {
 
       // Task 333: the App asks the user to confirm this extension. A 202
       // starts (or merges into) a pending request; denied and busy answers
-      // stop the whole attempt — retrying would only fight the user.
+      // stop the whole attempt — retrying would only fight the user, so they
+      // also skip the discovery retry round (`false`).
       const pair = await postPairRequest(baseUrl);
-      if (pair.status === 403 || pair.status === 429) return null;
+      if (pair.status === 403 || pair.status === 429) return false;
       if (!pair.ok) continue;
       const pairBody = await pair.json();
       if (pairBody?.product !== "mosa") continue;

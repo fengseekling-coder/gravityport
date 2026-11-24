@@ -274,3 +274,28 @@ test("466 验收：a poll POST that returns 200 with the token connects and stor
   assert.equal(counters.gets, 0, "never GET /pair/<id>");
   assert.equal(counters.posts, 4);
 });
+
+test("466 验收：a refused first POST (403 or 429) ends the attempt without the discovery retry round", async () => {
+  for (const status of [403, 429]) {
+    const harness = await createBackgroundHarness({
+      emptyStorage: true,
+      appOnline: true,
+      delayOverrides: { 1500: 20 },
+    });
+    let posts = 0;
+    harness.fetchHarness.setAppHandler((url) => {
+      if (url.pathname !== "/api/web-capture/pair") return null;
+      posts += 1;
+      return jsonRoute({ error: "refused", code: status === 403 ? "WEB_CAPTURE_PAIRING_DENIED" : "WEB_CAPTURE_PAIRING_BUSY" }, status);
+    });
+    const response = await withTimeout(
+      harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPageSender()),
+      3000,
+      `repairPairing after ${status}`,
+    );
+    assert.equal(response?.ok, false, `${status}: not connected`);
+    // The retry round would run 20 ms (scaled from 1.5 s) later; wait well past it.
+    await sleep(200);
+    assert.equal(posts, 1, `${status}: one POST, no retry round`);
+  }
+});
