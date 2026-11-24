@@ -12,11 +12,15 @@ const compileRoot = join(uiRoot, "node_modules", ".cache", "version-canvas-ui-te
 const tscOut = join(compileRoot, "tsc");
 const offDir = join(compileRoot, "off");
 const onDir = join(compileRoot, "on");
+const legacyDir = join(compileRoot, "legacy");
+const throwingDir = join(compileRoot, "throwing");
 
 let React;
 let renderStatic;
 let offModel;
 let onModel;
+let legacyModel;
+let throwingModel;
 let offSection;
 let onSection;
 let canvasMod;
@@ -236,6 +240,8 @@ before(async () => {
   await rewriteViteEnv(tscOut);
   await cp(tscOut, offDir, { recursive: true });
   await cp(tscOut, onDir, { recursive: true });
+  await cp(tscOut, legacyDir, { recursive: true });
+  await cp(tscOut, throwingDir, { recursive: true });
 
   await writeFile(
     join(compileRoot, "hooks.mjs"),
@@ -265,7 +271,9 @@ before(async () => {
 
   const previousStorage = globalThis.localStorage;
   try {
-    delete globalThis.localStorage;
+    globalThis.localStorage = {
+      getItem: (key) => (key === "gravityport.dev.version-canvas" ? "0" : null),
+    };
     offModel = await import(pathToFileURL(join(offDir, "version-canvas-model.js")).href);
     offSection = await import(pathToFileURL(join(offDir, "VersionSection.js")).href);
     canvasMod = await import(pathToFileURL(join(offDir, "VersionCanvas.js")).href);
@@ -273,11 +281,21 @@ before(async () => {
     i18nMod = await import(pathToFileURL(join(offDir, "i18n.js")).href);
     roundsMod = await import(pathToFileURL(join(offDir, "conversation-rounds.js")).href);
 
+    delete globalThis.localStorage;
+    onModel = await import(pathToFileURL(join(onDir, "version-canvas-model.js")).href);
+    onSection = await import(pathToFileURL(join(onDir, "VersionSection.js")).href);
+
     globalThis.localStorage = {
       getItem: (key) => (key === "gravityport.dev.version-canvas" ? "1" : null),
     };
-    onModel = await import(pathToFileURL(join(onDir, "version-canvas-model.js")).href);
-    onSection = await import(pathToFileURL(join(onDir, "VersionSection.js")).href);
+    legacyModel = await import(pathToFileURL(join(legacyDir, "version-canvas-model.js")).href);
+
+    globalThis.localStorage = {
+      getItem: () => {
+        throw new Error("storage unavailable");
+      },
+    };
+    throwingModel = await import(pathToFileURL(join(throwingDir, "version-canvas-model.js")).href);
   } finally {
     if (previousStorage === undefined) {
       delete globalThis.localStorage;
@@ -292,9 +310,11 @@ after(async () => {
 });
 
 describe("VersionCanvas entry gate & model (task 421)", () => {
-  it("gates VERSION_CANVAS_ENTRY off by default in built mode and enables it via localStorage", () => {
-    assert.equal(offModel.VERSION_CANVAS_ENTRY, false, "default built build must keep switch OFF");
-    assert.equal(onModel.VERSION_CANVAS_ENTRY, true, "localStorage flag must turn switch ON");
+  it('turns VERSION_CANVAS_ENTRY on by default in built mode; "0" is the fallback switch', () => {
+    assert.equal(onModel.VERSION_CANVAS_ENTRY, true, "default built build must turn switch ON");
+    assert.equal(offModel.VERSION_CANVAS_ENTRY, false, 'localStorage "0" must turn switch OFF');
+    assert.equal(legacyModel.VERSION_CANVAS_ENTRY, true, 'legacy localStorage "1" must stay ON');
+    assert.equal(throwingModel.VERSION_CANVAS_ENTRY, true, "unreadable localStorage must default to ON");
   });
 
   it("preserves legacy toggle behavior when switch is OFF", () => {
@@ -339,6 +359,7 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
     const html = renderStatic(React.createElement(Capture));
     assert.match(html, /class="settings-badge"/, "existing badge count remains intact");
     assert.match(html, />查看</, "button copy stays 查看 without introducing a new button");
+    assert.doesNotMatch(html, /aria-label="完整版本树"/, "canvas-eligible asset must not render inline expanded tree");
     const buttons = findElements(tree, (el) => el.type === "button" && el.props?.className === "section-action");
     assert.equal(buttons.length, 1);
     assert.equal(textOf(buttons[0]), "查看");
@@ -346,6 +367,47 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
     buttons[0].props.onClick();
     assert.equal(openCalls, 1);
     assert.equal(toggleCalls, 0);
+
+    const offHtml = renderStatic(
+      React.createElement(
+        offSection.VersionSection,
+        makeSectionProps(history, {
+          versionTreeOpen: true,
+          onOpenCanvas: () => {},
+        }),
+      ),
+    );
+    assert.match(offHtml, /aria-label="完整版本树"/, 'fallback switch ("0") still renders inline expanded tree');
+  });
+
+  it("checks versionCanvasOffered across switch, scope, history, and trashed siblings", () => {
+    assert.equal(typeof onModel.versionCanvasOffered, "function");
+    const history = makeHistory();
+    const a1 = history.output_assets[0];
+    assert.equal(onModel.versionCanvasOffered(history, a1, "all"), true);
+    assert.equal(onModel.versionCanvasOffered(history, a1, "trash"), false);
+    assert.equal(onModel.versionCanvasOffered(null, a1, "all"), false);
+
+    const soloHistory = {
+      asset_id: "a1",
+      generation_ids: ["evt1"],
+      output_assets: [a1],
+      events: [history.events[0]],
+      context_events: [],
+      relations: [],
+      relation_candidates: [],
+    };
+    assert.equal(onModel.versionCanvasOffered(soloHistory, a1, "all"), false);
+
+    const trashedSiblingsHistory = {
+      ...history,
+      output_assets: history.output_assets.map((item) =>
+        item.id === "a1" ? item : { ...item, deleted_at: "2026-11-15T00:00:00.000Z" },
+      ),
+    };
+    assert.equal(onModel.versionCanvasOffered(trashedSiblingsHistory, a1, "all"), false);
+
+    assert.equal(offModel.versionCanvasOffered(history, a1, "all"), false);
   });
 
   it("maps real generationHistory into nodes, confirmed edges, highest-confidence suggested edge, and final path", () => {

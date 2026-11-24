@@ -48,6 +48,9 @@ export function VersionSection(props: VersionSectionProps) {
     timeLabel, relationPairLine, roundText, selectHistoryAsset, mutateRelation, providerDisplayLabel,
     onOpenCanvas,
   } = props
+  // 任务 472：能进画布的图，「查看」只进画布；在别的图上展开过也不把旧展开区带过来。
+  const canvasEntry = VERSION_CANVAS_ENTRY && Boolean(onOpenCanvas)
+  const treeOpen = versionTreeOpen && !canvasEntry
   return (
     <>
           <section className="detail-section">
@@ -70,15 +73,15 @@ export function VersionSection(props: VersionSectionProps) {
                   {badgeCount ? <span className="settings-badge">{badgeCount}</span> : null}
                   <button
                     className="section-action"
-                    aria-expanded={VERSION_CANVAS_ENTRY && onOpenCanvas ? false : versionTreeOpen}
+                    aria-expanded={canvasEntry ? false : versionTreeOpen}
                     onClick={() => {
-                      if (VERSION_CANVAS_ENTRY && onOpenCanvas) {
-                        onOpenCanvas()
+                      if (canvasEntry) {
+                        onOpenCanvas?.()
                         return
                       }
                       setVersionTreeOpen(!versionTreeOpen)
                     }}
-                  >{tr(VERSION_CANVAS_ENTRY && onOpenCanvas ? "查看" : versionTreeOpen ? "收起" : "查看")}</button>
+                  >{tr(canvasEntry ? "查看" : versionTreeOpen ? "收起" : "查看")}</button>
                 </span>
               })()}
             </div>
@@ -92,7 +95,7 @@ export function VersionSection(props: VersionSectionProps) {
                 with the time/provider/model line. */}
             <div className="version-list" aria-label={tr("版本树")}>
               {versionRounds.mode === "context"
-                ? (versionTreeOpen ? conversationRoundRows(generationHistory, asset?.id || "") : versionRounds.rows).map((row) => {
+                ? (treeOpen ? conversationRoundRows(generationHistory, asset?.id || "") : versionRounds.rows).map((row) => {
                   const output = row.outputAsset || (row.isCurrent ? asset : undefined)
                   return InspectorRow({
                     key: String(row.outputAsset?.id || row.event.id || row.event.output_asset_id),
@@ -103,7 +106,7 @@ export function VersionSection(props: VersionSectionProps) {
                     onClick: () => { if (!row.isCurrent && row.outputAsset?.id) selectHistoryAsset(row.outputAsset.id) },
                   })
                 })
-                : (generationHistory?.events || []).slice(0, versionTreeOpen ? undefined : 3).map((event, index) => {
+                : (generationHistory?.events || []).slice(0, treeOpen ? undefined : 3).map((event, index) => {
                   const output = event.output_asset_id
                     ? generationHistory?.output_assets?.find(item => item.id === event.output_asset_id)
                       || (asset && asset.id === event.output_asset_id ? asset : undefined)
@@ -121,7 +124,7 @@ export function VersionSection(props: VersionSectionProps) {
                 ? <span className="muted">{tr("无法加载")}</span>
                 : !generationHistory?.events?.length && <span className="muted">{tr("暂无生成记录")}</span>}
             </div>
-            {versionTreeOpen && (() => {
+            {treeOpen && (() => {
               // Every block below renders the same thumbnail rows as the list
               // above; no gen- id may reach this region (task 148).
               const currentAssetId = asset?.id || ""

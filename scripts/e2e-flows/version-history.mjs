@@ -1,11 +1,11 @@
 // GravityPort React UI flow: version lineage and generation rounds surface in
 // the React inspector, and the prompt editor writes through the real API.
-// Task 144 adds a same-conversation ChatGPT shape: four assets bound to turns
+// Task 144 / 472 adds a same-conversation ChatGPT shape: four assets bound to turns
 // 1-4 of one conversation (via the capture-plugin turn-bindings endpoint), the
-// version tree listing them with 共 N 轮 texts, the expanded list, row jump and
-// the second-line ellipsis.
+// version tree listing them with 共 N 轮 texts, 查看 opening VersionCanvas with
+// 4 cards and round headers, default 3-row window jump and the second-line ellipsis.
 export const name = "version-history";
-export const description = "parent+child version -> 版本 section lists both and switches -> generation event -> 版本树 row shows thumbnail and prompt -> prompt editor PATCHes -> 4-image conversation -> 版本树 lists rounds, expands, jumps";
+export const description = "parent+child version -> 版本 section lists both and switches -> generation event -> 版本树 row shows thumbnail and prompt -> prompt editor PATCHes -> 4-image conversation -> 版本树 lists rounds, opens VersionCanvas, jumps in default window";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -86,7 +86,8 @@ export async function run(ctx) {
       || result?.promptEdited !== true || result?.promptPersisted !== true || result?.noteSaved !== true) {
       throw new Error(`version-history result: ${JSON.stringify({ parent: parent.asset.id, child: child.asset?.id, ...result })}`);
     }
-    if (result?.roundsDefaultRows !== 3 || result?.roundsExpandedRows !== 4 || result?.roundsBadge !== "4"
+    if (result?.roundsDefaultRows !== 3 || result?.roundsCanvasNodes !== 4 || result?.roundsCanvasCurrentSelected !== true
+      || result?.roundsCanvasHeadersOk !== true || result?.roundsBadge !== "4"
       || result?.roundsSwitchedToThird !== true || result?.roundsEllipsis !== true || result?.roundsCurrentMarked !== true) {
       throw new Error(`version-history rounds result: ${JSON.stringify(result)}`);
     }
@@ -210,30 +211,41 @@ function versionHistorySource(config) {
       .find((heading) => heading.querySelector('span')?.textContent === '版本树');
     const roundsBadge = treeHeading().querySelector('.settings-badge')?.textContent || '';
 
-    // 查看 expands to every captured image of the conversation (4).
+    // 查看 opens VersionCanvas with all 4 captured images, current selected, and round headers 1-4.
     Array.from(treeHeading().querySelectorAll('.section-action')).find((button) => button.textContent.trim() === '查看').click();
-    await waitFor(() => treeList().querySelectorAll('.related').length === 4, '版本树 expanded shows all 4 images');
-    const roundsExpandedRows = treeList().querySelectorAll('.related').length;
+    await waitFor(() => document.querySelectorAll('.version-canvas .vc-node').length === 4, 'VersionCanvas shows all 4 images');
+    const roundsCanvasNodes = document.querySelectorAll('.version-canvas .vc-node').length;
+    const roundsCanvasCurrentSelected = Boolean(
+      document.querySelector('.version-canvas .vc-node.is-selected[data-canvas-node="' + config.secondId + '"]'),
+    );
+    const roundHeaderText = Array.from(document.querySelectorAll('.version-canvas .vc-round'))
+      .map((el) => el.textContent || '')
+      .join('|');
+    const roundsCanvasHeadersOk = ['第 1 轮', '第 2 轮', '第 3 轮', '第 4 轮'].every((label) => roundHeaderText.includes(label));
+    (await waitFor(() => document.querySelector('.version-canvas button[aria-label="返回素材库"]'), 'back to gallery')).click();
+    await waitFor(() => !document.querySelector('.version-canvas')
+      && treeRowSmalls().join('|') === '共 4 轮 · 第 1 轮|共 4 轮 · 当前第 2 轮|共 4 轮 · 第 3 轮',
+      'returns to gallery with second card still inspected');
 
     // The second line truncates with an ellipsis of its own.
     const roundsEllipsis = getComputedStyle(treeList().querySelector('.related > span > small')).textOverflow === 'ellipsis';
 
-    // Clicking the third row jumps to that image: it becomes the current row.
+    // Clicking the third row in the default 3-row window jumps to that image: window shifts to 2-4 with turn 3 centered.
     treeList().querySelectorAll('.related')[2].click();
     await waitFor(() => {
       const rows = Array.from(treeList().querySelectorAll('.related'));
-      return rows.length === 4
-        && rows[2]?.classList.contains('is-current')
-        && treeRowSmalls().join('|') === '共 4 轮 · 第 1 轮|共 4 轮 · 第 2 轮|共 4 轮 · 当前第 3 轮|共 4 轮 · 第 4 轮';
-    }, '版本树 jumps to the third image and marks it current');
+      return rows.length === 3
+        && rows[1]?.classList.contains('is-current')
+        && treeRowSmalls().join('|') === '共 4 轮 · 第 2 轮|共 4 轮 · 当前第 3 轮|共 4 轮 · 第 4 轮';
+    }, '版本树 default window jumps to the third image and marks it current');
     const rowsAfterJump = Array.from(treeList().querySelectorAll('.related'));
-    const roundsCurrentMarked = rowsAfterJump[2]?.classList.contains('is-current') === true
-      && rowsAfterJump.some((row, index) => index !== 2 && !row.classList.contains('is-current'));
-    const roundsSwitchedToThird = treeRowSmalls()[2] === '共 4 轮 · 当前第 3 轮';
+    const roundsCurrentMarked = rowsAfterJump[1]?.classList.contains('is-current') === true
+      && rowsAfterJump.some((row, index) => index !== 1 && !row.classList.contains('is-current'));
+    const roundsSwitchedToThird = treeRowSmalls()[1] === '共 4 轮 · 当前第 3 轮';
 
     return {
       versionRows, switchedToChild, generationRowShown, promptEdited, promptPersisted, noteSaved,
-      roundsDefaultRows, roundsSmallLines, roundsBadge, roundsExpandedRows,
+      roundsDefaultRows, roundsSmallLines, roundsBadge, roundsCanvasNodes, roundsCanvasCurrentSelected, roundsCanvasHeadersOk,
       roundsEllipsis, roundsCurrentMarked, roundsSwitchedToThird,
     };
   })()

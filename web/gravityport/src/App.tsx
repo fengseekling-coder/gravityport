@@ -28,7 +28,7 @@ import { resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { galleryKeyAction, isFocusSearchKey, menuSelectAllTarget, mouseNavDirection, neighbourAssetId, resolveNavHistoryShortcut } from "./gallery-keys"
 import { type GenerationDisplay } from "./version-tree"
-import { VERSION_CANVAS_ENTRY, canvasFromHistory } from "./version-canvas-model"
+import { VERSION_CANVAS_ENTRY, versionCanvasOffered } from "./version-canvas-model"
 import { LEARNING_LIBRARY_ENTRY, learningLibraryIdForActive, learningLibraryIdFromDropRow } from "./learning-library-entry"
 import { learningFilterParams, type LearningFilter } from "./learning-guide-model"
 import { LearningLibraryPanel } from "./LearningLibraryPanel"
@@ -430,6 +430,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   )
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
   const [generationHistory, setGenerationHistory] = useState<MosaGenerationHistory | null>(null)
+  const menuRequestRef = useRef(0)
   const [relationBusy, setRelationBusy] = useState(false)
   const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({})
   const [newRelation, setNewRelation] = useState<{ anchor: string; other: string; direction: string; type: string } | null>(null)
@@ -3917,20 +3918,27 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // Right-clicking outside the multi-selection targets the clicked card
   // alone; inside it, the whole selection stays the action target.
   // UI 审查 11-16：只有一张图的版本树在画布里连不了线，是死路；「查看版本树」
-  // 只给能排出两张以上的图。按画布自己的算法数，取不到记录（或超过 400ms）就不给。
+  // 只给能排出两张以上的图，回收站里也不给。按画布自己的算法数，取不到记录（或超过 400ms）就不给。
   const canvasHasTree = async (clicked: MosaAsset): Promise<boolean> => {
     const history = await Promise.race([
       fetchAssetGenerationHistory(project, clicked.id).catch(() => null),
       new Promise<null>(resolve => setTimeout(() => resolve(null), 400)),
     ])
-    return Boolean(history) && canvasFromHistory(history, clicked).nodes.length >= 2
+    return versionCanvasOffered(history, clicked, scope)
   }
 
   const openAssetMenu = async (clicked: MosaAsset, x: number, y: number) => {
+    const request = ++menuRequestRef.current
     const ids = selectedIds.includes(clicked.id) ? [...batchIds] : [clicked.id]
-    const offerCanvas = VERSION_CANVAS_ENTRY && scope !== "trash" && ids.length === 1
-      ? await canvasHasTree(clicked)
-      : false
+    let offerCanvas = false
+    if (VERSION_CANVAS_ENTRY && scope !== "trash" && ids.length === 1) {
+      if (clicked.id === selected && generationHistory) {
+        offerCanvas = versionCanvasOffered(generationHistory, clicked, scope)
+      } else {
+        offerCanvas = await canvasHasTree(clicked)
+        if (request !== menuRequestRef.current) return
+      }
+    }
     const loaded = assets.filter(entry => ids.includes(entry.id))
     const ctx: MenuContext = {
       target: "asset",
@@ -3963,6 +3971,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // Right-clicking a stack card never changes the selection: the menu acts on
   // this stack alone, so its target rides along in the menu state.
   const openStackMenu = (stack: NonNullable<MosaAsset["stack"]>, cardName: string, x: number, y: number) => {
+    menuRequestRef.current += 1
     const ctx: MenuContext = {
       target: "stack",
       scope: "all",
@@ -3986,6 +3995,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   }
 
   const openBlankMenu = (x: number, y: number) => {
+    menuRequestRef.current += 1
     const inStack = Boolean(stackId)
     // Task 239: with a pending cut the blank-area 粘贴 moves the cut assets
     // (id "paste"); otherwise, when the main process reports importable
@@ -4029,6 +4039,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   }
 
   const openGroupMenu = (name: string, x: number, y: number) => {
+    menuRequestRef.current += 1
     const names = (navigation?.groups || []).map(item => item.name)
     const entries = translateMenuEntries(buildGroupMenu({
       index: names.indexOf(name), groupCount: names.length, exporting: Boolean(exportingGroup),
@@ -4039,6 +4050,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
 
   // 任务 459：侧栏学习库行的右键菜单（重命名 / 删除）。
   const openLearningLibraryMenu = (id: string, name: string, x: number, y: number) => {
+    menuRequestRef.current += 1
     const entries = translateMenuEntries(buildLearningLibraryMenu(), 0)
     setMenu({ x, y, entries, target: "learning-library", selectionCount: 0, stackId: "", stackName: "", stackCount: 0, learningLibrary: { id, name } })
   }
@@ -5351,7 +5363,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             selectHistoryAsset={selectHistoryAsset}
             mutateRelation={mutateRelation}
             providerDisplayLabel={providerDisplayLabel}
-            onOpenCanvas={asset && canvasFromHistory(generationHistory, asset).nodes.length >= 2 ? () => {
+            onOpenCanvas={asset && versionCanvasOffered(generationHistory, asset, scope) ? () => {
               setCanvasSession((old) => old + 1)
               setCanvasOpen(true)
             } : undefined}

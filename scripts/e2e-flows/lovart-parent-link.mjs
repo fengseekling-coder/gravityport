@@ -1,6 +1,6 @@
-// GravityPort React UI flow (task 465): Lovart edited image automatically links
-// under its in-library Lovart base image in the Inspector Version Tree, can be
-// deleted by the user, and stays unlinked on re-capture.
+// GravityPort React UI flow (task 465 / 472): Lovart edited image automatically
+// links under its in-library Lovart base image as a solid edge in VersionCanvas,
+// can be deleted from the canvas inspector, and stays unlinked on re-capture.
 import { createServer } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +13,7 @@ import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { signalProcessTree } from "../process-tree.mjs";
 
 export const name = "lovart-parent-link";
-export const description = "Lovart Fake01 -> ref -> Fake02 via /api/ingest/web-capture -> Inspector 版本树 shows 初始生成 + indented 改自上一个素材 with 删除关系 on both Fake02 and Fake01 -> delete relation -> re-capture Fake02 stays unlinked";
+export const description = "Lovart Fake01 -> ref -> Fake02 via /api/ingest/web-capture -> VersionCanvas shows 2 cards + 1 solid edge (改自) with 删除关系 on both Fake02 and Fake01 -> delete via confirm dialog -> re-capture Fake02 stays unlinked";
 
 const CAPTURE_TOKEN = "mosa_e2e_lovart_parent_link_token";
 const ROOT_DIR = resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -217,33 +217,42 @@ export async function run(ctx) {
 
     const stage1 = await ctx.runInPage(server, stage1Source({ fake01Id, fake02Id }));
     const problems = [];
-    if (stage1?.fake02Rows?.length !== 2) problems.push(`fake02 rows=${JSON.stringify(stage1?.fake02Rows)}`);
-    if (!stage1?.fake02Rows?.[0]?.text?.includes("初始生成")) problems.push(`fake02 row0 missing 初始生成: ${JSON.stringify(stage1?.fake02Rows?.[0])}`);
-    if (stage1?.fake02Rows?.[0]?.indent !== 0) problems.push(`fake02 row0 indent=${stage1?.fake02Rows?.[0]?.indent}`);
-    if (!stage1?.fake02Rows?.[1]?.text?.includes("改自上一个素材")) problems.push(`fake02 row1 missing 改自上一个素材: ${JSON.stringify(stage1?.fake02Rows?.[1])}`);
-    if (!(stage1?.fake02Rows?.[1]?.indent > 0)) problems.push(`fake02 row1 not indented: ${JSON.stringify(stage1?.fake02Rows?.[1])}`);
+    if (stage1?.canvasNodeCount !== 2) problems.push(`canvasNodeCount=${stage1?.canvasNodeCount}`);
+    if (stage1?.solidEdges !== 1) problems.push(`solidEdges=${stage1?.solidEdges}`);
+    if (stage1?.suggestedEdges !== 0) problems.push(`suggestedEdges=${stage1?.suggestedEdges}`);
+    if (!stage1?.typeLabel?.includes("改自")) problems.push(`typeLabel=${JSON.stringify(stage1?.typeLabel)}`);
     if (!stage1?.hasDeleteButton) problems.push("missing 删除关系 button");
     if (stage1?.hasLockedCopy) problems.push("unexpected 已由来源平台验证，无法修改 copy");
-    if (stage1?.fake01Rows?.length !== 2) problems.push(`fake01 rows=${JSON.stringify(stage1?.fake01Rows)}`);
+    if (!stage1?.fake01SeesRelation) problems.push("Fake01 did not list relation with 删除关系");
     if (!stage1?.deletedRelation) problems.push("relation did not disappear after clicking 删除关系");
+    if (stage1?.apiRelationsAfterDelete !== 0) problems.push(`apiRelationsAfterDelete=${stage1?.apiRelationsAfterDelete}`);
     if (problems.length) throw new Error(`lovart-parent-link stage1: ${problems.join("; ")}`);
 
     // Re-ingest Fake02 after deletion -> relation must NOT come back.
     await postCapture(server.origin, CAPTURE_TOKEN, toIngestBody(fake02, img02));
-    const stage2 = await ctx.runInPage(server, stage2Source({ fake02Id }));
-    if (stage2?.relationEditorCount !== 0 || stage2?.treeRowCount !== 1) {
+    const stage2 = await ctx.runInPage(server, stage2Source({ fake01Id, fake02Id }));
+    if (
+      stage2?.fake01InHistory !== true
+      || stage2?.canvasNodeCount !== 2
+      || stage2?.afterReingestEdges !== 0
+      || stage2?.afterReingestRelationCount !== 0
+      || stage2?.apiRelationCount !== 0
+      || stage2?.apiSuggestedCount !== 0
+    ) {
       throw new Error(`lovart-parent-link stage2 (after re-ingest): ${JSON.stringify(stage2)}`);
     }
 
     return {
       fake01Id,
       fake02Id,
-      fake02Rows: stage1.fake02Rows,
-      fake01Rows: stage1.fake01Rows,
-      relationEditorText: stage1.relationEditorText,
+      canvasNodeCount: stage1.canvasNodeCount,
+      solidEdges: stage1.solidEdges,
+      suggestedEdges: stage1.suggestedEdges,
+      typeLabel: stage1.typeLabel,
+      fake01SeesRelation: stage1.fake01SeesRelation,
       deletedRelation: stage1.deletedRelation,
-      afterReingestRelationCount: stage2.relationEditorCount,
-      afterReingestTreeRowCount: stage2.treeRowCount,
+      afterReingestEdges: stage2.afterReingestEdges,
+      afterReingestRelationCount: stage2.afterReingestRelationCount,
       ...(screenshots ? { screenshots } : {}),
     };
   } finally {
@@ -261,11 +270,12 @@ function stage1Source(config) {
       const deadline = Date.now() + timeoutMs;
       let stable = 0;
       while (Date.now() < deadline) {
-        const value = check();
+        const value = await check();
         if (value) { stable += 1; if (stable >= 2) return value; } else stable = 0;
         await sleep(100);
       }
-      throw new Error('Timed out waiting for ' + label + ' | cards=' + document.querySelectorAll('.asset-card').length);
+      throw new Error('Timed out waiting for ' + label + ' | cards=' + document.querySelectorAll('.asset-card').length
+        + ' | canvas=' + Boolean(document.querySelector('.version-canvas')));
     }
 
     async function selectCard(assetId) {
@@ -274,83 +284,91 @@ function stage1Source(config) {
       await waitFor(() => document.querySelector('.details .asset-title'), 'inspector for ' + assetId);
     }
 
-    async function ensureVersionTreeExpanded() {
+    async function openVersionCanvas() {
       const btn = await waitFor(() => {
         const heading = Array.from(document.querySelectorAll('.details .field-heading'))
           .find((el) => el.querySelector('span')?.textContent?.trim() === '版本树');
         if (!heading) return null;
-        return Array.from(heading.querySelectorAll('button')).find((b) => {
-          const t = (b.textContent || '').trim();
-          return t === '查看' || t === '收起';
-        }) || null;
-      }, '版本树 查看/收起 button');
-      if ((btn.textContent || '').trim() === '查看') btn.click();
+        return Array.from(heading.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '查看') || null;
+      }, '版本树 查看 button');
+      btn.click();
+      await waitFor(() => document.querySelectorAll('.version-canvas .vc-node').length === 2, 'VersionCanvas with 2 cards');
     }
 
-    function readTreeRows() {
-      return Array.from(document.querySelectorAll('.details .generation-tree-row')).map((row) => {
-        const ml = parseFloat(getComputedStyle(row).marginLeft || '0') || 0;
-        const pl = parseFloat(getComputedStyle(row).paddingLeft || '0') || 0;
-        const styleAttr = row.getAttribute('style') || '';
-        const indentMatch = /--indent\\s*:\\s*(\\d+)|margin-left\\s*:\\s*(\\d+)|padding-left\\s*:\\s*(\\d+)/i.exec(styleAttr);
-        const attrIndent = indentMatch ? Number(indentMatch[1] || indentMatch[2] || indentMatch[3] || 0) : 0;
-        return {
-          text: (row.textContent || '').replace(/\\s+/g, ' ').trim(),
-          indent: attrIndent || Math.round(ml + pl),
-          isCurrent: row.classList.contains('is-current'),
-          style: styleAttr,
-        };
-      });
-    }
+    const nodeEl = (id) => document.querySelector('.vc-node[data-canvas-node="' + id + '"]');
+    const clickCanvasNode = (id) => nodeEl(id).querySelector('.vc-node-image')
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const pairLinkStats = async () => {
+      const res = await fetch('/api/assets/default/' + encodeURIComponent(config.fake02Id) + '/generation-history').then((r) => r.json());
+      const h = res?.history || {};
+      const allEvents = [...(h.events || []), ...(h.context_events || [])];
+      const gen01 = new Set(allEvents.filter((e) => e.output_asset_id === config.fake01Id).map((e) => e.id));
+      const gen02 = new Set(allEvents.filter((e) => e.output_asset_id === config.fake02Id).map((e) => e.id));
+      const touchesPair = (item) => (gen01.has(item.parent_generation_id) && gen02.has(item.child_generation_id))
+        || (gen02.has(item.parent_generation_id) && gen01.has(item.child_generation_id));
+      const relations = [...(h.relations || []), ...(h.context_relations || [])].filter(touchesPair);
+      return { relationsCount: relations.length };
+    };
 
-    // 1. Select Fake02 and expand 版本树 -> 查看
+    // 1. Select Fake02 and click 查看 -> VersionCanvas with 2 cards, 1 solid edge, 0 suggested edges.
     await selectCard(config.fake02Id);
-    await ensureVersionTreeExpanded();
-    await waitFor(() => document.querySelectorAll('.details .generation-tree-row').length === 2, '2 generation tree rows on Fake02');
-    const fake02Rows = readTreeRows();
-    const baseIndent = fake02Rows[0]?.indent || 0;
-    const normalizedFake02Rows = fake02Rows.map((r) => ({ ...r, indent: Math.max(0, r.indent - baseIndent) }));
+    await openVersionCanvas();
+    await waitFor(() => (
+      document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length === 1
+      && document.querySelectorAll('.vc-edges g.suggested').length === 0
+    ), '1 solid edge and 0 suggested edges on canvas');
+    const canvasNodeCount = document.querySelectorAll('.version-canvas .vc-node').length;
+    const solidEdges = document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length;
+    const suggestedEdges = document.querySelectorAll('.vc-edges g.suggested').length;
 
     const editor = await waitFor(() => {
-      const editors = Array.from(document.querySelectorAll('.details .generation-relation-editor'));
-      return editors.find((el) => (el.textContent || '').includes('删除关系'));
-    }, 'generation-relation-editor with 删除关系');
-    const relationEditorText = (editor.textContent || '').replace(/\\s+/g, ' ').trim();
+      const editors = Array.from(document.querySelectorAll('.vc-inspector .generation-relation-editor'));
+      return editors.find((el) => (el.textContent || '').includes('删除关系')) || null;
+    }, 'canvas inspector generation-relation-editor with 删除关系');
+    const typeLabel = (editor.querySelector('.toolbar-select')?.textContent || '').trim();
     const hasDeleteButton = Array.from(editor.querySelectorAll('button')).some((b) => (b.textContent || '').trim() === '删除关系');
     const hasLockedCopy = (editor.textContent || '').includes('已由来源平台验证，无法修改');
 
-    // 2. Select Fake01 (click the parent row in the version tree) and verify both rows are visible
-    document.querySelectorAll('.details .generation-tree-row')[0].click();
-    await waitFor(() => {
-      const rows = Array.from(document.querySelectorAll('.details .generation-tree-row'));
-      return rows.length === 2 && rows[0].classList.contains('is-current');
-    }, '2 generation tree rows on Fake01 with row 0 current');
-    const fake01Rows = readTreeRows();
+    // 2. Select Fake01 card on canvas and verify the inspector lists the relation with 删除关系.
+    clickCanvasNode(config.fake01Id);
+    await waitFor(() => Boolean(document.querySelector('.vc-node.is-selected[data-canvas-node="' + config.fake01Id + '"]')), 'Fake01 selected on canvas');
+    const fake01SeesRelation = await waitFor(() => {
+      const editors = Array.from(document.querySelectorAll('.vc-inspector .generation-relation-editor'));
+      return editors.some((el) => Array.from(el.querySelectorAll('button')).some((b) => (b.textContent || '').trim() === '删除关系'));
+    }, 'Fake01 inspector shows relation with 删除关系');
 
-    // 3. Re-select Fake02 and delete the relation
-    document.querySelectorAll('.details .generation-tree-row')[1].click();
-    await waitFor(() => {
-      const rows = Array.from(document.querySelectorAll('.details .generation-tree-row'));
-      return rows.length === 2 && rows[1].classList.contains('is-current');
-    }, 'Fake02 selected again');
+    // 3. Re-select Fake02 and delete the relation via the app confirmation dialog.
+    clickCanvasNode(config.fake02Id);
+    await waitFor(() => Boolean(document.querySelector('.vc-node.is-selected[data-canvas-node="' + config.fake02Id + '"]')), 'Fake02 selected again on canvas');
     const delBtn = await waitFor(() => {
-      const buttons = Array.from(document.querySelectorAll('.details .generation-relation-editor button'));
-      return buttons.find((b) => (b.textContent || '').trim() === '删除关系');
+      const buttons = Array.from(document.querySelectorAll('.vc-inspector .generation-relation-editor button'));
+      return buttons.find((b) => (b.textContent || '').trim() === '删除关系') || null;
     }, '删除关系 button on Fake02');
-    window.confirm = () => true;
     delBtn.click();
-    await waitFor(() => {
-      const editors = Array.from(document.querySelectorAll('.details .generation-relation-editor'));
-      return !editors.some((el) => (el.textContent || '').includes('删除关系'));
-    }, 'relation removed after 删除关系');
+    const confirmDeleteBtn = await waitFor(() => {
+      const dialogs = Array.from(document.querySelectorAll('dialog[open]'));
+      const dialog = dialogs.find((d) => (d.textContent || '').includes('删除生成关系'));
+      if (!dialog) return null;
+      return Array.from(dialog.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '删除关系') || null;
+    }, 'confirm 删除关系 button in dialog');
+    confirmDeleteBtn.click();
+    await waitFor(() => (
+      document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length === 0
+      && !Array.from(document.querySelectorAll('.vc-inspector .generation-relation-editor'))
+        .some((el) => (el.textContent || '').includes('删除关系'))
+    ), 'solid edge and relation card disappear after deletion');
+    const statsAfterDelete = await pairLinkStats();
 
     return {
-      fake02Rows: normalizedFake02Rows,
-      fake01Rows,
-      relationEditorText,
+      canvasNodeCount,
+      solidEdges,
+      suggestedEdges,
+      typeLabel,
       hasDeleteButton,
       hasLockedCopy,
+      fake01SeesRelation,
       deletedRelation: true,
+      apiRelationsAfterDelete: statsAfterDelete.relationsCount,
     };
   })()`;
 }
@@ -363,12 +381,28 @@ function stage2Source(config) {
       const deadline = Date.now() + timeoutMs;
       let stable = 0;
       while (Date.now() < deadline) {
-        const value = check();
+        const value = await check();
         if (value) { stable += 1; if (stable >= 2) return value; } else stable = 0;
         await sleep(100);
       }
-      throw new Error('Timed out waiting for ' + label);
+      throw new Error('Timed out waiting for ' + label + ' | canvas=' + Boolean(document.querySelector('.version-canvas')));
     }
+
+    const res = await fetch('/api/assets/default/' + encodeURIComponent(config.fake02Id) + '/generation-history').then((r) => r.json());
+    const h = res?.history || {};
+    const allEvents = [...(h.events || []), ...(h.context_events || [])];
+    const fake01InHistory = allEvents.some((e) => e.output_asset_id === config.fake01Id);
+    if (!fake01InHistory) {
+      throw new Error('Fake01 missing from Fake02 generation-history events/context_events after re-ingest');
+    }
+    const gen01 = new Set(allEvents.filter((e) => e.output_asset_id === config.fake01Id).map((e) => e.id));
+    const gen02 = new Set(allEvents.filter((e) => e.output_asset_id === config.fake02Id).map((e) => e.id));
+    const touchesPair = (item) => (gen01.has(item.parent_generation_id) && gen02.has(item.child_generation_id))
+      || (gen02.has(item.parent_generation_id) && gen01.has(item.child_generation_id));
+    const apiRelationCount = [...(h.relations || []), ...(h.context_relations || [])].filter(touchesPair).length;
+    const apiSuggestedCount = [...(h.relation_candidates || []), ...(h.context_relation_candidates || [])]
+      .filter((c) => c.status === 'suggested' && touchesPair(c)).length;
+
     const card = await waitFor(() => document.querySelector('.asset-card[data-asset-id="' + config.fake02Id + '"]'), 'Fake02 card');
     card.click();
     await waitFor(() => document.querySelector('.details .asset-title'), 'inspector opens');
@@ -376,18 +410,23 @@ function stage2Source(config) {
       const heading = Array.from(document.querySelectorAll('.details .field-heading'))
         .find((el) => el.querySelector('span')?.textContent?.trim() === '版本树');
       if (!heading) return null;
-      return Array.from(heading.querySelectorAll('button')).find((b) => {
-        const t = (b.textContent || '').trim();
-        return t === '查看' || t === '收起';
-      }) || null;
-    }, '版本树 查看/收起 button');
-    if ((btn.textContent || '').trim() === '查看') btn.click();
-    await waitFor(() => document.querySelectorAll('.details .generation-tree-row').length >= 1, 'tree row on Fake02 after re-ingest');
+      return Array.from(heading.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '查看') || null;
+    }, '版本树 查看 button');
+    btn.click();
+    await waitFor(() => document.querySelectorAll('.version-canvas .vc-node').length === 2, 'VersionCanvas with 2 cards after re-ingest');
     await sleep(300);
-    const relationEditorCount = Array.from(document.querySelectorAll('.details .generation-relation-editor'))
+    const canvasNodeCount = document.querySelectorAll('.version-canvas .vc-node').length;
+    const afterReingestEdges = document.querySelectorAll('.vc-edges g:not(.vc-link-draft)').length;
+    const afterReingestRelationCount = Array.from(document.querySelectorAll('.vc-inspector .generation-relation-editor'))
       .filter((el) => (el.textContent || '').includes('删除关系')).length;
-    const treeRowCount = document.querySelectorAll('.details .generation-tree-row').length;
-    return { relationEditorCount, treeRowCount };
+    return {
+      fake01InHistory,
+      canvasNodeCount,
+      afterReingestEdges,
+      afterReingestRelationCount,
+      apiRelationCount,
+      apiSuggestedCount,
+    };
   })()`;
 }
 
@@ -563,16 +602,26 @@ async function captureInspectorScreenshots(ctx, shotDir, { fake01, ref01, fake02
         if (!card) throw new Error('Fake02 card not found for screenshot; cards=' + document.querySelectorAll('.asset-card').length);
         card.click();
         while (Date.now() < deadline && !document.querySelector('.details .asset-title')) await sleep(100);
+        let clickedView = false;
         while (Date.now() < deadline) {
           const heading = Array.from(document.querySelectorAll('.details .field-heading'))
             .find((el) => el.querySelector('span')?.textContent?.trim() === '版本树');
-          const btn = heading && Array.from(heading.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '查看' || (b.textContent || '').trim() === '收起');
-          if (btn) { if ((btn.textContent || '').trim() === '查看') btn.click(); break; }
+          const btn = heading && Array.from(heading.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '查看');
+          if (btn) { btn.click(); clickedView = true; break; }
           await sleep(100);
         }
-        while (Date.now() < deadline && document.querySelectorAll('.details .generation-tree-row').length < 2) await sleep(100);
-        const treeRow = document.querySelector('.details .generation-tree-row');
-        if (treeRow) treeRow.scrollIntoView({ block: 'center' });
+        if (!clickedView) throw new Error('版本树 查看 button not found for screenshot');
+        while (Date.now() < deadline) {
+          const nodes = document.querySelectorAll('.version-canvas .vc-node').length;
+          const solidEdges = document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length;
+          if (nodes === 2 && solidEdges === 1) break;
+          await sleep(100);
+        }
+        const finalNodes = document.querySelectorAll('.version-canvas .vc-node').length;
+        const finalSolidEdges = document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length;
+        if (finalNodes !== 2 || finalSolidEdges !== 1) {
+          throw new Error('VersionCanvas did not reach 2 cards and 1 solid edge for screenshot: nodes=' + finalNodes + ', solidEdges=' + finalSolidEdges);
+        }
         await sleep(400);
       })()`);
       const shot = await cdp.send("Page.captureScreenshot", { format: "png" });

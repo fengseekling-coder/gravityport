@@ -7,17 +7,16 @@ import {
   type MosaGenerationHistory,
 } from "./mosa-api"
 
+// 任务 472：版本树画布正式开启。正式构建和开发模式都默认打开；
+// localStorage "gravityport.dev.version-canvas" 写 "0" 时退回旧的就地展开列表，
+// 只作发版后出问题时的应急开关（以后删）。读不到 localStorage 时按默认打开。
 function readVersionCanvasEntry(): boolean {
-  if (import.meta.env.DEV) return true
   try {
-    return typeof localStorage !== "undefined" && localStorage.getItem("gravityport.dev.version-canvas") === "1"
+    return !(typeof localStorage !== "undefined" && localStorage.getItem("gravityport.dev.version-canvas") === "0")
   } catch {
-    return false
+    return true
   }
 }
-
-// 任务 421：版本树画布入口开关；正式构建（DEV=false）默认关闭，
-// 仅在开发模式或写入 localStorage "gravityport.dev.version-canvas"="1" 时开启。
 export const VERSION_CANVAS_ENTRY: boolean = readVersionCanvasEntry()
 
 // Keep in sync with LOVART_BASE_IMAGE_RESOLVER in lib/generation-history.mjs.
@@ -259,6 +258,12 @@ export function canvasFromHistory(
     })
   }
   return { title: current.name, nodes, edges }
+}
+
+/** 任务 472：右栏「版本树 · 查看」和图片右键「查看版本树」进画布的同一个条件：
+ *  开关开着、不在回收站（画布不画回收站里的图）、画布能排出两张以上。 */
+export function versionCanvasOffered(history: MosaGenerationHistory | null, asset: MosaAsset, scope: string): boolean {
+  return VERSION_CANVAS_ENTRY && scope !== "trash" && Boolean(history) && canvasFromHistory(history, asset).nodes.length >= 2
 }
 
 export async function submitCanvasCandidateAction(
