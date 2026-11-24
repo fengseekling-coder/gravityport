@@ -28,12 +28,13 @@ const DELETION_BATCH_MAX_ITEMS = 200;
 const CAPTURE_MEDIA_DB = "mosa-web-capture-media-v1";
 const CAPTURE_MEDIA_STORE = "media";
 const LEGACY_DEV_TOKEN = "mosa-web-capture-dev";
-// Task 333 — pairing needs the user's approval in GravityPort: POST /pair
+// Task 333 / 466 — pairing needs the user's approval in GravityPort: POST /pair
 // answers 202 with a request id, and the worker polls every 2 s for at most
-// the server-side TTL (120 s) instead of holding one fetch open. The whole
-// discover+confirm flow runs once at a time (module promise); if the service
-// worker is reaped mid-wait, the next getSettings() merges into the same
-// server-side request, so no dialog spam.
+// the server-side TTL (120 s) instead of holding one fetch open. Pairing starts
+// only from repairPairing() (a click on the settings page or throttled 401
+// auto-repair) and runs once at a time (module promise); if the service worker
+// is reaped mid-wait, clicking again merges into the same server-side pending
+// request, so no dialog spam.
 const MOSA_PAIR_POLL_INTERVAL_MS = 2_000;
 const MOSA_PAIR_WAIT_MS = 120_000;
 // Before the token leaves the worker, the service must prove it holds the
@@ -1542,8 +1543,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "mosa.repairPairing") {
-    // Options page "test connection" after a 401: pair again with GravityPort
-    // and hand the new Token back so the form can be refilled.
+    // Options page "Connect to GravityPort" / "Reconnect": pair with
+    // GravityPort and hand the new Token back so the page can update.
     repairPairing()
       .then((paired) => sendResponse({
         ok: Boolean(paired),
@@ -1770,23 +1771,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+// Read-only; pairing starts only from repairPairing() (task 466).
 async function getSettings() {
   await migrateSettingsToLocal();
-  let stored = await chrome.storage.local.get(DEFAULTS);
-  let settings = { ...DEFAULTS, ...stored };
-  if (!String(settings.mosaToken || "").trim()) {
-    const paired = await discoverAndPairMosa().catch(() => null);
-    if (paired) {
-      await chrome.storage.local.set({ mosaBaseUrl: paired.baseUrl, mosaToken: paired.token });
-      stored = await chrome.storage.local.get(DEFAULTS);
-      settings = { ...DEFAULTS, ...stored };
-    }
-  }
-  return settings;
+  const stored = await chrome.storage.local.get(DEFAULTS);
+  return { ...DEFAULTS, ...stored };
 }
 
 // Only one pairing flow at a time for the whole extension: a second caller
 // awaits the same promise instead of opening a second confirmation request.
+// Its only caller is repairPairing().
 async function discoverAndPairMosa() {
   if (!pairingFlowPromise) {
     pairingFlowPromise = runDiscoverAndPairMosa().finally(() => { pairingFlowPromise = null; });
@@ -2323,7 +2317,7 @@ async function uploadConnection() {
   const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
   const token = String(settings.mosaToken || "").trim();
   if (!token) {
-    const error = new Error("尚未连接 GravityPort。请先打开 GravityPort。");
+    const error = new Error("尚未连接 GravityPort。请在扩展设置页点「连接 GravityPort」。");
     error.kind = "pairing";
     throw error;
   }
@@ -2510,7 +2504,7 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
   let baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
   let token = String(settings.mosaToken || "").trim();
   if (!token) {
-    const error = new Error("尚未连接 GravityPort。请先打开 GravityPort；仍无法连接时，在扩展设置中检查令牌（Token）。");
+    const error = new Error("尚未连接 GravityPort。请在扩展设置页点「连接 GravityPort」。");
     error.kind = "pairing";
     throw error;
   }

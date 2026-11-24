@@ -30,7 +30,7 @@ GravityPort 是一款 AI 素材管理工具，支持 ChatGPT、Gemini、Flow、G
 
 - **GravityPort 桌面版 macOS**（Apple 芯片或 Intel 芯片，Intel 从 0.3.13 起）：两种芯片各一个 DMG 镜像，下载页两个都有，按你的 Mac 选（苹果菜单 → 关于本机）。把 `GravityPort.app` 拖入「应用程序」。
 - **GravityPort 桌面版 Windows 10/11**（x64）：安装程序。双击即可安装到当前 Windows 账户（不需要管理员），开始菜单和桌面会出现 GravityPort，装好后自动打开。卸载在「设置 → 应用」里，素材库会保留。（0.3.3 及更早版本是便携 ZIP：解压后运行 `GravityPort.exe`。）
-- **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，先启动桌面应用再加载，两边会自动配对。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
+- **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，先启动桌面应用再加载；加载后会打开扩展设置页，点「连接 GravityPort」，再在 GravityPort 里点「允许连接」。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
 
 已安装的桌面应用会在 **设置 → 关于** 里自行检查更新。[发布清单](https://gravityport.azhuilab.com/releases/gravityport/latest.json)是最新版本的机器可读来源。
 

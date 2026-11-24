@@ -839,7 +839,7 @@ test("pairing waits for the App user: 202 starts polling, approval stores the to
   });
   const extensionPage = { id: RUNTIME_ID, url: `chrome-extension://${RUNTIME_ID}/options.html` };
 
-  const pending = harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage);
+  const pending = harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPage);
   // The worker polls every 2 s; approve between two polls.
   await waitFor(async () => polls >= 1, { label: "first pairing poll" });
   approved = true;
@@ -859,7 +859,7 @@ test("pairing waits for the App user: 202 starts polling, approval stores the to
     if (url.pathname === "/api/web-capture/pair/req-confirm-2") return jsonRoute({ status: "denied" });
     return null;
   });
-  const denied = await harness2.dispatchMessage({ type: "mosa.getSettings" }, extensionPage);
+  const denied = await harness2.dispatchMessage({ type: "mosa.repairPairing" }, extensionPage);
   assert.equal(denied?.settings?.mosaToken || "", "", "a denial stores no token");
   const denialPairPosts = harness2.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/pair") && !request.url.includes("/pair/")).length;
   const denialPolls = harness2.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/web-capture/pair/req-confirm-2")).length;
@@ -880,8 +880,8 @@ test("two concurrent pairing callers share one flow and send one POST /pair", as
   });
   const extensionPage = { id: RUNTIME_ID, url: `chrome-extension://${RUNTIME_ID}/options.html` };
   const [first, second] = await Promise.all([
-    harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage),
-    harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage),
+    harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPage),
+    harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPage),
   ]);
   assert.equal(pairPosts, 1, "the module-level pairing promise collapses concurrent callers");
   assert.equal(first?.settings?.mosaToken, "single-flight-token");
@@ -1126,7 +1126,7 @@ test("discovery probes each port with a 3 s budget, and a cold start that answer
     return new Promise((resolve) => setTimeout(() => resolve(jsonRoute({ product: "mosa" })), 2_000));
   });
   const extensionPage = { id: RUNTIME_ID, url: `chrome-extension://${RUNTIME_ID}/options.html` };
-  const response = await harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage);
+  const response = await harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPage);
   assert.equal(response?.ok, true);
   assert.equal(response.settings.mosaToken, "paired-token", "a health answer after 2 s is still inside the 3 s budget");
 });
@@ -1140,7 +1140,7 @@ test("when no port answers, discovery runs one more full round 1.5 s later and t
   harness.localStore.delete("mosaBaseUrl");
   const extensionPage = { id: RUNTIME_ID, url: `chrome-extension://${RUNTIME_ID}/options.html` };
   const startedAt = Date.now();
-  const response = await harness.dispatchMessage({ type: "mosa.getSettings" }, extensionPage);
+  const response = await harness.dispatchMessage({ type: "mosa.repairPairing" }, extensionPage);
   const elapsed = Date.now() - startedAt;
   const healthProbes = harness.fetchHarness.appRequests.filter((request) => request.url.endsWith("/api/health"));
   assert.equal(healthProbes.length, 10, "five ports, two full rounds");

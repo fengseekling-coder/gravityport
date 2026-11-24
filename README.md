@@ -30,7 +30,7 @@ Get GravityPort from the [official download page](https://gravityport.azhuilab.c
 
 - **GravityPort Desktop for macOS** (Apple silicon or Intel, from 0.3.13): a DMG for each chip; the download page offers both. Pick the one that matches your Mac (Apple menu → About This Mac). Drag `GravityPort.app` into Applications.
 - **GravityPort Desktop for Windows 10/11** (x64): an installer. Double-click it; it installs GravityPort for your Windows account without asking for an administrator, adds it to the Start menu and the desktop, and opens it. Remove it in Settings → Apps; your library stays. (0.3.3 and earlier came as a portable ZIP: extract it and run `GravityPort.exe`.)
-- **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP; load it after the desktop app is running and the two pair automatically. See the [install guide](https://gravityport.azhuilab.com/guide/).
+- **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP; load it after the desktop app is running, then click Connect to GravityPort on the settings page it opens and Allow Connection in GravityPort. See the [install guide](https://gravityport.azhuilab.com/guide/).
 
 Installed desktop apps check for updates themselves in **Settings → About**. The [release manifest](https://gravityport.azhuilab.com/releases/gravityport/latest.json) is the machine-readable source for the newest version.
 

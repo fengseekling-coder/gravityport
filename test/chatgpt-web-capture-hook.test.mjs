@@ -4784,6 +4784,17 @@ test("ChatGPT: a queued capture is not sent again and says it is queued, not fai
   assert.ok(clock.now > 0);
 });
 
+test("ChatGPT: a queued capture waiting on pairing points to the extension settings page", async () => {
+  const { context, attempt } = await chatGptHandOffHarness({ ok: true, result: { status: "queued", reason: "pairing" } });
+  await attempt();
+  const expected = "已暂存，在扩展设置里连接 GravityPort 后自动收录";
+  assert.equal(context.ingestMessages.length, 1);
+  assert.equal(context.statusTexts.at(-1), expected);
+  assert.equal(context.toasts.filter((toast) => toast.isError).length, 0, "a queued capture never shows an error");
+  const notices = context.toasts.filter((toast) => toast.message === expected);
+  assert.equal(notices.length, 1, "the pairing queued notice shows once for this key");
+});
+
 test("ChatGPT: a retryable failure is tried twice, 60 s apart, and its error shows once", async () => {
   const { context, attempt } = await chatGptHandOffHarness({ ok: false, error: "GravityPort is closed", retryable: true });
   await attempt();

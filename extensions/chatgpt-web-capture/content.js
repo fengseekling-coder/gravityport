@@ -1726,12 +1726,16 @@
       if (lateBound?.prompt) schedulePromptUpgrade(lateBound);
 
       if (result.status === "queued") {
-        // The background keeps the capture until GravityPort is open again, so
-        // the page does not send it again. Say so once, without an error tone.
-        setStatus("已暂存，打开 GravityPort 后自动收录");
+        // The background keeps the capture until GravityPort is paired or open
+        // again, so the page does not send it again. Say so once, without an
+        // error tone.
+        const queuedNotice = result.reason === "pairing"
+          ? "已暂存，在扩展设置里连接 GravityPort 后自动收录"
+          : "已暂存，打开 GravityPort 后自动收录";
+        setStatus(queuedNotice);
         if (!queuedToastKeys.has(key)) {
           rememberSet(queuedToastKeys, key);
-          showToast("已暂存，打开 GravityPort 后自动收录");
+          showToast(queuedNotice);
         }
       } else if (result.status === "imported") {
         // 任务 359（EXT-34）：内部枚举不再上屏；无提示词时单独说明。
