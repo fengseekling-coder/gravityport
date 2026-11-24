@@ -227,6 +227,14 @@ export async function run(ctx) {
       "first learn completes with guide and 1 log row",
       30000,
     );
+    // 顶栏的「未学习」由面板取到的状态直接报上来，和手册同一拍更新；仍用
+    // waitFor 兜住渲染间隙（PR #357 第三轮 macOS CI 在这里抓到过旧数）。
+    await waitFor(
+      cdp,
+      `!(document.querySelector('.learn-library-title')?.textContent || '').includes('未学习')`,
+      "top bar drops 未学习 after first learn",
+      5000,
+    );
     const headerAfterFirst = await cdp.evaluate(`document.querySelector('.learn-library-title')?.textContent || ''`);
     if (headerAfterFirst.includes("未学习")) {
       throw new Error(`top bar still shows 未学习 after first learn: ${headerAfterFirst}`);

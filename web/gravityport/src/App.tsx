@@ -5272,6 +5272,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
               onShowFilter={applyLearnFilter}
               onOpenAiSettings={() => { setSettingTab("AI"); setSettings(true) }}
               onLearningChanged={() => setLearnMetaRefreshTick(k => k + 1)}
+              onPendingCount={setLearnPendingCount}
               notify={notify}
             />
           ) : asset ? (

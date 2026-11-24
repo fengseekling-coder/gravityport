@@ -50,6 +50,8 @@ export type LearningLibraryPanelProps = {
   onShowFilter: (filter: LearningFilter | null) => void
   onOpenAiSettings: () => void
   onLearningChanged: () => void
+  /** 每次取到学习状态都报一次「未学习」张数，顶栏和手册同一拍更新。 */
+  onPendingCount?: (pending: number) => void
   notify: (text: string) => void
 }
 
@@ -171,6 +173,7 @@ export function LearningLibraryPanel({
   onShowFilter,
   onOpenAiSettings,
   onLearningChanged,
+  onPendingCount,
   notify,
 }: LearningLibraryPanelProps) {
   const api = desktopAPI()
@@ -221,6 +224,8 @@ export function LearningLibraryPanel({
   notifyRef.current = notify
   const onLearningChangedRef = useRef(onLearningChanged)
   onLearningChangedRef.current = onLearningChanged
+  const onPendingCountRef = useRef(onPendingCount)
+  onPendingCountRef.current = onPendingCount
 
   useEffect(() => {
     mountedRef.current = true
@@ -262,6 +267,7 @@ export function LearningLibraryPanel({
       if (!mountedRef.current) return null
       revisionRef.current = Math.max(revisionRef.current, next.guide.revision)
       setState(next)
+      onPendingCountRef.current?.(next.counts.pending)
       return next
     } catch {
       return null
@@ -297,6 +303,7 @@ export function LearningLibraryPanel({
     if (nextState) {
       revisionRef.current = Math.max(revisionRef.current, nextState.guide.revision)
       setState(nextState)
+      onPendingCountRef.current?.(nextState.counts.pending)
     }
 
     // Announce completion / failure toast if a watched run just settled.
