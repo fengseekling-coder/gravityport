@@ -483,8 +483,9 @@ test("JSON backend invalid cursor returns 400 with INVALID_ASSET_CURSOR", async 
   });
   t.after(async () => {
     if (server.exitCode === null) {
+      const exited = once(server, "exit");
       server.kill("SIGTERM");
-      await once(server, "exit");
+      await exited;
     }
   });
   const port = await waitForServerPort(server);
@@ -522,8 +523,9 @@ test("cross-origin request returns 403 while same-origin succeeds", async (t) =>
   });
   t.after(async () => {
     if (server.exitCode === null) {
+      const exited = once(server, "exit");
       server.kill("SIGTERM");
-      await once(server, "exit");
+      await exited;
     }
   });
   const port = await waitForServerPort(server);
@@ -564,8 +566,9 @@ test("multi-byte UTF-8 body exceeding 5 MiB returns 413", async (t) => {
   });
   t.after(async () => {
     if (server.exitCode === null) {
+      const exited = once(server, "exit");
       server.kill("SIGTERM");
-      await once(server, "exit");
+      await exited;
     }
   });
   const port = await waitForServerPort(server);

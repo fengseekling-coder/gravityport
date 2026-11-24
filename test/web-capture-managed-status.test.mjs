@@ -33,8 +33,9 @@ async function requestRoute({ body, installed, failRead = false, noManaged = fal
       res.end(error.message);
     }
   });
+  const listening = once(server, "listening");
   server.listen(0, "127.0.0.1");
-  await once(server, "listening");
+  await listening;
   try {
     const url = `http://127.0.0.1:${server.address().port}`;
     const payload = JSON.stringify(body || {});

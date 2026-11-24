@@ -610,9 +610,10 @@ test("a SIGKILL mid-rebuild resumes on the next open and converges on the same r
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const exited = new Promise((resolveExit) => child.once("exit", (code, signal) => resolveExit({ code, signal })));
   let childStderr = "";
   child.stderr.on("data", (chunk) => { childStderr += String(chunk); });
-  const exit = await new Promise((resolveExit) => child.once("exit", (code, signal) => resolveExit({ code, signal })));
+  const exit = await exited;
   assert.equal(exit.signal, "SIGKILL", `the test hook killed the child after three batches (code ${exit?.code}) ${childStderr}`);
   assert.equal(markerValue(libraryDir, "search_scope_v4"), null, "the killed run wrote no marker");
 

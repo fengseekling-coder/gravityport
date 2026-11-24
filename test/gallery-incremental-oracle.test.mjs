@@ -137,6 +137,13 @@ function makeClient(syncFactory, id, view) {
     ...(client.view.groupName ? { group: client.view.groupName } : {}),
     ...(client.view.stackId ? { stackId: client.view.stackId } : {}),
   });
+  const pendingRequests = new Set();
+  const trackPending = (promise) => {
+    const tracked = Promise.resolve(promise).finally(() => { pendingRequests.delete(tracked); });
+    pendingRequests.add(tracked);
+    return tracked;
+  };
+  client.pendingRequests = pendingRequests;
   client.rowsQuery = rowsQuery;
   client.controller = syncFactory({
     hooks: () => ({
@@ -167,7 +174,7 @@ function makeClient(syncFactory, id, view) {
           }
         }
       },
-      onFallback: async (reason) => {
+      onFallback: (reason) => trackPending((async () => {
         // The oracle asserts incremental consistency; a fallback means the
         // merge gave up. Record it loudly — allowed reasons are tested
         // elsewhere, here it invalidates the comparison for this step.
@@ -180,12 +187,12 @@ function makeClient(syncFactory, id, view) {
           } catch { /* diagnostic only */ }
         }
         client.reload();
-      },
+      })()),
     }),
-    fetchRevision: project => api.fetchLibraryRevision(project),
-    fetchChanges: (project, since) => api.fetchLibraryChanges(project, since),
+    fetchRevision: (project) => trackPending(api.fetchLibraryRevision(project)),
+    fetchChanges: (project, since) => trackPending(api.fetchLibraryChanges(project, since)),
     // 320 补充 2：此接线必须和 web/gravityport/src/App.tsx 里 createLibrarySync 的接线一致（第 4 参数 stackIds 必须传下去）。
-    fetchRows: (query, assetIds, boundaryCursor, stackIds) => api.fetchGalleryRows(query, assetIds, boundaryCursor, stackIds),
+    fetchRows: (query, assetIds, boundaryCursor, stackIds) => trackPending(api.fetchGalleryRows(query, assetIds, boundaryCursor, stackIds)),
     readMutationState: () => ({ epoch: 0, pending: 0 }),
     readView: () => ({
       viewKey: `${client.id}:${client.generation}`,
@@ -347,7 +354,23 @@ async function runOracle(seed) {
       makeClient(syncFactory, "name-sort", { sort: "name" }),
     ];
     for (const client of clients) await client.loadPages(1 + Math.floor(random() * 3));
-    const settle = () => new Promise(resolveTick => setTimeout(resolveTick, 30));
+    // Track every client's in-flight HTTP sync calls and yield across
+    // setTimeout(0) macrotask turns (matching yieldToRender() in library-sync.ts)
+    // instead of sleeping a blind 30ms that loses to slow HTTP / busy CI runners.
+    const nextMacrotask = () => new Promise((resolveTick) => setTimeout(resolveTick, 0));
+    const settle = async () => {
+      let idle = 0;
+      for (let round = 0; round < 5000 && idle < 3; round += 1) {
+        const inflight = clients.flatMap((entry) => [...entry.pendingRequests]);
+        if (inflight.length > 0) {
+          await Promise.any(inflight.map((p) => p.then(() => "settled", () => "settled")));
+          idle = 0;
+          continue;
+        }
+        await nextMacrotask();
+        idle = clients.some((entry) => entry.pendingRequests.size > 0) ? 0 : idle + 1;
+      }
+    };
     const active = () => clients.filter(entry => !entry.viewGone);
 
     // Wait for a derivatives-flagged journal entry (a real completion).

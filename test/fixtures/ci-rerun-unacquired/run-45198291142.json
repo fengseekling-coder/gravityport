@@ -1,0 +1,108 @@
+{
+  "run_id": 45198291142,
+  "conclusion": "failure",
+  "event": "pull_request",
+  "run_attempt": 2,
+  "jobs": [
+    {
+      "id": 137802439865,
+      "name": "desktop-macos e2e (shard 2/2)",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "runner_name": "",
+      "runner_id": 0,
+      "steps_count": 0,
+      "labels": [
+        "macos-15"
+      ]
+    },
+    {
+      "id": 137802441567,
+      "name": "desktop-windows e2e (shard 1/2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003847",
+      "runner_id": 1000003847,
+      "steps_count": 14,
+      "labels": [
+        "windows-2022"
+      ]
+    },
+    {
+      "id": 137802442747,
+      "name": "desktop-windows e2e (shard 2/2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003849",
+      "runner_id": 1000003849,
+      "steps_count": 14,
+      "labels": [
+        "windows-2022"
+      ]
+    },
+    {
+      "id": 137802519981,
+      "name": "desktop-macos-package",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003851",
+      "runner_id": 1000003851,
+      "steps_count": 16,
+      "labels": [
+        "macos-15"
+      ]
+    },
+    {
+      "id": 137802532164,
+      "name": "desktop-macos e2e (shard 1/2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003852",
+      "runner_id": 1000003852,
+      "steps_count": 14,
+      "labels": [
+        "macos-15"
+      ]
+    },
+    {
+      "id": 137802534562,
+      "name": "desktop-macos-intel-package",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003853",
+      "runner_id": 1000003853,
+      "steps_count": 16,
+      "labels": [
+        "macos-15-intel"
+      ]
+    },
+    {
+      "id": 137802543613,
+      "name": "desktop-windows-package",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003848",
+      "runner_id": 1000003848,
+      "steps_count": 16,
+      "labels": [
+        "windows-2022"
+      ]
+    }
+  ],
+  "annotationsByJobId": {
+    "137802439865": [
+      {
+        "message": "The job was not acquired by Runner of type hosted even after multiple attempts"
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      }
+    ]
+  }
+}

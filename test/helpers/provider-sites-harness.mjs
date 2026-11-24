@@ -28,8 +28,13 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { setImmediate } from "node:timers/promises";
+import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import vm from "node:vm";
+
+function readEnvAsyncJitterMs() {
+  const raw = Number(process.env.MOSA_TEST_ASYNC_JITTER_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
 
 const extensionDir = new URL("../../extensions/chatgpt-web-capture/", import.meta.url);
 const providerPolicySource = await readFile(new URL("provider-policy.js", extensionDir), "utf8");
@@ -40,6 +45,8 @@ const IDENTITY_PROOF_PREFIX = "gravityport-web-capture-identity\0";
 
 /** The proof a correctly-paired GravityPort service signs for `nonce`. */
 export async function identityProof(baseUrl, token, nonce) {
+  const jitterMs = readEnvAsyncJitterMs();
+  if (jitterMs > 0) await delay(jitterMs);
   const port = new URL(baseUrl).port || "80";
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -575,20 +582,67 @@ export function createProviderPolicyHarness() {
  */
 export async function createOptionsHarness(options = {}) {
   const clock = { now: options.clockStart ?? 1_700_000_000_000 };
+  const rawJitter = options.asyncJitterMs !== undefined
+    ? Number(options.asyncJitterMs)
+    : readEnvAsyncJitterMs();
+  const asyncJitterMs = Number.isFinite(rawJitter) && rawJitter > 0 ? rawJitter : 0;
+  // 默认只在设了延迟时再核一次安静（实测全开会把本文件从 ~204ms 拖慢到 ~1904ms，超过 20%）。
+  const verifyQuiet = options.verifyQuiet !== undefined ? Boolean(options.verifyQuiet) : asyncJitterMs > 0;
   // 460 验收：「页面安静了」不能靠数固定圈数（6 圈 setImmediate）——身份核验
   // 的 HMAC 在别的线程里算，机器一忙就不够，状态还停在 checking。改成等在途
   // 的 fetch 和 WebCrypto 运算都落地、再连续空转几圈。chrome.runtime 消息不算
   // 在途：等待批准时测试故意让它一直挂着。
-  let pending = 0;
+  const pendingPromises = new Set();
   const trackPending = (promise) => {
-    pending += 1;
-    return Promise.resolve(promise).finally(() => { pending -= 1; });
+    const settled = asyncJitterMs > 0
+      ? Promise.resolve(promise).then(
+        async (value) => { await delay(asyncJitterMs); return value; },
+        async (error) => { await delay(asyncJitterMs); throw error; },
+      )
+      : Promise.resolve(promise);
+    const tracked = settled.finally(() => { pendingPromises.delete(tracked); });
+    pendingPromises.add(tracked);
+    return tracked;
   };
-  const settle = async () => {
+  const drainToIdle = async () => {
+    const stepCapMs = Math.max(80, asyncJitterMs * 4);
     let idle = 0;
     for (let round = 0; round < 5000 && idle < 6; round += 1) {
+      if (pendingPromises.size > 0) {
+        let timedOut = false;
+        await Promise.race([
+          Promise.any([...pendingPromises].map((p) => p.then(() => "settled", () => "settled"))),
+          delay(stepCapMs).then(() => { timedOut = true; }),
+        ]);
+        if (timedOut) break;
+        idle = 0;
+        continue;
+      }
       await setImmediate();
-      idle = pending === 0 ? idle + 1 : 0;
+      idle = pendingPromises.size === 0 ? idle + 1 : 0;
+    }
+  };
+  let snapshotState = () => ({});
+  const diffSnapshots = (before, after) => {
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    const changed = [];
+    for (const key of keys) {
+      if (before[key] !== after[key]) {
+        changed.push(`${key} (${before[key]} -> ${after[key]})`);
+      }
+    }
+    return changed;
+  };
+  const settle = async () => {
+    await drainToIdle();
+    if (!verifyQuiet) return;
+    const before = snapshotState();
+    await delay(Math.max(25, asyncJitterMs + 25));
+    await drainToIdle();
+    const after = snapshotState();
+    const changed = diffSnapshots(before, after);
+    if (changed.length > 0) {
+      throw new Error(`settle() 返回时页面还在变：${changed.join(", ")}；有异步来源没被 trackPending 跟上`);
     }
   };
 
@@ -786,6 +840,25 @@ export async function createOptionsHarness(options = {}) {
     }
     throw new Error("offline in this harness");
   })());
+
+  snapshotState = () => {
+    const state = {
+      "fetchCalls.length": String(fetchCalls.length),
+      pending: String(pendingPromises.size),
+      "storage.local": JSON.stringify([...localStore.entries()].sort((a, b) => a[0].localeCompare(b[0]))),
+    };
+    for (const [id, node] of elementMap.entries()) {
+      const attrs = [...node.attrs.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      state[`#${id}.attrs`] = JSON.stringify(attrs);
+      state[`#${id}.textContent`] = JSON.stringify(node.textContent ?? "");
+      state[`#${id}.value`] = JSON.stringify(node.value ?? "");
+      state[`#${id}.hidden`] = String(Boolean(node.hidden));
+      state[`#${id}.disabled`] = String(Boolean(node.disabled));
+      state[`#${id}.checked`] = String(Boolean(node.checked));
+      state[`#${id}.open`] = String(Boolean(node.open));
+    }
+    return state;
+  };
 
   const context = vm.createContext(sandbox);
   vm.runInContext(optionsSource, context, { filename: "options.js" });
