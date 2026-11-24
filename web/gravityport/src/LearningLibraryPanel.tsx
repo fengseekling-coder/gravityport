@@ -25,6 +25,7 @@ import {
   learningActionState,
   learningLogRowText,
   type GuideSectionId,
+  type LearningBlockedState,
   type LearningFilter,
   type LearningQuoteData,
   type LearningStatusSnapshot,
@@ -203,6 +204,11 @@ export function LearningLibraryPanel({
 
   const loadSeqRef = useRef(0)
   const mountedRef = useRef(true)
+  // 手册改动一条接一条发：每次都带上一条回来的 revision。并发发出去的几条
+  // 会带同一个旧 revision，后到的那条必然 409（比如改完文字失焦、紧接着点锁）。
+  // revision 只增不减，取较大值，防止晚到的旧快照把它拉回去。
+  const revisionRef = useRef(0)
+  const mutationChainRef = useRef<Promise<unknown>>(Promise.resolve())
   const watchingRunIdRef = useRef<string | null>(null)
   const prevActiveRunRef = useRef<{ id: string; status: string } | null>(null)
   const libraryNameRef = useRef(libraryName)
@@ -232,6 +238,7 @@ export function LearningLibraryPanel({
     setRevertRunId(null)
     watchingRunIdRef.current = null
     prevActiveRunRef.current = null
+    revisionRef.current = 0
   }, [project, libraryId])
 
   const requestQuote = useCallback(async (runId?: string): Promise<LearningQuoteData | null> => {
@@ -253,6 +260,7 @@ export function LearningLibraryPanel({
     try {
       const next = await fetchLearningState(project, libraryId)
       if (!mountedRef.current) return null
+      revisionRef.current = Math.max(revisionRef.current, next.guide.revision)
       setState(next)
       return next
     } catch {
@@ -286,7 +294,10 @@ export function LearningLibraryPanel({
     // 2. Fetch learning state (guide, counts, runs).
     const nextState = await fetchLearningState(project, libraryId).catch(() => null)
     if (!mountedRef.current || seq !== loadSeqRef.current) return
-    if (nextState) setState(nextState)
+    if (nextState) {
+      revisionRef.current = Math.max(revisionRef.current, nextState.guide.revision)
+      setState(nextState)
+    }
 
     // Announce completion / failure toast if a watched run just settled.
     if (announceRunId && nextState) {
@@ -381,22 +392,31 @@ export function LearningLibraryPanel({
   const revision = state?.guide.revision ?? 0
   const runs = useMemo(() => (state?.runs ?? []).slice(0, 30), [state?.runs])
   const grouped = useMemo(() => groupGuideEntries(entries), [entries])
-  const positioningEntry = useMemo(
-    () => grouped.find((group) => group.section === "positioning")?.entries[0] ?? null,
+  // 定位通常只有一条；用户锁住旧的一条后重新学习，后台可能再加一条新的，
+  // 每条都要显示出来（看不见的条目照样会进生成提示词）。
+  const positioningEntries = useMemo(
+    () => grouped.find((group) => group.section === "positioning")?.entries ?? [],
     [grouped],
   )
   const bodyGroups = useMemo(
     () => grouped.filter((group) => group.section !== "positioning"),
     [grouped],
   )
-  const revertibleRunId = useMemo(() => findRevertibleRunId(runs), [runs])
+  const revertibleRunId = useMemo(() => findRevertibleRunId(runs, revision), [runs, revision])
+
+  // 过滤着的那条不在手册里了（重新学习换掉、撤回、别处删了）→ 图墙回到全部，
+  // 不留一个永远是 0 张的过滤标签。
+  useEffect(() => {
+    if (!state || activeFilter?.kind !== "entry") return
+    if (!state.guide.entries.some((entry) => entry.id === activeFilter.id)) onShowFilter(null)
+  }, [state, activeFilter, onShowFilter])
 
   const availableAddSections = useMemo(() => {
-    const hasPositioning = Boolean(positioningEntry)
+    const hasPositioning = positioningEntries.length > 0
     return GUIDE_SECTIONS
       .filter((item) => !(item.id === "positioning" && hasPositioning))
       .map((item) => ({ value: item.id, label: tr(item.label) }))
-  }, [positioningEntry, tr])
+  }, [positioningEntries, tr])
 
   const action = useMemo(
     () => learningActionState({
@@ -419,6 +439,28 @@ export function LearningLibraryPanel({
     setEditDraft("")
   }
 
+  // 所有手册改动都排进同一条队；成功后再取一次手册，409 时取新的并提示。
+  const runGuideMutation = (work: (baseRevision: number) => Promise<{ revision: number }>): Promise<boolean> => {
+    const next = mutationChainRef.current.then(async () => {
+      try {
+        const result = await work(revisionRef.current)
+        if (result.revision) revisionRef.current = Math.max(revisionRef.current, result.revision)
+        await loadStateOnly()
+        return true
+      } catch (error) {
+        if (errorCodeOf(error) === "LEARNING_GUIDE_CONFLICT") {
+          await loadStateOnly()
+          notify(tr("手册已经更新，请再改一次"))
+        } else {
+          notify(tr("无法保存这一条"))
+        }
+        return false
+      }
+    })
+    mutationChainRef.current = next.catch(() => {})
+    return next
+  }
+
   const commitEdit = async (entry: MosaLearningGuideEntry) => {
     if (savingEntryId === entry.id) return
     const trimmed = editDraft.trim()
@@ -426,18 +468,10 @@ export function LearningLibraryPanel({
     if (!trimmed || trimmed === entry.text) return
     setSavingEntryId(entry.id)
     try {
-      await updateLearningGuideEntry(project, libraryId, entry.id, {
-        baseRevision: revision,
+      await runGuideMutation((baseRevision) => updateLearningGuideEntry(project, libraryId, entry.id, {
+        baseRevision,
         text: trimmed,
-      })
-      await loadStateOnly()
-    } catch (error) {
-      if (errorCodeOf(error) === "LEARNING_GUIDE_CONFLICT") {
-        await loadStateOnly()
-        notify(tr("手册已经更新，请再改一次"))
-      } else {
-        notify(tr("无法保存这一条"))
-      }
+      }))
     } finally {
       if (mountedRef.current) setSavingEntryId(null)
     }
@@ -447,18 +481,10 @@ export function LearningLibraryPanel({
     if (savingEntryId === entry.id) return
     setSavingEntryId(entry.id)
     try {
-      await updateLearningGuideEntry(project, libraryId, entry.id, {
-        baseRevision: revision,
+      await runGuideMutation((baseRevision) => updateLearningGuideEntry(project, libraryId, entry.id, {
+        baseRevision,
         locked: !entry.locked,
-      })
-      await loadStateOnly()
-    } catch (error) {
-      if (errorCodeOf(error) === "LEARNING_GUIDE_CONFLICT") {
-        await loadStateOnly()
-        notify(tr("手册已经更新，请再改一次"))
-      } else {
-        notify(tr("无法保存这一条"))
-      }
+      }))
     } finally {
       if (mountedRef.current) setSavingEntryId(null)
     }
@@ -468,19 +494,8 @@ export function LearningLibraryPanel({
     if (savingEntryId === entry.id) return
     setSavingEntryId(entry.id)
     try {
-      await deleteLearningGuideEntry(project, libraryId, entry.id, revision)
-      if (activeFilter?.kind === "entry" && activeFilter.id === entry.id) {
-        onShowFilter(null)
-      }
-      await loadStateOnly()
-      notify(tr("已删除一条要点"))
-    } catch (error) {
-      if (errorCodeOf(error) === "LEARNING_GUIDE_CONFLICT") {
-        await loadStateOnly()
-        notify(tr("手册已经更新，请再改一次"))
-      } else {
-        notify(tr("无法保存这一条"))
-      }
+      const ok = await runGuideMutation((baseRevision) => deleteLearningGuideEntry(project, libraryId, entry.id, baseRevision))
+      if (ok) notify(tr("已删除一条要点"))
     } finally {
       if (mountedRef.current) setSavingEntryId(null)
     }
@@ -503,20 +518,12 @@ export function LearningLibraryPanel({
     if (!trimmed || addingBusy) return
     setAddingBusy(true)
     try {
-      await addLearningGuideEntry(project, libraryId, {
-        baseRevision: revision,
+      const ok = await runGuideMutation((baseRevision) => addLearningGuideEntry(project, libraryId, {
+        baseRevision,
         section: addSection,
         text: trimmed,
-      })
-      closeAddForm()
-      await loadStateOnly()
-    } catch (error) {
-      if (errorCodeOf(error) === "LEARNING_GUIDE_CONFLICT") {
-        await loadStateOnly()
-        notify(tr("手册已经更新，请再改一次"))
-      } else {
-        notify(tr("无法保存这一条"))
-      }
+      }))
+      if (ok && mountedRef.current) closeAddForm()
     } finally {
       if (mountedRef.current) setAddingBusy(false)
     }
@@ -573,6 +580,14 @@ export function LearningLibraryPanel({
           notify(tr("花费估算已更新，请再确认一次"))
           return
         }
+      }
+      // 其余失败（另一个库抢先开学、素材库不可用……）关框后底部会换成对应的
+      // 受阻提示；这两种重新取数也看不出原因，当场说一句。
+      if (result && !result.ok && result.reason === "busy") {
+        const busyName = "libraryName" in result && typeof result.libraryName === "string" ? result.libraryName : ""
+        notify(fillNamed("「{name}」正在学习，学完再开始。", { name: busyName || tr("另一个学习库") }))
+      } else if (result && !result.ok && result.reason === "library-unavailable") {
+        notify(tr("素材库暂时不可用"))
       }
       setConfirmDialog(null)
       await loadAll()
@@ -692,6 +707,19 @@ export function LearningLibraryPanel({
         </button>
       </div>
     )
+  }
+
+  const blockedMessage = (blocked: LearningBlockedState): string => {
+    switch (blocked.blocked) {
+      case "encryption-unavailable": return tr("这台电脑无法加密保存密钥，暂时不能学习。")
+      case "no-service": return tr("还没有设置「分析和汇总」用哪家服务。")
+      case "unsupported-service": return tr("学习暂时只支持 Claude，请在 AI 设置里把「分析和汇总」换成 Claude。")
+      case "no-key": return fillNamed("还没有填 {service} 的密钥。", { service: blocked.serviceLabel || "Claude" })
+      case "unknown-price": return fillNamed("{model} 不在单价表里，无法估算花费。", { model: blocked.modelLabel || tr("所选模型") })
+      case "busy": return fillNamed("「{name}」正在学习，学完再开始。", { name: blocked.libraryName || tr("另一个学习库") })
+      case "empty": return tr("学习库里还没有能学的图片")
+      default: return tr("出了点问题，已暂停")
+    }
   }
 
   const renderFooter = () => {
@@ -815,6 +843,16 @@ export function LearningLibraryPanel({
                 cost: formatLearningUsd(action.run.costUsd, tr),
               })}
             </p>
+            {action.resumeBlocked && !action.quoting && (
+              <div className="learn-footer-blocked">
+                <p className="learn-footer-note">{blockedMessage(action.resumeBlocked)}</p>
+                {action.resumeBlocked.showAiSettings && !action.showAiSettings && (
+                  <button type="button" className="learn-footer-link" onClick={onOpenAiSettings}>
+                    {tr("打开 AI 设置")}
+                  </button>
+                )}
+              </div>
+            )}
             <div className="learn-footer-paused-actions">
               {action.canResume && action.resumeEstimateUsd !== null ? (
                 <button
@@ -849,25 +887,9 @@ export function LearningLibraryPanel({
             </button>
           )
         }
-        let message = ""
-        if (action.blocked === "encryption-unavailable") {
-          message = tr("这台电脑无法加密保存密钥，暂时不能学习。")
-        } else if (action.blocked === "no-service") {
-          message = tr("还没有设置「分析和汇总」用哪家服务。")
-        } else if (action.blocked === "unsupported-service") {
-          message = tr("学习暂时只支持 Claude，请在 AI 设置里把「分析和汇总」换成 Claude。")
-        } else if (action.blocked === "no-key") {
-          message = fillNamed("还没有填 {service} 的密钥。", { service: action.serviceLabel || "Claude" })
-        } else if (action.blocked === "unknown-price") {
-          message = fillNamed("{model} 不在单价表里，无法估算花费。", { model: action.modelLabel || tr("所选模型") })
-        } else if (action.blocked === "busy") {
-          message = fillNamed("「{name}」正在学习，学完再开始。", { name: action.libraryName || tr("另一个学习库") })
-        } else {
-          message = tr("出了点问题，已暂停")
-        }
         return (
           <div className="learn-footer-blocked">
-            <p className="learn-footer-note">{message}</p>
+            <p className="learn-footer-note">{blockedMessage(action)}</p>
             {action.showAiSettings && (
               <button type="button" className="learn-footer-link" onClick={onOpenAiSettings}>
                 {tr("打开 AI 设置")}
@@ -893,8 +915,9 @@ export function LearningLibraryPanel({
           </section>
         ) : (
           <section className="learn-library-section learn-guide-list" aria-label={tr("设计手册")}>
-            {positioningEntry && (
+            {positioningEntries.map((positioningEntry) => (
               <div
+                key={positioningEntry.id}
                 className="learn-guide-entry learn-guide-positioning"
                 data-guide-entry-id={positioningEntry.id}
               >
@@ -922,7 +945,7 @@ export function LearningLibraryPanel({
                   {renderEntryMeta(positioningEntry, "一句话定位")}
                 </div>
               </div>
-            )}
+            ))}
 
             {bodyGroups.map((group) => (
               <div key={group.section} className="learn-guide-group">

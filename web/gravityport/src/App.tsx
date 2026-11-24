@@ -779,11 +779,15 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         // and silently drops the whole run. The commit replaces the selection
         // wholesale anyway; a real view switch is reset above, not here.
         const selectAllBusy = selectAllInFlightRef.current || pendingSelectAllRef.current !== null
+        // 任务 464：学习库里点了「来自 N 张」或学习记录行（或正过滤着），换出来的
+        // 图墙不隐式选第一张——459 的规则会因此把右栏切到「详情」，收走用户刚
+        // 点的手册。不在图墙里了的选中照常剪掉。
         const keepUnselectedForLearn = Boolean(learnFilterKey) || suppressLearnAutoFocusRef.current
         suppressLearnAutoFocusRef.current = false
-        if (!selectAllBusy && !keepUnselectedForLearn && (pruned.changed || (!pruned.selectedIds.length && !pruned.selected))) {
+        const firstCardFallback = keepUnselectedForLearn ? "" : collected[0]?.id
+        if (!selectAllBusy && (pruned.changed || (!keepUnselectedForLearn && !pruned.selectedIds.length && !pruned.selected))) {
           const fallback = pruned.selected
-            || (pruned.selectedIds.length ? pruned.selectedIds[0] : collected[0]?.id)
+            || (pruned.selectedIds.length ? pruned.selectedIds[0] : firstCardFallback)
             || ""
           // The first card, or a kept focus that was already the app's pick,
           // stays implicit (see implicitFocusRef).

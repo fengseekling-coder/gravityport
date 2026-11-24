@@ -244,6 +244,28 @@ describe("learningActionState (every row in B.3)", () => {
     assert.equal(noKeyPaused.kind, "paused");
     assert.equal(noKeyPaused.showAiSettings, true);
     assert.equal(noKeyPaused.canResume, false);
+    assert.deepEqual(noKeyPaused.resumeBlocked, { kind: "blocked", blocked: "no-key", showAiSettings: true, serviceLabel: "" });
+    assert.equal(userPaused.resumeBlocked, null);
+  });
+
+  it("9b. paused but cannot resume: says why (another library running, resume quote blocked)", () => {
+    const busyPaused = learningActionState({
+      desktop: true,
+      quoting: false,
+      status: { run: makeRun({ status: "paused", pauseReason: "user" }), busyElsewhere: { libraryId: "ll_other", libraryName: "人像库" } },
+      quote: null,
+    });
+    assert.equal(busyPaused.kind, "paused");
+    assert.equal(busyPaused.canResume, false);
+    assert.deepEqual(busyPaused.resumeBlocked, { kind: "blocked", blocked: "busy", showAiSettings: false, libraryName: "人像库" });
+
+    const priceBlocked = learningActionState({
+      desktop: true,
+      quoting: false,
+      status: { run: makeRun({ status: "paused", pauseReason: "user" }), busyElsewhere: null },
+      quote: { ok: false, blocked: "unknown-price", modelLabel: "custom-model" },
+    });
+    assert.deepEqual(priceBlocked.resumeBlocked, { kind: "blocked", blocked: "unknown-price", showAiSettings: true, modelLabel: "custom-model" });
   });
 
   it("10–16. all 7 blocked states", () => {
@@ -353,6 +375,16 @@ describe("learningLogRowText & findRevertibleRunId", () => {
       makeRun({ id: "lr_done_old", kind: "learn", status: "done", change: { added: 2 } }),
     ];
     assert.equal(findRevertibleRunId(afterRevert), null);
+  });
+
+  it("hides revert once the guide moved past the run's revision (the backend would 409 LEARNING_GUIDE_CHANGED)", () => {
+    const runs = [
+      makeRun({ id: "lr_edit", kind: "edit", status: "done", guideRevisionAfter: 6 }),
+      makeRun({ id: "lr_done", kind: "learn", status: "done", guideRevisionAfter: 5, change: { added: 3 } }),
+    ];
+    assert.equal(findRevertibleRunId(runs, 6), null);
+    assert.equal(findRevertibleRunId(runs.slice(1), 5), "lr_done");
+    assert.equal(findRevertibleRunId(runs.slice(1)), "lr_done");
   });
 });
 

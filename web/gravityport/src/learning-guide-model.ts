@@ -158,16 +158,19 @@ export type LearningActionState =
       canResume: boolean
       resumeEstimateUsd: number | null
       quoting: boolean
-      resumeBlocked: string | null
+      /** 继续不了时为什么（继续报价被挡、或别的库正在学）；能继续时为 null。 */
+      resumeBlocked: LearningBlockedState | null
     }
-  | {
-      kind: "blocked"
-      blocked: string
-      showAiSettings: boolean
-      serviceLabel?: string
-      modelLabel?: string
-      libraryName?: string
-    }
+  | LearningBlockedState
+
+export type LearningBlockedState = {
+  kind: "blocked"
+  blocked: string
+  showAiSettings: boolean
+  serviceLabel?: string
+  modelLabel?: string
+  libraryName?: string
+}
 
 const PAUSE_REASON_TEXT: Record<string, string> = {
   user: "已暂停",
@@ -187,6 +190,31 @@ const PAUSE_REASON_TEXT: Record<string, string> = {
 export function pauseReasonText(reason: string | null | undefined): string {
   const key = String(reason || "")
   return PAUSE_REASON_TEXT[key] ?? PAUSE_REASON_TEXT.unknown
+}
+
+function busyElsewhereState(
+  busy: { libraryId: string; libraryName: string },
+  quote: LearningQuoteData | null | undefined,
+): LearningBlockedState {
+  return { kind: "blocked", blocked: "busy", showAiSettings: false, libraryName: busy.libraryName || quote?.libraryName || "" }
+}
+
+/** 报价被挡（ok: false）时显示哪一种受阻提示。 */
+function blockedQuoteState(quote: LearningQuoteData): LearningBlockedState {
+  const blocked = String(quote.blocked || "unknown")
+  if (blocked === "no-service" || blocked === "unsupported-service") {
+    return { kind: "blocked", blocked, showAiSettings: true }
+  }
+  if (blocked === "no-key") {
+    return { kind: "blocked", blocked, showAiSettings: true, serviceLabel: quote.serviceLabel || quote.service?.label || "" }
+  }
+  if (blocked === "unknown-price") {
+    return { kind: "blocked", blocked, showAiSettings: true, modelLabel: quote.modelLabel || quote.models?.analysis?.label || "" }
+  }
+  if (blocked === "busy") {
+    return { kind: "blocked", blocked, showAiSettings: false, libraryName: quote.libraryName || "" }
+  }
+  return { kind: "blocked", blocked, showAiSettings: false }
 }
 
 /** 底部操作区的纯状态判定（对应设计表 B.3 每一行）。 */
@@ -210,6 +238,11 @@ export function learningActionState(input: {
     if (run.status === "paused") {
       const reason = run.pauseReason || "unknown"
       const canResume = Boolean(input.quote?.ok && input.quote.kind === "resume")
+      // 继续也要报价：别的库正在学（主进程不给这个库报价）、或继续报价被挡
+      // （密钥被删、服务换了……）时，「继续」按钮禁用，旁边要说清为什么。
+      const resumeBlocked = canResume ? null
+        : input.status?.busyElsewhere ? busyElsewhereState(input.status.busyElsewhere, input.quote)
+          : input.quote && !input.quote.ok ? blockedQuoteState(input.quote) : null
       return {
         kind: "paused",
         run,
@@ -219,57 +252,14 @@ export function learningActionState(input: {
         canResume,
         resumeEstimateUsd: canResume ? Number(input.quote?.estimateUsd ?? 0) : null,
         quoting: Boolean(input.quoting),
-        resumeBlocked: input.quote && !input.quote.ok ? String(input.quote.blocked || "") : null,
+        resumeBlocked,
       }
     }
   }
-  if (input.status?.busyElsewhere) {
-    return {
-      kind: "blocked",
-      blocked: "busy",
-      showAiSettings: false,
-      libraryName: input.status.busyElsewhere.libraryName || input.quote?.libraryName || "",
-    }
-  }
+  if (input.status?.busyElsewhere) return busyElsewhereState(input.status.busyElsewhere, input.quote)
   if (input.quoting || !input.quote) return { kind: "quoting" }
   const quote = input.quote
-  if (!quote.ok) {
-    const blocked = String(quote.blocked || "unknown")
-    if (blocked === "encryption-unavailable") {
-      return { kind: "blocked", blocked, showAiSettings: false }
-    }
-    if (blocked === "no-service" || blocked === "unsupported-service") {
-      return { kind: "blocked", blocked, showAiSettings: true }
-    }
-    if (blocked === "no-key") {
-      return {
-        kind: "blocked",
-        blocked,
-        showAiSettings: true,
-        serviceLabel: quote.serviceLabel || quote.service?.label || "",
-      }
-    }
-    if (blocked === "unknown-price") {
-      return {
-        kind: "blocked",
-        blocked,
-        showAiSettings: true,
-        modelLabel: quote.modelLabel || quote.models?.analysis?.label || "",
-      }
-    }
-    if (blocked === "busy") {
-      return {
-        kind: "blocked",
-        blocked,
-        showAiSettings: false,
-        libraryName: quote.libraryName || "",
-      }
-    }
-    if (blocked === "empty") {
-      return { kind: "blocked", blocked, showAiSettings: false }
-    }
-    return { kind: "blocked", blocked, showAiSettings: false }
-  }
+  if (!quote.ok) return blockedQuoteState(quote)
   const noPreview = Number(quote.counts?.noPreview || 0)
   const estimateUsd = Number(quote.estimateUsd || 0)
   if (quote.kind === "summary-only") {
@@ -305,6 +295,7 @@ export type LearningRunLogItem = {
     unlocked?: number
     deleted?: number
   }
+  guideRevisionAfter?: number | null
   startedAt?: string
   updatedAt?: string
 }
@@ -411,10 +402,16 @@ export function learningLogRowText(
   return { template: "学了 {done} 张 · 更新 {added} 条 · 花费 {cost}", params: { done, added, cost } }
 }
 
-/** 最近一次已完成、没撤回过的学习 runId（仅这一行显示「撤回」按钮）。 */
-export function findRevertibleRunId(runs: readonly LearningRunLogItem[]): string | null {
+/**
+ * 最近一次已完成、没撤回过的学习 runId（仅这一行显示「撤回」按钮）。传了
+ * 手册当前的 revision 时，这次学习之后手册又改过（手动改、锁、删）就不给撤回——
+ * 后台照同一条规则回 409 LEARNING_GUIDE_CHANGED，按钮留着只会点了再报错。
+ */
+export function findRevertibleRunId(runs: readonly LearningRunLogItem[], currentRevision?: number): string | null {
   const latestDone = runs.find((run) => run.kind === "learn" && run.status === "done")
   if (!latestDone || latestDone.change?.reverted) return null
+  if (currentRevision !== undefined && latestDone.guideRevisionAfter != null
+    && Number(latestDone.guideRevisionAfter) !== Number(currentRevision)) return null
   return latestDone.id
 }
 
