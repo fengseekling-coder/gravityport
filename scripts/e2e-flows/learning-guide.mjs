@@ -264,8 +264,14 @@ export async function run(ctx) {
     // 清过滤这一下就在 960 宽里点：量坐标和点击在同一个布局里。撤掉视口覆盖
     // 是异步生效的，先撤再点会点到旧坐标上（PR #357 第二轮 macOS CI）。
     const fullWidth = await cdp.evaluate(`window.innerWidth`);
-    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 960, height: 760, deviceScaleFactor: 1, mobile: false });
     try {
+      // 刚好在 1000px 断点之上，小字还显示、顶栏最挤：× 不能被工具栏盖住。
+      for (const width of [1100, 1008]) {
+        await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 760, deviceScaleFactor: 1, mobile: false });
+        await waitFor(cdp, `window.innerWidth === ${width}`, `viewport narrowed to ${width}px`);
+        await centerOf(cdp, `document.querySelector('.learn-filter-clear')`);
+      }
+      await cdp.send("Emulation.setDeviceMetricsOverride", { width: 960, height: 760, deviceScaleFactor: 1, mobile: false });
       await waitFor(cdp, `window.innerWidth === 960`, "viewport narrowed to 960px");
       await waitFor(
         cdp,

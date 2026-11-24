@@ -7,6 +7,15 @@
 .app .learn-library-title {
   gap: var(--space-2);
   min-width: 0;
+  /* 名字、小字、过滤标签都能缩；再不够也只在自己框里裁，绝不压到右边的
+     工具栏上（PR #357：1008 宽的 Windows 窗口里 × 被排序下拉盖住）。 */
+  overflow: hidden;
+}
+.app .learn-library-title > span:not(.learn-filter-chip) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .app .learn-library-title .learn-library-name {
   display: block;
