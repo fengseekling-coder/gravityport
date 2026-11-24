@@ -2,11 +2,17 @@
   "schema": 2,
   "unreleased": {
     "zh": {
+      "new": [
+        "自动将 Lovart 中基于素材库已有图片改出的新图接入原图的版本树。"
+      ],
       "improved": [
         "重新设计浏览器扩展设置页，集中展示与 GravityPort 的连接状态，并新增英文界面。"
       ]
     },
     "en": {
+      "new": [
+        "Automatically linked Lovart edits of images already in the library to the original image's version tree."
+      ],
       "improved": [
         "Redesigned the browser extension settings page to surface the connection status with GravityPort, and added an English interface."
       ]
