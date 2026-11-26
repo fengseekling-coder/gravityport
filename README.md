@@ -57,7 +57,7 @@ Browse and search one gallery with adjustable column counts, marquee selection, 
 
 ### Iterate on the version tree
 
-The Inspector shows each asset's version tree, with generations from a ChatGPT conversation grouped by conversation round so you can see how the image evolved turn by turn. Images edited from an existing Lovart image in your library automatically attach beneath the original. Any two versions in a family can be compared side by side.
+The Inspector shows each asset's version tree, with generations from a ChatGPT conversation grouped by conversation round so you can see how the image evolved turn by turn. Images edited from an existing Lovart image in your library automatically attach beneath the original. Any two versions in a family can be compared side by side. Open the version tree from the Inspector or an image's context menu to see every version and how they relate on a canvas, link versions by dragging between them, and mark what to change in the next round.
 
 ### Let AI agents search your library
 
