@@ -1,10 +1,13 @@
-// 任务 459：学习库入口开关；正式构建（DEV=false）默认关闭，仅在开发模式或
-// 写入 localStorage "gravityport.dev.ai-generation"="1" 时开启。与任务 458 的
+import { localAiBuild } from "./local-build-flags"
+
+// 任务 459：学习库入口开关；正式构建（DEV=false）默认关闭，仅在开发模式、本机
+// 预览包（打包时设 GRAVITYPORT_LOCAL_AI=1）或写入 localStorage
+// "gravityport.dev.ai-generation"="1" 时开启。与任务 458 的
 // AI 设置页共用同一个 localStorage 键（两个入口随后续的整合单合成一个），
 // 各自一个文件，照 version-canvas-model.ts 的写法。
 
 function readLearningLibraryEntry(): boolean {
-  if (import.meta.env.DEV) return true
+  if (import.meta.env.DEV || localAiBuild()) return true
   try {
     return typeof localStorage !== "undefined" && localStorage.getItem("gravityport.dev.ai-generation") === "1"
   } catch {

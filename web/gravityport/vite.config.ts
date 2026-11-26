@@ -4,6 +4,8 @@ import tailwindcss from "@tailwindcss/vite"
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { bundledPackagesPlugin } from "./bundled-packages-plugin.mjs"
+import { localAiBuildFromEnv } from "./local-build-flags.mjs"
+import { env } from "node:process"
 
 // The extension status card compares the reporting extension against the
 // version this build ships (task 225); read it from the packaged manifest
@@ -25,6 +27,8 @@ export default defineConfig({
   ],
   define: {
     __GRAVITYPORT_BUNDLED_EXTENSION_VERSION__: JSON.stringify(bundledExtensionVersion),
+    // GRAVITYPORT_LOCAL_AI=1 only for the maintainer's local preview packages.
+    __GRAVITYPORT_LOCAL_AI_BUILD__: JSON.stringify(localAiBuildFromEnv(env)),
   },
   base: "/",
   build: {
