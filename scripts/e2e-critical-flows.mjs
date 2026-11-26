@@ -12,6 +12,7 @@ import sharp from "sharp";
 import { launchDesktopGui } from "./desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "./desktop-runtime-paths.mjs";
 import { createCriticalUiFlowSource, createTrashUiFlowSource, E2E_DROP_GROUP_NAME } from "./e2e-ui-flow.mjs";
+import { ciLikeConfig, clearActiveCiLikeFlow, formatCiLikeBanner, setActiveCiLikeFlow, writeCiLikeWindowBounds } from "./e2e-ci-like.mjs";
 import { systemClipboardAllowed, systemClipboardPlan } from "./e2e-system-clipboard.mjs";
 import { signalProcessTree } from "./process-tree.mjs";
 import { libraryDigest, readLibraryId } from "../lib/library-identity.mjs";
@@ -88,9 +89,13 @@ const selected = (name) => {
   if (!shard) return true;
   return sortedSelectableNames.indexOf(name) % shard.n === shard.k - 1;
 };
+const ciLike = ciLikeConfig(process.env, { platform: process.platform, shard });
 if (wantsList) {
   for (const name of sortedSelectableNames.filter(selected)) console.log(name);
   process.exit(0);
+}
+if (ciLike.enabled) {
+  console.log(formatCiLikeBanner(ciLike));
 }
 // Task 461: system-clipboard flows only run where nobody is using the
 // clipboard (CI). Read once, up front; `true` deserves a loud warning even
@@ -156,6 +161,7 @@ let verdict = { ok: false, storage: "sqlite", flows: [], restartVerified: false,
 // Task 461: every system-clipboard flow/step this machine skipped, reported
 // in the verdict so a green run never silently drops clipboard coverage.
 const skippedSystemClipboard = [];
+let repeatVerdictFields = null;
 try {
   const flowsRun = [];
   if (selected("web")) {
@@ -188,13 +194,44 @@ try {
     flowsRun.push("trash");
   }
 
-  flowsRun.push(...await runPluginFlows());
+  const pluginOutcome = await runPluginFlows();
+  flowsRun.push(...pluginOutcome.ran);
 
   if (!flowsRun.length) throw new Error(`MOSA_E2E_ONLY matched no flow: ${[...onlyFlows].join(",")}`);
-  verdict = { ok: true, storage: "sqlite", flows: flowsRun, restartVerified: true, skipped: skippedSystemClipboard, systemClipboard: systemClipboardGranted };
+  if (ciLike.repeat > 1) {
+    console.log(`[e2e] repeat summary ${JSON.stringify(pluginOutcome.repeatSummary)}`);
+    repeatVerdictFields = {
+      repeat: ciLike.repeat,
+      repeatPassed: pluginOutcome.repeatPassed,
+      repeatSummary: pluginOutcome.repeatSummary,
+    };
+    if (pluginOutcome.repeatFailures.length) {
+      throw new Error(
+        `E2E repeat failed (${pluginOutcome.repeatFailures.length} failure(s)): ${pluginOutcome.repeatFailures[0]}`,
+      );
+    }
+  }
+  verdict = {
+    ok: true,
+    storage: "sqlite",
+    flows: flowsRun,
+    restartVerified: true,
+    skipped: skippedSystemClipboard,
+    systemClipboard: systemClipboardGranted,
+    ...(repeatVerdictFields || {}),
+  };
   console.log(JSON.stringify(verdict));
 } catch (error) {
-  verdict = { ok: false, storage: "sqlite", flows: [], restartVerified: false, error: String(error?.message || error), skipped: skippedSystemClipboard, systemClipboard: systemClipboardGranted };
+  verdict = {
+    ok: false,
+    storage: "sqlite",
+    flows: [],
+    restartVerified: false,
+    error: String(error?.message || error),
+    skipped: skippedSystemClipboard,
+    systemClipboard: systemClipboardGranted,
+    ...(repeatVerdictFields || {}),
+  };
   throw error;
 } finally {
   if (resultFile) await writeFile(resultFile, `${JSON.stringify(verdict, null, 2)}\n`);
@@ -212,6 +249,9 @@ async function runPluginFlows() {
     .sort();
   const names = new Set();
   const ran = [];
+  const repeatSummary = {};
+  const repeatPassed = {};
+  const repeatFailures = [];
   for (const file of files) {
     const flow = await import(pathToFileURL(join(flowsDir, file)).href);
     if (typeof flow.name !== "string" || !/^[a-z][a-z0-9-]*$/.test(flow.name) || typeof flow.run !== "function") {
@@ -234,29 +274,57 @@ async function runPluginFlows() {
     if (plan === "refuse") {
       throw new Error(`E2E flow ${flow.name} needs the real system clipboard; it only runs with MOSA_E2E_SYSTEM_CLIPBOARD=1 (CI). Refusing to take over this machine's clipboard.`);
     }
-    console.log(`[e2e] flow ${flow.name}: ${flow.description || file}`);
-    const ctx = createFlowContext(flow.name);
-    try {
-      const summary = await flow.run(ctx);
-      if (summary !== undefined) console.log(`[e2e] flow ${flow.name} result ${JSON.stringify(summary)}`);
-    } catch (error) {
-      console.error(ctx.serverDiagnostics());
-      throw new Error(`E2E flow ${flow.name} failed: ${error?.message || error}`, { cause: error });
+    if (ciLike.repeat === 1) {
+      console.log(`[e2e] flow ${flow.name}: ${flow.description || file}`);
+      const ctx = createFlowContext(flow.name);
+      setActiveCiLikeFlow({ flowName: flow.name, userDataDir: ctx.userDataDir });
+      try {
+        const summary = await flow.run(ctx);
+        if (summary !== undefined) console.log(`[e2e] flow ${flow.name} result ${JSON.stringify(summary)}`);
+      } catch (error) {
+        console.error(ctx.serverDiagnostics());
+        throw new Error(`E2E flow ${flow.name} failed: ${error?.message || error}`, { cause: error });
+      } finally {
+        clearActiveCiLikeFlow();
+      }
+      ran.push(flow.name);
+      continue;
     }
+
+    let passed = 0;
+    for (let attempt = 1; attempt <= ciLike.repeat; attempt += 1) {
+      console.log(`[e2e] flow ${flow.name} (${attempt}/${ciLike.repeat}): ${flow.description || file}`);
+      const ctx = createFlowContext(flow.name, { runTag: `flow-${flow.name}-r${attempt}` });
+      setActiveCiLikeFlow({ flowName: flow.name, userDataDir: ctx.userDataDir });
+      try {
+        const summary = await flow.run(ctx);
+        if (summary !== undefined) console.log(`[e2e] flow ${flow.name} (${attempt}/${ciLike.repeat}) result ${JSON.stringify(summary)}`);
+        passed += 1;
+      } catch (error) {
+        console.error(ctx.serverDiagnostics());
+        const wrapped = new Error(`E2E flow ${flow.name} (${attempt}/${ciLike.repeat}) failed: ${error?.message || error}`, { cause: error });
+        console.error(wrapped.stack || wrapped.message);
+        repeatFailures.push(`${flow.name} (${attempt}/${ciLike.repeat}): ${error?.message || error}`);
+      } finally {
+        clearActiveCiLikeFlow();
+      }
+    }
+    repeatPassed[flow.name] = passed;
+    repeatSummary[flow.name] = `${passed}/${ciLike.repeat}`;
     ran.push(flow.name);
   }
-  return ran;
+  return { ran, repeatSummary, repeatPassed, repeatFailures };
 }
 
-function createFlowContext(flowName) {
-  const flowRoot = join(root, `flow-${flowName}`);
+function createFlowContext(flowName, { runTag = `flow-${flowName}` } = {}) {
+  const flowRoot = join(root, runTag);
   // Every server this flow starts, so a failed flow can report how each one
   // ended. A connection error alone cannot tell a crash from a flow bug.
   const servers = [];
   const dirs = {
     libraryDir: join(flowRoot, "library"),
     userDataDir: join(flowRoot, "user-data"),
-    fixturesDir: join(fixturesRoot, `flow-${flowName}`),
+    fixturesDir: join(fixturesRoot, runTag),
   };
   let sourceCounter = 0;
   const ctx = {
@@ -294,6 +362,7 @@ function createFlowContext(flowName) {
     },
     async prepare() {
       await Promise.all(Object.values(dirs).map((dir) => mkdir(dir, { recursive: true })));
+      if (ciLike.enabled) writeCiLikeWindowBounds(dirs.userDataDir);
     },
     // Writes a solid-colour PNG inside the Codex generated-images root, which
     // /api/assets/create is allowed to read in QA runs.
@@ -364,7 +433,7 @@ function createFlowContext(flowName) {
     // window (via MOSA_E2E_WEB_WINDOW_SIZE) for narrow-viewport flows; omitted
     // keeps the historical 1280x800.
     async runInPage(server, source, { windowSize } = {}) {
-      const sourceFile = join(root, `flow-${flowName}-${++sourceCounter}.js`);
+      const sourceFile = join(root, `${runTag}-${++sourceCounter}.js`);
       await writeFile(sourceFile, source, "utf8");
       const env = {
         ...process.env,
@@ -680,6 +749,7 @@ async function runElectronRound(mode, searchTerm, recipeChange) {
     userData: desktopUserData,
     library: desktopLibraryDir,
   });
+  if (ciLike.enabled) writeCiLikeWindowBounds(desktopUserData);
   const launched = await launchDesktopGui({
     platform: process.platform,
     rootDir: runDir,
@@ -819,15 +889,27 @@ async function waitForRendererReady(cdp, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
   while (Date.now() < deadline) {
+    let state = null;
     try {
-      const state = await cdp.evaluate(`({
+      state = await cdp.evaluate(`({
         readyState: document.readyState,
         appShell: Boolean(document.querySelector('.app')),
         preload: Boolean(window.electronAPI && typeof window.electronAPI.writeClipboardText === 'function'),
+        width: window.innerWidth,
+        height: window.innerHeight,
       })`);
-      if (state?.readyState === 'complete' && state.appShell && state.preload) return;
     } catch (error) {
       lastError = error;
+    }
+    if (state?.readyState === 'complete' && state.appShell && state.preload) {
+      if (ciLike.enabled) {
+        console.log(`[e2e] CI-like desktop viewport (electron): ${state.width}x${state.height}`);
+        const [expectedW, expectedH] = ciLike.desktopWindow;
+        if (state.width !== expectedW || state.height !== expectedH) {
+          throw new Error(`CI-like window not applied: got ${state.width}x${state.height} (expected ${expectedW}x${expectedH}, userData=${desktopUserData})`);
+        }
+      }
+      return;
     }
     await sleep(100);
   }
@@ -862,6 +944,9 @@ async function openCdpSession(url) {
   }
 
   await command("Runtime.enable");
+  if (ciLike.enabled) {
+    await command("Emulation.setCPUThrottlingRate", { rate: ciLike.cpuThrottle });
+  }
   return {
     async evaluate(expression) {
       const response = await command("Runtime.evaluate", {

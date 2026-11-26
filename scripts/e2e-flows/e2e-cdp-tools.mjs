@@ -19,6 +19,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { ciLikeConfig } from "../e2e-ci-like.mjs";
 import { signalProcessTree } from "../process-tree.mjs";
 import {
   clickAndWait,
@@ -332,6 +333,69 @@ export async function run(ctx) {
     const extra = await cdp.evaluate(`({ dbl: window.__dbl, hovered: window.__hovered })`);
     assert(extra.hovered >= 1 && extra.dbl === 1, `hover/doubleClick mismatch: ${JSON.stringify(extra)}`);
     results.hoverAndDoubleClick = extra;
+
+    // 10. Task 470: CI-like CPU throttling probe (only when MOSA_E2E_CI_LIKE=1).
+    const ciLike = ciLikeConfig(process.env, { platform: process.platform });
+    if (ciLike.enabled) {
+      const busyLoopExpr = `(() => {
+        function spin(n) {
+          let acc = 0;
+          for (let i = 0; i < n; i += 1) acc = (acc + Math.imul(i ^ acc, 2654435761)) | 0;
+          return acc;
+        }
+        const warm = spin(2_000_000);
+        const t0 = performance.now();
+        const out = spin(40_000_000);
+        return { ms: performance.now() - t0, check: (warm ^ out) | 0 };
+      })()`;
+      const throttledBeforeReload = await cdp.evaluate(busyLoopExpr);
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+      const unthrottled = await cdp.evaluate(busyLoopExpr);
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: ciLike.cpuThrottle });
+
+      await cdp.send("Page.enable");
+      const reloaded = new Promise((resolveReload, rejectReload) => {
+        const timer = setTimeout(() => {
+          unsubscribe();
+          rejectReload(new Error("timed out waiting for Page.loadEventFired during throttle probe reload"));
+        }, 10000);
+        const unsubscribe = cdp.onEvent((message) => {
+          if (message.method === "Page.loadEventFired") {
+            clearTimeout(timer);
+            unsubscribe();
+            resolveReload();
+          }
+        });
+      });
+      await cdp.send("Page.reload");
+      await reloaded;
+      const throttledAfterReload = await cdp.evaluate(busyLoopExpr);
+
+      const ratioBeforeReload = throttledBeforeReload.ms / unthrottled.ms;
+      const ratioAfterReload = throttledAfterReload.ms / unthrottled.ms;
+      const probe = {
+        rate: ciLike.cpuThrottle,
+        unthrottledMs: Number(unthrottled.ms.toFixed(1)),
+        throttledBeforeReloadMs: Number(throttledBeforeReload.ms.toFixed(1)),
+        ratioBeforeReload: Number(ratioBeforeReload.toFixed(2)),
+        throttledAfterReloadMs: Number(throttledAfterReload.ms.toFixed(1)),
+        ratioAfterReload: Number(ratioAfterReload.toFixed(2)),
+      };
+      console.log(
+        `[e2e-cdp-tools] CI-like throttle probe (rate=${probe.rate}): unthrottled=${probe.unthrottledMs}ms, beforeReload=${probe.throttledBeforeReloadMs}ms (${probe.ratioBeforeReload}x), afterReload=${probe.throttledAfterReloadMs}ms (${probe.ratioAfterReload}x)`,
+      );
+      if (ciLike.cpuThrottle >= 4) {
+        assert(
+          ratioBeforeReload >= 2.5,
+          `CI-like CPU throttle before reload too weak: ${JSON.stringify(probe)}`,
+        );
+        assert(
+          ratioAfterReload >= 2.5,
+          `CI-like CPU throttle after reload too weak: ${JSON.stringify(probe)}`,
+        );
+      }
+      results.ciLikeThrottleProbe = probe;
+    }
 
     console.log(`[e2e-cdp-tools] all assertions passed: ${JSON.stringify({
       normalClick: results.normalClick,

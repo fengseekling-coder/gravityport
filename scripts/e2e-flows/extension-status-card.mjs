@@ -18,6 +18,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
 import { signalProcessTree } from "../process-tree.mjs";
 import { connectCdp, waitForRendererReady } from "./_cdp.mjs";
 import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
@@ -117,6 +118,7 @@ async function runDesktopHintRound(ctx) {
     mkdir(codexDir, { recursive: true }),
     mkdir(join(ctx.rootDir, "tasks", "logs"), { recursive: true }),
   ]);
+  if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(userDataDir);
   const pidFile = join(runDir, "pid.txt");
   const logFile = join(runDir, "main.log");
   const healthFile = join(runDir, "health.json");

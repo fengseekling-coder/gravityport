@@ -29,6 +29,7 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
+import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
 import { connectCdp, reloadCdpAndWaitForApp, waitForCdpExpression } from "./_cdp.mjs";
 import { PAGE_WAIT_SOURCE, pageWaitSource } from "./_shared.mjs";
 
@@ -317,6 +318,7 @@ async function captureDialogShot({ ctx, theme, cardId, mcp, serverEnv }) {
   // shell residue ever lands in the repository.
   const userDataDir = join(ctx.libraryDir, "..", `385-shots-${theme}-user-data`);
   mkdirSync(userDataDir, { recursive: true });
+  if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(userDataDir);
   const port = await freePort();
   const cdpPort = await freePort();
   const pidFile = join(userDataDir, "pid.txt");

@@ -9,6 +9,7 @@ import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
 import { connectCdp, waitForRendererReady } from "./_cdp.mjs";
 
 export const name = "desktop-update-ready";
@@ -35,6 +36,7 @@ export async function run(ctx) {
   const updateReadyFile = join(stagingRoot, "gravityport-update-ready.json");
 
   await mkdir(stagingRoot, { recursive: true });
+  if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(userDataDir);
 
   const executable = ensureElectronExecutablePath({ rootDir: ctx.rootDir });
   const qaFlags = process.platform === "win32" ? ["--disable-gpu"] : [];

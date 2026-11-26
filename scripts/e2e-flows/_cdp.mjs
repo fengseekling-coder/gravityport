@@ -36,8 +36,80 @@
 //    failed to open settings and left only a bare timeout with no hit/scene
 //    context.
 
+import { ciLikeConfig, getActiveCiLikeFlow } from "../e2e-ci-like.mjs";
+
 const DEFAULT_APP_SHELL_EXPRESSION = "Boolean(document.querySelector('.app'))";
 let reloadTokenSeq = 0;
+const ciLikeSessions = new WeakMap();
+
+async function applyCiLikeCpuThrottle(cdp) {
+  const ciLike = ciLikeConfig(process.env, { platform: process.platform });
+  if (!ciLike.enabled) return null;
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: ciLike.cpuThrottle });
+  return ciLike;
+}
+
+async function probeDesktopViewport(cdp, { allowTransient = false } = {}) {
+  let info = null;
+  try {
+    info = await cdp.evaluate(
+      `(() => ({ width: window.innerWidth, height: window.innerHeight, isDesktopApp: Boolean(window.electronAPI) }))()`,
+    );
+  } catch (error) {
+    if (allowTransient) return null;
+    throw error;
+  }
+  if (!info || !Number.isFinite(info.width) || !Number.isFinite(info.height) || info.width <= 0 || info.height <= 0) {
+    return null;
+  }
+  return info;
+}
+
+async function logCiLikeDesktopViewportOnce(cdp, ciLike, { allowTransient = true } = {}) {
+  if (!ciLike?.enabled) return null;
+  let state = ciLikeSessions.get(cdp);
+  if (!state) {
+    state = { viewportLogged: false, windowVerified: false };
+    ciLikeSessions.set(cdp, state);
+  }
+  const info = await probeDesktopViewport(cdp, { allowTransient });
+  if (!info) return null;
+  if (!state.viewportLogged) {
+    state.viewportLogged = true;
+    if (info.isDesktopApp) {
+      const active = getActiveCiLikeFlow();
+      console.log(`[e2e] CI-like desktop viewport (${active.flowName || "desktop"}): ${info.width}x${info.height}`);
+    }
+  }
+  return info;
+}
+
+async function verifyCiLikeDesktopWindowOnce(cdp, ciLike) {
+  if (!ciLike?.enabled) return;
+  let state = ciLikeSessions.get(cdp);
+  if (!state) {
+    state = { viewportLogged: false, windowVerified: false };
+    ciLikeSessions.set(cdp, state);
+  }
+  if (state.windowVerified) return;
+  const info = await logCiLikeDesktopViewportOnce(cdp, ciLike, { allowTransient: false });
+  if (!info) {
+    const active = getActiveCiLikeFlow();
+    const [expectedW, expectedH] = ciLike.desktopWindow;
+    throw new Error(
+      `CI-like window not applied: got unknown viewport (expected ${expectedW}x${expectedH}, userData=${active.userDataDir || "unknown"})`,
+    );
+  }
+  state.windowVerified = true;
+  if (!info.isDesktopApp) return;
+  const [expectedW, expectedH] = ciLike.desktopWindow;
+  if (info.width !== expectedW || info.height !== expectedH) {
+    const active = getActiveCiLikeFlow();
+    throw new Error(
+      `CI-like window not applied: got ${info.width}x${info.height} (expected ${expectedW}x${expectedH}, userData=${active.userDataDir || "unknown"})`,
+    );
+  }
+}
 
 function resolveCdpEvaluator(cdp, customEvaluate) {
   if (typeof customEvaluate === "function") return customEvaluate;
@@ -82,6 +154,8 @@ export async function waitForCdpExpression(cdp, expression, label, optionsOrTime
     if (remainingMs <= 0) break;
     const attemptTimeoutMs = Math.min(evaluateTimeoutMs, Math.max(200, remainingMs));
     let timer = null;
+    let matched = false;
+    let matchedValue;
     try {
       const value = await Promise.race([
         Promise.resolve(evaluate(expression)),
@@ -89,12 +163,25 @@ export async function waitForCdpExpression(cdp, expression, label, optionsOrTime
           timer = setTimeout(() => reject(new Error("evaluate stalled")), attemptTimeoutMs);
         }),
       ]);
-      if (match(value)) return value;
+      if (match(value)) {
+        matched = true;
+        matchedValue = value;
+      }
       lastError = null;
     } catch (error) {
       lastError = error;
     } finally {
       if (timer !== null) clearTimeout(timer);
+    }
+    if (matched) {
+      const state = ciLikeSessions.get(cdp);
+      if (state && !state.viewportLogged) {
+        const ciLike = ciLikeConfig(process.env, { platform: process.platform });
+        if (ciLike.enabled) {
+          await logCiLikeDesktopViewportOnce(cdp, ciLike, { allowTransient: true });
+        }
+      }
+      return matchedValue;
     }
     const waitMs = Math.min(pollIntervalMs, Math.max(0, deadline - Date.now()));
     if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
@@ -353,7 +440,8 @@ export async function connectCdp(port, expectedUrlPrefix, optionsOrTimeoutMs = {
     ? { timeoutMs: optionsOrTimeoutMs }
     : (optionsOrTimeoutMs || {});
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  let wsUrl = null;
+  while (Date.now() < deadline && !wsUrl) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`);
       if (response.ok) {
@@ -362,13 +450,23 @@ export async function connectCdp(port, expectedUrlPrefix, optionsOrTimeoutMs = {
           (entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix),
         );
         if (target?.webSocketDebuggerUrl) {
-          return await openCdpSession(target.webSocketDebuggerUrl);
+          wsUrl = target.webSocketDebuggerUrl;
+          break;
         }
       }
     } catch {}
     await sleep(150);
   }
-  throw new Error(`no desktop CDP target on port ${port} matching ${expectedUrlPrefix}`);
+  if (!wsUrl) {
+    throw new Error(`no desktop CDP target on port ${port} matching ${expectedUrlPrefix}`);
+  }
+  const cdp = await openCdpSession(wsUrl);
+  const ciLike = await applyCiLikeCpuThrottle(cdp);
+  if (ciLike) {
+    ciLikeSessions.set(cdp, { viewportLogged: false, windowVerified: false });
+    await logCiLikeDesktopViewportOnce(cdp, ciLike, { allowTransient: true });
+  }
+  return cdp;
 }
 
 /**
@@ -381,11 +479,19 @@ export async function waitForRendererReady(cdp, { ready, timeoutMs = 30000 } = {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
   while (Date.now() < deadline) {
+    let isReady = false;
     try {
-      if (await cdp.evaluate(expression)) return;
+      isReady = Boolean(await cdp.evaluate(expression));
       lastError = null;
     } catch (error) {
       lastError = error;
+    }
+    if (isReady) {
+      const ciLike = ciLikeConfig(process.env, { platform: process.platform });
+      if (ciLike.enabled) {
+        await verifyCiLikeDesktopWindowOnce(cdp, ciLike);
+      }
+      return;
     }
     await sleep(100);
   }

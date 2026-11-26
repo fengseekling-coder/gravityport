@@ -4,6 +4,7 @@ import { app, BrowserWindow } from "electron";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createCriticalUiFlowSource, createStackUiFlowSource, createTrashUiFlowSource, E2E_DROP_GROUP_NAME } from "./e2e-ui-flow.mjs";
+import { ciLikeConfig } from "./e2e-ci-like.mjs";
 
 const cliArgs = process.argv.slice(2).filter((arg) => arg !== "--");
 const [cliTargetUrl, cliUserDataDir, cliMode, cliSearchTerm, cliRecipeChange] = cliArgs;
@@ -114,8 +115,15 @@ app.whenReady().then(async () => {
     for (let n = 1; existsSync(savePath); n += 1) savePath = join(downloadsDir, `${stem}-${n}${ext}`);
     item.setSavePath(savePath);
   });
+  const ciLike = ciLikeConfig(process.env, { platform: process.platform });
   try {
     await win.loadURL(targetUrl);
+    if (ciLike.enabled) {
+      win.webContents.debugger.attach("1.3");
+      await win.webContents.debugger.sendCommand("Emulation.setCPUThrottlingRate", {
+        rate: ciLike.cpuThrottle,
+      });
+    }
     // Flows match Chinese UI copy, but without a stored preference the UI
     // follows navigator.language, which is English on CI runners. Pin Chinese
     // unless this profile already chose a language (a flow may switch it).
@@ -137,6 +145,11 @@ app.whenReady().then(async () => {
         win.webContents.once("did-fail-load", (_event, code, description) => rejectReload(new Error(`reload failed: ${code} ${description}`)));
         win.webContents.reload();
       });
+      if (ciLike.enabled) {
+        await win.webContents.debugger.sendCommand("Emulation.setCPUThrottlingRate", {
+          rate: ciLike.cpuThrottle,
+        });
+      }
     }
     let source;
     if (flow === "source") source = readFileSync(sourceFile, "utf8");
@@ -161,6 +174,9 @@ app.whenReady().then(async () => {
     }
     console.log(JSON.stringify(result));
   } finally {
+    try {
+      if (win.webContents.debugger.isAttached()) win.webContents.debugger.detach();
+    } catch {}
     win.destroy();
   }
   app.quit();

@@ -17,6 +17,7 @@ import { createServer } from "node:net";
 import Database from "better-sqlite3";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
 import { createSqliteAssetStore } from "../../lib/sqlite-asset-store.mjs";
 import { connectCdp, reloadCdpAndWaitForApp, waitFor } from "./_cdp.mjs";
 
@@ -315,6 +316,7 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
   const logFile = join(userDataDir, "main.log");
   const healthFile = join(userDataDir, "health.json");
   const qaFlags = process.platform === "win32" ? ["--disable-gpu"] : [];
+  if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(userDataDir);
   const launched = await launchDesktopGui({
     platform: process.platform,
     rootDir: userDataDir,
