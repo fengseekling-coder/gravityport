@@ -8,7 +8,8 @@
 // - off-screen target in a tall page -> auto-scrolls into view and clicks
 // - moving target (600ms CSS transition) -> waits until settled; 300ms timeout
 //   throws reason=moving
-// - waitFor timeout -> includes scene= with dialog[open] and .toast text
+// - waitFor timeout -> includes scene= with dialog[open] and .toast text; an
+//   expression that throws keeps its last error as lastError=
 // - clickAndWait without retryOnce (does not retry) vs with retryOnce (logs
 //   [e2e-retry] and succeeds on second click)
 // - dispatchMouse without reason -> throws
@@ -240,6 +241,14 @@ export async function run(ctx) {
       "waitFor timeout scene",
     );
     results.waitForTimeoutError = waitErr;
+
+    // 6b. waitFor on an expression that throws: the timeout keeps the last evaluation error.
+    const throwingWaitErr = await assertRejects(
+      () => waitFor(cdp, `__e2eMissing469.ready`, "throwing condition", 300),
+      /timed out waiting for throwing condition after 300ms; scene=[\s\S]*; lastError=[\s\S]*__e2eMissing469/,
+      "waitFor keeps the last evaluation error",
+    );
+    results.waitForThrowingError = throwingWaitErr;
 
     // 7a. clickAndWait without retryOnce: first click swallowed -> does not retry, times out.
     await cdp.evaluate(`(() => {

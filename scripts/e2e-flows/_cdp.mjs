@@ -469,9 +469,15 @@ export async function waitFor(cdp, expression, label, optionsOrTimeoutMs = {}) {
       pollIntervalMs,
       evaluateTimeoutMs,
     });
-  } catch {
+  } catch (error) {
     const sceneText = await collectScene(cdp, scene);
-    throw new Error(`timed out waiting for ${label} after ${timeoutMs}ms; scene=${sceneText}`);
+    // Keep the last evaluation error (a typo'd expression, a detached
+    // context): without it the scene alone cannot tell a slow UI from a
+    // broken wait.
+    const prefix = `timed out waiting for ${label}: `;
+    const message = String(error?.message || error);
+    const lastError = message.startsWith(prefix) ? `; lastError=${message.slice(prefix.length)}` : "";
+    throw new Error(`timed out waiting for ${label} after ${timeoutMs}ms; scene=${sceneText}${lastError}`, { cause: error });
   }
 }
 

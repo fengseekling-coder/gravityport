@@ -322,6 +322,8 @@ async function openSettings(cdp, label) {
     {
       retryOnce: "刷新后左下角的用户按钮可能没接住第一次点击（PR #357 第四轮 macOS CI），3 秒未开记下 hit 后再点一次",
       scene: SETTINGS_AI_SCENE,
+      // 旧写法点之前先等按钮可点最多 20 秒；pointOf 默认只给 5 秒，刷新慢的 CI 机上会先挂。
+      clickTimeoutMs: 20000,
     },
   );
 }
