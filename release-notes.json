@@ -3,6 +3,7 @@
   "unreleased": {
     "zh": {
       "new": [
+        "新增版本树画布，集中展示一张图的各个版本及其生成关系，并支持连线、标注和导出。",
         "自动将 Lovart 中基于素材库已有图片改出的新图接入原图的版本树。"
       ],
       "improved": [
@@ -15,6 +16,7 @@
     },
     "en": {
       "new": [
+        "Added a version tree canvas that shows every version of an image with its generation relationships, and supports linking, annotating, and exporting them.",
         "Automatically linked Lovart edits of images already in the library to the original image's version tree."
       ],
       "improved": [
