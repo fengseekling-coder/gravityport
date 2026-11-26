@@ -1,4 +1,5 @@
 // Settings dialog JSX moved out of App.tsx (task 405). Pure moves; no behavior changes.
+import { useEffect, useRef } from "react"
 import Icon from "./Icon"
 import Button from "./ui/Button"
 import Switch from "./ui/Switch"
@@ -31,6 +32,8 @@ export type SettingsDialogProps = {
   setSettings: React.Dispatch<React.SetStateAction<boolean>>
   settingTab: string
   setSettingTab: React.Dispatch<React.SetStateAction<string>>
+  /** A 连接 card to scroll into view when the window opens on that page. */
+  revealCard?: "pinterest" | null
   backgroundCapture: { supported: boolean; enabled: boolean }
   setBackgroundCapture: React.Dispatch<React.SetStateAction<{ supported: boolean; enabled: boolean }>>
   backgroundCaptureBusy: boolean
@@ -62,13 +65,47 @@ export type SettingsDialogProps = {
 
 export function SettingsDialog(props: SettingsDialogProps) {
   const {
-    setSettings, settingTab, setSettingTab,
+    setSettings, settingTab, setSettingTab, revealCard,
     backgroundCapture, setBackgroundCapture, backgroundCaptureBusy, setBackgroundCaptureBusy,
     appearance, setAppearance, cardInfo, setCardInfo, language, setLanguage,
     savedLocally, updateState, updateReady, restartPending, systemDark, library, health,
     tr, notify, onPinterestStatus, checkForUpdates, downloadAndInstallUpdate, restartToUpdate,
     cancelUpdateDownload, openDownloadPage, changeLibraryLocation, openStorageLocation,
   } = props
+  // The Pinterest guide's 打开设置 lands on 连接, where the Pinterest card is
+  // the last one. Bring it into view; the cards above grow as their status
+  // arrives, so keep it in view until the page settles or the user takes over
+  // the scrolling. Done once per opening: coming back to 连接 later does not
+  // pull the page down again.
+  const pageRef = useRef<HTMLDivElement>(null)
+  const revealDone = useRef(false)
+  useEffect(() => {
+    if (revealDone.current || settingTab !== "连接" || revealCard !== "pinterest") return
+    const page = pageRef.current
+    if (!page) return
+    const reveal = () => page.querySelector(".pinterest-connection-card")?.scrollIntoView({ block: "nearest" })
+    reveal()
+    if (typeof ResizeObserver === "undefined") {
+      revealDone.current = true
+      return
+    }
+    const observer = new ResizeObserver(reveal)
+    for (const card of Array.from(page.children)) observer.observe(card)
+    const handoff = ["wheel", "pointerdown", "keydown"]
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const release = () => {
+      observer.disconnect()
+      clearTimeout(timer)
+      for (const type of handoff) page.removeEventListener(type, finish)
+    }
+    const finish = () => {
+      revealDone.current = true
+      release()
+    }
+    timer = setTimeout(finish, 3000)
+    for (const type of handoff) page.addEventListener(type, finish, { passive: true })
+    return release
+  }, [settingTab, revealCard])
   return (
         <div
           className="modal-layer"
@@ -123,7 +160,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   <Icon name="close" size={16} />
                 </Button>
               </div>
-              <div className="settings-page" key={settingTab}>
+              <div className="settings-page" key={settingTab} ref={pageRef}>
               {settingTab === "常规与外观" ? (
                 <>
                   <section className="settings-section settings-card" aria-label={tr("外观")}>
@@ -202,13 +239,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 </>
               ) : settingTab === "连接" ? (
                 <>
-                  <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
-                  <McpClientConfigCard language={language} />
-                  <WebCaptureStatusCard language={language} />
-                  <BridgeStatusCard language={language} />
-                  {backgroundCapture.supported && (
-                    <section className="settings-section settings-card">
-                      <div className="settings-card-header">
+                  {/* 收图在前：浏览器扩展（后台收录是它的开关，放进同一张卡）、本机 AI 工具；
+                      之后是 AI 助手（MCP）和 Pinterest。 */}
+                  <WebCaptureStatusCard language={language}>
+                    {backgroundCapture.supported && (
+                      <div className="settings-card-sub">
                         <div className="settings-card-head">
                           <strong>{tr("后台收录")}</strong>
                           <button
@@ -238,8 +273,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
                         </div>
                         <p className="settings-card-desc">{tr("GravityPort 关闭后，继续接收浏览器扩展发来的素材。")}</p>
                       </div>
-                    </section>
-                  )}
+                    )}
+                  </WebCaptureStatusCard>
+                  <BridgeStatusCard language={language} />
+                  <McpClientConfigCard language={language} />
+                  <PinterestConnectionCard language={language} onStatusChange={onPinterestStatus} />
                 </>
               ) : settingTab === "AI" ? (
                 <AiSettingsPanel language={language} />

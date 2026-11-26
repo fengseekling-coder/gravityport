@@ -93,6 +93,10 @@
   line-height: var(--type-body-line);
 }.app .settings-card-title > strong {
   flex-shrink: 0;
+}.app .settings-card-title.with-status {
+  /* 连接页卡头：名称后面跟一句状态。窄窗口放不下时状态折到下一行，不截断。 */
+  flex-wrap: wrap;
+  row-gap: 0;
 }.app .settings-card-head strong {
   font-size: var(--type-body-size);
   font-weight: var(--type-weight-title);

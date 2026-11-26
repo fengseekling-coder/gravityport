@@ -240,6 +240,12 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       .catch(() => {})
   }, [])
   const [settingTab, setSettingTab] = useState("常规与外观")
+  // Set by entries that open Settings for one 连接 card (the Pinterest guide);
+  // cleared when the window closes so a later plain open starts at the top.
+  const [settingsRevealCard, setSettingsRevealCard] = useState<"pinterest" | null>(null)
+  useEffect(() => {
+    if (!settings) setSettingsRevealCard(null)
+  }, [settings])
   const [backgroundCapture, setBackgroundCapture] = useState<{ supported: boolean; enabled: boolean }>({ supported: false, enabled: true })
   const [backgroundCaptureBusy, setBackgroundCaptureBusy] = useState(false)
   useEffect(() => {
@@ -5076,7 +5082,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             suspended={Boolean(settings || deleting || menu || renameNoticeOpen || schemaNoticeOpen || authorizationActive)}
             onSelectPin={() => setDetail(true)}
             onChrome={setPinterestChrome}
-            onOpenSettings={() => { setSettingTab("连接"); setSettings(true) }}
+            onOpenSettings={() => { setSettingTab("连接"); setSettingsRevealCard("pinterest"); setSettings(true) }}
           />
         ) : (
           <>
@@ -5396,7 +5402,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       {settings && (
         <SettingsDialog
           setSettings={setSettings}
-          settingTab={settingTab} setSettingTab={setSettingTab}
+          settingTab={settingTab} setSettingTab={setSettingTab} revealCard={settingsRevealCard}
           backgroundCapture={backgroundCapture} setBackgroundCapture={setBackgroundCapture}
           backgroundCaptureBusy={backgroundCaptureBusy} setBackgroundCaptureBusy={setBackgroundCaptureBusy}
           appearance={appearance} setAppearance={setAppearance}

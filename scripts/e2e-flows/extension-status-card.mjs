@@ -247,7 +247,7 @@ function desktopPageSource(token, phase) {
       await sleep(300);
       return {
         full: cardText().includes('浏览器扩展的离线空间即将用尽（已用 480MB / 512MB）。GravityPort 打开后将自动收录暂存的素材。'),
-        evicted: cardText().includes('2 个素材因离线空间不足，仅保留了网址或已被移除。网址过期后可能无法收录。'),
+        evicted: cardText().includes('2 个素材因离线空间不足，仅保留了网址或已被移除。'),
         urlOnly: cardText().includes('3 个素材仅保存了网址。网址过期后可能无法收录。'),
       };
     }

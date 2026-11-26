@@ -4,7 +4,7 @@
 // and the inspector (before a Pin is selected) stay hidden, and Settings → 连接
 // hosts the Pinterest connection card.
 export const name = "pinterest-entry";
-export const description = "Pinterest row -> guide page with shared top bar, 即将上线 instead of a connect button, no local gallery search/inspector -> ⌘A+Delete touch nothing -> 打开设置 lands on 连接 with the connection card (即将上线, no connect button) and the MCP card";
+export const description = "Pinterest row -> guide page with shared top bar, 即将上线 instead of a connect button, no local gallery search/inspector -> ⌘A+Delete touch nothing -> 打开设置 lands on 连接 with the connection card (last on the page, scrolled into view; 即将上线, no connect button) below the MCP card";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -73,9 +73,23 @@ function pinterestEntrySource() {
     const activeTab = document.querySelector('.settings-nav button[aria-pressed="true"]')?.textContent?.trim();
     if (activeTab !== '连接') throw new Error('打开设置 should land on 连接, got ' + JSON.stringify(activeTab));
     // The Pinterest connection is not an MCP integration; the separate
-    // AI assistants (MCP) card below it is (task 208).
+    // AI assistants (MCP) card above it is (task 208). 连接页重排: capture
+    // cards come first, then the MCP card, and the Pinterest card closes the page.
     if (/MCP/.test(document.querySelector('.settings-modal .pinterest-connection-card').textContent)) throw new Error('Pinterest card still mentions MCP');
-    await waitFor(() => document.querySelector('.settings-modal .pinterest-connection-card + .mcp-config-card'), 'AI assistants (MCP) card below the Pinterest card');
+    await waitFor(() => document.querySelector('.settings-modal .mcp-config-card + .pinterest-connection-card'), 'Pinterest card right below the AI assistants (MCP) card');
+    if (document.querySelector('.settings-modal .settings-page > :last-child') !== document.querySelector('.settings-modal .pinterest-connection-card')) throw new Error('Pinterest card should be the last card on 连接');
+    // 打开设置 was clicked for this card: although it is the last one, it must
+    // end up fully inside the page's scroll viewport, and stay there once the
+    // cards above have loaded their status and grown.
+    const cardInView = () => {
+      const page = document.querySelector('.settings-modal .settings-page').getBoundingClientRect();
+      const card = document.querySelector('.settings-modal .pinterest-connection-card').getBoundingClientRect();
+      return card.top >= page.top - 1 && card.bottom <= page.bottom + 1;
+    };
+    await waitFor(cardInView, 'Pinterest card scrolled into view');
+    await sleep(1200);
+    if (!cardInView()) throw new Error('Pinterest card left the viewport after the cards above finished loading');
+    const connectScrollTop = Math.round(document.querySelector('.settings-modal .settings-page').scrollTop);
     // Same in Settings once the status has loaded: 即将上线, no connect button.
     await waitFor(() => document.querySelector('.settings-modal .pinterest-connection-card .pinterest-status-badge')?.textContent?.trim() === '即将上线', 'connection card saying 即将上线');
     const cardSoon = true;
@@ -89,7 +103,7 @@ function pinterestEntrySource() {
     const selectedAfter = document.querySelectorAll('.asset-card.asset-selected').length;
     if (selectedAfter > baselineSelected) throw new Error('⌘A in the Pinterest view selected gallery cards: ' + selectedAfter + ' > ' + baselineSelected);
 
-    return { galleryHidden, sidebarCount, guideSoon, cardSoon, activeTab, baselineSelected, selectedAfter };
+    return { galleryHidden, sidebarCount, guideSoon, cardSoon, activeTab, connectScrollTop, baselineSelected, selectedAfter };
   })()
   `;
 }

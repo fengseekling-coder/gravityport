@@ -17,6 +17,8 @@ import {
 import { pinterestFormat, pinterestText } from "./pinterest-strings.js";
 import { pinterestConnectAvailable, usePinterestConnection } from "./use-pinterest-connection.js";
 import type { Language } from "./i18n.js";
+import Dialog from "./ui/Dialog.js";
+import Button from "./ui/Button.js";
 import "./pinterest.css";
 
 export type PinterestConnectionCardViewProps = {
@@ -74,61 +76,64 @@ export function PinterestConnectionCardView({
   ].filter(Boolean).join(" ");
 
   return (
-    <section className="pinterest-connection-card" aria-label="Pinterest">
-      <div className="pinterest-connection-head">
-        <div className="pinterest-connection-title">
-          <strong>Pinterest</strong>
-          <span className={badgeClass}>{stateLine}</span>
-          {connected && status?.quota ? (
-            <small>
-              {pinterestFormat(
-                "今天已用 {used} / {limit} 次",
-                { used: status.quota.usedToday, limit: status.quota.limit },
-                language
-              )}
-            </small>
-          ) : null}
-        </div>
-        <div className="pinterest-connection-actions">
-          {connected ? (
-            <button type="button" className="pinterest-card-secondary" onClick={onRequestDisconnect} disabled={disconnecting}>
-              {t("断开")}
-            </button>
-          ) : connecting ? (
-            <>
-              <button type="button" className="pinterest-card-primary" disabled>{t("等待浏览器授权…")}</button>
-              <button type="button" className="pinterest-card-secondary" onClick={onCancel}>{t("取消")}</button>
-            </>
-          ) : connectAvailable ? (
-            <button type="button" className="pinterest-card-primary" onClick={onStart}>{connectLabel}</button>
-          ) : null}
-        </div>
-      </div>
-      <div className="pinterest-connection-copy">
-        <p>{t("浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载。")}</p>
-        {connectionError ? <p className="pinterest-error-text">{t(connectionError)}</p> : null}
-        {disconnectError ? <p className="pinterest-error-text">{t(disconnectError)}</p> : null}
-      </div>
-      {confirmOpen ? (
-        <div
-          className="pinterest-confirm-backdrop"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) onCancelDisconnect();
-          }}
-        >
-          <div className="pinterest-confirm" role="dialog" aria-modal="true" aria-label={t("断开 Pinterest？")}>
-            {/* 任务 359（DLG-22a）：确认框补标题。 */}
-            <h3>{t("断开 Pinterest？")}</h3>
-            <p>{t("此电脑上保存的 Pinterest 授权将被移除，需要时可重新连接。")}</p>
-            <div className="pinterest-confirm-actions">
-              <button type="button" className="pinterest-danger" onClick={onConfirmDisconnect} disabled={disconnecting}>
+    <section className="settings-section settings-card pinterest-connection-card" aria-label="Pinterest">
+      {/* 连接页重排（11-26）：卡头只放名称、状态和操作；今日用量是次要信息，放到说明下一行。 */}
+      <div className="settings-card-header">
+        <div className="settings-card-head">
+          <div className="settings-card-title with-status">
+            <strong>Pinterest</strong>
+            <span className={badgeClass}>{stateLine}</span>
+          </div>
+          <div className="settings-card-actions">
+            {connected ? (
+              <button type="button" className="settings-action-btn pinterest-card-secondary" onClick={onRequestDisconnect} disabled={disconnecting}>
                 {t("断开")}
               </button>
-              <button type="button" className="pinterest-secondary" onClick={onCancelDisconnect}>{t("取消")}</button>
-            </div>
+            ) : connecting ? (
+              <>
+                <button type="button" className="settings-action-btn pinterest-card-primary" disabled>{t("等待浏览器授权…")}</button>
+                <button type="button" className="settings-action-btn pinterest-card-secondary" onClick={onCancel}>{t("取消")}</button>
+              </>
+            ) : connectAvailable ? (
+              <button type="button" className="settings-action-btn pinterest-card-primary" onClick={onStart}>{connectLabel}</button>
+            ) : null}
           </div>
         </div>
-      ) : null}
+        <p className="settings-card-desc">{t("浏览 Pinterest 账号里的画板和 Pin。内容直接从 Pinterest 加载。")}</p>
+        {connected && status?.quota ? (
+          <p className="settings-card-desc pinterest-connection-quota">
+            {pinterestFormat(
+              "今天已用 {used} / {limit} 次",
+              { used: status.quota.usedToday, limit: status.quota.limit },
+              language
+            )}
+          </p>
+        ) : null}
+        {connectionError ? <p className="pinterest-error-text">{t(connectionError)}</p> : null}
+        {disconnectError && !confirmOpen ? <p className="pinterest-error-text">{t(disconnectError)}</p> : null}
+      </div>
+      {/* 连接页重排（11-26）：原来的确认框是贴在卡片上的浮层，比卡片高，会被设置页的
+          滚动区裁掉；改用公共确认框（任务 359 DLG-22a 的标题与正文照旧）。断开失败时
+          框不关，原因显示在框里。 */}
+      <Dialog
+        open={confirmOpen}
+        title={t("断开 Pinterest？")}
+        description={t("此电脑上保存的 Pinterest 授权将被移除，需要时可重新连接。")}
+        closeLabel={t("关闭")}
+        onClose={() => { if (!disconnecting) onCancelDisconnect() }}
+        actions={
+          <>
+            <Button variant="neutral" autoFocus disabled={disconnecting} onClick={onCancelDisconnect}>
+              {t("取消")}
+            </Button>
+            <Button variant="danger" loading={disconnecting} onClick={onConfirmDisconnect}>
+              {t("断开")}
+            </Button>
+          </>
+        }
+      >
+        {disconnectError ? <p className="pinterest-error-text">{t(disconnectError)}</p> : null}
+      </Dialog>
     </section>
   );
 }

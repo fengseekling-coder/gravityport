@@ -1,87 +1,20 @@
-/* ---- Settings → 连接: AI assistants (MCP) --------------------------------- */
+/* ---- Settings → 连接: AI assistants (MCP) ---------------------------------
+   Card shell, title row, description and buttons come from the shared
+   settings card (.settings-section.settings-card, .settings-action-btn in
+   styles/06-settings.css); this file keeps the set-up block. */
 
-.mcp-config-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-  padding: var(--space-4);
-  border-radius: var(--radius-control);
-  background: var(--ui-inset);
-  min-width: 0;
-}
-
-.mcp-config-header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.mcp-config-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  min-height: var(--space-6);
-}
-
-.mcp-config-head strong {
-  font-size: var(--type-body-size);
-  font-weight: var(--type-weight-title);
-  line-height: var(--type-body-line);
-  color: var(--ui-text);
-}
-
-.mcp-config-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-.mcp-guide-button,
-.app .settings-modal .mcp-guide-button,
-.app .settings-modal .mcp-config-copy-button {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: calc(var(--space-16) + var(--space-3));
-  height: var(--control-height-small);
-  min-height: var(--control-height-small);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-control);
-  background: var(--ui-raised);
-  color: var(--ui-text);
-  font-size: var(--type-body-size);
-  font-weight: var(--type-weight-label);
-  line-height: var(--type-control-line);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.mcp-guide-button:hover,
-.app .settings-modal .mcp-guide-button:hover,
-.app .settings-modal .mcp-config-copy-button:hover:not(:disabled) {
-  background: var(--ui-selected);
-  color: var(--ui-text);
-}
-
-.mcp-config-desc,
 .mcp-config-hint,
 .mcp-config-note,
 .mcp-config-warning {
   margin: 0;
-  color: var(--ui-secondary);
   font-size: var(--type-body-size);
   line-height: var(--type-body-line);
 }
 
-.mcp-config-hint,
-.mcp-config-note {
-  font-size: 12px;
+/* 三段文字各有各的分量：卡片说明讲这是什么（--ui-secondary，共享样式）；
+   这一句是要照着做的，用正文色；末尾备注最轻。 */
+.mcp-config-hint {
+  color: var(--ui-text);
 }
 
 .mcp-config-note {
@@ -93,36 +26,67 @@
   text-decoration: underline;
 }
 
+/* 不先处理，复制出去的路径就是错的：和另外两张卡的出错行一样用 --ui-danger 的一行字，
+   不再是卡里再套一个底块。 */
 .mcp-config-warning {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-control);
-  background: var(--ui-inset);
-  color: var(--ui-text);
+  color: var(--ui-danger);
 }
 
-.mcp-config-toolbar {
+/* 选助手 → 这一步怎么做 → 复制（→ 展开时是将复制的原文）：一件事，组内 8px。 */
+.mcp-config-setup {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
-}
-
-.mcp-config-toolbar .mcp-config-hint {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding-top: calc((var(--control-height-small) - var(--type-body-line)) / 2);
 }
 
 .mcp-config-clients {
-  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.mcp-config-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* 安静按钮：无底无边，悬停只把字和箭头提亮；和「复制」同高，方便点。 */
+.app .settings-modal .mcp-config-toggle,
+.mcp-config-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-small);
+  min-height: var(--control-height-small);
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--ui-secondary);
+  line-height: var(--type-control-line);
+  white-space: nowrap;
+}
+
+.app .settings-modal .mcp-config-toggle:hover:not(:disabled),
+.mcp-config-toggle:hover:not(:disabled) {
+  background: transparent;
+  color: var(--ui-text);
+}
+
+.mcp-config-toggle:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: default;
 }
 
 .mcp-config-code {
+  align-self: stretch;
   min-width: 0;
 }
 
-/* UI 审查 11-16：配置整段显示，长路径折行，不限高、不横向滚动。 */
+/* UI 审查 11-16：配置整段显示，长路径折行，不限高、不横向滚动。
+   折行点由 McpClientConfigCard 的 breakable() 放在 "/" 和 "," 后面；
+   overflow-wrap 只兜底一个目录名比一行还长的情况。 */
 .mcp-config-code pre {
   margin: 0;
   padding: var(--space-3);
@@ -138,10 +102,6 @@
   user-select: text;
 }
 
-.mcp-config-copy-button {
-  flex-shrink: 0;
-}
-
 .mcp-config-line {
   display: block;
 }
@@ -149,10 +109,3 @@
 .mcp-config-indent {
   display: none;
 }
-
-/* UI 审查 11-16：复制按钮与「连接 Pinterest」同高（28px）；设置页 .neutral-button
-   有 32px 最小高度，这里加 .mcp-config-card 压过它。分段切换的高度在 06-settings.css 统一。 */
-.app .settings-modal .mcp-config-card .mcp-config-copy-button {
-  min-height: var(--control-height-small);
-}
-

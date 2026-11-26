@@ -581,6 +581,13 @@ describe("PinterestConnectionCardView", () => {
     assert.match(html, /已连接 @mika/);
     assert.match(html, /今天已用 12 \/ 100 次/);
     assert.match(html, /断开/);
+    // The title row carries the name and the state only; today's usage is a
+    // line of its own under the description.
+    const titleRow = /<div class="settings-card-title[^"]*">([\s\S]*?)<\/div>/.exec(html)?.[1] || "";
+    assert.match(titleRow, /已连接 @mika/);
+    assert.doesNotMatch(titleRow, /今天已用/);
+    assert.ok(html.indexOf("浏览 Pinterest 账号里的画板和 Pin。") < html.indexOf("今天已用 12 / 100 次"), "usage follows the description");
+    assert.match(html, /<p class="[^"]*pinterest-connection-quota[^"]*">今天已用 12 \/ 100 次<\/p>/);
   });
 
   it("shows Needs reconnection + Reconnect when stale", () => {
@@ -604,6 +611,28 @@ describe("PinterestConnectionCardView", () => {
     );
     assert.match(html, /此电脑上保存的 Pinterest 授权将被移除，需要时可重新连接。/);
     assert.match(html, /取消/);
+    // The shared confirmation dialog, not an overlay pinned to the card: the
+    // card sits last on the page and an overlay taller than it got clipped.
+    assert.match(html, /<dialog class="ui-dialog"/);
+    assert.match(html, /<h2[^>]*>断开 Pinterest？<\/h2>/);
+    const actions = /<div class="ui-dialog-actions">([\s\S]*?)<\/div>/.exec(html)?.[1] || "";
+    assert.ok(actions.indexOf("取消") >= 0 && actions.indexOf("取消") < actions.indexOf("断开"), "取消 first, then the action named in the title");
+    assert.match(actions, /ui-button--danger[^>]*>断开<\/button>/);
+    assert.doesNotMatch(html, /pinterest-confirm/);
+
+    const closed = renderStatic(
+      React.createElement(card.PinterestConnectionCardView, { ...cardBase, status: { connected: true, username: "mika" } })
+    );
+    assert.doesNotMatch(closed, /<dialog/);
+  });
+
+  it("shows a failed disconnect inside the open confirmation, and on the card once it is closed", () => {
+    const failed = { ...cardBase, status: { connected: true, username: "mika" }, disconnectError: "无法断开 Pinterest。请稍后重试。" };
+    const open = renderStatic(React.createElement(card.PinterestConnectionCardView, { ...failed, confirmOpen: true }));
+    assert.equal(open.split("无法断开 Pinterest。请稍后重试。").length - 1, 1, "the reason shows once while the dialog is open");
+    assert.ok(open.indexOf("无法断开 Pinterest。请稍后重试。") > open.indexOf("<dialog"), "inside the dialog");
+    const closed = renderStatic(React.createElement(card.PinterestConnectionCardView, { ...failed, confirmOpen: false }));
+    assert.match(closed, /无法断开 Pinterest。请稍后重试。/);
   });
 
   it("never mentions MCP in any state", () => {
