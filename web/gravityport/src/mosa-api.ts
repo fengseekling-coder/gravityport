@@ -1768,6 +1768,8 @@ export type MosaGenerationCandidate = { child_generation_id: string; parent_gene
 export type MosaGenerationConversation = { provider?: string; conversation_id?: string; turn_count?: number; synced_at?: string }
 
 export type MosaGenerationHistory = {
+  /** The asset this record was fetched for; lets callers check a cached record still belongs to the asset at hand. */
+  asset_id?: string
   events: MosaGenerationEvent[]
   context_events?: MosaGenerationEvent[]
   output_assets?: MosaAsset[]
@@ -1836,6 +1838,7 @@ export async function fetchAssetGenerationHistory(project: string, id: string, s
     const contextEvents = Array.isArray(history.context_events) ? history.context_events as JsonValue[] : []
     const outputAssets = Array.isArray(history.output_assets) ? history.output_assets as JsonValue[] : []
     return {
+      asset_id: id,
       events: events.map(row => normalizeGenerationEvent(row)),
       context_events: contextEvents.map(row => normalizeGenerationEvent(row)),
       output_assets: outputAssets.map(row => normalizeAsset(row, project)),

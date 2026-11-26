@@ -410,6 +410,16 @@ describe("VersionCanvas entry gate & model (task 421)", () => {
     assert.equal(offModel.versionCanvasOffered(history, a1, "all"), false);
   });
 
+  it("reuses the inspector's history for a right-click only when it was fetched for that asset (task 472)", () => {
+    const history = makeHistory();
+    assert.equal(history.asset_id, "a1");
+    assert.equal(onModel.historyForAsset(history, "a1"), history);
+    assert.equal(onModel.historyForAsset(history, "a2"), null, "a record left over from the previous selection is not reused");
+    const { asset_id: _unused, ...anonymous } = history;
+    assert.equal(onModel.historyForAsset(anonymous, "a1"), null, "a record without its asset id is not reused");
+    assert.equal(onModel.historyForAsset(null, "a1"), null);
+  });
+
   it("maps real generationHistory into nodes, confirmed edges, highest-confidence suggested edge, and final path", () => {
     const history = makeHistory();
     const doc = offModel.canvasFromHistory(history, history.output_assets[0], (v) => v || "");

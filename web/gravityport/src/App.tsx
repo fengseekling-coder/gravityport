@@ -28,7 +28,7 @@ import { resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { galleryKeyAction, isFocusSearchKey, menuSelectAllTarget, mouseNavDirection, neighbourAssetId, resolveNavHistoryShortcut } from "./gallery-keys"
 import { type GenerationDisplay } from "./version-tree"
-import { VERSION_CANVAS_ENTRY, versionCanvasOffered } from "./version-canvas-model"
+import { VERSION_CANVAS_ENTRY, historyForAsset, versionCanvasOffered } from "./version-canvas-model"
 import { LEARNING_LIBRARY_ENTRY, learningLibraryIdForActive, learningLibraryIdFromDropRow } from "./learning-library-entry"
 import { learningFilterParams, type LearningFilter } from "./learning-guide-model"
 import { LearningLibraryPanel } from "./LearningLibraryPanel"
@@ -3932,8 +3932,9 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     const ids = selectedIds.includes(clicked.id) ? [...batchIds] : [clicked.id]
     let offerCanvas = false
     if (VERSION_CANVAS_ENTRY && scope !== "trash" && ids.length === 1) {
-      if (clicked.id === selected && generationHistory) {
-        offerCanvas = versionCanvasOffered(generationHistory, clicked, scope)
+      const shown = historyForAsset(generationHistory, clicked.id)
+      if (shown) {
+        offerCanvas = versionCanvasOffered(shown, clicked, scope)
       } else {
         offerCanvas = await canvasHasTree(clicked)
         if (request !== menuRequestRef.current) return

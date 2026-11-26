@@ -266,6 +266,12 @@ export function versionCanvasOffered(history: MosaGenerationHistory | null, asse
   return VERSION_CANVAS_ENTRY && scope !== "trash" && Boolean(history) && canvasFromHistory(history, asset).nodes.length >= 2
 }
 
+/** 任务 472：右键时能直接用右栏已取到的记录，前提是这份记录就是这张图的。
+ *  切换选中后、旧记录还没清掉的那一刻，记录属于上一张图，不能拿来判断。 */
+export function historyForAsset(history: MosaGenerationHistory | null, assetId: string): MosaGenerationHistory | null {
+  return history && history.asset_id === assetId ? history : null
+}
+
 export async function submitCanvasCandidateAction(
   project: string,
   edge: Pick<CanvasEdge, "childGenerationId" | "parentGenerationId" | "type" | "evidence">,
