@@ -58,7 +58,18 @@ const SCENE_REPORT_SOURCE = `
 // value, logs [e2e-timeout] scene on timeout), and clickVisible (verifies the
 // element is visible, in-viewport, and uncovered at its center before calling
 // el.click()).
-export const PAGE_WAIT_SOURCE = SCENE_REPORT_SOURCE + `
+//
+// pageWaitSource(ms) sets waitFor's default timeout. Flows whose own waitFor
+// defaulted above 20s (poster decoding, derivative generation, a 30s dialog
+// self-timeout) pass their old default so the move does not shorten what a
+// slow CI runner gets; PAGE_WAIT_SOURCE is the 20s default for everyone else.
+export function pageWaitSource(defaultTimeoutMs = 20000) {
+  const ms = Number(defaultTimeoutMs);
+  if (!Number.isInteger(ms) || ms <= 0) throw new Error(`pageWaitSource: timeout must be a positive integer, got ${defaultTimeoutMs}`);
+  return PAGE_WAIT_BODY.replace("timeoutMs = 20000", `timeoutMs = ${ms}`);
+}
+
+const PAGE_WAIT_BODY = SCENE_REPORT_SOURCE + `
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitFor(check, label, timeoutMs = 20000) {
       const deadline = Date.now() + timeoutMs;
@@ -107,6 +118,8 @@ export const PAGE_WAIT_SOURCE = SCENE_REPORT_SOURCE + `
       el.click();
     }
 `;
+
+export const PAGE_WAIT_SOURCE = pageWaitSource();
 
 // Open any ToolbarSelect menu and pick one option. Reopens the menu and
 // retries (max 4 rounds) when a stray scroll closes it mid-wait; on success

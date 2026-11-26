@@ -7,7 +7,7 @@
 // poster without uploading again.
 import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
-import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+import { pageWaitSource } from "./_shared.mjs";
 
 export const name = "video-poster";
 export const description = "black-intro mp4 -> poster generated (img, not black, 16:9, play chip) -> detail plays the original video -> second page load reuses the stored poster without re-uploading -> MKV (task 413) gets a renderer poster too";
@@ -73,7 +73,7 @@ export async function run(ctx) {
 
 function mkvPosterSource(assetId) {
   return `(async () => {
-${PAGE_WAIT_SOURCE}
+${pageWaitSource(40000)}
     // Look the card up on every poll: the derivative flush can remount it,
     // and a node captured at mount time would never see the poster land.
     const liveCard = () => document.querySelector('.asset-card[data-asset-id="${assetId}"]');
@@ -91,7 +91,7 @@ ${PAGE_WAIT_SOURCE}
 
 function pageSource(assetId, { expectUpload }) {
   return `(async () => {
-${PAGE_WAIT_SOURCE}
+${pageWaitSource(25000)}
     const posterPosts = () => performance.getEntriesByType('resource')
       .filter((entry) => /\\/api\\/assets\\/[^/]+\\/[^/]+\\/poster$/.test(entry.name)).length;
     const posterPostsAtStart = posterPosts();

@@ -30,7 +30,7 @@ import { createServer } from "node:net";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { connectCdp, reloadCdpAndWaitForApp, waitForCdpExpression } from "./_cdp.mjs";
-import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+import { PAGE_WAIT_SOURCE, pageWaitSource } from "./_shared.mjs";
 
 const DEVELOPMENT_ORIGIN = "chrome-extension://hjcildpmialbefmcdpdooenlojecjpli";
 const CAPTURE_TOKEN = "mosa_e2e_viewer_delete_capture_token";
@@ -220,7 +220,7 @@ ${PAGE_WAIT_SOURCE}
 // pairing dialog must show first; 允许连接 hands over to the deletion dialog.
 function queueOrderSource({ assetId }) {
   return `(async () => {
-${PAGE_WAIT_SOURCE}
+${pageWaitSource(30000)}
     await waitFor(() => document.querySelector('.app'), 'app shell');
     const card = await waitFor(() => document.querySelector('.asset-card[data-asset-id="${assetId}"]'), 'the card');
     card.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));

@@ -38,6 +38,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { PAGE_WAIT_SOURCE, pageWaitSource } from "../scripts/e2e-flows/_shared.mjs";
 
 const rootDir = fileURLToPath(new URL("..", import.meta.url));
 const flowsDir = join(rootDir, "scripts", "e2e-flows");
@@ -324,4 +325,17 @@ test("fixture: rule 4 catches unlisted page waitFor definitions and stale pageWa
     baseline: { fixedWaits: {}, pageWaitForOwners: ["a.mjs"] },
   });
   assert.deepEqual(matched.pageWaitViolations, []);
+});
+
+test("pageWaitSource keeps a flow's own default timeout and stays interpolation-safe", () => {
+  assert.match(PAGE_WAIT_SOURCE, /async function waitFor\(check, label, timeoutMs = 20000\)/);
+  const slow = pageWaitSource(60000);
+  assert.match(slow, /async function waitFor\(check, label, timeoutMs = 60000\)/);
+  assert.equal(slow.replace("timeoutMs = 60000", "timeoutMs = 20000"), PAGE_WAIT_SOURCE, "only the default differs");
+  for (const source of [PAGE_WAIT_SOURCE, slow]) {
+    assert.equal(source.includes("`"), false, "page fragments must not contain backticks");
+    assert.equal(source.includes("${"), false, "page fragments must not contain ${");
+  }
+  assert.throws(() => pageWaitSource(0), /positive integer/);
+  assert.throws(() => pageWaitSource("30s"), /positive integer/);
 });

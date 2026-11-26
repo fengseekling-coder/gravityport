@@ -8,7 +8,7 @@
 // video-poster flow; this one pins the rendering contract.
 import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
-import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+import { pageWaitSource } from "./_shared.mjs";
 
 export const name = "video-first-frame";
 export const description = "mp4 asset -> gallery card renders the stored poster <img> with a play chip -> image card has neither -> Inspector summary shows the poster img and chip -> no <img> points at an mp4";
@@ -42,7 +42,7 @@ export async function run(ctx) {
 
 function videoFrameSource() {
   return `(async () => {
-${PAGE_WAIT_SOURCE}
+${pageWaitSource(25000)}
     const cards = () => Array.from(document.querySelectorAll('.asset-card'));
     const cardFor = (namePart) => cards().find((c) => (c.getAttribute('aria-label') || '').includes(namePart));
     await waitFor(() => cards().length === 2, 'two seeded cards');

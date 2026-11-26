@@ -2,7 +2,7 @@
 // the loaded gallery incrementally — no cursor-less /api/assets full reload,
 // at most one library-changes + one gallery-rows request per change, cards
 // land at their position, totals and the sidebar follow.
-import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+import { pageWaitSource } from "./_shared.mjs";
 
 export const name = "live-sync-incremental";
 export const description = "260 seeded cards, all loaded -> external favorite/trash/create each reconcile incrementally (0 full reloads, <=1 delta request each, counts follow)";
@@ -94,7 +94,7 @@ export async function run(ctx) {
 
 function incrementalSource(favoriteTarget, trashTarget) {
   return `(async () => {
-${PAGE_WAIT_SOURCE}
+${pageWaitSource(30000)}
     const clientToken = () => sessionStorage.getItem('mosa.client-token') || '';
     const cardCount = () => document.querySelectorAll('.asset-card').length;
     const cardIds = () => [...document.querySelectorAll('.asset-card[data-asset-id]')].map(el => el.dataset.assetId);
