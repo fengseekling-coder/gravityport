@@ -1,7 +1,9 @@
-import { localAiBuild } from "./local-build-flags"
+// 本机预览包：打包时设 GRAVITYPORT_LOCAL_AI=1，vite 注入为 true（见 web/gravityport/
+// local-build-flags.mjs）；正式版和 CI 从不设；单测、纯 tsc 里没有这个常量，按 false 算。
+declare const __GRAVITYPORT_LOCAL_AI_BUILD__: boolean | undefined
 
 function readAiSettingsEntry(): boolean {
-  if (import.meta.env.DEV || localAiBuild()) return true
+  if (import.meta.env.DEV || (typeof __GRAVITYPORT_LOCAL_AI_BUILD__ === "boolean" && __GRAVITYPORT_LOCAL_AI_BUILD__)) return true
   try {
     return typeof localStorage !== "undefined" && localStorage.getItem("gravityport.dev.ai-generation") === "1"
   } catch {
@@ -10,7 +12,7 @@ function readAiSettingsEntry(): boolean {
 }
 
 // 任务 458：AI 生成整条线的入口开关；正式构建（DEV=false）默认关闭，仅在
-// 开发模式、本机预览包（打包时设 GRAVITYPORT_LOCAL_AI=1，见 local-build-flags.ts）或写入 localStorage "gravityport.dev.ai-generation"="1" 时开启。
+// 开发模式、本机预览包（打包时设 GRAVITYPORT_LOCAL_AI=1，见 web/gravityport/local-build-flags.mjs）或写入 localStorage "gravityport.dev.ai-generation"="1" 时开启。
 // 459 学习库用同一个键、各自一个文件，以后合成一个。开关只管设置左栏
 // 「AI」这一项露不露；IPC 通道一直在（没人调就不做事）。
 export const AI_SETTINGS_ENTRY: boolean = readAiSettingsEntry()

@@ -26,7 +26,7 @@ test("release workflows never set GRAVITYPORT_LOCAL_AI", async () => {
 test("both AI entry points honour the local AI build", async () => {
   for (const file of ["ai-entry.ts", "learning-library-entry.ts"]) {
     const text = await readFile(new URL(`../web/gravityport/src/${file}`, import.meta.url), "utf8");
-    assert.match(text, /import\.meta\.env\.DEV \|\| localAiBuild\(\)/, file);
+    assert.match(text, /import\.meta\.env\.DEV \|\| \(typeof __GRAVITYPORT_LOCAL_AI_BUILD__ === "boolean" && __GRAVITYPORT_LOCAL_AI_BUILD__\)/, file);
   }
   const config = await readFile(new URL("../web/gravityport/vite.config.ts", import.meta.url), "utf8");
   assert.match(config, /__GRAVITYPORT_LOCAL_AI_BUILD__: JSON\.stringify\(localAiBuildFromEnv\(env\)\)/);
