@@ -1,0 +1,38 @@
+{
+  "code": 0,
+  "message": "Successfully got history view for 00000000-0000-4000-8000-000000000001",
+  "data": [
+    {
+      "id": "1331341799085539331-input",
+      "timestamp": "2026-11-26T15:53:28.796818Z",
+      "type": "user",
+      "action_id": "1331341799085539330",
+      "step_id": "1331341799085539331",
+      "text": "{\"generator_params\":{\"generator_name\":\"seedream/seedream-5-5\",\"input_args\":{\"image\":[\"https://a.lovart.ai/artifacts/agent/Fake02ArtifactId.png\"],\"prompt\":\"保持人物、头冠和长枪不变，构图不变，把场景改成月夜。\",\"resolution\":\"2K\",\"aspect_ratio\":\"3:4\",\"original_unit_data\":{\"icon\":[3,4],\"count\":1,\"image\":[{\"url\":\"https://a.lovart.ai/artifacts/agent/Fake02ArtifactId.png\",\"width\":1776,\"height\":2368}],\"ratio\":\"3:4\",\"video\":[],\"width\":1776,\"height\":2368,\"prompt\":\"保持人物、头冠和长枪不变，构图不变，把场景改成月夜。\",\"rawValue\":\"3:4\",\"video_uri\":[],\"paramsText\":\"3:4 · 2K\",\"resolution\":\"2K\",\"isFixedRatio\":true,\"source_image\":[],\"generator_name\":\"seedream/seedream-5-5\",\"generator_type\":\"image\",\"isAdaptiveSize\":false,\"thinking_level\":\"medium\",\"enable_grounding\":false}}},\"original_unit_data\":null}",
+      "thread_meta": {
+        "action_id": "1331341799085539330",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1331341799085539331",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>"
+      }
+    },
+    {
+      "id": "1331341799085539331",
+      "timestamp": "2026-11-26T15:53:28.796818Z",
+      "type": "assistant",
+      "action_id": "1331341799085539330",
+      "step_id": "1331341799085539331",
+      "text": "{\"generator_task_id\":\"6f0c2a8e-0000-4000-8000-00000000fa06\",\"artifacts\":[{\"type\":\"image\",\"content\":\"https://a.lovart.ai/artifacts/generator/Fake06ArtifactId.png\",\"metadata\":{\"width\":1776,\"format\":\"png\",\"height\":2368,\"background\":\"opaque\",\"artifact_id\":\"Fake06ArtifactId\",\"audit_status\":\"success\",\"audit_artifact_type\":\"image\"}}],\"status\":\"completed\"}",
+      "thread_meta": {
+        "action_id": "1331341799085539330",
+        "session_id": "00000000-0000-4000-8000-000000000001_main",
+        "step_id": "1331341799085539331",
+        "depth": 0,
+        "agent_name": "next_agent",
+        "project_id": "<redacted-project_id>"
+      }
+    }
+  ]
+}
