@@ -7,14 +7,18 @@
 // 代理、不带 cookie）；没有 HTTP 路由，密钥不出主进程。
 
 import {
+  AI_LEARNING_DEFAULT_EFFORT,
   AI_MODELS,
   AI_PRESET_SERVICES,
+  aiEffortFor,
+  aiEffortLevelsFor,
   aiFreePriceLine,
   aiModelById,
   aiMonthTotalLine,
   aiPresetServiceById,
   aiPriceLine,
 } from "../../lib/ai/model-catalog.mjs";
+import { effortCostMultiple } from "../../lib/ai/learning-cost.mjs";
 import {
   AI_CONNECTION_SUCCESS_TEMPLATE,
   buildConnectionTestRequest,
@@ -57,6 +61,26 @@ function buildPriceLines(slots, month, resolveService) {
     }
   }
   return lines;
+}
+
+/** 学习两步的推理强度元数据（任务 476）：界面直接渲染，不另写一份规则。 */
+function buildLearningEfforts(slots, resolveService) {
+  const analysisSlot = slots?.analysis;
+  const service = resolveService(analysisSlot?.serviceId);
+  const buildRole = (role, modelId) => {
+    const levels = aiEffortLevelsFor(service, modelId);
+    const value = levels.length > 0 ? aiEffortFor(analysisSlot, role, service) : "";
+    const defaultEffort = AI_LEARNING_DEFAULT_EFFORT[role];
+    const multiples = {};
+    for (const level of levels) {
+      multiples[level] = effortCostMultiple(role, level);
+    }
+    return { levels, value, defaultEffort, multiples };
+  };
+  return {
+    analysis: buildRole("analysis", analysisSlot?.model || ""),
+    summary: buildRole("summary", analysisSlot?.summaryModel || ""),
+  };
 }
 
 function buildServiceList(settings, keyStatus) {
@@ -133,6 +157,7 @@ export function registerAiIpc(deps) {
       catalog: { services: AI_PRESET_SERVICES, models: AI_MODELS },
       priceLines: buildPriceLines(settings.slots, month, resolve),
       monthTotals: month,
+      learningEfforts: buildLearningEfforts(settings.slots, resolve),
     };
   }
 

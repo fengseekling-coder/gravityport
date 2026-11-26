@@ -107,7 +107,7 @@ test("可信时存、测、改设置、删的整条路走通；返回值里搜�
   assert.equal(openai.last4, "5678");
   assert.equal(openai.keyUrl, "https://platform.openai.com/api-keys");
   assert.deepEqual(state1.slots, {
-    analysis: { serviceId: "openai", model: "gpt-5-nano", summaryModel: "gpt-5-mini" },
+    analysis: { serviceId: "openai", model: "gpt-5-nano", summaryModel: "gpt-5-mini", effort: "", summaryEffort: "" },
     brain: { serviceId: "openai", model: "gpt-5-mini" },
     image: { serviceId: "openai", model: "gpt-image-2" },
   });
@@ -147,7 +147,7 @@ test("第一次存密钥自动选：只存 Claude → 分析、大脑是 Claude�
   assert.deepEqual(saved, { ok: true, last4: "1234" });
   const state = await deps.handlers.get("ai-get-state")(trustedEvent);
   assert.deepEqual(state.slots, {
-    analysis: { serviceId: "claude", model: "claude-haiku-5-5", summaryModel: "claude-sonnet-5-5" },
+    analysis: { serviceId: "claude", model: "claude-haiku-5-5", summaryModel: "claude-sonnet-5-5", effort: "", summaryEffort: "" },
     brain: { serviceId: "claude", model: "claude-haiku-5-5" },
     image: { serviceId: "", model: "" },
   });
@@ -236,7 +236,7 @@ test("删掉自定义服务：密钥一起删，用到它的槽位退回「未�
   assert.equal(removed.ok, true);
   assert.equal(removed.state.services.some((service) => service.id === customId), false, "服务列表里没了");
   assert.ok(!readFileSync(credentialPath, "utf8").includes(customId), "密钥连着一起删了");
-  assert.deepEqual(removed.state.slots.analysis, { serviceId: "", model: "", summaryModel: "" }, "用到它的块退回未选择");
+  assert.deepEqual(removed.state.slots.analysis, { serviceId: "", model: "", summaryModel: "", effort: "", summaryEffort: "" }, "用到它的块退回未选择");
   assert.ok(!JSON.stringify(removed).includes(FAKE_CUSTOM_KEY));
 });
 

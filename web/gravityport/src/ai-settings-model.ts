@@ -281,7 +281,32 @@ export function modelGroups(
 
 export type SlotChoice = {
   slot: SlotId
-  patch: Partial<{ serviceId: string; model: string; summaryModel: string }>
+  patch: Partial<{ serviceId: string; model: string; summaryModel: string; effort: string; summaryEffort: string }>
+}
+
+const EFFORT_LABEL_KEYS: Record<string, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "很高",
+  max: "最高",
+}
+
+/** 推理强度档位对应的中文文案键（中英翻译见 i18n.ts）。 */
+export function effortLabelKey(effort: string): string {
+  return EFFORT_LABEL_KEYS[effort] ?? effort
+}
+
+/**
+ * 选了某一行的推理强度后要写回哪个槽、写什么（任务 476）：
+ * analysis 写 effort，summary 写 summaryEffort，都落在 analysis 槽上。
+ */
+export function effortChoiceFor(state: AiState, role: "analysis" | "summary", effort: string): SlotChoice {
+  const allowed = state?.learningEfforts?.[role]?.levels
+  const nextEffort = !effort || !allowed || allowed.includes(effort) ? effort : ""
+  return role === "summary"
+    ? { slot: "analysis", patch: { summaryEffort: nextEffort } }
+    : { slot: "analysis", patch: { effort: nextEffort } }
 }
 
 /**

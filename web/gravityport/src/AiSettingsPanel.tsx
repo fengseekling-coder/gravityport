@@ -14,6 +14,8 @@ import {
   ADD_CUSTOM_SERVICE_VALUE,
   addableServices,
   connectedServiceIds,
+  effortChoiceFor,
+  effortLabelKey,
   formatMonthUsd,
   isCustomService,
   isOllamaService,
@@ -274,15 +276,22 @@ export function AiSettingsPanel({ language }: { language: Language }) {
     requestKeyFocus(serviceId)
   }
 
-  const updateSlot = async (slot: SlotId, patch: Partial<{ serviceId: string; model: string; summaryModel?: string }>) => {
+  const updateSlot = async (
+    slot: SlotId,
+    patch: Partial<{ serviceId: string; model: string; summaryModel?: string; effort?: string; summaryEffort?: string }>,
+  ) => {
     const aiUpdateSettings = api?.aiUpdateSettings
     if (typeof aiUpdateSettings !== "function" || !state) return
     const current = state.slots[slot]
-    const payload: Partial<{ serviceId: string; model: string; summaryModel?: string }> = {
+    const payload: Partial<{ serviceId: string; model: string; summaryModel?: string; effort?: string; summaryEffort?: string }> = {
       ...current,
       ...patch,
     }
-    if (slot !== "analysis") delete payload.summaryModel
+    if (slot !== "analysis") {
+      delete payload.summaryModel
+      delete payload.effort
+      delete payload.summaryEffort
+    }
     setSlotError("")
     try {
       const result = await aiUpdateSettings.call(api, { slots: { [slot]: payload } })
@@ -296,6 +305,12 @@ export function AiSettingsPanel({ language }: { language: Language }) {
   const handleSelectModel = async (role: ModelRole, serviceId: string, modelId: string) => {
     if (!state) return
     const choice = slotChoiceFor(state, role, serviceId, modelId)
+    await updateSlot(choice.slot, choice.patch)
+  }
+
+  const handleSelectEffort = async (role: "analysis" | "summary", effort: string) => {
+    if (!state) return
+    const choice = effortChoiceFor(state, role, effort)
     await updateSlot(choice.slot, choice.patch)
   }
 
@@ -659,6 +674,27 @@ export function AiSettingsPanel({ language }: { language: Language }) {
     }
 
     const priceLine = priceLineFor(role, currentService)
+    const effortState = role === "analysis" || role === "summary" ? state?.learningEfforts?.[role] : undefined
+    const showEffort = Boolean(effortState && effortState.levels.length > 0)
+    const formatEffortOptionLabel = (level: string): string => {
+      const base = tr(effortLabelKey(level))
+      return level === effortState?.defaultEffort ? `${base}${tr("（默认）")}` : base
+    }
+    let effortHint = ""
+    if (showEffort && effortState) {
+      const valueIndex = effortState.levels.indexOf(effortState.value)
+      const defaultIndex = effortState.levels.indexOf(effortState.defaultEffort)
+      if (valueIndex !== -1 && defaultIndex !== -1) {
+        if (valueIndex > defaultIndex) {
+          const multiple = effortState.multiples[effortState.value]
+          if (multiple !== undefined) {
+            effortHint = fillTemplate(tr("比默认多想，这一步花费约 ×{n}"), { n: String(multiple) })
+          }
+        } else if (valueIndex < defaultIndex) {
+          effortHint = tr("比默认少想，手册可能更粗")
+        }
+      }
+    }
 
     return (
       <div className="ai-use-row" data-role={role}>
@@ -670,6 +706,24 @@ export function AiSettingsPanel({ language }: { language: Language }) {
             display={triggerDisplay}
             disabled={disabled}
           />
+          {showEffort && effortState && (role === "analysis" || role === "summary") ? (
+            <div className="ai-effort-group">
+              <ToolbarSelect
+                label={tr("推理强度")}
+                value={effortState.value}
+                options={effortState.levels.map((level) => ({
+                  value: level,
+                  label: formatEffortOptionLabel(level),
+                }))}
+                display={fillTemplate(tr("推理强度：{level}"), {
+                  level: formatEffortOptionLabel(effortState.value),
+                })}
+                disabled={!available}
+                onChange={(nextEffort) => void handleSelectEffort(role, nextEffort)}
+              />
+              {effortHint ? <span className="ai-effort-hint">{effortHint}</span> : null}
+            </div>
+          ) : null}
           {priceLine ? (
             <span className="ai-price-line">
               {fillTemplate(translate(priceLine.template, language), priceLine.params)}

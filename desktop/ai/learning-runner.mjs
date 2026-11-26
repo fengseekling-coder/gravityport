@@ -8,15 +8,17 @@ import {
   ANALYSIS_IMAGE_LONG_EDGE,
   ANALYSIS_FIXED_INPUT_TOKENS,
   ANALYSIS_OUTPUT_TOKENS,
+  ANALYSIS_OUTPUT_TOKENS_BY_EFFORT,
   SUMMARY_FIXED_INPUT_TOKENS,
   SUMMARY_OUTPUT_TOKENS,
+  SUMMARY_OUTPUT_TOKENS_BY_EFFORT,
   SUMMARY_CHUNK_SIZE,
   estimateLearningCost,
   imageTokens,
   tokenCostUsd,
 } from "../../lib/ai/learning-cost.mjs";
 import { normalizeGuideEntries } from "../../lib/ai/learning-schema.mjs";
-import { aiModelById, aiPresetServiceById, aiServiceFamily } from "../../lib/ai/model-catalog.mjs";
+import { aiEffortFor, aiModelById, aiPresetServiceById, aiServiceFamily } from "../../lib/ai/model-catalog.mjs";
 import { createLearningServiceClient } from "./learning-service-client.mjs";
 import { createClaudeClient, analyzeImage, summarizeGuide } from "./claude-client.mjs";
 import { ANALYSIS_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT, MERGE_SYSTEM_PROMPT, fillLanguage } from "./learning-prompts.mjs";
@@ -119,7 +121,9 @@ export function createLearningRunner({
     const analysisModel = String(slot?.model || "");
     const summaryModel = String(slot?.summaryModel || "");
     if (!analysisModel || !summaryModel) return { failure: "unknown-price" };
-    return { service, key, analysisModel, summaryModel };
+    const analysisEffort = aiEffortFor(slot, "analysis", service);
+    const summaryEffort = aiEffortFor(slot, "summary", service);
+    return { service, key, analysisModel, summaryModel, analysisEffort, summaryEffort };
   }
 
   /** 扫尾：库里 running / pausing 的 run，凡不是自己内存里在跑的，改 paused（interrupted）。 */
@@ -189,6 +193,8 @@ export function createLearningRunner({
     const estimate = estimateLearningCost({
       analysisModel: resolved.analysisModel,
       summaryModel: resolved.summaryModel,
+      analysisEffort: resolved.analysisEffort,
+      summaryEffort: resolved.summaryEffort,
       newImages,
       existingNoteCount: notes.length,
       summarize: true,
@@ -210,6 +216,8 @@ export function createLearningRunner({
       baseUrl: String(resolved.service.baseUrl || ""),
       analysisModel: resolved.analysisModel,
       summaryModel: resolved.summaryModel,
+      analysisEffort: resolved.analysisEffort,
+      summaryEffort: resolved.summaryEffort,
       language: languageToCode(language),
     });
     return {
@@ -229,8 +237,16 @@ export function createLearningRunner({
       summaryCalls: estimate.summaryCalls,
       service: { id: resolved.service.id, label: String(resolved.service.label || resolved.service.id) },
       models: {
-        analysis: { id: resolved.analysisModel, label: aiModelById(resolved.analysisModel)?.label || resolved.analysisModel },
-        summary: { id: resolved.summaryModel, label: aiModelById(resolved.summaryModel)?.label || resolved.summaryModel },
+        analysis: {
+          id: resolved.analysisModel,
+          label: aiModelById(resolved.analysisModel)?.label || resolved.analysisModel,
+          effort: resolved.analysisEffort,
+        },
+        summary: {
+          id: resolved.summaryModel,
+          label: aiModelById(resolved.summaryModel)?.label || resolved.summaryModel,
+          effort: resolved.summaryEffort,
+        },
       },
       privacy: { imageCount: assetIds.length, longEdge: ANALYSIS_IMAGE_LONG_EDGE },
     };
@@ -367,10 +383,11 @@ export function createLearningRunner({
       || String(service.clientToken || "") !== String(context.client.clientToken || "");
   }
 
-  function perImageEstimateUsd(model) {
+  function perImageEstimateUsd(model, effort) {
     // 派单前的逐步估计：尺寸未知按上限 960×960（宁可报高）。
     const inputTokens = imageTokens(null, null) + ANALYSIS_FIXED_INPUT_TOKENS;
-    return tokenCostUsd(model, { inputTokens, outputTokens: ANALYSIS_OUTPUT_TOKENS }) || 0;
+    const outputTokens = ANALYSIS_OUTPUT_TOKENS_BY_EFFORT[effort] ?? ANALYSIS_OUTPUT_TOKENS;
+    return tokenCostUsd(model, { inputTokens, outputTokens }) || 0;
   }
 
   /** 主循环：analyze 并发派单；全结束转 summarize；异常兜底暂停。 */
@@ -406,6 +423,7 @@ export function createLearningRunner({
     let pausedReason = null;
     const capUsd = Number(context.run.capUsd ?? Number.POSITIVE_INFINITY);
     const analysisModel = context.entry.analysisModel;
+    const analysisEffort = context.entry.analysisEffort;
 
     let cooldownTimer = null;
     const clearCooldownTimer = () => {
@@ -461,7 +479,7 @@ export function createLearningRunner({
         try {
           if (context.detached) return;
           // 每派一张新图前算「已花 + 这一步的估计」，超上限暂停（over-budget）。
-          if (Number(context.run.costUsd || 0) + context.unrecordedCostUsd + perImageEstimateUsd(analysisModel) > capUsd) {
+          if (Number(context.run.costUsd || 0) + context.unrecordedCostUsd + perImageEstimateUsd(analysisModel, analysisEffort) > capUsd) {
             pausedReason = "over-budget";
             return;
           }
@@ -502,6 +520,7 @@ export function createLearningRunner({
           // 不传 signal：已经发出去的请求不打断，避免服务端已算完收费却拿不到 usage（照实计价、不白扔快做完的分析）。
           const outcome = await analyzeImage(client, {
             model: analysisModel,
+            effort: analysisEffort,
             image: input.payload.image,
             metadata: input.payload.metadata,
             systemPrompt: ANALYSIS_SYSTEM_PROMPT,
@@ -675,9 +694,10 @@ export function createLearningRunner({
   async function summarizePhase(context) {
     const languageCode = context.entry.language || "en";
     const capUsd = Number(context.run.capUsd ?? Number.POSITIVE_INFINITY);
+    const summaryEffort = context.entry.summaryEffort;
     const summaryEstimate = tokenCostUsd(context.entry.summaryModel, {
       inputTokens: SUMMARY_FIXED_INPUT_TOKENS,
-      outputTokens: SUMMARY_OUTPUT_TOKENS,
+      outputTokens: SUMMARY_OUTPUT_TOKENS_BY_EFFORT[summaryEffort] ?? SUMMARY_OUTPUT_TOKENS,
     }) || 0;
     const stop = async (reason) => {
       await pauseRun(context, reason);
@@ -743,6 +763,7 @@ export function createLearningRunner({
       for (;;) {
         const outcome = await summarizeGuide(client, {
           model: context.entry.summaryModel,
+          effort: summaryEffort,
           userContent: content,
           systemPrompt,
         });

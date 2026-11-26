@@ -2,6 +2,7 @@
 // 复用公共 Dialog / Button；花钱的学习只允许经第一个确认框里的主按钮触发。
 import Dialog from "./ui/Dialog"
 import Button from "./ui/Button"
+import { effortLabelKey } from "./ai-settings-model"
 import { formatLearningUsd, type LearningQuoteData } from "./learning-guide-model"
 
 type TranslateFn = (text: string) => string
@@ -35,6 +36,8 @@ export function LearningStartDialog({
   const serviceLabel = quote.service?.label || quote.service?.id || "Claude"
   const analysisModel = quote.models?.analysis?.label || quote.models?.analysis?.id || ""
   const summaryModel = quote.models?.summary?.label || quote.models?.summary?.id || ""
+  const analysisEffort = tr(effortLabelKey(quote.models?.analysis?.effort || "low"))
+  const summaryEffort = tr(effortLabelKey(quote.models?.summary?.effort || "medium"))
   const longEdge = Number(quote.privacy?.longEdge ?? 960)
 
   const title = kind === "summary-only"
@@ -57,15 +60,18 @@ export function LearningStartDialog({
   })
 
   const privacyLine = newCount > 0
-    ? fillNamed("每张图的缩小版（长边 {longEdge} 像素）、提示词和来源平台会发给 {service}：{analysisModel} 逐张分析，{summaryModel} 整理手册。", {
+    ? fillNamed("每张图的缩小版（长边 {longEdge} 像素）、提示词和来源平台会发给 {service}：{analysisModel}（{analysisEffort}）逐张分析，{summaryModel}（{summaryEffort}）整理手册。", {
         longEdge,
         service: serviceLabel,
         analysisModel,
+        analysisEffort,
         summaryModel,
+        summaryEffort,
       })
-    : fillNamed("已分析的文字笔记会发给 {service}（{summaryModel}），不发送图片。", {
+    : fillNamed("已分析的文字笔记会发给 {service}：{summaryModel}（{summaryEffort}）整理手册，不发送图片。", {
         service: serviceLabel,
         summaryModel,
+        summaryEffort,
       })
 
   const confirmLabel = kind === "summary-only"

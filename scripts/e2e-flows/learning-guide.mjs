@@ -581,6 +581,89 @@ export async function run(ctx) {
       20000,
     );
 
+    // ── Step 7b (task 476): set analysis effort=high, summary effort=low -> confirm dialog & fake Claude requests reflect both ──
+    fakeClaude.state.mode = "fast";
+    fakeClaude.state.analyzeDelayMs = 0;
+    await clickCenter(cdp, `document.querySelector('.user-button')`);
+    await waitForUi(cdp, `Boolean(document.querySelector('.settings-modal'))`, "settings modal open for effort");
+    await clickCenter(
+      cdp,
+      `Array.from(document.querySelectorAll('.settings-nav button')).find((b) => b.textContent.trim() === 'AI')`,
+    );
+    await waitForUi(
+      cdp,
+      `Boolean(document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select')) && Boolean(document.querySelector('.ai-use-row[data-role="summary"] .ai-effort-group .toolbar-select'))`,
+      "effort selects visible in AI settings",
+    );
+    // 逐张分析设成「高」。
+    await clickCenter(cdp, `document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select')`);
+    await waitForUi(
+      cdp,
+      `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).some((el) => el.textContent.trim() === '高')`,
+      "analysis high effort option",
+    );
+    await clickCenter(
+      cdp,
+      `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).find((el) => el.textContent.trim() === '高')`,
+    );
+    await waitForUi(
+      cdp,
+      `document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select > span')?.textContent?.trim() === '推理强度：高'`,
+      "analysis effort switched to 高",
+    );
+    // 汇总手册设成「低」。
+    await clickCenter(cdp, `document.querySelector('.ai-use-row[data-role="summary"] .ai-effort-group .toolbar-select')`);
+    await waitForUi(
+      cdp,
+      `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).some((el) => el.textContent.trim() === '低')`,
+      "summary low effort option",
+    );
+    await clickCenter(
+      cdp,
+      `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).find((el) => el.textContent.trim() === '低')`,
+    );
+    await waitForUi(
+      cdp,
+      `document.querySelector('.ai-use-row[data-role="summary"] .ai-effort-group .toolbar-select > span')?.textContent?.trim() === '推理强度：低'`,
+      "summary effort switched to 低",
+    );
+    await clickCenter(cdp, `document.querySelector('.settings-modal .modal-close')`);
+    await waitForUi(cdp, `!document.querySelector('.settings-modal')`, "settings closed after effort update");
+
+    const reqBeforeEffortRun = fakeClaude.state.requests.length;
+    await ensureGuideTabActive(cdp);
+    await waitForUi(
+      cdp,
+      `Boolean(document.querySelector('.learn-footer-btn')?.textContent?.includes('学新加的 1 张'))`,
+      "footer ready for effort run",
+      20000,
+    );
+    await clickCenter(cdp, `document.querySelector('.learn-footer-btn')`);
+    await waitForUi(cdp, `Boolean(document.querySelector('dialog.ui-dialog[open]'))`, "effort run confirm dialog opens");
+    const effortConfirmText = await cdp.evaluate(`document.querySelector('dialog.ui-dialog[open]').textContent`);
+    if (!effortConfirmText.includes("（高）") || !effortConfirmText.includes("（低）")) {
+      throw new Error(`confirm dialog missing effort labels (高)/(低): ${effortConfirmText}`);
+    }
+    await clickCenter(
+      cdp,
+      `Array.from(document.querySelectorAll('dialog.ui-dialog[open] .ui-dialog-actions button')).find((b) => b.textContent.trim() === '开始学习')`,
+    );
+    await waitForUi(
+      cdp,
+      `Boolean(document.querySelector('.learn-footer-btn')?.textContent?.includes('重新整理手册')) && !document.querySelector('.learn-library-title')?.textContent?.includes('未学习')`,
+      "effort run completes",
+      30000,
+    );
+    const effortRunRequests = fakeClaude.state.requests.slice(reqBeforeEffortRun);
+    const analyzeEffortReqs = effortRunRequests.filter((r) => r.kind === "analyze");
+    const summaryEffortReqs = effortRunRequests.filter((r) => r.kind === "summarize");
+    if (analyzeEffortReqs.length < 1 || !analyzeEffortReqs.every((r) => r.effort === "high")) {
+      throw new Error(`expected analyze requests with effort=high, got ${JSON.stringify(effortRunRequests)}`);
+    }
+    if (summaryEffortReqs.length < 1 || !summaryEffortReqs.every((r) => r.effort === "low")) {
+      throw new Error(`expected summarize requests with effort=low, got ${JSON.stringify(effortRunRequests)}`);
+    }
+
     // ── Step 8: Raw byte scan for fake key across libraryDir and userDataDir (except ai-credentials.json) ──
     const leaked = [
       ...(await scanDirectoryForSecret(ctx.libraryDir, [FAKE_KEY, FAKE_KEY_BODY], new Set())),
@@ -682,6 +765,7 @@ function startFakeClaudeServer() {
     analyzeCount: 0,
     summaryCount: 0,
     totalRequests: 0,
+    requests: [],
   };
 
   const server = createServer(async (req, res) => {
@@ -711,6 +795,11 @@ function startFakeClaudeServer() {
 
       const content = Array.isArray(body?.messages?.[0]?.content) ? body.messages[0].content : [];
       const hasImage = content.some((block) => block && block.type === "image");
+      state.requests.push({
+        kind: hasImage ? "analyze" : "summarize",
+        model: body?.model || "",
+        effort: body?.output_config?.effort || "",
+      });
 
       if (hasImage) {
         state.analyzeCount += 1;
@@ -732,6 +821,32 @@ function startFakeClaudeServer() {
           prompt_techniques: ["cold rim lighting", "clean silhouette"],
           has_text: false,
         };
+        if (body?.stream === true) {
+          const noteText = JSON.stringify(note);
+          const events = [
+            {
+              type: "message_start",
+              message: {
+                id: `msg_ana_${state.analyzeCount}`,
+                type: "message",
+                role: "assistant",
+                model: body?.model || "claude-haiku-5-5",
+                content: [],
+                stop_reason: null,
+                usage: { input_tokens: 1800, output_tokens: 0 },
+              },
+            },
+            { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+            { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: noteText } },
+            { type: "content_block_stop", index: 0 },
+            { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 450 } },
+            { type: "message_stop" },
+          ];
+          const sse = events.map((ev) => `event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`).join("");
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          res.end(sse);
+          return;
+        }
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({
           id: `msg_ana_${state.analyzeCount}`,
