@@ -1,5 +1,7 @@
 // GravityPort React UI flow (320 补充 8 / 原单⑤-8)：导入几张等衍生图做完，
 // 卡片换成缩略图地址，列表顺序和 scrollTop 都不变（增量合并不重排）。
+import { pageWaitSource } from "./_shared.mjs";
+
 export const name = "live-sync-import-derivatives";
 export const description = "import via page API, wait for derivatives -> card URLs swap to thumbnails with order and scrollTop unchanged";
 
@@ -28,16 +30,7 @@ export async function run(ctx) {
 
 function derivativesSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 60000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(200);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${pageWaitSource(60000)}
     const clientToken = () => sessionStorage.getItem('mosa.client-token') || '';
     const cardIds = () => [...document.querySelectorAll('.asset-card[data-asset-id]')].map(node => node.dataset.assetId);
     const grid = () => document.querySelector('.asset-grid');

@@ -68,14 +68,25 @@ export async function findLicenseFile(packageDir) {
   return null;
 }
 
+/**
+ * License text kept in the repository for a package that ships without a
+ * license file, written from the package's upstream source (scoped names use
+ * "+" for "/"). A package with neither still fails packaging.
+ */
+export function packageLicenseOverridePath(name, { projectRoot = PROJECT_ROOT } = {}) {
+  return join(projectRoot, "desktop", "licenses", "packages", `${String(name).replace("/", "+")}.txt`);
+}
+
 /** { name, version, license, text } for one installed package; text is null when only the LGPL files apply. */
-export async function readPackageLicense(packageDir) {
+export async function readPackageLicense(packageDir, { projectRoot = PROJECT_ROOT } = {}) {
   const manifest = JSON.parse(await readFile(join(packageDir, "package.json"), "utf8"));
   const name = String(manifest.name || "");
   const version = String(manifest.version || "");
   const license = typeof manifest.license === "string" ? manifest.license : String(manifest.license?.type || "");
   const licenseFile = await findLicenseFile(packageDir);
   if (licenseFile) return { name, version, license, text: normalizeText(await readFile(licenseFile, "utf8")) };
+  const override = packageLicenseOverridePath(name, { projectRoot });
+  if (await isFile(override)) return { name, version, license, text: normalizeText(await readFile(override, "utf8")) };
   if (LGPL_LICENSE_PATTERN.test(license)) return { name, version, license, text: null };
   const error = new Error(`${name}@${version} has no license file (license: ${license || "(none)"})`);
   error.missingLicense = { name, version, license, packageDir };
@@ -104,12 +115,12 @@ export async function listInstalledPackages(nodeModulesDir) {
 }
 
 /** Reads every package's license, de-duplicated by name@version, failing once with every package that has none. */
-export async function collectPackageLicenses(packageDirs) {
+export async function collectPackageLicenses(packageDirs, { projectRoot = PROJECT_ROOT } = {}) {
   const byKey = new Map();
   const missing = [];
   for (const dir of packageDirs) {
     try {
-      const entry = await readPackageLicense(dir);
+      const entry = await readPackageLicense(dir, { projectRoot });
       byKey.set(`${entry.name}@${entry.version}`, entry);
     } catch (error) {
       if (!error.missingLicense) throw error;
@@ -228,8 +239,8 @@ export async function writeDesktopLicenses({
   const lgpl = await requireFile(join(projectRoot, "desktop", "licenses", LICENSE_FILES.lgpl), "vendored LGPL-3.0 text");
   const gpl = await requireFile(join(projectRoot, "desktop", "licenses", LICENSE_FILES.gpl), "vendored GPL-3.0 text");
 
-  const frontend = await collectPackageLicenses(await readBundledFrontendPackages(projectRoot));
-  const runtime = await collectPackageLicenses(await listInstalledPackages(join(buildPath, "node_modules")));
+  const frontend = await collectPackageLicenses(await readBundledFrontendPackages(projectRoot), { projectRoot });
+  const runtime = await collectPackageLicenses(await listInstalledPackages(join(buildPath, "node_modules")), { projectRoot });
   // The pruned tree drops READMEs, so the licensing table comes from the source install.
   const libvipsDir = join(projectRoot, "node_modules", "@img", libvipsPackage);
   const libvipsManifest = JSON.parse(await readFile(join(libvipsDir, "package.json"), "utf8"));

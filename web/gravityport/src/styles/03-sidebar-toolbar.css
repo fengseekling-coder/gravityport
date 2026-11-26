@@ -362,6 +362,16 @@
   display: inline-flex;
   color: var(--ui-accent);
   flex-shrink: 0;
+}.app .option-hint {
+  margin-left: auto;
+  color: var(--ui-muted);
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  flex-shrink: 0;
+}.app .toolbar-select:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: default;
 }
 
 /* UI 审查 11-16：后退按钮无处可退时变灰，不响应悬停。 */

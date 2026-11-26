@@ -1,5 +1,7 @@
 // GravityPort React UI flow: the full-screen viewer opens on double-click,
 // navigates with the keyboard, reports zoom state and closes on Escape.
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "media-preview";
 export const description = "double-click opens the viewer -> fit/zoom controls -> arrow keys switch assets -> Escape closes";
 
@@ -25,16 +27,7 @@ export async function run(ctx) {
 
 function previewSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 15000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const cardCount = () => document.querySelectorAll('.asset-card').length;
 
     await waitFor(() => document.querySelector('.app') && cardCount() === 2, 'two seeded cards');

@@ -73,9 +73,30 @@ export class FakeProviderNode {
     this.__rect = options.rect || { x: 0, y: 0, width: 300, height: 200, top: 0, left: 0, right: 300, bottom: 200 };
     this.value = options.value ?? "";
     this.checked = Boolean(options.checked);
+    this.hidden = Boolean(options.hidden);
+    this.disabled = Boolean(options.disabled);
     this.src = options.src || "";
     this.currentSrc = options.currentSrc ?? options.src ?? "";
     this.__listeners = new Map();
+    this.dataset = new Proxy({}, {
+      get: (_, prop) => {
+        if (typeof prop !== "string") return undefined;
+        const attr = `data-${prop.replace(/[A-Z]/g, (ch) => `-${ch.toLowerCase()}`)}`;
+        return this.attrs.has(attr) ? this.attrs.get(attr) : undefined;
+      },
+      set: (_, prop, val) => {
+        if (typeof prop !== "string") return false;
+        const attr = `data-${prop.replace(/[A-Z]/g, (ch) => `-${ch.toLowerCase()}`)}`;
+        this.attrs.set(attr, String(val));
+        return true;
+      },
+      deleteProperty: (_, prop) => {
+        if (typeof prop !== "string") return false;
+        const attr = `data-${prop.replace(/[A-Z]/g, (ch) => `-${ch.toLowerCase()}`)}`;
+        this.attrs.delete(attr);
+        return true;
+      },
+    });
   }
 
   getAttribute(name) {
@@ -86,6 +107,10 @@ export class FakeProviderNode {
     this.attrs.set(name, String(value));
     if (name === "id") this.id = String(value);
     if (name === "src") this.src = String(value);
+  }
+
+  removeAttribute(name) {
+    this.attrs.delete(name);
   }
 
   get classList() {
@@ -550,12 +575,31 @@ export function createProviderPolicyHarness() {
  */
 export async function createOptionsHarness(options = {}) {
   const clock = { now: options.clockStart ?? 1_700_000_000_000 };
+  // 460 验收：「页面安静了」不能靠数固定圈数（6 圈 setImmediate）——身份核验
+  // 的 HMAC 在别的线程里算，机器一忙就不够，状态还停在 checking。改成等在途
+  // 的 fetch 和 WebCrypto 运算都落地、再连续空转几圈。chrome.runtime 消息不算
+  // 在途：等待批准时测试故意让它一直挂着。
+  let pending = 0;
+  const trackPending = (promise) => {
+    pending += 1;
+    return Promise.resolve(promise).finally(() => { pending -= 1; });
+  };
+  const settle = async () => {
+    let idle = 0;
+    for (let round = 0; round < 5000 && idle < 6; round += 1) {
+      await setImmediate();
+      idle = pending === 0 ? idle + 1 : 0;
+    }
+  };
 
   const sandbox = {
     URL,
     JSON,
     Math,
     Object,
+    Set,
+    Map,
+    RegExp,
     String,
     Number,
     Array,
@@ -564,15 +608,32 @@ export async function createOptionsHarness(options = {}) {
     Uint8Array,
     Boolean,
     btoa: globalThis.btoa,
-    crypto: globalThis.crypto,
+    // 真 WebCrypto（HMAC 身份核验照真跑），但记下在途的运算：它在别的线程里
+    // 算，机器一忙就要好几圈事件循环才回来，settle() 要等它们都落地。
+    crypto: {
+      getRandomValues: (array) => globalThis.crypto.getRandomValues(array),
+      subtle: {
+        importKey: (...args) => trackPending(globalThis.crypto.subtle.importKey(...args)),
+        sign: (...args) => trackPending(globalThis.crypto.subtle.sign(...args)),
+      },
+    },
     AbortController: globalThis.AbortController,
     TextEncoder: globalThis.TextEncoder,
+    navigator: { language: options.navigatorLanguage ?? "zh-CN" },
     console: { debug: () => {}, log: () => {}, warn: () => {}, error: () => {} },
     clock,
   };
   const timers = capturedTimers(sandbox, clock);
 
+  let reloadCount = 0;
+  sandbox.location = {
+    reload: () => {
+      reloadCount += 1;
+    },
+  };
+
   const runtimeMessages = [];
+  const storageListeners = [];
   const chromeObj = {
     runtime: {
       id: "test-provider-extension-id",
@@ -589,16 +650,47 @@ export async function createOptionsHarness(options = {}) {
         return { ok: true };
       },
     },
+    i18n: {
+      getUILanguage: () => (options.uiLanguage !== undefined ? options.uiLanguage : "zh-CN"),
+    },
     storage: {},
   };
   const localStore = new Map(options.storageLocal || []);
   const localReads = [];
   const localWrites = [];
+  const baseLocalArea = storageArea(localStore, {
+    get: (query) => localReads.push(query),
+    set: (patch) => localWrites.push(patch),
+  });
   chromeObj.storage = {
-    local: storageArea(localStore, {
-      get: (query) => localReads.push(query),
-      set: (patch) => localWrites.push(patch),
-    }),
+    local: {
+      async get(query = null) {
+        if (options.storageGetError) {
+          throw options.storageGetError instanceof Error
+            ? options.storageGetError
+            : new Error(String(options.storageGetError));
+        }
+        return baseLocalArea.get(query);
+      },
+      async set(patch) {
+        if (options.storageSetError) {
+          throw options.storageSetError instanceof Error
+            ? options.storageSetError
+            : new Error(String(options.storageSetError));
+        }
+        return baseLocalArea.set(patch);
+      },
+      remove: (keys) => baseLocalArea.remove(keys),
+    },
+    onChanged: {
+      addListener: (listener) => {
+        storageListeners.push(listener);
+      },
+      removeListener: (listener) => {
+        const index = storageListeners.indexOf(listener);
+        if (index >= 0) storageListeners.splice(index, 1);
+      },
+    },
   };
 
   const elementMap = new Map();
@@ -607,39 +699,136 @@ export async function createOptionsHarness(options = {}) {
     elementMap.set(id, node);
     return node;
   };
-  element("status", { tagName: "div" });
-  element("mosaBaseUrl");
-  element("mosaToken");
-  element("autoCapture", { tagName: "input", attrs: { type: "checkbox" } });
-  element("save", { tagName: "button" });
-  element("test", { tagName: "button" });
-  element("repair", { tagName: "button" });
+  element("connection", {
+    tagName: "section",
+    attrs: { "data-state": "checking", "data-tone": "idle", role: "status", "aria-live": "polite" },
+  });
+  element("connectionTitle", { tagName: "h1" });
+  element("connectionDetail", { tagName: "p" });
+  element("connectionNote", { tagName: "p", hidden: true });
+  element("connectionAction", { tagName: "button", hidden: true });
+  element("connectionQuiet", { tagName: "button", hidden: true });
+  element("connectionLink", {
+    tagName: "a",
+    hidden: true,
+    attrs: { href: "https://gravityport.azhuilab.com/#download", target: "_blank", rel: "noopener" },
+  });
+  element("autoCapture", { tagName: "button", attrs: { role: "switch", "aria-checked": "false" } });
+  element("autoCaptureStatus", { tagName: "div", hidden: true, attrs: { role: "status", "aria-live": "polite" } });
+  element("advanced", { tagName: "details" });
+  element("mosaBaseUrl", { tagName: "input", attrs: { type: "url" } });
+  element("mosaToken", { tagName: "input", attrs: { type: "password" } });
+  element("save", { tagName: "button", attrs: { "data-i18n": "save" } });
+  element("advancedStatus", { tagName: "div", hidden: true, attrs: { role: "status", "aria-live": "polite" } });
+
+  const i18nElements = {
+    pageTitle: new FakeProviderNode("div", { attrs: { "data-i18n": "pageTitle" } }),
+    autoCaptureLabel: new FakeProviderNode("strong", { attrs: { "data-i18n": "autoCaptureLabel" } }),
+    autoCaptureDesc: new FakeProviderNode("p", { attrs: { "data-i18n": "autoCaptureDesc" } }),
+    advancedTitle: new FakeProviderNode("strong", { attrs: { "data-i18n": "advancedTitle" } }),
+    advancedHint: new FakeProviderNode("span", { attrs: { "data-i18n": "advancedHint" } }),
+    urlLabel: new FakeProviderNode("label", { attrs: { "data-i18n": "urlLabel" } }),
+    urlHint: new FakeProviderNode("small", { attrs: { "data-i18n": "urlHint" } }),
+    tokenLabel: new FakeProviderNode("label", { attrs: { "data-i18n": "tokenLabel" } }),
+    tokenHint: new FakeProviderNode("small", { attrs: { "data-i18n": "tokenHint" } }),
+    save: elementMap.get("save"),
+    supportedSites: new FakeProviderNode("p", { attrs: { "data-i18n": "supportedSites" } }),
+  };
+
+  const docListeners = new Map();
+  const winListeners = new Map();
+  const addListener = (bucket, type, listener) => {
+    if (!bucket.has(type)) bucket.set(type, []);
+    bucket.set(type, [...bucket.get(type), listener]);
+  };
+  const removeListener = (bucket, type, listener) => {
+    if (!bucket.has(type)) return;
+    bucket.set(type, bucket.get(type).filter((entry) => entry !== listener));
+  };
 
   const fetchCalls = [];
   sandbox.document = {
+    documentElement: { lang: "zh-CN" },
+    title: "",
+    visibilityState: options.visibilityState ?? "visible",
     getElementById: (id) => elementMap.get(id) || null,
+    querySelectorAll: (selector) => (selector === "[data-i18n]" ? Object.values(i18nElements) : []),
     createElement: (tag) => new FakeProviderNode(tag),
     createTextNode: (text) => ({ nodeType: 3, nodeValue: String(text), parentElement: null }),
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    addEventListener: (type, listener) => addListener(docListeners, type, listener),
+    removeEventListener: (type, listener) => removeListener(docListeners, type, listener),
+  };
+  sandbox.window = {
+    addEventListener: (type, listener) => addListener(winListeners, type, listener),
+    removeEventListener: (type, listener) => removeListener(winListeners, type, listener),
   };
   sandbox.chrome = chromeObj;
-  sandbox.fetch = async (url, init = {}) => {
+  // 读响应体也算在途：测试里的假服务常在 json() 里才算身份证明（真 WebCrypto，
+  // 在别的线程里跑），fetch 本身早已落地。不跟着它，CI 机器一忙 settle() 就会
+  // 在证明回来之前收工，状态还停在 checking（PR #357 的 verify 两条）。
+  const BODY_READERS = new Set(["json", "text", "arrayBuffer", "blob"]);
+  const trackBody = (response) => {
+    if (!response || typeof response !== "object") return response;
+    return new Proxy(response, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (typeof value !== "function") return value;
+        if (BODY_READERS.has(property)) return (...args) => trackPending(value.apply(target, args));
+        return value.bind(target);
+      },
+    });
+  };
+  sandbox.fetch = (url, init = {}) => trackPending((async () => {
     fetchCalls.push({ url: String(url), init });
     if (options.fetchHandler) {
       const custom = await options.fetchHandler(String(url), init);
-      if (custom) return custom;
+      if (custom) return trackBody(custom);
     }
     throw new Error("offline in this harness");
-  };
+  })());
 
-  vm.runInNewContext(optionsSource, sandbox, { filename: "options.js" });
-  await flush();
+  const context = vm.createContext(sandbox);
+  vm.runInContext(optionsSource, context, { filename: "options.js" });
+  if (options.autoFlush !== false) {
+    await settle();
+  }
 
   return {
-    context: sandbox,
+    context,
+    strings: vm.runInContext("STRINGS", context),
     elements: Object.fromEntries(elementMap),
-    click: (id) => elementMap.get(id)?.click({ target: elementMap.get(id) }),
+    i18nElements,
+    click: (id) => {
+      const node = elementMap.get(id);
+      if (!node || node.disabled) return Promise.resolve([]);
+      return node.click({ target: node });
+    },
+    triggerStorageChange: (changes, areaName = "local") => {
+      if (areaName === "local" && changes) {
+        for (const [key, change] of Object.entries(changes)) {
+          if (Object.prototype.hasOwnProperty.call(change, "newValue")) {
+            localStore.set(key, change.newValue);
+          } else {
+            localStore.delete(key);
+          }
+        }
+      }
+      for (const listener of [...storageListeners]) listener(changes, areaName);
+    },
+    fireVisibilityChange: (state = "visible") => {
+      sandbox.document.visibilityState = state;
+      for (const listener of [...(docListeners.get("visibilitychange") || [])]) {
+        listener({ type: "visibilitychange" });
+      }
+    },
+    fireWindowFocus: () => {
+      for (const listener of [...(winListeners.get("focus") || [])]) {
+        listener({ type: "focus" });
+      }
+    },
+    get reloadCount() {
+      return reloadCount;
+    },
     runtimeMessages,
     fetchCalls,
     storage: {
@@ -652,6 +841,6 @@ export async function createOptionsHarness(options = {}) {
     advanceClock: (ms) => {
       clock.now += ms;
     },
-    flush,
+    flush: settle,
   };
 }

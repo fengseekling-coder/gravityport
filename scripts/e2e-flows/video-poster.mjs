@@ -7,6 +7,7 @@
 // poster without uploading again.
 import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pageWaitSource } from "./_shared.mjs";
 
 export const name = "video-poster";
 export const description = "black-intro mp4 -> poster generated (img, not black, 16:9, play chip) -> detail plays the original video -> second page load reuses the stored poster without re-uploading -> MKV (task 413) gets a renderer poster too";
@@ -72,17 +73,7 @@ export async function run(ctx) {
 
 function mkvPosterSource(assetId) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 40000) {
-      const deadline = Date.now() + timeoutMs;
-      let last = null;
-      while (Date.now() < deadline) {
-        try { last = check(); } catch (error) { last = String(error); }
-        if (last) return last;
-        await sleep(150);
-      }
-      throw new Error('Timed out waiting for ' + label + ' | last=' + String(last));
-    }
+${pageWaitSource(40000)}
     // Look the card up on every poll: the derivative flush can remount it,
     // and a node captured at mount time would never see the poster land.
     const liveCard = () => document.querySelector('.asset-card[data-asset-id="${assetId}"]');
@@ -100,17 +91,7 @@ function mkvPosterSource(assetId) {
 
 function pageSource(assetId, { expectUpload }) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 25000) {
-      const deadline = Date.now() + timeoutMs;
-      let last = null;
-      while (Date.now() < deadline) {
-        try { last = check(); } catch (error) { last = String(error); }
-        if (last) return last;
-        await sleep(120);
-      }
-      throw new Error('Timed out waiting for ' + label + ' | last=' + String(last));
-    }
+${pageWaitSource(25000)}
     const posterPosts = () => performance.getEntriesByType('resource')
       .filter((entry) => /\\/api\\/assets\\/[^/]+\\/[^/]+\\/poster$/.test(entry.name)).length;
     const posterPostsAtStart = posterPosts();

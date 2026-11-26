@@ -1,11 +1,13 @@
-// GravityPort React UI flow (task 421):
-// 1. Default built mode (DEV=false, no localStorage flag) keeps 版本树 -> 查看 inline.
-// 2. Enabling localStorage "gravityport.dev.version-canvas"="1" routes 查看 directly into VersionCanvas,
+// GravityPort React UI flow (task 421 / 472):
+// 1. Default built mode (no localStorage flag) routes 版本树 -> 查看 directly into VersionCanvas,
 //    hiding the gallery inspector, showing moved 版本对比 / 生成关系 / 版本历史 panels,
-//    confirming a suggested candidate edge via real HTTP APIs, toggling in-memory final status, and returning cleanly.
-// 3. Clearing the flag returns to legacy mode with the confirmed relation persisted and candidate removed.
+//    confirming a suggested candidate edge via real HTTP APIs, dragging to link, and returning cleanly.
+// 2. Right-clicking a card with a tree offers「查看版本树」and opens VersionCanvas.
+// 3. Setting localStorage "gravityport.dev.version-canvas"="0" falls back to the inline list and hides
+//    right-click「查看版本树」, with confirmed relations persisted.
+// 4. 960x640 narrow window layout, right-click latency & race guard, and trashed assets staying inline.
 export const name = "version-canvas";
-export const description = "VERSION_CANVAS_ENTRY gate off->on -> 查看 enters VersionCanvas -> confirm candidate edge -> return -> gate off persists relation";
+export const description = 'default 查看 enters VersionCanvas -> reload/reset -> right-click 查看版本树 -> "0" fallback expands inline -> 960px layout -> menu latency/race -> trash keeps inline';
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -31,6 +33,13 @@ export async function run(ctx) {
       prompt: "poster v3 sibling",
     });
     const sibling = siblingCreate.asset;
+
+    const soloCreate = await ctx.api(server.origin, "POST", "/api/assets/create", {
+      projectId: "default",
+      imagePath: await ctx.makePng("vc-e2e-solo.png", [120, 120, 120]),
+      prompt: "solo card without generation history",
+    });
+    const solo = soloCreate.asset;
 
     await ctx.api(server.origin, "POST", `/api/assets/default/${encodeURIComponent(parent.id)}/versions`, {
       version_change: "version canvas e2e family item",
@@ -68,13 +77,6 @@ export async function run(ctx) {
       createdAt: "2026-11-14T10:10:00.000Z",
     });
 
-    const offResult = await ctx.runInPage(server, roundOffSource({ parentId: parent.id, setFlag: true }), {
-      windowSize: [1440, 940],
-    });
-    if (offResult?.inlineExpanded !== true || offResult?.canvasMounted !== false) {
-      throw new Error(`version-canvas gate-off check failed: ${JSON.stringify(offResult)}`);
-    }
-
     const onResult = await ctx.runInPage(server, roundOnSource({ parentId: parent.id, childId: child.id, siblingId: sibling.id }), {
       windowSize: [1440, 940],
     });
@@ -97,7 +99,7 @@ export async function run(ctx) {
       || onResult?.tooltipShown !== true
       || onResult?.typeSavedOnPick !== true
     ) {
-      throw new Error(`version-canvas gate-on flow failed: ${JSON.stringify(onResult)}`);
+      throw new Error(`version-canvas default-on flow failed: ${JSON.stringify(onResult)}`);
     }
 
     const reloadResult = await ctx.runInPage(server, roundReloadAndReverseEditSource({
@@ -128,20 +130,22 @@ export async function run(ctx) {
       afterResetResult?.resetPersistedAfterReload !== true
       || afterResetResult?.escCancelled !== true
       || afterResetResult?.failureRolledBack !== true
+      || typeof afterResetResult?.menuLatencyMs !== "number"
     ) {
-      throw new Error(`version-canvas post-reset reload check failed: ${JSON.stringify(afterResetResult)}`);
+      throw new Error(`version-canvas post-reset right-click check failed: ${JSON.stringify(afterResetResult)}`);
     }
 
-    const verifyOffResult = await ctx.runInPage(server, roundOffSource({ parentId: parent.id, setFlag: false }), {
+    const fallbackResult = await ctx.runInPage(server, roundFallbackSource({ parentId: parent.id }), {
       windowSize: [1440, 940],
     });
     if (
-      verifyOffResult?.inlineExpanded !== true
-      || verifyOffResult?.canvasMounted !== false
-      || verifyOffResult?.hasConfirmedSection !== true
-      || verifyOffResult?.hasCandidateActions !== false
+      fallbackResult?.inlineExpanded !== true
+      || fallbackResult?.canvasMounted !== false
+      || fallbackResult?.hasConfirmedSection !== true
+      || fallbackResult?.hasCandidateActions !== false
+      || fallbackResult?.fallbackMenuOmitsCanvas !== true
     ) {
-      throw new Error(`version-canvas persistence check failed: ${JSON.stringify(verifyOffResult)}`);
+      throw new Error(`version-canvas fallback ("0") check failed: ${JSON.stringify(fallbackResult)}`);
     }
 
     const historyRes = await ctx.api(server.origin, "GET", `/api/assets/default/${encodeURIComponent(parent.id)}/generation-history`);
@@ -157,10 +161,69 @@ export async function run(ctx) {
       throw new Error(`version-canvas HTTP persistence mismatch: ${JSON.stringify({ userConfirmed, suggestedLeft, dragLinkPersisted })}`);
     }
 
+    const narrowResult = await ctx.runInPage(server, roundNarrow960Source({ parentId: parent.id }), {
+      windowSize: [960, 640],
+    });
+    if (
+      narrowResult?.canvasNodes < 2
+      || narrowResult?.inspectorVisible !== true
+      || !(narrowResult?.inspectorWidth >= 240)
+      || !(narrowResult?.stageWidth >= 300)
+      || narrowResult?.exportInHeader !== true
+      || narrowResult?.returnedToGallery !== true
+    ) {
+      throw new Error(`version-canvas 960x640 narrow layout check failed: ${JSON.stringify(narrowResult)}`);
+    }
+
+    const menuRaceResult = await ctx.runInPage(server, roundMenuLatencyAndRaceSource({
+      parentId: parent.id,
+      childId: child.id,
+      soloId: solo.id,
+    }), {
+      windowSize: [1440, 940],
+    });
+    if (
+      menuRaceResult?.race200Ok !== true
+      || menuRaceResult?.race600Ok !== true
+      || typeof menuRaceResult?.selectedMenuMedianMs !== "number"
+      || typeof menuRaceResult?.otherMenuMedianMs !== "number"
+    ) {
+      throw new Error(`version-canvas menu latency/race check failed: ${JSON.stringify(menuRaceResult)}`);
+    }
+
+    const trashed = await ctx.api(server.origin, "POST", "/api/assets/batch", {
+      action: "trash",
+      projectId: "default",
+      assetIds: [sibling.id],
+    });
+    if (!JSON.stringify(trashed).includes(`"${sibling.id}"`)) {
+      throw new Error(`version-canvas trash setup did not confirm sibling: ${JSON.stringify(trashed).slice(0, 200)}`);
+    }
+
+    const trashResult = await ctx.runInPage(server, roundTrashSource({ siblingId: sibling.id }), {
+      windowSize: [1440, 940],
+    });
+    if (
+      trashResult?.inlineExpanded !== true
+      || trashResult?.canvasMounted !== false
+      || trashResult?.trashMenuOmitsCanvas !== true
+    ) {
+      throw new Error(`version-canvas trash inline check failed: ${JSON.stringify(trashResult)}`);
+    }
+
     return {
       parentId: parent.id,
       childId: child.id,
       ...onResult,
+      menuLatencyMs: afterResetResult.menuLatencyMs,
+      selectedMenuMedianMs: menuRaceResult.selectedMenuMedianMs,
+      otherMenuMedianMs: menuRaceResult.otherMenuMedianMs,
+      selectedMenuLatenciesMs: menuRaceResult.selectedMenuLatenciesMs,
+      otherMenuLatenciesMs: menuRaceResult.otherMenuLatenciesMs,
+      race200Ok: menuRaceResult.race200Ok,
+      race600Ok: menuRaceResult.race600Ok,
+      narrow960: narrowResult,
+      trashInlineOk: true,
       persistedUserConfirmed: userConfirmed,
       persistedDragLink: dragLinkPersisted,
     };
@@ -201,29 +264,72 @@ const HELPERS = `
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
     el.dispatchEvent(new Event('input', { bubbles: true }));
   };
+  const menuButton = (label) => {
+    const menu = document.querySelector('.context-menu');
+    if (!menu) return null;
+    return Array.from(menu.querySelectorAll('button'))
+      .find((button) => Array.from(button.querySelectorAll(':scope > span')).some((span) => span.textContent.trim() === label)) || null;
+  };
+  const menuLabels = () => Array.from(document.querySelectorAll('.context-menu > .menu-row > button'))
+    .map((button) => Array.from(button.querySelectorAll(':scope > span')).map((span) => span.textContent.trim()).join(''));
+  const closeContextMenu = async () => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await waitFor(() => !document.querySelector('.context-menu'), 'context menu closes');
+  };
+  const openContextMenuMeasured = (card, clientX = 480, clientY = 320) => new Promise((resolve, reject) => {
+    const start = performance.now();
+    let done = false;
+    const finish = (menu) => {
+      if (done) return;
+      done = true;
+      observer.disconnect();
+      clearTimeout(timer);
+      resolve({ menu, latencyMs: Math.round((performance.now() - start) * 100) / 100 });
+    };
+    const observer = new MutationObserver(() => {
+      const menu = document.querySelector('.context-menu');
+      if (menu) finish(menu);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      observer.disconnect();
+      reject(new Error('Timed out waiting for context menu'));
+    }, 10000);
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX, clientY }));
+    const immediate = document.querySelector('.context-menu');
+    if (immediate) finish(immediate);
+  });
 `;
 
-function roundOffSource(config) {
+function roundFallbackSource(config) {
   return `(async () => {
     const config = ${JSON.stringify(config)};
     ${HELPERS}
-    await waitFor(() => document.querySelector('.app') && cardById(config.parentId), 'seeded parent card (gate off)');
-    (await waitFor(() => cardById(config.parentId), 'parent card click')).click();
-    await waitFor(() => Boolean(document.querySelector('.details .asset-title')) && Boolean(findVersionTreeButton()), 'inspector & 版本树 button');
-    findVersionTreeButton().click();
-    await waitFor(() => Boolean(document.querySelector('.details .version-tree')), 'inline version tree expands');
-    const inlineExpanded = Boolean(document.querySelector('.details .version-tree'));
-    const canvasMounted = Boolean(document.querySelector('.version-canvas'));
-    const detailsText = document.querySelector('.details')?.textContent || '';
-    const hasConfirmedSection = detailsText.includes('生成关系');
-    const hasCandidateActions = Boolean(document.querySelector('.details .relation-candidate-actions'))
-      || detailsText.includes('确认关系');
-    if (config.setFlag) {
-      localStorage.setItem('gravityport.dev.version-canvas', '1');
-    } else {
+    try {
+      const flagValue = localStorage.getItem('gravityport.dev.version-canvas');
+      if (flagValue !== '0') throw new Error('expected fallback key "0", got ' + JSON.stringify(flagValue));
+      await waitFor(() => document.querySelector('.app') && cardById(config.parentId), 'seeded parent card (fallback "0")');
+      (await waitFor(() => cardById(config.parentId), 'parent card click')).click();
+      await waitFor(() => Boolean(document.querySelector('.details .asset-title')) && Boolean(findVersionTreeButton()), 'inspector & 版本树 button');
+      findVersionTreeButton().click();
+      await waitFor(() => Boolean(document.querySelector('.details .version-tree')), 'inline version tree expands');
+      const inlineExpanded = Boolean(document.querySelector('.details .version-tree'));
+      const canvasMounted = Boolean(document.querySelector('.version-canvas'));
+      const detailsText = document.querySelector('.details')?.textContent || '';
+      const hasConfirmedSection = detailsText.includes('生成关系');
+      const hasCandidateActions = Boolean(document.querySelector('.details .relation-candidate-actions'))
+        || detailsText.includes('确认关系');
+
+      const parentCard = await waitFor(() => cardById(config.parentId), 'parent card for fallback menu');
+      await openContextMenuMeasured(parentCard, 480, 320);
+      const fallbackMenuOmitsCanvas = !menuLabels().includes('查看版本树');
+      await closeContextMenu();
+      return { inlineExpanded, canvasMounted, hasConfirmedSection, hasCandidateActions, fallbackMenuOmitsCanvas };
+    } finally {
       localStorage.removeItem('gravityport.dev.version-canvas');
     }
-    return { inlineExpanded, canvasMounted, hasConfirmedSection, hasCandidateActions };
   })()`;
 }
 
@@ -231,7 +337,9 @@ function roundOnSource(config) {
   return `(async () => {
     const config = ${JSON.stringify(config)};
     ${HELPERS}
-    await waitFor(() => document.querySelector('.app') && cardById(config.parentId), 'seeded parent card (gate on)');
+    const flagValue = localStorage.getItem('gravityport.dev.version-canvas');
+    if (flagValue !== null) throw new Error('expected default localStorage key null, got ' + JSON.stringify(flagValue));
+    await waitFor(() => document.querySelector('.app') && cardById(config.parentId), 'seeded parent card (default on)');
     (await waitFor(() => cardById(config.parentId), 'parent card click')).click();
     await waitFor(() => Boolean(document.querySelector('.details .asset-title')) && Boolean(findVersionTreeButton()), 'inspector & 版本树 button');
     findVersionTreeButton().click();
@@ -550,10 +658,12 @@ function roundAfterResetSource(config) {
     const config = ${JSON.stringify(config)};
     ${HELPERS}
     await waitFor(() => document.querySelector('.app') && cardById(config.childId), 'seeded child card after post-reset reload');
-    cardById(config.childId).click();
-    (await waitFor(() => findVersionTreeButton(), 'open canvas after reset reload')).click();
+    const childCard = await waitFor(() => cardById(config.childId), 'child card for right-click');
+    const { latencyMs: menuLatencyMs } = await openContextMenuMeasured(childCard, 480, 320);
+    const canvasMenuItem = await waitFor(() => menuButton('查看版本树'), 'right-click 查看版本树 item');
+    canvasMenuItem.click();
     const nodeEl = (id) => document.querySelector('.vc-node[data-canvas-node="' + id + '"]');
-    await waitFor(() => Boolean(document.querySelector('.version-canvas')) && Boolean(nodeEl(config.childId)), 'canvas mounts post-reset reload');
+    await waitFor(() => Boolean(document.querySelector('.version-canvas')) && Boolean(nodeEl(config.childId)), 'canvas mounts from right-click menu');
     await waitFor(() => (
       Boolean(nodeEl(config.childId)?.querySelector('.vc-final-badge'))
       && (nodeEl(config.childId)?.querySelector('.vc-mark-badge')?.textContent || '').includes('1')
@@ -609,7 +719,168 @@ function roundAfterResetSource(config) {
       window.fetch = origFetch;
     }
 
-    localStorage.removeItem('gravityport.dev.version-canvas');
-    return { resetPersistedAfterReload: true, escCancelled, failureRolledBack };
+    localStorage.setItem('gravityport.dev.version-canvas', '0');
+    return { resetPersistedAfterReload: true, escCancelled, failureRolledBack, menuLatencyMs };
+  })()`;
+}
+
+function roundNarrow960Source(config) {
+  return `(async () => {
+    const config = ${JSON.stringify(config)};
+    ${HELPERS}
+    const flagValue = localStorage.getItem('gravityport.dev.version-canvas');
+    if (flagValue !== null) throw new Error('expected null key before 960px check, got ' + JSON.stringify(flagValue));
+    await waitFor(() => document.querySelector('.app') && cardById(config.parentId), 'parent card at 960x640');
+    cardById(config.parentId).click();
+    await waitFor(() => Boolean(document.querySelector('.details .asset-title')) && Boolean(findVersionTreeButton()), 'inspector & 查看 at 960x640');
+    findVersionTreeButton().click();
+    await waitFor(() => Boolean(document.querySelector('.version-canvas')) && document.querySelectorAll('.vc-node').length >= 2, 'canvas at 960x640');
+    const canvasNodes = document.querySelectorAll('.vc-node').length;
+    const inspectorEl = document.querySelector('.vc-inspector');
+    const stageEl = document.querySelector('.vc-stage');
+    const headerEl = document.querySelector('.vc-header');
+    const exportBtn = document.querySelector('.version-canvas button[aria-label="导出版本树"]');
+    const inspectorStyle = inspectorEl ? getComputedStyle(inspectorEl) : null;
+    const inspectorRect = inspectorEl ? inspectorEl.getBoundingClientRect() : { width: 0 };
+    const stageRect = stageEl ? stageEl.getBoundingClientRect() : { width: 0 };
+    const headerRect = headerEl ? headerEl.getBoundingClientRect() : { left: 0, right: 0, top: 0, bottom: 0 };
+    const exportRect = exportBtn ? exportBtn.getBoundingClientRect() : { width: 0, left: 0, right: 0, top: 0, bottom: 0 };
+    const inspectorVisible = Boolean(inspectorStyle && inspectorStyle.display !== 'none');
+    const inspectorWidth = Math.round(inspectorRect.width);
+    const stageWidth = Math.round(stageRect.width);
+    const exportInHeader = exportRect.width > 0
+      && exportRect.left >= headerRect.left - 1
+      && exportRect.right <= headerRect.right + 1
+      && exportRect.top >= headerRect.top - 1
+      && exportRect.bottom <= headerRect.bottom + 1;
+    const backBtn = await waitFor(() => document.querySelector('.version-canvas button[aria-label="返回素材库"]'), 'back button at 960x640');
+    backBtn.click();
+    await waitFor(() => !document.querySelector('.version-canvas') && Boolean(document.querySelector('.workspace')), 'return to gallery at 960x640');
+    const returnedToGallery = !document.querySelector('.version-canvas') && Boolean(document.querySelector('.workspace'));
+    return { canvasNodes, inspectorVisible, inspectorWidth, stageWidth, exportInHeader, returnedToGallery };
+  })()`;
+}
+
+function roundMenuLatencyAndRaceSource(config) {
+  return `(async () => {
+    const config = ${JSON.stringify(config)};
+    ${HELPERS}
+    const flagValue = localStorage.getItem('gravityport.dev.version-canvas');
+    if (flagValue !== null) throw new Error('expected null key before menu latency/race, got ' + JSON.stringify(flagValue));
+    await waitFor(() => document.querySelector('.app') && cardById(config.parentId) && cardById(config.childId) && cardById(config.soloId), 'all cards for latency/race');
+
+    const median = (values) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 === 1 ? sorted[mid] : Math.round(((sorted[mid - 1] + sorted[mid]) / 2) * 100) / 100;
+    };
+
+    const selectedId = () => document.querySelector('.asset-card.asset-selected')?.dataset.assetId || '';
+
+    // 1. Right-click the asset already open in the inspector (5 trials).
+    cardById(config.parentId).click();
+    await waitFor(() => selectedId() === config.parentId
+      && Boolean(document.querySelector('.details .asset-title'))
+      && Boolean(findVersionTreeButton()), 'parent inspected with history');
+    const selectedMenuLatenciesMs = [];
+    for (let i = 0; i < 5; i += 1) {
+      const { latencyMs } = await openContextMenuMeasured(cardById(config.parentId), 420, 320);
+      if (!menuLabels().includes('查看版本树')) throw new Error('selected card menu missing 查看版本树 on trial ' + i);
+      selectedMenuLatenciesMs.push(latencyMs);
+      await closeContextMenu();
+    }
+
+    // 2. Right-click another asset not currently open in the inspector (5 trials).
+    const otherMenuLatenciesMs = [];
+    for (let i = 0; i < 5; i += 1) {
+      cardById(config.soloId).click();
+      await waitFor(() => selectedId() === config.soloId
+        && Boolean(document.querySelector('.details .asset-title'))
+        && !findVersionTreeButton(), 'solo inspected before trial ' + i);
+      const { latencyMs } = await openContextMenuMeasured(cardById(config.parentId), 420, 320);
+      if (!menuLabels().includes('查看版本树')) throw new Error('other card menu missing 查看版本树 on trial ' + i);
+      otherMenuLatenciesMs.push(latencyMs);
+      await closeContextMenu();
+    }
+
+    // 3. Race test: right-click A (has canvas, delayed generation-history) then
+    //    within 50ms right-click B (solo, no canvas). Final menu must stay B's.
+    const runRace = async (delayMs) => {
+      cardById(config.childId).click();
+      await waitFor(() => selectedId() === config.childId
+        && Boolean(document.querySelector('.details .asset-title'))
+        && Boolean(findVersionTreeButton()), 'child inspected before race ' + delayMs);
+      await sleep(100);
+      const origFetch = window.fetch;
+      let delayedCalls = 0;
+      window.fetch = async (input, init) => {
+        const target = typeof input === 'string' ? input : input?.url || '';
+        if (target.includes('/' + encodeURIComponent(config.parentId) + '/generation-history')
+          || target.includes('/' + config.parentId + '/generation-history')) {
+          delayedCalls += 1;
+          await sleep(delayMs);
+        }
+        return origFetch(input, init);
+      };
+      try {
+        cardById(config.parentId).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 220, clientY: 220 }));
+        await sleep(50);
+        cardById(config.soloId).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 520, clientY: 340 }));
+        await waitFor(() => Boolean(document.querySelector('.context-menu')), 'B context menu opens in race ' + delayMs);
+        await sleep(delayMs + 200);
+        const menu = document.querySelector('.context-menu');
+        if (!menu) throw new Error('context menu vanished during race ' + delayMs);
+        const labels = menuLabels();
+        const left = parseFloat(menu.style.left || '0');
+        const hasCanvasItem = labels.includes('查看版本树');
+        if (delayedCalls < 1) throw new Error('race ' + delayMs + ' did not intercept A generation-history');
+        if (hasCanvasItem) throw new Error('race ' + delayMs + ' leaked 查看版本树 from A onto B: ' + JSON.stringify({ labels, left }));
+        if (Math.abs(left - 520) > 80) throw new Error('race ' + delayMs + ' menu overwritten by A position: left=' + left);
+        return true;
+      } finally {
+        window.fetch = origFetch;
+        if (document.querySelector('.context-menu')) await closeContextMenu();
+      }
+    };
+
+    const race200Ok = await runRace(200);
+    const race600Ok = await runRace(600);
+
+    return {
+      selectedMenuLatenciesMs,
+      selectedMenuMedianMs: median(selectedMenuLatenciesMs),
+      otherMenuLatenciesMs,
+      otherMenuMedianMs: median(otherMenuLatenciesMs),
+      race200Ok,
+      race600Ok,
+    };
+  })()`;
+}
+
+function roundTrashSource(config) {
+  return `(async () => {
+    const config = ${JSON.stringify(config)};
+    ${HELPERS}
+    const flagValue = localStorage.getItem('gravityport.dev.version-canvas');
+    if (flagValue !== null) throw new Error('expected null key before trash check, got ' + JSON.stringify(flagValue));
+    await waitFor(() => Boolean(document.querySelector('.app')) && Boolean(document.querySelector('.main-nav')), 'app ready for trash view');
+    const trashBtn = await waitFor(() => Array.from(document.querySelectorAll('.main-nav button')).find((button) =>
+      button.textContent.trim() === '回收站'
+        || Array.from(button.querySelectorAll(':scope > span')).some((span) => span.textContent.trim() === '回收站')), '回收站 nav button');
+    trashBtn.click();
+    const siblingCard = await waitFor(() => cardById(config.siblingId), 'trashed sibling card');
+    siblingCard.click();
+    await waitFor(() => Boolean(document.querySelector('.details .asset-title')), 'inspector for trashed sibling');
+    const viewBtn = await waitFor(() => findVersionTreeButton(), '版本树 查看 button for trashed sibling');
+    viewBtn.click();
+    await waitFor(() => Boolean(document.querySelector('.details .version-tree')), 'trashed sibling expands inline version tree');
+    const inlineExpanded = Boolean(document.querySelector('.details .version-tree'));
+    const canvasMounted = Boolean(document.querySelector('.version-canvas'));
+
+    const freshCard = await waitFor(() => cardById(config.siblingId), 'trashed sibling card for context menu');
+    await openContextMenuMeasured(freshCard, 480, 320);
+    const trashMenuOmitsCanvas = !menuLabels().includes('查看版本树');
+    await closeContextMenu();
+    return { inlineExpanded, canvasMounted, trashMenuOmitsCanvas };
   })()`;
 }

@@ -26,6 +26,7 @@ import { ingestWebCapture, createWebCaptureIngest } from "../lib/web-capture-ing
 import { createLiveDeletionRequests } from "../lib/live-deletion-requests.mjs";
 import { searchMcpAssets } from "../lib/mcp-asset-search.mjs";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
+import { isolatedSourceOptions } from "./helpers/isolated-sources.mjs";
 
 const CLIENT_TOKEN = "mosa_live_deletion_test_client_token_0123456789abcdef";
 const CAPTURE_TOKEN = "mosa_live_deletion_test_capture_token";
@@ -544,6 +545,7 @@ test("the real runtime routes: viewer-presence writes and clears, the queue list
     projectRoot: root,
     libraryDir,
     assetsRoot: join(libraryDir, "assets"),
+    ...isolatedSourceOptions(root),
     clientToken: CLIENT_TOKEN,
     webCaptureToken: CAPTURE_TOKEN,
     maintenanceStartDelayMs: 50,
@@ -665,6 +667,7 @@ test("the real runtime routes: viewer-presence writes and clears, the queue list
     projectRoot: root,
     libraryDir,
     assetsRoot: join(libraryDir, "assets"),
+    ...isolatedSourceOptions(root),
     clientToken: CLIENT_TOKEN,
     webCaptureToken: CAPTURE_TOKEN,
     maintenanceStartDelayMs: 30,

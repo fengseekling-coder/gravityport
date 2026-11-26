@@ -244,7 +244,7 @@ function storageArea(store) {
 }
 
 function createChromeHarness() {
-  const listeners = { message: [], alarm: [], installed: [], startup: [], contextMenu: [] };
+  const listeners = { message: [], alarm: [], installed: [], startup: [], contextMenu: [], storageChanged: [] };
   const localStore = new Map();
   const sessionStore = new Map();
   const syncStore = new Map();
@@ -267,7 +267,7 @@ function createChromeHarness() {
       local: storageArea(localStore),
       session: storageArea(sessionStore),
       sync: storageArea(syncStore),
-      onChanged: { addListener: () => {} },
+      onChanged: { addListener: (fn) => listeners.storageChanged.push(fn) },
     },
     alarms: {
       create: () => {},
@@ -379,6 +379,7 @@ export async function createBackgroundHarness({
   settings = {},
   clock = undefined,
   fastTimers = false,
+  delayOverrides = null,
 } = {}) {
   const chromeHarness = createChromeHarness();
   if (!emptyStorage) {
@@ -403,9 +404,15 @@ export async function createBackgroundHarness({
     crypto,
     atob,
     btoa,
-    setTimeout: fastTimers
-      ? (fn, delay, ...args) => setTimeout(fn, delay === 2_000 ? 5 : delay, ...args)
-      : setTimeout,
+    setTimeout: delayOverrides
+      ? (fn, delay, ...args) => setTimeout(
+        fn,
+        Object.prototype.hasOwnProperty.call(delayOverrides, delay) ? delayOverrides[delay] : delay,
+        ...args,
+      )
+      : fastTimers
+        ? (fn, delay, ...args) => setTimeout(fn, delay === 2_000 ? 5 : delay, ...args)
+        : setTimeout,
     clearTimeout,
     queueMicrotask,
     console,
@@ -473,6 +480,9 @@ export async function createBackgroundHarness({
     },
     fireAlarm(name = QUEUE_ALARM_NAME) {
       for (const listener of chromeHarness.listeners.alarm) listener({ name });
+    },
+    fireStorageChanged(changes, area = "local") {
+      for (const listener of chromeHarness.listeners.storageChanged) listener(changes, area);
     },
     readQueue: async () => (await chromeHarness.chrome.storage.local.get({ [QUEUE_KEY]: [] }))[QUEUE_KEY],
     writeQueue: async (queue) => chromeHarness.chrome.storage.local.set({ [QUEUE_KEY]: queue }),

@@ -28,14 +28,25 @@ const DELETION_BATCH_MAX_ITEMS = 200;
 const CAPTURE_MEDIA_DB = "mosa-web-capture-media-v1";
 const CAPTURE_MEDIA_STORE = "media";
 const LEGACY_DEV_TOKEN = "mosa-web-capture-dev";
-// Task 333 — pairing needs the user's approval in GravityPort: POST /pair
-// answers 202 with a request id, and the worker polls every 2 s for at most
-// the server-side TTL (120 s) instead of holding one fetch open. The whole
-// discover+confirm flow runs once at a time (module promise); if the service
-// worker is reaped mid-wait, the next getSettings() merges into the same
-// server-side request, so no dialog spam.
+// Task 333 / 466 — pairing needs the user's approval in GravityPort: POST /pair
+// answers 202 with a request id, and the worker then re-sends POST /pair every
+// 2 s for the rest of the request's life (at most the server-side TTL, 120 s)
+// instead of holding one fetch open. It re-sends a POST rather than polling
+// GET /pair/<id> because Chrome attaches no Origin header to a GET from an
+// extension that has host permission for the address, and the App binds a
+// pairing request to the Origin that created it; a POST always carries it. A
+// POST from the same Origin merges into the request that is still waiting (202,
+// same request id, no second dialog), collects the token once it was approved
+// (200) and is refused after a denial (403). Pairing starts only from
+// repairPairing() (a click on the settings page or throttled 401 auto-repair)
+// and runs once at a time (module promise); if the service worker is reaped
+// mid-wait, clicking again merges into the same server-side pending request,
+// so no dialog spam.
 const MOSA_PAIR_POLL_INTERVAL_MS = 2_000;
 const MOSA_PAIR_WAIT_MS = 120_000;
+// Stop re-sending this close to the end of the request: a POST after it expired
+// would open a new confirmation in the App.
+const MOSA_PAIR_POLL_MARGIN_MS = 1_000;
 // Before the token leaves the worker, the service must prove it holds the
 // paired secret (HMAC challenge on /api/web-capture/identity). A verified
 // baseUrl is remembered for 10 minutes in worker memory only.
@@ -1542,8 +1553,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "mosa.repairPairing") {
-    // Options page "test connection" after a 401: pair again with GravityPort
-    // and hand the new Token back so the form can be refilled.
+    // Options page "Connect to GravityPort" / "Reconnect": pair with
+    // GravityPort and hand the new Token back so the page can update.
     repairPairing()
       .then((paired) => sendResponse({
         ok: Boolean(paired),
@@ -1770,23 +1781,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+// Read-only; pairing starts only from repairPairing() (task 466).
 async function getSettings() {
   await migrateSettingsToLocal();
-  let stored = await chrome.storage.local.get(DEFAULTS);
-  let settings = { ...DEFAULTS, ...stored };
-  if (!String(settings.mosaToken || "").trim()) {
-    const paired = await discoverAndPairMosa().catch(() => null);
-    if (paired) {
-      await chrome.storage.local.set({ mosaBaseUrl: paired.baseUrl, mosaToken: paired.token });
-      stored = await chrome.storage.local.get(DEFAULTS);
-      settings = { ...DEFAULTS, ...stored };
-    }
-  }
-  return settings;
+  const stored = await chrome.storage.local.get(DEFAULTS);
+  return { ...DEFAULTS, ...stored };
 }
 
 // Only one pairing flow at a time for the whole extension: a second caller
 // awaits the same promise instead of opening a second confirmation request.
+// Its only caller is repairPairing().
 async function discoverAndPairMosa() {
   if (!pairingFlowPromise) {
     pairingFlowPromise = runDiscoverAndPairMosa().finally(() => { pairingFlowPromise = null; });
@@ -1797,6 +1801,10 @@ async function discoverAndPairMosa() {
 async function runDiscoverAndPairMosa() {
   const first = await discoverAndPairMosaOnce();
   if (first) return first;
+  // `false`: the App answered — it refused, was busy, or the user (or the
+  // clock) ended the request. Asking again would only fight the user or open a
+  // second confirmation.
+  if (first === false) return null;
   // A cold-started GravityPort (Windows) can take longer than one probe round
   // to start listening, so probe the whole port list once more after a pause.
   await new Promise((resolve) => setTimeout(resolve, MOSA_DISCOVERY_RETRY_MS));
@@ -1814,25 +1822,21 @@ async function discoverAndPairMosaOnce() {
 
       // Task 333: the App asks the user to confirm this extension. A 202
       // starts (or merges into) a pending request; denied and busy answers
-      // stop the whole attempt — retrying would only fight the user.
-      const pair = await fetchWithTimeout(`${baseUrl}/api/web-capture/pair`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ extensionVersion: chrome.runtime.getManifest().version }),
-        cache: "no-cache",
-      }, MOSA_PROBE_TIMEOUT_MS);
-      if (pair.status === 403 || pair.status === 429) return null;
+      // stop the whole attempt — retrying would only fight the user, so they
+      // also skip the discovery retry round (`false`).
+      const pair = await postPairRequest(baseUrl);
+      if (pair.status === 403 || pair.status === 429) return false;
       if (!pair.ok) continue;
       const pairBody = await pair.json();
       if (pairBody?.product !== "mosa") continue;
-      // A one-shot approval (decide()) lets an older, non-polling worker
-      // collect the token straight from POST /pair; current workers see 202.
+      // A one-shot approval (decide()) is collected by the next POST /pair of
+      // the same Origin, which answers 200 with the token instead of 202.
       const directToken = String(pairBody?.token || "").trim();
       if (directToken) return { baseUrl, token: directToken };
       const requestId = String(pairBody?.requestId || "");
       if (pair.status !== 202 || !requestId) continue;
-      const token = await pollPairingDecision(baseUrl, requestId);
-      if (!token) return null;
+      const token = await pollPairingDecision(baseUrl, requestId, Number(pairBody?.expiresInMs));
+      if (!token) return false;
       return { baseUrl, token };
     } catch {
       // Try the next local discovery port.
@@ -1841,30 +1845,42 @@ async function discoverAndPairMosaOnce() {
   return null;
 }
 
-// Polls GET /pair/<id> until the user answers in GravityPort, the request
-// expires, or the App goes away. Each poll is one short fetch; the wait comes
-// from the interval, never from a long-held connection.
-async function pollPairingDecision(baseUrl, requestId) {
-  const deadline = Date.now() + MOSA_PAIR_WAIT_MS;
-  while (Date.now() < deadline) {
+// The one POST /pair request, used for the first ask and for every re-send.
+function postPairRequest(baseUrl) {
+  return fetchWithTimeout(`${baseUrl}/api/web-capture/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ extensionVersion: chrome.runtime.getManifest().version }),
+    cache: "no-cache",
+  }, MOSA_PROBE_TIMEOUT_MS);
+}
+
+// Waits for the user's answer in GravityPort by re-sending POST /pair every
+// 2 s (see the note at the top: a GET would carry no Origin). The window is the
+// request's remaining life as the App reported it (capped at 120 s); the last
+// re-send happens at least 1 s before it ends. Each re-send is one short fetch;
+// the wait comes from the interval, never from a long-held connection.
+async function pollPairingDecision(baseUrl, requestId, expiresInMs) {
+  const windowMs = Number.isFinite(expiresInMs) && expiresInMs > 0
+    ? Math.min(expiresInMs, MOSA_PAIR_WAIT_MS)
+    : MOSA_PAIR_WAIT_MS;
+  const deadline = Date.now() + windowMs;
+  while (true) {
     await new Promise((resolve) => setTimeout(resolve, MOSA_PAIR_POLL_INTERVAL_MS));
+    if (deadline - Date.now() < MOSA_PAIR_POLL_MARGIN_MS) return null;
     let response;
     try {
-      response = await fetchWithTimeout(`${baseUrl}/api/web-capture/pair/${encodeURIComponent(requestId)}`, {
-        cache: "no-cache",
-      }, MOSA_PROBE_TIMEOUT_MS);
+      response = await postPairRequest(baseUrl);
     } catch {
       return null;
     }
-    if (response.status === 404 || !response.ok) return null;
+    if (!response.ok) return null; // denied (403), busy (429), pairing off (503)
     const body = await response.json().catch(() => null);
-    if (body?.status === "approved") {
-      const token = String(body?.token || "").trim();
-      return body?.product === "mosa" && token ? token : null;
-    }
-    if (body?.status !== "pending") return null; // denied or expired
+    if (body?.product !== "mosa") return null;
+    const token = String(body?.token || "").trim();
+    if (token) return token;
+    if (response.status !== 202 || String(body?.requestId || "") !== requestId) return null;
   }
-  return null;
 }
 
 async function repairPairing() {
@@ -2241,6 +2257,15 @@ function base64ToBytes(value) {
 }
 
 function captureRequestPayload(payload, { mediaKind, mimeType, mediaUrl = "", finalMediaUrl = "", provider } = {}) {
+  const rawReferenceProviderAssetIds = payload.referenceProviderAssetIds;
+  const referenceProviderAssetIds = Array.isArray(rawReferenceProviderAssetIds)
+    ? rawReferenceProviderAssetIds
+      .filter((item) => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => item.slice(0, 160))
+      .slice(0, 8)
+    : undefined;
   return {
     provider,
     prompt: payload.prompt || "",
@@ -2269,6 +2294,7 @@ function captureRequestPayload(payload, { mediaKind, mimeType, mediaUrl = "", fi
     providerGenerationCallId: payload.providerGenerationCallId || "",
     providerResponseId: payload.providerResponseId || "",
     providerAssetId: payload.providerAssetId || "",
+    ...(referenceProviderAssetIds !== undefined ? { reference_provider_asset_ids: referenceProviderAssetIds } : {}),
     model: payload.model || "",
     captureMode: payload.captureMode === "manual" ? "manual" : "automatic",
     capturedAt: payload.capturedAt || new Date().toISOString(),
@@ -2313,7 +2339,7 @@ async function uploadConnection() {
   const baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
   const token = String(settings.mosaToken || "").trim();
   if (!token) {
-    const error = new Error("尚未连接 GravityPort。请先打开 GravityPort。");
+    const error = new Error("尚未连接 GravityPort。请在扩展设置页点「连接 GravityPort」。");
     error.kind = "pairing";
     throw error;
   }
@@ -2500,7 +2526,7 @@ async function ingestToMosa(payload = {}, { binaryParts = null } = {}) {
   let baseUrl = normalizeBaseUrl(settings.mosaBaseUrl || DEFAULTS.mosaBaseUrl);
   let token = String(settings.mosaToken || "").trim();
   if (!token) {
-    const error = new Error("尚未连接 GravityPort。请先打开 GravityPort；仍无法连接时，在扩展设置中检查令牌（Token）。");
+    const error = new Error("尚未连接 GravityPort。请在扩展设置页点「连接 GravityPort」。");
     error.kind = "pairing";
     throw error;
   }

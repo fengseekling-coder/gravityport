@@ -14,6 +14,8 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { clickCenter, connectCdp } from "./_cdp.mjs";
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
 
 const HOST_LABEL = "ref-ratio-host";
 const RATIO_TOLERANCE = 0.03;
@@ -128,17 +130,7 @@ function assertPageResult(result) {
 
 function pageSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      let last = null;
-      while (Date.now() < deadline) {
-        try { last = check(); } catch (error) { last = String(error); }
-        if (last) return last;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label + ' | last=' + String(last));
-    }
+${PAGE_WAIT_SOURCE}
     const cards = () => Array.from(document.querySelectorAll('.asset-card'));
     const hostCard = () => cards().find((c) => (c.getAttribute('aria-label') || '').includes('${HOST_LABEL}'));
     await waitFor(() => (cards().length === ${SEEDS.length + 1} && hostCard()) || null, 'the four seeded cards');
@@ -239,11 +231,7 @@ async function runDesktopPhase(ctx) {
   try {
     await waitForHealthFile(healthFile);
     cdp = await connectCdp(cdpPort, `http://127.0.0.1:${port}`);
-    const evaluate = async (expression) => {
-      const response = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-      if (response?.exceptionDetails) throw new Error("evaluate failed: " + (response.exceptionDetails.exception?.description || response.exceptionDetails.text));
-      return response?.result?.value;
-    };
+    const evaluate = (expression) => cdp.evaluate(expression);
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitForValue(expression, label, timeoutMs = 20000) {
       const deadline = Date.now() + timeoutMs;
@@ -267,16 +255,11 @@ async function runDesktopPhase(ctx) {
     // Open the inspector on the host card with one trusted click (retried: the
     // click can land before the grid finishes settling its handlers).
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const point = await evaluate(`(() => {
-        const card = Array.from(document.querySelectorAll('.asset-card')).find((c) => (c.getAttribute('aria-label') || '').includes('${HOST_LABEL}'));
-        if (!card) return null;
-        const r = card.getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      })()`);
-      if (!point) throw new Error("host card not found in the desktop shell");
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "none" });
-      await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount: 1 });
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 1 });
+      await clickCenter(
+        cdp,
+        `Array.from(document.querySelectorAll('.asset-card')).find((c) => (c.getAttribute('aria-label') || '').includes('${HOST_LABEL}'))`,
+        { label: "host card in the desktop shell" },
+      );
       const opened = await waitForValue(`(() => {
         const gallery = document.querySelector('.reference-gallery');
         if (!gallery) return false;
@@ -306,54 +289,6 @@ async function runDesktopPhase(ctx) {
     }
     await rm(guiRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 }).catch(() => {});
   }
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find((entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix));
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve, reject } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) reject(new Error(message.error.message));
-      else resolve(message.result);
-    }
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
 }
 
 async function waitForHealthFile(filePath, timeoutMs = 60000) {

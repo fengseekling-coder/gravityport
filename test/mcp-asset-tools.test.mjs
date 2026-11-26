@@ -8,6 +8,7 @@ import { createAssetStore } from "../lib/asset-store.mjs";
 import { TRASH_RETENTION_MS } from "../lib/sqlite-asset-store.mjs";
 import { startMosaRuntime } from "../lib/mosa-runtime.mjs";
 import { createMcpWorkspace, startMcpServer, writePngFixture } from "./helpers/mcp-server-harness.mjs";
+import { isolatedSourceOptions } from "./helpers/isolated-sources.mjs";
 
 async function setupServerWithFixture(t, fixtureName = "fixture.png") {
   const workspace = await createMcpWorkspace(t);
@@ -97,6 +98,7 @@ test("asset_trash moves asset to Trash, calculates purge_after, and asset_restor
     libraryDir: workspace.libraryDir,
     assetsRoot: join(workspace.libraryDir, "assets"),
     generatedImagesDir: workspace.imagesDir,
+    ...isolatedSourceOptions(workspace.root),
   });
   t.after(() => runtime.stop());
 
@@ -174,6 +176,7 @@ test("asset_trash followed by asset_create of identical bytes creates new id and
     libraryDir: workspace.libraryDir,
     assetsRoot: join(workspace.libraryDir, "assets"),
     generatedImagesDir: workspace.imagesDir,
+    ...isolatedSourceOptions(workspace.root),
   });
   t.after(() => runtime.stop());
 
@@ -229,6 +232,7 @@ test("HTTP batch action archive moves assets to Trash", async (t) => {
     libraryDir: workspace.libraryDir,
     assetsRoot: join(workspace.libraryDir, "assets"),
     generatedImagesDir: workspace.imagesDir,
+    ...isolatedSourceOptions(workspace.root),
   });
   t.after(() => runtime.stop());
 

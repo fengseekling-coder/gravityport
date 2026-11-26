@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import sharp from "sharp";
 import { createSqliteAssetStore } from "../lib/sqlite-asset-store.mjs";
+import { isolatedSourceEnv } from "./helpers/isolated-sources.mjs";
 
 test("returns 404 for a missing library image without stopping the server", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "mosa-server-"));
@@ -57,6 +58,7 @@ test("returns 404 for a missing library image without stopping the server", asyn
       MOSA_LIBRARY_DIR: join(root, "library"),
       CODEX_GENERATED_IMAGES_DIR: join(root, "generated-images"),
       CODEX_SESSIONS_DIR: sessionsDir,
+      CODEX_THREAD_HISTORY_DIR: join(root, "codex-thread-history"),
       GROK_SESSIONS_DIR: join(root, "grok-sessions"),
       COWART_MOSA_CANVAS_DIR: join(root, "cowart-data"),
       MOSA_COWART_REGISTRY_PATH: join(root, "state", "cowart-projects.json"),
@@ -228,6 +230,7 @@ test("SQLite HTTP surface paginates assets and serves durable derivatives", asyn
       MOSA_LIBRARY_DIR: libraryDir,
       CODEX_GENERATED_IMAGES_DIR: join(root, "generated-images"),
       CODEX_SESSIONS_DIR: join(root, "sessions"),
+      CODEX_THREAD_HISTORY_DIR: join(root, "codex-thread-history"),
       GROK_SESSIONS_DIR: join(root, "grok-sessions"),
       COWART_MOSA_CANVAS_DIR: join(root, "cowart-data"),
       MOSA_COWART_REGISTRY_PATH: join(root, "state", "cowart-projects.json"),
@@ -344,6 +347,7 @@ test("invalid cursor returns 400 with INVALID_ASSET_CURSOR code", async (t) => {
       MOSA_LIBRARY_DIR: libraryDir,
       CODEX_GENERATED_IMAGES_DIR: join(root, "generated-images"),
       CODEX_SESSIONS_DIR: join(root, "sessions"),
+      CODEX_THREAD_HISTORY_DIR: join(root, "codex-thread-history"),
       GROK_SESSIONS_DIR: join(root, "grok-sessions"),
       COWART_MOSA_CANVAS_DIR: join(root, "cowart-data"),
       MOSA_COWART_REGISTRY_PATH: join(root, "state", "cowart-projects.json"),
@@ -405,6 +409,7 @@ test("request body errors return correct HTTP status codes", async (t) => {
       MOSA_LIBRARY_DIR: libraryDir,
       CODEX_GENERATED_IMAGES_DIR: join(root, "generated-images"),
       CODEX_SESSIONS_DIR: join(root, "sessions"),
+      CODEX_THREAD_HISTORY_DIR: join(root, "codex-thread-history"),
       GROK_SESSIONS_DIR: join(root, "grok-sessions"),
       COWART_MOSA_CANVAS_DIR: join(root, "cowart-data"),
       MOSA_COWART_REGISTRY_PATH: join(root, "state", "cowart-projects.json"),
@@ -469,6 +474,7 @@ test("JSON backend invalid cursor returns 400 with INVALID_ASSET_CURSOR", async 
       MOSA_LIBRARY_DIR: join(root, "library"),
       CODEX_GENERATED_IMAGES_DIR: join(root, "generated-images"),
       CODEX_SESSIONS_DIR: join(root, "sessions"),
+      CODEX_THREAD_HISTORY_DIR: join(root, "codex-thread-history"),
       GROK_SESSIONS_DIR: join(root, "grok-sessions"),
       COWART_MOSA_CANVAS_DIR: join(root, "cowart-data"),
       MOSA_COWART_REGISTRY_PATH: join(root, "state", "cowart-projects.json"),
@@ -507,6 +513,7 @@ test("cross-origin request returns 403 while same-origin succeeds", async (t) =>
       MOSA_LIBRARY_DIR: join(root, "library"),
       CODEX_GENERATED_IMAGES_DIR: join(root, "generated-images"),
       CODEX_SESSIONS_DIR: join(root, "sessions"),
+      CODEX_THREAD_HISTORY_DIR: join(root, "codex-thread-history"),
       GROK_SESSIONS_DIR: join(root, "grok-sessions"),
       COWART_MOSA_CANVAS_DIR: join(root, "cowart-data"),
       MOSA_COWART_REGISTRY_PATH: join(root, "state", "cowart-projects.json"),
@@ -548,6 +555,7 @@ test("multi-byte UTF-8 body exceeding 5 MiB returns 413", async (t) => {
       MOSA_LIBRARY_DIR: join(root, "library"),
       CODEX_GENERATED_IMAGES_DIR: join(root, "generated-images"),
       CODEX_SESSIONS_DIR: join(root, "sessions"),
+      CODEX_THREAD_HISTORY_DIR: join(root, "codex-thread-history"),
       GROK_SESSIONS_DIR: join(root, "grok-sessions"),
       COWART_MOSA_CANVAS_DIR: join(root, "cowart-data"),
       MOSA_COWART_REGISTRY_PATH: join(root, "state", "cowart-projects.json"),
@@ -694,6 +702,7 @@ test("rejects non-loopback Host headers (DNS rebinding guard)", async (t) => {
       MOSA_PORT: "0",
       MOSA_PROJECT_DIR: root,
       MOSA_LIBRARY_DIR: join(root, "library"),
+      ...isolatedSourceEnv(root),
       MOSA_DISABLE_BRIDGES: "codex,grok,cowart,cowartDiscovery",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -743,6 +752,7 @@ test("JSON write routes reject non-object bodies with 400 INVALID_JSON_BODY_TYPE
       MOSA_PORT: "0",
       MOSA_PROJECT_DIR: root,
       MOSA_LIBRARY_DIR: join(root, "library"),
+      ...isolatedSourceEnv(root),
       MOSA_DISABLE_BRIDGES: "codex,grok,cowart,cowartDiscovery",
       MOSA_CLIENT_TOKEN: clientToken,
     },

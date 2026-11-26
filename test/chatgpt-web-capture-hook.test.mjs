@@ -73,7 +73,7 @@ test("installs the page hook in the main world before ChatGPT page scripts", () 
 });
 
 test("declares the supported Google media sites and provider content script", () => {
-  assert.equal(manifest.version, "0.15.51");
+  assert.equal(manifest.version, "0.15.52");
   assert.deepEqual(
     manifest.content_scripts.find((entry) => entry.js?.includes("provider-sites.js"))?.matches,
     ["https://gemini.google.com/*", "https://labs.google/*", "https://flow.google.com/*", "https://aistudio.google.com/*"],
@@ -102,7 +102,7 @@ test("keeps the extension key, version, and pairing identifiers intact across th
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAofKTi8b+4rBSTVqJFccjuwj7wljVkVriU4N05gYSDuHviShLUFQxMjYMGRUQFHi81Y3hx2hVCgB5Fuz3hxKiZvSsEnSOax7pp4raSu3st7r/SFXy7+T0Hwvrv47oDnbPDeYFoSrgRRHGSLaX0hid/EhALBunFpQJmjdKrA+OL9n6RQBe8Lp7hrkZhReMV8h569JEOnHNw63BGr9y8OgSjdtb680bpDg9Acz3yM5A9CeeIFhYPNVHL1uCGTyRUK/zAbaOeRFVJkyFu1tTnA901Ik0TzbPkPmSKdVW/BdvwrYZsieYJZbdaA9KGtUwfMCm8jC/t8y8+w1Zx4bmuPKplQIDAQAB",
   );
   assert.equal(manifest.name, "GravityPort Web Capture");
-  assert.equal(manifest.version, "0.15.51");
+  assert.equal(manifest.version, "0.15.52");
 });
 
 test("surfaces MOSA's own ingest error when pairing repair keeps the same connection", async () => {
@@ -4782,6 +4782,17 @@ test("ChatGPT: a queued capture is not sent again and says it is queued, not fai
   await attempt(180_000);
   assert.equal(context.ingestMessages.length, 1, "three minutes later the queued capture is still not re-sent");
   assert.ok(clock.now > 0);
+});
+
+test("ChatGPT: a queued capture waiting on pairing points to the extension settings page", async () => {
+  const { context, attempt } = await chatGptHandOffHarness({ ok: true, result: { status: "queued", reason: "pairing" } });
+  await attempt();
+  const expected = "已暂存，在扩展设置里连接 GravityPort 后自动收录";
+  assert.equal(context.ingestMessages.length, 1);
+  assert.equal(context.statusTexts.at(-1), expected);
+  assert.equal(context.toasts.filter((toast) => toast.isError).length, 0, "a queued capture never shows an error");
+  const notices = context.toasts.filter((toast) => toast.message === expected);
+  assert.equal(notices.length, 1, "the pairing queued notice shows once for this key");
 });
 
 test("ChatGPT: a retryable failure is tried twice, 60 s apart, and its error shows once", async () => {

@@ -170,6 +170,7 @@ async function startPairingServer(t) {
       MOSA_LIBRARY_DIR: libraryDir,
       CODEX_GENERATED_IMAGES_DIR: join(root, "generated-images"),
       CODEX_SESSIONS_DIR: sessionsDir,
+      CODEX_THREAD_HISTORY_DIR: join(root, "codex-thread-history"),
       GROK_SESSIONS_DIR: join(root, "grok-sessions"),
       COWART_MOSA_CANVAS_DIR: join(root, "cowart-data"),
       MOSA_COWART_REGISTRY_PATH: join(root, "state", "cowart-projects.json"),

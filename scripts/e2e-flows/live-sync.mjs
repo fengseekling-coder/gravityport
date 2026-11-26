@@ -1,5 +1,7 @@
 // GravityPort React UI flow: mutations made behind the open page arrive through
 // the library event stream and reconcile the visible gallery.
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "live-sync";
 export const description = "external API create/trash while the page is open -> SSE live refresh updates the gallery without user action";
 
@@ -22,16 +24,7 @@ export async function run(ctx) {
 
 function liveSyncSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(120);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const clientToken = () => sessionStorage.getItem('mosa.client-token') || '';
     const cardCount = () => document.querySelectorAll('.asset-card').length;
     const api = (path, method, body) => fetch(path, {

@@ -30,7 +30,7 @@ GravityPort 是一款 AI 素材管理工具，支持 ChatGPT、Gemini、Flow、G
 
 - **GravityPort 桌面版 macOS**（Apple 芯片或 Intel 芯片，Intel 从 0.3.13 起）：两种芯片各一个 DMG 镜像，下载页两个都有，按你的 Mac 选（苹果菜单 → 关于本机）。把 `GravityPort.app` 拖入「应用程序」。
 - **GravityPort 桌面版 Windows 10/11**（x64）：安装程序。双击即可安装到当前 Windows 账户（不需要管理员），开始菜单和桌面会出现 GravityPort，装好后自动打开。卸载在「设置 → 应用」里，素材库会保留。（0.3.3 及更早版本是便携 ZIP：解压后运行 `GravityPort.exe`。）
-- **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，先启动桌面应用再加载，两边会自动配对。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
+- **GravityPort 网页采集扩展**（Chrome / Chromium，可选）：ZIP 包，先启动桌面应用再加载；加载后会打开扩展设置页，点「连接 GravityPort」，再在 GravityPort 里点「允许连接」。安装步骤见[安装指南](https://gravityport.azhuilab.com/guide/)。
 
 已安装的桌面应用会在 **设置 → 关于** 里自行检查更新。[发布清单](https://gravityport.azhuilab.com/releases/gravityport/latest.json)是最新版本的机器可读来源。
 
@@ -57,7 +57,7 @@ GravityPort 把每张素材和让它可复用的上下文重新连在一起：�
 
 ### 在版本树上迭代
 
-检视器展示每张素材的版本树：来自同一个 ChatGPT 对话的生成按对话轮次分组，可以逐轮查看图片是怎么演变过来的。同一家族中的任意两个版本都可以并排比较。
+检视器展示每张素材的版本树：来自同一个 ChatGPT 对话的生成按对话轮次分组，可以逐轮查看图片是怎么演变过来的；在 Lovart 里基于库中已有的 Lovart 图片改出的新图会自动接在原图下面。同一家族中的任意两个版本都可以并排比较。在检视器的「版本树」一栏点「查看」，或在图片上右键选「查看版本树」，可在画布上查看各版本和它们之间的关系，拖动连线补上关系，并在图上标出下一轮要改的地方。
 
 ### 让 AI 代理检索你的素材库
 

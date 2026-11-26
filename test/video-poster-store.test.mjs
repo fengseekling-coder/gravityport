@@ -139,6 +139,7 @@ test("poster API route validates content type and size, and serves the stored po
     generatedImagesDir: generated,
     codexImagesDir: join(root, "codex-images"),
     codexSessionsDir: join(root, "sessions"),
+    codexThreadHistoryDir: join(root, "codex-thread-history"),
     grokSessionsDir: join(root, "grok-sessions"),
     cowartCanvasDir: join(root, "cowart-data"),
     cowartRegistryPath: join(root, "state", "cowart-projects.json"),

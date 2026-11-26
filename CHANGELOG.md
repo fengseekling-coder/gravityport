@@ -2,6 +2,25 @@
 
 This file records user-visible changes. Internal deployment notes, local paths, and development handoffs are intentionally not tracked in the public repository.
 
+## 0.3.18 — 2026-11-26 / Preview
+
+### Desktop
+
+- Version tree canvas: View next to Version tree in the Inspector, or View version tree in an image's context menu, opens a canvas that lays out every version of an image round by round with its generation relationships. Drag between versions to record a relationship, mark what to change in the next round, and export the tree as an image. The canvas is the default entry; images whose tree has fewer than two images, or that are in the trash, keep the inline list.
+- Lovart: a captured Lovart image whose base image is already in the library as a Lovart capture is linked under the original in its version tree; when the library holds several copies of that base image, the earliest one is used.
+- Browser extension pairing: GravityPort shows the connection prompt only after Connect to GravityPort is clicked on the extension's settings page.
+- Tests: e2e flows click and wait through shared CDP helpers that check the target first, and a CI-like local mode throttles the renderer and uses the Windows CI window size; no behavior change.
+
+### Web Capture
+
+- Extension 0.15.52: the settings page is redesigned around the connection status and a Connect to GravityPort button, with an English interface. The extension connects only from that button (the token-expiry reconnect is unchanged); images saved from the right-click menu before connecting are held in the extension and imported once it connects.
+- While waiting for approval the extension re-sends the pairing request every 2 seconds, so an approval given any time within the 2-minute confirmation window connects; it stops after a refusal or when the window ends.
+- Lovart captures record each image's own base image (`ref:<id>`) and ignore the page's ack/fetch frames, so the image-mode base image and the Agent request are no longer lost. Images captured without a base image pick it up when re-saved from the chat panel after refreshing the page.
+
+### MCP launcher
+
+- `gravityport-mcp` 0.3.18: version bump only.
+
 ## 0.3.17 — 2026-11-23 / Preview
 
 ### Desktop

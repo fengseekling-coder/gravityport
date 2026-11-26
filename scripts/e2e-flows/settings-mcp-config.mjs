@@ -18,6 +18,7 @@
 // walks the same card with English copy. Known product shape, not fixed
 // here: the card has no edit/save — select, read, copy is all it does.
 import { join } from "node:path";
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
 import { buildMcpClientConfig } from "../../lib/mcp-client-config.mjs";
 
 export const name = "settings-mcp-config";
@@ -140,16 +141,7 @@ function assertOk(condition, label) {
 
 function pagePrelude() {
   return `
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 15000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const navButton = (label) => Array.from(document.querySelectorAll('.settings-nav button'))
       .find((button) => button.textContent.trim() === label) || null;
     const clientButtons = () => Array.from(document.querySelectorAll('.mcp-config-clients button'));

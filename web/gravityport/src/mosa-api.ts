@@ -107,6 +107,8 @@ export type AssetQuery = {
   source?: string
   group?: string
   learningLibrary?: string
+  learningEntry?: string
+  learningRun?: string
   stackId?: string
   cursor?: string
 }
@@ -860,7 +862,11 @@ function buildAssetParams(q: AssetQuery, options: { limit: number; cursor?: stri
   if (q.mediaKind !== "all") params.set("mediaKind", q.mediaKind)
   if (q.source) params.set("source", q.source)
   if (q.group) params.set("group", q.group)
-  if (q.learningLibrary) params.set("learningLibrary", q.learningLibrary)
+  if (q.learningLibrary) {
+    params.set("learningLibrary", q.learningLibrary)
+    if (q.learningEntry) params.set("learningEntry", q.learningEntry)
+    if (q.learningRun) params.set("learningRun", q.learningRun)
+  }
   if (options.cursor) params.set("cursor", options.cursor)
   return params
 }
@@ -955,6 +961,8 @@ export type MosaGalleryRowsQuery = {
   source?: string
   group?: string
   learningLibrary?: string
+  learningEntry?: string
+  learningRun?: string
   stackId?: string
 }
 
@@ -985,7 +993,11 @@ export async function fetchGalleryRows(
     facets: { group: query.group || "" },
     ...(query.mediaKind !== "all" ? { mediaKind: query.mediaKind } : {}),
     ...(query.source ? { source: query.source } : {}),
-    ...(query.learningLibrary ? { learningLibrary: query.learningLibrary } : {}),
+    ...(query.learningLibrary ? {
+      learningLibrary: query.learningLibrary,
+      ...(query.learningEntry ? { learningEntry: query.learningEntry } : {}),
+      ...(query.learningRun ? { learningRun: query.learningRun } : {}),
+    } : {}),
     ...(query.stackId ? { stackId: query.stackId } : {}),
     ...(boundaryCursor ? { boundaryCursor } : {}),
     ...(stacks.length ? { affectedStackIds: stacks } : {}),
@@ -1402,6 +1414,194 @@ export async function removeFromLearningLibrary(project: string, id: string, ass
   return { removed: Number(data.removed || 0) }
 }
 
+// ── Learning guide & runs (task 464): read state, manual guide edits, revert. ──
+export type MosaLearningSwatch = {
+  hex: string
+  name: string
+}
+
+export type MosaLearningGuideEntry = {
+  id: string
+  section: string
+  position: number
+  text: string
+  swatches: MosaLearningSwatch[]
+  origin: string
+  locked: boolean
+  sources: string[]
+  sourceCount: number
+  updatedAt: string
+}
+
+export type MosaLearningRun = {
+  id: string
+  libraryId: string
+  kind: string
+  status: string
+  phase: string
+  pauseReason: string
+  itemCount: number
+  doneCount: number
+  failedCount: number
+  skippedCount: number
+  estimateUsd: number | null
+  capUsd: number | null
+  costUsd: number
+  guideRevisionBefore: number | null
+  guideRevisionAfter: number | null
+  change: Record<string, unknown>
+  startedAt: string
+  updatedAt: string
+  finishedAt: string | null
+}
+
+export type MosaLearningState = {
+  counts: { total: number; analyzed: number; pending: number; noPreview: number }
+  guide: {
+    revision: number
+    language: string
+    updatedAt: string | null
+    entries: MosaLearningGuideEntry[]
+  }
+  openRun: MosaLearningRun | null
+  runs: MosaLearningRun[]
+}
+
+function normalizeLearningGuideEntry(value: JsonValue): MosaLearningGuideEntry {
+  const swatches = Array.isArray(value.swatches)
+    ? value.swatches
+        .filter((item): item is JsonValue => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+        .map((item) => ({ hex: String(item.hex || ""), name: String(item.name || "") }))
+        .filter((item) => Boolean(item.hex))
+    : []
+  const sources = asStringArray(value.sources)
+  return {
+    id: String(value.id || ""),
+    section: String(value.section || ""),
+    position: Number(value.position || 0),
+    text: String(value.text || ""),
+    swatches,
+    origin: String(value.origin || ""),
+    locked: Boolean(value.locked),
+    sources,
+    sourceCount: value.sourceCount === undefined ? sources.length : Number(value.sourceCount || 0),
+    updatedAt: String(value.updatedAt || ""),
+  }
+}
+
+function normalizeLearningRun(value: JsonValue): MosaLearningRun {
+  const change = value.change && typeof value.change === "object" && !Array.isArray(value.change)
+    ? (value.change as Record<string, unknown>)
+    : {}
+  return {
+    id: String(value.id || ""),
+    libraryId: String(value.libraryId || ""),
+    kind: String(value.kind || ""),
+    status: String(value.status || ""),
+    phase: String(value.phase || ""),
+    pauseReason: String(value.pauseReason || ""),
+    itemCount: Number(value.itemCount || 0),
+    doneCount: Number(value.doneCount || 0),
+    failedCount: Number(value.failedCount || 0),
+    skippedCount: Number(value.skippedCount || 0),
+    estimateUsd: value.estimateUsd == null ? null : Number(value.estimateUsd),
+    capUsd: value.capUsd == null ? null : Number(value.capUsd),
+    costUsd: Number(value.costUsd || 0),
+    guideRevisionBefore: value.guideRevisionBefore == null ? null : Number(value.guideRevisionBefore),
+    guideRevisionAfter: value.guideRevisionAfter == null ? null : Number(value.guideRevisionAfter),
+    change,
+    startedAt: String(value.startedAt || ""),
+    updatedAt: String(value.updatedAt || ""),
+    finishedAt: value.finishedAt == null ? null : String(value.finishedAt),
+  }
+}
+
+export async function fetchLearningState(project: string, libraryId: string, signal?: AbortSignal): Promise<MosaLearningState> {
+  const data = await requestJson<JsonValue>(`/api/learning-libraries/${e(libraryId)}/learning?project=${e(project)}`, { signal })
+  const counts = (data.counts && typeof data.counts === "object" ? data.counts : {}) as JsonValue
+  const guide = (data.guide && typeof data.guide === "object" ? data.guide : {}) as JsonValue
+  const rawEntries = Array.isArray(guide.entries) ? guide.entries : []
+  const rawRuns = Array.isArray(data.runs) ? data.runs : []
+  const rawOpen = data.openRun && typeof data.openRun === "object" && !Array.isArray(data.openRun)
+    ? (data.openRun as JsonValue)
+    : null
+  return {
+    counts: {
+      total: Number(counts.total || 0),
+      analyzed: Number(counts.analyzed || 0),
+      pending: Number(counts.pending || 0),
+      noPreview: Number(counts.noPreview || 0),
+    },
+    guide: {
+      revision: Number(guide.revision || 0),
+      language: String(guide.language || ""),
+      updatedAt: guide.updatedAt == null ? null : String(guide.updatedAt),
+      entries: rawEntries
+        .filter((item): item is JsonValue => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+        .map(normalizeLearningGuideEntry),
+    },
+    openRun: rawOpen ? normalizeLearningRun(rawOpen) : null,
+    runs: rawRuns
+      .filter((item): item is JsonValue => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+      .map(normalizeLearningRun),
+  }
+}
+
+export async function addLearningGuideEntry(
+  project: string,
+  libraryId: string,
+  payload: { baseRevision: number; section: string; text: string; swatches?: MosaLearningSwatch[] },
+): Promise<{ entryId: string; revision: number }> {
+  const data = await requestJson<{ entry?: { entryId?: string; revision?: number } }>(
+    `/api/learning-libraries/${e(libraryId)}/guide/entries`,
+    { method: "POST", body: { projectId: project, ...payload } },
+  )
+  return {
+    entryId: String(data.entry?.entryId || ""),
+    revision: Number(data.entry?.revision || 0),
+  }
+}
+
+export async function updateLearningGuideEntry(
+  project: string,
+  libraryId: string,
+  entryId: string,
+  payload: { baseRevision: number; text?: string; swatches?: MosaLearningSwatch[]; locked?: boolean },
+): Promise<{ entryId: string; revision: number }> {
+  const data = await requestJson<{ entry?: { entryId?: string; revision?: number } }>(
+    `/api/learning-libraries/${e(libraryId)}/guide/entries/${e(entryId)}`,
+    { method: "PATCH", body: { projectId: project, ...payload } },
+  )
+  return {
+    entryId: String(data.entry?.entryId || entryId),
+    revision: Number(data.entry?.revision || 0),
+  }
+}
+
+export async function deleteLearningGuideEntry(
+  project: string,
+  libraryId: string,
+  entryId: string,
+  baseRevision: number,
+): Promise<{ entryId: string; revision: number }> {
+  const data = await requestJson<{ entry?: { entryId?: string; revision?: number } }>(
+    `/api/learning-libraries/${e(libraryId)}/guide/entries/${e(entryId)}`,
+    { method: "DELETE", body: { projectId: project, baseRevision } },
+  )
+  return {
+    entryId: String(data.entry?.entryId || entryId),
+    revision: Number(data.entry?.revision || 0),
+  }
+}
+
+export async function revertLearningRun(project: string, runId: string): Promise<{ ok: boolean }> {
+  const data = await requestJson<{ ok?: boolean }>(
+    `/api/learning-runs/${e(runId)}/revert`,
+    { method: "POST", body: { projectId: project } },
+  )
+  return { ok: Boolean(data.ok) }
+}
+
 export async function fetchRawGroupAssets(project: string, group: string, signal?: AbortSignal): Promise<JsonValue[]> {
   const seenCursors = new Set<string>()
   const seenIds = new Set<string>()
@@ -1568,6 +1768,8 @@ export type MosaGenerationCandidate = { child_generation_id: string; parent_gene
 export type MosaGenerationConversation = { provider?: string; conversation_id?: string; turn_count?: number; synced_at?: string }
 
 export type MosaGenerationHistory = {
+  /** The asset this record was fetched for; lets callers check a cached record still belongs to the asset at hand. */
+  asset_id?: string
   events: MosaGenerationEvent[]
   context_events?: MosaGenerationEvent[]
   output_assets?: MosaAsset[]
@@ -1636,6 +1838,7 @@ export async function fetchAssetGenerationHistory(project: string, id: string, s
     const contextEvents = Array.isArray(history.context_events) ? history.context_events as JsonValue[] : []
     const outputAssets = Array.isArray(history.output_assets) ? history.output_assets as JsonValue[] : []
     return {
+      asset_id: id,
       events: events.map(row => normalizeGenerationEvent(row)),
       context_events: contextEvents.map(row => normalizeGenerationEvent(row)),
       output_assets: outputAssets.map(row => normalizeAsset(row, project)),

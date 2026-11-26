@@ -1,6 +1,6 @@
 {
   "name": "gravityport-mcp",
-  "version": "0.3.17",
+  "version": "0.3.18",
   "type": "module",
   "bin": {
     "gravityport-mcp": "bin/gravityport-mcp.mjs"

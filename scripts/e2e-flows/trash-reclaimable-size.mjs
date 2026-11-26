@@ -14,7 +14,8 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
-import { reloadCdpAndWaitForApp, waitForCdpExpression } from "./_shared.mjs";
+import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
+import { connectCdp, reloadCdpAndWaitForApp, waitForCdpExpression } from "./_cdp.mjs";
 
 export const name = "trash-reclaimable-size";
 export const description =
@@ -190,8 +191,11 @@ async function runDesktopPhase(ctx, ids) {
   await mkdir(join(guiRoot, "grok-sessions"), { recursive: true });
   await mkdir(join(guiRoot, "cowart-data"), { recursive: true });
   // The desktop shell remembers its bounds in userData; a fresh dir would
-  // open at the 1320px default. Seed 1280 wide for the task's screenshot size.
-  await writeFile(join(ctx.userDataDir, "window-bounds.json"), JSON.stringify({ width: 1280, height: 800 }));
+  // open at the 1320px default. Seed 1280 wide for the task's screenshot size;
+  // the CI-like mode seeds the Windows CI window instead (that runner clamps
+  // 1280x800 to 1008x689 anyway).
+  if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(ctx.userDataDir);
+  else await writeFile(join(ctx.userDataDir, "window-bounds.json"), JSON.stringify({ width: 1280, height: 800 }));
 
   const port = await freePort();
   const cdpPort = await freePort();
@@ -234,11 +238,7 @@ async function runDesktopPhase(ctx, ids) {
   try {
     await waitForHealthFile(healthFile);
     cdp = await connectCdp(cdpPort, `http://127.0.0.1:${port}`);
-    const evaluate = async (expression) => {
-      const response = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-      if (response?.exceptionDetails) throw new Error("evaluate failed: " + (response.exceptionDetails.exception?.description || response.exceptionDetails.text));
-      return response?.result?.value;
-    };
+    const evaluate = (expression) => cdp.evaluate(expression);
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitForValue(expression, label, timeoutMs = 20000) {
       try {
@@ -416,65 +416,4 @@ function freePort() {
       server.close(() => resolvePort(address.port));
     });
   });
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find((entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix));
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const eventHandlers = new Set();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve, reject, timer } = pending.get(message.id);
-      pending.delete(message.id);
-      clearTimeout(timer);
-      if (message.error) reject(new Error(message.error.message));
-      else resolve(message.result);
-      return;
-    }
-    if (message.method) for (const handler of eventHandlers) handler(message);
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", () => resolveReady(), { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("cdp socket error")), { once: true });
-  });
-  return ready.then(() => ({
-    send(method, params = {}) {
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          if (pending.has(id)) {
-            pending.delete(id);
-            reject(new Error(`cdp ${method} timed out`));
-          }
-        }, 15000);
-        pending.set(id, { resolve, reject, timer });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    onEvent(handler) {
-      eventHandlers.add(handler);
-      return () => eventHandlers.delete(handler);
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  }));
 }

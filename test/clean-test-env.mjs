@@ -6,6 +6,11 @@
 // may still set their own MOSA_* values afterwards; the caller's parent shell
 // is never modified because this only mutates the current process env.
 
+import { homedir } from "node:os";
+import { delimiter, join, resolve } from "node:path";
+
+import { TEST_HOST_SOURCE_ROOTS_ENV } from "../lib/test-host-source-guard.mjs";
+
 const POLLUTING_MOSA_VARIABLES = [
   "MOSA_LIBRARY_DIR",
   "MOSA_LIBRARY_LOCATION_FILE",
@@ -31,6 +36,35 @@ const POLLUTING_MOSA_VARIABLES = [
   "GRAVITYPORT_WEB_CAPTURE_TOKEN",
   "GRAVITYPORT_WEB_CAPTURE_ORIGINS",
 ];
+
+// Real AI-tool source locations on this machine. A runtime under test must
+// never scan, watch, or write them: record the host roots (default homes plus
+// any location the developer's shell points at) for the fail-closed guard in
+// lib/test-host-source-guard.mjs, then drop the shell overrides (before the
+// generic MOSA_* sweep below) so a test can only reach a source directory it
+// passes explicitly. Product hosts never set the marker, so production
+// defaults are untouched.
+const HOST_SOURCE_VARIABLES = [
+  "CODEX_HOME",
+  "CODEX_GENERATED_IMAGES_DIR",
+  "CODEX_SESSIONS_DIR",
+  "CODEX_THREAD_HISTORY_DIR",
+  "GROK_SESSIONS_DIR",
+  "COWART_MOSA_CANVAS_DIR",
+  "MOSA_COWART_REGISTRY_PATH",
+];
+const hostSourceRoots = new Set([join(homedir(), ".codex"), join(homedir(), ".grok")]);
+for (const name of HOST_SOURCE_VARIABLES) {
+  const value = process.env[name];
+  if (value) hostSourceRoots.add(resolve(value));
+  delete process.env[name];
+}
+// Child test processes inherit the already-recorded roots; keep them so a
+// nested preload cannot forget the real roots after they were deleted above.
+for (const root of String(process.env[TEST_HOST_SOURCE_ROOTS_ENV] || "").split(delimiter)) {
+  if (root) hostSourceRoots.add(root);
+}
+process.env[TEST_HOST_SOURCE_ROOTS_ENV] = [...hostSourceRoots].join(delimiter);
 
 for (const name of POLLUTING_MOSA_VARIABLES) {
   delete process.env[name];

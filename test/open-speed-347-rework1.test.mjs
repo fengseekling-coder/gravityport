@@ -207,6 +207,7 @@ test("runtime stop interrupts the background sweep instead of hanging exit", asy
     generatedImagesDir: join(projectRoot, "generated-images"),
     codexImagesDir: join(projectRoot, "codex-images"),
     codexSessionsDir: join(projectRoot, "codex-sessions"),
+    codexThreadHistoryDir: join(projectRoot, "codex-thread-history"),
     grokSessionsDir: join(projectRoot, "grok-sessions"),
     cowartCanvasDir: join(projectRoot, "cowart-canvas"),
     cowartRegistryPath: join(projectRoot, "state", "cowart-projects.json"),

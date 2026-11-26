@@ -30,7 +30,7 @@ Get GravityPort from the [official download page](https://gravityport.azhuilab.c
 
 - **GravityPort Desktop for macOS** (Apple silicon or Intel, from 0.3.13): a DMG for each chip; the download page offers both. Pick the one that matches your Mac (Apple menu → About This Mac). Drag `GravityPort.app` into Applications.
 - **GravityPort Desktop for Windows 10/11** (x64): an installer. Double-click it; it installs GravityPort for your Windows account without asking for an administrator, adds it to the Start menu and the desktop, and opens it. Remove it in Settings → Apps; your library stays. (0.3.3 and earlier came as a portable ZIP: extract it and run `GravityPort.exe`.)
-- **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP; load it after the desktop app is running and the two pair automatically. See the [install guide](https://gravityport.azhuilab.com/guide/).
+- **GravityPort Web Capture** (Chrome / Chromium, optional): a ZIP; load it after the desktop app is running, then click Connect to GravityPort on the settings page it opens and Allow Connection in GravityPort. See the [install guide](https://gravityport.azhuilab.com/guide/).
 
 Installed desktop apps check for updates themselves in **Settings → About**. The [release manifest](https://gravityport.azhuilab.com/releases/gravityport/latest.json) is the machine-readable source for the newest version.
 
@@ -57,7 +57,7 @@ Browse and search one gallery with adjustable column counts, marquee selection, 
 
 ### Iterate on the version tree
 
-The Inspector shows each asset's version tree, with generations from a ChatGPT conversation grouped by conversation round so you can see how the image evolved turn by turn. Any two versions in a family can be compared side by side.
+The Inspector shows each asset's version tree, with generations from a ChatGPT conversation grouped by conversation round so you can see how the image evolved turn by turn. Images edited from an existing Lovart image in your library automatically attach beneath the original. Any two versions in a family can be compared side by side. Open the version tree from the Inspector or an image's context menu to see every version and how they relate on a canvas, link versions by dragging between them, and mark what to change in the next round.
 
 ### Let AI agents search your library
 

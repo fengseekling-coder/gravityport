@@ -27,13 +27,15 @@ export function versionCompareRows(fields: string[], base: VersionCompareEntry, 
 // 两侧可以选同一条，所以图和说明按左右位置作 key，不用条目 id。
 // 选择是组件内部状态：已选 id 不在条目里（换素材、列表刷新）时回落到调用
 // 方给的默认；App 用 key=素材 id 在切换素材时整体重置成默认选择。
-export default function VersionCompare({ language, entries, fields, defaultBaseId, defaultTargetId, captions = false }: {
+export default function VersionCompare({ language, entries, fields, defaultBaseId, defaultTargetId, captions = false, heading = true }: {
   language: Language
   entries: VersionCompareEntry[]
   fields: string[]
   defaultBaseId: string
   defaultTargetId: string
   captions?: boolean
+  /** Off where the surrounding section already titles the block 版本对比 (the canvas inspector). */
+  heading?: boolean
 }) {
   const tr = (text: string) => translate(text, language)
   const [basePick, setBasePick] = useState("")
@@ -46,7 +48,7 @@ export default function VersionCompare({ language, entries, fields, defaultBaseI
     || entries.find((entry) => entry.id === defaultTargetId)
     || entries[entries.length - 1]
   return <div className="version-compare">
-    <h4>{tr("版本对比")}</h4>
+    {heading && <h4>{tr("版本对比")}</h4>}
     <div className="version-compare-selectors">
       <select aria-label={tr("基准版本")} value={base.id} onChange={(event) => setBasePick(event.target.value)}>
         {entries.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}

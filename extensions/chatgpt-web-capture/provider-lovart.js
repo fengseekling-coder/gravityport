@@ -147,9 +147,9 @@
   }
 
   // The image-mode input's own JSON (typed prompt, chosen generator, base
-  // images). `original_unit_data.image[]` / `source_image[]` element formats
-  // were never observed non-empty: both strings and {url} objects are
-  // accepted, anything else is ignored.
+  // images). `input_args.image[]` carries URL strings while
+  // `original_unit_data.image[]` carries `{url}` objects; both strings and
+  // `{url}` objects are accepted across all observed fields.
   function collectUserGeneratorParams(text) {
     const parsed = parseJsonText(text);
     const params = parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -164,6 +164,7 @@
       generatorName: trimmed(params.generator_name),
       prompt: typeof inputArgs.prompt === "string" ? inputArgs.prompt.trim().slice(0, MAX_PROMPT_LENGTH) : "",
       referenceUrls: [
+        ...collectUrlList(inputArgs.image),
         ...collectUrlList(unitData.image),
         ...collectUrlList(unitData.source_image),
         ...collectUrlList(inputArgs.source_image),
@@ -232,15 +233,29 @@
     return artifacts.length ? artifacts : null;
   }
 
-  function generatorStartPrompt(block) {
-    if (!block || typeof block !== "object" || !Array.isArray(block.content)) return "";
+  function generatorStartInfo(block) {
+    if (!block || typeof block !== "object" || !Array.isArray(block.content)) {
+      return { prompt: "", referenceUrls: [] };
+    }
     for (const entry of block.content) {
       if (!entry || typeof entry !== "object" || entry.event_type !== "generator_start") continue;
       const eventData = entry.event_data && typeof entry.event_data === "object" ? entry.event_data : {};
       const inputArgs = eventData.input_args && typeof eventData.input_args === "object" ? eventData.input_args : {};
-      if (typeof inputArgs.prompt === "string") return inputArgs.prompt.trim().slice(0, MAX_PROMPT_LENGTH);
+      const unitData = inputArgs.original_unit_data && typeof inputArgs.original_unit_data === "object"
+        ? inputArgs.original_unit_data
+        : {};
+      return {
+        prompt: typeof inputArgs.prompt === "string" ? inputArgs.prompt.trim().slice(0, MAX_PROMPT_LENGTH) : "",
+        referenceUrls: [
+          ...collectUrlList(inputArgs.image),
+          ...collectUrlList(unitData.image),
+          ...collectUrlList(unitData.source_image),
+          ...collectUrlList(inputArgs.source_image),
+          ...collectUrlList(inputArgs.reference_image_urls),
+        ],
+      };
     }
-    return "";
+    return { prompt: "", referenceUrls: [] };
   }
 
   // The legacy UI names models `generate_image_…`; a bare tool name
@@ -325,6 +340,7 @@
     const model = trimmed(params?.generatorName) || trimmed(context?.model);
     const referenceUrls = dedupeReferenceUrls([
       ...(params?.referenceUrls || []),
+      ...(context?.pendingGeneratorReferenceUrls || []),
       ...(context?.userInput?.markUrls || []),
     ], media.url);
     return {
@@ -473,6 +489,7 @@
       pendingUsers: new Map(),
       pendingTools: new Map(),
       pendingGeneratorPrompts: new Map(),
+      pendingGeneratorReferences: new Map(),
     };
   }
 
@@ -485,6 +502,10 @@
     const data = frame.data && typeof frame.data === "object" ? frame.data : {};
     const threadId = trimmed(data.thread_id, 128);
     if (!threadId) return;
+    // The page automatically sends ack / fetch frames after each generation
+    // request; they are not new user messages and must not overwrite the
+    // pending prompt or base-image parameters.
+    if (data.event !== "start") return;
     if (frame.type === "chat-canda") {
       const contents = [];
       for (const message of Array.isArray(data.messages) ? data.messages : []) {
@@ -496,11 +517,13 @@
       }
       let text = "";
       const markUrls = [];
+      const imageUrls = [];
       for (const part of contents) {
         if (part.type === "text" && typeof part.text === "string") text = text ? `${text}\n${part.text}` : part.text;
         if (part.type === "mark" && typeof part.url === "string") markUrls.push(part.url);
+        if (part.type === "image" && typeof part.image_url === "string") imageUrls.push(part.image_url);
       }
-      state.pendingUsers.set(threadId, { text, markUrls, generatorParams: null });
+      state.pendingUsers.set(threadId, { text, markUrls, imageUrls, generatorParams: null });
       capMap(state.pendingUsers);
       return;
     }
@@ -514,13 +537,14 @@
         generatorName: trimmed(params.generator_name),
         prompt: typeof inputArgs.prompt === "string" ? inputArgs.prompt.trim().slice(0, MAX_PROMPT_LENGTH) : "",
         referenceUrls: [
+          ...collectUrlList(inputArgs.image),
           ...collectUrlList(unitData.image),
           ...collectUrlList(unitData.source_image),
           ...collectUrlList(inputArgs.source_image),
           ...collectUrlList(inputArgs.reference_image_urls),
         ],
       };
-      state.pendingUsers.set(threadId, { text: generatorParams.prompt, markUrls: [], generatorParams });
+      state.pendingUsers.set(threadId, { text: generatorParams.prompt, markUrls: [], imageUrls: [], generatorParams });
       capMap(state.pendingUsers);
     }
   }
@@ -574,17 +598,32 @@
     }
 
     if (block.type === "generator_event") {
-      const startPrompt = generatorStartPrompt(block);
-      if (startPrompt) {
-        state.pendingGeneratorPrompts.set(threadId, startPrompt);
+      const generatorKey = trimmed(block.id, 128) || threadId;
+      const startInfo = generatorStartInfo(block);
+      if (startInfo.prompt) {
+        state.pendingGeneratorPrompts.set(threadId, startInfo.prompt);
         capMap(state.pendingGeneratorPrompts);
+      }
+      // One generation pushes several generator_start blocks under the same
+      // id, and only some echo the base images (observed 2026-11-26: with,
+      // without, with, without, then the artifacts). An image-less start
+      // therefore never clears what an earlier one recorded; the entry is
+      // dropped once the artifacts consume it.
+      if (generatorKey && startInfo.referenceUrls.length) {
+        state.pendingGeneratorReferences.set(generatorKey, startInfo.referenceUrls);
+        capMap(state.pendingGeneratorReferences);
       }
       const artifacts = realtimeGeneratorArtifacts(block);
       if (!artifacts) return records;
+      const pendingGeneratorReferenceUrls = generatorKey
+        ? (state.pendingGeneratorReferences.get(generatorKey) || [])
+        : [];
+      if (generatorKey) state.pendingGeneratorReferences.delete(generatorKey);
       const context = {
         ...generatorContextFromOwner({ action_id: data.action_id, thread_id: data.thread_id, thread_meta: { session_id: data.session_id } }, state.pendingUsers.get(threadId) || null),
         model: trimmed(block.name),
         pendingGeneratorPrompt: state.pendingGeneratorPrompts.get(threadId) || "",
+        pendingGeneratorReferenceUrls,
         isRealtime: true,
         nowMs,
         timestampMs: null,
@@ -814,6 +853,11 @@ function friendlyCaptureError(message) {
 
   function basePayload(record) {
     const prompt = record.prompt || "";
+    const referenceProviderAssetIds = [];
+    for (const referenceUrl of record.referenceUrls || []) {
+      const refId = referenceIdForUrl(referenceUrl);
+      if (refId && !referenceProviderAssetIds.includes(refId)) referenceProviderAssetIds.push(refId);
+    }
     return {
       provider: "lovart",
       mediaKind: "image",
@@ -832,6 +876,7 @@ function friendlyCaptureError(message) {
       generationContextId: record.messageId || "",
       messageId: record.messageId || "",
       providerAssetId: record.providerAssetId || "",
+      referenceProviderAssetIds,
       generationStatus: "completed",
       imageUrl: record.mediaUrl,
       width: record.width || 0,
@@ -1045,6 +1090,13 @@ function friendlyCaptureError(message) {
   function manualPayload(mediaUrl, learned) {
     const info = mediaUrlInfo(mediaUrl);
     const prompt = learned?.prompt || "";
+    const referenceProviderAssetIds = [];
+    if (learned) {
+      for (const referenceUrl of learned.referenceUrls || []) {
+        const refId = referenceIdForUrl(referenceUrl);
+        if (refId && !referenceProviderAssetIds.includes(refId)) referenceProviderAssetIds.push(refId);
+      }
+    }
     return {
       provider: "lovart",
       mediaKind: "image",
@@ -1063,6 +1115,7 @@ function friendlyCaptureError(message) {
       generationContextId: learned?.messageId || "",
       messageId: learned?.messageId || "",
       providerAssetId: learned?.providerAssetId || info?.id || "",
+      ...(learned ? { referenceProviderAssetIds } : {}),
       generationStatus: "completed",
       // A learned record carries the full-size URL; the clicked thumbnail may
       // be the same image behind resize query parameters.

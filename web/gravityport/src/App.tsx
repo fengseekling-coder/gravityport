@@ -28,8 +28,9 @@ import { resolvePromptSaveTarget, type PromptEditTarget } from "./prompt-edit"
 import { isEditableTarget } from "./keyboard"
 import { galleryKeyAction, isFocusSearchKey, menuSelectAllTarget, mouseNavDirection, neighbourAssetId, resolveNavHistoryShortcut } from "./gallery-keys"
 import { type GenerationDisplay } from "./version-tree"
-import { VERSION_CANVAS_ENTRY, canvasFromHistory } from "./version-canvas-model"
+import { VERSION_CANVAS_ENTRY, historyForAsset, versionCanvasOffered } from "./version-canvas-model"
 import { LEARNING_LIBRARY_ENTRY, learningLibraryIdForActive, learningLibraryIdFromDropRow } from "./learning-library-entry"
+import { learningFilterParams, type LearningFilter } from "./learning-guide-model"
 import { LearningLibraryPanel } from "./LearningLibraryPanel"
 import { computeConversationRounds } from "./conversation-rounds"
 import { sanitizeAssetForExport } from "./feature-parity"
@@ -62,7 +63,7 @@ import {
   fetchProjects, fetchAssetVersions, fetchAssetGenerationHistory, setAssetsFavorite, setAssetsCurated,
   toggleAssetFavorite, updateAssetMetadata, uploadVideoPoster, moveAssetsToTrash, setAssetsGroup,
   createGroup, renameGroup, recolorGroup, reorderGroups, fetchGroupStats, deleteGroupKeepingAssets, mergeGroups, fetchRawGroupAssets,
-  createLearningLibrary, renameLearningLibrary, deleteLearningLibrary, fetchLearningLibrary, addToLearningLibrary as addAssetsToLearningLibrary, removeFromLearningLibrary as removeAssetsFromLearningLibrary,
+  createLearningLibrary, renameLearningLibrary, deleteLearningLibrary, fetchLearningLibrary, fetchLearningState, addToLearningLibrary as addAssetsToLearningLibrary, removeFromLearningLibrary as removeAssetsFromLearningLibrary,
   moveAssetsToStack, openLibraryFolder,
   fetchSchemaUpgradeNotice, acknowledgeSchemaUpgradeNotice,
   fetchLibraryRevision, fetchLibraryChanges, fetchGalleryRows, readMutationState,
@@ -361,6 +362,17 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   const learnTabUserSetRef = useRef(false)
   const [learnLibraryNameEditing, setLearnLibraryNameEditing] = useState(false)
   const [learnLibraryNameDraft, setLearnLibraryNameDraft] = useState("")
+  // 任务 464：学习手册的图墙过滤（条目来源 / 单次学习）、未学习张数与设置关闭触发重报价。
+  const [learnFilter, setLearnFilter] = useState<LearningFilter | null>(null)
+  const suppressLearnAutoFocusRef = useRef(false)
+  const [learnPendingCount, setLearnPendingCount] = useState(0)
+  const [learnSettingsRefreshKey, setLearnSettingsRefreshKey] = useState(0)
+  const [learnMetaRefreshTick, setLearnMetaRefreshTick] = useState(0)
+  const prevSettingsOpenRef = useRef(false)
+  useEffect(() => {
+    if (prevSettingsOpenRef.current && !settings) setLearnSettingsRefreshKey(k => k + 1)
+    prevSettingsOpenRef.current = settings
+  }, [settings])
   const [skipConfirm, setSkipConfirm] = useState(preferences.skipTrashConfirm)
   // 「不再提醒」persists across sessions like the preference it is.
   useEffect(() => {
@@ -418,6 +430,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   )
   const [versions, setVersions] = useState<MosaVersionRow[] | null>(null)
   const [generationHistory, setGenerationHistory] = useState<MosaGenerationHistory | null>(null)
+  const menuRequestRef = useRef(0)
   const [relationBusy, setRelationBusy] = useState(false)
   const [relationDrafts, setRelationDrafts] = useState<Record<string, string>>({})
   const [newRelation, setNewRelation] = useState<{ anchor: string; other: string; direction: string; type: string } | null>(null)
@@ -559,10 +572,13 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // 任务 459：learn:<id> 是学习库视图——图墙按 learningLibrary 过滤、堆叠不折叠，
   // 搜索和类型筛选照常可用（都在这个学习库的范围内）。
   const learningLibraryId = learningLibraryIdForActive(active) || undefined
+  const learnFilterQuery = learningLibraryId ? learningFilterParams(learnFilter) : {}
+  const learnFilterKey = learningLibraryId && learnFilter ? `${learnFilter.kind}:${learnFilter.id}` : ""
   const mediaKind = assetType === "image" ? "img" : assetType === "video" ? "video" : "all"
   const buildQuery = (cursor?: string): AssetQuery => ({
     project, q: debouncedQuery, scope, mediaKind, sort: sortOrder as AssetQuery["sort"],
-    ...(source ? { source } : {}), ...(group ? { group } : {}), ...(learningLibraryId ? { learningLibrary: learningLibraryId } : {}),
+    ...(source ? { source } : {}), ...(group ? { group } : {}),
+    ...(learningLibraryId ? { learningLibrary: learningLibraryId, ...learnFilterQuery } : {}),
     ...(stackId ? { stackId } : {}),
     ...(cursor ? { cursor } : {}),
   })
@@ -613,7 +629,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     // A same-view refresh (a sync fallback, the 刷新 menu) must re-fetch the
     // WHOLE loaded window: collapsing back to the first page would throw away
     // the user's scrolled pages. Incremental syncs never come through here.
-    const viewKey = JSON.stringify([project, active, debouncedQuery, sortOrder, assetType, stackId])
+    const viewKey = JSON.stringify([project, active, debouncedQuery, sortOrder, assetType, stackId, learnFilterKey])
     const windowRefresh = viewKeyRef.current === viewKey && assetsRef.current.length > GALLERY_PAGE_SIZE
     // Task 152 scroll restore: a real view switch owes the next committed load
     // a restore (recorded position, or the top when the view was never
@@ -764,9 +780,15 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
         // and silently drops the whole run. The commit replaces the selection
         // wholesale anyway; a real view switch is reset above, not here.
         const selectAllBusy = selectAllInFlightRef.current || pendingSelectAllRef.current !== null
-        if (!selectAllBusy && (pruned.changed || (!pruned.selectedIds.length && !pruned.selected))) {
+        // 任务 464：学习库里点了「来自 N 张」或学习记录行（或正过滤着），换出来的
+        // 图墙不隐式选第一张——459 的规则会因此把右栏切到「详情」，收走用户刚
+        // 点的手册。不在图墙里了的选中照常剪掉。
+        const keepUnselectedForLearn = Boolean(learnFilterKey) || suppressLearnAutoFocusRef.current
+        suppressLearnAutoFocusRef.current = false
+        const firstCardFallback = keepUnselectedForLearn ? "" : collected[0]?.id
+        if (!selectAllBusy && (pruned.changed || (!keepUnselectedForLearn && !pruned.selectedIds.length && !pruned.selected))) {
           const fallback = pruned.selected
-            || (pruned.selectedIds.length ? pruned.selectedIds[0] : collected[0]?.id)
+            || (pruned.selectedIds.length ? pruned.selectedIds[0] : firstCardFallback)
             || ""
           // The first card, or a kept focus that was already the app's pick,
           // stays implicit (see implicitFocusRef).
@@ -829,7 +851,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
       // whenever a derivative landed mid-click.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, active, debouncedQuery, sortOrder, assetType, stackId, refreshKey])
+  }, [project, active, debouncedQuery, sortOrder, assetType, stackId, learnFilterKey, refreshKey])
   // Opening the preview unmounts the grid: re-arm the restore so closing it —
   // even after the viewer paged and re-focused — returns to the pre-preview
   // position and only reveals the focused card (task 152).
@@ -2019,7 +2041,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     query: {
       project, scope, query: debouncedQuery, sort: sortOrder, mediaKind,
       ...(source ? { source } : {}), ...(group ? { group } : {}),
-      ...(learningLibraryId ? { learningLibrary: learningLibraryId } : {}),
+      ...(learningLibraryId ? { learningLibrary: learningLibraryId, ...learnFilterQuery } : {}),
       ...(stackId ? { stackId } : {}),
     },
     viewedId: selected,
@@ -3896,20 +3918,28 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // Right-clicking outside the multi-selection targets the clicked card
   // alone; inside it, the whole selection stays the action target.
   // UI 审查 11-16：只有一张图的版本树在画布里连不了线，是死路；「查看版本树」
-  // 只给能排出两张以上的图。按画布自己的算法数，取不到记录（或超过 400ms）就不给。
+  // 只给能排出两张以上的图，回收站里也不给。按画布自己的算法数，取不到记录（或超过 400ms）就不给。
   const canvasHasTree = async (clicked: MosaAsset): Promise<boolean> => {
     const history = await Promise.race([
       fetchAssetGenerationHistory(project, clicked.id).catch(() => null),
       new Promise<null>(resolve => setTimeout(() => resolve(null), 400)),
     ])
-    return Boolean(history) && canvasFromHistory(history, clicked).nodes.length >= 2
+    return versionCanvasOffered(history, clicked, scope)
   }
 
   const openAssetMenu = async (clicked: MosaAsset, x: number, y: number) => {
+    const request = ++menuRequestRef.current
     const ids = selectedIds.includes(clicked.id) ? [...batchIds] : [clicked.id]
-    const offerCanvas = VERSION_CANVAS_ENTRY && scope !== "trash" && ids.length === 1
-      ? await canvasHasTree(clicked)
-      : false
+    let offerCanvas = false
+    if (VERSION_CANVAS_ENTRY && scope !== "trash" && ids.length === 1) {
+      const shown = historyForAsset(generationHistory, clicked.id)
+      if (shown) {
+        offerCanvas = versionCanvasOffered(shown, clicked, scope)
+      } else {
+        offerCanvas = await canvasHasTree(clicked)
+        if (request !== menuRequestRef.current) return
+      }
+    }
     const loaded = assets.filter(entry => ids.includes(entry.id))
     const ctx: MenuContext = {
       target: "asset",
@@ -3942,6 +3972,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   // Right-clicking a stack card never changes the selection: the menu acts on
   // this stack alone, so its target rides along in the menu state.
   const openStackMenu = (stack: NonNullable<MosaAsset["stack"]>, cardName: string, x: number, y: number) => {
+    menuRequestRef.current += 1
     const ctx: MenuContext = {
       target: "stack",
       scope: "all",
@@ -3965,6 +3996,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   }
 
   const openBlankMenu = (x: number, y: number) => {
+    menuRequestRef.current += 1
     const inStack = Boolean(stackId)
     // Task 239: with a pending cut the blank-area 粘贴 moves the cut assets
     // (id "paste"); otherwise, when the main process reports importable
@@ -4008,6 +4040,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
   }
 
   const openGroupMenu = (name: string, x: number, y: number) => {
+    menuRequestRef.current += 1
     const names = (navigation?.groups || []).map(item => item.name)
     const entries = translateMenuEntries(buildGroupMenu({
       index: names.indexOf(name), groupCount: names.length, exporting: Boolean(exportingGroup),
@@ -4018,6 +4051,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
 
   // 任务 459：侧栏学习库行的右键菜单（重命名 / 删除）。
   const openLearningLibraryMenu = (id: string, name: string, x: number, y: number) => {
+    menuRequestRef.current += 1
     const entries = translateMenuEntries(buildLearningLibraryMenu(), 0)
     setMenu({ x, y, entries, target: "learning-library", selectionCount: 0, stackId: "", stackName: "", stackCount: 0, learningLibrary: { id, name } })
   }
@@ -4115,13 +4149,25 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
     return { count: navLibrary.count, groupCount: learnLibraryGroupCountRef.current }
   })()
   useEffect(() => {
+    setLearnFilter(null)
+    setLearnPendingCount(0)
+  }, [project, learningLibraryId])
+  useEffect(() => {
     if (!learningLibraryId) { setLearnLibraryNameEditing(false); return }
     let cancelled = false
     fetchLearningLibrary(project, learningLibraryId)
       .then(library => { if (!cancelled) learnLibraryGroupCountRef.current = library.groupCount || 0 })
       .catch(() => {})
+    fetchLearningState(project, learningLibraryId)
+      .then(data => { if (!cancelled) setLearnPendingCount(data.counts.pending || 0) })
+      .catch(() => {})
     return () => { cancelled = true }
-  }, [project, learningLibraryId, navigation])
+  }, [project, learningLibraryId, navigation, learnMetaRefreshTick])
+  const applyLearnFilter = (next: LearningFilter | null) => {
+    suppressLearnAutoFocusRef.current = true
+    setLearnFilter(next)
+    applySelection([], "")
+  }
   // 顶栏名字点一下就地改名：回车或失焦保存、Esc 取消；规则和失败提示同重命名。
   const commitLearnLibraryName = () => {
     setLearnLibraryNameEditing(false)
@@ -4932,7 +4978,28 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
                     onClick={() => { setLearnLibraryNameDraft(navLibrary?.name || ""); setLearnLibraryNameEditing(true) }}
                   >{name}</button>
                 )}
-                <span>{m > 0 ? `${fillNamed("{n} 张", { n })} · ${fillNamed("来自 {m} 个分组", { m })}` : fillNamed("{n} 张", { n })}</span>
+                <span>
+                  {m > 0 ? `${fillNamed("{n} 张", { n })} · ${fillNamed("来自 {m} 个分组", { m })}` : fillNamed("{n} 张", { n })}
+                  {learnPendingCount > 0 ? ` · ${fillNamed("{k} 张未学习", { k: learnPendingCount })}` : ""}
+                </span>
+                {learnFilter && (
+                  <span className="learn-filter-chip">
+                    <span>
+                      {learnFilter.kind === "entry"
+                        ? fillNamed("只看「{label}」的来源 · {count} 张", { label: learnFilter.label, count: learnFilter.count })
+                        : fillNamed("只看 {label} 学的 {count} 张", { label: learnFilter.label, count: learnFilter.count })}
+                    </span>
+                    <button
+                      type="button"
+                      className="learn-filter-clear"
+                      aria-label={tr("显示全部")}
+                      title={tr("显示全部")}
+                      onClick={() => applyLearnFilter(null)}
+                    >
+                      <Icon name="close" size={12} />
+                    </button>
+                  </span>
+                )}
               </div>
             )
           })()}
@@ -5205,7 +5272,22 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
           {/* 「手册」页签是学习库面板；详情页签没图可看时只剩页签行。「手册」
           面板里的说明文字也兜住「点了详情但还没选图」的空档。 */}
           {LEARNING_LIBRARY_ENTRY && learningLibraryId && (learnTab === "guide" || !asset) ? (
-            <LearningLibraryPanel tr={tr} />
+            <LearningLibraryPanel
+              tr={tr}
+              fillNamed={fillNamed}
+              language={language}
+              project={project}
+              libraryId={learningLibraryId}
+              libraryName={learningLibraryNameFor(learningLibraryId)}
+              libraryCount={learnLibraryHeader?.count ?? 0}
+              refreshKey={learnSettingsRefreshKey}
+              activeFilter={learnFilter}
+              onShowFilter={applyLearnFilter}
+              onOpenAiSettings={() => { setSettingTab("AI"); setSettings(true) }}
+              onLearningChanged={() => setLearnMetaRefreshTick(k => k + 1)}
+              onPendingCount={setLearnPendingCount}
+              notify={notify}
+            />
           ) : asset ? (
           <>
           <InspectorDetails
@@ -5282,7 +5364,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             selectHistoryAsset={selectHistoryAsset}
             mutateRelation={mutateRelation}
             providerDisplayLabel={providerDisplayLabel}
-            onOpenCanvas={asset && canvasFromHistory(generationHistory, asset).nodes.length >= 2 ? () => {
+            onOpenCanvas={asset && versionCanvasOffered(generationHistory, asset, scope) ? () => {
               setCanvasSession((old) => old + 1)
               setCanvasOpen(true)
             } : undefined}

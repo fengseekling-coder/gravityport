@@ -7,6 +7,8 @@
 // stay empty. Esc leaves the fullscreen first; only a second Esc closes the
 // viewer. The fullscreen state is never remembered: a reopened viewer starts
 // windowed.
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "viewer-fullscreen";
 export const description = "全屏 collapses chrome -> viewer fills window and image grows -> arrows page inside fullscreen -> Esc exits fullscreen only, second Esc closes viewer -> 退出全屏 button restores -> English Full screen / Exit full screen -> zero OS fullscreen calls";
 
@@ -64,17 +66,7 @@ export async function run(ctx) {
 
 function fullscreenSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 15000) {
-      const deadline = Date.now() + timeoutMs;
-      let last = null;
-      while (Date.now() < deadline) {
-        try { last = check(); } catch (error) { last = String(error); }
-        if (last) return last;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label + ' | last=' + String(last));
-    }
+${PAGE_WAIT_SOURCE}
     // Fake desktop bridge, injected after load like the update flow: handlers
     // read desktopAPI() at call time, so this records every OS-fullscreen
     // request the UI makes. The feature must make none.

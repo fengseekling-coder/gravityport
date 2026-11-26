@@ -17,12 +17,10 @@ import test from "node:test";
 import { setImmediate } from "node:timers/promises";
 
 import {
-  createOptionsHarness,
   createProviderPolicyHarness,
   createProviderSitesHarness,
   FakeProviderImage,
   FakeProviderVideo,
-  identityProof,
   textNode,
 } from "./helpers/provider-sites-harness.mjs";
 
@@ -810,126 +808,4 @@ test("the image load event wakes the scan", async () => {
   harness.timers.fireTimeouts({ ms: 300 });
   await harness.flush();
   assert.equal(messagesOf(harness, "mosa.ingest").length, 1, "the load event leads to the scan that captures");
-});
-
-test("options page loads settings and defaults auto-capture off", async () => {
-  const harness = await createOptionsHarness({
-    settings: { mosaBaseUrl: "http://127.0.0.1:9", mosaToken: "saved-token", autoCapture: false },
-  });
-  assert.equal(harness.elements.mosaBaseUrl.value, "http://127.0.0.1:9");
-  assert.equal(harness.elements.mosaToken.value, "saved-token");
-  assert.equal(harness.elements.autoCapture.checked, false, "the stored off switch stays off in the checkbox");
-
-  const fallback = await createOptionsHarness({
-    runtimeError: true,
-    storageLocal: [["mosaBaseUrl", "http://localhost:8080"], ["autoCapture", true]],
-  });
-  assert.equal(fallback.elements.mosaBaseUrl.value, "http://localhost:8080", "with the background gone the page reads chrome.storage.local");
-  assert.equal(fallback.elements.autoCapture.checked, true, "a stored on switch is restored");
-  assert.ok(fallback.elements.status.textContent.includes("无法读取设置"), "the read failure is explained");
-  assert.ok(fallback.storage.localReads.length >= 1, "the fallback went through chrome.storage.local");
-});
-
-test("options save normalizes the local address and persists through chrome.storage.local", async () => {
-  const harness = await createOptionsHarness({
-    settings: { mosaBaseUrl: "http://127.0.0.1:9", mosaToken: "", autoCapture: false },
-  });
-  harness.elements.mosaBaseUrl.value = "http://127.0.0.1:43517/";
-  harness.elements.mosaToken.value = "tok-1";
-  harness.elements.autoCapture.checked = true;
-  await harness.click("save");
-  await harness.flush();
-  assert.deepEqual(JSON.parse(JSON.stringify(harness.storage.localWrites[0])), {
-    mosaBaseUrl: "http://127.0.0.1:43517",
-    mosaToken: "tok-1",
-    autoCapture: true,
-  });
-  assert.equal(harness.elements.status.textContent, "已保存。刷新已打开的支持网站后生效。");
-  assert.equal(harness.storage.local.get("mosaToken"), "tok-1", "the write landed in chrome.storage.local");
-
-  for (const [label, badUrl] of [
-    ["a non-local host", "https://example.com:1"],
-    ["a non-http protocol", "https://127.0.0.1:43517"],
-    ["embedded credentials", "http://user:pass@127.0.0.1:43517"],
-  ]) {
-    const rejecting = await createOptionsHarness({
-      settings: { mosaBaseUrl: "http://127.0.0.1:9", mosaToken: "", autoCapture: false },
-    });
-    rejecting.elements.mosaBaseUrl.value = badUrl;
-    await rejecting.click("save");
-    await rejecting.flush();
-    assert.equal(rejecting.storage.localWrites.length, 0, `${label} must not be written`);
-    assert.ok(rejecting.elements.status.textContent.includes("地址必须") || rejecting.elements.status.textContent.includes("地址无效"), `${label} is explained`);
-  }
-
-  const legacy = await createOptionsHarness({
-    settings: { mosaBaseUrl: "http://127.0.0.1:9", mosaToken: "", autoCapture: false },
-  });
-  legacy.elements.mosaBaseUrl.value = "http://127.0.0.1:43517";
-  legacy.elements.mosaToken.value = "mosa-web-capture-dev";
-  await legacy.click("save");
-  await legacy.flush();
-  assert.equal(legacy.storage.localWrites.length, 0, "the legacy development token is rejected");
-  assert.ok(legacy.elements.status.textContent.includes("已失效"), "the legacy token rejection is explained");
-});
-
-test("options connection test verifies the service identity before using the Token", async () => {
-  const baseUrl = "http://127.0.0.1:43517";
-  const identityHandler = (token) => async (url, init) => {
-    if (new URL(url).pathname === "/api/web-capture/identity") {
-      const { nonce } = JSON.parse(init.body);
-      return { ok: true, status: 200, json: async () => ({ proof: await identityProof(baseUrl, token, nonce) }) };
-    }
-    return undefined;
-  };
-
-  const happy = await createOptionsHarness({
-    settings: { mosaBaseUrl: baseUrl, mosaToken: "", autoCapture: false },
-    fetchHandler: async (url, init) => (await identityHandler("tok-1")(url, init))
-      ?? (new URL(url).pathname === "/api/ingest/web-capture"
-        ? { ok: false, status: 400, json: async () => ({ code: "WEB_CAPTURE_BAD_IMAGE" }) }
-        : undefined),
-  });
-  happy.elements.mosaToken.value = "tok-1";
-  await happy.click("test");
-  await happy.flush();
-  assert.equal(happy.elements.status.textContent, "连接测试通过。", "a verified identity plus the validation probe passes");
-  const probe = happy.fetchCalls.find((call) => call.url.includes("/api/ingest/web-capture"));
-  assert.equal(probe.init.headers.authorization, "Bearer tok-1", "the probe carries the real token path");
-  const identityIndex = happy.fetchCalls.findIndex((call) => call.url.includes("/api/web-capture/identity"));
-  const probeIndex = happy.fetchCalls.findIndex((call) => call.url.includes("/api/ingest/web-capture"));
-  assert.ok(identityIndex >= 0, "the identity challenge happens");
-  assert.ok(identityIndex < probeIndex, "identity first, token second");
-
-  const unauthorized = await createOptionsHarness({
-    settings: { mosaBaseUrl: baseUrl, mosaToken: "", autoCapture: false },
-    fetchHandler: async (url, init) => (await identityHandler("stale-token")(url, init))
-      ?? (new URL(url).pathname === "/api/ingest/web-capture"
-        ? { ok: false, status: 401, json: async () => ({ code: "WEB_CAPTURE_UNAUTHORIZED" }) }
-        : undefined),
-  });
-  unauthorized.elements.mosaToken.value = "stale-token";
-  await unauthorized.click("test");
-  await unauthorized.flush();
-  assert.ok(unauthorized.elements.status.textContent.includes("令牌（Token）与 GravityPort 不一致"), "a rejected token is reported without re-pairing");
-
-  const mismatch = await createOptionsHarness({
-    settings: { mosaBaseUrl: baseUrl, mosaToken: "", autoCapture: false },
-    fetchHandler: identityHandler("someone-elses-token"),
-  });
-  mismatch.elements.mosaToken.value = "tok-1";
-  await mismatch.click("test");
-  await mismatch.flush();
-  assert.ok(mismatch.elements.status.textContent.includes("连接到的不是你的 GravityPort"), "a wrong identity proof stops the token from being used");
-  assert.equal(mismatch.fetchCalls.some((call) => call.url.includes("/api/ingest/web-capture")), false, "the token is never sent to an unverified service");
-
-  const notMosa = await createOptionsHarness({
-    settings: { mosaBaseUrl: baseUrl, mosaToken: "", autoCapture: false },
-    fetchHandler: async (url) => (new URL(url).pathname === "/api/health"
-      ? { ok: true, status: 200, json: async () => ({ product: "someone-else", productVersion: "9.9.9" }) }
-      : undefined),
-  });
-  await notMosa.click("test");
-  await notMosa.flush();
-  assert.ok(notMosa.elements.status.textContent.includes("不是 GravityPort"), "a non-GravityPort service is named as such");
 });

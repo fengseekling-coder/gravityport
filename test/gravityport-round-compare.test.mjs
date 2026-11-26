@@ -257,6 +257,12 @@ describe("VersionCompare rendering (task 217)", () => {
     assert.equal(html, "");
   });
 
+  it("drops its own 版本对比 heading when the surrounding section already titles it (task 472)", () => {
+    const html = renderToStaticMarkup(createElement(VersionCompare, { ...props, heading: false }));
+    assert.doesNotMatch(html, /<h4>/);
+    assert.match(html, /class="version-compare-selectors"/);
+  });
+
   it("translates the fixed labels through the real i18n table", () => {
     const zh = renderToStaticMarkup(createElement(VersionCompare, props));
     assert.match(zh, /<h4>版本对比<\/h4>/);

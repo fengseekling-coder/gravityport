@@ -1,6 +1,8 @@
 // GravityPort React UI flow (320 返工 2):
 // 加载超过 320 张卡片（激活虚拟化窗口）后回到顶部收藏一张，断言 gallery-rows ≤ 1；
 // 随后再次滚动到底部，断言翻页机制正常恢复继续加载（loaded 数变多），证明守卫不会卡死。
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "live-sync-top-pagination";
 export const description = "load >320 cards (virtual window active) -> back to top -> favorite (gallery-rows <= 1) -> scroll down -> pagination continues";
 
@@ -46,16 +48,7 @@ export async function run(ctx) {
 
 function topPaginationSource(targetCardId) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
 
     const clientToken = () => sessionStorage.getItem('mosa.client-token') || '';
     const api = (path, method, body) => fetch(path, {

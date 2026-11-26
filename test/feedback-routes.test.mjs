@@ -52,6 +52,7 @@ async function startFeedbackRuntime(t) {
     generatedImagesDir: join(root, "generated-images"),
     codexImagesDir: join(root, "codex-images"),
     codexSessionsDir: join(root, "sessions"),
+    codexThreadHistoryDir: join(root, "codex-thread-history"),
     grokSessionsDir: join(root, "grok-sessions"),
     cowartCanvasDir: join(root, "cowart-data"),
     cowartRegistryPath: join(root, "state", "cowart-projects.json"),

@@ -1,6 +1,6 @@
 {
   "name": "mosa",
-  "version": "0.3.17",
+  "version": "0.3.18",
   "private": true,
   "license": "PolyForm-Shield-1.0.0",
   "type": "module",
@@ -94,6 +94,7 @@
     "qa:gallery:resize": "node scripts/qa-gallery-resize.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.12.0",
     "better-sqlite3": "^13.1.1",
     "sharp": "^0.35.4"
   },

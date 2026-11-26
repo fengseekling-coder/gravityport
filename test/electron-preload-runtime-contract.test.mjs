@@ -10,6 +10,7 @@ import { extname, isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { assertPackageLockMatchesManifest } from "./package-lock-contract.mjs";
 import { EXPECTED_PRELOAD_API_KEYS, EXPECTED_PRELOAD_INVOKE_COUNT } from "./helpers/desktop-preload-surface.mjs";
+import { isolatedSourceEnv } from "./helpers/isolated-sources.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const preloadPath = resolve(root, "desktop", "preload.cjs");
@@ -189,7 +190,8 @@ test("preload path, module format, security settings, and API surface are stable
   const manifest = JSON.parse(packageJson);
   // 任务 238 更新：删除 @huggingface/tokenizers 与 onnxruntime-node（本地视觉检索移除）。
   // 任务 392 更新：better-sqlite3 ^13.0.1→^13.1.1（上游 SQLite 3.53.3→3.54.1）。
-  assert.equal(sha256(JSON.stringify(manifest.dependencies)), "64d898a72172e592bc44290505da3ed61f41a32a8d39befbc125807288fdfd9a", "package.json dependencies were not changed by this phase");
+  // 任务 463：加新运行时依赖后登记的新哈希（392 惯例）。
+  assert.equal(sha256(JSON.stringify(manifest.dependencies)), "c6825533d618d0436eb4006c4f75a46d28cec3321ccf576db2e891083bf009b9", "package.json dependencies were not changed by this phase");
   // 任务 246 更新：forge 三包 7.11.2→8.0.1、typescript 5.4.5→5.9.3，显式加
   // @electron/asar 4.3.1 与 @electron/windows-sign 2.1.0（版本对齐 forge 8 实际安装）。
   // 10-29 Dependabot #317：smol-toml 1.8.0→1.9.0。
@@ -341,6 +343,7 @@ test("real Electron preload smoke (opt-in)", { skip: process.env.MOSA_ELECTRON_P
       MOSA_QA_RUN: "1",
       MOSA_DESKTOP_PORT: String(desktopPort),
       MOSA_DISABLE_BRIDGES: "cowart,cowartDiscovery,codex,grok",
+      ...isolatedSourceEnv(userDataDir),
       ELECTRON_ENABLE_LOGGING: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],

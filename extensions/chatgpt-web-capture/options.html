@@ -2,94 +2,555 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GravityPort 浏览器扩展设置</title>
     <style>
-      body {
-        --mosa-error: #b91c1c;
-        --mosa-success: #166534;
-        font: 14px/1.5 system-ui, -apple-system, sans-serif;
-        margin: 24px;
-        max-width: 560px;
-        color: #0f172a;
+      :root {
+        --ui-text: #292929;
+        --ui-secondary: #707070;
+        --ui-muted: #737373;
+        --ui-hover: #00000005;
+        --ui-selected: #e8e8e8;
+        --ui-inset: #00000004;
+        --ui-line: #0000000c;
+        --ui-panel: #fafafa;
+        --ui-raised: #ffffff;
+        --ui-accent: #009a1a;
+        --focus-ring: #009a1a;
+        --field-focus: #0000002e;
+        --ui-primary: #343434;
+        --ui-primary-text: #ffffff;
+        --ui-danger: #c45050;
+        --ui-wait: #b58a2a;
+        --switch-thumb-color: #ffffff;
+        --switch-thumb-shadow: 0 1px 3px #00000026;
+        --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+        --type-body: 14px;
+        --type-body-line: 22px;
+        --type-title: 16px;
+        --type-page: 20px;
+        --space-1: 4px;
+        --space-2: 8px;
+        --space-3: 12px;
+        --space-4: 16px;
+        --space-5: 20px;
+        --space-6: 24px;
+        --space-8: 32px;
+        --space-10: 40px;
+        --space-16: 64px;
+        --radius-control: 8px;
+        --radius-panel: 16px;
+        --ease-out: cubic-bezier(.22, 1, .36, 1);
+        --duration-control: 180ms;
+        --duration-spinner: 800ms;
+        color-scheme: light dark;
       }
-      label {
-        display: block;
-        font-weight: 600;
-        margin: 14px 0 6px;
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ui-text: #f1f1f1;
+          --ui-secondary: #b0b0b0;
+          --ui-muted: #909090;
+          --ui-hover: #ffffff08;
+          --ui-selected: #ffffff12;
+          --ui-inset: #ffffff06;
+          --ui-line: #ffffff0c;
+          --ui-panel: #242424;
+          --ui-raised: #2c2c2c;
+          --ui-accent: #39ff14;
+          --focus-ring: #39ff14;
+          --field-focus: #ffffff33;
+          --ui-primary: #e3e3e3;
+          --ui-primary-text: #292929;
+          --ui-danger: #ef9494;
+          --ui-wait: #e0b85a;
+        }
       }
-      input[type="text"],
-      input[type="url"],
-      input[type="password"] {
-        width: 100%;
+
+      * {
         box-sizing: border-box;
-        padding: 8px 10px;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
       }
-      input:focus-visible,
-      button:focus-visible {
-        outline: 2px solid #2424ff;
-        outline-offset: 2px;
+
+      [hidden] {
+        display: none !important;
       }
+
+      html,
+      body {
+        margin: 0;
+      }
+
+      body {
+        background: var(--ui-panel);
+        color: var(--ui-text);
+        font: 400 var(--type-body)/var(--type-body-line) var(--font-system);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      main {
+        max-width: 560px;
+        margin: 0 auto;
+        padding: var(--space-10) var(--space-6) var(--space-16);
+        display: grid;
+        gap: var(--space-6);
+      }
+
+      .brand {
+        font-size: var(--type-body);
+        line-height: var(--type-body-line);
+        font-weight: 600;
+        color: var(--ui-secondary);
+        text-align: center;
+      }
+
+      .hero {
+        background: var(--ui-raised);
+        border-radius: var(--radius-panel);
+        box-shadow: 0 0 0 1px var(--ui-line);
+        padding: var(--space-10) var(--space-8) var(--space-8);
+        display: grid;
+        justify-items: center;
+        text-align: center;
+        gap: var(--space-3);
+      }
+
+      .badge {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: var(--ui-muted);
+        background: var(--ui-inset);
+        box-shadow: inset 0 0 0 1px var(--ui-line);
+        margin-bottom: var(--space-2);
+      }
+
+      .hero[data-tone="ok"] .badge {
+        color: var(--ui-accent);
+      }
+
+      .hero[data-tone="bad"] .badge {
+        color: var(--ui-danger);
+      }
+
+      .hero[data-tone="wait"] .badge {
+        color: var(--ui-wait);
+      }
+
+      .badge-icon {
+        display: none;
+      }
+
+      .hero[data-state="connected"] .badge-icon-check,
+      .hero[data-state="pair"] .badge-icon-plug,
+      .hero[data-state="waiting"] .badge-icon-clock,
+      .hero[data-state="checking"] .badge-icon-search,
+      .hero[data-state="offline"] .badge-icon-search,
+      .hero[data-state="moved"] .badge-icon-alert,
+      .hero[data-state="reconnect"] .badge-icon-alert,
+      .hero[data-state="outdated"] .badge-icon-alert,
+      .hero[data-state="forbidden"] .badge-icon-alert,
+      .hero[data-state="not-gravityport"] .badge-icon-alert,
+      .hero[data-state="error"] .badge-icon-alert,
+      .hero[data-state="settings-error"] .badge-icon-alert {
+        display: block;
+      }
+
+      .hero h1 {
+        font-size: var(--type-page);
+        line-height: 28px;
+        font-weight: 600;
+        letter-spacing: -0.4px;
+      }
+
+      .hero p {
+        color: var(--ui-secondary);
+        max-width: 400px;
+      }
+
+      .hero .hero-note {
+        color: var(--ui-muted);
+        font-size: 12px;
+        line-height: 18px;
+        max-width: 400px;
+      }
+
+      .hero .cta {
+        margin-top: var(--space-3);
+        display: grid;
+        justify-items: center;
+        gap: var(--space-3);
+      }
+
+      .hero .cta:not(:has(> :not([hidden]))) {
+        display: none;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: var(--space-2);
+        height: 32px;
+        padding: 0 var(--space-4);
+        border: 0;
+        border-radius: var(--radius-control);
+        font-family: inherit;
+        font-size: var(--type-body);
+        font-weight: 500;
+        line-height: 1;
+        text-decoration: none;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background-color var(--duration-control) var(--ease-out), color var(--duration-control) var(--ease-out);
+      }
+
+      .btn-primary {
+        background: var(--ui-primary);
+        color: var(--ui-primary-text);
+      }
+
+      .btn-primary:hover:not(:disabled) {
+        filter: brightness(0.92);
+      }
+
+      .hero .cta .btn-primary {
+        min-width: 200px;
+        height: 40px;
+      }
+
+      .btn-neutral {
+        background: var(--ui-inset);
+        color: var(--ui-secondary);
+        box-shadow: inset 0 0 0 1px var(--ui-line);
+      }
+
+      .btn-neutral:hover:not(:disabled) {
+        background: var(--ui-selected);
+        color: var(--ui-text);
+      }
+
+      .btn-quiet {
+        background: transparent;
+        color: var(--ui-secondary);
+        padding: 0 var(--space-2);
+      }
+
+      .btn-quiet:hover:not(:disabled) {
+        background: transparent;
+        color: var(--ui-text);
+      }
+
+      .btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+        filter: none;
+      }
+
+      .btn[aria-busy="true"]::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 1.6px solid currentColor;
+        border-right-color: transparent;
+        flex: none;
+        animation: spin var(--duration-spinner) linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .link {
+        color: var(--ui-secondary);
+        font-size: 12px;
+        line-height: 18px;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        text-decoration-color: var(--ui-line);
+        transition: color var(--duration-control) var(--ease-out);
+      }
+
+      .link:hover {
+        color: var(--ui-text);
+      }
+
+      .btn:focus-visible,
+      .switch:focus-visible,
+      .link:focus-visible,
+      details > summary:focus-visible {
+        outline: 2px solid var(--focus-ring);
+        outline-offset: 3px;
+      }
+
+      .list {
+        background: var(--ui-raised);
+        border-radius: var(--radius-control);
+        box-shadow: 0 0 0 1px var(--ui-line);
+      }
+
+      .list > * + * {
+        border-top: 1px solid var(--ui-line);
+      }
+
       .row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: var(--space-4);
+        padding: var(--space-4) var(--space-5);
+        align-items: start;
+      }
+
+      .row strong {
+        font-weight: 500;
+      }
+
+      .row p {
+        color: var(--ui-secondary);
+        margin-top: var(--space-1);
+      }
+
+      .switch {
+        width: 36px;
+        height: 20px;
+        border-radius: 999px;
+        background: var(--ui-selected);
+        position: relative;
+        flex: none;
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+        transition: background-color var(--duration-control) var(--ease-out);
+      }
+
+      .switch::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--switch-thumb-color);
+        box-shadow: var(--switch-thumb-shadow);
+        transition: transform var(--duration-control) var(--ease-out);
+      }
+
+      .switch[aria-checked="true"] {
+        background: var(--ui-accent);
+      }
+
+      .switch[aria-checked="true"]::after {
+        transform: translateX(16px);
+      }
+
+      .field-status {
+        margin-top: var(--space-2);
+        font-size: 12px;
+        line-height: 18px;
+        color: var(--ui-secondary);
+      }
+
+      .field-status.is-error {
+        color: var(--ui-danger);
+      }
+
+      details > summary {
+        list-style: none;
+        cursor: pointer;
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin-top: 14px;
+        gap: var(--space-2);
+        padding: var(--space-4) var(--space-5);
+        border-radius: var(--radius-control);
       }
-      button {
-        margin-top: 18px;
-        padding: 8px 14px;
-        border: 0;
-        border-radius: 8px;
-        background: #111827;
-        color: white;
-        font-weight: 600;
-        cursor: pointer;
-        transition: filter 120ms ease;
+
+      details > summary::-webkit-details-marker {
+        display: none;
       }
-      #status {
-        margin-top: 12px;
-        color: #166534;
-        min-height: 1.2em;
+
+      details summary strong {
+        font-weight: 500;
       }
-      code {
-        background: #f1f5f9;
-        padding: 1px 5px;
-        border-radius: 4px;
+
+      details summary .muted {
+        color: var(--ui-muted);
+        font-size: 12px;
+        line-height: 18px;
       }
+
+      details summary .chev {
+        margin-left: auto;
+        display: inline-flex;
+        color: var(--ui-muted);
+        transition: transform var(--duration-control) var(--ease-out);
+      }
+
+      details[open] .chev {
+        transform: rotate(90deg);
+      }
+
+      .adv {
+        border-top: 1px solid var(--ui-line);
+        padding: var(--space-4) var(--space-5) var(--space-5);
+        display: grid;
+        gap: var(--space-4);
+      }
+
+      .field {
+        display: grid;
+        gap: var(--space-1);
+      }
+
+      .field label {
+        font-weight: 500;
+      }
+
+      .field input {
+        height: 32px;
+        padding: 0 var(--space-3);
+        border-radius: var(--radius-control);
+        border: 1px solid var(--ui-line);
+        background: var(--ui-raised);
+        color: var(--ui-text);
+        font: inherit;
+      }
+
+      .field input::placeholder {
+        color: var(--ui-muted);
+      }
+
+      .field input:focus,
+      .field input:focus-visible {
+        outline: none;
+        border-color: var(--field-focus);
+      }
+
+      .field small {
+        color: var(--ui-muted);
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      .adv-actions {
+        display: grid;
+        gap: var(--space-2);
+        justify-items: start;
+      }
+
+      .adv-actions .field-status {
+        margin-top: 0;
+      }
+
+      .foot {
+        color: var(--ui-muted);
+        font-size: 12px;
+        line-height: 18px;
+        text-align: center;
+        padding: 0 var(--space-6);
+      }
+
       @media (prefers-reduced-motion: reduce) {
-        button { transition: none; }
+        .btn,
+        .link,
+        .switch,
+        .switch::after,
+        .chev {
+          transition: none;
+        }
+        .btn[aria-busy="true"]::before {
+          animation: none;
+        }
       }
     </style>
   </head>
   <body>
-    <h1>GravityPort 浏览器扩展</h1>
-    <p>将 AI 生成的图片和视频连同提示词收录到本机 GravityPort。图片支持 ChatGPT、Gemini、Flow、Google AI Studio、即梦、Midjourney、Lovart；视频支持 Flow、Google AI Studio、即梦、Midjourney。</p>
-    <section style="padding:12px;border-radius:12px;background:#f8fafc;margin-bottom:16px">
-      <strong>收录方式</strong>
-      <p style="margin:6px 0;color:#475569">自动收录新生成的图片和视频，也可通过右键菜单手动保存。</p>
-    </section>
-    <p>扩展会自动连接本机的 GravityPort。以下地址和令牌（Token）仅用于诊断或高级设置。</p>
+    <main>
+      <div class="brand" data-i18n="pageTitle">GravityPort 浏览器扩展</div>
 
-    <label for="mosaBaseUrl">GravityPort 地址</label>
-    <input id="mosaBaseUrl" type="url" placeholder="http://127.0.0.1:43517" />
+      <section id="connection" class="hero" data-state="checking" data-tone="idle" role="status" aria-live="polite">
+        <span class="badge" aria-hidden="true">
+          <svg class="badge-icon badge-icon-check" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12.5l4.2 4.2L19 7" />
+          </svg>
+          <svg class="badge-icon badge-icon-plug" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 3v5M15 3v5M6.5 8h11v3.5a5.5 5.5 0 0 1-11 0zM12 17v4" />
+          </svg>
+          <svg class="badge-icon badge-icon-clock" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M12 7.5V12l3 2" />
+          </svg>
+          <svg class="badge-icon badge-icon-search" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="6" />
+            <path d="M20 20l-4.5-4.5" />
+          </svg>
+          <svg class="badge-icon badge-icon-alert" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3.5l9 16H3z" />
+            <path d="M12 10v4.5M12 17.2v.1" />
+          </svg>
+        </span>
+        <h1 id="connectionTitle">正在检查连接…</h1>
+        <p id="connectionDetail">正在查找本机的 GravityPort。</p>
+        <p id="connectionNote" class="hero-note" hidden></p>
+        <div class="cta">
+          <button id="connectionAction" type="button" class="btn btn-primary" hidden></button>
+          <a id="connectionLink" class="link" href="https://gravityport.azhuilab.com/#download" target="_blank" rel="noopener" hidden></a>
+          <button id="connectionQuiet" type="button" class="btn btn-quiet" hidden></button>
+        </div>
+      </section>
 
-    <label for="mosaToken">访问令牌（Token）</label>
-    <input id="mosaToken" type="password" autocomplete="off" placeholder="自动连接，无需填写" />
+      <div class="list">
+        <div class="row">
+          <div>
+            <strong id="autoCaptureLabel" data-i18n="autoCaptureLabel">自动收录</strong>
+            <p data-i18n="autoCaptureDesc">开启后，扩展只在支持的网站上读取与生成内容有关的页面数据，把图片、视频、提示词和来源发到本机的 GravityPort。默认关闭，不会上传到云端。也可以在网页上右键手动保存。</p>
+            <div id="autoCaptureStatus" class="field-status" role="status" aria-live="polite" hidden></div>
+          </div>
+          <button id="autoCapture" type="button" class="switch" role="switch" aria-checked="false" aria-labelledby="autoCaptureLabel"></button>
+        </div>
 
-    <div class="row">
-      <input id="autoCapture" type="checkbox" />
-      <label for="autoCapture" style="margin: 0; font-weight: 500">自动收录</label>
-    </div>
-    <p style="margin:8px 0 0;color:#475569;font-size:12px">
-      开启后，扩展仅在支持的网站上读取与生成内容相关的页面数据，并将图片、视频、提示词和来源发送到本机的 GravityPort。默认关闭，不会上传到云端。
-    </p>
+        <details id="advanced">
+          <summary>
+            <strong data-i18n="advancedTitle">高级</strong>
+            <span class="muted" data-i18n="advancedHint">手动指定地址和令牌，一般不需要改</span>
+            <span class="chev" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 6l6 6-6 6" />
+              </svg>
+            </span>
+          </summary>
+          <div class="adv">
+            <div class="field">
+              <label for="mosaBaseUrl" data-i18n="urlLabel">GravityPort 地址</label>
+              <input id="mosaBaseUrl" type="url" placeholder="http://127.0.0.1:43517" />
+              <small data-i18n="urlHint">连接时会自动查找并填写（端口 43517–43521），一般不用改。</small>
+            </div>
+            <div class="field">
+              <label for="mosaToken" data-i18n="tokenLabel">访问令牌（Token）</label>
+              <input id="mosaToken" type="password" autocomplete="off" />
+              <small data-i18n="tokenHint">连接后自动填写。</small>
+            </div>
+            <div class="adv-actions">
+              <button id="save" type="button" class="btn btn-neutral save" data-i18n="save">保存</button>
+              <div id="advancedStatus" class="field-status" role="status" aria-live="polite" hidden></div>
+            </div>
+          </div>
+        </details>
+      </div>
 
-    <button id="save" type="button">保存</button>
-    <button id="test" type="button" style="background: #334155; margin-left: 8px">测试连接</button>
-    <button id="repair" type="button" style="background: #334155; margin-left: 8px">重新配对</button>
-    <div id="status" role="status" aria-live="polite"></div>
+      <p class="foot" data-i18n="supportedSites">图片支持 ChatGPT、Gemini、Flow、Google AI Studio、即梦、Midjourney、Lovart；视频支持 Flow、Google AI Studio、即梦、Midjourney。</p>
+    </main>
 
     <script src="options.js" type="module"></script>
   </body>

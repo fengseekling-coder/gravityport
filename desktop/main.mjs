@@ -85,6 +85,7 @@ import { cleanupLegacyVisualData as cleanupLegacyVisualDataDir } from "./legacy-
 import { registerClipboardIpc } from "./ipc/clipboard.mjs";
 import { registerLibraryLocationIpc } from "./ipc/library-location.mjs";
 import { registerAiIpc } from "./ipc/ai.mjs";
+import { registerAiLearningIpc } from "./ipc/ai-learning.mjs";
 import { chooseAiEncryption, createAiCredentialStore } from "./ai/credential-store.mjs";
 import { createAiSettingsStore } from "./ai/settings-store.mjs";
 import { settlePendingOldLibraryCleanup } from "./library-relocation-cleanup.mjs";
@@ -784,6 +785,7 @@ function registerIPC() {
   registerUpdateIpc(deps);
   registerLibraryLocationIpc(deps);
   registerAiIpc(deps);
+  registerAiLearningIpc(deps);
 }
 
 function runAnonymousUsageReport() {

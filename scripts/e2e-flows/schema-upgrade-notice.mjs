@@ -17,8 +17,9 @@ import { createServer } from "node:net";
 import Database from "better-sqlite3";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
 import { createSqliteAssetStore } from "../../lib/sqlite-asset-store.mjs";
-import { reloadCdpAndWaitForApp, waitForCdpExpression } from "./_shared.mjs";
+import { connectCdp, reloadCdpAndWaitForApp, waitFor } from "./_cdp.mjs";
 
 export const name = "schema-upgrade-notice";
 export const description =
@@ -315,6 +316,7 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
   const logFile = join(userDataDir, "main.log");
   const healthFile = join(userDataDir, "health.json");
   const qaFlags = process.platform === "win32" ? ["--disable-gpu"] : [];
+  if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(userDataDir);
   const launched = await launchDesktopGui({
     platform: process.platform,
     rootDir: userDataDir,
@@ -350,7 +352,7 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
     // service ended up on. The launcher's own health-file mirror proved
     // unreliable under the e2e runner, so nothing depends on it here.
     cdp = await connectCdp(cdpPort, "http://127.0.0.1");
-    await waitForExpression(cdp, "Boolean(document.querySelector('.app'))", "app shell", 60000);
+    await waitFor(cdp, "Boolean(document.querySelector('.app'))", "app shell", 60000);
     if (language === "en") {
       // The language preference must be in place before the App mounts; the
       // dialog opens after the first screen, so a reload lands it in English.
@@ -358,13 +360,13 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
       await reloadCdpAndWaitForApp(cdp, { label: "app shell after reload" });
     }
     const titleWait = language === "en" ? "Library upgrade check failed" : "素材库升级检查未通过";
-    await waitForExpression(
+    await waitFor(
       cdp,
       `Boolean(Array.from(document.querySelectorAll('.delete-modal h3')).find((node) => node.textContent === ${JSON.stringify(titleWait)}))`,
       `dialog title (${language})`,
       30000,
     );
-    await waitForExpression(cdp, "document.querySelector('.app') && document.readyState === 'complete'", "window settled");
+    await waitFor(cdp, "document.querySelector('.app') && document.readyState === 'complete'", "window settled");
     const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
     if (!shot?.data) throw new Error(`Page.captureScreenshot returned no data for ${language}`);
     const filePath = join(shotDirFor(ctx), fileName);
@@ -420,71 +422,4 @@ function freePort() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find(
-          (entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix),
-        );
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await sleep(200);
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const eventHandlers = new Set();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve: resolveFn, reject: rejectFn } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) rejectFn(new Error(message.error.message));
-      else if (message.result?.exceptionDetails) {
-        rejectFn(new Error("evaluate failed: " + (message.result.exceptionDetails.exception?.description || message.result.exceptionDetails.text)));
-      } else resolveFn(message.result);
-      return;
-    }
-    if (message.method) for (const handler of eventHandlers) handler(message);
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    async evaluate(expression) {
-      const result = await this.send("Runtime.evaluate", { expression, returnByValue: true });
-      return result?.result?.value;
-    },
-    onEvent(handler) {
-      eventHandlers.add(handler);
-      return () => eventHandlers.delete(handler);
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
-}
-
-async function waitForExpression(cdp, expression, label, timeoutMs = 20000) {
-  await waitForCdpExpression(cdp, expression, label, { timeoutMs });
 }

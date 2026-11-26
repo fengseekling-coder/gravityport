@@ -1,13 +1,14 @@
-// GravityPort React UI flow, task 148: every block of the expanded 版本树
-// 「查看」 region renders thumbnail rows and no gen- generation id reaches the
-// screen. One 4-turn ChatGPT conversation seeded through the capture-plugin
-// turn-bindings endpoint; prompts and timestamps are tuned so the lineage
-// resolver naturally proposes exactly one candidate per child
-// (3←2 and 4←3 pass the 0.45 confidence bar: same conversation + immediately
-// previous + recent + modification prompt + same model = 0.69; the older
-// pairs lose the recency signal and land at 0.43).
+// GravityPort React UI flow, task 148 / 472:
+// Stage 1 (default on): 查看 enters VersionCanvas; no gen- id reaches the canvas,
+// candidate pairs (3←2 and 4←3 at 0.69 confidence) confirm and dismiss in the
+// canvas inspector, solid/suggested edge counts update, and clicking the upstream
+// thumbnail selects the upstream card on canvas.
+// Stage 2 (fallback "0"): sets localStorage "gravityport.dev.version-canvas"="0",
+// tests the legacy inline expanded list (add relation form with trashed filter,
+// edit relation type + 保存关系, window.confirm delete, version history rows &
+// compare), then removes the fallback key and verifies it is cleared to null.
 export const name = "version-view-rows";
-export const description = "查看 expand: no gen- ids -> candidate pair confirm -> tree jump -> candidate dismiss -> add relation from thumbnail rows -> relation edit/delete -> version history rows";
+export const description = 'VersionCanvas (default): no gen- ids -> candidate confirm/dismiss -> solid/suggested edges -> upstream thumb select; fallback "0": inline add/edit/delete relation -> version history rows';
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -85,19 +86,31 @@ export async function run(ctx) {
     }));
     for (const field of ["regionHasNoGenerationId", "sameConversationBlockGone", "candidatePairSrcs", "secondCandidatePairSrcs",
       "confidenceText", "confirmAddedRelation", "confirmedCardGone", "dismissedCardGone", "dismissedStatusPersisted",
-      "treeNodeCount", "treeNodeImages", "treeJumpTargetId", "currentRowFlipped"]) {
-      if (first?.[field] === undefined || first?.[field] === false || (field === "treeNodeCount" && first[field] !== 2)) {
+      "canvasNodeCount", "solidEdges", "suggestedEdges", "canvasJumpTargetId", "selectionFlipped", "returnedToGallery"]) {
+      if (first?.[field] === undefined || first?.[field] === false
+        || (field === "canvasNodeCount" && first[field] !== 4)
+        || (field === "solidEdges" && first[field] !== 1)
+        || (field === "suggestedEdges" && first[field] !== 0)) {
         throw new Error(`version-view-rows stage 1 failed at ${field}: ${JSON.stringify(first)}`);
       }
     }
 
     // The related-generation picker must hide trashed assets: trash #4 from
-    // the real API, then drive the picker in a fresh page.
+    // the real API, enable the "0" fallback switch, then drive the legacy
+    // inline picker in a fresh page.
     const trashed = await ctx.api(server.origin, "POST", "/api/assets/batch", {
       action: "trash", projectId: "default", assetIds: [roundsAssets[3].id],
     });
     if (!JSON.stringify(trashed).includes(`"${roundsAssets[3].id}"`)) {
       throw new Error(`trash batch did not confirm asset 4: ${JSON.stringify(trashed).slice(0, 200)}`);
+    }
+
+    const fallbackSet = await ctx.runInPage(server, `(() => {
+      localStorage.setItem('gravityport.dev.version-canvas', '0');
+      return localStorage.getItem('gravityport.dev.version-canvas');
+    })()`);
+    if (fallbackSet !== "0") {
+      throw new Error(`version-view-rows failed to set fallback switch "0": ${JSON.stringify(fallbackSet)}`);
     }
 
     const second = await ctx.runInPage(server, secondStageSource({
@@ -120,7 +133,12 @@ export async function run(ctx) {
     if (second.editorPairLines.join("|") !== "第 2 轮 → 第 3 轮|第 1 轮 → 第 3 轮") {
       throw new Error(`relation editor pair lines wrong: ${JSON.stringify(second.editorPairLines)}`);
     }
-    return { first, second };
+
+    const fallbackCleared = await ctx.runInPage(server, `(() => localStorage.getItem('gravityport.dev.version-canvas'))()`);
+    if (fallbackCleared !== null) {
+      throw new Error(`version-view-rows fallback key was not cleared: ${JSON.stringify(fallbackCleared)}`);
+    }
+    return { first, second, fallbackCleared };
   } finally {
     if (previousCaptureToken === undefined) delete process.env.MOSA_WEB_CAPTURE_TOKEN;
     else process.env.MOSA_WEB_CAPTURE_TOKEN = previousCaptureToken;
@@ -208,19 +226,33 @@ function firstStageSource(config) {
     window.__vviewAsset3 = config.asset3Id;
 
     await selectCard(config.asset3Id);
-    await openViewer();
+    await waitFor(() => treeHeading() && treeHeading().querySelector('.section-action'), '查看 action');
+    Array.from(treeHeading().querySelectorAll('.section-action')).find((b) => b.textContent.trim() === '查看').click();
+    await waitFor(() => document.querySelectorAll('.version-canvas .vc-node').length === 4, 'VersionCanvas mounts with 4 cards');
+    const canvasNodeCount = document.querySelectorAll('.version-canvas .vc-node').length;
 
-    // No generation id anywhere in the expanded region; the retired block is gone.
-    const regionHasNoGenerationId = await waitFor(noGenerationIds, '展开区不含 gen- 编号');
+    const noCanvasGenerationIds = () => {
+      const root = document.querySelector('.version-canvas');
+      if (!root) return false;
+      if (root.textContent.includes('gen-')) return false;
+      for (const el of root.querySelectorAll('[aria-label]')) {
+        if ((el.getAttribute('aria-label') || '').includes('gen-')) return false;
+      }
+      for (const el of root.querySelectorAll('[title]')) {
+        if ((el.getAttribute('title') || '').includes('gen-')) return false;
+      }
+      return true;
+    };
+
+    // No generation id anywhere in VersionCanvas; the retired block is gone.
+    const regionHasNoGenerationId = await waitFor(noCanvasGenerationIds, '画布不含 gen- 编号');
     const sameConversationBlockGone = !document.body.textContent.includes('同对话候选');
 
-    // Two natural candidates: 3←2 (the asset's own modification prompt) and
-    // 4←3 (surfaced because its upstream 3 is connected). Card order follows
-    // random event ids, so both cards are identified by their thumbnail pair.
+    // Two natural candidates in the canvas inspector: 3←2 and 4←3.
     const cards = await waitFor(() => {
-      const list = Array.from(region().querySelectorAll('.generation-candidate-card'));
+      const list = Array.from(document.querySelectorAll('.vc-inspector .generation-candidate-card'));
       return list.length === 2 ? list : null;
-    }, '两张建议关系卡');
+    }, '画布右栏两张建议关系卡');
     const [upstream, downstream, downstream4] = await Promise.all([
       assetJson(config.asset2Id), assetJson(config.asset3Id), assetJson(config.asset4Id),
     ]);
@@ -230,8 +262,7 @@ function firstStageSource(config) {
     if (!confirmCard || !dismissCard) throw new Error('候选卡配对不上: ' + JSON.stringify(cards.map(pairSrcs)));
     const candidatePairSrcs = true;
     const secondCandidatePairSrcs = true;
-    const confidenceText = Array.from(confirmCard.querySelectorAll(':scope > small'))
-      .map((el) => el.textContent).find((t) => t.includes('可信度')) || '';
+    const confidenceText = (confirmCard.querySelector('.vc-relation-confidence')?.textContent || '').trim();
     if (confidenceText !== '可信度 69%') throw new Error('候选可信度文本不符合打分预期: ' + confidenceText);
 
     // Confirming writes the relation and removes that candidate (the other
@@ -248,11 +279,8 @@ function firstStageSource(config) {
       return linked && !pairStillSuggested;
     }, '确认关系写入接口且该候选消失');
     const confirmAddedRelation = true;
-    // Re-read the assets on every poll: the snapshot above can predate the
-    // thumbnails (slow runners), and the re-rendered card then shows a
-    // thumbnail URL the snapshot never had.
     const confirmedCardGone = await waitFor(async () => {
-      const list = Array.from(region().querySelectorAll('.generation-candidate-card'));
+      const list = Array.from(document.querySelectorAll('.vc-inspector .generation-candidate-card'));
       if (list.length !== 1) return false;
       const srcs = pairSrcs(list[0]);
       const [fresh3, fresh4] = await Promise.all([assetJson(config.asset3Id), assetJson(config.asset4Id)]);
@@ -265,7 +293,7 @@ function firstStageSource(config) {
     const child4 = (stageForDismiss.events.find((e) => e.output_asset_id === config.asset4Id)
       || stageForDismiss.context.find((e) => e.output_asset_id === config.asset4Id) || {}).id || '';
     const freshDismissCard = await waitFor(() => {
-      const list = Array.from(region().querySelectorAll('.generation-candidate-card'));
+      const list = Array.from(document.querySelectorAll('.vc-inspector .generation-candidate-card'));
       return list.length === 1 ? list[0] : null;
     }, '只剩 4←3 候选卡');
     Array.from(freshDismissCard.querySelectorAll('button')).find((b) => b.textContent.trim() === '忽略建议').click();
@@ -273,7 +301,7 @@ function firstStageSource(config) {
       const stage = await relationRows(config.asset3Id);
       return !stage.candidates.some((c) => c.child_generation_id === child4);
     }, '忽略建议从接口候选列表消失');
-    const dismissedCardGone = await waitFor(() => !region().querySelector('.generation-candidate-card'), '忽略后候选卡全部消失');
+    const dismissedCardGone = await waitFor(() => !document.querySelector('.vc-inspector .generation-candidate-card'), '忽略后候选卡全部消失');
     const stageNow = await relationRows(config.asset3Id);
     const child4b = (stageNow.events.find((e) => e.output_asset_id === config.asset4Id)
       || stageNow.context.find((e) => e.output_asset_id === config.asset4Id) || {}).id || '';
@@ -285,27 +313,35 @@ function firstStageSource(config) {
     }).then((r) => r.json()).catch((e) => ({ error: String(e) }));
     const dismissedStatusPersisted = patched?.candidate?.status === 'dismissed';
 
-    // The tree now shows both nodes as thumbnail rows; clicking the upstream
-    // (non-current) node jumps to that image.
-    const treeRows = await waitFor(() => {
-      const rows = Array.from(region().querySelectorAll('.generation-tree-row'));
-      return rows.length === 2 && rows.every((row) => row.querySelector('i img')) ? rows : null;
-    }, '生成关系树两行缩略图');
-    const treeNodeCount = treeRows.length;
-    const treeNodeImages = treeRows.every((row) => row.querySelector('i img'));
-    const selectedCard = () => document.querySelector('.asset-card.asset-selected')?.dataset.assetId || '';
-    treeRows[0].click();
-    await waitFor(() => selectedCard() === config.asset2Id, '点树节点跳到上游素材');
-    const treeJumpTargetId = selectedCard();
-    const currentRowFlipped = await waitFor(() => {
-      const rows = Array.from(region().querySelectorAll('.generation-tree-row'));
-      return rows.length === 2 && rows[0].classList.contains('is-current') && !rows[1].classList.contains('is-current');
-    }, '当前行高亮随跳转翻转');
+    // After confirm + dismiss: 1 solid edge, 0 suggested edges.
+    await waitFor(() => (
+      document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length === 1
+      && document.querySelectorAll('.vc-edges g.suggested').length === 0
+    ), '画布实线 1 条、虚线 0 条');
+    const solidEdges = document.querySelectorAll('.vc-edges g:not(.suggested):not(.vc-link-draft)').length;
+    const suggestedEdges = document.querySelectorAll('.vc-edges g.suggested').length;
+
+    // Clicking the upstream thumbnail on the confirmed relation card selects asset #2 on canvas.
+    const upstreamThumbBtn = await waitFor(() => {
+      const confirmedEditor = Array.from(document.querySelectorAll('.vc-inspector .generation-relation-editor:not(.generation-candidate-card)'))
+        .find((el) => el.querySelector('.relation-pair-row .relation-thumb-link'));
+      return confirmedEditor?.querySelector('.relation-pair-row .relation-thumb-link') || null;
+    }, '已确认关系卡上游缩略图按钮');
+    upstreamThumbBtn.click();
+    const selectionFlipped = await waitFor(() => (
+      Boolean(document.querySelector('.vc-node.is-selected[data-canvas-node="' + config.asset2Id + '"]'))
+      && !document.querySelector('.vc-node.is-selected[data-canvas-node="' + config.asset3Id + '"]')
+    ), '画布选中切换到第 2 张');
+    const canvasJumpTargetId = document.querySelector('.vc-node.is-selected')?.dataset.canvasNode || '';
+
+    (await waitFor(() => document.querySelector('.version-canvas button[aria-label="返回素材库"]'), '返回素材库按钮')).click();
+    await waitFor(() => !document.querySelector('.version-canvas') && Boolean(document.querySelector('.workspace')), '返回素材库');
+    const returnedToGallery = !document.querySelector('.version-canvas') && Boolean(document.querySelector('.workspace'));
 
     return {
       regionHasNoGenerationId, sameConversationBlockGone, candidatePairSrcs, secondCandidatePairSrcs, confidenceText,
       confirmAddedRelation, confirmedCardGone, dismissedCardGone, dismissedStatusPersisted,
-      treeNodeCount, treeNodeImages, treeJumpTargetId, currentRowFlipped,
+      canvasNodeCount, solidEdges, suggestedEdges, canvasJumpTargetId, selectionFlipped, returnedToGallery,
     };
   })()
   `;
@@ -315,11 +351,15 @@ function secondStageSource(config) {
   return `(async () => {
     const config = ${JSON.stringify(config)};
     ${HELPERS}
+    try {
+    const flagValue = localStorage.getItem('gravityport.dev.version-canvas');
+    if (flagValue !== '0') throw new Error('expected fallback key "0" in stage 2, got ' + JSON.stringify(flagValue));
     window.confirm = () => true;
     window.__vviewAsset3 = config.asset3Id;
 
     await selectCard(config.asset3Id);
     await openViewer();
+    if (document.querySelector('.version-canvas')) throw new Error('stage 2 under "0" must not mount VersionCanvas');
     await waitFor(noGenerationIds, '展开区不含 gen- 编号');
 
     // 添加生成关系: the anchor display, the picker rows and the trashed filter.
@@ -412,6 +452,9 @@ function secondStageSource(config) {
       choiceSelected, addCreatedRelation, editorPairLines, relationTypeEdited, relationDeleted,
       regionStillHasNoGenerationId, versionRows, versionRowImages, currentVersionMarked, compareImages,
     };
+    } finally {
+      localStorage.removeItem('gravityport.dev.version-canvas');
+    }
   })()
   `;
 }

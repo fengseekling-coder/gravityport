@@ -1743,6 +1743,7 @@ export default function VersionCanvas({
                     key={`rounds-${currentAssetId}`}
                     language={language}
                     captions
+                    heading={false}
                     fields={["尺寸", "用户指令", "提示词"]}
                     entries={roundSelection.options.map((row: ConversationRoundRow): VersionCompareEntry => {
                       const output = row.outputAsset

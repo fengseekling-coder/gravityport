@@ -59,4 +59,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   aiDeleteKey: (serviceId) => ipcRenderer.invoke("ai-delete-key", serviceId),
   aiTestConnection: (serviceId, purpose) => ipcRenderer.invoke("ai-test-connection", serviceId, purpose),
   aiUpdateSettings: (payload) => ipcRenderer.invoke("ai-update-settings", payload),
+  // 任务 463：学习后台六个通道。报价确认（quoteToken 用一次就作废）、开始 /
+  // 暂停 / 继续 / 放弃 / 状态；密钥与花费只在主进程。
+  aiLearningQuote: (payload) => ipcRenderer.invoke("ai-learning-quote", payload),
+  aiLearningStart: (payload) => ipcRenderer.invoke("ai-learning-start", payload),
+  aiLearningPause: (payload) => ipcRenderer.invoke("ai-learning-pause", payload),
+  aiLearningResume: (payload) => ipcRenderer.invoke("ai-learning-resume", payload),
+  aiLearningAbandon: (payload) => ipcRenderer.invoke("ai-learning-abandon", payload),
+  aiLearningStatus: (payload) => ipcRenderer.invoke("ai-learning-status", payload),
 });

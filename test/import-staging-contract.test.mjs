@@ -21,6 +21,7 @@ import {
 } from "../lib/import-staging.mjs";
 import { SUPPORTED_MEDIA_EXTENSIONS } from "../lib/asset-store.mjs";
 import { EXPECTED_PRELOAD_API_KEYS } from "./helpers/desktop-preload-surface.mjs";
+import { isolatedSourceOptions } from "./helpers/isolated-sources.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const ONE_PIXEL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+1CBR3wAAAABJRU5ErkJggg==", "base64");
@@ -272,6 +273,7 @@ async function startAuditRuntime(t, { userDataDir, withStagingRoot }) {
     assetsRoot: join(libraryDir, "assets"),
     generatedImagesDir: join(libraryDir, "imports"),
     disabledBridges: ["cowart", "cowartDiscovery", "codex", "grok"],
+    ...isolatedSourceOptions(userDataDir),
     importStagingRoot: withStagingRoot ? importStagingDir(userDataDir) : null,
   });
   t.after(async () => { await runtime.stop(); });

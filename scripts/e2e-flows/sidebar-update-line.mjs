@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
-import { prepareCdpReload, reloadCdpAndWaitForApp, waitForCdpExpression } from "./_shared.mjs";
+import { connectCdp, openCdpSession, prepareCdpReload, reloadCdpAndWaitForApp, waitFor } from "./_cdp.mjs";
 
 export const name = "sidebar-update-line";
 export const description =
@@ -100,7 +100,7 @@ export async function run(ctx) {
     await waitForHealthFile(healthFile);
     cdp = await connectCdp(cdpPort, `http://127.0.0.1:${port}`);
     main = await connectMainInspector(inspectorPort);
-    await waitForExpression(cdp, "Boolean(document.querySelector('.app'))", "app shell");
+    await waitFor(cdp, "Boolean(document.querySelector('.app'))", "app shell");
     // Renderer-side preferences start unset: the language defaults to zh.
     await cdp.evaluate(`localStorage.removeItem("gravityport.preferences")`);
     try {
@@ -120,7 +120,7 @@ export async function run(ctx) {
 
     // Round 1 (zh): the row exists, sits above 设置, is a 32px single
     // line with a 6px dot, and the sidebar gains no horizontal scrollbar.
-    await waitForExpression(cdp, "Boolean(document.querySelector('.update-ready-line'))", "update-ready line");
+    await waitFor(cdp, "Boolean(document.querySelector('.update-ready-line'))", "update-ready line");
     const zh = await cdp.evaluate(inspectLine());
     assertOk(zh.present, "update-ready line present");
     assertOk(zh.userTop !== null && zh.top < zh.userTop, `line above 设置 (top ${zh.top} < 设置 ${zh.userTop})`);
@@ -150,7 +150,7 @@ export async function run(ctx) {
     // Round 3 (click): install called exactly once, the row disables and reads
     // 正在更新…, and the cursor is no longer a pointer.
     await cdp.evaluate(`document.querySelector('.update-ready-line').click()`);
-    await waitForExpression(
+    await waitFor(
       cdp,
       `(() => { const line = document.querySelector('.update-ready-line'); return Boolean(line && line.disabled && line.querySelector('.update-ready-action').textContent.trim() === "正在更新…"); })()`,
       "pending state (disabled + 正在更新…)",
@@ -170,10 +170,10 @@ export async function run(ctx) {
     // restartPending set, so a fresh mount (reload) resets it first.
     await main.evaluate(`globalThis.__e2eUpdateLine.result = { status: "error", code: "UPDATE_FAILED_TWICE" }`);
     await reloadAndSettle(cdp);
-    await waitForExpression(cdp, "Boolean(document.querySelector('.update-ready-line'))", "update-ready line (dialogged result)");
+    await waitFor(cdp, "Boolean(document.querySelector('.update-ready-line'))", "update-ready line (dialogged result)");
     await installToastRecorder(cdp);
     await cdp.evaluate(`document.querySelector('.update-ready-line').click()`);
-    await waitForExpression(
+    await waitFor(
       cdp,
       `(() => { const line = document.querySelector('.update-ready-line'); return Boolean(line && !line.disabled); })()`,
       "row re-enabled after UPDATE_FAILED_TWICE",
@@ -185,7 +185,7 @@ export async function run(ctx) {
     await main.evaluate(`globalThis.__e2eUpdateLine.result = { status: "error", code: "MACOS_UPDATE_FAILED" }`);
     await cdp.evaluate(`window.__e2eUpdateToasts.length = 0`);
     await cdp.evaluate(`document.querySelector('.update-ready-line').click()`);
-    await waitForExpression(
+    await waitFor(
       cdp,
       `(() => { const line = document.querySelector('.update-ready-line'); return Boolean(line && !line.disabled); })()`,
       "row re-enabled after MACOS_UPDATE_FAILED",
@@ -333,7 +333,7 @@ async function installToastRecorder(cdp) {
 // 常规 page, and close the dialog with Escape — the same path a user takes.
 async function switchLanguage(cdp, target) {
   await cdp.evaluate(`document.querySelector('.user-button').click()`);
-  await waitForExpression(cdp, "Boolean(document.querySelector('.settings-modal'))", "settings open");
+  await waitFor(cdp, "Boolean(document.querySelector('.settings-modal'))", "settings open");
   const navTitle = target === "en" ? "常规" : "General";
   const buttonTitle = target === "en" ? "English" : "中文";
   await cdp.evaluate(`(() => {
@@ -341,7 +341,7 @@ async function switchLanguage(cdp, target) {
     if (!nav) throw new Error("general nav missing: " + Array.from(document.querySelectorAll('.settings-nav button')).map((b) => b.textContent.trim()).join("|"));
     nav.click();
   })()`);
-  await waitForExpression(
+  await waitFor(
     cdp,
     `Array.from(document.querySelectorAll('.settings-content .segmented button')).some((b) => b.textContent.trim() === ${JSON.stringify(buttonTitle)})`,
     "language segmented control",
@@ -349,7 +349,7 @@ async function switchLanguage(cdp, target) {
   await cdp.evaluate(`(() => {
     Array.from(document.querySelectorAll('.settings-content .segmented button')).find((b) => b.textContent.trim() === ${JSON.stringify(buttonTitle)}).click();
   })()`);
-  await waitForExpression(
+  await waitFor(
     cdp,
     target === "en"
       ? `Array.from(document.querySelectorAll('.settings-nav button')).some((b) => b.textContent.trim() === "General")`
@@ -357,7 +357,7 @@ async function switchLanguage(cdp, target) {
     `ui language switched to ${target}`,
   );
   await cdp.evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`);
-  await waitForExpression(cdp, `!document.querySelector('.settings-modal')`, "settings closed");
+  await waitFor(cdp, `!document.querySelector('.settings-modal')`, "settings closed");
 }
 
 // Persist the wanted appearance, reload, and wait until the app picked it up
@@ -365,9 +365,9 @@ async function switchLanguage(cdp, target) {
 async function shotWithAppearance(cdp, dir, fileName, appearance) {
   await setPreferences(cdp, { appearance });
   await reloadAndSettle(cdp);
-  await waitForExpression(cdp, "Boolean(document.querySelector('.update-ready-line'))", `update-ready line (${appearance})`);
+  await waitFor(cdp, "Boolean(document.querySelector('.update-ready-line'))", `update-ready line (${appearance})`);
   const wantsDark = appearance === "深色";
-  await waitForExpression(
+  await waitFor(
     cdp,
     wantsDark
       ? `Boolean(document.querySelector('.app') && document.querySelector('.app').classList.contains('dark'))`
@@ -391,10 +391,6 @@ async function setPreferences(cdp, overrides) {
 
 async function reloadAndSettle(cdp) {
   await reloadCdpAndWaitForApp(cdp, { label: "app shell after reload" });
-}
-
-async function waitForExpression(cdp, expression, label, timeoutMs = 20000) {
-  await waitForCdpExpression(cdp, expression, label, { timeoutMs });
 }
 
 function assertEqual(actual, expected, label) {
@@ -448,69 +444,6 @@ function waitForPaused(session, timeoutMs = 30_000) {
       resolve(message.params);
     });
   });
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find(
-          (entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix),
-        );
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await sleep(200);
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const eventHandlers = new Set();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve: resolveFn, reject: rejectFn } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) rejectFn(new Error(message.error.message));
-      else if (message.result?.exceptionDetails) {
-        rejectFn(new Error("evaluate failed: " + (message.result.exceptionDetails.exception?.description || message.result.exceptionDetails.text)));
-      } else resolveFn(message.result);
-      return;
-    }
-    if (message.method) for (const handler of eventHandlers) handler(message);
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    async evaluate(expression) {
-      const result = await this.send("Runtime.evaluate", { expression, returnByValue: true });
-      return result?.result?.value;
-    },
-    onEvent(handler) {
-      eventHandlers.add(handler);
-      return () => eventHandlers.delete(handler);
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
 }
 
 function freePort() {

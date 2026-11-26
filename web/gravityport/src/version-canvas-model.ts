@@ -7,18 +7,20 @@ import {
   type MosaGenerationHistory,
 } from "./mosa-api"
 
+// 任务 472：版本树画布正式开启。正式构建和开发模式都默认打开；
+// localStorage "gravityport.dev.version-canvas" 写 "0" 时退回旧的就地展开列表，
+// 只作发版后出问题时的应急开关（以后删）。读不到 localStorage 时按默认打开。
 function readVersionCanvasEntry(): boolean {
-  if (import.meta.env.DEV) return true
   try {
-    return typeof localStorage !== "undefined" && localStorage.getItem("gravityport.dev.version-canvas") === "1"
+    return !(typeof localStorage !== "undefined" && localStorage.getItem("gravityport.dev.version-canvas") === "0")
   } catch {
-    return false
+    return true
   }
 }
-
-// 任务 421：版本树画布入口开关；正式构建（DEV=false）默认关闭，
-// 仅在开发模式或写入 localStorage "gravityport.dev.version-canvas"="1" 时开启。
 export const VERSION_CANVAS_ENTRY: boolean = readVersionCanvasEntry()
+
+// Keep in sync with LOVART_BASE_IMAGE_RESOLVER in lib/generation-history.mjs.
+export const LOVART_BASE_IMAGE_RESOLVER = "lovart-base-image-v1"
 
 export type CanvasMark = {
   x: number
@@ -213,10 +215,14 @@ export function canvasFromHistory(
     })
   }
   for (const relation of [...(history?.relations || []), ...(history?.context_relations || [])]) {
+    const isLovartAutoBaseImage =
+      relation.verification_level === "observed" &&
+      relation.evidence?.resolver === LOVART_BASE_IMAGE_RESOLVER
     if (
       !["provider_verified", "user_confirmed"].includes(
         relation.verification_level || "",
-      )
+      ) &&
+      !isLovartAutoBaseImage
     )
       continue
     addEdge({
@@ -252,6 +258,18 @@ export function canvasFromHistory(
     })
   }
   return { title: current.name, nodes, edges }
+}
+
+/** 任务 472：右栏「版本树 · 查看」和图片右键「查看版本树」进画布的同一个条件：
+ *  开关开着、不在回收站（画布不画回收站里的图）、画布能排出两张以上。 */
+export function versionCanvasOffered(history: MosaGenerationHistory | null, asset: MosaAsset, scope: string): boolean {
+  return VERSION_CANVAS_ENTRY && scope !== "trash" && Boolean(history) && canvasFromHistory(history, asset).nodes.length >= 2
+}
+
+/** 任务 472：右键时能直接用右栏已取到的记录，前提是这份记录就是这张图的。
+ *  切换选中后、旧记录还没清掉的那一刻，记录属于上一张图，不能拿来判断。 */
+export function historyForAsset(history: MosaGenerationHistory | null, assetId: string): MosaGenerationHistory | null {
+  return history && history.asset_id === assetId ? history : null
 }
 
 export async function submitCanvasCandidateAction(

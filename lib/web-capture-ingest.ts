@@ -488,6 +488,17 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
   const providerGenerationCallId = String(input.providerGenerationCallId || input.provider_generation_call_id || "").trim();
   const providerResponseId = String(input.providerResponseId || input.provider_response_id || "").trim();
   const providerAssetId = String(input.providerAssetId || input.provider_asset_id || "").trim();
+  const rawReferenceProviderAssetIds = input.reference_provider_asset_ids ?? input.referenceProviderAssetIds;
+  const referenceProviderAssetIds = Array.isArray(rawReferenceProviderAssetIds)
+    ? new Set(
+      rawReferenceProviderAssetIds
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => item.slice(0, 160))
+        .slice(0, 8),
+    )
+    : null;
   const logicalOutputId = logicalCaptureKey(projectId, provider, input);
   const captureSessionId = conversationId ? `${provider}:${conversationId}` : "";
   const generationBatchId = captureSessionId && messageId ? `${captureSessionId}:${messageId}` : "";
@@ -554,6 +565,7 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
     userMessage: metadataUpgradeAllowed ? userMessage : "",
     model,
     provider,
+    onlyProviderAssetIds: referenceProviderAssetIds,
   });
   const onExistingObserved = async (asset: StoredAsset): Promise<StoredAsset> => {
     const withRequestPrompt = await maybeStoreRequestPrompt(store, asset, requestPrompt) || asset;
@@ -609,7 +621,7 @@ async function ingestWebCaptureUnlocked(options: { store: Store; referenceStore?
     tempFileName = tempName;
     await writeCaptureTempFile(tempPath, imageBytes);
     const captureAssetId = sanitizeAssetId(explicitAssetId || `${providerConfig.assetIdPrefix}-${contentHash.slice(0, 12)}`, providerConfig.assetIdPrefix);
-    const references = await turnReferences(store, projectAssets, referenceStore, projectId, { conversationId, generationContextId, capturedAt, selfAssetId: captureAssetId });
+    const references = await turnReferences(store, projectAssets, referenceStore, projectId, { conversationId, generationContextId, capturedAt, selfAssetId: captureAssetId, onlyProviderAssetIds: referenceProviderAssetIds });
     return {
       fileName: tempName,
       assetInput: {
@@ -1181,10 +1193,14 @@ async function findReferenceHardlinkSource(store: Store, projectId: string, cont
   }
 }
 
-async function turnReferences(store: Store, projectAssets: () => Promise<StoredAsset[]>, referenceStore: ReturnType<typeof createReferenceAttachmentStore>, projectId: string, { conversationId, generationContextId, capturedAt, selfAssetId }: { conversationId: string; generationContextId: string; capturedAt: string; selfAssetId: string }): Promise<Metadata[]> {
+async function turnReferences(store: Store, projectAssets: () => Promise<StoredAsset[]>, referenceStore: ReturnType<typeof createReferenceAttachmentStore>, projectId: string, { conversationId, generationContextId, capturedAt, selfAssetId, onlyProviderAssetIds = null }: { conversationId: string; generationContextId: string; capturedAt: string; selfAssetId: string; onlyProviderAssetIds?: Set<string> | null }): Promise<Metadata[]> {
   if (!conversationId && !generationContextId) return [];
   const now = createdAtTimestamp(capturedAt);
   if (now === null) return [];
+  const matchesAllowedProviderAssetId = (attachment: ReferenceAttachment, usage?: ReferenceAttachment["usages"][number]) => (
+    onlyProviderAssetIds == null
+    || onlyProviderAssetIds.has(String(usage?.provider_asset_id || attachment.provider_asset_id || "").trim())
+  );
 
   const attachments = await referenceStore.list(projectId);
   if (generationContextId) {
@@ -1193,7 +1209,7 @@ async function turnReferences(store: Store, projectAssets: () => Promise<StoredA
         attachment,
         usage: attachment.usages?.find((usage) => usage.generation_context_id === generationContextId),
       }))
-      .filter((entry): entry is { attachment: ReferenceAttachment; usage: ReferenceAttachment["usages"][number] } => Boolean(entry.usage))
+      .filter((entry): entry is { attachment: ReferenceAttachment; usage: ReferenceAttachment["usages"][number] } => Boolean(entry.usage) && matchesAllowedProviderAssetId(entry.attachment, entry.usage))
       .slice(0, MAX_TURN_REFERENCES)
       .map(({ attachment, usage }) => referenceMetadata(attachment, usage));
   }
@@ -1224,7 +1240,7 @@ async function turnReferences(store: Store, projectAssets: () => Promise<StoredA
     }])
       .filter((usage) => usage.conversation_id === conversationId)
       .map((usage) => ({ attachment, usage, at: createdAtTimestamp(usage.captured_at) })))
-    .filter((entry): entry is { attachment: ReferenceAttachment; usage: ReferenceAttachment["usages"][number]; at: number } => entry.at !== null && entry.at <= now && entry.at > previousGeneration)
+    .filter((entry): entry is { attachment: ReferenceAttachment; usage: ReferenceAttachment["usages"][number]; at: number } => entry.at !== null && entry.at <= now && entry.at > previousGeneration && matchesAllowedProviderAssetId(entry.attachment, entry.usage))
     .sort((left, right) => left.at - right.at)
     .slice(0, MAX_TURN_REFERENCES)
     .map(({ attachment, usage }) => referenceMetadata(attachment, usage));
@@ -1272,6 +1288,7 @@ async function mergeDuplicateGenerationRecipe(
     userMessage: string;
     model: string;
     provider: string;
+    onlyProviderAssetIds?: Set<string> | null;
   },
 ): Promise<{ asset: StoredAsset; merged: boolean }> {
   if (typeof store.updateMetadata !== "function") return { asset: existing, merged: false };
@@ -1280,6 +1297,7 @@ async function mergeDuplicateGenerationRecipe(
     generationContextId: input.generationContextId,
     capturedAt: input.capturedAt,
     selfAssetId: existing.id,
+    onlyProviderAssetIds: input.onlyProviderAssetIds ?? null,
   });
   const currentReferences = Array.isArray(existing.references) ? existing.references : [];
   // Duplicate/late observations are monotonic: an incomplete observation with

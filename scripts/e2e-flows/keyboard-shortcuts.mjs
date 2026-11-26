@@ -31,9 +31,14 @@ import { readFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { clickCenter, connectCdp, dispatchMouse, doubleClick, waitFor as waitForCdp } from "./_cdp.mjs";
 
 export const name = "keyboard-shortcuts";
 export const description = "real desktop shell: ⌘C copies selection files to the system clipboard (toast + paste dedupe), text selection keeps ⌘C on text, execCommand copy rides the web copy event, ⌘[/⌘] and mouse side buttons step history, viewer back closes only the viewer, Esc exits stacks, group dialogs trap Tab and cancel on Esc";
+// Task 461: the first four steps drive the REAL system clipboard (⌘C files,
+// ⌘V dedupe, ⌘C text, execCommand copy); the rest never touch it. Without
+// MOSA_E2E_SYSTEM_CLIPBOARD=1 exactly those four steps skip loudly.
+export const systemClipboard = "steps";
 
 const SEED_COUNT = 5;
 const GROUP_NAME = "e2e-shortcuts-group-384";
@@ -110,6 +115,10 @@ export async function run(ctx) {
         console.error(`[keyboard-shortcuts] FAIL: ${label}: ${error.message}`);
       }
     };
+    // Task 461: a step that drives the REAL system clipboard only runs when
+    // the runner granted it; otherwise it never keys or reads the clipboard
+    // and is skipped loudly (the verdict records the skip).
+    const systemStep = (label, fn) => (ctx.systemClipboard ? step(label, fn) : ctx.skipStep(label, "system-clipboard"));
     // The sidebar and grid update through the live library stream; every
     // trusted click waits for that stream to settle first (desktop-input
     // pattern — a re-render replacing a node mid-click loses the click).
@@ -127,33 +136,16 @@ export async function run(ctx) {
     };
 
     const activeNav = () => cdp.evaluate(`document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') || 'none'`);
-    const cardCenter = async (assetId) => {
-      const point = await cdp.evaluate(`(() => {
-        const el = document.querySelector('[data-asset-id="${assetId}"]');
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        if (r.width === 0) return null;
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      })()`);
-      if (!point) throw new Error(`card not on screen: ${assetId}`);
-      return point;
-    };
     // Right after a history step the group view is still laying out: a
     // double-click aimed at a card that then moves lands on nothing and the
     // viewer never opens (seen on macOS CI and locally, about 1 run in 3).
-    // Wait for the card to hold still, and re-aim if the viewer stays shut.
+    // doubleClick waits for the card to hold still (<= 1px), and we still
+    // re-aim if the viewer stays shut.
     const openViewerOn = async (assetId, label) => {
       for (let attempt = 1; ; attempt += 1) {
-        let previous = null;
-        for (let read = 0; read < 25; read += 1) {
-          const point = await cardCenter(assetId).catch(() => null);
-          if (point && previous && Math.abs(point.x - previous.x) < 1 && Math.abs(point.y - previous.y) < 1) break;
-          previous = point;
-          await sleep(120);
-        }
-        await dispatchDoubleClick(cdp, await cardCenter(assetId));
+        await doubleClick(cdp, `document.querySelector('[data-asset-id="${assetId}"]')`, { label: `card ${assetId}` });
         try {
-          await waitFor(cdp, `document.querySelector('.workspace')?.classList.contains('preview-open')`, label, 4000);
+          await waitForUi(cdp, `document.querySelector('.workspace')?.classList.contains('preview-open')`, label, 4000);
           return;
         } catch (error) {
           if (attempt >= 3) throw error;
@@ -173,14 +165,14 @@ export async function run(ctx) {
     };
 
     await waitForLibraryQuiet("first render");
-    await waitFor(cdp, `document.querySelectorAll('.asset-card').length >= 4`, "seeded grid", 20000);
+    await waitForUi(cdp, `document.querySelectorAll('.asset-card').length >= 4`, "seeded grid", 20000);
 
     // ── 1. ⌘C with two cards: file paths on the OS clipboard + toast ──
-    await step("⌘C on two cards copies their file paths with the 已复制 toast", async () => {
-      await dispatchClick(cdp, await cardCenter(seeded.ids[0]));
-      await waitFor(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 1`, "first card selected");
-      await dispatchClick(cdp, await cardCenter(seeded.ids[1]), { modifiers: 4 });
-      await waitFor(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 2`, "batch of two");
+    await systemStep("⌘C on two cards copies their file paths with the 已复制 toast", async () => {
+      await clickCenter(cdp, `document.querySelector('[data-asset-id="${seeded.ids[0]}"]')`, { label: `card ${seeded.ids[0]}` });
+      await waitForUi(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 1`, "first card selected");
+      await clickCenter(cdp, `document.querySelector('[data-asset-id="${seeded.ids[1]}"]')`, { modifiers: 4, label: `card ${seeded.ids[1]}` });
+      await waitForUi(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 2`, "batch of two");
       await dispatchCopyKey(cdp);
       await waitForToast("已复制 2 个素材");
       const expected = [seeded.paths[0], seeded.paths[1]].map((p) => realpathSync.native(p));
@@ -191,7 +183,7 @@ export async function run(ctx) {
     });
 
     // ── 2. ⌘V of those same library files: import dedupe, count unchanged ──
-    await step("⌘V pasting the copied library files dedupes with the 已在素材库中 toast", async () => {
+    await systemStep("⌘V pasting the copied library files dedupes with the 已在素材库中 toast", async () => {
       const before = await ctx.api(origin, "GET", "/api/assets?project=default&limit=1000");
       const beforeCount = (before.assets || []).length;
       await dispatchPasteCommand(cdp);
@@ -202,9 +194,9 @@ export async function run(ctx) {
     });
 
     // ── 3. a selected prompt range keeps ⌘C on the text path ──
-    await step("⌘C with a selected prompt range copies the text, not files", async () => {
-      await dispatchClick(cdp, await cardCenter(seeded.ids[2]));
-      await waitFor(cdp, `Boolean(document.querySelector('#asset-prompt'))`, "inspector prompt visible");
+    await systemStep("⌘C with a selected prompt range copies the text, not files", async () => {
+      await clickCenter(cdp, `document.querySelector('[data-asset-id="${seeded.ids[2]}"]')`, { label: `card ${seeded.ids[2]}` });
+      await waitForUi(cdp, `Boolean(document.querySelector('#asset-prompt'))`, "inspector prompt visible");
       const selected = await cdp.evaluate(`(() => {
         const p = document.querySelector('#asset-prompt');
         const range = document.createRange();
@@ -227,9 +219,9 @@ export async function run(ctx) {
     });
 
     // ── 4. the web copy event (menu 拷贝 role's path) copies the file ──
-    await step("document.execCommand('copy') with one card lands its file path", async () => {
-      await dispatchClick(cdp, await cardCenter(seeded.ids[0]));
-      await waitFor(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 1`, "one card selected");
+    await systemStep("document.execCommand('copy') with one card lands its file path", async () => {
+      await clickCenter(cdp, `document.querySelector('[data-asset-id="${seeded.ids[0]}"]')`, { label: `card ${seeded.ids[0]}` });
+      await waitForUi(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 1`, "one card selected");
       await cdp.send("Runtime.evaluate", {
         expression: `document.execCommand('copy')`,
         userGesture: true,
@@ -246,22 +238,22 @@ export async function run(ctx) {
     // ── 5. ⌘[ / ⌘] step nav history like the toolbar arrows ──
     await step("⌘[ / ⌘] walk back and forth between the group and 所有素材", async () => {
       await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="所有素材"]')`);
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "back on 所有素材");
+      await waitForUi(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "back on 所有素材");
       await clickCenter(cdp, `document.querySelector('.nav-row.group-row[aria-label="${GROUP_NAME}"]')`);
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '${GROUP_NAME}'`, "inside the group");
+      await waitForUi(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '${GROUP_NAME}'`, "inside the group");
       await dispatchNavBackKey(cdp);
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "⌘[ went back to 所有素材");
+      await waitForUi(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "⌘[ went back to 所有素材");
       await dispatchNavForwardKey(cdp);
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '${GROUP_NAME}'`, "⌘] came forward to the group");
+      await waitForUi(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '${GROUP_NAME}'`, "⌘] came forward to the group");
     });
 
     // ── 6. mouse side buttons do the same, with no page reload ──
     await step("mouse side buttons step history without a page reload", async () => {
       await cdp.evaluate(`(() => { window.__ksProbe = { marker: 384, href: location.href }; return window.__ksProbe.marker; })()`);
       await dispatchSideButton(cdp, "back");
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "side back to 所有素材");
+      await waitForUi(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "side back to 所有素材");
       await dispatchSideButton(cdp, "forward");
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '${GROUP_NAME}'`, "side forward to the group");
+      await waitForUi(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '${GROUP_NAME}'`, "side forward to the group");
       const probe = await cdp.evaluate(`(() => ({ marker: window.__ksProbe?.marker || null, href: location.href, same: window.__ksProbe?.href === location.href }))()`);
       if (probe.marker !== 384 || !probe.same) {
         throw new Error(`page reloaded or marker lost: ${JSON.stringify(probe)}`);
@@ -272,84 +264,68 @@ export async function run(ctx) {
     await step("⌘[ with the viewer open closes just the viewer (windowed, then fullscreen)", async () => {
       await openViewerOn(seeded.ids[2], "viewer open");
       await dispatchNavBackKey(cdp);
-      await waitFor(cdp, `!document.querySelector('.workspace')?.classList.contains('preview-open')`, "viewer closed");
+      await waitForUi(cdp, `!document.querySelector('.workspace')?.classList.contains('preview-open')`, "viewer closed");
       const stillGroup = await activeNav();
       if (stillGroup !== GROUP_NAME) throw new Error(`viewer-back left the group: ${stillGroup}`);
       // Fullscreen: the same single-step close, no extra history step.
       await openViewerOn(seeded.ids[2], "viewer open again");
       await clickCenter(cdp, `document.querySelector('.viewer-controls button[title="全屏"]')`);
-      await waitFor(cdp, `document.querySelector('.viewer-controls button[aria-pressed="true"]') !== null`, "viewer fullscreen");
+      await waitForUi(cdp, `document.querySelector('.viewer-controls button[aria-pressed="true"]') !== null`, "viewer fullscreen");
       await dispatchNavBackKey(cdp);
-      await waitFor(cdp, `!document.querySelector('.workspace')?.classList.contains('preview-open')`, "fullscreen viewer closed");
+      await waitForUi(cdp, `!document.querySelector('.workspace')?.classList.contains('preview-open')`, "fullscreen viewer closed");
       const stillGroup2 = await activeNav();
       if (stillGroup2 !== GROUP_NAME) throw new Error(`fullscreen viewer-back left the group: ${stillGroup2}`);
       // History still holds the group: the next ⌘[ is the real step back.
       await dispatchNavBackKey(cdp);
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "second ⌘[ steps history");
+      await waitForUi(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "second ⌘[ steps history");
       await dispatchNavForwardKey(cdp);
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '${GROUP_NAME}'`, "forward back into the group");
+      await waitForUi(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '${GROUP_NAME}'`, "forward back into the group");
     });
 
     // ── 8. Esc in a stack: no selection exits, a batch clears first ──
     await step("Esc in a stack exits without a selection, clears a batch first", async () => {
       await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="所有素材"]')`);
-      await waitFor(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "on 所有素材");
-      await waitFor(cdp, `[...document.querySelectorAll('.asset-card')].some((el) => el.querySelector('.stack-mark'))`, "stack card in the grid");
-      const findStackCard = () => cdp.evaluate(`(() => {
-        const card = [...document.querySelectorAll('.asset-card')].find((el) => el.querySelector('.stack-mark'));
-        if (!card) return null;
-        const r = card.getBoundingClientRect();
-        if (r.width === 0) return null;
-        return { id: card.getAttribute('data-asset-id'), x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      })()`);
-      const stackCard = await findStackCard();
-      if (!stackCard?.id) throw new Error("no stack card in the grid");
-      await dispatchDoubleClick(cdp, stackCard);
-      await waitFor(cdp, `Boolean(document.querySelector('.viewer-title')) && !document.querySelector('.workspace.preview-open')`, "inside the stack view");
+      await waitForUi(cdp, `document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "on 所有素材");
+      await waitForUi(cdp, `[...document.querySelectorAll('.asset-card')].some((el) => el.querySelector('.stack-mark'))`, "stack card in the grid");
+      const stackCardExpr = `[...document.querySelectorAll('.asset-card')].find((el) => el.querySelector('.stack-mark'))`;
+      await doubleClick(cdp, stackCardExpr, { label: "stack card in the grid" });
+      await waitForUi(cdp, `Boolean(document.querySelector('.viewer-title')) && !document.querySelector('.workspace.preview-open')`, "inside the stack view");
       // The view load seats the app's implicit focus on the first member; the
       // "no user selection" scenario needs that settled before Esc.
-      await waitFor(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 1`, "implicit focus seated");
+      await waitForUi(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 1`, "implicit focus seated");
       await sleep(400);
       await pressEscape(cdp);
-      await waitFor(cdp, `!document.querySelector('.viewer-title')`, "Esc left the stack");
+      await waitForUi(cdp, `!document.querySelector('.viewer-title')`, "Esc left the stack");
       const nav = await activeNav();
       if (nav !== "所有素材") throw new Error(`Esc exit landed on ${nav}`);
       // Re-enter (re-measure: the restored view may place the stack card
       // elsewhere); select two members; Esc clears the batch and stays; Esc leaves.
-      await waitFor(cdp, `[...document.querySelectorAll('.asset-card')].some((el) => el.querySelector('.stack-mark'))`, "stack card back in the grid");
-      const stackCard2 = await findStackCard();
-      if (!stackCard2?.id) throw new Error("stack card gone for re-entry");
-      await dispatchDoubleClick(cdp, stackCard2);
-      await waitFor(cdp, `Boolean(document.querySelector('.viewer-title')) && document.querySelectorAll('.asset-card.asset-selected').length === 1`, "back inside the stack, implicit focus seated");
+      await waitForUi(cdp, `[...document.querySelectorAll('.asset-card')].some((el) => el.querySelector('.stack-mark'))`, "stack card back in the grid");
+      await doubleClick(cdp, stackCardExpr, { label: "stack card for re-entry" });
+      await waitForUi(cdp, `Boolean(document.querySelector('.viewer-title')) && document.querySelectorAll('.asset-card.asset-selected').length === 1`, "back inside the stack, implicit focus seated");
       await sleep(400);
-      const members = await cdp.evaluate(`(() => {
-        const cards = [...document.querySelectorAll('.asset-card')].map((el) => {
-          const r = el.getBoundingClientRect();
-          return { id: el.getAttribute('data-asset-id'), x: r.x + r.width / 2, y: r.y + r.height / 2 };
-        }).filter((card) => card.id);
-        return cards;
-      })()`);
-      if (members.length < 2) throw new Error(`stack members visible: ${members.length}`);
-      await dispatchClick(cdp, members[0]);
-      await dispatchClick(cdp, members[1], { modifiers: 4 });
-      await waitFor(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 2`, "two members selected");
+      const memberIds = await cdp.evaluate(`[...document.querySelectorAll('.asset-card')].map((el) => el.getAttribute('data-asset-id')).filter(Boolean)`);
+      if (memberIds.length < 2) throw new Error(`stack members visible: ${memberIds.length}`);
+      await clickCenter(cdp, `document.querySelector('[data-asset-id="${memberIds[0]}"]')`, { label: `stack member ${memberIds[0]}` });
+      await clickCenter(cdp, `document.querySelector('[data-asset-id="${memberIds[1]}"]')`, { modifiers: 4, label: `stack member ${memberIds[1]}` });
+      await waitForUi(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 2`, "two members selected");
       await pressEscape(cdp);
-      await waitFor(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 0`, "Esc cleared the batch");
+      await waitForUi(cdp, `document.querySelectorAll('.asset-card.asset-selected').length === 0`, "Esc cleared the batch");
       if (!(await cdp.evaluate(`Boolean(document.querySelector('.viewer-title'))`))) {
         throw new Error("Esc with a batch left the stack; it must only clear the selection");
       }
       await pressEscape(cdp);
-      await waitFor(cdp, `!document.querySelector('.viewer-title')`, "second Esc left the stack");
+      await waitForUi(cdp, `!document.querySelector('.viewer-title')`, "second Esc left the stack");
     });
 
     // ── 9. group dialogs: focus lands, Tab stays in, Esc cancels ──
     await step("rename-group dialog traps Tab on its input and Esc cancels", async () => {
       const row = `document.querySelector('.nav-row.group-row[aria-label="${GROUP_NAME}"]')`;
-      await dispatchClick(cdp, await centerOf(cdp, row), { button: "right" });
-      await waitFor(cdp, `Boolean(document.querySelector('.context-menu'))`, "group menu open");
+      await clickCenter(cdp, row, { button: "right" });
+      await waitForUi(cdp, `Boolean(document.querySelector('.context-menu'))`, "group menu open");
       await clickCenter(cdp, `[...document.querySelectorAll('.context-menu .menu-row')].find((el) => el.textContent.includes('重命名分组'))`);
-      await waitFor(cdp, `Boolean(document.querySelector('.group-dialog'))`, "rename dialog open");
-      await waitFor(cdp, `document.activeElement?.tagName === 'INPUT' && !!document.activeElement?.closest('.group-dialog')`, "focus on the dialog input");
+      await waitForUi(cdp, `Boolean(document.querySelector('.group-dialog'))`, "rename dialog open");
+      await waitForUi(cdp, `document.activeElement?.tagName === 'INPUT' && !!document.activeElement?.closest('.group-dialog')`, "focus on the dialog input");
       const before = await cdp.evaluate(`document.querySelector('.group-dialog input')?.value || ''`);
       for (let i = 0; i < 4; i += 1) {
         await pressTab(cdp);
@@ -361,7 +337,7 @@ export async function run(ctx) {
       })()`);
       if (!inside) throw new Error("Tab left the rename dialog");
       await pressEscape(cdp);
-      await waitFor(cdp, `!document.querySelector('.group-dialog')`, "rename dialog closed");
+      await waitForUi(cdp, `!document.querySelector('.group-dialog')`, "rename dialog closed");
       const after = await cdp.evaluate(`document.querySelector('.nav-row.group-row[aria-label="${GROUP_NAME}"]') !== null`);
       if (!after) throw new Error("group row vanished after cancelling rename");
       if (before !== GROUP_NAME) throw new Error(`dialog draft was not the current name: ${JSON.stringify(before)}`);
@@ -369,13 +345,13 @@ export async function run(ctx) {
 
     await step("delete-group dialog lands on 取消 and Esc keeps the group", async () => {
       const row = `document.querySelector('.nav-row.group-row[aria-label="${GROUP_NAME}"]')`;
-      await dispatchClick(cdp, await centerOf(cdp, row), { button: "right" });
-      await waitFor(cdp, `Boolean(document.querySelector('.context-menu'))`, "group menu open");
+      await clickCenter(cdp, row, { button: "right" });
+      await waitForUi(cdp, `Boolean(document.querySelector('.context-menu'))`, "group menu open");
       await clickCenter(cdp, `[...document.querySelectorAll('.context-menu .menu-row')].find((el) => el.textContent.includes('删除分组'))`);
-      await waitFor(cdp, `Boolean(document.querySelector('.group-dialog'))`, "delete dialog open");
-      await waitFor(cdp, `document.activeElement?.textContent === '取消'`, "focus on 取消");
+      await waitForUi(cdp, `Boolean(document.querySelector('.group-dialog'))`, "delete dialog open");
+      await waitForUi(cdp, `document.activeElement?.textContent === '取消'`, "focus on 取消");
       await pressEscape(cdp);
-      await waitFor(cdp, `!document.querySelector('.group-dialog')`, "delete dialog closed");
+      await waitForUi(cdp, `!document.querySelector('.group-dialog')`, "delete dialog closed");
       const kept = await cdp.evaluate(`document.querySelector('.nav-row.group-row[aria-label="${GROUP_NAME}"]') !== null`);
       if (!kept) throw new Error("group was deleted by a cancelled dialog");
     });
@@ -524,9 +500,10 @@ async function dispatchSideButton(cdp, which) {
     return { x: Math.min(r.x + r.width / 2, innerWidth - 10), y: Math.min(r.y + r.height / 2, innerHeight - 10) };
   })()`);
   if (!center) throw new Error("no grid to click beside");
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: center.x, y: center.y, pointerType: "mouse" });
-  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: center.x, y: center.y, button: which, buttons, pointerType: "mouse" });
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: center.x, y: center.y, button: which, buttons: 0, pointerType: "mouse" });
+  const reason = `click mouse side button (${which}) over asset grid to test history navigation`;
+  await dispatchMouse(cdp, { type: "mouseMoved", x: center.x, y: center.y, pointerType: "mouse" }, { reason });
+  await dispatchMouse(cdp, { type: "mousePressed", x: center.x, y: center.y, button: which, buttons, pointerType: "mouse" }, { reason });
+  await dispatchMouse(cdp, { type: "mouseReleased", x: center.x, y: center.y, button: which, buttons: 0, pointerType: "mouse" }, { reason });
 }
 
 async function pressEscape(cdp) {
@@ -539,57 +516,17 @@ async function pressTab(cdp) {
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
 }
 
-async function centerOf(cdp, elementExpression) {
-  const point = await cdp.evaluate(`(() => {
-    const el = ${elementExpression};
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  })()`);
-  if (!point) throw new Error(`element not found: ${elementExpression}`);
-  return point;
-}
+const KEYBOARD_SHORTCUTS_SCENE = `(() => ({
+  active: document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') || 'none',
+  cards: document.querySelectorAll('.asset-card').length,
+  selected: document.querySelectorAll('.asset-card.asset-selected').length,
+  preview: Boolean(document.querySelector('.workspace.preview-open')),
+  stackTitle: Boolean(document.querySelector('.viewer-title')),
+  toast: document.querySelector('.toast')?.textContent || '',
+}))()`;
 
-async function clickCenter(cdp, elementExpression, { button = "left" } = {}) {
-  const point = await centerOf(cdp, elementExpression);
-  await dispatchClick(cdp, point.x, point.y, { button });
-}
-
-async function dispatchClick(cdp, xOrPoint, yOrOptions, options = {}) {
-  const isPoint = typeof xOrPoint === "object";
-  const x = isPoint ? xOrPoint.x : xOrPoint;
-  const y = isPoint ? xOrPoint.y : yOrOptions;
-  const { button = "left", modifiers = 0 } = isPoint ? (yOrOptions || {}) : options;
-  const buttons = button === "right" ? 2 : 1;
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, pointerType: "mouse" });
-  // clickCount is required: a press/release pair without it never synthesizes
-  // the DOM click event (the pair is silently dropped instead).
-  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button, buttons, modifiers, clickCount: 1, pointerType: "mouse" });
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button, buttons: 0, modifiers, clickCount: 1, pointerType: "mouse" });
-}
-
-async function dispatchDoubleClick(cdp, point) {
-  for (const clickCount of [1, 2]) {
-    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount, pointerType: "mouse" });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount, pointerType: "mouse" });
-  }
-}
-
-async function waitFor(cdp, expression, label, timeoutMs = 12000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await cdp.evaluate(`Boolean(${expression})`)) return;
-    await sleep(120);
-  }
-  const snapshot = await cdp.evaluate(`(() => ({
-    active: document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') || 'none',
-    cards: document.querySelectorAll('.asset-card').length,
-    selected: document.querySelectorAll('.asset-card.asset-selected').length,
-    preview: Boolean(document.querySelector('.workspace.preview-open')),
-    stackTitle: Boolean(document.querySelector('.viewer-title')),
-    toast: document.querySelector('.toast')?.textContent || '',
-  }))()`).catch(() => ({}));
-  throw new Error(`timeout waiting for ${label}; state=${JSON.stringify(snapshot)}`);
+async function waitForUi(cdp, expression, label, timeoutMs = 12000) {
+  await waitForCdp(cdp, expression, label, { timeoutMs, scene: KEYBOARD_SHORTCUTS_SCENE });
 }
 
 async function waitForHealthFile(filePath, timeoutMs = 60000) {
@@ -602,59 +539,6 @@ async function waitForHealthFile(filePath, timeoutMs = 60000) {
     await sleep(250);
   }
   throw new Error("desktop health file timeout");
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find((entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix));
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await sleep(200);
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve, reject } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) reject(new Error(message.error.message));
-      else if (message.result?.exceptionDetails) {
-        reject(new Error("evaluate failed: " + (message.result.exceptionDetails.exception?.description || message.result.exceptionDetails.text)));
-      } else resolve(message.result?.result?.value);
-    }
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    async evaluate(expression) {
-      return this.send("Runtime.evaluate", { expression, returnByValue: true });
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
 }
 
 function freePort() {

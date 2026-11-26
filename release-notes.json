@@ -6,6 +6,36 @@
   },
   "releases": [
     {
+      "version": "0.3.18",
+      "date": "2026-11-26",
+      "zh": {
+        "new": [
+          "新增版本树画布，集中展示一张图的各个版本及其生成关系，并支持连线、标注和导出。",
+          "自动将 Lovart 中基于已收录 Lovart 图片改出的新图接入原图的版本树。"
+        ],
+        "improved": [
+          "重新设计浏览器扩展设置页，集中展示与 GravityPort 的连接状态，并新增英文界面。",
+          "限定浏览器扩展仅在设置页点击「连接 GravityPort」时发起连接，GravityPort 不再自行弹出连接确认。"
+        ],
+        "fixed": [
+          "在 GravityPort 中允许连接后，浏览器扩展即完成连接，不再停留在未连接状态。"
+        ]
+      },
+      "en": {
+        "new": [
+          "Added a version tree canvas that shows every version of an image with its generation relationships, and supports linking, annotating, and exporting them.",
+          "Automatically linked Lovart edits of Lovart images already in the library to the original image's version tree."
+        ],
+        "improved": [
+          "Redesigned the browser extension settings page to surface the connection status with GravityPort, and added an English interface.",
+          "Limited the browser extension to requesting a connection only when Connect to GravityPort is clicked on its settings page, so GravityPort no longer shows the connection prompt on its own."
+        ],
+        "fixed": [
+          "Fixed the browser extension staying disconnected after the connection was approved in GravityPort."
+        ]
+      }
+    },
+    {
       "version": "0.3.17",
       "date": "2026-11-23",
       "zh": {

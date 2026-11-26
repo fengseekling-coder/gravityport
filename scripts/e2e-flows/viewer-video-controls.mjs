@@ -19,6 +19,8 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { connectCdp, dispatchMouse, doubleClick, hover } from "./_cdp.mjs";
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
 
 const VIDEO_CARD_LABEL = "portrait";
 const IMAGE_CARD_LABEL = "viewer-video-still";
@@ -115,17 +117,7 @@ function assertPageResult(result, label, { full }) {
 
 function pageSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      let last = null;
-      while (Date.now() < deadline) {
-        try { last = check(); } catch (error) { last = String(error); }
-        if (last) return last;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label + ' | last=' + String(last));
-    }
+${PAGE_WAIT_SOURCE}
     const cards = () => Array.from(document.querySelectorAll('.asset-card'));
     const cardFor = (part) => cards().find((c) => (c.getAttribute('aria-label') || '').includes(part));
     const controlsRect = () => document.querySelector('.viewer-controls').getBoundingClientRect();
@@ -257,11 +249,7 @@ async function runDesktopPhase(ctx) {
     const origin = `http://127.0.0.1:${port}`;
     cdp = await connectCdp(cdpPort, origin);
     await cdp.send("Page.enable");
-    const evaluate = async (expression) => {
-      const response = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-      if (response?.exceptionDetails) throw new Error("evaluate failed: " + (response.exceptionDetails.exception?.description || response.exceptionDetails.text));
-      return response?.result?.value;
-    };
+    const evaluate = (expression) => cdp.evaluate(expression);
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function waitForValue(expression, label, timeoutMs = 20000) {
       const deadline = Date.now() + timeoutMs;
@@ -279,35 +267,29 @@ async function runDesktopPhase(ctx) {
       await writeFile(path, Buffer.from(shot.data, "base64"));
       written.push(path);
     };
-    const pointOf = async (expression) => {
-      const point = await evaluate(`(() => {
-        const el = ${expression};
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      })()`);
-      if (!point) throw new Error(`element not found: ${expression}`);
-      return point;
+    const mouseAt = async (point, type, { clickCount = 1, buttons = type === "mousePressed" ? 1 : 0, reason } = {}) => {
+      await dispatchMouse(
+        cdp,
+        { type, x: point.x, y: point.y, button: "left", buttons, clickCount, pointerType: "mouse" },
+        { reason },
+      );
     };
-    const mouseButton = async (point, type, { clickCount = 1, buttons = type === "mousePressed" ? 1 : 0 } = {}) => {
-      await cdp.send("Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", buttons, clickCount, pointerType: "mouse" });
-    };
-    const drag = async (from, to) => {
-      await mouseButton(from, "mouseMoved");
-      await mouseButton(from, "mousePressed");
+    const drag = async (from, to, reason) => {
+      await mouseAt(from, "mouseMoved", { reason });
+      await mouseAt(from, "mousePressed", { reason });
       for (let step = 1; step <= 5; step += 1) {
-        await mouseButton({ x: from.x + (to.x - from.x) * step / 5, y: from.y + (to.y - from.y) * step / 5 }, "mouseMoved", { buttons: 1 });
+        await mouseAt({ x: from.x + (to.x - from.x) * step / 5, y: from.y + (to.y - from.y) * step / 5 }, "mouseMoved", { buttons: 1, reason });
         await sleep(40);
       }
-      await mouseButton(to, "mouseReleased");
+      await mouseAt(to, "mouseReleased", { reason });
       await sleep(150);
     };
-    const doubleClick = async (point) => {
-      await mouseButton(point, "mouseMoved");
-      await mouseButton(point, "mousePressed");
-      await mouseButton(point, "mouseReleased");
-      await mouseButton(point, "mousePressed", { clickCount: 2 });
-      await mouseButton(point, "mouseReleased", { clickCount: 2 });
+    const doubleClickAt = async (point, reason) => {
+      await mouseAt(point, "mouseMoved", { reason });
+      await mouseAt(point, "mousePressed", { reason });
+      await mouseAt(point, "mouseReleased", { reason });
+      await mouseAt(point, "mousePressed", { clickCount: 2, reason });
+      await mouseAt(point, "mouseReleased", { clickCount: 2, reason });
       await sleep(200);
     };
     const mediaBox = () => evaluate(`(() => {
@@ -320,10 +302,14 @@ async function runDesktopPhase(ctx) {
     await waitForValue(`document.querySelectorAll('.asset-card').length >= 2`, 'two seeded cards');
 
     // Open the video in the viewer with a trusted double-click on its card.
-    const videoCardPoint = await pointOf(`document.querySelectorAll('.asset-card').length === 2
-      ? (Array.from(document.querySelectorAll('.asset-card')).find((c) => (c.getAttribute('aria-label') || '').includes('${VIDEO_CARD_LABEL}')) || null)
-      : null`);
-    await doubleClick(videoCardPoint);
+    await doubleClick(
+      cdp,
+      `document.querySelectorAll('.asset-card').length === 2
+        ? (Array.from(document.querySelectorAll('.asset-card')).find((c) => (c.getAttribute('aria-label') || '').includes('${VIDEO_CARD_LABEL}')) || null)
+        : null`,
+      { label: "video card" },
+    );
+    await sleep(200);
     await waitForValue(`(() => { const v = document.querySelector('.image-viewer video.viewer-image'); return Boolean(v && v.readyState >= 1 && v.videoWidth > 0); })()`, 'viewer video metadata');
 
     // Hide the inspector first so the stage is wide enough on small CI
@@ -342,7 +328,7 @@ async function runDesktopPhase(ctx) {
     const before = await mediaBox();
     const stageBox = await evaluate(`(() => { const r = document.querySelector('.viewer-stage').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()`);
     const videoCenter = { x: before.x + before.width / 2, y: before.y + before.height / 2 };
-    await drag(videoCenter, { x: videoCenter.x + 50, y: videoCenter.y + 50 });
+    await drag(videoCenter, { x: videoCenter.x + 50, y: videoCenter.y + 50 }, "drag across zoomed video surface to verify stage does not capture/pan");
     const afterVideoDrag = await mediaBox();
     const videoDragKeptPosition = Math.abs(afterVideoDrag.x - before.x) <= 2 && Math.abs(afterVideoDrag.y - before.y) <= 2;
     const stageNeverGrabbed = await evaluate(`!document.querySelector('.viewer-stage').classList.contains('dragging')`);
@@ -357,14 +343,14 @@ async function runDesktopPhase(ctx) {
       y: stageBox.y + stageBox.height / 2,
     };
     const backgroundOutsideMedia = backgroundPoint.x < before.x - 4 || backgroundPoint.x > before.x + before.width + 4;
-    await drag(backgroundPoint, { x: backgroundPoint.x, y: backgroundPoint.y + 70 });
+    await drag(backgroundPoint, { x: backgroundPoint.x, y: backgroundPoint.y + 70 }, "drag on stage background outside media box to verify panning works");
     const afterStageDrag = await mediaBox();
     const stageDragPanned = Math.abs(afterStageDrag.y - afterVideoDrag.y) > 10;
 
     // Trusted double-click on the video: Chromium's native controls must not
     // enter any fullscreen, and the app zoom stays put.
     const zoomBefore = await evaluate(`document.querySelector('.viewer-controls output')?.textContent`);
-    await doubleClick(videoCenter);
+    await doubleClickAt(videoCenter, "double-click zoomed video coordinates to verify native controls do not enter fullscreen");
     const fullscreenElement = await evaluate(`document.fullscreenElement && document.fullscreenElement.nodeName || null`);
     const appFullscreenClass = await evaluate(`document.querySelector('.app')?.classList.contains('viewer-fullscreen') || false`);
     const zoomAfterDblclick = await evaluate(`document.querySelector('.viewer-controls output')?.textContent`);
@@ -399,9 +385,10 @@ async function runDesktopPhase(ctx) {
     let nativeFsButtonRendered = false;
     if (fsButtonCenter) {
       nativeFsButtonRendered = true;
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: fsButtonCenter.x, y: fsButtonCenter.y });
-      await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: fsButtonCenter.x, y: fsButtonCenter.y, button: "left", buttons: 1, clickCount: 1 });
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: fsButtonCenter.x, y: fsButtonCenter.y, button: "left", buttons: 0, clickCount: 1 });
+      const fsReason = "click native video fullscreen button inside UA shadow DOM via DOM.getBoxModel coordinates";
+      await dispatchMouse(cdp, { type: "mouseMoved", x: fsButtonCenter.x, y: fsButtonCenter.y }, { reason: fsReason });
+      await dispatchMouse(cdp, { type: "mousePressed", x: fsButtonCenter.x, y: fsButtonCenter.y, button: "left", buttons: 1, clickCount: 1 }, { reason: fsReason });
+      await dispatchMouse(cdp, { type: "mouseReleased", x: fsButtonCenter.x, y: fsButtonCenter.y, button: "left", buttons: 0, clickCount: 1 }, { reason: fsReason });
       await sleep(600);
       nativeFsButtonBackedOut = await evaluate(`document.fullscreenElement === null && !(document.querySelector('.app')?.classList.contains('viewer-fullscreen') || false)`);
     }
@@ -416,8 +403,7 @@ async function runDesktopPhase(ctx) {
       return true;
     })()`);
     await sleep(300);
-    const fitBox = await mediaBox();
-    await mouseButton({ x: fitBox.x + fitBox.width / 2, y: fitBox.y + fitBox.height / 2 }, "mouseMoved");
+    await hover(cdp, `document.querySelector('.image-viewer video.viewer-image')`, { label: "viewer video for controls hover" });
     await sleep(800);
     await capture("254-video.png");
     if (fitState !== true) desktopFailures.push("could not restore the fit state for the screenshot");
@@ -520,54 +506,6 @@ async function runDesktopPhase(ctx) {
     }
     await rm(guiRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 }).catch(() => {});
   }
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find((entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix));
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve, reject } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) reject(new Error(message.error.message));
-      else resolve(message.result);
-    }
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
 }
 
 async function waitForHealthFile(filePath, timeoutMs = 60000) {

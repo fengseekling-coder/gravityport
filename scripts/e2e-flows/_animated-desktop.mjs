@@ -10,6 +10,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { connectCdp, dispatchMouse, pointOf as cdpPointOf } from "./_cdp.mjs";
 
 export async function runDesktopShell(ctx, work) {
   const guiRoot = join(ctx.userDataDir, "..", "desktop-gui");
@@ -61,11 +62,7 @@ export async function runDesktopShell(ctx, work) {
     const origin = `http://127.0.0.1:${port}`;
     cdp = await connectCdp(cdpPort, origin);
     await cdp.send("Page.enable");
-    const evaluate = async (expression) => {
-      const response = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true, userGesture: true });
-      if (response?.exceptionDetails) throw new Error("evaluate failed: " + (response.exceptionDetails.exception?.description || response.exceptionDetails.text));
-      return response?.result?.value;
-    };
+    const evaluate = (expression) => cdp.evaluate(expression);
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const waitForValue = async (expression, label, timeoutMs = 30000) => {
       const deadline = Date.now() + timeoutMs;
@@ -83,24 +80,20 @@ export async function runDesktopShell(ctx, work) {
     };
     // Trusted pointer move (a real hover: fires pointerenter/pointerleave).
     const mouseMove = async (point) => {
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, pointerType: "mouse" });
+      await dispatchMouse(
+        cdp,
+        { type: "mouseMoved", x: point.x, y: point.y, pointerType: "mouse" },
+        { reason: "hover over card center or park pointer at neutral coordinates to test animated hover motion" },
+      );
     };
-    const pointOf = async (selector) => {
-      const point = await evaluate(`(() => {
-        const el = document.querySelector(${JSON.stringify(selector)});
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      })()`);
-      if (!point) throw new Error(`element not found: ${selector}`);
-      return point;
-    };
-    const doubleClick = async (point) => {
+    const elementPoint = (selector) => cdpPointOf(cdp, `document.querySelector(${JSON.stringify(selector)})`, { label: selector });
+    const doubleClickPoint = async (point) => {
+      const reason = "double-click validated card center to open animated GIF viewer";
       const press = { type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount: 1, pointerType: "mouse" };
-      await cdp.send("Input.dispatchMouseEvent", { ...press });
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 1, pointerType: "mouse" });
-      await cdp.send("Input.dispatchMouseEvent", { ...press, clickCount: 2 });
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 2, pointerType: "mouse" });
+      await dispatchMouse(cdp, { ...press }, { reason });
+      await dispatchMouse(cdp, { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 1, pointerType: "mouse" }, { reason });
+      await dispatchMouse(cdp, { ...press, clickCount: 2 }, { reason });
+      await dispatchMouse(cdp, { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 2, pointerType: "mouse" }, { reason });
       await sleep(250);
     };
     // Screenshot of a page-region only, always inside the isolated instance.
@@ -114,7 +107,7 @@ export async function runDesktopShell(ctx, work) {
       await writeFile(filePath, Buffer.from(shot.data, "base64"));
       return filePath;
     };
-    const result = await work({ origin, evaluate, waitForValue, sleep, mouseMove, pointOf, doubleClick, captureRect, cdp });
+    const result = await work({ origin, evaluate, waitForValue, sleep, mouseMove, pointOf: elementPoint, doubleClick: doubleClickPoint, captureRect, cdp });
     return result;
   } catch (error) {
     const log = await readFile(logFile, "utf8").catch(() => "");
@@ -144,54 +137,6 @@ async function waitForHealthFile(filePath, timeoutMs = 60000) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("desktop health file timeout");
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find((entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix));
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve, reject } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) reject(new Error(message.error.message));
-      else resolve(message.result);
-    }
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
 }
 
 function freePort() {

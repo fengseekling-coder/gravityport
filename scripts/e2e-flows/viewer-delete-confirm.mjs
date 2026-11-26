@@ -29,7 +29,9 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
-import { reloadCdpAndWaitForApp, waitForCdpExpression } from "./_shared.mjs";
+import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
+import { connectCdp, reloadCdpAndWaitForApp, waitForCdpExpression } from "./_cdp.mjs";
+import { PAGE_WAIT_SOURCE, pageWaitSource } from "./_shared.mjs";
 
 const DEVELOPMENT_ORIGIN = "chrome-extension://hjcildpmialbefmcdpdooenlojecjpli";
 const CAPTURE_TOKEN = "mosa_e2e_viewer_delete_capture_token";
@@ -111,16 +113,7 @@ async function startMcpProcess(libraryDir, rootDir) {
 // leave the dialog up (timeout round).
 function viewerDialogSource({ phase, assetId }) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const modal = () => document.querySelector('.authorization-modal');
     const lines = () => Array.from(modal()?.querySelectorAll('p') || []).map((node) => node.textContent.trim());
     const result = {};
@@ -228,16 +221,7 @@ function viewerDialogSource({ phase, assetId }) {
 // pairing dialog must show first; 允许连接 hands over to the deletion dialog.
 function queueOrderSource({ assetId }) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 30000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${pageWaitSource(30000)}
     await waitFor(() => document.querySelector('.app'), 'app shell');
     const card = await waitFor(() => document.querySelector('.asset-card[data-asset-id="${assetId}"]'), 'the card');
     card.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
@@ -323,69 +307,6 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find(
-          (entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix),
-        );
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await sleep(200);
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const eventHandlers = new Set();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve: resolveFn, reject: rejectFn } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) rejectFn(new Error(message.error.message));
-      else if (message.result?.exceptionDetails) {
-        rejectFn(new Error("evaluate failed: " + (message.result.exceptionDetails.exception?.description || message.result.exceptionDetails.text)));
-      } else resolveFn(message.result);
-      return;
-    }
-    if (message.method) for (const handler of eventHandlers) handler(message);
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    async evaluate(expression) {
-      const result = await this.send("Runtime.evaluate", { expression, returnByValue: true });
-      return result?.result?.value;
-    },
-    onEvent(handler) {
-      eventHandlers.add(handler);
-      return () => eventHandlers.delete(handler);
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
-}
-
 /**
  * One screenshot: a hidden desktop shell on the flow's library, the viewer
  * opened on the card via a real double click, the MCP ask filed through the
@@ -397,6 +318,7 @@ async function captureDialogShot({ ctx, theme, cardId, mcp, serverEnv }) {
   // shell residue ever lands in the repository.
   const userDataDir = join(ctx.libraryDir, "..", `385-shots-${theme}-user-data`);
   mkdirSync(userDataDir, { recursive: true });
+  if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(userDataDir);
   const port = await freePort();
   const cdpPort = await freePort();
   const pidFile = join(userDataDir, "pid.txt");

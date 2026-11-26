@@ -7,7 +7,7 @@ import { access, readFile, stat } from "node:fs/promises";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { DESKTOP_FUSES, resolveDesktopPackagingTarget } from "../desktop/forge.config.mjs";
+import { DESKTOP_FUSES, resolveDesktopPackagingTarget, shippedRuntimePackages } from "../desktop/forge.config.mjs";
 import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
 import { LICENSES_DIR_NAME, verifyPackagedLicenses } from "./third-party-licenses.mjs";
 
@@ -212,6 +212,17 @@ export async function verifyPackagedRuntime({
   const unpackedOnnxDir = join(unpackedRoot, "node_modules", "onnxruntime-node");
   const unpackedOnnx = await stat(unpackedOnnxDir).catch(() => null);
   if (unpackedOnnx) throw new Error(`Removed ONNX Runtime must stay out of ${releaseProductNames(product).macAppBundleName} unpacked resources.`);
+
+  // Every runtime package has to ship inside app.asar. A missing one stays
+  // invisible to the packaged smoke while out/ sits under the repository (Node's
+  // module lookup climbs into the repository's node_modules), but an installed
+  // app cannot even start.
+  const packagedPathSet = new Set(files.map(({ path }) => path));
+  const missingRuntimePackages = shippedRuntimePackages({ projectRoot })
+    .filter((name) => !packagedPathSet.has(`node_modules/${name}/package.json`));
+  if (missingRuntimePackages.length) {
+    throw new Error(`Runtime packages missing from app.asar: ${missingRuntimePackages.join(", ")}`);
+  }
 
   const missingMcpModules = missingMcpServerModules(
     files.map(({ path }) => path),

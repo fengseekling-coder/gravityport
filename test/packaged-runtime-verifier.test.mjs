@@ -50,11 +50,21 @@ async function writePackagedLicenses(asarPath) {
   return licensesDir;
 }
 
-async function createFixture(t, { platform, arch, packedNatives = false, omitMcpModule = "" }) {
+async function createFixture(t, { platform, arch, packedNatives = false, omitMcpModule = "", runtimeDependencies = {} }) {
   const projectRoot = await mkdtemp(join(tmpdir(), "mosa-package-verifier-"));
   deferTestPathRemoval(projectRoot, { recursive: true, force: true });
   const runtimeRoot = join(projectRoot, "runtime");
   const manifest = { name: "mosa", version: IDENTITY.productVersion };
+  // runtimeDependencies: { name: shipped } — every one is installed in the
+  // project; only the shipped ones are packed into app.asar.
+  if (Object.keys(runtimeDependencies).length) {
+    manifest.dependencies = Object.fromEntries(Object.keys(runtimeDependencies).map((name) => [name, "1.0.0"]));
+    for (const [name, shipped] of Object.entries(runtimeDependencies)) {
+      const packageJson = `${JSON.stringify({ name, version: "1.0.0" })}\n`;
+      await writeFixtureFile(projectRoot, `node_modules/${name}/package.json`, packageJson);
+      if (shipped) await writeFixtureFile(runtimeRoot, `node_modules/${name}/package.json`, packageJson);
+    }
+  }
   await writeFixtureFile(projectRoot, "web/gravityport/dist/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
   await writeFixtureFile(projectRoot, "package.json", `${JSON.stringify(manifest, null, 2)}\n`);
   await writeFixtureFile(runtimeRoot, "web/gravityport/dist/build-identity.json", `${JSON.stringify(IDENTITY, null, 2)}\n`);
@@ -112,6 +122,40 @@ test("packaged runtime verifier accepts a macOS package only when native binarie
   assert.equal(result.target, "darwin-arm64");
   assert.equal(result.productVersion, IDENTITY.productVersion);
   assert.equal(result.nativeBinaries.length, 3);
+});
+
+test("packaged runtime verifier refuses a package that leaves a runtime dependency out of app.asar", async (t) => {
+  // 463 shipped @anthropic-ai/sdk as a dependency the asar allowlist never let
+  // in; the smoke passed only because Node found the repository's copy.
+  const missing = await createFixture(t, {
+    platform: "darwin",
+    arch: "arm64",
+    runtimeDependencies: { "@fake-scope/runtime-sdk": false, "fake-helper": true },
+  });
+  await assert.rejects(
+    verifyPackagedRuntime({
+      projectRoot: missing.projectRoot,
+      platform: "darwin",
+      arch: "arm64",
+      readPackagedFuses: async () => matchingFuseWire(),
+      readPackagedBinaryArch: async () => "arm64\n",
+    }),
+    /Runtime packages missing from app\.asar: @fake-scope\/runtime-sdk$/,
+  );
+
+  const complete = await createFixture(t, {
+    platform: "darwin",
+    arch: "arm64",
+    runtimeDependencies: { "@fake-scope/runtime-sdk": true, "fake-helper": true },
+  });
+  const result = await verifyPackagedRuntime({
+    projectRoot: complete.projectRoot,
+    platform: "darwin",
+    arch: "arm64",
+    readPackagedFuses: async () => matchingFuseWire(),
+    readPackagedBinaryArch: async () => "arm64\n",
+  });
+  assert.equal(result.target, "darwin-arm64");
 });
 
 test("packaged runtime verifier verifies the Mach-O architecture of every darwin binary", async (t) => {

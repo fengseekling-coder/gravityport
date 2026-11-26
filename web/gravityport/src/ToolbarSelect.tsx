@@ -1,19 +1,20 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import Icon from "./Icon"
 
-type Option = { value: string; label: string }
+type Option = { value: string; label: string; hint?: string }
 export type ToolbarSelectGroup = { label: string; value: string; options: Option[]; onChange: (value: string) => void }
 
 // One trigger, one listbox. With `groups` the listbox holds several labelled
 // single-choice groups (e.g. asset type + sort) and the trigger shows `display`.
-export default function ToolbarSelect({ label, value, options, onChange, groups, display }: {
+export default function ToolbarSelect({ label, value, options, onChange, groups, display, disabled }: {
   label: string
   value?: string
   options?: Option[]
   onChange?: (value: string) => void
   groups?: ToolbarSelectGroup[]
-  display?: string
+  display?: ReactNode
+  disabled?: boolean
 }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
@@ -37,6 +38,9 @@ export default function ToolbarSelect({ label, value, options, onChange, groups,
     })
   }, [open, items.length, headed, sections.length])
   useEffect(() => {
+    if (disabled && open) setOpen(false)
+  }, [disabled, open])
+  useEffect(() => {
     if (!open) return
     const dismiss = (event: PointerEvent) => {
       if (!trigger.current?.contains(event.target as Node) && !popup.current?.contains(event.target as Node)) setOpen(false)
@@ -53,20 +57,23 @@ export default function ToolbarSelect({ label, value, options, onChange, groups,
   }, [open])
   const choose = (index: number) => {
     const item = items[index]
+    if (!item) return
     sections[item.groupIndex].onChange(item.option.value)
     setOpen(false)
     trigger.current?.focus()
   }
   const triggerText = display ?? items[selected]?.option.label ?? ""
   return <>
-    <button ref={trigger} className={`toolbar-select ${open ? "open" : ""}`} role="combobox" aria-label={label} aria-expanded={open} aria-haspopup="listbox" aria-controls={open ? id : undefined} aria-activedescendant={open ? `${id}-${active}` : undefined}
-      onClick={() => { setActive(selected); setOpen(!open) }}
+    <button ref={trigger} type="button" disabled={disabled} className={`toolbar-select ${open ? "open" : ""}`} role="combobox" aria-label={label} aria-expanded={open} aria-haspopup="listbox" aria-controls={open ? id : undefined} aria-activedescendant={open ? `${id}-${active}` : undefined}
+      onClick={() => { if (disabled) return; setActive(selected); setOpen(!open) }}
       onKeyDown={event => {
+        if (disabled) return
         if (["ArrowDown", "ArrowUp", "Home", "End", "Enter", " ", "Escape"].includes(event.key)) {
           event.preventDefault()
           event.stopPropagation()
           if (event.key === "Escape") { setOpen(false); return }
           if (!open) { setActive(selected); setOpen(true); return }
+          if (!items.length) return
           if (event.key === "ArrowDown") setActive(i => (i + 1) % items.length)
           else if (event.key === "ArrowUp") setActive(i => (i - 1 + items.length) % items.length)
           else if (event.key === "Home") setActive(0)
@@ -76,14 +83,14 @@ export default function ToolbarSelect({ label, value, options, onChange, groups,
       }}>
       <span>{triggerText}</span><Icon name="down" size={12} />
     </button>
-    {open && createPortal(<div ref={popup} id={id} className="toolbar-select-menu" role="listbox" aria-label={label} style={position}>
+    {open && !disabled && createPortal(<div ref={popup} id={id} className="toolbar-select-menu" role="listbox" aria-label={label} style={position}>
       {sections.map((group, groupIndex) => {
         const optionRows = items.map((item, index) => ({ ...item, index })).filter(item => item.groupIndex === groupIndex).map(({ option, index }) =>
           <div key={option.value} id={`${id}-${index}`} role="option" aria-selected={option.value === group.value} className={`toolbar-select-option ${active === index ? "active" : ""}`} onPointerMove={() => setActive(index)} onMouseDown={event => event.preventDefault()} onClick={() => choose(index)}>
-            <span className="option-check">{option.value === group.value && <Icon name="check" size={12} />}</span><span>{option.label}</span>
+            <span className="option-check">{option.value === group.value && <Icon name="check" size={12} />}</span><span>{option.label}</span>{option.hint ? <span className="option-hint">{option.hint}</span> : null}
           </div>)
         if (!headed) return optionRows
-        return <div key={group.label} role="group" aria-labelledby={`${id}-g${groupIndex}`} className="toolbar-select-group">
+        return <div key={`${groupIndex}-${group.label}`} role="group" aria-labelledby={`${id}-g${groupIndex}`} className="toolbar-select-group">
           <div id={`${id}-g${groupIndex}`} className="toolbar-select-heading" role="presentation">{group.label}</div>
           {optionRows}
         </div>

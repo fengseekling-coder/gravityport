@@ -1,103 +1,100 @@
 /**
- * Settings → AI panel (task 458). Self-contained like FeedbackPanel: it loads
- * its own state over the ai-* IPC channels (desktopAPI() itself, no props from
- * App.tsx) and degrades to a single card in a plain browser. Keys never come
- * back to the renderer — only the last 4 digits; the password input is cleared
- * the moment a save succeeds, and the draft never touches localStorage, URLs,
- * toasts, or the console.
+ * Settings → AI panel (task 458 / 468). Self-contained like FeedbackPanel: it
+ * loads its own state over the ai-* IPC channels (desktopAPI() itself, no props
+ * from App.tsx) and degrades to a single card in a plain browser. Keys never
+ * come back to the renderer — only the last 4 digits; the password input is
+ * cleared the moment a save succeeds, and drafts never touch localStorage,
+ * URLs, toasts, or the console.
  */
 
-import { useCallback, useEffect, useState } from "react"
-import ToolbarSelect from "./ToolbarSelect"
-import { desktopAPI, type AiServiceState, type AiSlotState, type AiState } from "./desktop"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
+import ToolbarSelect, { type ToolbarSelectGroup } from "./ToolbarSelect"
+import { desktopAPI, type AiPriceLine, type AiServiceState, type AiState } from "./desktop"
+import {
+  ADD_CUSTOM_SERVICE_VALUE,
+  addableServices,
+  connectedServiceIds,
+  formatMonthUsd,
+  isCustomService,
+  isOllamaService,
+  modelGroups,
+  priceWithoutMonth,
+  testPurposeFor,
+  rowNoteFor,
+  slotChoiceFor,
+  visibleServiceIds,
+  type ModelRole,
+  type SlotId,
+  type UseRowNote,
+} from "./ai-settings-model"
 import { handleExternalLinkClick } from "./external-link.js"
 import { translate, type Language } from "./i18n.js"
 import "./ai-settings.css"
-type SlotId = "analysis" | "brain" | "image"
-// A slot's model field role: the analysis card holds two fields with separate
-// model lists (逐张分析 uses "analysis", 汇总手册 uses "summary").
-type ModelRole = "analysis" | "summary" | "brain" | "image"
-
-const ADD_SERVICE_VALUE = "__add__"
-
-const SLOT_CARDS: { slot: SlotId; title: string; desc: string }[] = [
-  { slot: "analysis", title: "分析和汇总", desc: "学习时逐张看图，再把要点汇总成设计手册。" },
-  { slot: "brain", title: "对话大脑", desc: "在对话中理解需求、写提示词。" },
-  { slot: "image", title: "出图", desc: "按提示词和参考图出图。" },
-]
-
-function isCustomService(service: AiServiceState): boolean {
-  return service.id.startsWith("custom-")
-}
-
-function isOllamaService(service: AiServiceState): boolean {
-  return service.id === "ollama" || service.format === "ollama"
-}
-
-// Presets draw from their own family; Claude-format custom services draw from
-// the Claude table, everything else custom from OpenAI's (同一份规则在
-// lib/ai/model-catalog.mjs，主进程校验用那份，这里只为选默认模型)。
-function serviceFamily(service: AiServiceState): string {
-  if (!isCustomService(service)) return service.id
-  return service.format === "claude" ? "claude" : "openai"
-}
-
-// 出图块只列 OpenAI、Gemini 和 OpenAI 格式的自定义服务；Ollama 只在分析和大脑。
-function serviceAllowedInSlot(service: AiServiceState, slot: SlotId): boolean {
-  if (slot !== "image") return true
-  const family = serviceFamily(service)
-  return family === "openai" || family === "gemini"
-}
-
-function fillTemplate(template: string, params: Record<string, string> | undefined): string {
-  return template.replace(/\{(\w+)\}/g, (_match, name) => params?.[name] ?? "")
-}
-
-function defaultModelFor(state: AiState, service: AiServiceState, role: ModelRole): string {
-  const family = serviceFamily(service)
-  const model = state.catalog.models.find(
-    (entry) => entry.service === family && entry.defaults.includes(role),
-  )
-  return model ? model.id : ""
-}
 
 type AddFormState = { label: string; format: "openai" | "claude"; baseUrl: string }
 
 const EMPTY_ADD_FORM: AddFormState = { label: "", format: "openai", baseUrl: "" }
+
+function fillTemplate(template: string, params: Record<string, string> | undefined): string {
+  return template.replace(/\{(\w+)\}/g, (_match, name) => params?.[name] ?? "")
+}
 
 export function AiSettingsPanel({ language }: { language: Language }) {
   const tr = useCallback((text: string) => translate(text, language), [language])
   const api = desktopAPI()
   const [state, setState] = useState<AiState | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
+  const [opened, setOpened] = useState<string[]>([])
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({})
   const [keyEditing, setKeyEditing] = useState<Record<string, boolean>>({})
   const [keyError, setKeyError] = useState<Record<string, string>>({})
   const [savingFor, setSavingFor] = useState<string | null>(null)
-  const [testingFor, setTestingFor] = useState<string | null>(null)
-  const [addFormFor, setAddFormFor] = useState<SlotId | null>(null)
+  const [testingFor, setTestingFor] = useState<Record<string, boolean>>({})
+  const [addFormOpen, setAddFormOpen] = useState(false)
   const [addForm, setAddForm] = useState<AddFormState>(EMPTY_ADD_FORM)
   const [addFormError, setAddFormError] = useState("")
   const [slotError, setSlotError] = useState("")
+  const [focusRequest, setFocusRequest] = useState<{ serviceId: string; seq: number } | null>(null)
 
-  const refresh = useCallback(async () => {
+  const keyInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const serviceRowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const focusSeqRef = useRef(0)
+
+  const requestKeyFocus = useCallback((serviceId: string) => {
+    focusSeqRef.current += 1
+    setFocusRequest({ serviceId, seq: focusSeqRef.current })
+  }, [])
+
+  const refresh = useCallback(async (): Promise<AiState | null> => {
     const aiGetState = api?.aiGetState
     if (typeof aiGetState !== "function") {
       setLoadFailed(true)
-      return
+      return null
     }
     try {
       const next = await aiGetState.call(api)
       setState(next)
       setLoadFailed(false)
+      return next
     } catch {
       setLoadFailed(true)
+      return null
     }
   }, [api])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (!focusRequest) return
+    const input = keyInputRefs.current[focusRequest.serviceId]
+    const row = serviceRowRefs.current[focusRequest.serviceId]
+    if (!input && !row) return
+    row?.scrollIntoView({ block: "nearest" })
+    input?.focus()
+    setFocusRequest(null)
+  }, [focusRequest, state, opened, keyEditing])
 
   if (!api) {
     return (
@@ -108,6 +105,24 @@ export function AiSettingsPanel({ language }: { language: Language }) {
   }
 
   const available = state?.available !== false
+
+  const displayServiceName = (service: Pick<AiServiceState, "id" | "label" | "format">): string =>
+    isOllamaService(service as AiServiceState) ? tr(service.label) : service.label
+
+  const displayAddableLabel = (value: string, label: string): string =>
+    value === ADD_CUSTOM_SERVICE_VALUE || value === "ollama" ? tr(label) : label
+
+  const runTest = async (serviceId: string, purpose: "text" | "image") => {
+    const aiTestConnection = api?.aiTestConnection
+    if (typeof aiTestConnection !== "function") return
+    setTestingFor((previous) => ({ ...previous, [serviceId]: true }))
+    try {
+      await aiTestConnection.call(api, serviceId, purpose)
+      await refresh()
+    } finally {
+      setTestingFor((previous) => ({ ...previous, [serviceId]: false }))
+    }
+  }
 
   const saveKey = async (service: AiServiceState) => {
     const aiSaveKey = api?.aiSaveKey
@@ -121,17 +136,38 @@ export function AiSettingsPanel({ language }: { language: Language }) {
         setKeyDraft((previous) => ({ ...previous, [service.id]: "" }))
         setKeyEditing((previous) => ({ ...previous, [service.id]: false }))
         setKeyError((previous) => ({ ...previous, [service.id]: "" }))
-        await refresh()
-      } else {
-        setKeyError((previous) => ({
-          ...previous,
-          [service.id]: result.reason === "invalid-key" ? tr("密钥格式不对，请检查后重试。") : tr("密钥没有保存成功，请重试。"),
-        }))
+        setOpened((previous) => previous.filter((id) => id !== service.id))
+        setSavingFor(null)
+        try {
+          const nextState = await refresh()
+          if (nextState) {
+            await runTest(service.id, testPurposeFor(nextState, service.id))
+          }
+        } catch {
+          // 密钥已经存好；自动测试出错只影响这一行的状态，不能报成「没有保存成功」。
+        }
+        return
       }
+      setKeyError((previous) => ({
+        ...previous,
+        [service.id]:
+          result.reason === "invalid-key"
+            ? tr("密钥格式不对，请检查后重试。")
+            : tr("密钥没有保存成功，请重试。"),
+      }))
     } catch {
       setKeyError((previous) => ({ ...previous, [service.id]: tr("密钥没有保存成功，请重试。") }))
     } finally {
       setSavingFor(null)
+    }
+  }
+
+  const cancelEdit = (service: AiServiceState) => {
+    setKeyDraft((previous) => ({ ...previous, [service.id]: "" }))
+    setKeyError((previous) => ({ ...previous, [service.id]: "" }))
+    setKeyEditing((previous) => ({ ...previous, [service.id]: false }))
+    if (!service.hasKey && !isCustomService(service)) {
+      setOpened((previous) => previous.filter((id) => id !== service.id))
     }
   }
 
@@ -142,26 +178,110 @@ export function AiSettingsPanel({ language }: { language: Language }) {
     setKeyDraft((previous) => ({ ...previous, [service.id]: "" }))
     setKeyEditing((previous) => ({ ...previous, [service.id]: false }))
     setKeyError((previous) => ({ ...previous, [service.id]: "" }))
+    setOpened((previous) => previous.filter((id) => id !== service.id))
     await refresh()
   }
 
-  const runTest = async (service: AiServiceState, purpose: "text" | "image") => {
-    const aiTestConnection = api?.aiTestConnection
-    if (typeof aiTestConnection !== "function") return
-    setTestingFor(service.id)
+  const removeService = async (service: AiServiceState) => {
+    const aiUpdateSettings = api?.aiUpdateSettings
+    if (typeof aiUpdateSettings !== "function" || !state) return
+    setSlotError("")
     try {
-      await aiTestConnection.call(api, service.id, purpose)
-      await refresh()
-    } finally {
-      setTestingFor(null)
+      const result = await aiUpdateSettings.call(api, {
+        customServices: state.services
+          .filter((entry) => isCustomService(entry) && entry.id !== service.id)
+          .map((entry) => ({
+            id: entry.id,
+            label: entry.label,
+            format: entry.format === "claude" ? ("claude" as const) : ("openai" as const),
+            baseUrl: entry.baseUrl || "",
+          })),
+      })
+      if (result.ok && result.state) {
+        setState(result.state)
+        setKeyDraft((previous) => ({ ...previous, [service.id]: "" }))
+        setKeyEditing((previous) => ({ ...previous, [service.id]: false }))
+        setKeyError((previous) => ({ ...previous, [service.id]: "" }))
+        setOpened((previous) => previous.filter((id) => id !== service.id))
+      } else {
+        setSlotError(tr("设置没有保存成功，请重试。"))
+      }
+    } catch {
+      setSlotError(tr("设置没有保存成功，请重试。"))
     }
   }
 
-  const updateSlot = async (slot: SlotId, patch: Partial<AiSlotState>) => {
+  const submitAddService = async () => {
+    const aiUpdateSettings = api?.aiUpdateSettings
+    if (typeof aiUpdateSettings !== "function" || !state) return
+    setAddFormError("")
+    try {
+      const result = await aiUpdateSettings.call(api, {
+        customServices: [
+          ...state.services.filter(isCustomService).map((service) => ({
+            id: service.id,
+            label: service.label,
+            format: service.format === "claude" ? ("claude" as const) : ("openai" as const),
+            baseUrl: service.baseUrl || "",
+          })),
+          { label: addForm.label.trim(), format: addForm.format, baseUrl: addForm.baseUrl.trim() },
+        ],
+      })
+      if (!result.ok || !result.state) {
+        setAddFormError(tr("设置没有保存成功，请重试。"))
+        return
+      }
+      const previousIds = new Set(state.services.filter(isCustomService).map((service) => service.id))
+      const added = result.state.services.find(
+        (service) => isCustomService(service) && !previousIds.has(service.id),
+      )
+      setState(result.state)
+      setAddFormOpen(false)
+      setAddForm(EMPTY_ADD_FORM)
+      if (added) {
+        requestKeyFocus(added.id)
+      }
+    } catch {
+      setAddFormError(tr("设置没有保存成功，请重试。"))
+    }
+  }
+
+  const handleAddChoice = (value: string) => {
+    if (!available || !state) return
+    if (value === ADD_CUSTOM_SERVICE_VALUE) {
+      setAddForm(EMPTY_ADD_FORM)
+      setAddFormError("")
+      setAddFormOpen(true)
+      return
+    }
+    setOpened((previous) => (previous.includes(value) ? previous : [...previous, value]))
+    if (value === "ollama") {
+      void runTest("ollama", testPurposeFor(state, "ollama"))
+      return
+    }
+    setKeyDraft((previous) => ({ ...previous, [value]: "" }))
+    setKeyError((previous) => ({ ...previous, [value]: "" }))
+    setKeyEditing((previous) => ({ ...previous, [value]: true }))
+    requestKeyFocus(value)
+  }
+
+  const openKeyEditorFor = (serviceId: string) => {
+    if (!available) return
+    setOpened((previous) => (previous.includes(serviceId) ? previous : [...previous, serviceId]))
+    setKeyDraft((previous) => ({ ...previous, [serviceId]: "" }))
+    setKeyError((previous) => ({ ...previous, [serviceId]: "" }))
+    setKeyEditing((previous) => ({ ...previous, [serviceId]: true }))
+    requestKeyFocus(serviceId)
+  }
+
+  const updateSlot = async (slot: SlotId, patch: Partial<{ serviceId: string; model: string; summaryModel?: string }>) => {
     const aiUpdateSettings = api?.aiUpdateSettings
     if (typeof aiUpdateSettings !== "function" || !state) return
     const current = state.slots[slot]
-    const payload: Partial<AiSlotState> = { ...current, ...patch }
+    const payload: Partial<{ serviceId: string; model: string; summaryModel?: string }> = {
+      ...current,
+      ...patch,
+    }
     if (slot !== "analysis") delete payload.summaryModel
     setSlotError("")
     try {
@@ -173,120 +293,54 @@ export function AiSettingsPanel({ language }: { language: Language }) {
     }
   }
 
-  const chooseService = async (slot: SlotId, value: string) => {
-    if (value === ADD_SERVICE_VALUE) {
-      setAddForm(EMPTY_ADD_FORM)
-      setAddFormError("")
-      setAddFormFor(slot)
-      return
-    }
+  const handleSelectModel = async (role: ModelRole, serviceId: string, modelId: string) => {
     if (!state) return
-    const service = state.services.find((entry) => entry.id === value)
-    if (!service) return
-    // 选了服务就带上它的默认模型（Ollama 没有目录模型，等测试连接后再选）。
-    if (slot === "analysis") {
-      await updateSlot(slot, {
-        serviceId: value,
-        model: defaultModelFor(state, service, "analysis"),
-        summaryModel: defaultModelFor(state, service, "summary"),
-      })
-    } else {
-      await updateSlot(slot, { serviceId: value, model: defaultModelFor(state, service, slot) })
-    }
+    const choice = slotChoiceFor(state, role, serviceId, modelId)
+    await updateSlot(choice.slot, choice.patch)
   }
 
-  const submitAddService = async (slot: SlotId) => {
-    const aiUpdateSettings = api?.aiUpdateSettings
-    if (typeof aiUpdateSettings !== "function" || !state) return
-    setAddFormError("")
-    try {
-      const result = await aiUpdateSettings.call(api, {
-        customServices: [
-          ...state.services.filter(isCustomService).map((service) => ({
-            id: service.id,
-            label: service.label,
-            format: service.format === "claude" ? "claude" as const : "openai" as const,
-            baseUrl: service.baseUrl || "",
-          })),
-          { label: addForm.label.trim(), format: addForm.format, baseUrl: addForm.baseUrl.trim() },
-        ],
-      })
-      if (!result.ok || !result.state) {
-        setAddFormError(tr("设置没有保存成功，请重试。"))
-        return
-      }
-      setState(result.state)
-      // 就地添加后在本卡选中新服务 + 默认模型（新服务只在 result.state 里，
-      // 不能走 chooseService 的旧 state 查找）。
-      const previousIds = new Set(state.services.filter(isCustomService).map((service) => service.id))
-      const added = result.state.services.find((service) => isCustomService(service) && !previousIds.has(service.id))
-      setAddFormFor(null)
-      setAddForm(EMPTY_ADD_FORM)
-      if (added) {
-        if (slot === "analysis") {
-          await updateSlot(slot, {
-            serviceId: added.id,
-            model: defaultModelFor(result.state, added, "analysis"),
-            summaryModel: defaultModelFor(result.state, added, "summary"),
-          })
-        } else {
-          await updateSlot(slot, { serviceId: added.id, model: defaultModelFor(result.state, added, slot) })
-        }
-      }
-    } catch {
-      setAddFormError(tr("设置没有保存成功，请重试。"))
-    }
+  if (loadFailed) {
+    return (
+      <div className="ai-settings">
+        <section className="settings-section settings-card">
+          <p className="settings-card-desc">{tr("无法读取 AI 设置。")}</p>
+        </section>
+      </div>
+    )
   }
 
-  const removeService = async (service: AiServiceState) => {
-    const aiUpdateSettings = api?.aiUpdateSettings
-    if (typeof aiUpdateSettings !== "function" || !state) return
-    setSlotError("")
-    try {
-      // C.1：删掉自定义服务时连它的密钥一起删（主进程级联），用到它的块退回「未选择」。
-      const result = await aiUpdateSettings.call(api, {
-        customServices: state.services
-          .filter((entry) => isCustomService(entry) && entry.id !== service.id)
-          .map((entry) => ({
-            id: entry.id,
-            label: entry.label,
-            format: entry.format === "claude" ? "claude" as const : "openai" as const,
-            baseUrl: entry.baseUrl || "",
-          })),
-      })
-      if (result.ok && result.state) setState(result.state)
-      else setSlotError(tr("设置没有保存成功，请重试。"))
-    } catch {
-      setSlotError(tr("设置没有保存成功，请重试。"))
-    }
+  if (!state) {
+    return <div className="ai-settings" />
   }
 
-  const modelOptions = (serviceId: string, role: ModelRole): { value: string; label: string }[] => {
-    if (!state) return []
-    const service = state.services.find((entry) => entry.id === serviceId)
-    if (!service) return []
-    const family = serviceFamily(service)
-    const catalog = state.catalog.models
-      .filter((entry) => entry.service === family && entry.slots.includes(role))
-      .map((entry) => ({ value: entry.id, label: entry.label }))
-    const tested = service.lastTest?.models ?? []
-    const extra = tested
-      .filter((id) => !catalog.some((entry) => entry.value === id))
-      .map((id) => ({ value: id, label: id }))
-    return [...catalog, ...extra]
-  }
+  const visibleIds = state ? visibleServiceIds(state, { opened }) : []
+  const visibleServices = state
+    ? visibleIds
+        .map((id) => state.services.find((entry) => entry.id === id))
+        .filter((entry): entry is AiServiceState => Boolean(entry))
+    : []
+  const addable = state ? addableServices(state, visibleIds) : []
+  const allQuickAddOptions = state ? addableServices(state, []) : []
+  const connectedIds = state ? connectedServiceIds(state) : []
 
   const renderTestStatus = (service: AiServiceState) => {
-    if (testingFor === service.id) {
+    if (testingFor[service.id]) {
       return (
         <span className="ai-status-line">
           <span className="ai-status-dot busy" aria-hidden="true" />
-          {tr("正在测试…")}
+          <span className="ai-status-text">{tr("正在测试…")}</span>
         </span>
       )
     }
     const lastTest = service.lastTest
-    if (!lastTest) return null
+    if (!lastTest) {
+      return (
+        <span className="ai-status-line">
+          <span className="ai-status-dot" aria-hidden="true" />
+          <span className="ai-status-text">{tr("还没测试")}</span>
+        </span>
+      )
+    }
     const display = lastTest.display
     const text = display
       ? fillTemplate(translate(display.template || display.message || "", language), display.params)
@@ -295,51 +349,54 @@ export function AiSettingsPanel({ language }: { language: Language }) {
       return (
         <span className="ai-status-line">
           <span className="ai-status-dot ok" aria-hidden="true" />
-          {text}
-          {display?.missingModel ? (
-            <span className="ai-status-sub">
-              {fillTemplate(tr("这个账号的模型清单里没有 {model}"), { model: display.missingModel })}
-            </span>
-          ) : null}
+          <span className="ai-status-text">
+            {text}
+            {display?.missingModel ? (
+              <span className="ai-status-sub">
+                {" · "}
+                {fillTemplate(tr("这个账号的模型清单里没有 {model}"), { model: display.missingModel })}
+              </span>
+            ) : null}
+          </span>
         </span>
       )
     }
     return (
-      <span className="ai-status-line">
+      <span className="ai-status-line ai-status-error">
         <span className="ai-status-dot error" aria-hidden="true" />
-        {text}
+        <span className="ai-status-text">{text}</span>
       </span>
     )
   }
 
-  const renderKeyRow = (service: AiServiceState) => {
-    if (isOllamaService(service)) return null
-    const draft = keyDraft[service.id] ?? ""
-    const editing = keyEditing[service.id] === true || !service.hasKey
-    const busy = savingFor === service.id || !available
-    return (
-      <div className="ai-row ai-key-row">
-        <span className="ai-row-label">{tr("密钥")}</span>
-        {editing ? (
-          <>
-            <input
-              className="ai-text-input ai-key-input"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              aria-label={tr("密钥")}
-              value={draft}
-              disabled={!available}
-              onChange={(event) => setKeyDraft((previous) => ({ ...previous, [service.id]: event.target.value }))}
-            />
-            <button
-              type="button"
-              className="settings-action-btn"
-              disabled={!available || savingFor === service.id}
-              onClick={() => void saveKey(service)}
-            >
-              {tr("保存")}
-            </button>
+  const renderServiceRow = (service: AiServiceState) => {
+    const ollama = isOllamaService(service)
+    const custom = isCustomService(service)
+    const editing = !ollama && (keyEditing[service.id] === true || !service.hasKey)
+    const testFailed = !testingFor[service.id] && service.lastTest?.ok === false
+
+    if (editing) {
+      const draft = keyDraft[service.id] ?? ""
+      const canCancel = service.hasKey || !custom
+      const formatLabel = service.format === "claude" ? tr("Claude 格式") : tr("OpenAI 格式")
+      return (
+        <div
+          key={service.id}
+          ref={(node) => { serviceRowRefs.current[service.id] = node }}
+          className="ai-service-row editing"
+          data-service-id={service.id}
+        >
+          <div className="ai-service-edit-head">
+            <span className="ai-service-name">
+              {displayServiceName(service)}
+              {custom ? (
+                <span className="ai-service-meta">
+                  {" · "}
+                  {formatLabel}
+                  {service.baseUrl ? ` · ${service.baseUrl}` : ""}
+                </span>
+              ) : null}
+            </span>
             {service.keyUrl ? (
               <a
                 className="ai-key-link"
@@ -351,227 +408,491 @@ export function AiSettingsPanel({ language }: { language: Language }) {
                 {tr("获取密钥")}
               </a>
             ) : null}
-          </>
-        ) : (
-          <>
-            <span className="ai-key-saved">{fillTemplate(tr("已保存 · 尾号 {last4}"), { last4: service.last4 })}</span>
-            <button
-              type="button"
-              className="settings-action-btn"
-              disabled={!available}
-              onClick={() => setKeyEditing((previous) => ({ ...previous, [service.id]: true }))}
-            >
-              {tr("更换")}
-            </button>
-            <button
-              type="button"
-              className="settings-action-btn"
-              disabled={!available}
-              onClick={() => void deleteKey(service)}
-            >
-              {tr("删除")}
-            </button>
-          </>
-        )}
-        {keyError[service.id] ? <span className="ai-error-line">{keyError[service.id]}</span> : null}
-      </div>
-    )
-  }
-
-  const renderModelRow = (slot: SlotId, service: AiServiceState) => {
-    const slotState = state?.slots[slot]
-    if (slot === "analysis") {
-      const analysisOptions = modelOptions(service.id, "analysis")
-      const summaryOptions = modelOptions(service.id, "summary")
-      const analysisModel = slotState?.model || ""
-      const summaryModel = slotState?.summaryModel || ""
-      return (
-        <div className="ai-row ai-model-row">
-          <span className="ai-row-label">{tr("模型")}</span>
-          <div className="ai-model-pair">
-            <ToolbarSelect
-              label={tr("逐张分析")}
-              value={analysisModel}
-              display={analysisModel
-                ? analysisOptions.find((option) => option.value === analysisModel)?.label || analysisModel
-                : tr("未选择")}
-              options={analysisOptions}
-              onChange={(value) => void updateSlot("analysis", { model: value })}
-            />
-            <ToolbarSelect
-              label={tr("汇总手册")}
-              value={summaryModel}
-              display={summaryModel
-                ? summaryOptions.find((option) => option.value === summaryModel)?.label || summaryModel
-                : tr("未选择")}
-              options={summaryOptions}
-              onChange={(value) => void updateSlot("analysis", { summaryModel: value })}
-            />
           </div>
+          <div className="ai-service-edit-input">
+            <input
+              ref={(node) => { keyInputRefs.current[service.id] = node }}
+              className="ai-text-input ai-key-input"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              aria-label={tr("密钥")}
+              value={draft}
+              disabled={!available}
+              onChange={(event) => setKeyDraft((previous) => ({ ...previous, [service.id]: event.target.value }))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && available && savingFor !== service.id) {
+                  event.preventDefault()
+                  void saveKey(service)
+                } else if (event.key === "Escape" && canCancel) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  cancelEdit(service)
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={!available || savingFor === service.id}
+              onClick={() => void saveKey(service)}
+            >
+              {tr("保存")}
+            </button>
+            {canCancel ? (
+              <button
+                type="button"
+                className="settings-action-btn"
+                onClick={() => cancelEdit(service)}
+              >
+                {tr("取消")}
+              </button>
+            ) : null}
+          </div>
+          <div className="ai-service-edit-foot">
+            <span className="ai-service-hint">
+              {tr("保存后自动测试连接。测试只要一份模型清单，不花钱。")}
+            </span>
+            {custom ? (
+              <button
+                type="button"
+                className="ai-danger-link"
+                disabled={!available}
+                onClick={() => void removeService(service)}
+              >
+                {tr("删除此服务")}
+              </button>
+            ) : service.hasKey ? (
+              <button
+                type="button"
+                className="ai-danger-link"
+                disabled={!available}
+                onClick={() => void deleteKey(service)}
+              >
+                {tr("删除密钥")}
+              </button>
+            ) : null}
+          </div>
+          {keyError[service.id] ? (
+            <div className="ai-note ai-note-danger ai-error-line">
+              <span className="ai-status-dot error" aria-hidden="true" />
+              <span className="ai-note-text">{keyError[service.id]}</span>
+            </div>
+          ) : null}
         </div>
       )
     }
-    const options = modelOptions(service.id, slot)
-    const model = slotState?.model || ""
+
     return (
-      <div className="ai-row ai-model-row">
-        <span className="ai-row-label">{tr("模型")}</span>
-        <ToolbarSelect
-          label={tr("模型")}
-          value={model}
-          display={model ? options.find((option) => option.value === model)?.label || model : tr("未选择")}
-          options={options}
-          onChange={(value) => void updateSlot(slot, { model: value })}
-        />
+      <div
+        key={service.id}
+        ref={(node) => { serviceRowRefs.current[service.id] = node }}
+        className="ai-service-row"
+        data-service-id={service.id}
+      >
+        <div className={`ai-service-main${testFailed ? "" : " inline"}`}>
+          <span className="ai-service-name">
+            {displayServiceName(service)}
+            <span className="ai-service-meta">
+              {" · "}
+              {ollama
+                ? tr("本机运行，不需要密钥")
+                : fillTemplate(tr("尾号 {last4}"), { last4: service.last4 })}
+            </span>
+          </span>
+          {renderTestStatus(service)}
+        </div>
+        <div className="ai-service-actions">
+          <button
+            type="button"
+            className="settings-action-btn"
+            disabled={!available || Boolean(testingFor[service.id])}
+            onClick={() => state && void runTest(service.id, testPurposeFor(state, service.id))}
+          >
+            {tr("测试连接")}
+          </button>
+          {!ollama ? (
+            <button
+              type="button"
+              className="settings-action-btn"
+              disabled={!available}
+              onClick={() => {
+                setKeyDraft((previous) => ({ ...previous, [service.id]: "" }))
+                setKeyError((previous) => ({ ...previous, [service.id]: "" }))
+                setKeyEditing((previous) => ({ ...previous, [service.id]: true }))
+                requestKeyFocus(service.id)
+              }}
+            >
+              {tr("更换")}
+            </button>
+          ) : null}
+        </div>
       </div>
     )
   }
 
-  return (
-    <>
-      <p className="settings-card-desc ai-panel-desc">
-        {available
-          ? tr("密钥只保存在本机，由系统加密，不会上传到 GravityPort。")
-          : tr("这台电脑无法加密保存密钥，暂时不能使用 AI 功能。")}
-      </p>
-      {loadFailed ? (
-        <section className="settings-section settings-card">
-          <p className="settings-card-desc">{tr("无法读取 AI 设置。")}</p>
-        </section>
+  const priceLineFor = (role: ModelRole, service: AiServiceState | null): AiPriceLine | null => {
+    if (!state || !available || connectedIds.length === 0 || !service) return null
+    if (role === "analysis") {
+      if (state.priceLines.analysis.length === 3) return state.priceLines.analysis[0]
+      if (isOllamaService(service) && state.priceLines.analysis[0]) return state.priceLines.analysis[0]
+      return null
+    }
+    if (role === "summary") {
+      if (state.priceLines.analysis.length === 3) return state.priceLines.analysis[1]
+      if (isOllamaService(service) && state.priceLines.analysis[0]) return state.priceLines.analysis[0]
+      return null
+    }
+    const line = state.priceLines[role]?.[0]
+    return line ? priceWithoutMonth(line) : null
+  }
+
+  const renderUseNote = (note: UseRowNote) => {
+    const toneClass = note.tone === "danger" ? "ai-note-danger" : "ai-note-info"
+    const dotClass = note.tone === "danger" ? "ai-status-dot error" : "ai-status-dot"
+
+    let text = ""
+    let actionButton: ReactNode = null
+
+    switch (note.kind) {
+      case "no-key":
+        text = fillTemplate(tr("{service} 还没有密钥。"), note.params)
+        actionButton = (
+          <button
+            type="button"
+            className="ai-note-action"
+            onClick={() => openKeyEditorFor(note.params.serviceId)}
+          >
+            {tr("填写密钥")}
+          </button>
+        )
+        break
+      case "test-failed":
+        text = fillTemplate(tr("{service} 最近一次测试没通过，先在上面检查密钥。"), note.params)
+        break
+      case "learning-unsupported":
+        text = tr("学习暂时只支持 Claude（含 Claude 格式的自定义服务），选这一家无法开始学习。")
+        break
+      case "analysis-expensive":
+        text = fillTemplate(
+          tr("单价是 {reference} 的 {n} 倍。逐张分析每张图调用一次，学同样多的图，花费也是 {n} 倍。"),
+          note.params,
+        )
+        actionButton = (
+          <button
+            type="button"
+            className="ai-note-action"
+            onClick={() => void updateSlot("analysis", { model: note.params.referenceId })}
+          >
+            {fillTemplate(tr("换回 {reference}"), note.params)}
+          </button>
+        )
+        break
+      case "learning-unknown-price":
+        text = fillTemplate(tr("{model} 不在单价表里，学习前无法估算花费，不能开始学习。"), note.params)
+        break
+      case "unknown-price":
+        text = tr("这个模型不在单价表里，无法估算花费。")
+        break
+      case "image-needs-service":
+        text = tr("出图要用 OpenAI 或 Gemini，填好其中一家的密钥后自动选上。")
+        break
+    }
+
+    return (
+      <div className={`ai-note ${toneClass}`}>
+        <span className={dotClass} aria-hidden="true" />
+        <div className="ai-note-body">
+          <span className="ai-note-text">{text}</span>
+          {actionButton ? <div className="ai-note-actions">{actionButton}</div> : null}
+        </div>
+      </div>
+    )
+  }
+
+  const renderUseRow = (role: ModelRole, labelText: string, monthUsd?: number) => {
+    const slot: SlotId = role === "summary" ? "analysis" : role
+    const slotState = state?.slots[slot]
+    const currentServiceId = slotState?.serviceId || ""
+    const currentModelId = role === "summary" ? (slotState?.summaryModel || "") : (slotState?.model || "")
+    const currentService = state?.services.find((entry) => entry.id === currentServiceId) ?? null
+
+    const groups = state ? modelGroups(state, role, tr) : []
+    const selectGroups: ToolbarSelectGroup[] = groups.map((group) => ({
+      label: group.heading,
+      value: group.serviceId === currentServiceId ? currentModelId : "",
+      options: group.options,
+      onChange: (modelId) => void handleSelectModel(role, group.serviceId, modelId),
+    }))
+
+    const rawNote = state ? rowNoteFor(state, role) : null
+    const showNote = Boolean(
+      rawNote && available && (connectedIds.length > 0 || Boolean(currentService)),
+    )
+
+    const noOptions = groups.every((group) => group.options.length === 0)
+    const disabled =
+      !available ||
+      connectedIds.length === 0 ||
+      (role === "image" && rawNote?.kind === "image-needs-service") ||
+      noOptions
+
+    let triggerDisplay: ReactNode
+    if (!currentService || !currentModelId) {
+      triggerDisplay = <span className="ai-select-placeholder">{tr("未选择")}</span>
+    } else {
+      const catalogEntry = state?.catalog.models.find((entry) => entry.id === currentModelId)
+      const modelLabel = catalogEntry?.label || currentModelId
+      const svcLabel = displayServiceName(currentService)
+      const startsWithService = modelLabel.toLowerCase().startsWith(svcLabel.toLowerCase())
+      triggerDisplay = startsWithService ? (
+        modelLabel
       ) : (
-        SLOT_CARDS.map(({ slot, title, desc }) => {
-          const slotState = state?.slots[slot]
-          const service = state?.services.find((entry) => entry.id === slotState?.serviceId) || null
-          const serviceOptions = (state?.services ?? [])
-            .filter((entry) => serviceAllowedInSlot(entry, slot))
-            .map((entry) => ({ value: entry.id, label: entry.label }))
-          const purpose: "text" | "image" = slot === "image" ? "image" : "text"
-          return (
-            <section key={slot} className="settings-section settings-card ai-card" aria-label={tr(title)}>
-              <div className="settings-card-header">
-                <div className="settings-card-head">
-                  <strong>{tr(title)}</strong>
-                </div>
-                <p className="settings-card-desc">{tr(desc)}</p>
+        <>
+          {modelLabel}
+          <span className="ai-select-sub">
+            {" · "}
+            {svcLabel}
+          </span>
+        </>
+      )
+    }
+
+    const priceLine = priceLineFor(role, currentService)
+
+    return (
+      <div className="ai-use-row" data-role={role}>
+        <span className="ai-use-label">{tr(labelText)}</span>
+        <div className="ai-use-control">
+          <ToolbarSelect
+            label={tr(labelText)}
+            groups={selectGroups}
+            display={triggerDisplay}
+            disabled={disabled}
+          />
+          {priceLine ? (
+            <span className="ai-price-line">
+              {fillTemplate(translate(priceLine.template, language), priceLine.params)}
+            </span>
+          ) : null}
+          {showNote && rawNote ? renderUseNote(rawNote) : null}
+        </div>
+        {monthUsd !== undefined ? (
+          <span className="ai-month-text">
+            {fillTemplate(tr("本月 {month}"), { month: formatMonthUsd(monthUsd) })}
+          </span>
+        ) : (
+          <span className="ai-month-spacer" aria-hidden="true" />
+        )}
+      </div>
+    )
+  }
+
+  const totalMonthUsd =
+    (state?.monthTotals.analysis ?? 0) +
+    (state?.monthTotals.brain ?? 0) +
+    (state?.monthTotals.image ?? 0)
+
+  const showHeaderAdd = available && visibleServices.length > 0
+  const showEmptyState = available && visibleServices.length === 0
+
+  return (
+    <div className="ai-settings">
+      <section className="settings-section settings-card ai-services" aria-label={tr("服务")}>
+        <div className="settings-card-header">
+          <div className="settings-card-head">
+            <strong>{tr("服务")}</strong>
+            {showHeaderAdd ? (
+              <div className="ai-add-select">
+                <ToolbarSelect
+                  label={tr("添加服务")}
+                  value=""
+                  display={tr("添加服务")}
+                  options={addable.map((option) => ({
+                    value: option.value,
+                    label: displayAddableLabel(option.value, option.label),
+                  }))}
+                  onChange={handleAddChoice}
+                />
               </div>
-              <div className="ai-card-body">
-                <div className="ai-row">
-                  <span className="ai-row-label">{tr("服务")}</span>
-                  <ToolbarSelect
-                    label={tr(title)}
-                    value={service?.id || ""}
-                    display={service ? service.label : tr("未选择")}
-                    options={[...serviceOptions, { value: ADD_SERVICE_VALUE, label: tr("添加其它服务…") }]}
-                    onChange={(value) => void chooseService(slot, value)}
-                  />
-                  {service && isCustomService(service) && (
-                    <button
-                      type="button"
-                      className="settings-action-btn"
-                      disabled={!available}
-                      onClick={() => void removeService(service)}
-                    >
-                      {tr("删除此服务")}
-                    </button>
-                  )}
-                </div>
-                {addFormFor === slot && (
-                  <div className="ai-add-form" role="group" aria-label={tr("添加服务")}>
-                    <div className="ai-row">
-                      <span className="ai-row-label">{tr("名称")}</span>
-                      <input
-                        className="ai-text-input"
-                        value={addForm.label}
-                        disabled={!available}
-                        maxLength={80}
-                        onChange={(event) => setAddForm((previous) => ({ ...previous, label: event.target.value }))}
-                      />
-                    </div>
-                    <div className="ai-row">
-                      <span className="ai-row-label">{tr("接口格式")}</span>
-                      <div className="segmented" role="group" aria-label={tr("接口格式")}>
-                        <button
-                          type="button"
-                          className={addForm.format === "openai" ? "on" : ""}
-                          aria-pressed={addForm.format === "openai"}
-                          disabled={!available}
-                          onClick={() => setAddForm((previous) => ({ ...previous, format: "openai" }))}
-                        >
-                          {tr("OpenAI 格式")}
-                        </button>
-                        <button
-                          type="button"
-                          className={addForm.format === "claude" ? "on" : ""}
-                          aria-pressed={addForm.format === "claude"}
-                          disabled={!available}
-                          onClick={() => setAddForm((previous) => ({ ...previous, format: "claude" }))}
-                        >
-                          {tr("Claude 格式")}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="ai-row">
-                      <span className="ai-row-label">{tr("地址")}</span>
-                      <input
-                        className="ai-text-input"
-                        type="url"
-                        value={addForm.baseUrl}
-                        placeholder="https://…"
-                        disabled={!available}
-                        onChange={(event) => setAddForm((previous) => ({ ...previous, baseUrl: event.target.value }))}
-                      />
-                    </div>
-                    <div className="ai-add-actions">
-                      <button
-                        type="button"
-                        className="settings-action-btn"
-                        disabled={!available || !addForm.label.trim() || !addForm.baseUrl.trim()}
-                        onClick={() => void submitAddService(slot)}
-                      >
-                        {tr("添加")}
-                      </button>
-                      <button
-                        type="button"
-                        className="settings-action-btn"
-                        onClick={() => {
-                          setAddFormFor(null)
-                          setAddForm(EMPTY_ADD_FORM)
-                        }}
-                      >
-                        {tr("取消")}
-                      </button>
-                      {addFormError ? <span className="ai-error-line">{addFormError}</span> : null}
-                    </div>
-                  </div>
-                )}
-                {service ? renderKeyRow(service) : null}
-                {service ? (
-                  <div className="ai-row ai-test-row">
-                    <button
-                      type="button"
-                      className="settings-action-btn"
-                      disabled={!available || testingFor === service.id}
-                      onClick={() => void runTest(service, purpose)}
-                    >
-                      {tr("测试连接")}
-                    </button>
-                    {renderTestStatus(service)}
-                  </div>
-                ) : null}
-                {service ? renderModelRow(slot, service) : null}
-                <div className="ai-price-row">
-                  {(state?.priceLines[slot] ?? []).map((line, index) => (
-                    <span key={index} className="ai-price-line">
-                      {fillTemplate(translate(line.template, language), line.params)}
-                    </span>
-                  ))}
-                </div>
-                {slotError ? <span className="ai-error-line">{slotError}</span> : null}
+            ) : null}
+          </div>
+          {available ? (
+            <p className="settings-card-desc">
+              {tr("密钥只保存在本机，由系统加密，不会上传到 GravityPort。")}
+            </p>
+          ) : (
+            <div className="ai-note ai-note-danger">
+              <span className="ai-status-dot error" aria-hidden="true" />
+              <span className="ai-note-text">
+                {tr("这台电脑无法加密保存密钥，暂时不能使用 AI 功能。GravityPort 不会用明文保存密钥。")}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {visibleServices.length > 0 ? (
+          <div className="ai-service-list">{visibleServices.map(renderServiceRow)}</div>
+        ) : null}
+
+        {showEmptyState ? (
+          <>
+            <p className="ai-empty-line">{tr("还没有连接服务。先选一家，填好密钥就能用。")}</p>
+            <div className="ai-quick-add">
+              <span className="ai-quick-add-label">{tr("添加")}</span>
+              {allQuickAddOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className="settings-action-btn ai-quick-add-btn"
+                  onClick={() => handleAddChoice(option.value)}
+                >
+                  {displayAddableLabel(option.value, option.label)}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
+
+        {!available ? (
+          <div className="ai-quick-add">
+            <span className="ai-quick-add-label">{tr("添加")}</span>
+            {allQuickAddOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className="settings-action-btn ai-quick-add-btn"
+                disabled
+              >
+                {displayAddableLabel(option.value, option.label)}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {addFormOpen && available ? (
+          <div className="ai-add-form" role="group" aria-label={tr("添加服务")}>
+            <div className="ai-form-row">
+              <span className="ai-form-label">{tr("名称")}</span>
+              <input
+                className="ai-text-input"
+                value={addForm.label}
+                disabled={!available}
+                maxLength={80}
+                onChange={(event) => setAddForm((previous) => ({ ...previous, label: event.target.value }))}
+              />
+            </div>
+            <div className="ai-form-row">
+              <span className="ai-form-label">{tr("接口格式")}</span>
+              <div className="segmented" role="group" aria-label={tr("接口格式")}>
+                <button
+                  type="button"
+                  className={addForm.format === "openai" ? "on" : ""}
+                  aria-pressed={addForm.format === "openai"}
+                  disabled={!available}
+                  onClick={() => setAddForm((previous) => ({ ...previous, format: "openai" }))}
+                >
+                  {tr("OpenAI 格式")}
+                </button>
+                <button
+                  type="button"
+                  className={addForm.format === "claude" ? "on" : ""}
+                  aria-pressed={addForm.format === "claude"}
+                  disabled={!available}
+                  onClick={() => setAddForm((previous) => ({ ...previous, format: "claude" }))}
+                >
+                  {tr("Claude 格式")}
+                </button>
               </div>
-            </section>
-          )
-        })
-      )}
-    </>
+            </div>
+            <div className="ai-form-row">
+              <span className="ai-form-label">{tr("地址")}</span>
+              <input
+                className="ai-text-input"
+                type="url"
+                value={addForm.baseUrl}
+                placeholder="https://…"
+                disabled={!available}
+                onChange={(event) => setAddForm((previous) => ({ ...previous, baseUrl: event.target.value }))}
+              />
+            </div>
+            <div className="ai-add-actions">
+              <button
+                type="button"
+                className="settings-action-btn"
+                disabled={!available || !addForm.label.trim() || !addForm.baseUrl.trim()}
+                onClick={() => void submitAddService()}
+              >
+                {tr("添加")}
+              </button>
+              <button
+                type="button"
+                className="settings-action-btn"
+                onClick={() => {
+                  setAddFormOpen(false)
+                  setAddForm(EMPTY_ADD_FORM)
+                  setAddFormError("")
+                }}
+              >
+                {tr("取消")}
+              </button>
+            </div>
+            {addFormError ? (
+              <div className="ai-note ai-note-danger ai-error-line">
+                <span className="ai-status-dot error" aria-hidden="true" />
+                <span className="ai-note-text">{addFormError}</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="settings-section settings-card ai-uses" aria-label={tr("用途")}>
+        <div className="settings-card-header">
+          <div className="settings-card-head">
+            <strong>{tr("用途")}</strong>
+            <span className="ai-month-total">
+              {fillTemplate(tr("本月合计 {month}"), { month: formatMonthUsd(totalMonthUsd) })}
+            </span>
+          </div>
+          <p className="settings-card-desc">
+            {available && connectedIds.length === 0
+              ? tr("连上第一家服务后，下面各项自动选好它的默认模型。")
+              : tr("下拉里只列已连接服务的模型，选了哪家的模型就用哪家。")}
+          </p>
+        </div>
+
+        <div className="ai-use-group">
+          <div className="ai-use-group-head">
+            <strong>{tr("学习")}</strong>
+            <span className="ai-month-text">
+              {fillTemplate(tr("本月 {month}"), {
+                month: formatMonthUsd(state?.monthTotals.analysis ?? 0),
+              })}
+            </span>
+          </div>
+          <p className="settings-card-desc">
+            {tr("学习库先逐张看图，每张图调用一次；再汇总成设计手册。两步用同一家服务。")}
+          </p>
+          {renderUseRow("analysis", "逐张分析")}
+          {renderUseRow("summary", "汇总手册")}
+        </div>
+
+        <div className="ai-use-group ai-use-group-bordered">
+          {renderUseRow("brain", "对话大脑", state?.monthTotals.brain ?? 0)}
+        </div>
+
+        <div className="ai-use-group ai-use-group-bordered">
+          {renderUseRow("image", "出图", state?.monthTotals.image ?? 0)}
+        </div>
+
+        {slotError ? (
+          <div className="ai-note ai-note-danger ai-error-line">
+            <span className="ai-status-dot error" aria-hidden="true" />
+            <span className="ai-note-text">{slotError}</span>
+          </div>
+        ) : null}
+      </section>
+    </div>
   )
 }

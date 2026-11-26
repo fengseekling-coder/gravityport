@@ -9,6 +9,8 @@ import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
+import { connectCdp, waitForRendererReady } from "./_cdp.mjs";
 
 export const name = "desktop-update-ready";
 export const description =
@@ -34,6 +36,7 @@ export async function run(ctx) {
   const updateReadyFile = join(stagingRoot, "gravityport-update-ready.json");
 
   await mkdir(stagingRoot, { recursive: true });
+  if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(userDataDir);
 
   const executable = ensureElectronExecutablePath({ rootDir: ctx.rootDir });
   const qaFlags = process.platform === "win32" ? ["--disable-gpu"] : [];
@@ -74,7 +77,9 @@ export async function run(ctx) {
     const seededIds = await seedAssets(ctx, port);
     cdp = await connectCdp(cdpPort, `http://127.0.0.1:${port}`);
 
-    await waitForRendererReady(cdp);
+    await waitForRendererReady(cdp, {
+      ready: "Boolean(window.electronAPI && typeof window.electronAPI.writeClipboardText === 'function')",
+    });
 
     // The renderer must eventually write the ready file. The three conditions
     // (version consistency + first page + SSE open) all resolve in practice
@@ -163,80 +168,6 @@ async function waitForUpdateReadyFile(filePath, timeoutMs) {
     await sleep(250);
   }
   throw new Error(`update-ready file never appeared at ${filePath} within ${timeoutMs}ms`);
-}
-
-async function waitForRendererReady(cdp, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError = null;
-  while (Date.now() < deadline) {
-    try {
-      const state = await cdp.evaluate(`({
-        readyState: document.readyState,
-        appShell: Boolean(document.querySelector('.app')),
-        preload: Boolean(window.electronAPI && typeof window.electronAPI.writeClipboardText === 'function'),
-      })`);
-      if (state?.readyState === "complete" && state.appShell && state.preload) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await sleep(100);
-  }
-  throw new Error(`renderer readiness timeout${lastError ? `: ${lastError.message}` : ""}`);
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find(
-          (entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix),
-        );
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await sleep(200);
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve: resolveFn, reject: rejectFn } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) rejectFn(new Error(message.error.message));
-      else if (message.result?.exceptionDetails) {
-        rejectFn(new Error("evaluate failed: " + (message.result.exceptionDetails.exception?.description || message.result.exceptionDetails.text)));
-      } else resolveFn(message.result?.result?.value);
-    }
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    async evaluate(expression) {
-      return this.send("Runtime.evaluate", { expression, returnByValue: true });
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
 }
 
 function freePort() {

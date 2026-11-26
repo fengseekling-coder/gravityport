@@ -55,6 +55,10 @@ export type AiCatalogModel = {
   service: string
   slots: string[]
   defaults: string[]
+  pricing?:
+    | { kind: "tokens"; input: number; output: number; tier?: { thresholdTokens: number; input: number; output: number } }
+    | { kind: "openai-image"; imageInput?: number; imageOutput?: number; textInput?: number; textOutput?: number }
+    | { kind: "per-image"; perImage: number }
   source?: string
   checkedAt?: string
 }
@@ -114,6 +118,13 @@ type ElectronAPI = {
   aiDeleteKey?: (serviceId: string) => Promise<{ ok: boolean }>
   aiTestConnection?: (serviceId: string, purpose: "text" | "image") => Promise<{ ok: boolean; code?: string; message?: string; template?: string; params?: Record<string, string>; modelCount?: number; missingModel?: string }>
   aiUpdateSettings?: (payload: { slots?: Record<string, Partial<AiSlotState>>; customServices?: Array<{ id?: string; label: string; format: "openai" | "claude"; baseUrl: string }> }) => Promise<{ ok: boolean; state?: AiState; reason?: string }>
+  // 任务 463：学习后台六个通道（界面在 464；浏览器里没有这些方法）。
+  aiLearningQuote?: (payload: { project: string; libraryId: string; runId?: string }) => Promise<{ ok: boolean; quoteToken?: string; kind?: "learn" | "resume" | "summary-only"; counts?: { newCount: number; analyzedCount: number; totalCount: number; noPreview: number }; estimateUsd?: number; capUsd?: number; analysisUsd?: number; summaryUsd?: number; summaryCalls?: number; service?: { id: string; label: string }; models?: { analysis: { id: string; label: string }; summary: { id: string; label: string } }; privacy?: { imageCount: number; longEdge: number }; blocked?: string; libraryId?: string; libraryName?: string; runId?: string }>
+  aiLearningStart?: (payload: { quoteToken: string }) => Promise<{ ok: boolean; runId?: string; reason?: string }>
+  aiLearningPause?: (payload: { runId: string }) => Promise<{ ok: boolean }>
+  aiLearningResume?: (payload: { runId: string; quoteToken: string }) => Promise<{ ok: boolean; reason?: string }>
+  aiLearningAbandon?: (payload: { runId: string }) => Promise<{ ok: boolean }>
+  aiLearningStatus?: (payload: { project: string; libraryId: string }) => Promise<{ ok: boolean; run?: { id: string; libraryId: string; status: string; phase: string; itemCount: number; doneCount: number; failedCount: number; skippedCount: number; costUsd: number; estimateUsd: number | null; capUsd: number | null; pauseReason: string } | null; busyElsewhere?: { libraryId: string; libraryName: string } | null }>
   [key: string]: unknown
 }
 
