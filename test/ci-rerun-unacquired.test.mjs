@@ -47,22 +47,22 @@ test("run 45425176035: 2 unacquired macOS jobs + 1 real macOS e2e failure -> rep
   assert.equal(singleResult.reason, "has-other-failures");
 });
 
-test("run 45221815959 (nightly): 2 unacquired jobs and 0 others -> report-only (multiple-unacquired; bulk rerun-failed-jobs unverified for cancelled)", () => {
+test("run 45221815959 (nightly): 2 unacquired jobs and 0 others -> rerun-failed (only-unacquired)", () => {
   const fixture = loadFixture("run-45221815959.json");
   const result = classifyRun(fixture.jobs, fixture.annotationsByJobId);
   assert.deepEqual(result.unacquired, [137857790632, 137857790789]);
   assert.deepEqual(result.others, []);
-  assert.equal(result.action, "report-only");
-  assert.equal(result.reason, "multiple-unacquired");
+  assert.equal(result.action, "rerun-failed");
+  assert.equal(result.reason, "only-unacquired");
 });
 
-test("run 45198291142: 1 unacquired job and 0 others -> rerun-job (single-unacquired)", () => {
+test("run 45198291142: 1 unacquired job and 0 others -> rerun-failed (only-unacquired)", () => {
   const fixture = loadFixture("run-45198291142.json");
   const result = classifyRun(fixture.jobs, fixture.annotationsByJobId);
   assert.deepEqual(result.unacquired, [137802439865]);
   assert.deepEqual(result.others, []);
-  assert.equal(result.action, "rerun-job");
-  assert.equal(result.reason, "single-unacquired");
+  assert.equal(result.action, "rerun-failed");
+  assert.equal(result.reason, "only-unacquired");
 });
 
 test("run 45419848205: concurrency-superseded cancellation + failures -> nothing (never rerun)", () => {
@@ -112,7 +112,7 @@ test("runUnacquiredCheck paginates jobs, fetches annotations only for non-succes
     if (annMatch) {
       return new Response(JSON.stringify(fixture.annotationsByJobId[annMatch[1]] || []), { status: 200 });
     }
-    if (init.method === "POST" && parsed.pathname.endsWith("/actions/jobs/137802439865/rerun")) {
+    if (init.method === "POST" && parsed.pathname.endsWith(`/actions/runs/${fixture.run_id}/rerun-failed-jobs`)) {
       return new Response("", { status: 201 });
     }
     return new Response("unexpected request", { status: 500 });
@@ -127,7 +127,7 @@ test("runUnacquiredCheck paginates jobs, fetches annotations only for non-succes
     writeSummary: (p, content) => writtenSummaries.push({ p, content }),
   });
 
-  assert.equal(result.classification.action, "rerun-job");
+  assert.equal(result.classification.action, "rerun-failed");
   assert.equal(result.rerunTriggered, true);
   assert.deepEqual(
     calls,
@@ -135,16 +135,16 @@ test("runUnacquiredCheck paginates jobs, fetches annotations only for non-succes
       { method: "GET", path: `/repos/owner/repo/actions/runs/${fixture.run_id}/jobs?per_page=100&page=1` },
       { method: "GET", path: `/repos/owner/repo/actions/runs/${fixture.run_id}/jobs?per_page=100&page=2` },
       { method: "GET", path: "/repos/owner/repo/check-runs/137802439865/annotations?per_page=100" },
-      { method: "POST", path: "/repos/owner/repo/actions/jobs/137802439865/rerun" },
+      { method: "POST", path: `/repos/owner/repo/actions/runs/${fixture.run_id}/rerun-failed-jobs` },
     ],
   );
   assert.equal(writtenSummaries.length, 1);
-  assert.match(writtenSummaries[0].content, /rerun-job/);
+  assert.match(writtenSummaries[0].content, /rerun-failed/);
   assert.match(writtenSummaries[0].content, /137802439865/);
 });
 
 test("report-only summary prints copyable gh run rerun commands and never POSTs", async () => {
-  const fixture = loadFixture("run-45221815959.json");
+  const fixture = loadFixture("run-45425176035.json");
   const methods = [];
   const fakeFetch = async (url, init = {}) => {
     const parsed = new URL(url);
@@ -169,8 +169,8 @@ test("report-only summary prints copyable gh run rerun commands and never POSTs"
   assert.equal(result.classification.action, "report-only");
   assert.equal(result.rerunTriggered, false);
   assert.equal(methods.includes("POST"), false);
-  assert.match(result.summary, /gh run rerun 45221815959 --job 137857790632/);
-  assert.match(result.summary, /gh run rerun 45221815959 --job 137857790789/);
+  assert.match(result.summary, /gh run rerun 45425176035 --job 138555080918/);
+  assert.match(result.summary, /gh run rerun 45425176035 --job 138555080972/);
 
   // Direct formatStepSummary smoke check
   const formatted = formatStepSummary({
@@ -178,7 +178,7 @@ test("report-only summary prints copyable gh run rerun commands and never POSTs"
     jobs: fixture.jobs,
     classification: result.classification,
   });
-  assert.match(formatted, /multiple-unacquired/);
+  assert.match(formatted, /has-other-failures/);
 });
 
 test("runUnacquiredCheck rejects with the raw HTTP error on GitHub API failure", async () => {

@@ -236,12 +236,13 @@ jobs:
   # Intel macOS runner generation, scheduled for decommissioning around fall
   # 2027. When GitHub removes it, this job must either move to a macOS-on-AWS
   # x64 image or be dropped; the Intel package can still be cross-built (the
-  # step inside desktop-macos-package above) but its smoke would lose a native
-  # runner.
+  # packaging steps in desktop-macos-e2e shard 2/2 above) but its smoke would
+  # lose a native runner.
   desktop-macos-intel-package:
     runs-on: macos-15-intel
-    # Mirrors desktop-macos-package (~1.5 min green there); Intel runners are
-    # slower, so 20 keeps roughly the same >10x headroom while bounding hangs.
+    # Mirrors the arm64 packaging steps in desktop-macos-e2e shard 2/2 (~1.5 min
+    # green there); Intel runners are slower, so 20 keeps roughly the same >10x
+    # headroom while bounding hangs.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

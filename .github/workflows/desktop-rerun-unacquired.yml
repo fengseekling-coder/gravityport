@@ -1,11 +1,11 @@
 name: Rerun unacquired desktop CI jobs
 
 # Task 471 (B.2): when a "Desktop packaging" workflow run completes with a
-# non-success conclusion on its first attempt, inspect its jobs and rerun a
-# single macOS/hosted job that failed solely because GitHub never acquired a
-# runner ("was not acquired by Runner"). Never reruns when any real failure or
-# concurrency-cancel exists, and runs at most once per workflow run
-# (run_attempt == 1).
+# non-success conclusion on its first attempt, inspect its jobs and, when
+# every non-success job failed solely because GitHub never acquired a runner
+# ("was not acquired by Runner"), rerun them via rerun-failed-jobs. Never
+# reruns when any real failure or concurrency-cancel exists, and runs at most
+# once per workflow run (run_attempt == 1).
 #
 # Security & default-branch behaviour:
 # - GitHub only triggers `on: workflow_run` from the copy of this workflow file
@@ -13,7 +13,7 @@ name: Rerun unacquired desktop CI jobs
 # - Checkout below uses the default branch ref (never the triggering PR's head
 #   SHA/code), sets `persist-credentials: false`, does not run `npm ci`, and
 #   never downloads PR artifacts. Because zero untrusted PR code is ever
-#   executed, granting `actions: write` (solely to invoke the job-rerun API for
+#   executed, granting `actions: write` (solely to invoke rerun-failed-jobs for
 #   `github.event.workflow_run.id`) is safe against pwn-request attacks.
 
 on:
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      - name: Check and rerun unacquired job
+      - name: Check and rerun unacquired jobs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}

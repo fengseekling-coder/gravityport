@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// Task 471 (B.2): classify a completed Desktop packaging workflow run and
-// automatically rerun a single unacquired-runner job once (never rerunning
-// when any real failure or concurrency-cancel exists).
+// Task 471 (B.2): classify a completed Desktop packaging workflow run and,
+// when every non-success job failed only because no runner was acquired,
+// rerun them once via POST /repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs
+// (never when any real failure or concurrency-cancel exists).
 //
-// Because docs.github.com does not specify whether POST /rerun-failed-jobs
-// includes `cancelled` jobs (unacquired runners end with conclusion=cancelled),
-// automatic rerun is restricted to a single unacquired job via
-// POST /repos/{repo}/actions/jobs/{job_id}/rerun; when more than one job was
-// unacquired, the script downgrades to report-only and prints ready-to-copy
+// docs.github.com does not say whether rerun-failed-jobs includes `cancelled`
+// jobs (unacquired runners end as cancelled). This project has relied on it:
+// in the 0.3.12 release, `gh run rerun 43223977357 --failed` (the same
+// endpoint) reran two cancelled, unacquired macOS jobs. With the two
+// Apple-silicon shards running packaging too, both going unacquired together
+// is the common case, so a per-job rerun of exactly one would miss it.
+// Otherwise the script reports only, with ready-to-copy
 // `gh run rerun <run_id> --job <job_id>` commands in GITHUB_STEP_SUMMARY.
 import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -40,11 +43,8 @@ export function isUnacquiredJob(job, annotations = []) {
  * Pure classifier for a completed workflow run.
  *
  * Returns `{ unacquired, others, action, reason }` where:
- * - `action: "rerun-job"`    — exactly 1 unacquired job and 0 other non-success jobs
- * - `action: "report-only"`  — unacquired jobs exist, but either other non-success
- *                              jobs also exist or >1 jobs were unacquired (bulk
- *                              rerun-failed-jobs behaviour on `cancelled` jobs is
- *                              unverified in docs.github.com)
+ * - `action: "rerun-failed"` — 1 or more unacquired jobs and 0 other non-success jobs
+ * - `action: "report-only"`  — unacquired jobs exist alongside other non-success jobs
  * - `action: "nothing"`      — no unacquired jobs
  */
 export function classifyRun(jobs, annotationsByJobId = {}) {
@@ -77,19 +77,11 @@ export function classifyRun(jobs, annotationsByJobId = {}) {
       reason: "has-other-failures",
     };
   }
-  if (unacquired.length === 1) {
-    return {
-      unacquired,
-      others,
-      action: "rerun-job",
-      reason: "single-unacquired",
-    };
-  }
   return {
     unacquired,
     others,
-    action: "report-only",
-    reason: "multiple-unacquired",
+    action: "rerun-failed",
+    reason: "only-unacquired",
   };
 }
 
@@ -116,10 +108,10 @@ export function formatStepSummary({ runId, jobs, classification, rerunTriggered 
     }`,
   ];
 
-  if (classification.action === "rerun-job" && rerunTriggered) {
+  if (classification.action === "rerun-failed" && rerunTriggered) {
     lines.push(
       "",
-      `Triggered single-job rerun via \`POST /actions/jobs/${classification.unacquired[0]}/rerun\`.`,
+      `Triggered \`POST /actions/runs/${runId}/rerun-failed-jobs\` for ${classification.unacquired.length} unacquired job(s).`,
     );
   } else if (classification.action === "report-only") {
     lines.push("", "Manual rerun commands for unacquired jobs:", "```bash");
@@ -197,13 +189,12 @@ export async function runUnacquiredCheck({
   const classification = classifyRun(jobs, annotationsByJobId);
   let rerunTriggered = false;
 
-  if (classification.action === "rerun-job") {
-    const targetJobId = classification.unacquired[0];
+  if (classification.action === "rerun-failed") {
     await githubRequest({
       fetchImpl,
       token,
       method: "POST",
-      path: `/repos/${repo}/actions/jobs/${targetJobId}/rerun`,
+      path: `/repos/${repo}/actions/runs/${runId}/rerun-failed-jobs`,
       apiBase,
     });
     rerunTriggered = true;
