@@ -10,6 +10,7 @@
 // collapsing the picture to normalizeAsset's 1×1 placeholder. A second asset
 // with intact dimensions must keep rendering from its props.
 import { createServer, request as httpRequest } from "node:http";
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
 
 export const name = "viewer-missing-dimensions";
 export const description = "UI receives a 1200x800 asset without width/height (proxy-stripped) -> viewer renders it from the decoded image at ~1.5 ratio, zoom and fit work -> a normal asset keeps its props dimensions";
@@ -144,17 +145,7 @@ function startStrippingProxy(targetOrigin, assetId) {
 
 function viewerSource(gapId) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 45000) {
-      const deadline = Date.now() + timeoutMs;
-      let last = null;
-      while (Date.now() < deadline) {
-        try { last = check(); } catch (error) { last = String(error); }
-        if (last) return last;
-        await sleep(120);
-      }
-      throw new Error('Timed out waiting for ' + label + ' | last=' + String(last));
-    }
+${PAGE_WAIT_SOURCE}
     // The page talks to the same stripping proxy, so this response is exactly
     // what the app was fed.
     const token = new URLSearchParams(location.hash.slice(1)).get('mosa-client-token') || '';

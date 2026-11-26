@@ -25,7 +25,7 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import sharp from "sharp";
-import { waitForCdpExpression } from "./_shared.mjs";
+import { connectCdp, waitForCdpExpression } from "./_cdp.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { signalProcessTree } from "../process-tree.mjs";
 
@@ -175,7 +175,7 @@ async function runWindowRound(ctx, server, { codexSessionsDir, codexImagesDir, w
     });
     await cdp.evaluate(`document.querySelector('.bridge-status-card').scrollIntoView({ block: 'center' })`);
     await sleep(300);
-    const lightShot = Buffer.from((await cdp.command("Page.captureScreenshot", { format: "png" })).data, "base64");
+    const lightShot = Buffer.from((await cdp.send("Page.captureScreenshot", { format: "png" })).data, "base64");
     const lightPath = join(shotsDir, "452-card-error.png");
     await writeFile(lightPath, lightShot);
 
@@ -185,7 +185,7 @@ async function runWindowRound(ctx, server, { codexSessionsDir, codexImagesDir, w
     });
     await cdp.evaluate(`document.querySelector('.bridge-status-card').scrollIntoView({ block: 'center' })`);
     await sleep(300);
-    const darkShot = Buffer.from((await cdp.command("Page.captureScreenshot", { format: "png" })).data, "base64");
+    const darkShot = Buffer.from((await cdp.send("Page.captureScreenshot", { format: "png" })).data, "base64");
     const darkPath = join(shotsDir, "452-card-error-dark.png");
     await writeFile(darkPath, darkShot);
 
@@ -328,72 +328,4 @@ async function waitForReadyLine(stdoutChunks, stderrChunks, timeoutMs = 30000) {
     await sleep(100);
   }
   throw new Error(`bridge status window never became ready: stdout=${stdoutChunks.join("").slice(-500)} stderr=${stderrChunks.join("").slice(-1200)}`);
-}
-
-// ---- Local CDP plumbing mirroring the runner's desktop helpers ----
-
-async function connectCdp(port, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  let target = null;
-  while (Date.now() < deadline && !target) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        target = targets.find((entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix));
-      }
-    } catch {}
-    if (!target) await sleep(100);
-  }
-  if (!target?.webSocketDebuggerUrl) throw new Error(`No Electron CDP target found on ${port}`);
-  return openCdpSession(target.webSocketDebuggerUrl);
-}
-
-async function openCdpSession(url) {
-  const socket = new WebSocket(url);
-  await new Promise((resolveOpen, reject) => {
-    socket.addEventListener("open", resolveOpen, { once: true });
-    socket.addEventListener("error", () => reject(new Error("CDP websocket failed to open")), { once: true });
-  });
-
-  let sequence = 0;
-  const pending = new Map();
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (!message.id) return;
-    const request = pending.get(message.id);
-    if (!request) return;
-    pending.delete(message.id);
-    if (message.error) request.reject(new Error(message.error.message || "CDP command failed"));
-    else request.resolve(message.result);
-  });
-
-  function command(method, params = {}) {
-    const id = ++sequence;
-    return new Promise((resolveCommand, rejectCommand) => {
-      pending.set(id, { resolve: resolveCommand, reject: rejectCommand });
-      socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  await command("Runtime.enable");
-  return {
-    command,
-    async evaluate(expression) {
-      const response = await command("Runtime.evaluate", {
-        expression,
-        awaitPromise: true,
-        returnByValue: true,
-        userGesture: true,
-      });
-      if (response.exceptionDetails) {
-        const description = response.exceptionDetails.exception?.description || response.exceptionDetails.text || "Renderer evaluation failed";
-        throw new Error(description);
-      }
-      return response.result?.value;
-    },
-    close() {
-      socket.close();
-    },
-  };
 }

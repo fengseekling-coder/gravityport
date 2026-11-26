@@ -3,6 +3,8 @@
 // success. Task 382: a CJK-named drop keeps its readable name everywhere the
 // UI shows it (card aria-label, inspector title, viewer title) instead of the
 // old `asset-<stamp>` slug.
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "import-batch-and-errors";
 export const description = "three-file drop imports all (CJK name intact on card/inspector/viewer) -> unsupported text file paste fails honestly with a toast and imports nothing";
 
@@ -23,16 +25,7 @@ export async function run(ctx) {
 
 function importSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(120);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const cardCount = () => document.querySelectorAll('.asset-card').length;
     async function makeFile(name, type) {
       const canvas = document.createElement('canvas');

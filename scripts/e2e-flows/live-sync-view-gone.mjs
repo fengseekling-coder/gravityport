@@ -5,7 +5,7 @@
 export const name = "live-sync-view-gone";
 export const description = "dissolved/emptied stack auto-exits (back never returns), deleted group falls back to 所有素材, renamed group follows, stack+video filter shows the no-results empty state";
 
-import { TOOLBAR_SELECT_SOURCE } from "./_shared.mjs";
+import { PAGE_WAIT_SOURCE, TOOLBAR_SELECT_SOURCE } from "./_shared.mjs";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -45,7 +45,7 @@ export async function run(ctx) {
 
 function viewGoneSource(stackA, stackACover, stackB, stackBCover, stackCCover, stackBMember1, stackBMember2) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+${PAGE_WAIT_SOURCE}
     ${TOOLBAR_SELECT_SOURCE}
     async function chooseToolbarOption(label, optionText) {
       const trigger = Array.from(document.querySelectorAll('.toolbar-select')).find((node) => {
@@ -57,15 +57,6 @@ function viewGoneSource(stackA, stackACover, stackB, stackBCover, stackCCover, s
       const optionFor = () => Array.from(document.querySelectorAll('.toolbar-select-menu [role="option"]'))
         .find((node) => node.textContent.trim() === optionText) || null;
       await chooseToolbarSelect(() => trigger, optionFor, 'option ' + optionText, 'toolbar select ' + label, 'menu closes');
-    }
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(120);
-      }
-      throw new Error('Timed out waiting for ' + label);
     }
     const clientToken = () => sessionStorage.getItem('mosa.client-token') || '';
     const api = (path, method, body) => fetch(path, {

@@ -19,6 +19,8 @@ import sharp from "sharp";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { signalProcessTree } from "../process-tree.mjs";
+import { connectCdp, waitForRendererReady } from "./_cdp.mjs";
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
 
 export const name = "extension-status-card";
 export const description = "capture with extensionVersion -> card 已连接 + version -> extension reports pending:2 -> 刷新 shows 重试 -> click -> retryRequestId +1; then a nearly-full offline queue shows the three storage hints (screenshot) and a clean report hides them";
@@ -157,7 +159,9 @@ async function runDesktopHintRound(ctx) {
       throw new Error(`desktop QA runtime is not MOSA/sqlite: ${JSON.stringify(health)}`);
     }
     cdp = await connectCdp(cdpPort, `http://127.0.0.1:${servicePort}`);
-    await waitForRendererReady(cdp);
+    await waitForRendererReady(cdp, {
+      ready: "Boolean(window.electronAPI && typeof window.electronAPI.writeClipboardText === 'function')",
+    });
     await pinChineseLanguage(cdp);
 
     const hinted = await cdp.evaluate(desktopPageSource(CAPTURE_TOKEN, "hinted"));
@@ -167,7 +171,7 @@ async function runDesktopHintRound(ctx) {
     if (hinted?.urlOnly !== true) problems.push("只存了网址 hint missing");
     if (problems.length) throw new Error(`extension-status-card desktop hints: ${problems.join("; ")}`);
 
-    const screenshot = await cdp.command("Page.captureScreenshot", { format: "png" });
+    const screenshot = await cdp.send("Page.captureScreenshot", { format: "png" });
     const screenshotPath = join(ctx.rootDir, "tasks", "logs", "310-card.png");
     await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
 
@@ -196,9 +200,11 @@ async function pinChineseLanguage(cdp) {
     }
   })()`);
   if (needsPin !== true) return;
-  await cdp.command("Page.reload");
+  await cdp.send("Page.reload");
   await sleep(500);
-  await waitForRendererReady(cdp);
+  await waitForRendererReady(cdp, {
+    ready: "Boolean(window.electronAPI && typeof window.electronAPI.writeClipboardText === 'function')",
+  });
 }
 
 function desktopPageSource(token, phase) {
@@ -270,16 +276,7 @@ async function noiseJpeg() {
 
 function pageSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 15000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const bridgeStatus = async () => {
       const response = await fetch('/api/web-capture', { cache: 'no-store' });
       if (!response.ok) throw new Error('GET /api/web-capture -> HTTP ' + response.status);
@@ -386,91 +383,6 @@ async function waitForHealthFile(filePath, timeoutMs = 60000) {
     await sleep(100);
   }
   throw new Error(`Health file timeout: ${filePath}`);
-}
-
-async function connectCdp(port, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  let target = null;
-  while (Date.now() < deadline && !target) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        target = targets.find((entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix));
-      }
-    } catch {}
-    if (!target) await sleep(100);
-  }
-  if (!target?.webSocketDebuggerUrl) throw new Error(`No Electron CDP target found on ${port}`);
-  return openCdpSession(target.webSocketDebuggerUrl);
-}
-
-async function openCdpSession(url) {
-  const socket = new WebSocket(url);
-  await new Promise((resolveOpen, reject) => {
-    socket.addEventListener("open", resolveOpen, { once: true });
-    socket.addEventListener("error", () => reject(new Error("CDP websocket failed to open")), { once: true });
-  });
-
-  let sequence = 0;
-  const pending = new Map();
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (!message.id) return;
-    const request = pending.get(message.id);
-    if (!request) return;
-    pending.delete(message.id);
-    if (message.error) request.reject(new Error(message.error.message || "CDP command failed"));
-    else request.resolve(message.result);
-  });
-
-  function command(method, params = {}) {
-    const id = ++sequence;
-    return new Promise((resolveCommand, rejectCommand) => {
-      pending.set(id, { resolve: resolveCommand, reject: rejectCommand });
-      socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  await command("Runtime.enable");
-  return {
-    command,
-    async evaluate(expression) {
-      const response = await command("Runtime.evaluate", {
-        expression,
-        awaitPromise: true,
-        returnByValue: true,
-        userGesture: true,
-      });
-      if (response.exceptionDetails) {
-        const description = response.exceptionDetails.exception?.description || response.exceptionDetails.text || "Renderer evaluation failed";
-        throw new Error(description);
-      }
-      return response.result?.value;
-    },
-    close() {
-      socket.close();
-    },
-  };
-}
-
-async function waitForRendererReady(cdp, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError = null;
-  while (Date.now() < deadline) {
-    try {
-      const state = await cdp.evaluate(`({
-        readyState: document.readyState,
-        appShell: Boolean(document.querySelector('.app')),
-        preload: Boolean(window.electronAPI && typeof window.electronAPI.writeClipboardText === 'function'),
-      })`);
-      if (state?.readyState === 'complete' && state.appShell && state.preload) return;
-    } catch (error) {
-      lastError = error;
-    }
-    await sleep(100);
-  }
-  throw new Error(`Desktop renderer readiness timeout${lastError ? `: ${lastError.message}` : ''}`);
 }
 
 // Only this flow's own leftovers are matched: the launcher executable inside

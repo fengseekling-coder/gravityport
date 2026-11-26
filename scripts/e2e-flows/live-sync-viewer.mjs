@@ -2,6 +2,8 @@
 // mutations — a deleted card steps to the one now at its position with the
 // title counter intact; a card that merely left the view stays until the
 // viewer closes, then leaves the view.
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "live-sync-viewer";
 export const description = "external trash under the open viewer steps to the next card (title 10 -> 10/11); external unfavorite pins the viewed card until the viewer closes";
 
@@ -40,16 +42,7 @@ export async function run(ctx) {
 
 function viewerSource(tenth, favoriteA) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(120);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const clientToken = () => sessionStorage.getItem('mosa.client-token') || '';
     const api = (path, method, body) => fetch(path, {
       method: method || 'GET',

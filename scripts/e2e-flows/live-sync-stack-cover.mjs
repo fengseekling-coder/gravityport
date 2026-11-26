@@ -2,6 +2,8 @@
 // must swap the stack card to its new cover through the incremental sync —
 // the new cover's id is in no journal assetIds list, so the client has to
 // send the affected stack id along (and the App actually does, now).
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "live-sync-stack-cover";
 export const description = "external archive of a stack cover -> stack card stays with the new cover and count-1; moving the new cover out -> same; no cursor-less /api/assets";
 
@@ -32,16 +34,7 @@ export async function run(ctx) {
 
 function stackCoverSource(stackId, firstCover) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(120);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const clientToken = () => sessionStorage.getItem('mosa.client-token') || '';
     const api = (path, method, body) => fetch(path, {
       method: method || 'GET',

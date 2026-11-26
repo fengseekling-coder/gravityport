@@ -1,6 +1,6 @@
 // GravityPort desktop-window input flow (task 127): launches the REAL desktop
 // shell (desktop/main.mjs with preload) and drives the UI exclusively through
-// CDP Input.dispatchMouseEvent / dispatchKeyEvent — trusted browser input that
+// CDP mouse/keyboard helpers (_cdp.mjs) — trusted browser input that
 // goes through Chromium's hit-testing, not element.click(). This is the layer
 // the web-driver flows (plain Electron window, no desktop chain) never cover:
 // preload wiring, the brandbar safe area, the real toolbar layout.
@@ -17,6 +17,7 @@ import { readFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { clickCenter, connectCdp, dispatchMouse, doubleClick, pointOf, waitFor as waitForCdp } from "./_cdp.mjs";
 
 export const name = "desktop-input";
 export const description = "real desktop window: trusted CDP input drives nav/cards/viewer/search/sort/settings/scroll/context-menu/keyboard; 56px top strip, no simulated traffic lights";
@@ -153,7 +154,7 @@ export async function run(ctx) {
       }
       // The new groups reach the sidebar through the live refresh; a fixed
       // 500ms pause sometimes measured before they rendered (macOS CI).
-      await waitFor(cdp, `document.querySelector(".sidebar").scrollHeight > document.querySelector(".sidebar").clientHeight`, "sidebar overflow from 40 groups");
+      await waitForUi(cdp, `document.querySelector(".sidebar").scrollHeight > document.querySelector(".sidebar").clientHeight`, "sidebar overflow from 40 groups");
       const layout = await cdp.evaluate(`(() => {
         const el = document.querySelector(".brandbar");
         const r = el.getBoundingClientRect();
@@ -189,7 +190,7 @@ export async function run(ctx) {
       for (let round = 1; round <= 4; round += 1) {
         try {
           await clickCenter(cdp, elementExpression);
-          await waitFor(cdp, waitExpression, label, 2500);
+          await waitForUi(cdp, waitExpression, label, 2500);
           return;
         } catch (error) {
           lastError = error;
@@ -198,7 +199,7 @@ export async function run(ctx) {
       // 352 diagnostics on the final failure: a lost click shows as few or no
       // trusted click events and/or another element under the measured point;
       // a delivered click that changes nothing points at the app instead.
-      const point = await centerOf(cdp, elementExpression).catch(() => null);
+      const point = await pointOf(cdp, elementExpression).catch(() => null);
       const probeExpression = "(() => {"
         + " const nav = document.querySelector('.nav-row[aria-current=\"page\"]');"
         + " const rect = nav ? nav.getBoundingClientRect() : null;"
@@ -229,38 +230,31 @@ export async function run(ctx) {
     }));
 
     await step("trusted click selects a card and updates the inspector", trusted(async () => {
-      const info = await cdp.evaluate(`(() => {
-        const card = document.querySelector(".asset-card");
-        if (!card) return null;
-        const r = card.getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      })()`);
-      if (!info) throw new Error("no asset card rendered");
-      await dispatchClick(cdp, info.x, info.y);
-      await waitFor(cdp, `document.querySelectorAll(".asset-card.asset-selected").length === 1`, "card selected");
-      await waitFor(cdp, `Boolean(document.querySelector(".detail-heading"))`, "inspector heading visible");
+      await clickCenter(cdp, `document.querySelector(".asset-card")`, { label: "first asset card" });
+      await waitForUi(cdp, `document.querySelectorAll(".asset-card.asset-selected").length === 1`, "card selected");
+      await waitForUi(cdp, `Boolean(document.querySelector(".detail-heading"))`, "inspector heading visible");
     }));
 
     await step("trusted double click opens the preview and Escape closes it", trusted(async () => {
-      await dispatchDoubleClick(cdp);
-      await waitFor(cdp, `document.querySelector(".workspace")?.classList.contains("preview-open")`, "preview open");
+      await doubleClick(cdp, `document.querySelector(".asset-card.asset-selected") || document.querySelector(".asset-card")`, { label: "selected asset card" });
+      await waitForUi(cdp, `document.querySelector(".workspace")?.classList.contains("preview-open")`, "preview open");
       await pressEscape(cdp);
-      await waitFor(cdp, `!document.querySelector(".workspace")?.classList.contains("preview-open")`, "preview closed");
+      await waitForUi(cdp, `!document.querySelector(".workspace")?.classList.contains("preview-open")`, "preview closed");
     }));
 
     await step("trusted click focuses search and keyboard types into it", trusted(async () => {
       await clickCenter(cdp, `document.querySelector(".search input")`);
-      await waitFor(cdp, `document.activeElement === document.querySelector(".search input")`, "search focused");
+      await waitForUi(cdp, `document.activeElement === document.querySelector(".search input")`, "search focused");
       for (const char of "g1") {
         await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: char, text: char });
         await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: char });
       }
-      await waitFor(cdp, `document.querySelector(".search input").value === "g1"`, "search value g1");
+      await waitForUi(cdp, `document.querySelector(".search input").value === "g1"`, "search value g1");
       for (let i = 0; i < 2; i += 1) {
         await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
         await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
       }
-      await waitFor(cdp, `document.querySelector(".search input").value === ""`, "search cleared");
+      await waitForUi(cdp, `document.querySelector(".search input").value === ""`, "search cleared");
     }));
 
     await step("trusted click opens the sort menu and selects an option", trusted(async () => {
@@ -274,9 +268,9 @@ export async function run(ctx) {
           await clickCenter(cdp, `document.querySelector('.toolbar-select[aria-haspopup="listbox"]')`);
         }
         try {
-          await waitFor(cdp, open, "sort menu open", 2500);
+          await waitForUi(cdp, open, "sort menu open", 2500);
           await clickCenter(cdp, `document.querySelector(".toolbar-select-option")`);
-          await waitFor(cdp, `!document.querySelector(".toolbar-select-menu")`, "sort menu closed");
+          await waitForUi(cdp, `!document.querySelector(".toolbar-select-menu")`, "sort menu closed");
           return;
         } catch (error) {
           lastError = error;
@@ -291,15 +285,15 @@ export async function run(ctx) {
       await cdp.evaluate(`(() => { const sidebar = document.querySelector(".sidebar"); sidebar.scrollTop = sidebar.scrollHeight; return sidebar.scrollTop; })()`);
       await sleep(200);
       // 11-16：左下角显示安装编号（前 8 位…后 4 位，悬停看完整编号），点它仍打开设置。
-      await waitFor(cdp, `/^[0-9a-f]{8}…[0-9a-f]{4}$/.test(document.querySelector(".user-button > span")?.textContent || "")`, "nav shows the short installation id");
+      await waitForUi(cdp, `/^[0-9a-f]{8}…[0-9a-f]{4}$/.test(document.querySelector(".user-button > span")?.textContent || "")`, "nav shows the short installation id");
       const navId = await cdp.evaluate(`(() => { const b = document.querySelector(".user-button"); return { short: b.querySelector("span").textContent, title: b.getAttribute("title") || "" }; })()`);
       if (!/^安装编号 [0-9a-f-]{36}$/.test(navId.title) || !navId.title.includes(navId.short.slice(0, 8)) || !navId.title.endsWith(navId.short.slice(-4))) {
         throw new Error(`nav installation id mismatch: ${JSON.stringify(navId)}`);
       }
       await clickCenter(cdp, `document.querySelector(".user-button")`);
-      await waitFor(cdp, `Boolean(document.querySelector(".settings-modal"))`, "settings open");
+      await waitForUi(cdp, `Boolean(document.querySelector(".settings-modal"))`, "settings open");
       await pressEscape(cdp);
-      await waitFor(cdp, `!document.querySelector(".settings-modal")`, "settings closed");
+      await waitForUi(cdp, `!document.querySelector(".settings-modal")`, "settings closed");
     }));
 
     await step("mouse wheel scrolls the gallery", async () => {
@@ -308,9 +302,17 @@ export async function run(ctx) {
         const r = grid.getBoundingClientRect();
         return { x: r.x + r.width / 2, y: Math.min(r.y + r.height / 2, innerHeight - 40) };
       })()`);
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: center.x, y: center.y, pointerType: "mouse" });
+      await dispatchMouse(
+        cdp,
+        { type: "mouseMoved", x: center.x, y: center.y, pointerType: "mouse" },
+        { reason: "position mouse over asset grid center before wheel scroll" },
+      );
       for (let tick = 0; tick < 3; tick += 1) {
-        await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: center.x, y: center.y, deltaX: 0, deltaY: 400, pointerType: "mouse" });
+        await dispatchMouse(
+          cdp,
+          { type: "mouseWheel", x: center.x, y: center.y, deltaX: 0, deltaY: 400, pointerType: "mouse" },
+          { reason: "dispatch wheel scroll at asset grid center" },
+        );
         await sleep(120);
       }
       await sleep(300);
@@ -322,18 +324,11 @@ export async function run(ctx) {
     });
 
     await step("right click opens the context menu and Escape closes it", trusted(async () => {
-      const card = await cdp.evaluate(`(() => {
-        const cards = [...document.querySelectorAll(".asset-card")];
-        const el = cards.find((c) => { const r = c.getBoundingClientRect(); return r.top > 60 && r.bottom < innerHeight - 20; });
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-      })()`);
-      if (!card) throw new Error("no on-screen card to right-click");
-      await dispatchClick(cdp, card.x, card.y, { button: "right" });
-      await waitFor(cdp, `Boolean(document.querySelector(".context-menu"))`, "context menu open");
+      const onScreenCardExpr = `[...document.querySelectorAll(".asset-card")].find((c) => { const r = c.getBoundingClientRect(); return r.top > 60 && r.bottom < innerHeight - 20; })`;
+      await clickCenter(cdp, onScreenCardExpr, { button: "right", label: "on-screen card to right-click" });
+      await waitForUi(cdp, `Boolean(document.querySelector(".context-menu"))`, "context menu open");
       await pressEscape(cdp);
-      await waitFor(cdp, `!document.querySelector(".context-menu")`, "context menu closed");
+      await waitForUi(cdp, `!document.querySelector(".context-menu")`, "context menu closed");
     }));
 
     await step("trusted Tab moves keyboard focus", trusted(async () => {
@@ -351,11 +346,7 @@ export async function run(ctx) {
       const paths = (page.assets || []).map((asset) => asset.image_path).filter(Boolean);
       if (paths.length !== 2) throw new Error(`expected 2 library paths, got ${JSON.stringify(paths)}`);
       const outside = await ctx.makePng("desktop-input-outside.png", [10, 20, 30]);
-      const callBridge = () => cdp.send("Runtime.evaluate", {
-        expression: `window.electronAPI.writeClipboardFiles(${JSON.stringify([...paths, outside])})`,
-        awaitPromise: true,
-        returnByValue: true,
-      });
+      const callBridge = () => cdp.evaluate(`window.electronAPI.writeClipboardFiles(${JSON.stringify([...paths, outside])})`);
       let result = await callBridge();
       // The Windows CI clipboard service is occasionally unavailable; one
       // short retry rides out that flake (task 223). Every other failure
@@ -437,60 +428,20 @@ async function seedAssets(ctx, port) {
   return seededIds;
 }
 
-async function centerOf(cdp, elementExpression) {
-  const point = await cdp.evaluate(`(() => {
-    const el = ${elementExpression};
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  })()`);
-  if (!point) throw new Error(`element not found: ${elementExpression}`);
-  return point;
-}
-
-async function clickCenter(cdp, elementExpression) {
-  const point = await centerOf(cdp, elementExpression);
-  await dispatchClick(cdp, point.x, point.y);
-}
-
-async function dispatchClick(cdp, x, y, { button = "left", clickCount = 1 } = {}) {
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, pointerType: "mouse" });
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    x, y, button, buttons: button === "right" ? 2 : 1, clickCount, pointerType: "mouse",
-  });
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    x, y, button, buttons: 0, clickCount, pointerType: "mouse",
-  });
-}
-
-async function dispatchDoubleClick(cdp) {
-  const point = await centerOf(cdp, `document.querySelector(".asset-card.asset-selected") || document.querySelector(".asset-card")`);
-  for (const clickCount of [1, 2]) {
-    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount, pointerType: "mouse" });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount, pointerType: "mouse" });
-  }
-}
+const DESKTOP_INPUT_SCENE = `(() => ({
+  active: document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') || 'none',
+  cards: document.querySelectorAll('.asset-card').length,
+  selected: document.querySelectorAll('.asset-card.asset-selected').length,
+  bodyClass: document.body.className,
+}))()`;
 
 async function pressEscape(cdp) {
   await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
 }
 
-async function waitFor(cdp, expression, label, timeoutMs = 12000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await cdp.evaluate(`Boolean(${expression})`)) return;
-    await sleep(120);
-  }
-  const snapshot = await cdp.evaluate(`(() => ({
-    active: document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') || 'none',
-    cards: document.querySelectorAll('.asset-card').length,
-    selected: document.querySelectorAll('.asset-card.asset-selected').length,
-    bodyClass: document.body.className,
-  }))()`).catch(() => ({}));
-  throw new Error(`timeout waiting for ${label}; state=${JSON.stringify(snapshot)}`);
+async function waitForUi(cdp, expression, label, timeoutMs = 12000) {
+  await waitForCdp(cdp, expression, label, { timeoutMs, scene: DESKTOP_INPUT_SCENE });
 }
 
 async function waitForHealthFile(filePath, timeoutMs = 60000) {
@@ -503,59 +454,6 @@ async function waitForHealthFile(filePath, timeoutMs = 60000) {
     await sleep(250);
   }
   throw new Error("desktop health file timeout");
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find((entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix));
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await sleep(200);
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve, reject } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) reject(new Error(message.error.message));
-      else if (message.result?.exceptionDetails) {
-        reject(new Error("evaluate failed: " + (message.result.exceptionDetails.exception?.description || message.result.exceptionDetails.text)));
-      } else resolve(message.result?.result?.value);
-    }
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    async evaluate(expression) {
-      return this.send("Runtime.evaluate", { expression, returnByValue: true });
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
 }
 
 function freePort() {

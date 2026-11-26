@@ -10,6 +10,8 @@
 // onto the sidebar row joins without moving the card's group, 移出学习库
 // removes one, and deleting the library returns to 所有素材 with every image
 // still there. Server truth is re-verified from node.
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "learning-library";
 export const description = "learning library (entry on): + creates one, group 全部加入学习库, second library via card menu, learn view (no stack fold, guide/details tabs), header rename, card drag join, remove-from-learning-library, delete returns to 所有素材; entry off hides section + menus";
 
@@ -93,16 +95,7 @@ export async function run(ctx) {
 
 function entryOffSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(120);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     await waitFor(() => document.querySelector('.app') && document.querySelector('.workspace'), 'app shell');
     const sectionLabels = Array.from(document.querySelectorAll('.group-section .section-toggle span')).map((span) => span.textContent.trim());
     const sectionHidden = !sectionLabels.includes('学习库');

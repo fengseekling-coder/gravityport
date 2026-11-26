@@ -11,6 +11,7 @@ import sharp from "sharp";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { signalProcessTree } from "../process-tree.mjs";
+import { connectCdp } from "./_cdp.mjs";
 
 export const name = "lovart-parent-link";
 export const description = "Lovart Fake01 -> ref -> Fake02 via /api/ingest/web-capture -> VersionCanvas shows 2 cards + 1 solid edge (改自) with 删除关系 on both Fake02 and Fake01 -> delete via confirm dialog -> re-capture Fake02 stays unlinked";
@@ -466,46 +467,6 @@ async function waitForHealthFile(filePath, timeoutMs = 60000) {
     await sleep(100);
   }
   throw new Error(`Health file timeout: ${filePath}`);
-}
-
-async function connectCdp(port, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  let target = null;
-  while (Date.now() < deadline && !target) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/json/list`);
-      if (res.ok) {
-        const list = await res.json();
-        target = list.find((e) => e.type === "page" && String(e.url || "").startsWith(expectedUrlPrefix));
-      }
-    } catch {}
-    if (!target) await sleep(150);
-  }
-  if (!target?.webSocketDebuggerUrl) throw new Error(`CDP target not found on port ${port}`);
-  const ws = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-  let nextId = 1;
-  const pending = new Map();
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(String(event.data));
-    if (msg.id && pending.has(msg.id)) {
-      const { resolve: r, reject: j } = pending.get(msg.id);
-      pending.delete(msg.id);
-      if (msg.error) j(new Error(msg.error.message || JSON.stringify(msg.error)));
-      else r(msg.result);
-    }
-  };
-  const send = (method, params = {}) => new Promise((resolveSend, rejectSend) => {
-    const id = nextId++;
-    pending.set(id, { resolve: resolveSend, reject: rejectSend });
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-  const evaluate = async (expression) => {
-    const out = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
-    if (out?.exceptionDetails) throw new Error(out.exceptionDetails.text || JSON.stringify(out.exceptionDetails));
-    return out?.result?.value;
-  };
-  return { send, evaluate, close: () => ws.close() };
 }
 
 async function stampDemoWatermark(pngBuffer) {

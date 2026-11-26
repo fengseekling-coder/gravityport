@@ -10,6 +10,7 @@
 // overflow horizontally or resize the modal.
 import { createServer } from "node:http";
 import { homedir } from "node:os";
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
 
 export const name = "settings-feedback";
 export const description = "Settings → 反馈: empty send disabled -> diagnostics preview leaks nothing -> submit hits the fake collector once (kind idea, diagnostics === preview) -> 429 keeps the copy -> draft survives close/reopen and restart -> 720x464 stays overflow-free";
@@ -160,16 +161,7 @@ function assertOk(condition, label) {
 
 function pageHelpers() {
   return `
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 15000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const setInput = (el, value) => {
       const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
       Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);

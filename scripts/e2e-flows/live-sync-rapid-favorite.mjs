@@ -1,6 +1,8 @@
 // GravityPort React UI flow (320 补充 7 / 原单⑤-7)：自己快速收藏又取消
 // （两次点击间隔 <50ms），同步提交后心形不许回跳——MutationObserver 记录的
 // 状态序列只能是 未收藏→收藏→未收藏。
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "live-sync-rapid-favorite";
 export const description = "double-click-speed favorite/unfavorite -> MutationObserver heart sequence never bounces back";
 
@@ -27,16 +29,7 @@ export async function run(ctx) {
 
 function rapidFavoriteSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 20000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const clientToken = () => sessionStorage.getItem('mosa.client-token') || '';
     const cardCount = () => document.querySelectorAll('.asset-card').length;
 

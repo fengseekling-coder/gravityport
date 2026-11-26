@@ -13,6 +13,8 @@
 // answers status "denied" with no token. A third request (store origin) then
 // opens while the page watches the DOM, and an Escape pressed the moment its
 // dialog is inserted must deny it too.
+import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
+
 export const name = "web-capture-pairing-confirm";
 export const description = "POST /pair -> 202 pending -> App dialog (focus on 不允许, versioned source) -> 允许连接 -> poll returns the token once; second POST -> Escape denies -> poll returns denied; third POST -> Escape at dialog insertion denies";
 
@@ -39,16 +41,7 @@ async function pollPair(origin, requestId, extensionOrigin = DEVELOPMENT_ORIGIN)
 
 function pageSource({ phase }) {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 15000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     await waitFor(() => document.querySelector('.app'), 'app shell');
     await waitFor(() => document.querySelector('.authorization-modal'), 'authorization dialog');
     // The dialog's initial focus lands in a passive effect after the paint

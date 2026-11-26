@@ -1,6 +1,6 @@
 // GravityPort React UI flow: search, media-kind filter, sort order and the
 // column control drive real server queries and the grid layout.
-import { TOOLBAR_SELECT_SOURCE } from "./_shared.mjs";
+import { PAGE_WAIT_SOURCE, TOOLBAR_SELECT_SOURCE } from "./_shared.mjs";
 
 export const name = "browse-sort-filter";
 export const description = "search narrows server-side -> mediaKind filter -> sort order flips card order -> column control reflows the grid";
@@ -34,16 +34,7 @@ export async function run(ctx) {
 
 function browseSource() {
   return `(async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    async function waitFor(check, label, timeoutMs = 15000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const value = check();
-        if (value) return value;
-        await sleep(100);
-      }
-      throw new Error('Timed out waiting for ' + label);
-    }
+${PAGE_WAIT_SOURCE}
     const cardLabels = () => Array.from(document.querySelectorAll('.asset-card')).map((card) => card.getAttribute('aria-label') || '');
     const settled = () => !document.querySelector(".empty-state[role='status']");
     function setSearch(value) {

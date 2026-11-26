@@ -25,6 +25,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { clickCenter, connectCdp, dispatchMouse, doubleClick, waitFor as waitForCdp } from "./_cdp.mjs";
 
 export const name = "desktop-paste-import";
 export const description = "real desktop paste-to-import: system-clipboard files/images via ⌘V and the blank-area menu 粘贴 land in the browsed view (group/stack), hidden views point at 所有素材, trash-free skips stay silent, library files never import twice";
@@ -192,19 +193,13 @@ export async function run(ctx) {
       }
       throw new Error(`timeout waiting for toast ${label}`);
     };
-    const waitFor = async (expression, label, timeoutMs = 12000) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (await cdp.evaluate(`Boolean(${expression})`)) return;
-        await sleep(150);
-      }
-      const snapshot = await cdp.evaluate(`(() => ({
-        active: document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') || 'none',
-        cards: document.querySelectorAll('.asset-card').length,
-        toast: document.querySelector('.toast')?.textContent || '',
-      }))()`).catch(() => ({}));
-      throw new Error(`timeout waiting for ${label}; state=${JSON.stringify(snapshot)}`);
-    };
+    const PASTE_SCENE = `(() => ({
+      active: document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') || 'none',
+      cards: document.querySelectorAll('.asset-card').length,
+      toast: document.querySelector('.toast')?.textContent || '',
+    }))()`;
+    const waitForUi = (expression, label, timeoutMs = 12000) =>
+      waitForCdp(cdp, expression, label, { timeoutMs, scene: PASTE_SCENE });
 
     // Capture what every paste event actually delivers: file count, names and
     // types. The clipboard writers above are the first suspect whenever an
@@ -261,11 +256,11 @@ export async function run(ctx) {
     // ── 2) Raw image data into a group view ──
     await step("raw image data pasted in a group view joins the group with a 粘贴的图片 name", async () => {
       await clickCenter(cdp, `document.querySelector('.sidebar .group-row[aria-label="${GROUP_NAME}"]')`);
-      await waitFor(`[...document.querySelectorAll('.sidebar .group-row')].some((row) => row.getAttribute('aria-current') === 'page' && row.getAttribute('aria-label') === '${GROUP_NAME}')`,
+      await waitForUi(`[...document.querySelectorAll('.sidebar .group-row')].some((row) => row.getAttribute('aria-current') === 'page' && row.getAttribute('aria-label') === '${GROUP_NAME}')`,
       "group view active");
       await writeClipboardImage(filePngD);
       await dispatchPasteCommand(cdp);
-      await waitFor(`document.querySelectorAll('.asset-card').length === 1`, "pasted card lands in the group view");
+      await waitForUi(`document.querySelectorAll('.asset-card').length === 1`, "pasted card lands in the group view");
       const assets = await total();
       // The backend slugs imported names into ids, stripping non-ASCII — so
       // the 粘贴的图片 prefix cannot survive, but the rename's timestamp can.
@@ -286,17 +281,17 @@ export async function run(ctx) {
       await writeClipboardFiles([filePngE]);
       // Back to 所有素材, then open the stack with a real double click.
       await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="所有素材"]')`);
-      await waitFor(`[...document.querySelectorAll('.asset-card[aria-label]')].some((card) => card.getAttribute('aria-label').includes('堆叠'))`, "stack card visible");
-      await dispatchDoubleClick(cdp, `[...document.querySelectorAll('.asset-card[aria-label]')].find((card) => card.getAttribute('aria-label').includes('堆叠'))`);
-      await waitFor(`document.querySelector('.context-menu') === null`, "stack view settled");
+      await waitForUi(`[...document.querySelectorAll('.asset-card[aria-label]')].some((card) => card.getAttribute('aria-label').includes('堆叠'))`, "stack card visible");
+      await doubleClick(cdp, `[...document.querySelectorAll('.asset-card[aria-label]')].find((card) => card.getAttribute('aria-label').includes('堆叠'))`, { label: "stack card" });
+      await waitForUi(`document.querySelector('.context-menu') === null`, "stack view settled");
       const membersBefore = (await stackMembers(origin, stack.stack.id, ctx.token)).length;
       await rightClickBlank(cdp);
-      await waitFor(`Boolean(document.querySelector('.context-menu'))`, "stack blank menu open");
+      await waitForUi(`Boolean(document.querySelector('.context-menu'))`, "stack blank menu open");
       const menuHasBack = await cdp.evaluate(`[...document.querySelectorAll('.context-menu button')].some((b) => b.textContent.includes('返回素材库'))`);
       if (!menuHasBack) throw new Error("stack blank menu missing 返回素材库 — not in a stack view");
       // The 粘贴 item patches in after the async clipboard query answers;
       // wait for it instead of racing the IPC roundtrip.
-      await waitFor(`[...document.querySelectorAll('.context-menu button')].some((b) => b.textContent.trim() === '粘贴')`, "stack blank menu 粘贴 item", 4000);
+      await waitForUi(`[...document.querySelectorAll('.context-menu button')].some((b) => b.textContent.trim() === '粘贴')`, "stack blank menu 粘贴 item", 4000);
       await clickCenter(cdp, `[...document.querySelectorAll('.context-menu button')].find((b) => b.textContent.trim() === '粘贴')`);
       const deadline = Date.now() + 20000;
       let members = [];
@@ -311,11 +306,11 @@ export async function run(ctx) {
     // ── 4) Focus in the search field: no import ──
     await step("paste with the search field focused imports nothing", async () => {
       await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="所有素材"]')`);
-      await waitFor(`document.querySelector('.search input')`, "back in the library");
+      await waitForUi(`document.querySelector('.search input')`, "back in the library");
       await writeClipboardImage(filePngA);
       const before = (await total()).length;
       await clickCenter(cdp, `document.querySelector('.search input')`);
-      await waitFor(`document.activeElement === document.querySelector('.search input')`, "search focused");
+      await waitForUi(`document.activeElement === document.querySelector('.search input')`, "search focused");
       await dispatchPasteCommand(cdp);
       await sleep(1500);
       const after = (await total()).length;
@@ -327,7 +322,7 @@ export async function run(ctx) {
       await writeClipboardFiles([filePngC]);
       const before = (await total()).length;
       await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="收藏"]')`);
-      await waitFor(`document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '收藏'`, "favorites view active");
+      await waitForUi(`document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '收藏'`, "favorites view active");
       await dispatchPasteCommand(cdp);
       const assets = await waitForTotal(before + 1, "favorites paste imported");
       const pasted = assets.find((asset) =>
@@ -339,17 +334,15 @@ export async function run(ctx) {
 
     // ── 6) A library file pasted back is skipped ──
     await step("pasting a library file back is skipped with the already-in-library toast", async () => {
-      const result = await cdp.send("Runtime.evaluate", {
-        expression: `window.electronAPI.writeClipboardFiles(${JSON.stringify([libraryFilePath])}).then((value) => JSON.stringify(value))`,
-        awaitPromise: true,
-        returnByValue: true,
-      });
+      const result = await cdp.evaluate(
+        `window.electronAPI.writeClipboardFiles(${JSON.stringify([libraryFilePath])}).then((value) => JSON.stringify(value))`,
+      );
       if (typeof result !== "string" || !result.includes('"ok":true')) {
         throw new Error(`writeClipboardFiles result ${JSON.stringify(result)}`);
       }
       const before = (await total()).length;
       await clickCenter(cdp, `document.querySelector('.nav-row[aria-label="所有素材"]')`);
-      await waitFor(`document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "library view active");
+      await waitForUi(`document.querySelector('.nav-row[aria-current="page"]')?.getAttribute('aria-label') === '所有素材'`, "library view active");
       await dispatchPasteCommand(cdp);
       await waitForToast("已在素材库中", "already-in-library toast");
       await sleep(800);
@@ -366,12 +359,12 @@ export async function run(ctx) {
     );
     const closeMenu = async (label) => {
       await pressEscape(cdp);
-      await waitFor(`!document.querySelector('.context-menu')`, `${label} menu closed`);
+      await waitForUi(`!document.querySelector('.context-menu')`, `${label} menu closed`);
     };
     await step("text-only clipboard: the blank-area menu offers no 粘贴", async () => {
       await writeClipboardText("just text, nothing to import");
       await rightClickBlank(cdp);
-      await waitFor(`Boolean(document.querySelector('.context-menu'))`, "blank menu open");
+      await waitForUi(`Boolean(document.querySelector('.context-menu'))`, "blank menu open");
       await sleep(800);
       const pasteItems = await menuPasteCount();
       if (pasteItems !== 0) throw new Error(`blank menu offered ${pasteItems} 粘贴 entries for a text clipboard`);
@@ -398,7 +391,7 @@ export async function run(ctx) {
 
       const assertNoPasteInMenu = async (label) => {
         await rightClickBlank(cdp);
-        await waitFor(`Boolean(document.querySelector('.context-menu'))`, `${label} menu open`);
+        await waitForUi(`Boolean(document.querySelector('.context-menu'))`, `${label} menu open`);
         await sleep(800);
         const pasteItems = await menuPasteCount();
         if (pasteItems !== 0) throw new Error(`${label}: blank menu offered 粘贴 for a media-less file copy`);
@@ -419,8 +412,8 @@ export async function run(ctx) {
         await writeClipboardFilesWithIcon([notesPath, mediaPath]);
         const before = (await total()).length;
         await rightClickBlank(cdp);
-        await waitFor(`Boolean(document.querySelector('.context-menu'))`, "mixed-copy menu open");
-        await waitFor(
+        await waitForUi(`Boolean(document.querySelector('.context-menu'))`, "mixed-copy menu open");
+        await waitForUi(
           `[...document.querySelectorAll('.context-menu button')].some((b) => b.textContent.trim() === '粘贴')`,
           "mixed-copy menu 粘贴 item",
           4000,
@@ -610,43 +603,6 @@ async function stackMembers(origin, stackId, token) {
   return detail?.assets || [];
 }
 
-async function clickCenter(cdp, elementExpression) {
-  const point = await cdp.evaluate(`(() => {
-    const el = ${elementExpression};
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  })()`);
-  if (!point) throw new Error(`element not found: ${elementExpression.slice(0, 80)}`);
-  await dispatchClick(cdp, point.x, point.y);
-}
-
-async function dispatchClick(cdp, x, y, { button = "left", clickCount = 1 } = {}) {
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, pointerType: "mouse" });
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    x, y, button, buttons: button === "right" ? 2 : 1, clickCount, pointerType: "mouse",
-  });
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    x, y, button, buttons: 0, clickCount, pointerType: "mouse",
-  });
-}
-
-async function dispatchDoubleClick(cdp, elementExpression) {
-  const point = await cdp.evaluate(`(() => {
-    const el = ${elementExpression};
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  })()`);
-  if (!point) throw new Error("double-click target missing");
-  for (const clickCount of [1, 2]) {
-    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount, pointerType: "mouse" });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount, pointerType: "mouse" });
-  }
-}
-
 // Right-click a point of the asset grid that no card covers: the blank ground
 // the blank-area menu lives on.
 async function rightClickBlank(cdp) {
@@ -664,7 +620,10 @@ async function rightClickBlank(cdp) {
     return { x: rect.right - 40, y: rect.bottom - 20 };
   })()`);
   if (!point) throw new Error("asset grid missing for the blank right-click");
-  await dispatchClick(cdp, point.x, point.y, { button: "right" });
+  const reason = "right-click blank grid area outside any card to open blank-area context menu";
+  await dispatchMouse(cdp, { type: "mouseMoved", x: point.x, y: point.y, pointerType: "mouse" }, { reason });
+  await dispatchMouse(cdp, { type: "mousePressed", x: point.x, y: point.y, button: "right", buttons: 2, clickCount: 1, pointerType: "mouse" }, { reason });
+  await dispatchMouse(cdp, { type: "mouseReleased", x: point.x, y: point.y, button: "right", buttons: 0, clickCount: 1, pointerType: "mouse" }, { reason });
 }
 
 // ⌘V / Ctrl+V as a real paste: CDP cannot go through the native menu
@@ -702,59 +661,6 @@ async function waitForHealthFile(filePath, timeoutMs = 60000) {
     await sleep(250);
   }
   throw new Error("desktop health file timeout");
-}
-
-async function connectCdp(cdpPort, expectedUrlPrefix, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
-      if (response.ok) {
-        const targets = await response.json();
-        const target = targets.find((entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix));
-        if (target?.webSocketDebuggerUrl) return openCdpSession(target.webSocketDebuggerUrl);
-      }
-    } catch {}
-    await sleep(200);
-  }
-  throw new Error(`no desktop CDP target on port ${cdpPort}`);
-}
-
-function openCdpSession(url) {
-  let idSeq = 0;
-  const pending = new Map();
-  const socket = new WebSocket(url);
-  socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data));
-    if (message.id && pending.has(message.id)) {
-      const { resolve, reject } = pending.get(message.id);
-      pending.delete(message.id);
-      if (message.error) reject(new Error(message.error.message));
-      else if (message.result?.exceptionDetails) {
-        reject(new Error("evaluate failed: " + (message.result.exceptionDetails.exception?.description || message.result.exceptionDetails.text)));
-      } else resolve(message.result?.result?.value);
-    }
-  });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    socket.addEventListener("open", resolveReady, { once: true });
-    socket.addEventListener("error", () => rejectReady(new Error("CDP socket failed")), { once: true });
-  });
-  return {
-    async send(method, params = {}) {
-      await ready;
-      const id = ++idSeq;
-      return new Promise((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
-      });
-    },
-    async evaluate(expression) {
-      return this.send("Runtime.evaluate", { expression, returnByValue: true });
-    },
-    close() {
-      try { socket.close(); } catch {}
-    },
-  };
 }
 
 function freePort() {
