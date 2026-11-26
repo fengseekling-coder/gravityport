@@ -14,6 +14,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
 import { connectCdp, reloadCdpAndWaitForApp, waitForCdpExpression } from "./_cdp.mjs";
 
 export const name = "trash-reclaimable-size";
@@ -190,8 +191,11 @@ async function runDesktopPhase(ctx, ids) {
   await mkdir(join(guiRoot, "grok-sessions"), { recursive: true });
   await mkdir(join(guiRoot, "cowart-data"), { recursive: true });
   // The desktop shell remembers its bounds in userData; a fresh dir would
-  // open at the 1320px default. Seed 1280 wide for the task's screenshot size.
-  await writeFile(join(ctx.userDataDir, "window-bounds.json"), JSON.stringify({ width: 1280, height: 800 }));
+  // open at the 1320px default. Seed 1280 wide for the task's screenshot size;
+  // the CI-like mode seeds the Windows CI window instead (that runner clamps
+  // 1280x800 to 1008x689 anyway).
+  if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(ctx.userDataDir);
+  else await writeFile(join(ctx.userDataDir, "window-bounds.json"), JSON.stringify({ width: 1280, height: 800 }));
 
   const port = await freePort();
   const cdpPort = await freePort();

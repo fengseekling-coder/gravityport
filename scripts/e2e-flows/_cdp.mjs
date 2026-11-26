@@ -440,8 +440,11 @@ export async function connectCdp(port, expectedUrlPrefix, optionsOrTimeoutMs = {
     ? { timeoutMs: optionsOrTimeoutMs }
     : (optionsOrTimeoutMs || {});
   const deadline = Date.now() + timeoutMs;
-  let wsUrl = null;
-  while (Date.now() < deadline && !wsUrl) {
+  // A failed session open (the target navigated or its socket was not ready
+  // yet) retries until the deadline, exactly as before 470; only the CI-like
+  // throttling below runs once the session is open, and its failure throws.
+  let cdp = null;
+  while (Date.now() < deadline) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`);
       if (response.ok) {
@@ -450,17 +453,16 @@ export async function connectCdp(port, expectedUrlPrefix, optionsOrTimeoutMs = {
           (entry) => entry.type === "page" && String(entry.url || "").startsWith(expectedUrlPrefix),
         );
         if (target?.webSocketDebuggerUrl) {
-          wsUrl = target.webSocketDebuggerUrl;
+          cdp = await openCdpSession(target.webSocketDebuggerUrl);
           break;
         }
       }
     } catch {}
     await sleep(150);
   }
-  if (!wsUrl) {
+  if (!cdp) {
     throw new Error(`no desktop CDP target on port ${port} matching ${expectedUrlPrefix}`);
   }
-  const cdp = await openCdpSession(wsUrl);
   const ciLike = await applyCiLikeCpuThrottle(cdp);
   if (ciLike) {
     ciLikeSessions.set(cdp, { viewportLogged: false, windowVerified: false });
