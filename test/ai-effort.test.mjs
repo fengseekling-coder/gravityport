@@ -785,6 +785,20 @@ test("6. IPC ai-get-state：learningEfforts 在 Claude 预设、汇总存 low、
   assert.deepEqual(updExt.state.learningEfforts.summary.levels, ["low", "medium", "high"]);
   assert.equal(updExt.state.learningEfforts.summary.value, "medium");
 
+  // 两行各按自己的模型算档位：一行表内（五档）、一行表外（三档），两个方向都核。
+  const updMixed = await ipc.handlers.get("ai-update-settings")(trustedEvent, {
+    slots: { analysis: { serviceId: claudeCustomId, model: "claude-haiku-5-5", summaryModel: "claude-ext-preview" } },
+  });
+  assert.equal(updMixed.state.slots.analysis.model, "claude-haiku-5-5");
+  assert.equal(updMixed.state.slots.analysis.summaryModel, "claude-ext-preview");
+  assert.deepEqual(updMixed.state.learningEfforts.analysis.levels, ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(updMixed.state.learningEfforts.summary.levels, ["low", "medium", "high"]);
+  const updMixedBack = await ipc.handlers.get("ai-update-settings")(trustedEvent, {
+    slots: { analysis: { serviceId: claudeCustomId, model: "claude-ext-preview", summaryModel: "claude-haiku-5-5" } },
+  });
+  assert.deepEqual(updMixedBack.state.learningEfforts.analysis.levels, ["low", "medium", "high"]);
+  assert.deepEqual(updMixedBack.state.learningEfforts.summary.levels, ["low", "medium", "high", "xhigh", "max"]);
+
   // OpenAI 格式自定义服务 → levels 为 []，value 为 ""。
   const addedOpenai = await ipc.handlers.get("ai-update-settings")(trustedEvent, {
     customServices: [
