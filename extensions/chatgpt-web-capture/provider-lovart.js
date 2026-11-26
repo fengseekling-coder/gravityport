@@ -235,7 +235,7 @@
 
   function generatorStartInfo(block) {
     if (!block || typeof block !== "object" || !Array.isArray(block.content)) {
-      return { hasStart: false, prompt: "", referenceUrls: [] };
+      return { prompt: "", referenceUrls: [] };
     }
     for (const entry of block.content) {
       if (!entry || typeof entry !== "object" || entry.event_type !== "generator_start") continue;
@@ -245,7 +245,6 @@
         ? inputArgs.original_unit_data
         : {};
       return {
-        hasStart: true,
         prompt: typeof inputArgs.prompt === "string" ? inputArgs.prompt.trim().slice(0, MAX_PROMPT_LENGTH) : "",
         referenceUrls: [
           ...collectUrlList(inputArgs.image),
@@ -256,7 +255,7 @@
         ],
       };
     }
-    return { hasStart: false, prompt: "", referenceUrls: [] };
+    return { prompt: "", referenceUrls: [] };
   }
 
   // The legacy UI names models `generate_image_…`; a bare tool name
@@ -605,13 +604,14 @@
         state.pendingGeneratorPrompts.set(threadId, startInfo.prompt);
         capMap(state.pendingGeneratorPrompts);
       }
-      if (generatorKey) {
-        if (startInfo.referenceUrls.length) {
-          state.pendingGeneratorReferences.set(generatorKey, startInfo.referenceUrls);
-          capMap(state.pendingGeneratorReferences);
-        } else if (startInfo.hasStart) {
-          state.pendingGeneratorReferences.delete(generatorKey);
-        }
+      // One generation pushes several generator_start blocks under the same
+      // id, and only some echo the base images (observed 2026-11-26: with,
+      // without, with, without, then the artifacts). An image-less start
+      // therefore never clears what an earlier one recorded; the entry is
+      // dropped once the artifacts consume it.
+      if (generatorKey && startInfo.referenceUrls.length) {
+        state.pendingGeneratorReferences.set(generatorKey, startInfo.referenceUrls);
+        capMap(state.pendingGeneratorReferences);
       }
       const artifacts = realtimeGeneratorArtifacts(block);
       if (!artifacts) return records;

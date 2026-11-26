@@ -374,10 +374,15 @@ test("3. agent without artifact prompt_image_list or tool_use refs still gets Fa
 // ---- Test 4: a real new start frame still overwrites pendingUsers (one running task per thread assumption) ----
 
 test("4. new real start frame overwrites pendingUsers in same thread (existing single-task-per-thread assumption)", async () => {
-  const genStartClient = cloneFixture(realtimeCanvasRef.frames[0].frame);
-  const genStartServer = cloneFixture(realtimeCanvasRef.frames[2].frame);
-  const agentStartClient = cloneFixture(realtimeCanvasRef.frames[6].frame);
-  const genArtifactsServer = cloneFixture(realtimeCanvasRef.frames[4].frame);
+  // Frames are picked by content, not position: the fixture keeps the real
+  // order, including the repeated generator_start blocks.
+  const frames = realtimeCanvasRef.frames.map((entry) => entry.frame);
+  const blockEvent = (frame) => frame?.data?.data?.content_block?.content?.[0];
+  const genStartClient = cloneFixture(frames.find((frame) => frame.type === "chat-canda-generator" && frame.data?.event === "start"));
+  const genStartServer = cloneFixture(frames.find((frame) => blockEvent(frame)?.event_type === "generator_start"
+    && Array.isArray(blockEvent(frame)?.event_data?.input_args?.image)));
+  const agentStartClient = cloneFixture(frames.find((frame) => frame.type === "chat-canda" && frame.data?.event === "start"));
+  const genArtifactsServer = cloneFixture(frames.find((frame) => blockEvent(frame)?.event_type === "generator_artifacts"));
 
   // With server generator_start present: client generator params were overwritten
   // by the agent start frame, so Fake04 keeps ref:Fake02ArtifactId only via

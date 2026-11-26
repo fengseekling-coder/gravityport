@@ -1,5 +1,5 @@
 {
-  "_说明": "2026-11-26 Claude 在 Lovart 新界面真页面经扩展页面钩子只读记录的 WebSocket 文字帧（钩子已去掉 signature），按原结构重建：字段名、嵌套、值类型和帧的先后顺序是实测的；账号、项目、图片编号、时间戳换成假值，提示词换成示例。和 457 样本不同，这里保留了 ack / fetch 两种客户端帧，因为 465 真机复核失败的原因就是它们把图像模式记下的底图冲掉了。服务端其余帧（thread_start、action_start、step_start、content_block_stop、step_end、action_end、thread_end、message_stop、notification）照旧省略，解析时要能安全忽略。",
+  "_说明": "2026-11-26 Claude 在 Lovart 新界面真页面经扩展页面钩子只读记录的 WebSocket 文字帧（钩子已去掉 signature），按原结构重建：字段名、嵌套、值类型和帧的先后顺序是实测的；账号、项目、图片编号、时间戳换成假值，提示词换成示例。和 457 样本不同，这里保留了 ack / fetch 两种客户端帧（465 真机复核失败的原因就是它们把图像模式记下的底图冲掉了），以及同一次生成里重复推回的 4 条 generator_start（11-26 返工验收补）。服务端其余帧（thread_start、action_start、step_start、content_block_stop、step_end、action_end、thread_end、message_stop、notification）照旧省略，解析时要能安全忽略。",
   "frames": [
     {
       "_方向": "客户端发出：图像模式，参考图从画布选择（Fake02 金色长枪版）。底图在 input_args.image[]（字符串）和 original_unit_data.image[]（{type,url,width,height,refId}）",
@@ -159,6 +159,53 @@
       }
     },
     {
+      "_方向": "服务端推回：同一次生成（同一个 content_block.id）又一条 generator_start，实测 input_args 里没有 image / original_unit_data.image；其余字段未逐项记录，这里去掉 input_args 表示。真页面上这一次生成共推回 4 条 generator_start（有底图、无、有、无）才出结果，解析时不得因无底图的这条丢掉已记下的底图",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "content_block": {
+              "name": "vertex/nano-banana-2-1",
+              "id": "28a762a7-1897-4b68-b0da-0c7bb026a850",
+              "type": "generator_event",
+              "content": [
+                {
+                  "event_type": "generator_start",
+                  "event_data": {
+                    "generator_type": "image",
+                    "generator_task_id": "28a762a7-1897-4b68-b0da-0c7bb026a850"
+                  },
+                  "event_index": 0
+                }
+              ]
+            },
+            "index": 2
+          },
+          "action_id": "1331837403951751181",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "evt_1319142236538224641",
+          "type": "content_block_start",
+          "step_id": "1319142236538224641",
+          "msg_id": "250247413258878976",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1331837403951751181",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          }
+        },
+        "send_timestamp": "1795353230966",
+        "req_uuid": "<redacted>",
+        "type": "chat"
+      }
+    },
+    {
       "_方向": "客户端发出：页面拉取进度（event=fetch），同样不是用户消息",
       "frame": {
         "role": "client",
@@ -172,6 +219,136 @@
           "metadata": {},
           "project_id": "<redacted-project_id>"
         }
+      }
+    },
+    {
+      "_方向": "服务端推回：fetch 之后同一次生成再推一遍带底图的 generator_start",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "content_block": {
+              "name": "vertex/nano-banana-2-1",
+              "id": "28a762a7-1897-4b68-b0da-0c7bb026a850",
+              "type": "generator_event",
+              "content": [
+                {
+                  "event_type": "generator_start",
+                  "event_data": {
+                    "generator_type": "image",
+                    "input_args": {
+                      "aspect_ratio": "1:1",
+                      "original_unit_data": {
+                        "image": [
+                          {
+                            "width": 1776,
+                            "refId": "ref_1795722798005_fake01",
+                            "type": "image",
+                            "url": "https://a.lovart.ai/artifacts/agent/Fake02ArtifactId.png",
+                            "height": 2368
+                          }
+                        ],
+                        "generator_name": "vertex/nano-banana-2-1",
+                        "enable_grounding": false,
+                        "count": 1,
+                        "video": [],
+                        "resolution": "1K",
+                        "isAdaptiveSize": false,
+                        "video_uri": [],
+                        "generator_type": "image",
+                        "thinking_level": "medium",
+                        "source_image": [],
+                        "width": 1024,
+                        "paramsText": "1:1 · 1K · medium",
+                        "prompt": "保持人物、服装和构图不变，把场景改成雪夜。",
+                        "height": 1024,
+                        "ratio": "1:1"
+                      },
+                      "thinking_level": "medium",
+                      "enable_grounding": false,
+                      "prompt": "保持人物、服装和构图不变，把场景改成雪夜。",
+                      "resolution": "1K",
+                      "image": [
+                        "https://a.lovart.ai/artifacts/agent/Fake02ArtifactId.png"
+                      ]
+                    },
+                    "generator_task_id": "28a762a7-1897-4b68-b0da-0c7bb026a850"
+                  },
+                  "event_index": 0
+                }
+              ]
+            },
+            "index": 2
+          },
+          "action_id": "1331837403951751181",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "evt_1319142236538224641",
+          "type": "content_block_start",
+          "step_id": "1319142236538224641",
+          "msg_id": "250247413258878976",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1331837403951751181",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          }
+        },
+        "send_timestamp": "1795353230966",
+        "req_uuid": "<redacted>",
+        "type": "chat"
+      }
+    },
+    {
+      "_方向": "服务端推回：再推一遍不带底图的 generator_start，紧接着就是出图结果",
+      "frame": {
+        "role": "server",
+        "data": {
+          "thread_id": "00000000-0000-4000-8000-000000000001",
+          "trace_id": "<redacted-trace_id>",
+          "agent_name": "next_agent",
+          "data": {
+            "content_block": {
+              "name": "vertex/nano-banana-2-1",
+              "id": "28a762a7-1897-4b68-b0da-0c7bb026a850",
+              "type": "generator_event",
+              "content": [
+                {
+                  "event_type": "generator_start",
+                  "event_data": {
+                    "generator_type": "image",
+                    "generator_task_id": "28a762a7-1897-4b68-b0da-0c7bb026a850"
+                  },
+                  "event_index": 0
+                }
+              ]
+            },
+            "index": 2
+          },
+          "action_id": "1331837403951751181",
+          "session_id": "00000000-0000-4000-8000-000000000001_main",
+          "message_id": "evt_1319142236538224641",
+          "type": "content_block_start",
+          "step_id": "1319142236538224641",
+          "msg_id": "250247413258878976",
+          "thread_meta": {
+            "user_uuid": "<redacted-user_uuid>",
+            "trace_id": "<redacted-trace_id>",
+            "depth": 0,
+            "agent_name": "next_agent",
+            "action_id": "1331837403951751181",
+            "project_id": "<redacted-project_id>",
+            "session_id": "00000000-0000-4000-8000-000000000001_main"
+          }
+        },
+        "send_timestamp": "1795353230966",
+        "req_uuid": "<redacted>",
+        "type": "chat"
       }
     },
     {
