@@ -9,9 +9,11 @@ import {
   ANALYSIS_OUTPUT_TOKENS,
   SUMMARY_CHUNK_SIZE,
   estimateLearningCost,
+  fallbackTokenCostUsd,
   imageTokens,
   tokenCostUsd,
 } from "../lib/ai/learning-cost.mjs";
+import { aiFallbackBillingModel, aiModelById } from "../lib/ai/model-catalog.mjs";
 
 test("imageTokens：960×960 → 1176；1920×1080 缩到 960×540 → 662；尺寸未知按 960×960；不放大", () => {
   assert.equal(imageTokens(960, 960), 1176); // 921600 / 784 = 1175.51 → ceil 1176
@@ -110,4 +112,50 @@ test("估算参数常量与单子一致（宽高、固定输入/输出、分批�
   assert.equal(ANALYSIS_FIXED_INPUT_TOKENS, 1100);
   assert.equal(ANALYSIS_OUTPUT_TOKENS, 800);
   assert.equal(SUMMARY_CHUNK_SIZE, 300);
+});
+
+// 任务 480：Opus 5.5 进单价表；汇总的服务端兜底按兜底目标计价，但兜底计价表
+// 不让表外模型变成「单价已知」（学习照样拦表外模型）。期望值手算写死。
+test("480：Opus 5.5 在单价表里（$4 / $20，三个用途，不当默认）", () => {
+  const opus = aiModelById("claude-opus-5-5");
+  assert.equal(opus.label, "Claude Opus 5.5");
+  assert.equal(opus.service, "claude");
+  assert.deepEqual(opus.slots, ["analysis", "summary", "brain"]);
+  assert.deepEqual(opus.defaults, []);
+  assert.deepEqual(opus.pricing, { kind: "tokens", input: 4, output: 20 });
+  assert.equal(opus.source, "https://platform.claude.com/docs/en/about-claude/pricing");
+  assert.equal(tokenCostUsd("claude-opus-5-5", { inputTokens: 1_000_000, outputTokens: 1_000_000 }), 24);
+  assert.notEqual(estimateLearningCost({
+    analysisModel: "claude-haiku-5-5",
+    summaryModel: "claude-opus-5-5",
+    newImages: [{ width: 960, height: 960 }],
+  }), null, "a summary on Opus 5.5 can be quoted");
+});
+
+test("480：Fable 5.2 在单价表里（$8 / $40，只给汇总手册和对话大脑，不当默认）", () => {
+  const fable = aiModelById("claude-fable-5-2");
+  assert.equal(fable.label, "Claude Fable 5.2");
+  assert.equal(fable.service, "claude");
+  assert.deepEqual(fable.slots, ["summary", "brain"]);
+  assert.deepEqual(fable.defaults, []);
+  assert.deepEqual(fable.pricing, { kind: "tokens", input: 8, output: 40 });
+  assert.equal(tokenCostUsd("claude-fable-5-2", { inputTokens: 1_000_000, outputTokens: 1_000_000 }), 48);
+  assert.equal(fallbackTokenCostUsd("claude-fable-5-2", { inputTokens: 1_000_000, outputTokens: 1_000_000 }), 48);
+});
+
+test("480：兜底计价——表里的照单价，兜底目标照兜底表，认不出的按最贵一档；兜底表不进可选模型", () => {
+  const million = { inputTokens: 1_000_000, outputTokens: 1_000_000 };
+  assert.equal(fallbackTokenCostUsd("claude-sonnet-5-5", million), 12);
+  assert.equal(fallbackTokenCostUsd("claude-sonnet-5", million), 12);
+  assert.equal(fallbackTokenCostUsd("claude-opus-5", million), 30);
+  assert.equal(fallbackTokenCostUsd("claude-opus-4-8", million), 30);
+  assert.equal(fallbackTokenCostUsd("claude-future-9", million), 30);
+  assert.equal(fallbackTokenCostUsd(undefined, million), 30);
+  assert.deepEqual(aiFallbackBillingModel("claude-future-9"), { id: "claude-opus-5", pricing: { kind: "tokens", input: 5, output: 25 } });
+  assert.equal(aiFallbackBillingModel("claude-sonnet-5").id, "claude-sonnet-5");
+
+  for (const billingOnly of ["claude-sonnet-5", "claude-opus-5", "claude-opus-4-8"]) {
+    assert.equal(aiModelById(billingOnly), null, `${billingOnly} must not become a selectable model`);
+    assert.equal(tokenCostUsd(billingOnly, million), null, `${billingOnly} stays unknown-price for learning`);
+  }
 });

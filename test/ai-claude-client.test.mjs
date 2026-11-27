@@ -71,10 +71,10 @@ async function analyzeWith(responseHandler) {
   return { calls, outcome };
 }
 
-async function summarizeWith(responseHandler) {
+async function summarizeWith(responseHandler, { model = "claude-sonnet-5-5" } = {}) {
   const { calls, fetchImpl } = makeFakeFetch(responseHandler);
   const client = createClaudeClient({ apiKey: FAKE_KEY, baseURL: "https://claude.test.example", outboundFetch: fetchImpl });
-  const outcome = await summarizeGuide(client, { model: "claude-sonnet-5-5", userContent: "<notes>\n#1 0 | barn | flat | #AA0000 | c | cam | l | m | ch | mood | pt\n</notes>", systemPrompt: SUMMARY_SYSTEM_PROMPT });
+  const outcome = await summarizeGuide(client, { model, userContent: "<notes>\n#1 0 | barn | flat | #AA0000 | c | cam | l | m | ch | mood | pt\n</notes>", systemPrompt: SUMMARY_SYSTEM_PROMPT });
   return { calls, outcome };
 }
 
@@ -251,7 +251,7 @@ test("错误分类：401/403/429（retry-after 0）/500/529/400/连不上；分�
   }
 });
 
-test("汇总：带 betas + fallbacks、走流式、effort medium；引用 usage.iterations 的兜底模型计费", async () => {
+test("汇总：带 betas + fallbacks: \"default\"、走流式、effort medium；按 usage.iterations 逐次计费", async () => {
   const { calls, outcome } = await summarizeWith(() => sseMessageResponse({
     text: JSON.stringify(GOOD_GUIDE),
     model: "claude-sonnet-5-5",
@@ -265,15 +265,17 @@ test("汇总：带 betas + fallbacks、走流式、effort medium；引用 usage.
   // betas 以 anthropic-beta 头发出、fallbacks 留在 body（SDK 1.12.0 的线上形状）。
   assert.equal(call.headers["anthropic-beta"], "server-side-fallback-2026-07-01");
   assert.equal(call.body.betas, undefined);
-  assert.deepEqual(call.body.fallbacks, [{ model: "claude-sonnet-5" }]);
-  assert.deepEqual(call.body.fallbacks, [{ model: "claude-sonnet-5" }]);
+  // 任务 480：不写死兜底名单，由服务端按拒绝类别挑（名单必须在所选模型的
+  // allowed_fallback_models 里，Haiku 5.5 带名单还会 400）。
+  assert.equal(call.body.fallbacks, "default");
   assert.equal(call.body.max_tokens, 32000);
   assert.equal(call.body.output_config.effort, "medium");
   assert.equal(call.body.stream, true);
   assert.ok(Math.abs(outcome.costUsd - ((51000 * 2 + 6000 * 10) / 1e6)) < 1e-12);
 
-  // 兜底被用到（iterations 里有 fallback_message）：按实际模型计费；
-  // claude-sonnet-5 不在单价表 → 按 Sonnet 5.5 同价算。
+  // 兜底被用到（iterations 里有 fallback_message）：iterations 才是逐次计费
+  // 记录，被拒的那次（Sonnet 5.5）和兜底那次（Sonnet 5，兜底计价表里有）各按
+  // 自己的单价算；顶层 usage 只是兜底那次，不再拿它代替整条回答。
   const fallbackOutcome = await summarizeWith((_call, index) => index === 1
     ? sseMessageResponse({
       text: "not json",
@@ -290,9 +292,73 @@ test("汇总：带 betas + fallbacks、走流式、effort medium；引用 usage.
   assert.equal(fallbackOutcome.outcome.ok, true);
   assert.equal(fallbackOutcome.outcome.fallbackUsed, true);
   assert.equal(fallbackOutcome.outcome.billedModel, "claude-sonnet-5");
-  assert.equal(fallbackOutcome.outcome.costModel, "claude-sonnet-5-5");
+  assert.equal(fallbackOutcome.outcome.costModel, "claude-sonnet-5");
   // 第一次解析失败的那条回答（默认 usage 10 入 / 20 出）也收费，一并算进来。
-  assert.ok(Math.abs(fallbackOutcome.outcome.costUsd - ((1000 * 2 + 500 * 10) / 1e6 + (10 * 2 + 20 * 10) / 1e6)) < 1e-12);
+  const refusedAttempt = (900 * 2 + 300 * 10) / 1e6;
+  const fallbackAttempt = (1000 * 2 + 500 * 10) / 1e6;
+  const firstReply = (10 * 2 + 20 * 10) / 1e6;
+  assert.ok(Math.abs(fallbackOutcome.outcome.costUsd - (refusedAttempt + fallbackAttempt + firstReply)) < 1e-12);
+});
+
+test("任务 480：汇总选 Opus 5.5 / Fable 5.2 / Haiku 5.5 也只带 fallbacks: \"default\"；Opus 兜底按兜底目标单价，认不出的按最贵一档", async () => {
+  for (const model of ["claude-opus-5-5", "claude-fable-5-2", "claude-haiku-5-5"]) {
+    const { calls, outcome } = await summarizeWith(() => sseMessageResponse({
+      text: JSON.stringify(GOOD_GUIDE),
+      model,
+      usage: { input_tokens: 2000, output_tokens: 1000 },
+    }), { model });
+    assert.equal(outcome.ok, true, model);
+    assert.equal(calls[0].body.model, model);
+    assert.equal(calls[0].body.fallbacks, "default", model);
+    assert.equal(calls[0].headers["anthropic-beta"], "server-side-fallback-2026-07-01", model);
+    assert.equal(calls[0].body.thinking, undefined, "Opus 5.5 / Fable 5.2 reject thinking: disabled; effort alone controls depth");
+    assert.equal(calls[0].body.output_config.effort, "medium", model);
+  }
+  const fableToOpus = await summarizeWith(() => sseMessageResponse({
+    text: JSON.stringify(GOOD_GUIDE),
+    model: "claude-opus-4-8",
+    usage: {
+      input_tokens: 2000, output_tokens: 1000,
+      iterations: [
+        { type: "message", model: "claude-fable-5-2", input_tokens: 2000, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        { type: "fallback_message", model: "claude-opus-4-8", input_tokens: 2000, output_tokens: 1000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      ],
+    },
+  }), { model: "claude-fable-5-2" });
+  assert.ok(Math.abs(fableToOpus.outcome.costUsd - ((2000 * 8 + 100 * 40) / 1e6 + (2000 * 5 + 1000 * 25) / 1e6)) < 1e-12);
+  const opusPlain = await summarizeWith(() => sseMessageResponse({
+    text: JSON.stringify(GOOD_GUIDE),
+    model: "claude-opus-5-5",
+    usage: { input_tokens: 2000, output_tokens: 1000 },
+  }), { model: "claude-opus-5-5" });
+  assert.ok(Math.abs(opusPlain.outcome.costUsd - ((2000 * 4 + 1000 * 20) / 1e6)) < 1e-12);
+  assert.equal(opusPlain.outcome.costKnown, true);
+
+  const opusRefused = { type: "message", model: "claude-opus-5-5", input_tokens: 2000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  for (const [fallbackModel, costModel, price] of [
+    ["claude-opus-5", "claude-opus-5", { input: 5, output: 25 }],
+    ["claude-opus-4-8", "claude-opus-4-8", { input: 5, output: 25 }],
+    ["claude-sonnet-5", "claude-sonnet-5", { input: 2, output: 10 }],
+    // 服务端换到一个我们不认识的模型：按兜底目标里最贵的一档算，上限不失守。
+    ["claude-future-9", "claude-opus-5", { input: 5, output: 25 }],
+  ]) {
+    const { outcome } = await summarizeWith(() => sseMessageResponse({
+      text: JSON.stringify(GOOD_GUIDE),
+      model: fallbackModel,
+      usage: {
+        input_tokens: 2000, output_tokens: 1000,
+        iterations: [opusRefused, { type: "fallback_message", model: fallbackModel, input_tokens: 2000, output_tokens: 1000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }],
+      },
+    }), { model: "claude-opus-5-5" });
+    assert.equal(outcome.ok, true, fallbackModel);
+    assert.equal(outcome.fallbackUsed, true, fallbackModel);
+    assert.equal(outcome.billedModel, fallbackModel);
+    assert.equal(outcome.costModel, costModel, fallbackModel);
+    assert.equal(outcome.costKnown, true, fallbackModel);
+    const expected = (2000 * 4) / 1e6 + (2000 * price.input + 1000 * price.output) / 1e6;
+    assert.ok(Math.abs(outcome.costUsd - expected) < 1e-12, `${fallbackModel}: ${outcome.costUsd} vs ${expected}`);
+    assert.deepEqual(outcome.usage, { input_tokens: 4000, output_tokens: 1000 }, fallbackModel);
+  }
 });
 
 test("汇总 refusal → refusal；两次解析失败 → summary-error", async () => {

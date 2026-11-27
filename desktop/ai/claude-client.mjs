@@ -14,8 +14,8 @@ import {
   ANALYSIS_NOTE_JSON_SCHEMA,
   GUIDE_OUTPUT_JSON_SCHEMA,
 } from "../../lib/ai/learning-schema.mjs";
-import { tokenCostUsd } from "../../lib/ai/learning-cost.mjs";
-import { AI_EFFORT_LEVELS, AI_LEARNING_DEFAULT_EFFORT } from "../../lib/ai/model-catalog.mjs";
+import { fallbackTokenCostUsd, tokenCostUsd } from "../../lib/ai/learning-cost.mjs";
+import { AI_EFFORT_LEVELS, AI_LEARNING_DEFAULT_EFFORT, aiFallbackBillingModel } from "../../lib/ai/model-catalog.mjs";
 
 const VALID_EFFORTS = new Set(AI_EFFORT_LEVELS);
 const SUMMARY_HIGH_EFFORTS = new Set(["high", "xhigh", "max"]);
@@ -104,46 +104,70 @@ function parseStructuredOutput(message) {
   }
 }
 
-/** usage 四个字段，没有的当 0；喂 tokenCostUsd 算钱。 */
-export function usageToCost(model, usage) {
-  return tokenCostUsd(model, {
+/** usage 四个字段，没有的当 0。 */
+function usageTokens(usage) {
+  return {
     inputTokens: Number(usage?.input_tokens || 0),
     outputTokens: Number(usage?.output_tokens || 0),
     cacheWriteTokens: Number(usage?.cache_creation_input_tokens || 0),
     cacheReadTokens: Number(usage?.cache_read_input_tokens || 0),
-  });
+  };
 }
 
-// 汇总兜底模型 claude-sonnet-5 不在单价表里；Sonnet 5 与 Sonnet 5.5 同价，
-// 兜底被实际用到时按 Sonnet 5.5 算（回报里写明）。
-const FALLBACK_BILLING_MODEL = "claude-sonnet-5-5";
+/** 喂 tokenCostUsd 算钱：所选模型不在单价表里 → null。 */
+export function usageToCost(model, usage) {
+  return tokenCostUsd(model, usageTokens(usage));
+}
 
-/** 一条回答按哪个模型计价：走了服务端兜底按兜底模型，否则按回答里的模型。 */
+/**
+ * 一条回答按哪个模型计价：走了服务端兜底按兜底模型，否则按回答里的模型。
+ * 兜底模型由服务端按拒绝类别挑（任务 480 起 fallbacks: "default"），单价见
+ * aiFallbackBillingModel：认不出的按最贵的兜底目标算，costModel 就是计价用的那个。
+ */
 function billingModelOf(message, requestedModel) {
   const iterations = Array.isArray(message?.usage?.iterations) ? message.usage.iterations : [];
   const fallbackEntry = iterations.find((entry) => entry?.type === "fallback_message" && entry.model);
-  const billedModel = fallbackEntry ? fallbackEntry.model : (message?.model || requestedModel);
-  if (usageToCost(billedModel, {}) !== null) return { billedModel, costModel: billedModel, fallbackUsed: Boolean(fallbackEntry) };
-  return { billedModel, costModel: fallbackEntry ? FALLBACK_BILLING_MODEL : billedModel, fallbackUsed: Boolean(fallbackEntry) };
+  if (!fallbackEntry) {
+    const billedModel = message?.model || requestedModel;
+    return { billedModel, costModel: billedModel, fallbackUsed: false };
+  }
+  return { billedModel: fallbackEntry.model, costModel: aiFallbackBillingModel(fallbackEntry.model).id, fallbackUsed: true };
 }
 
 /**
  * 这次调用里收到的每一条回答都要算钱：被拒（refusal）、截断（max_tokens）、
  * 解析失败后重试的那几次服务端照样收费，不算进来花费上限就会偏低（463 验收）。
  * 一条回答都没收到（HTTP 错误、连不上）才是 0。
+ *
+ * 一条回答里有 usage.iterations 时按它逐次计（任务 480）：官方说 iterations
+ * 才是每次尝试的计费记录，顶层 usage 只算交回答案的那一次——走了兜底时，被拒
+ * 的那次只出现在 iterations 里。被拒的那次照算（有的拒绝类别其实不收费，宁可
+ * 多算）；兜底那次按 aiFallbackBillingModel 的单价。
  */
 function messagesCost(messages, requestedModel) {
   let costUsd = 0;
   let costKnown = true;
   let inputTokens = 0;
   let outputTokens = 0;
-  for (const message of messages) {
-    const { costModel } = billingModelOf(message, requestedModel);
-    const cost = usageToCost(costModel, message?.usage);
+  const add = (cost, usage) => {
     if (cost === null) costKnown = false;
     else costUsd += cost;
-    inputTokens += Number(message?.usage?.input_tokens || 0);
-    outputTokens += Number(message?.usage?.output_tokens || 0);
+    inputTokens += Number(usage?.input_tokens || 0);
+    outputTokens += Number(usage?.output_tokens || 0);
+  };
+  for (const message of messages) {
+    const iterations = Array.isArray(message?.usage?.iterations) ? message.usage.iterations : [];
+    if (iterations.length === 0) {
+      add(usageToCost(message?.model || requestedModel, message?.usage), message?.usage);
+      continue;
+    }
+    for (const iteration of iterations) {
+      if (iteration?.type === "fallback_message") {
+        add(fallbackTokenCostUsd(iteration.model, usageTokens(iteration)), iteration);
+      } else {
+        add(usageToCost(iteration?.model || requestedModel, iteration), iteration);
+      }
+    }
   }
   return { costUsd, costKnown, inputTokens, outputTokens };
 }
@@ -237,8 +261,11 @@ export async function analyzeImage(client, { model, image, metadata, signal, sys
 
 /**
  * 一次汇总（或合并）。走 beta 接口：服务端兜底 beta
- * server-side-fallback-2026-07-01 + fallbacks: [{ model: "claude-sonnet-5" }]
- * （被拒时同一次请求里换 Sonnet 5 重跑，同价）。SDK 1.12.0 的
+ * server-side-fallback-2026-07-01 + fallbacks: "default"（任务 480）：被拒时
+ * 服务端按拒绝类别换它推荐的模型重跑，不用我们维护名单。写死的名单行不通：
+ * 名单里的模型必须在所选模型的 allowed_fallback_models 里（Sonnet 5 不是
+ * Opus 5.5 的兜底目标），Haiku 5.5 没有服务端兜底、带名单直接 400；"default"
+ * 对 Haiku 5.5 照收，只是被拒就是被拒。SDK 1.12.0 的
  * BetaMessageCreateParams 里 betas / fallbacks 两个参数都有（.d.ts 7458/7272
  * 行，BetaFallbacksParam = Array<BetaFallbackParam> | 'default'），不需要退
  * 路。合并那次用同一个函数，systemPrompt 换成合并提示。
@@ -253,7 +280,7 @@ export async function summarizeGuide(client, { model, userContent, signal, syste
     messages: [{ role: "user", content: userContent }],
     output_config: { format: { type: "json_schema", schema: GUIDE_OUTPUT_JSON_SCHEMA }, effort: resolvedEffort },
     betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: [{ model: "claude-sonnet-5" }],
+    fallbacks: "default",
   };
   // 输出长的请求走流式（finalMessage），免得 HTTP 超时；解析失败重试一次。
   const result = await createStructuredMessage({
