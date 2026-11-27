@@ -11,11 +11,17 @@ import {
   mosaDesktopStartupHandoffPath,
 } from "../lib/runtime-handoff.mjs";
 import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
-import { MACOS_TEAM_IDENTIFIER_PATTERN, MACOS_UPDATE_APP_NAMES, stagedArtifactMatches } from "./update-service.mjs";
+import {
+  MACOS_TEAM_IDENTIFIER_PATTERN,
+  MACOS_UPDATE_APP_NAMES,
+  MOSA_RELEASE_DOWNLOAD_BASE_URL,
+  MOSA_UPDATE_DOWNLOAD_BASE_URLS,
+  stagedArtifactMatches,
+} from "./update-service.mjs";
 
 export { MACOS_UPDATE_APP_NAMES };
 
-export const MOSA_MACOS_DOWNLOAD_BASE_URL = "https://gravityport.azhuilab.com/downloads/";
+export const MOSA_MACOS_DOWNLOAD_BASE_URL = MOSA_RELEASE_DOWNLOAD_BASE_URL;
 const MAX_MACOS_UPDATE_BYTES = 1_500_000_000;
 const DEFAULT_MACOS_UPDATE_IDLE_TIMEOUT_MS = 30_000;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
@@ -38,7 +44,7 @@ function safeBuildIdentity(value) {
   const gitSha = String(value.gitSha || "").trim().toLowerCase();
   const uiFingerprint = String(value.uiFingerprint || "").trim().toLowerCase();
   const runtimeFingerprint = String(value.runtimeFingerprint || "").trim().toLowerCase();
-  const distribution = normalizeDesktopDistribution(value.distribution, { defaultValue: "preview", releaseOnly: true });
+  const distribution = normalizeDesktopDistribution(value.distribution, { defaultValue: "preview" });
   if (!GIT_SHA_PATTERN.test(gitSha) || !SHA256_PATTERN.test(uiFingerprint) || !SHA256_PATTERN.test(runtimeFingerprint)) {
     throw new Error("macOS update build identity is invalid.");
   }
@@ -74,10 +80,13 @@ export function validateMacosUpdateArtifact(input, version) {
   };
 }
 
-export function macosUpdateDownloadUrl(artifact) {
+// The base comes from the update channel the release was read from (see
+// updateChannelForDistribution); only the known first-party bases are allowed.
+export function macosUpdateDownloadUrl(artifact, { downloadBaseUrl = MOSA_MACOS_DOWNLOAD_BASE_URL } = {}) {
   const file = String(artifact?.file || "").trim();
   if (!/^(?:MOSA|GravityPort)-darwin-(?:arm64|x64)-[0-9A-Za-z.-]+\.zip$/.test(file)) throw new Error("Unsafe macOS update filename.");
-  return new URL(encodeURIComponent(file), MOSA_MACOS_DOWNLOAD_BASE_URL).toString();
+  if (!MOSA_UPDATE_DOWNLOAD_BASE_URLS.includes(downloadBaseUrl)) throw new Error("Unsupported macOS update download location.");
+  return new URL(encodeURIComponent(file), downloadBaseUrl).toString();
 }
 
 export function resolveMacosInstallAppPath(execPath = process.execPath) {
@@ -111,12 +120,14 @@ export async function downloadMacosUpdate({
   artifact,
   version,
   stagingRoot,
+  downloadBaseUrl = MOSA_MACOS_DOWNLOAD_BASE_URL,
   fetchImpl = globalThis.fetch,
   onProgress = () => {},
   signal,
   idleTimeoutMs = DEFAULT_MACOS_UPDATE_IDLE_TIMEOUT_MS,
 } = {}) {
   const safeArtifact = validateMacosUpdateArtifact(artifact, version);
+  const downloadUrl = macosUpdateDownloadUrl(safeArtifact, { downloadBaseUrl });
   if (typeof fetchImpl !== "function") throw new Error("macOS update download is unavailable.");
   const normalizedVersion = safeVersion(version);
   const stagingDir = join(stagingRoot, normalizedVersion);
@@ -159,7 +170,7 @@ export async function downloadMacosUpdate({
   armIdleTimeout();
 
   try {
-    const response = await fetchImpl(macosUpdateDownloadUrl(safeArtifact), {
+    const response = await fetchImpl(downloadUrl, {
       method: "GET",
       headers: {
         accept: "application/zip, application/octet-stream",
@@ -356,6 +367,9 @@ if [ -n "$OLD_TEAM" ]; then
   [ "$NEW_TEAM" = "$OLD_TEAM" ]
 fi
 
+# With a pinned team identifier the payload must carry it, run hardened and
+# pass Gatekeeper (notarized); this is the only branch production and
+# development payloads can take. Without one only a preview payload passes.
 if [ -n "$EXPECTED_TEAM_IDENTIFIER" ]; then
   [ "$NEW_TEAM" = "$EXPECTED_TEAM_IDENTIFIER" ]
   printf '%s\n' "$PAYLOAD_CODESIGN" | /usr/bin/grep -q 'flags=.*runtime'
@@ -482,6 +496,11 @@ export async function launchMacosUpdateHelper({
   }
   if (identity.distribution === "production" && !safeTeamIdentifier) {
     throw new Error("macOS production updates require a release team identifier.");
+  }
+  // Task 479: development packages are Developer ID signed; the helper only
+  // installs them through its team-identifier branch.
+  if (identity.distribution === "development" && !safeTeamIdentifier) {
+    throw new Error("macOS development updates require a release team identifier.");
   }
   const safeLipoArch = macosLipoArchForUpdateArch(expectedArch);
   const stagingDir = dirname(zipPath);

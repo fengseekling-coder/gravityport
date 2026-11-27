@@ -109,6 +109,7 @@ export function registerUpdateIpc(deps) {
             fetchImpl: systemNetworkFetch,
             artifact: release.macArtifact,
             version: release.latestVersion,
+            downloadBaseUrl: release.downloadBaseUrl,
             stagingRoot: MACOS_UPDATE_STAGING_ROOT,
             signal: controller.signal,
             onProgress: (progress) => {

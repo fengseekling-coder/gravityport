@@ -20,6 +20,7 @@
 //   --from-app <path>      default /Applications/GravityPort.app; its file name
 //                          becomes the app name used everywhere
 //   --to-version x.y.z     default: the version field of <build>/package.json
+//                          (a development build's x.y.z-dev.yyyymmddHHMM too)
 //   --from-version x.y.z   default: read at runtime from the copied app's
 //                          Info.plist (dry run prints 运行时读取)
 //   --work-dir <dir>       default <system temp>/gp-rehearsal-local|-live;
@@ -35,8 +36,11 @@
 //                          refused so the key never reaches a command line or
 //                          the printed plan. No default path is written here —
 //                          the key stays outside the repo
-//   --feed-url <url>       default MOSA_UPDATE_FEED_URL from
-//                          desktop/update-service.mjs
+//   --feed-url <url>       default: the feed the from-app reads for the
+//                          build's distribution (desktop/update-service.mjs:
+//                          MOSA_UPDATE_FEED_URL for preview/production, the
+//                          development feed for a development-channel build,
+//                          task 479)
 //   --dry-run              print the plan and exit without executing anything
 //
 // Safety: nothing outside <work-dir> is written; the cleanup step only kills
@@ -48,12 +52,13 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { MOSA_UPDATE_FEED_URL } from "../../desktop/update-service.mjs";
+import { updateChannelForDistribution } from "../../desktop/update-service.mjs";
 
 const REHEARSAL_PORT_DEFAULT = 43617;
 // The port the user's own running app listens on; rehearsals must never take it.
 const USER_APP_PORT = 43517;
-const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+// x.y.z, or a development-channel build's x.y.z-dev.yyyymmddHHMM.
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-dev\.\d{12})?$/;
 // Placeholder in the plan for a from-version that is only known at runtime
 // (read from the copied app's Info.plist after the copy step).
 export const RUNTIME_FROM_VERSION = "<runtime: from-version from the copied app>";
@@ -175,7 +180,7 @@ export function buildRehearsalPlan(options) {
     toVersion = parsed?.version;
     if (typeof toVersion !== "string") throw new Error(`--to-version was not given and ${join(build, "package.json")} has no version field`);
   }
-  if (!VERSION_PATTERN.test(toVersion)) throw new Error(`--to-version must be x.y.z, got ${JSON.stringify(toVersion)}`);
+  if (!VERSION_PATTERN.test(toVersion)) throw new Error(`--to-version must be x.y.z (or x.y.z-dev.yyyymmddHHMM), got ${JSON.stringify(toVersion)}`);
 
   const privateKey = options.privateKey;
   if (mode === "local" && !privateKey) {
@@ -185,7 +190,14 @@ export function buildRehearsalPlan(options) {
   const workDir = canonicalWorkDir(options.workDir ?? join(tmpdir(), mode === "live" ? "gp-rehearsal-live" : "gp-rehearsal-local"));
   assertSafeWorkDir(workDir, [fromApp, build, join(homedir(), "MOSA Library")]);
 
-  const feedUrl = options.feedUrl ?? MOSA_UPDATE_FEED_URL;
+  // The to-build's distribution decides which feed the from-app reads: a
+  // development-channel build is only ever offered on the development feed.
+  // Before the build exists (a dry run), assume a release.
+  let buildDistribution = null;
+  try {
+    buildDistribution = JSON.parse(readFileSync(join(build, "web", "gravityport", "dist", "build-identity.json"), "utf8"))?.distribution ?? null;
+  } catch { /* no build yet */ }
+  const feedUrl = options.feedUrl ?? updateChannelForDistribution(buildDistribution).feedUrl;
   const rootDir = join(workDir, "root");
   const fromSrcDir = join(workDir, "from-src");
   const copiedApp = join(rootDir, "Applications", appName);

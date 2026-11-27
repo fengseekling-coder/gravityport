@@ -647,7 +647,9 @@ test("trusted update checks reject a release feed whose signed metadata was chan
 });
 
 test("distribution tracks stay isolated after legacy builds join preview", () => {
-  assert.equal(canUpdateDistribution("development", "preview"), true);
+  // Task 479: development builds follow only the development channel (see
+  // test/dev-update-channel.test.mjs); they no longer accept preview releases.
+  assert.equal(canUpdateDistribution("development", "preview"), false);
   assert.equal(canUpdateDistribution("preview", "preview"), true);
   assert.equal(canUpdateDistribution("production", "production"), true);
   // The transition release intentionally bridges preview users into the later

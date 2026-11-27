@@ -4,7 +4,12 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresMacDeveloperIdSigning } from "../lib/release-distribution.mjs";
+import {
+  desktopDistributionFromEnvironment,
+  devChannelBuildFromEnvironment,
+  normalizeDesktopDistribution,
+  requiresMacDeveloperIdSigning,
+} from "../lib/release-distribution.mjs";
 import { resolveReleaseProductNames } from "./release-product.mjs";
 
 export const MOSA_RELEASE_BUNDLE_ID = "com.azhuilab.mosa";
@@ -85,22 +90,30 @@ export function runCommand(command, args, { cwd = process.cwd() } = {}) {
   });
 }
 
+// A development app is verified only as a development-channel build
+// (MOSA_DEV_CHANNEL=1, task 479), and then to the release standard: Developer
+// ID, Hardened Runtime, stapled notarization and Gatekeeper. A plain local
+// development package is ad-hoc and has nothing to verify here.
 export async function verifyMacosReleaseApp({
   appPath,
   env = process.env,
   runner = runCommand,
   staple = false,
-  distribution = desktopDistributionFromEnvironment(env, { defaultValue: "production", releaseOnly: true }),
+  devChannel = devChannelBuildFromEnvironment(env),
+  distribution = desktopDistributionFromEnvironment(env, { defaultValue: "production", releaseOnly: !devChannel }),
 } = {}) {
   const resolvedAppPath = resolve(String(appPath || ""));
   if (!appPath) throw new Error("macOS release app path is required.");
   await access(resolvedAppPath);
-  const normalizedDistribution = normalizeDesktopDistribution(distribution, { releaseOnly: true });
+  const normalizedDistribution = normalizeDesktopDistribution(distribution, { releaseOnly: !devChannel });
+  if (devChannel && normalizedDistribution !== "development") {
+    throw new Error("A development-channel app must carry the development distribution.");
+  }
 
   await runner("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", resolvedAppPath]);
   const detailsResult = await runner("/usr/bin/codesign", ["-dv", "--verbose=4", resolvedAppPath]);
   const details = parseCodesignDetails(`${detailsResult.stdout || ""}\n${detailsResult.stderr || ""}`);
-  if (!requiresMacDeveloperIdSigning(normalizedDistribution)) {
+  if (!requiresMacDeveloperIdSigning(normalizedDistribution, { devChannel })) {
     assertMacosPreviewSignature(details);
     return { appPath: resolvedAppPath, distribution: normalizedDistribution, bundleId: details.Identifier };
   }

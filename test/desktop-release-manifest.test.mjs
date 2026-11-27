@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { parseUpdateManifest } from "../desktop/update-service.mjs";
+import { checkForMosaUpdate, parseUpdateManifest } from "../desktop/update-service.mjs";
 import {
   createReleaseManifestTrust,
   releaseManifestBackupTrustFromRepository,
@@ -723,6 +723,112 @@ test("a normally generated manifest fits the client limit with headroom", async 
     assert.ok(
       size <= UPDATE_MANIFEST_MAX_BYTES / 2,
       `expected real headroom: manifest is ${size} bytes, limit ${UPDATE_MANIFEST_MAX_BYTES}`,
+    );
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+// Task 479: the development channel's publisher and the local rehearsal of a
+// development build write their manifests with this same writer.
+async function developmentArtifacts(version) {
+  const root = await mkdtemp(join(tmpdir(), "mosa-release-manifest-dev-"));
+  const mac = join(root, `GravityPort-darwin-arm64-${version}.zip`);
+  const windows = join(root, `MOSA-win32-x64-${version}.zip`);
+  await writeFile(mac, `mac-${version}`);
+  await writeFile(windows, `windows-${version}`);
+  return { root, mac, windows };
+}
+
+function developmentOptions(version, { distribution = "development", channel = "development" } = {}) {
+  return {
+    version,
+    macAppName: "GravityPort.app",
+    macTeamIdentifier: "B5ZJT8TRPN",
+    buildIdentity: { ...buildIdentity(version), distribution },
+    signingPrivateKey: RELEASE_KEYS.privateKey,
+    publishedAt: "2026-11-27T21:30:00Z",
+    notes: { zh: "开发版", en: "Development build" },
+    // null leaves channel out, as the release command line does.
+    ...(channel === null ? {} : { channel }),
+  };
+}
+
+test("the development channel writes a development manifest that an older development package accepts", async () => {
+  const version = "0.3.19-dev.202611272130";
+  const files = await developmentArtifacts(version);
+  try {
+    const manifest = await prepareDesktopReleaseManifest({ ...developmentOptions(version), macArtifactPath: files.mac });
+    assert.equal(manifest.build.distribution, "development");
+    assert.equal(manifest.platforms.macos.teamIdentifier, "B5ZJT8TRPN");
+    verifyReleaseManifestSignature(manifest, [RELEASE_TRUST, BACKUP_TRUST]);
+    assert.equal(parseUpdateManifest(manifest).buildIdentity.distribution, "development");
+
+    const fetchImpl = async () => new Response(JSON.stringify(manifest), { status: 200 });
+    const older = await checkForMosaUpdate({
+      currentVersion: "0.3.19-dev.202611271742",
+      currentDistribution: "development",
+      releaseManifestTrust: [RELEASE_TRUST, BACKUP_TRUST],
+      macArch: "arm64",
+      platform: "darwin",
+      fetchImpl,
+    });
+    assert.equal(older.channel, "development");
+    assert.equal(older.updateAvailable, true);
+    const release = await checkForMosaUpdate({
+      currentVersion: "0.3.18",
+      currentDistribution: "preview",
+      releaseManifestTrust: [RELEASE_TRUST, BACKUP_TRUST],
+      macArch: "arm64",
+      platform: "darwin",
+      fetchImpl,
+    });
+    assert.equal(release.updateAvailable, false);
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+test("release and development manifests never take each other's builds", async () => {
+  const version = "0.3.19-dev.202611272130";
+  const files = await developmentArtifacts(version);
+  try {
+    // The release writer (the default, and the command line) refuses a development build.
+    await assert.rejects(
+      prepareDesktopReleaseManifest({ ...developmentOptions(version, { channel: null }), macArtifactPath: files.mac }),
+      /preview or production/,
+    );
+    await assert.rejects(
+      prepareDesktopReleaseManifest({ ...developmentOptions(version, { channel: "release" }), macArtifactPath: files.mac }),
+      /preview or production/,
+    );
+    // The development writer refuses release builds.
+    for (const distribution of ["preview", "production"]) {
+      await assert.rejects(
+        prepareDesktopReleaseManifest({ ...developmentOptions(version, { distribution }), macArtifactPath: files.mac }),
+        /require a development build/,
+      );
+    }
+    await assert.rejects(
+      prepareDesktopReleaseManifest({ ...developmentOptions(version, { channel: "beta" }), macArtifactPath: files.mac }),
+      /channel must be release or development/,
+    );
+  } finally {
+    await removeTestPath(files.root, { recursive: true, force: true });
+  }
+});
+
+test("a development manifest pins the team identifier and carries no Windows package", async () => {
+  const version = "0.3.19-dev.202611272130";
+  const files = await developmentArtifacts(version);
+  try {
+    await assert.rejects(
+      prepareDesktopReleaseManifest({ ...developmentOptions(version), macTeamIdentifier: "", macArtifactPath: files.mac }),
+      /teamIdentifier/,
+    );
+    await assert.rejects(
+      prepareDesktopReleaseManifest({ ...developmentOptions(version), macArtifactPath: files.mac, windowsArtifactPath: files.windows }),
+      /do not carry Windows packages/,
     );
   } finally {
     await removeTestPath(files.root, { recursive: true, force: true });

@@ -58,11 +58,18 @@ export async function prepareDesktopReleaseManifest({
   previousManifest = null,
   publishedAt = new Date().toISOString(),
   notes = null,
+  // Which feed this manifest is written for. "release" (the default, and the
+  // only one the command line offers) accepts preview and production builds;
+  // "development" (task 479: scripts/dev-channel/publish.mjs and the local
+  // update rehearsal of a development build) accepts development builds only.
+  // Neither accepts the other's builds, so a release run can never publish a
+  // development manifest by accident, nor the reverse.
+  channel = "release",
   env = process.env,
 } = {}) {
   const cleanVersion = String(version || "").trim();
   if (!VERSION_PATTERN.test(cleanVersion)) throw new Error("Invalid MOSA release version.");
-  const normalizedBuildIdentity = normalizeBuildIdentity(buildIdentity, cleanVersion);
+  const normalizedBuildIdentity = normalizeBuildIdentity(buildIdentity, cleanVersion, channel);
 
   const cleanMacAppName = String(macAppName || "").trim();
   if (!MACOS_UPDATE_APP_NAMES.includes(cleanMacAppName)) throw new Error("Invalid macOS release app name.");
@@ -248,15 +255,23 @@ export function resolveManifestNotes({ notesZh = "", notesEn = "", version, rele
   };
 }
 
-function normalizeBuildIdentity(value, version) {
+function normalizeBuildIdentity(value, version, channel) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Release build identity is required.");
+  }
+  if (channel !== "release" && channel !== "development") {
+    throw new Error(`Release manifest channel must be release or development (got: ${JSON.stringify(channel)}).`);
   }
   const productVersion = String(value.productVersion || "").trim();
   const gitSha = String(value.gitSha || "").trim().toLowerCase();
   const uiFingerprint = String(value.uiFingerprint || "").trim().toLowerCase();
   const runtimeFingerprint = String(value.runtimeFingerprint || "").trim().toLowerCase();
-  const distribution = normalizeDesktopDistribution(value.distribution, { releaseOnly: true });
+  const distribution = channel === "release"
+    ? normalizeDesktopDistribution(value.distribution, { releaseOnly: true })
+    : normalizeDesktopDistribution(value.distribution, { defaultValue: "" });
+  if (channel === "development" && distribution !== "development") {
+    throw new Error(`Development-channel manifests require a development build (got: ${distribution}).`);
+  }
   if (productVersion !== version) {
     throw new Error(`Release build identity version ${productVersion || "(missing)"} does not match ${version}.`);
   }
