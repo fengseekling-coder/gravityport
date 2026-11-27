@@ -87,7 +87,16 @@ function pinterestEntrySource() {
       return card.top >= page.top - 1 && card.bottom <= page.bottom + 1;
     };
     await waitFor(cardInView, 'Pinterest card scrolled into view');
-    await sleep(1200);
+    // Wait for the cards above to finish loading (that is when they grow),
+    // then give the reveal's ResizeObserver two frames to follow.
+    const modal = document.querySelector('.settings-modal');
+    const cardsAboveSettled = () =>
+      modal.querySelector('.web-capture-status-card .web-capture-badge')?.textContent?.trim() !== '正在加载…' &&
+      modal.querySelector('.web-capture-status-card .settings-switch:not(:disabled)') &&
+      modal.querySelector('.bridge-status-card :is(.bridge-status-rows, .bridge-status-error)') &&
+      modal.querySelector('.mcp-config-card :is(.mcp-config-copy-button, .mcp-guide-button)');
+    await waitFor(cardsAboveSettled, 'cards above the Pinterest card finished loading');
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     if (!cardInView()) throw new Error('Pinterest card left the viewport after the cards above finished loading');
     const connectScrollTop = Math.round(document.querySelector('.settings-modal .settings-page').scrollTop);
     // Same in Settings once the status has loaded: 即将上线, no connect button.
