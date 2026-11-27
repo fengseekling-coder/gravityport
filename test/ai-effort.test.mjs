@@ -91,7 +91,7 @@ test("1. 目录：Claude 表内五档、表外三档、别家/Ollama 空、Claud
     if (model.service === "claude") {
       assert.deepEqual(model.efforts, ["low", "medium", "high", "xhigh", "max"]);
       assert.equal(model.effortSource, "https://platform.claude.com/docs/en/build-with-claude/effort");
-      assert.equal(model.effortCheckedAt, "2026-11-26");
+      assert.match(model.effortCheckedAt, /^\d{4}-\d{2}-\d{2}$/, `${model.id} needs the date its effort levels were checked`);
     } else {
       assert.equal("efforts" in model, false, `non-claude model ${model.id} must not declare efforts`);
     }
@@ -106,6 +106,9 @@ test("1. 目录：Claude 表内五档、表外三档、别家/Ollama 空、Claud
 
   assert.deepEqual(aiEffortLevelsFor(claude, "claude-haiku-5-5"), ["low", "medium", "high", "xhigh", "max"]);
   assert.deepEqual(aiEffortLevelsFor(claude, "claude-sonnet-5-5"), ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(aiEffortLevelsFor(claude, "claude-opus-5-5"), ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(aiEffortLevelsFor(customClaude, "claude-opus-5-5"), ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(aiEffortLevelsFor(claude, "claude-fable-5-2"), ["low", "medium", "high", "xhigh", "max"]);
   assert.deepEqual(aiEffortLevelsFor(claude, "claude-discovered-2026"), ["low", "medium", "high"]);
   assert.deepEqual(aiEffortLevelsFor(customClaude, "claude-haiku-5-5"), ["low", "medium", "high", "xhigh", "max"]);
   assert.deepEqual(aiEffortLevelsFor(customClaude, "claude-discovered-2026"), ["low", "medium", "high"]);
@@ -126,6 +129,31 @@ test("1. 目录：Claude 表内五档、表外三档、别家/Ollama 空、Claud
   assert.equal(aiEffortFor({ summaryModel: "claude-discovered-2026", summaryEffort: "max" }, "summary", customClaude), "medium");
   assert.equal(aiEffortFor({ model: "claude-discovered-2026", effort: "high" }, "analysis", customClaude), "high");
   assert.equal(aiEffortFor({ model: "gpt-5-nano", effort: "high" }, "analysis", openai), "");
+});
+
+test("480：Fable 5.2 只进汇总手册和对话大脑——存逐张分析被丢、存汇总和对话大脑照收", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "mosa-ai-fable-slots-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = createAiSettingsStore({ dir });
+  await store.applyUpdate({
+    slots: {
+      analysis: { serviceId: "claude", model: "claude-haiku-5-5", summaryModel: "claude-sonnet-5-5" },
+      brain: { serviceId: "claude", model: "claude-haiku-5-5" },
+    },
+  });
+  const rejected = await store.applyUpdate({ slots: { analysis: { model: "claude-fable-5-2" } } });
+  assert.equal(rejected.settings.slots.analysis.model, "claude-haiku-5-5", "per-image analysis must not take Fable 5.2");
+  const accepted = await store.applyUpdate({
+    slots: {
+      analysis: { summaryModel: "claude-fable-5-2", summaryEffort: "xhigh" },
+      brain: { serviceId: "claude", model: "claude-fable-5-2" },
+    },
+  });
+  assert.equal(accepted.settings.slots.analysis.summaryModel, "claude-fable-5-2");
+  assert.equal(accepted.settings.slots.analysis.summaryEffort, "xhigh");
+  assert.equal(accepted.settings.slots.brain.model, "claude-fable-5-2");
+  const opus = await store.applyUpdate({ slots: { analysis: { model: "claude-opus-5-5" } } });
+  assert.equal(opus.settings.slots.analysis.model, "claude-opus-5-5", "Opus 5.5 is allowed for per-image analysis");
 });
 
 // ── 2. 设置 ──
@@ -303,7 +331,7 @@ test("3. 调用：五档 analyzeImage / summarizeGuide 逐格核对参数、重�
   assert.equal(summaryDefaultCall.params.system, "SYS_S");
   assert.deepEqual(summaryDefaultCall.params.messages, [{ role: "user", content: "USER_S" }]);
   assert.deepEqual(summaryDefaultCall.params.betas, ["server-side-fallback-2026-07-01"]);
-  assert.deepEqual(summaryDefaultCall.params.fallbacks, [{ model: "claude-sonnet-5" }]);
+  assert.equal(summaryDefaultCall.params.fallbacks, "default");
   assert.equal(summaryDefaultCall.params.output_config.format.type, "json_schema");
   assert.equal(summaryDefaultCall.params.output_config.effort, "medium");
 

@@ -215,7 +215,8 @@ describe("ai-settings-model: modelGroups", () => {
             ok: true,
             code: "ok",
             at: "2026-11-24T00:00:00Z",
-            models: ["claude-haiku-5-5", "claude-opus-5-5"],
+            // claude-opus-4-8 stands for a model the gateway lists but the catalog does not.
+            models: ["claude-haiku-5-5", "claude-opus-4-8"],
           },
         },
         {
@@ -254,13 +255,15 @@ describe("ai-settings-model: modelGroups", () => {
     assert.deepEqual(claudePreset.options, [
       { value: "claude-haiku-5-5", label: "Claude Haiku 5.5", hint: "默认" },
       { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", hint: "单价 20 倍" },
+      { value: "claude-opus-5-5", label: "Claude Opus 5.5", hint: "单价 40 倍" },
     ]);
 
     const claudeCustom = analysisGroups.find((group) => group.serviceId === "custom-claude");
     assert.deepEqual(claudeCustom.options, [
       { value: "claude-haiku-5-5", label: "Claude Haiku 5.5", hint: "默认" },
       { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", hint: "单价 20 倍" },
-      { value: "claude-opus-5-5", label: "claude-opus-5-5", hint: "单价未知" },
+      { value: "claude-opus-5-5", label: "Claude Opus 5.5", hint: "单价 40 倍" },
+      { value: "claude-opus-4-8", label: "claude-opus-4-8", hint: "单价未知" },
     ]);
 
     const openaiCustom = analysisGroups.find((group) => group.serviceId === "custom-openai");
@@ -304,6 +307,8 @@ describe("ai-settings-model: modelGroups", () => {
     assert.deepEqual(claudeSummary[0].options, [
       { value: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
       { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", hint: "默认" },
+      { value: "claude-opus-5-5", label: "Claude Opus 5.5" },
+      { value: "claude-fable-5-2", label: "Claude Fable 5.2" },
     ]);
 
     const openaiSelected = makeState({
@@ -449,12 +454,12 @@ describe("ai-settings-model: rowNoteFor", () => {
       customServices: [
         { id: "custom-c", label: "公司网关", format: "claude", baseUrl: "http://127.0.0.1:9001", hasKey: true, last4: "1111" },
       ],
-      slots: { analysis: { serviceId: "custom-c", model: "claude-haiku-5-5", summaryModel: "claude-opus-5-5" } },
+      slots: { analysis: { serviceId: "custom-c", model: "claude-haiku-5-5", summaryModel: "claude-opus-4-8" } },
     });
     assert.deepEqual(rowNoteFor(learningUnknownState, "summary"), {
       kind: "learning-unknown-price",
       tone: "danger",
-      params: { model: "claude-opus-5-5" },
+      params: { model: "claude-opus-4-8" },
     });
 
     // 6. unknown-price (brain / image)
@@ -462,12 +467,12 @@ describe("ai-settings-model: rowNoteFor", () => {
       customServices: [
         { id: "custom-c", label: "公司网关", format: "claude", baseUrl: "http://127.0.0.1:9001", hasKey: true, last4: "1111" },
       ],
-      slots: { brain: { serviceId: "custom-c", model: "claude-opus-5-5" } },
+      slots: { brain: { serviceId: "custom-c", model: "claude-opus-4-8" } },
     });
     assert.deepEqual(rowNoteFor(brainUnknownState, "brain"), {
       kind: "unknown-price",
       tone: "info",
-      params: { model: "claude-opus-5-5" },
+      params: { model: "claude-opus-4-8" },
     });
 
     // 7. image-needs-service
