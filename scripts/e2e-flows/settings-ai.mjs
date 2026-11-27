@@ -203,6 +203,16 @@ export async function run(ctx) {
     if (!useDisplays.analysisNote.includes("学习暂时只支持 Claude")) {
       throw new Error(`analysis row missing learning-unsupported note: ${JSON.stringify(useDisplays)}`);
     }
+    // 任务 476：OpenAI 格式服务下，学习两行以及对话大脑、出图均不得出现推理强度下拉。
+    const openaiEffortCounts = await cdp.evaluate(`({
+      analysis: document.querySelectorAll('.ai-use-row[data-role="analysis"] .ai-effort-group').length,
+      summary: document.querySelectorAll('.ai-use-row[data-role="summary"] .ai-effort-group').length,
+      brain: document.querySelectorAll('.ai-use-row[data-role="brain"] .ai-effort-group').length,
+      image: document.querySelectorAll('.ai-use-row[data-role="image"] .ai-effort-group').length,
+    })`);
+    if (openaiEffortCounts.analysis !== 0 || openaiEffortCounts.summary !== 0 || openaiEffortCounts.brain !== 0 || openaiEffortCounts.image !== 0) {
+      throw new Error(`OpenAI custom service should have zero effort selects: ${JSON.stringify(openaiEffortCounts)}`);
+    }
 
     // --- Round 4: 更换 → 删除此服务 (key cascades, uses fall back to 未选择) ---
     await clickCenter(cdp, `Array.from(document.querySelectorAll('.ai-service-row[data-service-id="${addedServiceId}"] .ai-service-actions .settings-action-btn')).find((el) => el.textContent.trim() === '更换')`);
@@ -239,6 +249,104 @@ export async function run(ctx) {
     await waitForUi(cdp, `Boolean(document.querySelector('.ai-service-row[data-service-id="${failingServiceId}"] .ai-danger-link'))`, "删除此服务 visible on 401 service");
     await clickCenter(cdp, `document.querySelector('.ai-service-row[data-service-id="${failingServiceId}"] .ai-danger-link')`);
     await waitForUi(cdp, `!document.querySelector('.ai-service-row[data-service-id="${failingServiceId}"]')`, "401 service removed");
+
+    // --- Round 7 (task 476): Claude-format custom service -> effort dropdowns, persistence, out-of-catalog fallback ---
+    const serverClaude = await startFakeService((req, res) => {
+      if (req.method === "GET" && req.url === "/v1/models") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: [{ id: "claude-haiku-5-5" }, { id: "claude-custom-ext" }] }));
+        return;
+      }
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "not found" } }));
+    });
+    try {
+      const claudeServiceId = await addCustomClaudeService(cdp, serverClaude.url);
+      await saveKey(cdp, FAKE_KEY);
+      await waitForUi(cdp,
+        `document.querySelector('.ai-service-row[data-service-id="${claudeServiceId}"] .ai-status-line')?.textContent?.includes('连接正常 · 可用 2 个模型')`,
+        "Claude custom service auto-test ok");
+
+      // 学习两行出现推理强度下拉，对话大脑与出图任何时候都没有。
+      await waitForUi(cdp,
+        `Boolean(document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select')) && Boolean(document.querySelector('.ai-use-row[data-role="summary"] .ai-effort-group .toolbar-select'))`,
+        "analysis and summary effort selects appear for Claude service");
+      const claudeEffortPresence = await cdp.evaluate(`({
+        analysisText: document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select > span')?.textContent?.trim() || '',
+        summaryText: document.querySelector('.ai-use-row[data-role="summary"] .ai-effort-group .toolbar-select > span')?.textContent?.trim() || '',
+        brainCount: document.querySelectorAll('.ai-use-row[data-role="brain"] .ai-effort-group').length,
+        imageCount: document.querySelectorAll('.ai-use-row[data-role="image"] .ai-effort-group').length,
+      })`);
+      if (claudeEffortPresence.analysisText !== "推理强度：低（默认）") {
+        throw new Error(`unexpected initial analysis effort text: ${JSON.stringify(claudeEffortPresence)}`);
+      }
+      if (claudeEffortPresence.summaryText !== "推理强度：中（默认）") {
+        throw new Error(`unexpected initial summary effort text: ${JSON.stringify(claudeEffortPresence)}`);
+      }
+      if (claudeEffortPresence.brainCount !== 0 || claudeEffortPresence.imageCount !== 0) {
+        throw new Error(`brain/image must never show effort select: ${JSON.stringify(claudeEffortPresence)}`);
+      }
+
+      // 选「高」→ 出现「比默认多想，这一步花费约 ×4」→ 关掉设置再打开仍是「高」。
+      await clickCenter(cdp, `document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select')`);
+      await waitForUi(cdp,
+        `document.querySelectorAll('.toolbar-select-menu .toolbar-select-option').length === 5`,
+        "Haiku 5.5 offers 5 effort options");
+      await clickCenter(cdp,
+        `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).find((el) => el.textContent.trim() === '高')`);
+      await waitForUi(cdp,
+        `document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select > span')?.textContent?.trim() === '推理强度：高' && (document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-hint')?.textContent?.trim() || '') === '比默认多想，这一步花费约 ×4'`,
+        "analysis effort high shows 4x cost hint");
+
+      await clickCenter(cdp, `document.querySelector('.settings-modal .modal-close')`);
+      await waitForUi(cdp, `!document.querySelector('.settings-modal')`, "settings closed after setting effort high");
+      await openSettings(cdp, "settings reopened to check persisted effort");
+      await waitForUi(cdp, `Array.from(document.querySelectorAll('.settings-nav button')).some((button) => button.textContent.trim() === 'AI')`, "AI nav row on reopen");
+      await clickCenter(cdp, `Array.from(document.querySelectorAll('.settings-nav button')).find((button) => button.textContent.trim() === 'AI')`);
+      await waitForUi(cdp,
+        `document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select > span')?.textContent?.trim() === '推理强度：高' && (document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-hint')?.textContent?.trim() || '') === '比默认多想，这一步花费约 ×4'`,
+        "analysis effort high persisted across reopen");
+
+      // 先选「很高」（仅五档模型支持），再把逐张分析换成表外模型 claude-custom-ext → 只剩三档、档位回到「低（默认）」。
+      await clickCenter(cdp, `document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select')`);
+      await waitForUi(cdp,
+        `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).some((el) => el.textContent.trim() === '很高')`,
+        "xhigh option visible");
+      await clickCenter(cdp,
+        `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).find((el) => el.textContent.trim() === '很高')`);
+      await waitForUi(cdp,
+        `document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select > span')?.textContent?.trim() === '推理强度：很高'`,
+        "analysis effort set to xhigh");
+
+      await clickCenter(cdp, `document.querySelector('.ai-use-row[data-role="analysis"] .toolbar-select')`);
+      await waitForUi(cdp,
+        `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).some((el) => el.textContent.includes('claude-custom-ext'))`,
+        "out-of-catalog claude-custom-ext option visible");
+      await clickCenter(cdp,
+        `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).find((el) => el.textContent.includes('claude-custom-ext'))`);
+      await waitForUi(cdp,
+        `document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select > span')?.textContent?.trim() === '推理强度：低（默认）' && !document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-hint')`,
+        "switching to out-of-catalog model resets unsupported xhigh back to 低（默认）");
+
+      await clickCenter(cdp, `document.querySelector('.ai-use-row[data-role="analysis"] .ai-effort-group .toolbar-select')`);
+      await waitForUi(cdp,
+        `document.querySelectorAll('.toolbar-select-menu .toolbar-select-option').length === 3`,
+        "out-of-catalog Claude model offers exactly 3 effort options");
+      const extOptions = await cdp.evaluate(`Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).map((el) => el.textContent.trim())`);
+      if (JSON.stringify(extOptions) !== JSON.stringify(["低（默认）", "中", "高"])) {
+        throw new Error(`unexpected out-of-catalog effort options: ${JSON.stringify(extOptions)}`);
+      }
+      await clickCenter(cdp, `document.querySelector('.toolbar-select-menu .toolbar-select-option')`);
+      await waitForUi(cdp, `!document.querySelector('.toolbar-select-menu')`, "effort menu closed");
+
+      // 收尾删掉 Claude 假服务。
+      await clickCenter(cdp, `Array.from(document.querySelectorAll('.ai-service-row[data-service-id="${claudeServiceId}"] .ai-service-actions .settings-action-btn')).find((el) => el.textContent.trim() === '更换')`);
+      await waitForUi(cdp, `Boolean(document.querySelector('.ai-service-row[data-service-id="${claudeServiceId}"] .ai-danger-link'))`, "删除此服务 visible on Claude service");
+      await clickCenter(cdp, `document.querySelector('.ai-service-row[data-service-id="${claudeServiceId}"] .ai-danger-link')`);
+      await waitForUi(cdp, `!document.querySelector('.ai-service-row[data-service-id="${claudeServiceId}"]')`, "Claude custom service removed");
+    } finally {
+      await serverClaude.close();
+    }
 
     // Final byte check on the real userData file: the fake key survives nowhere.
     const credentialPath = join(ctx.userDataDir, "ai-credentials.json");
@@ -286,6 +394,36 @@ async function addCustomService(cdp, baseUrl) {
     "custom service row appears in edit mode with focus in password input");
   const serviceId = await cdp.evaluate(`document.querySelector('.ai-service-row.editing[data-service-id]')?.getAttribute('data-service-id') || ''`);
   if (!serviceId) throw new Error("custom service row missing data-service-id");
+  return serviceId;
+}
+
+async function addCustomClaudeService(cdp, baseUrl) {
+  await waitForUi(
+    cdp,
+    `Boolean(document.querySelector('.ai-add-select .toolbar-select')) || Array.from(document.querySelectorAll('.ai-quick-add .settings-action-btn')).some((el) => el.textContent.includes('其它服务'))`,
+    "add-claude-service trigger ready",
+  );
+  const hasHeaderSelect = await cdp.evaluate(`Boolean(document.querySelector('.ai-add-select .toolbar-select'))`);
+  if (hasHeaderSelect) {
+    await clickCenter(cdp, `document.querySelector('.ai-add-select .toolbar-select')`);
+    await waitForUi(cdp, `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).some((el) => el.textContent.includes('其它服务'))`, "other-service option (claude)");
+    await clickCenter(cdp, `Array.from(document.querySelectorAll('.toolbar-select-menu .toolbar-select-option')).find((el) => el.textContent.includes('其它服务'))`);
+  } else {
+    await clickCenter(cdp, `Array.from(document.querySelectorAll('.ai-quick-add .settings-action-btn')).find((el) => el.textContent.includes('其它服务'))`);
+  }
+  await waitForUi(cdp, `Boolean(document.querySelector('.ai-add-form'))`, "add form open (claude)");
+  await clickCenter(cdp, `document.querySelector('.ai-add-form input.ai-text-input')`);
+  await cdp.send("Input.insertText", { text: "Flow Claude 假服务" });
+  await clickCenter(cdp, `Array.from(document.querySelectorAll('.ai-add-form .segmented button')).find((el) => el.textContent.includes('Claude'))`);
+  await clickCenter(cdp, `document.querySelector('.ai-add-form input[type="url"]')`);
+  await cdp.send("Input.insertText", { text: baseUrl });
+  await clickCenter(cdp, `Array.from(document.querySelectorAll('.ai-add-actions .settings-action-btn')).find((el) => el.textContent.trim() === '添加')`);
+  await waitForUi(cdp, `!document.querySelector('.ai-add-form')`, "add form closed (claude)");
+  await waitForUi(cdp,
+    `Boolean(document.querySelector('.ai-service-row.editing[data-service-id] .ai-key-input')) && document.activeElement === document.querySelector('.ai-service-row.editing[data-service-id] .ai-key-input')`,
+    "Claude custom service row appears in edit mode");
+  const serviceId = await cdp.evaluate(`document.querySelector('.ai-service-row.editing[data-service-id]')?.getAttribute('data-service-id') || ''`);
+  if (!serviceId) throw new Error("Claude custom service row missing data-service-id");
   return serviceId;
 }
 

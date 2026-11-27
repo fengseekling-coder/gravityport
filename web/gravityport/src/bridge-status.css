@@ -3,36 +3,8 @@
    ladder, per-row detail groups, and the copy button mirror the approved
    sample A (素材/桥接状态卡-oil-ui/explore/index.html). */
 
-.bridge-status-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-  padding: var(--space-4);
-  border-radius: var(--radius-control);
-  background: var(--ui-inset);
-  min-width: 0;
-}
-
-.bridge-status-title {
-  display: flex;
-  align-items: center;
-  min-height: var(--space-6);
-  line-height: var(--type-body-line);
-}
-
-.bridge-status-title strong {
-  font-size: var(--type-body-size);
-  font-weight: var(--type-weight-title);
-  color: var(--ui-text);
-}
-
-.bridge-status-desc {
-  margin: 0;
-  color: var(--ui-secondary);
-  font-size: var(--type-body-size);
-  line-height: var(--type-body-line);
-}
+/* The card shell, title row and description come from the shared settings
+   card (.settings-section.settings-card in styles/06-settings.css). */
 
 .bridge-status-rows {
   display: flex;
@@ -49,7 +21,12 @@
 
 .bridge-status-row:first-child {
   border-top: 0;
-  padding-top: var(--space-1);
+  padding-top: 0;
+}
+
+/* 最后一行不再垫底：卡片下边距和上边距一样是 16px。 */
+.bridge-status-row:last-child {
+  padding-bottom: 0;
 }
 
 .bridge-status-line {
@@ -150,27 +127,8 @@
   padding-top: var(--space-1);
 }
 
-.bridge-status-copy-btn,
-.app .settings-modal .bridge-status-copy-btn {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+/* Shape comes from .settings-action-btn; the copy icon only needs its gap. */
+.app .settings-modal .bridge-status-copy-btn,
+.bridge-status-copy-btn {
   gap: 6px;
-  height: var(--control-height-small);
-  min-height: var(--control-height-small);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-control);
-  background: var(--ui-raised);
-  color: var(--ui-text);
-  font-size: var(--type-body-size);
-  font-weight: var(--type-weight-label);
-  line-height: var(--type-control-line);
-  white-space: nowrap;
-}
-
-.bridge-status-copy-btn:hover:not(:disabled) {
-  background: var(--ui-selected);
-  color: var(--ui-text);
 }

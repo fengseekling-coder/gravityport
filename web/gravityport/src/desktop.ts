@@ -47,6 +47,8 @@ export type AiSlotState = {
   serviceId: string
   model: string
   summaryModel?: string
+  effort?: string
+  summaryEffort?: string
 }
 
 export type AiCatalogModel = {
@@ -61,6 +63,16 @@ export type AiCatalogModel = {
     | { kind: "per-image"; perImage: number }
   source?: string
   checkedAt?: string
+  efforts?: string[]
+  effortSource?: string
+  effortCheckedAt?: string
+}
+
+export type AiLearningEffortRoleState = {
+  levels: string[]
+  value: string
+  defaultEffort: string
+  multiples: Record<string, number>
 }
 
 export type AiPriceLine = {
@@ -75,6 +87,7 @@ export type AiState = {
   catalog: { services: AiServiceState[]; models: AiCatalogModel[] }
   priceLines: { analysis: AiPriceLine[]; brain: AiPriceLine[]; image: AiPriceLine[] }
   monthTotals: { analysis: number; brain: number; image: number }
+  learningEfforts?: { analysis: AiLearningEffortRoleState; summary: AiLearningEffortRoleState }
 }
 
 type ElectronAPI = {
@@ -119,7 +132,7 @@ type ElectronAPI = {
   aiTestConnection?: (serviceId: string, purpose: "text" | "image") => Promise<{ ok: boolean; code?: string; message?: string; template?: string; params?: Record<string, string>; modelCount?: number; missingModel?: string }>
   aiUpdateSettings?: (payload: { slots?: Record<string, Partial<AiSlotState>>; customServices?: Array<{ id?: string; label: string; format: "openai" | "claude"; baseUrl: string }> }) => Promise<{ ok: boolean; state?: AiState; reason?: string }>
   // 任务 463：学习后台六个通道（界面在 464；浏览器里没有这些方法）。
-  aiLearningQuote?: (payload: { project: string; libraryId: string; runId?: string }) => Promise<{ ok: boolean; quoteToken?: string; kind?: "learn" | "resume" | "summary-only"; counts?: { newCount: number; analyzedCount: number; totalCount: number; noPreview: number }; estimateUsd?: number; capUsd?: number; analysisUsd?: number; summaryUsd?: number; summaryCalls?: number; service?: { id: string; label: string }; models?: { analysis: { id: string; label: string }; summary: { id: string; label: string } }; privacy?: { imageCount: number; longEdge: number }; blocked?: string; libraryId?: string; libraryName?: string; runId?: string }>
+  aiLearningQuote?: (payload: { project: string; libraryId: string; runId?: string }) => Promise<{ ok: boolean; quoteToken?: string; kind?: "learn" | "resume" | "summary-only"; counts?: { newCount: number; analyzedCount: number; totalCount: number; noPreview: number }; estimateUsd?: number; capUsd?: number; analysisUsd?: number; summaryUsd?: number; summaryCalls?: number; service?: { id: string; label: string }; models?: { analysis: { id: string; label: string; effort?: string }; summary: { id: string; label: string; effort?: string } }; privacy?: { imageCount: number; longEdge: number }; blocked?: string; libraryId?: string; libraryName?: string; runId?: string }>
   aiLearningStart?: (payload: { quoteToken: string }) => Promise<{ ok: boolean; runId?: string; reason?: string }>
   aiLearningPause?: (payload: { runId: string }) => Promise<{ ok: boolean }>
   aiLearningResume?: (payload: { runId: string; quoteToken: string }) => Promise<{ ok: boolean; reason?: string }>

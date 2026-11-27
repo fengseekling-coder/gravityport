@@ -269,6 +269,8 @@ test("connected managed extension shows automatic update status", () => {
   assert.match(html, /跟随 App 自动更新/);
   assert.match(html, /正在更新扩展/);
   assert.doesNotMatch(html, /有新版扩展/);
+  // The parenthesis follows the state and version inside the title row.
+  assert.match(html, /<span class="web-capture-badge is-connected">已连接 · v0\.15\.45<\/span><span class="web-capture-managed-note">（跟随 App 自动更新）<\/span><\/div>/);
 });
 
 test("connected shows the verdict and the version row", () => {
@@ -345,7 +347,7 @@ test("lastError is shown once, capped at 120 characters", () => {
     active: true,
     status: bridgeStatus({ lastError: longError }),
   });
-  assert.match(html, /最近一次错误/);
+  assert.match(html, /最近一次收录无法完成（e+）/);
   assert.ok(html.includes("e".repeat(120)), "first 120 characters shown");
   assert.ok(!html.includes("TAIL-MUST-NOT-APPEAR"), "nothing past 120 characters");
 });
@@ -374,7 +376,7 @@ test("English rendering contains no Chinese characters in any state", () => {
   assert.match(pieces[2], /Connected · v0\.15\.36/);
   assert.match(pieces[2], /A newer extension is available/);
   assert.match(pieces[2], /2 assets waiting to retry/);
-  assert.match(pieces[2], /Last error/);
+  assert.match(pieces[2], /The latest capture couldn’t be collected \(/);
   assert.match(pieces[3], /Retry requested/);
 });
 
@@ -502,7 +504,7 @@ test("the three storage hints appear only when their condition holds", () => {
   // Nearly full (>= 90%), evicted and url-only each show their own line.
   const withHints = full();
   assert.match(withHints, /浏览器扩展的离线空间即将用尽（已用 480MB \/ 512MB）。GravityPort 打开后将自动收录暂存的素材。/);
-  assert.match(withHints, /2 个素材因离线空间不足，仅保留了网址或已被移除。网址过期后可能无法收录。/);
+  assert.match(withHints, /2 个素材因离线空间不足，仅保留了网址或已被移除。<\/p>/);
   assert.match(withHints, /3 个素材仅保存了网址。网址过期后可能无法收录。/);
 
   // Under 90% the fullness line hides; zero counters hide their lines.
@@ -546,4 +548,99 @@ test("the storage hints render in English without leaking Chinese", () => {
   assert.match(html, /2 captures were kept as URLs only or removed because offline storage ran out./);
   assert.match(html, /3 captures were saved as URLs only./);
   assert.doesNotMatch(html, /[一-鿿]/, `Chinese leaked into EN render: ${html.slice(0, 400)}`);
+});
+
+// ---- 连接页重排: card head, grouped notices, switch rows ----
+
+test("the head row carries the name, the state and 刷新 only; the update link sits on the next line", () => {
+  const html = renderCard({
+    active: true,
+    bundledVersion: "0.15.37",
+    status: bridgeStatus({ lastExtensionVersion: "0.15.36" }),
+  });
+  const head = /<div class="settings-card-head">([\s\S]*?)<p /.exec(html)?.[1] || "";
+  assert.match(head, /浏览器扩展/);
+  assert.match(head, /已连接 · v0\.15\.36/);
+  assert.match(head, /刷新/);
+  assert.doesNotMatch(head, /有新版扩展/, "the update link no longer wraps inside the title row");
+  assert.match(html, /<p class="settings-card-desc"><a class="web-capture-update-link"[^>]*>有新版扩展<\/a><\/p>/);
+  // The card and its buttons use the shared settings-card pieces.
+  assert.match(html, /<section class="settings-section settings-card web-capture-status-card"/);
+  assert.match(html, /class="settings-action-btn web-capture-refresh"/);
+});
+
+test("pending, storage and error notices form one group between the head and the switch rows", () => {
+  const html = renderCard({
+    active: true,
+    status: bridgeStatus({
+      lastExtensionVersion: "0.15.36",
+      lastError: "ingest rejected",
+      queue: { reportedAt: null, pending: 2, failed: 0, storageBytes: 480 * 1024 * 1024, storageLimitBytes: 512 * 1024 * 1024, urlOnly: 3, evicted: 2, items: [] },
+    }),
+  });
+  const group = /<div class="web-capture-messages">([\s\S]*?)<\/div>/.exec(html)?.[1] || "";
+  for (const line of ["2 个素材等待重试", "离线空间即将用尽", "2 个素材因离线空间不足", "3 个素材仅保存了网址", "最近一次收录无法完成（ingest rejected）"]) {
+    assert.ok(group.includes(line), `${line} is inside the notice group`);
+  }
+  assert.match(group, /class="settings-action-btn web-capture-retry"/);
+  assert.ok(html.indexOf("web-capture-messages") < html.indexOf("settings-card-sub"), "notices come before the switch rows");
+  // Nothing to report: no empty group.
+  assert.doesNotMatch(renderCard({ active: true, status: bridgeStatus({ lastExtensionVersion: "0.15.36" }) }), /web-capture-messages/);
+});
+
+test("extra switch rows (后台收录) render inside the card, above the deletion sync row", () => {
+  const row = React.createElement("div", { className: "settings-card-sub", "data-row": "background-capture" }, "后台收录");
+  const html = renderStatic(React.createElement(card.WebCaptureStatusCardView, { ...viewBase }, row));
+  const section = /<section[\s\S]*<\/section>/.exec(html)?.[0] || "";
+  assert.ok(section.includes('data-row="background-capture"'), "the row is inside the extension card");
+  assert.ok(section.indexOf('data-row="background-capture"') < section.indexOf("同步即梦中的删除"), "it comes before the deletion sync row");
+  assert.equal(section.split('class="settings-card-sub"').length - 1, 2, "both rows are card sub-sections");
+  // Without it the card still ends with the deletion sync row alone.
+  assert.equal(renderCard({}).split('class="settings-card-sub"').length - 1, 1);
+});
+
+// ---- 2026-11-26 copy changes ----
+
+test("the URL-expiry consequence is said once, on the line it applies to", () => {
+  const both = renderCard({
+    active: true,
+    status: bridgeStatus({ lastExtensionVersion: "0.15.36", queue: { reportedAt: null, pending: 0, failed: 0, storageBytes: 0, storageLimitBytes: 512 * 1024 * 1024, urlOnly: 3, evicted: 2, items: [] } }),
+  });
+  assert.equal(both.split("网址过期后可能无法收录。").length - 1, 1, "the consequence appears once when both lines show");
+  assert.match(both, /<p class="web-capture-error">3 个素材仅保存了网址。网址过期后可能无法收录。<\/p>/);
+
+  // Every evicted ticket was removed outright: no URL is left to expire, so
+  // the consequence is not claimed at all.
+  const removedOnly = renderCard({
+    active: true,
+    status: bridgeStatus({ lastExtensionVersion: "0.15.36", queue: { reportedAt: null, pending: 1, failed: 0, storageBytes: 0, storageLimitBytes: 512 * 1024 * 1024, urlOnly: 0, evicted: 1, items: [] } }),
+  });
+  assert.match(removedOnly, /<p class="web-capture-error">1 个素材因离线空间不足，仅保留了网址或已被移除。<\/p>/);
+  assert.doesNotMatch(removedOnly, /网址过期后可能无法收录/);
+
+  const english = renderCard({
+    language: "en",
+    active: true,
+    status: bridgeStatus({ lastExtensionVersion: "0.15.36", queue: { reportedAt: null, pending: 0, failed: 0, storageBytes: 0, storageLimitBytes: 512 * 1024 * 1024, urlOnly: 3, evicted: 2, items: [] } }),
+  });
+  assert.match(english, /<p class="web-capture-error">2 captures were kept as URLs only or removed because offline storage ran out\.<\/p>/);
+  assert.equal(english.split("may not be recoverable").length - 1, 1);
+});
+
+test("the last failed capture is a sentence with the raw reason in brackets", () => {
+  const zh = renderCard({ active: true, status: bridgeStatus({ lastError: "image exceeds 64MB limit" }) });
+  assert.match(zh, /<p class="web-capture-error">最近一次收录无法完成（image exceeds 64MB limit）<\/p>/);
+  assert.doesNotMatch(zh, /最近一次错误/);
+  const en = renderCard({ language: "en", active: true, status: bridgeStatus({ lastError: "image exceeds 64MB limit" }) });
+  assert.match(en, /The latest capture couldn’t be collected \(image exceeds 64MB limit\)/);
+});
+
+test("the install notes end with one lead-in and the download link, not the same phrase twice", () => {
+  const managed = { available: true, path: "/private/test/chrome", version: "0.15.46", installId: "abc", extensionManaged: false };
+  const zh = renderCard({ status: bridgeStatus({ managedExtension: managed }) });
+  // Full-width colon, then the link directly: no space in Chinese.
+  assert.match(zh, /<small>其他安装方式：<a [^>]*>前往官网下载<\/a><\/small>/);
+  assert.doesNotMatch(zh, /也可以去官网下载/);
+  const en = renderCard({ language: "en", status: bridgeStatus({ managedExtension: managed }) });
+  assert.match(en, /<small>Other ways to install: <a [^>]*>Download from website<\/a><\/small>/);
 });

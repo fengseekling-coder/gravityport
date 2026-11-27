@@ -15,6 +15,21 @@ import {
   GUIDE_OUTPUT_JSON_SCHEMA,
 } from "../../lib/ai/learning-schema.mjs";
 import { tokenCostUsd } from "../../lib/ai/learning-cost.mjs";
+import { AI_EFFORT_LEVELS, AI_LEARNING_DEFAULT_EFFORT } from "../../lib/ai/model-catalog.mjs";
+
+const VALID_EFFORTS = new Set(AI_EFFORT_LEVELS);
+const SUMMARY_HIGH_EFFORTS = new Set(["high", "xhigh", "max"]);
+const ANALYZE_LIMITS_BY_EFFORT = {
+  low: { maxTokens: 4000, retryMaxTokens: 8000, timeoutMs: 60_000, stream: false },
+  medium: { maxTokens: 8000, retryMaxTokens: 16000, timeoutMs: 120_000, stream: false },
+  high: { maxTokens: 16000, retryMaxTokens: 32000, timeoutMs: 600_000, stream: true },
+  xhigh: { maxTokens: 16000, retryMaxTokens: 32000, timeoutMs: 600_000, stream: true },
+  max: { maxTokens: 16000, retryMaxTokens: 32000, timeoutMs: 600_000, stream: true },
+};
+
+function resolveEffort(effort, fallback) {
+  return typeof effort === "string" && VALID_EFFORTS.has(effort) ? effort : fallback;
+}
 
 export function createClaudeClient({ apiKey, baseURL, outboundFetch }) {
   return new Anthropic({
@@ -171,10 +186,12 @@ async function createStructuredMessage({ send, createParams, retryMaxTokens }) {
  * <asset_metadata>…</asset_metadata> 里。不传 thinking / temperature /
  * top_p / top_k（Haiku 5.5 与 Sonnet 5.5 都会 400）；想多少用 effort 控制。
  */
-export async function analyzeImage(client, { model, image, metadata, signal, systemPrompt }) {
+export async function analyzeImage(client, { model, image, metadata, signal, systemPrompt, effort }) {
+  const resolvedEffort = resolveEffort(effort, AI_LEARNING_DEFAULT_EFFORT.analysis);
+  const limits = ANALYZE_LIMITS_BY_EFFORT[resolvedEffort];
   const params = {
     model,
-    max_tokens: 4000,
+    max_tokens: limits.maxTokens,
     system: systemPrompt,
     messages: [{
       role: "user",
@@ -183,13 +200,16 @@ export async function analyzeImage(client, { model, image, metadata, signal, sys
         { type: "text", text: `<asset_metadata>\n${JSON.stringify(metadata)}\n</asset_metadata>` },
       ],
     }],
-    output_config: { format: { type: "json_schema", schema: ANALYSIS_NOTE_JSON_SCHEMA }, effort: "low" },
+    output_config: { format: { type: "json_schema", schema: ANALYSIS_NOTE_JSON_SCHEMA }, effort: resolvedEffort },
   };
-  // 分析走 messages.create（60s 超时）；解析失败用 max_tokens 8000 重试一次。
+  // 低/中档走 messages.create（60s/120s 超时）；高及以上走流式（600s）。解析失败放大 max_tokens 重试一次。
+  const send = limits.stream
+    ? (attemptParams) => client.messages.stream(attemptParams, { timeout: limits.timeoutMs, signal }).finalMessage()
+    : (attemptParams) => client.messages.create(attemptParams, { timeout: limits.timeoutMs, signal });
   const result = await createStructuredMessage({
-    send: (attemptParams) => client.messages.create(attemptParams, { timeout: 60_000, signal }),
+    send,
     createParams: params,
-    retryMaxTokens: 8000,
+    retryMaxTokens: limits.retryMaxTokens,
   });
   const spent = messagesCost(result.messages, model);
   const usage = { input_tokens: spent.inputTokens, output_tokens: spent.outputTokens };
@@ -223,13 +243,15 @@ export async function analyzeImage(client, { model, image, metadata, signal, sys
  * 行，BetaFallbacksParam = Array<BetaFallbackParam> | 'default'），不需要退
  * 路。合并那次用同一个函数，systemPrompt 换成合并提示。
  */
-export async function summarizeGuide(client, { model, userContent, signal, systemPrompt }) {
+export async function summarizeGuide(client, { model, userContent, signal, systemPrompt, effort }) {
+  const resolvedEffort = resolveEffort(effort, AI_LEARNING_DEFAULT_EFFORT.summary);
+  const maxTokens = SUMMARY_HIGH_EFFORTS.has(resolvedEffort) ? 64000 : 32000;
   const params = {
     model,
-    max_tokens: 32000,
+    max_tokens: maxTokens,
     system: systemPrompt,
     messages: [{ role: "user", content: userContent }],
-    output_config: { format: { type: "json_schema", schema: GUIDE_OUTPUT_JSON_SCHEMA }, effort: "medium" },
+    output_config: { format: { type: "json_schema", schema: GUIDE_OUTPUT_JSON_SCHEMA }, effort: resolvedEffort },
     betas: ["server-side-fallback-2026-07-01"],
     fallbacks: [{ model: "claude-sonnet-5" }],
   };

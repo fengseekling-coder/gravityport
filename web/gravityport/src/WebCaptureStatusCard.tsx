@@ -8,7 +8,7 @@
  * are pure helpers so the boundary stays testable.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   fetchProviderDeletionSettings,
   fetchWebCaptureStatus,
@@ -88,6 +88,8 @@ export type WebCaptureStatusCardViewProps = {
   deletionSyncSaving: boolean
   deletionSyncError: boolean
   onDeletionSyncChange: (enabled: boolean) => void
+  /** More switch rows about the extension (后台收录), shown above the deletion-sync row. */
+  children?: ReactNode
 }
 
 export function WebCaptureStatusCardView({
@@ -104,6 +106,7 @@ export function WebCaptureStatusCardView({
   deletionSyncSaving,
   deletionSyncError,
   onDeletionSyncChange,
+  children,
 }: WebCaptureStatusCardViewProps) {
   const t = (text: string) => translate(text, language)
   const [copied, setCopied] = useState(false)
@@ -158,8 +161,8 @@ export function WebCaptureStatusCardView({
           ))}
         </code>
         <div className="web-capture-path-actions">
-          <button type="button" className="web-capture-secondary-btn" onClick={copyFolder}>{copied ? t("已复制") : t("复制位置")}</button>
-          <button type="button" className="web-capture-secondary-btn" onClick={showFolder}>
+          <button type="button" className="settings-action-btn" onClick={copyFolder}>{copied ? t("已复制") : t("复制位置")}</button>
+          <button type="button" className="settings-action-btn" onClick={showFolder}>
             {t(typeof navigator !== "undefined" && /Win/i.test(navigator.platform) ? "在文件资源管理器中显示" : "在访达中显示")}
           </button>
         </div>
@@ -197,31 +200,81 @@ export function WebCaptureStatusCardView({
   const formatMb = (bytes: number) => `${Math.round(bytes / (1024 * 1024))}MB`
   const storageNearlyFull = storageLimitBytes > 0 && storageBytes >= storageLimitBytes * 0.9
 
+  // 连接页重排（11-26）：卡头只放名称、状态和「刷新」；「有新版扩展」放到卡头
+  // 下一行；待重试、空间与错误提示收成一组；开关各占一栏。
+  const messages = [
+    managedLag ? (
+      <p className="web-capture-note" key="lag">
+        {lagStartedAt !== null && clockMs - lagStartedAt > 5 * 60 * 1000
+          ? t("扩展没有自动更新。打开 chrome://extensions，确认扩展已启用、开发者模式开着，然后点扩展上的刷新按钮。")
+          : t("正在更新扩展，一分钟内完成")}
+      </p>
+    ) : null,
+    !loading && pending > 0 ? (
+      <p className="web-capture-row" key="pending">
+        {pending === 1
+          ? t("1 个素材等待重试")
+          : t("{count} 个素材等待重试").replace("{count}", String(pending))}
+        {" "}
+        <button
+          type="button"
+          className="settings-action-btn web-capture-retry"
+          onClick={onRetry}
+          disabled={retrying}
+        >
+          {t("重试")}
+        </button>
+        {retried ? <span className="web-capture-retried">{t("已请求重试")}</span> : null}
+      </p>
+    ) : null,
+    !loading && active && storageNearlyFull ? (
+      <p className="web-capture-note" key="storage">
+        {t("浏览器扩展的离线空间即将用尽（已用 {used} / {limit}）。GravityPort 打开后将自动收录暂存的素材。")
+          .replace("{used}", formatMb(storageBytes))
+          .replace("{limit}", formatMb(storageLimitBytes))}
+      </p>
+    ) : null,
+    !loading && active && evicted > 0 ? (
+      <p className="web-capture-error" key="evicted">
+        {evicted === 1
+          ? t("1 个素材因离线空间不足，仅保留了网址或已被移除。")
+          : t("{count} 个素材因离线空间不足，仅保留了网址或已被移除。").replace("{count}", String(evicted))}
+      </p>
+    ) : null,
+    !loading && active && urlOnly > 0 ? (
+      <p className="web-capture-error" key="url-only">
+        {urlOnly === 1
+          ? t("1 个素材仅保存了网址。网址过期后可能无法收录。")
+          : t("{count} 个素材仅保存了网址。网址过期后可能无法收录。").replace("{count}", String(urlOnly))}
+      </p>
+    ) : null,
+    // 任务 359（TOAST-38p）：冒号随语言进翻译表。
+    lastError ? (
+      <p className="web-capture-error" key="last-error">
+        {t("最近一次收录无法完成（{error}）").replace("{error}", lastError)}
+      </p>
+    ) : null,
+  ].filter(Boolean)
+
   return (
-    <section className="web-capture-status-card" aria-label={t("浏览器扩展")}>
-      <div className="web-capture-header">
-        <div className="web-capture-status-head">
-          <div className="web-capture-status-title">
+    <section className="settings-section settings-card web-capture-status-card" aria-label={t("浏览器扩展")}>
+      <div className="settings-card-header">
+        <div className="settings-card-head">
+          <div className="settings-card-title with-status">
             <strong>{t("浏览器扩展")}</strong>
             <span className={`web-capture-badge ${active ? "is-connected" : ""}`}>
               {stateLabel}
             </span>
-            {outdated ? (
-              <a
-                className="web-capture-update-link"
-                href={DOWNLOAD_PAGE_URL}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}
-              >
-                {t("有新版扩展")}
-              </a>
+            {/* 这句本来就是接在版本号后面的一个括号（英文译文以空格开头）；放回状态后面，
+                放不下时自己折到下一行。 */}
+            {!loading && active && extensionManaged ? (
+              <span className="web-capture-managed-note">{t("（跟随 App 自动更新）")}</span>
             ) : null}
           </div>
-          <div className="web-capture-actions">
+          <div className="settings-card-actions">
             <button
               type="button"
-              className="web-capture-secondary-btn web-capture-refresh"
+              className="settings-action-btn web-capture-refresh"
               onClick={onRefresh}
               disabled={refreshing}
             >
@@ -229,23 +282,33 @@ export function WebCaptureStatusCardView({
             </button>
           </div>
         </div>
-        {!loading && active && extensionManaged ? (
-          <p className="web-capture-note">{t("（跟随 App 自动更新）")}</p>
-        ) : null}
-        {!loading && !active && available ? (
-          <div className="web-capture-note">
-            <p className="web-capture-lead">{t("安装浏览器扩展（装一次，以后跟随 App 自动更新）：")}</p>
-            {installationSteps}
-            <small>{t("也可以去官网下载")} <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a></small>
-          </div>
+        {outdated ? (
+          <p className="settings-card-desc">
+            <a
+              className="web-capture-update-link"
+              href={DOWNLOAD_PAGE_URL}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}
+            >
+              {t("有新版扩展")}
+            </a>
+          </p>
         ) : null}
         {!loading && !active && !available ? (
-          <p className="web-capture-note">
+          <p className="settings-card-desc">
             {t("前往官网安装浏览器扩展，并在扩展设置中开启「自动收录」。")}{" "}
             <a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a>
           </p>
         ) : null}
       </div>
+      {!loading && !active && available ? (
+        <div className="web-capture-note">
+          <p className="web-capture-lead">{t("安装浏览器扩展（装一次，以后跟随 App 自动更新）：")}</p>
+          {installationSteps}
+          <small>{t("其他安装方式：")}<a href={DOWNLOAD_PAGE_URL} target="_blank" rel="noreferrer" onClick={(event) => handleExternalLinkClick(event, DOWNLOAD_PAGE_URL)}>{t("前往官网下载")}</a></small>
+        </div>
+      ) : null}
       {migrate ? (
         <div className="web-capture-note">
           <p className="web-capture-lead">{t("按以下步骤重新加载一次扩展，之后将跟随 App 自动更新：")}</p>
@@ -253,60 +316,11 @@ export function WebCaptureStatusCardView({
           <p className="web-capture-tip">{t("不要先移除旧扩展，直接加载这个文件夹就行，等待入库的图片会保留。换好后，旧的扩展文件夹可以删掉。")}</p>
         </div>
       ) : null}
-      {managedLag ? (
-        <p className="web-capture-note">
-          {lagStartedAt !== null && clockMs - lagStartedAt > 5 * 60 * 1000
-            ? t("扩展没有自动更新。打开 chrome://extensions，确认扩展已启用、开发者模式开着，然后点扩展上的刷新按钮。")
-            : t("正在更新扩展，一分钟内完成")}
-        </p>
-      ) : null}
-      {!loading && pending > 0 ? (
-        <p className="web-capture-row">
-          {pending === 1
-            ? t("1 个素材等待重试")
-            : t("{count} 个素材等待重试").replace("{count}", String(pending))}
-          {" "}
-          <button
-            type="button"
-            className="web-capture-secondary-btn web-capture-retry"
-            onClick={onRetry}
-            disabled={retrying}
-          >
-            {t("重试")}
-          </button>
-          {retried ? <span className="web-capture-retried">{t("已请求重试")}</span> : null}
-        </p>
-      ) : null}
-      {!loading && active && storageNearlyFull ? (
-        <p className="web-capture-note">
-          {t("浏览器扩展的离线空间即将用尽（已用 {used} / {limit}）。GravityPort 打开后将自动收录暂存的素材。")
-            .replace("{used}", formatMb(storageBytes))
-            .replace("{limit}", formatMb(storageLimitBytes))}
-        </p>
-      ) : null}
-      {!loading && active && evicted > 0 ? (
-        <p className="web-capture-error">
-          {evicted === 1
-            ? t("1 个素材因离线空间不足，仅保留了网址或已被移除。网址过期后可能无法收录。")
-            : t("{count} 个素材因离线空间不足，仅保留了网址或已被移除。网址过期后可能无法收录。").replace("{count}", String(evicted))}
-        </p>
-      ) : null}
-      {!loading && active && urlOnly > 0 ? (
-        <p className="web-capture-error">
-          {urlOnly === 1
-            ? t("1 个素材仅保存了网址。网址过期后可能无法收录。")
-            : t("{count} 个素材仅保存了网址。网址过期后可能无法收录。").replace("{count}", String(urlOnly))}
-        </p>
-      ) : null}
-      {/* 任务 359（TOAST-38p）：冒号随语言进翻译表。 */}
-      {lastError ? (
-        <p className="web-capture-error">
-          {t("最近一次错误：{error}").replace("{error}", lastError)}
-        </p>
-      ) : null}
-      <div className="web-capture-toggle">
-        <div className="web-capture-toggle-row">
-          <span className="web-capture-toggle-label">{t("同步即梦中的删除")}</span>
+      {messages.length > 0 ? <div className="web-capture-messages">{messages}</div> : null}
+      {children}
+      <div className="settings-card-sub">
+        <div className="settings-card-head">
+          <strong>{t("同步即梦中的删除")}</strong>
           <button
             type="button"
             className={`settings-switch ${deletionSyncEnabled === true ? "enabled" : ""}`}
@@ -319,7 +333,7 @@ export function WebCaptureStatusCardView({
             <span />
           </button>
         </div>
-        <p className="web-capture-toggle-note">
+        <p className="settings-card-desc">
           {t("在即梦网站中删除的作品，对应素材将移到回收站。在 GravityPort 中收藏、评分、分组或加了标签的素材不会被移动。")}
         </p>
         {deletionSyncError ? <p className="web-capture-error">{t("无法保存同步设置")}</p> : null}
@@ -328,7 +342,7 @@ export function WebCaptureStatusCardView({
   )
 }
 
-export function WebCaptureStatusCard({ language }: { language: Language }) {
+export function WebCaptureStatusCard({ language, children }: { language: Language; children?: ReactNode }) {
   const [status, setStatus] = useState<MosaWebCaptureStatus | null | undefined>(() => undefined)
   const [refreshing, setRefreshing] = useState(false)
   const [retrying, setRetrying] = useState(false)
@@ -407,6 +421,8 @@ export function WebCaptureStatusCard({ language }: { language: Language }) {
       deletionSyncSaving={deletionSyncSaving}
       deletionSyncError={deletionSyncError}
       onDeletionSyncChange={changeDeletionSync}
-    />
+    >
+      {children}
+    </WebCaptureStatusCardView>
   )
 }

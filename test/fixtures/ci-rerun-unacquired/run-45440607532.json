@@ -1,0 +1,93 @@
+{
+  "run_id": 45440607532,
+  "conclusion": "success",
+  "event": "schedule",
+  "run_attempt": 1,
+  "jobs": [
+    {
+      "id": 138610354150,
+      "name": "desktop-macos-package",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003949",
+      "runner_id": 1000003949,
+      "steps_count": 16,
+      "labels": [
+        "macos-15"
+      ]
+    },
+    {
+      "id": 138610354341,
+      "name": "desktop-macos e2e (shard 2/2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003948",
+      "runner_id": 1000003948,
+      "steps_count": 14,
+      "labels": [
+        "macos-15"
+      ]
+    },
+    {
+      "id": 138610354434,
+      "name": "desktop-windows e2e (shard 1/2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003945",
+      "runner_id": 1000003945,
+      "steps_count": 14,
+      "labels": [
+        "windows-2022"
+      ]
+    },
+    {
+      "id": 138610354466,
+      "name": "desktop-windows e2e (shard 2/2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003946",
+      "runner_id": 1000003946,
+      "steps_count": 14,
+      "labels": [
+        "windows-2022"
+      ]
+    },
+    {
+      "id": 138610354543,
+      "name": "desktop-windows-package",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003947",
+      "runner_id": 1000003947,
+      "steps_count": 16,
+      "labels": [
+        "windows-2022"
+      ]
+    },
+    {
+      "id": 138610354553,
+      "name": "desktop-macos-intel-package",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003951",
+      "runner_id": 1000003951,
+      "steps_count": 16,
+      "labels": [
+        "macos-15-intel"
+      ]
+    },
+    {
+      "id": 138610354857,
+      "name": "desktop-macos e2e (shard 1/2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003950",
+      "runner_id": 1000003950,
+      "steps_count": 14,
+      "labels": [
+        "macos-15"
+      ]
+    }
+  ],
+  "annotationsByJobId": {}
+}

@@ -1,45 +1,8 @@
 /* ---- Settings → 连接: browser extension status ----------------------------- */
 
-.web-capture-status-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-  padding: var(--space-4);
-  border-radius: var(--radius-control);
-  background: var(--ui-inset);
-  min-width: 0;
-}
-
-.web-capture-header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.web-capture-status-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  min-height: var(--space-6);
-}
-
-.web-capture-status-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  min-width: 0;
-  line-height: var(--type-body-line);
-}
-
-.web-capture-status-title strong {
-  font-size: var(--type-body-size);
-  font-weight: var(--type-weight-title);
-  color: var(--ui-text);
-}
+/* Card shell, head row and buttons come from the shared settings card
+   (.settings-section.settings-card, .settings-card-head, .settings-action-btn
+   in styles/06-settings.css); this file only keeps what is specific to the card. */
 
 .web-capture-badge {
   display: inline-flex;
@@ -68,48 +31,27 @@
   opacity: 1;
 }
 
-.web-capture-update-link {
-  color: var(--ui-accent);
+/* 有新版扩展：卡头下一行。说明行里的链接默认随说明文字的灰色，这一个要被看见，
+   用正文色加下划线；不用强调色（浅色主题下强调色不排小字）。 */
+.web-capture-update-link,
+.app .settings-card-desc a.web-capture-update-link {
+  color: var(--ui-text);
   font-size: var(--type-body-size);
   text-decoration: underline;
 }
 
-.web-capture-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-.web-capture-secondary-btn,
-.app .settings-modal .web-capture-secondary-btn {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: calc(var(--space-16) + var(--space-3));
-  height: var(--control-height-small);
-  min-height: var(--control-height-small);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-control);
-  background: var(--ui-raised);
-  color: var(--ui-text);
+/* 「（跟随 App 自动更新）」接在状态和版本号后面，放不下时折到下一行。全角括号左半边
+   是空的，收掉行首标点的空白，折下去时才和标题左对齐。 */
+.web-capture-managed-note {
+  color: var(--ui-muted);
   font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  text-spacing-trim: trim-start;
+}
+
+/* 卡内的开关栏比卡片标题低一档：卡片标题 600，栏标题 500。 */
+.app .web-capture-status-card .settings-card-sub .settings-card-head strong {
   font-weight: var(--type-weight-label);
-  line-height: var(--type-control-line);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.web-capture-secondary-btn:hover:not(:disabled) {
-  background: var(--ui-selected);
-  color: var(--ui-text);
-}
-
-.web-capture-secondary-btn:disabled {
-  opacity: var(--disabled-opacity);
-  cursor: default;
 }
 
 .web-capture-note {
@@ -122,6 +64,11 @@
 .web-capture-note a {
   color: inherit;
   text-decoration: underline;
+}
+
+/* 「也可以去官网下载」这句原来用 <small>，浏览器默认缩到约 10px；字号只有 12 这一档。 */
+.web-capture-note small {
+  font-size: inherit;
 }
 
 .web-capture-note code {
@@ -192,13 +139,22 @@
 
 .web-capture-tip {
   color: var(--ui-muted);
-  font-size: 12px;
+  font-size: var(--type-body-size);
+}
+
+/* 待重试、空间提示和错误提示收成一组，组内 8px，和卡片其他区块之间 12px。 */
+.web-capture-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .web-capture-row {
   margin: 0;
   color: var(--ui-secondary);
-  font-size: 12px;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -212,42 +168,7 @@
 .web-capture-error {
   margin: 0;
   color: var(--ui-danger);
-  font-size: 12px;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
   overflow-wrap: anywhere;
-}
-
-.web-capture-toggle {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--ui-line);
-}
-
-.web-capture-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  min-height: var(--space-6);
-  color: var(--ui-text);
-  font-size: var(--type-body-size);
-}
-
-.web-capture-toggle-label {
-  color: var(--ui-text);
-  font-weight: var(--type-weight-title);
-  line-height: var(--type-body-line);
-}
-
-.web-capture-toggle-row button.settings-switch:disabled {
-  opacity: 0.5;
-}
-
-.web-capture-toggle-note {
-  margin: 0;
-  color: var(--ui-secondary);
-  font-size: var(--type-body-size);
-  line-height: var(--type-body-line);
 }

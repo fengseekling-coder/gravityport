@@ -45,9 +45,11 @@ export function BridgeStatusCardView({ language, status, nowMs }: BridgeStatusCa
   }
   const clock = nowMs ?? Date.now()
   return (
-    <section className="bridge-status-card" aria-label={t("本机 AI 工具")}>
-      <div className="bridge-status-title"><strong>{t("本机 AI 工具")}</strong></div>
-      <p className="bridge-status-desc">{t("GravityPort 打开时，自动收录这些工具生成的图片。")}</p>
+    <section className="settings-section settings-card bridge-status-card" aria-label={t("本机 AI 工具")}>
+      <div className="settings-card-header">
+        <div className="settings-card-head"><strong>{t("本机 AI 工具")}</strong></div>
+        <p className="settings-card-desc">{t("GravityPort 打开时，自动收录这些工具生成的图片。")}</p>
+      </div>
       {status === null ? (
         <p className="bridge-status-error">{t("无法读取收录状态")}</p>
       ) : (
@@ -69,7 +71,7 @@ export function BridgeStatusCardView({ language, status, nowMs }: BridgeStatusCa
                     </div>
                   ))}
                   <div className="bridge-status-actions">
-                    <button type="button" className="bridge-status-copy-btn" onClick={() => copyDetail(row.key, row.detailText)}>
+                    <button type="button" className="settings-action-btn bridge-status-copy-btn" onClick={() => copyDetail(row.key, row.detailText)}>
                       <Icon name="copy" size={16} />
                       {copiedKey === row.key ? t("已复制") : t("复制详细信息")}
                     </button>

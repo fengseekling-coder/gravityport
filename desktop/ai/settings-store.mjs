@@ -10,6 +10,7 @@ import { join } from "node:path";
 import {
   AI_PRESET_SERVICES,
   aiDefaultModel,
+  aiEffortLevelsFor,
   aiIsImageCapable,
   aiModelsForServiceSlot,
 } from "../../lib/ai/model-catalog.mjs";
@@ -24,7 +25,7 @@ export function emptyAiSettings() {
   return {
     version: 1,
     slots: {
-      analysis: { serviceId: "", model: "", summaryModel: "" },
+      analysis: { serviceId: "", model: "", summaryModel: "", effort: "", summaryEffort: "" },
       brain: { serviceId: "", model: "" },
       image: { serviceId: "", model: "" },
     },
@@ -86,7 +87,11 @@ function normalizeSlotUpdate(role, incoming, previous, knownServices, lastTests)
       // 换了服务就把原服务的模型清掉（模型属于服务家族，跨家沿用没有意义）。
       if (next.serviceId !== serviceId) {
         next.model = "";
-        next.summaryModel = "";
+        if (role === "analysis") {
+          next.summaryModel = "";
+          next.effort = "";
+          next.summaryEffort = "";
+        }
       }
       next.serviceId = serviceId;
     } // 不可用的服务（如出图块选了 Claude）丢弃这项，保留原值。
@@ -102,6 +107,24 @@ function normalizeSlotUpdate(role, incoming, previous, knownServices, lastTests)
     const allowedSummary = service ? slotAllowedModels(service, "summary", lastTests) : new Set([""]);
     const summaryModel = String(incoming.summaryModel ?? "");
     if (allowedSummary.has(summaryModel)) next.summaryModel = summaryModel;
+  }
+  if (role === "analysis") {
+    const allowedEfforts = service ? aiEffortLevelsFor(service, next.model) : [];
+    if ("effort" in incoming) {
+      const effort = String(incoming.effort ?? "");
+      if (effort === "" || allowedEfforts.includes(effort)) next.effort = effort;
+    }
+    if (next.effort && !allowedEfforts.includes(next.effort)) {
+      next.effort = "";
+    }
+    const allowedSummaryEfforts = service ? aiEffortLevelsFor(service, next.summaryModel) : [];
+    if ("summaryEffort" in incoming) {
+      const summaryEffort = String(incoming.summaryEffort ?? "");
+      if (summaryEffort === "" || allowedSummaryEfforts.includes(summaryEffort)) next.summaryEffort = summaryEffort;
+    }
+    if (next.summaryEffort && !allowedSummaryEfforts.includes(next.summaryEffort)) {
+      next.summaryEffort = "";
+    }
   }
   return next;
 }
@@ -179,6 +202,8 @@ export function createAiSettingsStore({ dir }) {
           serviceId,
           model: aiDefaultModel(service, "analysis"),
           summaryModel: aiDefaultModel(service, "summary"),
+          effort: "",
+          summaryEffort: "",
         };
       }
       if (!slots.brain.serviceId) {
@@ -254,7 +279,7 @@ export function createAiSettingsStore({ dir }) {
       for (const role of ["analysis", "brain", "image"]) {
         if (removed.has(settings.slots[role]?.serviceId)) {
           settings.slots[role] = role === "analysis"
-            ? { serviceId: "", model: "", summaryModel: "" }
+            ? { serviceId: "", model: "", summaryModel: "", effort: "", summaryEffort: "" }
             : { serviceId: "", model: "" };
         }
       }

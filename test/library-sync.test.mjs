@@ -164,6 +164,12 @@ function createHarness({ paused: pausedOverride } = {}) {
   // advanced it yet (reverse-verify 1 — the merge lands first, then the
   // baseline moves).
   let baselineAtCommit = null;
+  const pendingRequests = new Set();
+  const trackPending = (promise) => {
+    const tracked = Promise.resolve(promise).finally(() => { pendingRequests.delete(tracked); });
+    pendingRequests.add(tracked);
+    return tracked;
+  };
   const sync = syncModule.createLibrarySync({
     hooks: () => ({
       onCommit: commit => {
@@ -177,9 +183,9 @@ function createHarness({ paused: pausedOverride } = {}) {
         fallbackChanges.push(changes ?? null);
       },
     }),
-    fetchRevision: async () => library.token(),
-    fetchChanges: (project, since) => library.fetchChanges(project, since),
-    fetchRows: (query, assetIds, boundaryCursor, stackIds) => library.fetchRows(query, assetIds, boundaryCursor, stackIds),
+    fetchRevision: () => trackPending(Promise.resolve(library.token())),
+    fetchChanges: (project, since) => trackPending(library.fetchChanges(project, since)),
+    fetchRows: (query, assetIds, boundaryCursor, stackIds) => trackPending(library.fetchRows(query, assetIds, boundaryCursor, stackIds)),
     readMutationState: () => ({ epoch: mutation.epoch, pending: mutation.pending }),
     readView: () => ({ ...currentView, loadedCardIds: [...currentView.loadedCardIds], cards: [...currentView.cards] }),
     isPaused: () => (typeof pausedOverride === "function" ? pausedOverride() : Boolean(pausedOverride)),
@@ -196,9 +202,28 @@ function createHarness({ paused: pausedOverride } = {}) {
       timer.fn();
     }
   };
-  // setTimeout (not setImmediate): the controller yields to renders with
-  // setTimeout(0), so a same-macrotask-class tick is needed to run past it.
-  const settle = async () => { await new Promise(resolveTask => setTimeout(resolveTask, 20)) };
+  // Track in-flight fetchRevision / fetchChanges / fetchRows promises and yield
+  // across setTimeout(0) macrotask turns (matching yieldToRender() in
+  // library-sync.ts). Tests that deliberately pause a request on a deferred
+  // gate break out cleanly after the per-step cap instead of hanging.
+  const nextMacrotask = () => new Promise((resolveTask) => setTimeout(resolveTask, 0));
+  const settle = async () => {
+    let idle = 0;
+    for (let round = 0; round < 5000 && idle < 3; round += 1) {
+      if (pendingRequests.size > 0) {
+        let timedOut = false;
+        await Promise.race([
+          Promise.any([...pendingRequests].map((p) => p.then(() => "settled", () => "settled"))),
+          new Promise((resolveCap) => setTimeout(() => { timedOut = true; resolveCap(); }, 80)),
+        ]);
+        if (timedOut) break;
+        idle = 0;
+        continue;
+      }
+      await nextMacrotask();
+      idle = pendingRequests.size === 0 ? idle + 1 : 0;
+    }
+  };
   // A realistic page load: revision token as of the fetch + the fetched cards.
   const loadPage = async (ids, { revisionToken = library.token() } = {}) => {
     currentView.cards = ids.map(id => ({

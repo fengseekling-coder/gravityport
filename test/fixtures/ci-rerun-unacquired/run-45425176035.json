@@ -1,0 +1,139 @@
+{
+  "run_id": 45425176035,
+  "conclusion": "failure",
+  "event": "pull_request",
+  "run_attempt": 1,
+  "jobs": [
+    {
+      "id": 138555080283,
+      "name": "desktop-windows e2e (shard 1/2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003917",
+      "runner_id": 1000003917,
+      "steps_count": 14,
+      "labels": [
+        "windows-2022"
+      ]
+    },
+    {
+      "id": 138555080918,
+      "name": "desktop-macos e2e (shard 2/2)",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "runner_name": "",
+      "runner_id": 0,
+      "steps_count": 0,
+      "labels": [
+        "macos-15"
+      ]
+    },
+    {
+      "id": 138555080972,
+      "name": "desktop-macos-package",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "runner_name": "",
+      "runner_id": 0,
+      "steps_count": 0,
+      "labels": [
+        "macos-15"
+      ]
+    },
+    {
+      "id": 138555081000,
+      "name": "desktop-macos e2e (shard 1/2)",
+      "status": "completed",
+      "conclusion": "failure",
+      "runner_name": "GitHub Actions 1000003928",
+      "runner_id": 1000003928,
+      "steps_count": 14,
+      "labels": [
+        "macos-15"
+      ]
+    },
+    {
+      "id": 138555081076,
+      "name": "desktop-windows e2e (shard 2/2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003918",
+      "runner_id": 1000003918,
+      "steps_count": 14,
+      "labels": [
+        "windows-2022"
+      ]
+    },
+    {
+      "id": 138555081107,
+      "name": "desktop-macos-intel-package",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003922",
+      "runner_id": 1000003922,
+      "steps_count": 16,
+      "labels": [
+        "macos-15-intel"
+      ]
+    },
+    {
+      "id": 138555082757,
+      "name": "desktop-windows-package",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_name": "GitHub Actions 1000003923",
+      "runner_id": 1000003923,
+      "steps_count": 16,
+      "labels": [
+        "windows-2022"
+      ]
+    }
+  ],
+  "annotationsByJobId": {
+    "138555080918": [
+      {
+        "message": "The job was not acquired by Runner of type hosted even after multiple attempts"
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      }
+    ],
+    "138555080972": [
+      {
+        "message": "The job was not acquired by Runner of type hosted even after multiple attempts"
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      }
+    ],
+    "138555081000": [
+      {
+        "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830, actions/checkout@11d5960a326750d5838078e36cf38b85af677262, actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020, actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02. For more information see: <url>"
+      },
+      {
+        "message": "Process completed with exit code 1."
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      },
+      {
+        "message": "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times."
+      }
+    ]
+  }
+}

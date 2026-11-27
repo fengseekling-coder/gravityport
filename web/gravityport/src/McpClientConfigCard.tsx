@@ -2,15 +2,17 @@
  * Settings → 连接: "AI assistants (MCP)" card (task 208).
  *
  * The desktop main process builds ready-to-paste configs that run the bundled
- * MCP server with the app's own executable. The card only shows them and
- * copies the selected one. McpClientConfigCardView is the props-only half that
- * unit tests render directly.
+ * MCP server with the app's own executable. The card picks an assistant, says
+ * where the text goes, and copies it; the text itself is a set-up-once payload
+ * and stays folded behind 查看内容 until asked for. McpClientConfigCardView is
+ * the props-only half that unit tests render directly.
  */
 
-import { useEffect, useRef, useState } from "react"
+import { Fragment, useEffect, useId, useRef, useState } from "react"
 import { desktopAPI, type McpClientConfig } from "./desktop.js"
 import { handleExternalLinkClick } from "./external-link.js"
 import { translate, type Language } from "./i18n.js"
+import Icon from "./Icon.js"
 import "./mcp-config.css"
 
 export type McpClientId = "claudeDesktop" | "claudeCode" | "codex" | "other"
@@ -19,14 +21,14 @@ export const MCP_CLIENTS: ReadonlyArray<{ id: McpClientId; label: string; hint: 
   {
     id: "claudeDesktop",
     label: "Claude Desktop",
-    hint: "粘贴到 claude_desktop_config.json（Claude 设置 > 开发者 > 编辑配置）。若文件中已有 mcpServers，仅合并 gravityport 这一段。",
+    hint: "粘贴到 claude_desktop_config.json（Claude 设置 > 开发者 > 编辑配置）。若文件中已有 mcpServers，仅合并 gravityport 这一段。保存后重启 Claude Desktop。",
   },
   { id: "claudeCode", label: "Claude Code", hint: "复制下面这段话，发给 Claude Code，它会自动完成安装。" },
   { id: "codex", label: "Codex", hint: "复制下面这段话，发给 Codex，它会自动完成安装。" },
   {
     id: "other",
     label: "其他",
-    hint: "Cursor、Windsurf、Cline 等多数助手通用。粘贴到该助手的 MCP 设置中；若已有 mcpServers，仅合并 gravityport 这一段。",
+    hint: "Cursor、Windsurf、Cline 等多数助手通用。粘贴到该助手的 MCP 设置中；若已有 mcpServers，仅合并 gravityport 这一段。保存后重启该助手。",
   },
 ]
 
@@ -68,24 +70,28 @@ export type McpClientConfigCardViewProps = {
   config: McpClientConfig | null | undefined
   client: McpClientId
   copied: boolean
+  /** Whether the text behind 复制 is shown; folded by default. */
+  expanded: boolean
   onSelectClient: (client: McpClientId) => void
   onCopy: () => void
+  onToggleExpanded: () => void
 }
 
-export function McpClientConfigCardView({ language, config, client, copied, onSelectClient, onCopy }: McpClientConfigCardViewProps) {
+export function McpClientConfigCardView({ language, config, client, copied, expanded, onSelectClient, onCopy, onToggleExpanded }: McpClientConfigCardViewProps) {
   const t = (text: string) => translate(text, language)
   const selected = MCP_CLIENTS.find((entry) => entry.id === client) || MCP_CLIENTS[0]
   const text = mcpClientCopyText(selected.id, mcpClientConfigText(config, selected.id), language)
+  const codeId = useId()
 
   return (
-    <section className="mcp-config-card" aria-label={t("AI 助手（MCP）")}>
-      <div className="mcp-config-header">
-        <div className="mcp-config-head">
+    <section className="settings-section settings-card mcp-config-card" aria-label={t("AI 助手（MCP）")}>
+      <div className="settings-card-header">
+        <div className="settings-card-head">
           <strong>{t("AI 助手（MCP）")}</strong>
           {config !== undefined && !config?.available ? (
-            <div className="mcp-config-actions">
+            <div className="settings-card-actions">
               <a
-                className="mcp-guide-button"
+                className="settings-action-btn mcp-guide-button"
                 href={MCP_GUIDE_URL}
                 target="_blank"
                 rel="noreferrer"
@@ -94,9 +100,19 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
                 {t("使用指南")}
               </a>
             </div>
-          ) : config?.available ? (
-            // UI 审查 11-16：助手切换放在标题右侧（没配置时那里是「使用指南」）。
-            // 任务 359（SET-09c）：按钮组读屏名与卡片标题区分开。
+          ) : null}
+        </div>
+        <p className="settings-card-desc mcp-config-desc">{t("支持 Claude、Codex 等 AI 助手直接连接与管理素材库。")}</p>
+      </div>
+      {config === undefined ? null : config?.available ? (
+        <>
+          {config.installWarning === "not-in-applications" ? (
+            <p className="mcp-config-warning" role="alert">{t("请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。")}</p>
+          ) : null}
+          {/* 连接页重排（11-26）：选助手 → 这一步怎么做 → 复制，自上而下一条线，紧挨在一起；
+              配置原文是配一次就不再看的内容，默认收起，「查看内容」展开（同反馈页的诊断日志）。 */}
+          <div className="mcp-config-setup">
+            {/* 任务 359（SET-09c）：按钮组读屏名与卡片标题区分开。 */}
             <div className="segmented mcp-config-clients" role="group" aria-label={t("AI 助手")}>
               {MCP_CLIENTS.map((entry) => (
                 <button
@@ -110,24 +126,30 @@ export function McpClientConfigCardView({ language, config, client, copied, onSe
                 </button>
               ))}
             </div>
-          ) : null}
-        </div>
-        <p className="mcp-config-desc">{t("支持 Claude、Codex 等 AI 助手直接连接与管理素材库。将下方配置粘贴到 AI 助手中，然后重启该助手。")}</p>
-      </div>
-      {config === undefined ? null : config?.available ? (
-        <>
-          {config.installWarning === "not-in-applications" ? (
-            <p className="mcp-config-warning" role="alert">{t("请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。")}</p>
-          ) : null}
-          {/* UI 审查 11-16：说明和复制按钮同一行，复制不再压在代码上。 */}
-          <div className="mcp-config-toolbar">
             <p className="mcp-config-hint">{t(selected.hint)}</p>
-            <button type="button" className="neutral-button mcp-config-copy-button" onClick={onCopy} disabled={!text}>
-              {copied ? t("已复制") : t("复制")}
-            </button>
-          </div>
-          <div className="mcp-config-code">
-            <pre data-mcp-client={selected.id}><code>{codeLines(text)}</code></pre>
+            <div className="mcp-config-actions">
+              <button type="button" className="settings-action-btn mcp-config-copy-button" onClick={onCopy} disabled={!text}>
+                {copied ? t("已复制") : t("复制")}
+              </button>
+              {/* 「复制」是这张卡要做的事，带边框；「查看内容」只是想核对时才点，用安静按钮
+                  （写法同检视器的「展开内容介绍」）。 */}
+              <button
+                type="button"
+                className="mcp-config-toggle"
+                aria-expanded={expanded}
+                aria-controls={codeId}
+                onClick={onToggleExpanded}
+                disabled={!text}
+              >
+                {expanded ? t("收起") : t("查看内容")}
+                <Icon name={expanded ? "minus" : "down"} size={12} />
+              </button>
+            </div>
+            {expanded ? (
+              <div className="mcp-config-code" id={codeId}>
+                <pre data-mcp-client={selected.id}><code>{codeLines(text)}</code></pre>
+              </div>
+            ) : null}
           </div>
           <p className="mcp-config-note">{t("更改存储位置后无需修改此配置，重启 AI 助手即可。GravityPort 无需保持打开。")}</p>
         </>
@@ -150,10 +172,21 @@ function codeLines(text: string) {
     return (
       <span key={index} className="mcp-config-line" style={{ paddingLeft: `${indent + 2}ch`, textIndent: "-2ch" }}>
         {indent > 0 ? <span className="mcp-config-indent">{line.slice(0, indent)}</span> : null}
-        {index < lines.length - 1 ? `${body}\n` : body}
+        {breakable(index < lines.length - 1 ? `${body}\n` : body)}
       </span>
     )
   })
+}
+
+// 路径里没有空格，浏览器不会在斜杠处折行，一行放不下就从单词中间断开
+// （GravityPort 后面的引号单独掉到下一行）。在每个 "/" 和 "," 后面放一个可折点，
+// 长路径按目录折、长命令按参数折；<wbr> 不进文本，显示和复制的内容都不变。
+function breakable(text: string) {
+  const parts = text.split(/(?<=[/,])/)
+  if (parts.length === 1) return text
+  return parts.map((part, index) => (
+    <Fragment key={index}>{part}{index < parts.length - 1 ? <wbr /> : null}</Fragment>
+  ))
 }
 
 async function writeClipboardText(text: string) {
@@ -170,6 +203,7 @@ export function McpClientConfigCard({ language }: { language: Language }) {
   const [config, setConfig] = useState<McpClientConfig | null | undefined>(() => (desktopAPI()?.getMcpClientConfig ? undefined : null))
   const [client, setClient] = useState<McpClientId>("claudeDesktop")
   const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -199,5 +233,16 @@ export function McpClientConfigCard({ language }: { language: Language }) {
     }).catch(() => setCopied(false))
   }
 
-  return <McpClientConfigCardView language={language} config={config} client={client} copied={copied} onSelectClient={selectClient} onCopy={copy} />
+  return (
+    <McpClientConfigCardView
+      language={language}
+      config={config}
+      client={client}
+      copied={copied}
+      expanded={expanded}
+      onSelectClient={selectClient}
+      onCopy={copy}
+      onToggleExpanded={() => setExpanded((open) => !open)}
+    />
+  )
 }

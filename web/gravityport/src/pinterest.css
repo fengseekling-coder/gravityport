@@ -51,7 +51,6 @@
 
 .pinterest-primary,
 .pinterest-secondary,
-.pinterest-danger,
 .pinterest-link {
   min-height: var(--space-8);
   padding: 0 var(--space-4);
@@ -79,15 +78,6 @@
   background: var(--ui-hover);
 }
 
-.pinterest-danger {
-  background: var(--ui-danger);
-  color: var(--ui-panel);
-}
-
-.pinterest-danger:hover {
-  filter: brightness(1.1);
-}
-
 .pinterest-link {
   min-height: auto;
   padding: 0;
@@ -100,8 +90,7 @@
   color: var(--ui-text);
 }
 
-.pinterest-primary:disabled,
-.pinterest-danger:disabled {
+.pinterest-primary:disabled {
   opacity: 0.6;
   cursor: default;
 }
@@ -289,45 +278,15 @@
 
 /* ---- Settings connection card --------------------------------------------- */
 
-.pinterest-connection-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin-bottom: var(--space-3);
-  padding: var(--space-4);
-  border-radius: var(--radius-control);
-  background: var(--ui-inset);
-}
+/* Shell, head row and buttons come from the shared settings card
+   (.settings-section.settings-card, .settings-action-btn); the disconnect
+   confirmation is the shared Dialog. */
 
-.pinterest-connection-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  min-height: var(--space-6);
-}
-
-.pinterest-connection-copy {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.pinterest-connection-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  min-width: 0;
-  line-height: var(--type-body-line);
-}
-
-.pinterest-connection-title strong {
-  font-size: var(--type-body-size);
-  font-weight: var(--type-weight-title);
-  color: var(--ui-text);
+/* 今日用量：次要信息，说明下一行，数字等宽。 */
+.app .settings-card-desc.pinterest-connection-quota,
+.pinterest-connection-quota {
+  color: var(--ui-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .pinterest-status-badge {
@@ -364,93 +323,4 @@
 .pinterest-status-badge.is-warning::before {
   background: var(--ui-danger);
   opacity: 1;
-}
-
-.pinterest-connection-copy p {
-  margin: 0;
-  color: var(--ui-secondary);
-  font-size: var(--type-body-size);
-  line-height: var(--type-body-line);
-}
-
-.pinterest-connection-title small {
-  color: var(--ui-muted);
-  font-size: var(--type-body-size);
-}
-
-.pinterest-connection-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-.pinterest-card-primary,
-.pinterest-card-secondary,
-.app .settings-modal .pinterest-card-primary,
-.app .settings-modal .pinterest-card-secondary {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: calc(var(--space-16) + var(--space-3));
-  height: var(--control-height-small);
-  min-height: var(--control-height-small);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-control);
-  background: var(--ui-raised);
-  color: var(--ui-text);
-  font-size: var(--type-body-size);
-  font-weight: var(--type-weight-label);
-  line-height: var(--type-control-line);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.pinterest-card-primary:hover:not(:disabled),
-.pinterest-card-secondary:hover:not(:disabled) {
-  background: var(--ui-selected);
-  color: var(--ui-text);
-}
-
-.pinterest-card-primary:disabled,
-.pinterest-card-secondary:disabled {
-  opacity: var(--disabled-opacity);
-  cursor: default;
-}
-
-/* ---- Disconnect confirmation ------------------------------------------------ */
-
-.pinterest-confirm-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  background: var(--ui-inset);
-  border-radius: var(--radius-panel);
-}
-
-.pinterest-confirm {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  width: min(360px, 100%);
-  padding: var(--space-4);
-  border: 1px solid var(--ui-line);
-  border-radius: var(--radius-panel);
-  background: var(--ui-raised);
-  box-shadow: var(--ui-shadow);
-}
-
-.pinterest-confirm p {
-  margin: 0;
-  color: var(--ui-text);
-}
-
-.pinterest-confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3);
 }

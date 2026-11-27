@@ -389,6 +389,14 @@
   color: var(--ui-muted);
 }
 
+.app .ai-settings .ai-effort-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  max-width: 100%;
+}
+.app .ai-settings .ai-effort-hint,
 .app .ai-settings .ai-price-line {
   color: var(--ui-muted);
   font-size: var(--type-body-size);

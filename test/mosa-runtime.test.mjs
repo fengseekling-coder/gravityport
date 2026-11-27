@@ -279,8 +279,9 @@ test("requests on an existing connection receive 503 while runtime ownership dra
   const runtime = await startMosaRuntime(runtimeOptions(root));
   t.after(() => runtime.stop());
   const socket = createConnection({ host: "127.0.0.1", port: runtime.port });
+  const connected = once(socket, "connect");
   t.after(() => socket.destroy());
-  await once(socket, "connect");
+  await connected;
   socket.write(`GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:${runtime.port}\r\n`);
   await new Promise((done) => setTimeout(done, 10));
   let response = "";

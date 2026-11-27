@@ -17,12 +17,18 @@
 // language on the settings 常规 page (the viewer-fullscreen pattern) and then
 // walks the same card with English copy. Known product shape, not fixed
 // here: the card has no edit/save — select, read, copy is all it does.
+//
+// 连接页重排: the text behind 复制 is folded by default. Every round first
+// checks the folded card (no config block, 查看内容 with aria-expanded=false),
+// unfolds it through the real 查看内容 button, and only then reads the block;
+// the Chinese round also folds it back and copies once more, because copying
+// must not depend on the block being open.
 import { join } from "node:path";
 import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
 import { buildMcpClientConfig } from "../../lib/mcp-client-config.mjs";
 
 export const name = "settings-mcp-config";
-export const description = "Settings → 连接 MCP card: four assistants (Other reuses the Claude Desktop config) with per-client pre/code/hint (Claude Code and Codex get a message for the agent) -> Codex copy hits the fake clipboard once, switch clears 已复制 at once, button auto-resets in ~2s -> installWarning banner -> available:false leaves only the guide link (not clicked) -> English round";
+export const description = "Settings → 连接 MCP card: config folded by default, 查看内容 unfolds it -> four assistants (Other reuses the Claude Desktop config) with per-client pre/code/hint (Claude Code and Codex get a message for the agent) -> Codex copy hits the fake clipboard once, switch clears 已复制 at once, button auto-resets in ~2s -> 收起 folds it and copy still sends the same text -> installWarning banner -> available:false leaves only the guide link (not clicked) -> English round";
 
 const CLIENT_IDS = ["claudeDesktop", "claudeCode", "codex", "other"];
 const CLIENT_LABELS = ["Claude Desktop", "Claude Code", "Codex", "其他"];
@@ -32,16 +38,16 @@ const LABEL_BY_ID = { claudeDesktop: "Claude Desktop", claudeCode: "Claude Code"
 // The card's copy, pinned in both languages (zh source strings from
 // McpClientConfigCard.tsx, en from web/gravityport/src/i18n.ts).
 const ZH_HINTS = {
-  claudeDesktop: "粘贴到 claude_desktop_config.json（Claude 设置 > 开发者 > 编辑配置）。若文件中已有 mcpServers，仅合并 gravityport 这一段。",
+  claudeDesktop: "粘贴到 claude_desktop_config.json（Claude 设置 > 开发者 > 编辑配置）。若文件中已有 mcpServers，仅合并 gravityport 这一段。保存后重启 Claude Desktop。",
   claudeCode: "复制下面这段话，发给 Claude Code，它会自动完成安装。",
   codex: "复制下面这段话，发给 Codex，它会自动完成安装。",
-  other: "Cursor、Windsurf、Cline 等多数助手通用。粘贴到该助手的 MCP 设置中；若已有 mcpServers，仅合并 gravityport 这一段。",
+  other: "Cursor、Windsurf、Cline 等多数助手通用。粘贴到该助手的 MCP 设置中；若已有 mcpServers，仅合并 gravityport 这一段。保存后重启该助手。",
 };
 const EN_HINTS = {
-  claudeDesktop: "Paste into claude_desktop_config.json (Claude Settings > Developer > Edit Config). If mcpServers already exists, merge only the gravityport entry.",
+  claudeDesktop: "Paste into claude_desktop_config.json (Claude Settings > Developer > Edit Config). If mcpServers already exists, merge only the gravityport entry. Save the file, then restart Claude Desktop.",
   claudeCode: "Copy the message below and send it to Claude Code. It will complete the setup for you.",
   codex: "Copy the message below and send it to Codex. It will complete the setup for you.",
-  other: "Works with most assistants, such as Cursor, Windsurf and Cline. Paste it into the assistant’s MCP settings. If mcpServers already exists, merge only the gravityport entry.",
+  other: "Works with most assistants, such as Cursor, Windsurf and Cline. Paste it into the assistant’s MCP settings. If mcpServers already exists, merge only the gravityport entry. Save, then restart the assistant.",
 };
 const ZH_WARNING = "请先将 GravityPort 移到「应用程序」文件夹，再复制配置，否则其中的路径将失效。";
 const ZH_NOTE = "更改存储位置后无需修改此配置，重启 AI 助手即可。GravityPort 无需保持打开。";
@@ -69,6 +75,9 @@ export async function run(ctx) {
 
     // Round 1 (Chinese, available): the full selection and copy walk.
     const zh = await ctx.runInPage(server, cardSource({ config, platform: process.platform, installWarning: null }));
+    assertEqual(zh.folded, { hasPre: false, toggle: "查看内容", expanded: "false", pressed: "Claude Desktop", hint: ZH_HINTS.claudeDesktop, copy: "复制" }, "card opens folded: assistants, hint and copy without the config block");
+    assertEqual(zh.unfolded, { toggle: "收起", expanded: "true", controlsBlock: true }, "查看内容 unfolds the block it controls");
+    assertEqual(zh.order, ["clients", "hint", "copy", "toggle", "code", "note"], "set-up block reads top to bottom");
     assertEqual(zh.clientLabels, CLIENT_LABELS, "four assistant buttons");
     assertEqual(zh.classes, ["on", "", "", ""], "selected assistant button carries the on class");
     assertEqual(zh.initial.pressed, "Claude Desktop", "Claude Desktop pressed by default");
@@ -92,6 +101,7 @@ export async function run(ctx) {
     assertEqual(zh.copy.afterSwitch.hint, ZH_HINTS.claudeDesktop, "hint follows the switch");
     assertOk(zh.copy.resetWaitMs >= 1000 && zh.copy.resetWaitMs <= 3000, `copied state auto-resets in ~2s (took ${zh.copy.resetWaitMs}ms)`);
     assertEqual(zh.copy.copiedFinal, [zh.clients.codex.code, zh.clients.codex.code], "every copy sent the Codex message");
+    assertEqual(zh.refolded, { hasPre: false, toggle: "查看内容", expanded: "false", pressed: "Codex", copiedWhileFolded: zh.clients.codex.code }, "收起 folds the block; copy while folded still sends the selected assistant's text");
 
     // Round 2: installWarning — a fresh page with the warning variant.
     const warned = await ctx.runInPage(server, warningSource({ config, platform: process.platform }));
@@ -103,6 +113,7 @@ export async function run(ctx) {
     const off = await ctx.runInPage(server, unavailableSource());
     assertEqual(off.hasClientButtons, false, "no assistant buttons when unavailable");
     assertEqual(off.hasCopyButton, false, "no copy button when unavailable");
+    assertEqual(off.hasToggle, false, "no 查看内容 when unavailable");
     assertEqual(off.hasPre, false, "no config block when unavailable");
     assertEqual(off.hasWarning, false, "no install warning when unavailable");
     assertOk(typeof off.linkHref === "string" && off.linkHref.startsWith("https://github.com/") && off.linkHref.includes("guide"), `guide link points at the guide (${off.linkHref})`);
@@ -122,6 +133,7 @@ export async function run(ctx) {
     assertEqual(en.clients.other.code, config.claudeDesktop, "English Other shows the shared config raw");
     assertEqual(en.clients.other.hint, EN_HINTS.other, "English other hint");
     assertEqual(en.copyLabel, "Copy", "English copy button");
+    assertEqual(en.toggleLabels, { folded: "View contents", unfolded: "Collapse" }, "English fold toggle");
     assertEqual(en.note, EN_NOTE, "English library-move note");
 
     return { copied: zh.copy.copiedFinal.length, resetWaitMs: zh.copy.resetWaitMs, warningShown: warned.warningText === ZH_WARNING, guideOnly: off.linkHref !== null, english: en.ariaLabel === "AI assistants (MCP)" };
@@ -151,6 +163,14 @@ ${PAGE_WAIT_SOURCE}
     const codeText = () => document.querySelector('.mcp-config-card pre code')?.textContent ?? null;
     const hintText = () => document.querySelector('.mcp-config-hint')?.textContent ?? null;
     const copyButton = () => document.querySelector('.mcp-config-copy-button');
+    const toggleButton = () => document.querySelector('.mcp-config-card .mcp-config-toggle');
+    const pressedLabel = () => clientButtons().find((b) => b.getAttribute('aria-pressed') === 'true')?.textContent.trim() ?? null;
+    // The config block is folded by default; unfold it through the real button.
+    async function unfold() {
+      if (mcpPre()) throw new Error('config block already shown before 查看内容 was clicked');
+      toggleButton().click();
+      await waitFor(() => mcpPre() && toggleButton()?.getAttribute('aria-expanded') === 'true', 'config block unfolded');
+    }
     const cardState = () => ({
       attr: selectedId(),
       code: codeText(),
@@ -197,6 +217,34 @@ function cardSource({ config, platform, installWarning }) {
 
     await openConnectionPage();
 
+    // Folded first: picking an assistant, its hint and 复制 are all there, the
+    // config block is not.
+    await waitFor(toggleButton, '查看内容 button');
+    const folded = {
+      hasPre: Boolean(mcpPre()),
+      toggle: toggleButton().textContent.trim(),
+      expanded: toggleButton().getAttribute('aria-expanded'),
+      pressed: pressedLabel(),
+      hint: hintText(),
+      copy: copyButton()?.textContent.trim() ?? null,
+    };
+    await unfold();
+    const unfolded = {
+      toggle: toggleButton().textContent.trim(),
+      expanded: toggleButton().getAttribute('aria-expanded'),
+      controlsBlock: document.getElementById(toggleButton().getAttribute('aria-controls') || '')?.contains(mcpPre()) === true,
+    };
+    // Reading order inside the card: assistants, hint, copy, view, block, note.
+    const parts = [
+      ['clients', document.querySelector('.mcp-config-clients')],
+      ['hint', document.querySelector('.mcp-config-hint')],
+      ['copy', copyButton()],
+      ['toggle', toggleButton()],
+      ['code', mcpPre()],
+      ['note', document.querySelector('.mcp-config-card .mcp-config-note')],
+    ];
+    const order = parts.slice().sort((a, b) => (a[1].compareDocumentPosition(b[1]) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)).map((entry) => entry[0]);
+
     const clientLabels = clientButtons().map((b) => b.textContent.trim());
     const classes = clientButtons().map((b) => b.className);
     const initial = cardState();
@@ -231,8 +279,26 @@ function cardSource({ config, platform, installWarning }) {
     const copiedShownAt = Date.now();
     await waitFor(() => copyButton()?.textContent.trim() === '复制', 'copied state auto-resets', 3000);
     const resetWaitMs = Date.now() - copiedShownAt;
+    const copiedFinal = (window.__copied || []).slice();
+
+    // 收起 folds the block again; copying does not need it open.
+    toggleButton().click();
+    await waitFor(() => !mcpPre() && toggleButton()?.getAttribute('aria-expanded') === 'false', 'config block folded again');
+    copyButton().click();
+    await waitFor(() => copyButton()?.textContent.trim() === '已复制', 'copied state while folded');
+    const refolded = {
+      hasPre: Boolean(mcpPre()),
+      toggle: toggleButton().textContent.trim(),
+      expanded: toggleButton().getAttribute('aria-expanded'),
+      pressed: pressedLabel(),
+      copiedWhileFolded: (window.__copied || []).slice(-1)[0] ?? null,
+    };
 
     return {
+      folded,
+      unfolded,
+      order,
+      refolded,
       clientLabels,
       classes,
       initial,
@@ -243,7 +309,7 @@ function cardSource({ config, platform, installWarning }) {
         switchClearedImmediately,
         afterSwitch,
         resetWaitMs,
-        copiedFinal: (window.__copied || []).slice(),
+        copiedFinal,
       },
     };
   })()
@@ -275,6 +341,7 @@ function unavailableSource() {
     return {
       hasClientButtons: clientButtons().length > 0,
       hasCopyButton: Boolean(document.querySelector('.mcp-config-copy-button')),
+      hasToggle: Boolean(toggleButton()),
       hasPre: Boolean(document.querySelector('.mcp-config-card pre')),
       hasWarning: Boolean(document.querySelector('.mcp-config-warning')),
       linkHref: document.querySelector('.mcp-config-card .mcp-config-note a')?.getAttribute('href') ?? null,
@@ -302,6 +369,10 @@ function englishSource({ config, platform }) {
     if (!nav) throw new Error('Connect nav missing: ' + Array.from(document.querySelectorAll('.settings-nav button')).map((b) => b.textContent.trim()).join('|'));
     nav.click();
     await waitFor(() => document.querySelector('.settings-modal .mcp-config-card'), 'MCP config card in English');
+    await waitFor(toggleButton, 'View contents button');
+    const toggleLabels = { folded: toggleButton().textContent.trim() };
+    await unfold();
+    toggleLabels.unfolded = toggleButton().textContent.trim();
 
     const clientLabels = clientButtons().map((b) => b.textContent.trim());
     const initial = cardState();
@@ -317,6 +388,7 @@ function englishSource({ config, platform }) {
       initial,
       clients,
       copyLabel: copyButton()?.textContent.trim() ?? null,
+      toggleLabels,
       note: document.querySelector('.mcp-config-card .mcp-config-note')?.textContent.trim() ?? null,
     };
   })()

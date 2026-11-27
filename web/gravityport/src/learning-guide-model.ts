@@ -130,7 +130,7 @@ export type LearningQuoteData = {
   summaryUsd?: number
   summaryCalls?: number
   service?: { id: string; label: string }
-  models?: { analysis: { id: string; label: string }; summary: { id: string; label: string } }
+  models?: { analysis: { id: string; label: string; effort?: string }; summary: { id: string; label: string; effort?: string } }
   privacy?: { imageCount: number; longEdge: number }
   blocked?: string
   libraryId?: string
