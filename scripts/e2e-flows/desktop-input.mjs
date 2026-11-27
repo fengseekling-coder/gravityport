@@ -140,11 +140,14 @@ export async function run(ctx) {
       }
     });
 
-    await step("sidebar overflow (40 groups) must not squash the brandbar", async () => {
+    await step("sidebar overflow (40 groups): brandbar and settings stay put while only the middle scrolls", async () => {
       // Real libraries have long sidebars; a flex column without scroll
       // protection squeezes the brandbar down to its 16px text (task 127 on
       // the production library), which shoves the nav under the native
-      // traffic lights. Force the overflow and re-assert the 56px strip.
+      // traffic lights. And when the whole sidebar was the scroller, scrolling
+      // carried the nav under the traffic lights and pushed the settings entry
+      // below the fold (11-27, the maintainer's library). Only .sidebar-scroll
+      // may scroll: the brandbar (drag region) and the footer stay fixed.
       for (let index = 0; index < 40; index += 1) {
         const name = `desktop-input-group-${index}`;
         await ctx.api(origin, "POST", "/api/groups", { projectId: "default", name });
@@ -154,16 +157,49 @@ export async function run(ctx) {
       }
       // The new groups reach the sidebar through the live refresh; a fixed
       // 500ms pause sometimes measured before they rendered (macOS CI).
-      await waitForUi(cdp, `document.querySelector(".sidebar").scrollHeight > document.querySelector(".sidebar").clientHeight`, "sidebar overflow from 40 groups");
-      const layout = await cdp.evaluate(`(() => {
-        const el = document.querySelector(".brandbar");
-        const r = el.getBoundingClientRect();
-        return { top: r.top, height: r.height, sidebarScroll: document.querySelector(".sidebar").scrollHeight > document.querySelector(".sidebar").clientHeight };
-      })()`);
-      if (Math.round(layout.height) !== 56 || Math.round(layout.top) !== 0) {
-        throw new Error(`brandbar squashed under sidebar overflow: ${JSON.stringify(layout)}`);
+      await waitForUi(cdp, `(() => { const s = document.querySelector(".sidebar-scroll"); return Boolean(s) && s.scrollHeight > s.clientHeight; })()`, "sidebar overflow from 40 groups");
+      const measure = `(() => {
+        const rect = (selector) => { const r = document.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height }; };
+        const scroller = document.querySelector(".sidebar-scroll");
+        const user = document.querySelector(".user-button");
+        const u = user.getBoundingClientRect();
+        // What sits under the traffic lights (x 16..75, centred on y 25) and
+        // under the settings entry's centre.
+        const underLights = document.elementFromPoint(40, 25);
+        const underUser = document.elementFromPoint(u.left + u.width / 2, u.top + u.height / 2);
+        return {
+          brandbar: rect(".brandbar"),
+          scroller: rect(".sidebar-scroll"),
+          user: rect(".user-button"),
+          viewport: window.innerHeight,
+          scrollTop: scroller.scrollTop,
+          asideScrollTop: document.querySelector(".sidebar").scrollTop,
+          lightsInBrandbar: Boolean(underLights && underLights.closest(".brandbar")),
+          userReachable: Boolean(underUser && user.contains(underUser)),
+        };
+      })()`;
+      const check = (layout, label) => {
+        if (Math.round(layout.brandbar.height) !== 56 || Math.round(layout.brandbar.top) !== 0) {
+          throw new Error(`${label}: brandbar moved or squashed ${JSON.stringify(layout)}`);
+        }
+        if (Math.round(layout.scroller.top) < 56) throw new Error(`${label}: the scrolling list starts under the titlebar ${JSON.stringify(layout)}`);
+        if (!layout.lightsInBrandbar) throw new Error(`${label}: something other than the brandbar sits under the traffic lights ${JSON.stringify(layout)}`);
+        if (layout.user.bottom > layout.viewport + 0.5 || layout.user.top < layout.scroller.bottom - 0.5 || !layout.userReachable) {
+          throw new Error(`${label}: settings entry not fully visible below the list ${JSON.stringify(layout)}`);
+        }
+        if (layout.asideScrollTop !== 0) throw new Error(`${label}: the whole sidebar scrolled ${JSON.stringify(layout)}`);
+      };
+      const before = await cdp.evaluate(measure);
+      check(before, "before scrolling");
+      await cdp.evaluate(`(() => { const s = document.querySelector(".sidebar-scroll"); s.scrollTop = s.scrollHeight; })()`);
+      await waitForUi(cdp, `document.querySelector(".sidebar-scroll").scrollTop > 0`, "sidebar list scrolled");
+      const after = await cdp.evaluate(measure);
+      check(after, "scrolled to the bottom");
+      if (Math.round(after.user.top) !== Math.round(before.user.top)) {
+        throw new Error(`settings entry moved while the list scrolled ${JSON.stringify({ before: before.user, after: after.user })}`);
       }
-      if (!layout.sidebarScroll) throw new Error("sidebar did not overflow; the fixture no longer reproduces the squeeze");
+      // Later steps click rows near the top of the list.
+      await cdp.evaluate(`document.querySelector(".sidebar-scroll").scrollTop = 0`);
     });
 
     // The 40-group setup above journals ~80 library changes; while that
@@ -280,10 +316,9 @@ export async function run(ctx) {
     }));
 
     await step("trusted click opens settings and Escape closes them", trusted(async () => {
-      // The overflow sidebar pushes the user entry below the fold; scroll it
-      // into view like a real user would.
-      await cdp.evaluate(`(() => { const sidebar = document.querySelector(".sidebar"); sidebar.scrollTop = sidebar.scrollHeight; return sidebar.scrollTop; })()`);
-      await sleep(200);
+      // The sidebar still overflows from the 40 groups above, with its list at
+      // the top: the settings entry sits in the fixed footer, so the trusted
+      // click reaches it without any scrolling.
       // 11-16：左下角显示安装编号（前 8 位…后 4 位，悬停看完整编号），点它仍打开设置。
       await waitForUi(cdp, `/^[0-9a-f]{8}…[0-9a-f]{4}$/.test(document.querySelector(".user-button > span")?.textContent || "")`, "nav shows the short installation id");
       const navId = await cdp.evaluate(`(() => { const b = document.querySelector(".user-button"); return { short: b.querySelector("span").textContent, title: b.getAttribute("title") || "" }; })()`);

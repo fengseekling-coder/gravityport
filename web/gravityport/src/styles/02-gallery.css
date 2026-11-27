@@ -11,8 +11,6 @@
   transition: background 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 180ms var(--ease-out);
 }button:active {
   transform: translateY(1px);
-}.sidebar {
-  overflow-y: auto;
 }.nav-row {
   border-color: #e6e6e8;
 }.nav-row.selected {
@@ -22,7 +20,6 @@
   color: var(--ink-tertiary);
 }.user-button {
   flex-shrink: 0;
-  margin-top: auto;
 }.toolbar-left button {
   min-width: 28px;
   min-height: 28px;
@@ -304,13 +301,35 @@
 }.app:has(> .details) {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
 }.sidebar {
+  /* 侧栏分三段：品牌栏（macOS 红绿灯和窗口拖动区域在这里）和底栏（更新提示、
+     设置）固定，只有中间的 .sidebar-scroll 滚动。整个侧栏一起滚的话，列表会从
+     红绿灯下面穿过去，设置按钮也会被挤到列表最底下。 */
   width: auto;
-  padding: 0 var(--space-3) var(--space-4);
+  padding: 0;
   border-right: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  overflow: hidden;
 }.sidebar > * {
   flex-shrink: 0;
+}.sidebar > .brandbar,
+.sidebar > .sidebar-footer {
+  /* overflow: hidden 也按 stable 留滚动条槽：三段右边缘与中间滚动区对齐。 */
+  overflow: hidden;
+  scrollbar-gutter: stable;
+  padding-inline: var(--space-3);
+}.sidebar > .sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-inline: var(--space-3);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}.sidebar-scroll > * {
+  flex-shrink: 0;
+}.sidebar > .sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--space-2) var(--space-4);
 }.brandbar {
   height: var(--space-14);
   gap: var(--space-2);
@@ -726,7 +745,13 @@ html[lang="en"] .version-compare-fields > div { grid-template-columns: 68px 1fr 
 @media (max-width: 480px) {:root {
     --sidebar-width: 64px;
   }.sidebar {
-    padding: var(--space-2);
+    padding-top: var(--space-2);
+  }.sidebar > .brandbar,
+  .sidebar > .sidebar-scroll,
+  .sidebar > .sidebar-footer {
+    padding-inline: var(--space-2);
+  }.sidebar > .sidebar-footer {
+    padding-bottom: var(--space-2);
   }.brandbar {
     height: var(--space-10);
   }.nav-row {
