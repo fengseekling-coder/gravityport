@@ -126,7 +126,8 @@ export async function run(ctx) {
     assertOk(zh.userTop !== null && zh.top < zh.userTop, `line above 设置 (top ${zh.top} < 设置 ${zh.userTop})`);
     assertOk(Math.abs(zh.height - 32) <= 1, `line height 32±1 (got ${zh.height})`);
     assertOk(zh.oneLine, `label stays on one line (scrollHeight ${zh.labelScroll} <= clientHeight ${zh.labelClient})`);
-    assertOk(zh.sidebarScrollWidth <= zh.sidebarClientWidth, `sidebar has no horizontal scrollbar (${zh.sidebarScrollWidth} > ${zh.sidebarClientWidth})`);
+    assertOk(zh.inFooter, "line sits in the fixed sidebar footer");
+    assertOk(zh.footerScrollWidth <= zh.footerClientWidth, `line does not overflow the sidebar footer (${zh.footerScrollWidth} > ${zh.footerClientWidth})`);
     assertEqual(zh.text, "v9.9.9 已就绪", "zh label");
     assertEqual(zh.action, "重启并更新", "zh action");
     assertEqual(zh.title, "重启并更新到 v9.9.9", "zh title");
@@ -282,7 +283,9 @@ function inspectLine() {
     const line = document.querySelector('.update-ready-line');
     if (!line) return { present: false };
     const user = document.querySelector('.user-button');
-    const sidebar = document.querySelector('.sidebar');
+    // The line lives in the sidebar's fixed footer, which clips its overflow;
+    // measure the footer itself so a too-wide line still shows up.
+    const footer = line.closest('.sidebar-footer');
     const label = line.querySelector('.update-ready-label');
     const action = line.querySelector('.update-ready-action');
     const dot = line.querySelector('.update-ready-dot');
@@ -296,8 +299,9 @@ function inspectLine() {
       oneLine: label ? label.scrollHeight <= label.clientHeight : line.scrollHeight <= line.clientHeight,
       labelScroll: label ? label.scrollHeight : line.scrollHeight,
       labelClient: label ? label.clientHeight : line.clientHeight,
-      sidebarScrollWidth: sidebar.scrollWidth,
-      sidebarClientWidth: sidebar.clientWidth,
+      inFooter: Boolean(footer),
+      footerScrollWidth: footer ? footer.scrollWidth : null,
+      footerClientWidth: footer ? footer.clientWidth : null,
       text: label ? label.textContent.replace(/\\s+/g, " ").trim() : "",
       action: action ? action.textContent.trim() : null,
       title: line.getAttribute("title"),

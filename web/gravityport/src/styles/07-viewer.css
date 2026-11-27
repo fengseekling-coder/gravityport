@@ -359,15 +359,17 @@ video.black-image,
 }
 .app.native-desktop .brandbar {
   /* The title's right edge lines up with the nav rows' counts, which sit
-     inside the rows' own var(--space-2) inline padding. */
+     inside the rows' own var(--space-2) inline padding. The brandbar carries
+     the sidebar's var(--space-3) inline padding itself (the sidebar is split
+     into a fixed brandbar, a scrolling middle and a fixed footer). */
   justify-content: flex-end;
-  padding-inline-end: var(--space-2);
+  padding-inline-end: calc(var(--space-3) + var(--space-2));
 }
 .app.native-darwin .brandbar {
   /* Native buttons sit at x=16..75, centred on y=25 (trafficLightPosition
      16,18). Keep the title clear of them when the sidebar is narrow and
      centre it on their row. */
-  padding-inline-start: calc(85px - var(--space-3));
+  padding-inline-start: 85px;
   padding-bottom: 6px;
 }
 .app.native-darwin .brandbar strong {

@@ -129,11 +129,8 @@
   background: var(--ui-hover);
   color: var(--ui-text);
 }.app .update-ready-slot {
+  /* 在固定底栏里、设置按钮上方；和列表的间距由底栏的上内边距给。 */
   flex-shrink: 0;
-  margin-top: auto;
-  padding-top: var(--space-2);
-}.app .update-ready-slot + .user-button {
-  margin-top: 0;
 }.app .update-ready-line {
   display: flex;
   align-items: center;
