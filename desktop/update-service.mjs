@@ -9,6 +9,45 @@ import { normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
 // already-shipped clients and never receives the renamed releases.
 export const MOSA_UPDATE_FEED_URL = "https://gravityport.azhuilab.com/releases/gravityport/latest.json";
 export const MOSA_DOWNLOAD_PAGE_URL = "https://gravityport.azhuilab.com/#download";
+export const MOSA_RELEASE_DOWNLOAD_BASE_URL = "https://gravityport.azhuilab.com/downloads/";
+
+// Task 479: the maintainer's development packages (distribution
+// "development", built by scripts/dev-channel/publish.mjs) follow their own
+// signed feed. Its update packages sit next to the feed under /releases/, so
+// they never mix with the website's downloads/ or its download statistics.
+// The website does not link this path; the app repository is public, so it is
+// unlisted rather than secret, and nothing in the packages needs it to be.
+export const MOSA_DEVELOPMENT_UPDATE_FEED_URL = "https://gravityport.azhuilab.com/releases/gravityport-dev/latest.json";
+export const MOSA_DEVELOPMENT_DOWNLOAD_BASE_URL = "https://gravityport.azhuilab.com/releases/gravityport-dev/";
+
+const RELEASE_UPDATE_CHANNEL = Object.freeze({
+  channel: "release",
+  feedUrl: MOSA_UPDATE_FEED_URL,
+  downloadBaseUrl: MOSA_RELEASE_DOWNLOAD_BASE_URL,
+});
+const DEVELOPMENT_UPDATE_CHANNEL = Object.freeze({
+  channel: "development",
+  feedUrl: MOSA_DEVELOPMENT_UPDATE_FEED_URL,
+  downloadBaseUrl: MOSA_DEVELOPMENT_DOWNLOAD_BASE_URL,
+});
+
+// Every location an update package may be downloaded from. The updaters
+// refuse any other base, whatever a caller passes.
+export const MOSA_UPDATE_DOWNLOAD_BASE_URLS = Object.freeze([
+  RELEASE_UPDATE_CHANNEL.downloadBaseUrl,
+  DEVELOPMENT_UPDATE_CHANNEL.downloadBaseUrl,
+]);
+
+// Which feed a running build reads, from its own build identity: development
+// builds read the development feed, preview and production builds the public
+// release feed. A caller that does not know its distribution reads the public
+// feed, as before.
+export function updateChannelForDistribution(distribution) {
+  if (!distribution) return RELEASE_UPDATE_CHANNEL;
+  return normalizeDesktopDistribution(distribution) === "development"
+    ? DEVELOPMENT_UPDATE_CHANNEL
+    : RELEASE_UPDATE_CHANNEL;
+}
 
 const UPDATE_MANIFEST_MAX_BYTES = 16 * 1024;
 const VERSION_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -151,9 +190,15 @@ export async function stagedArtifactMatches(zipPath, expectedSize, expectedSha25
 }
 
 export function canUpdateDistribution(currentDistribution, targetDistribution) {
-  if (!currentDistribution) return true;
+  const target = normalizeDesktopDistribution(targetDistribution, { defaultValue: "preview" });
+  if (!currentDistribution) return target !== "development";
   const current = normalizeDesktopDistribution(currentDistribution);
-  const target = normalizeDesktopDistribution(targetDistribution, { defaultValue: "preview", releaseOnly: true });
+  // Task 479: the development channel is closed in both directions. A
+  // development package only moves to a newer development package, so a public
+  // release can never replace the maintainer's AI-enabled build; and a release
+  // build never accepts a development manifest, even one signed with the
+  // release key, so a misplaced development feed cannot reach users.
+  if (current === "development" || target === "development") return current === target;
   if (current === target) return true;
   // The rename ships a transition release that lets every existing preview
   // user cross into the later Developer-ID-signed production channel in place.
@@ -162,8 +207,7 @@ export function canUpdateDistribution(currentDistribution, targetDistribution) {
   // against it, so this bridge never accepts an arbitrary developer signature.
   // The reverse direction stays closed: a production install must never
   // silently downgrade back to preview.
-  if (current === "preview" && target === "production") return true;
-  return current === "development" && target === "preview";
+  return current === "preview" && target === "production";
 }
 
 function cleanNote(value) {
@@ -176,7 +220,7 @@ function parseBuildIdentity(value) {
   const gitSha = typeof value.gitSha === "string" ? value.gitSha.trim().toLowerCase() : "";
   const uiFingerprint = typeof value.uiFingerprint === "string" ? value.uiFingerprint.trim().toLowerCase() : "";
   const runtimeFingerprint = typeof value.runtimeFingerprint === "string" ? value.runtimeFingerprint.trim().toLowerCase() : "";
-  const distribution = normalizeDesktopDistribution(value.distribution, { defaultValue: "preview", releaseOnly: true });
+  const distribution = normalizeDesktopDistribution(value.distribution, { defaultValue: "preview" });
   if (!GIT_SHA_PATTERN.test(gitSha)) throw new Error("Invalid release git SHA.");
   if (!SHA256_PATTERN.test(uiFingerprint)) throw new Error("Invalid release UI fingerprint.");
   if (!SHA256_PATTERN.test(runtimeFingerprint)) throw new Error("Invalid release runtime fingerprint.");
@@ -273,6 +317,20 @@ export function parseUpdateManifest(input, { macArch } = {}) {
       throw new Error("Production macOS releases require a release team identifier.");
     }
   }
+  // Task 479: development packages are Developer ID signed and notarized, and
+  // the macOS helper installs one only through its team-identifier branch (the
+  // branch without a team identifier accepts preview payloads only), so a
+  // development manifest must pin it as well. The development channel carries
+  // no Windows package yet; a manifest that names one is refused whole rather
+  // than offering a download the Windows updater cannot fetch.
+  if (buildIdentity?.distribution === "development") {
+    for (const developmentMacArtifact of [macArtifactArm64, macArtifactX64]) {
+      if (developmentMacArtifact && !developmentMacArtifact.teamIdentifier) {
+        throw new Error("Development macOS packages require a release team identifier.");
+      }
+    }
+    if (windowsArtifact) throw new Error("Development update manifests do not carry Windows packages.");
+  }
   // Windows production trust mirrors macOS: the pinned signer thumbprint is
   // what the installer verifies every payload signature against. Preview may
   // omit it because those builds ship unsigned.
@@ -350,17 +408,23 @@ export async function checkForMosaUpdate({
   anonymousUsage = null,
   releaseManifestTrust = null,
   macArch,
+  platform = process.platform,
   fetchImpl = globalThis.fetch,
   timeoutMs = 8_000,
 } = {}) {
   const current = parseVersion(currentVersion);
   if (!current) throw new Error("Invalid current MOSA version.");
   if (typeof fetchImpl !== "function") throw new Error("Update fetch is unavailable.");
+  const updateChannel = updateChannelForDistribution(currentDistribution);
+  const developmentChannel = updateChannel === DEVELOPMENT_UPDATE_CHANNEL;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
   try {
-    const response = await fetchImpl(buildUpdateFeedUrl(anonymousUsage), {
+    // The development feed never carries usage parameters; usage reports go
+    // to the public feed only (see reportAnonymousUsage).
+    const feedUrl = developmentChannel ? updateChannel.feedUrl : buildUpdateFeedUrl(anonymousUsage);
+    const response = await fetchImpl(feedUrl, {
       method: "GET",
       headers: {
         accept: "application/json",
@@ -376,13 +440,25 @@ export async function checkForMosaUpdate({
     const trusts = Array.isArray(releaseManifestTrust) ? releaseManifestTrust : [releaseManifestTrust].filter(Boolean);
     if (trusts.length) verifyReleaseManifestSignature(document, trusts);
     const release = parseUpdateManifest(document, { macArch });
-    const distributionAllowed = !release.buildIdentity
-      || canUpdateDistribution(currentDistribution, release.buildIdentity.distribution);
+    // A development build reads only the development feed, which in turn
+    // only carries development manifests; anything else is refused here too.
+    const distributionAllowed = developmentChannel
+      ? release.buildIdentity?.distribution === "development"
+      : !release.buildIdentity || canUpdateDistribution(currentDistribution, release.buildIdentity.distribution);
+    // The development channel has no download page to fall back on: it offers
+    // an update only to a host it carries a package for (an Intel Mac or a
+    // Windows development build sees no update rather than a dead end).
+    const hostArtifact = platform === "darwin" ? release.macArtifact
+      : platform === "win32" ? release.windowsArtifact
+        : null;
+    const hostSupported = !developmentChannel || Boolean(hostArtifact);
     return {
       currentVersion: current.version,
       latestVersion: release.version,
-      updateAvailable: compareVersions(release.version, current.version) > 0 && distributionAllowed,
+      updateAvailable: compareVersions(release.version, current.version) > 0 && distributionAllowed && hostSupported,
       distributionAllowed,
+      channel: updateChannel.channel,
+      downloadBaseUrl: updateChannel.downloadBaseUrl,
       publishedAt: release.publishedAt,
       notes: release.notes,
       buildIdentity: release.buildIdentity,

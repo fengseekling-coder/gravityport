@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { access, copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { desktopDistributionFromEnvironment, requiresMacDeveloperIdSigning, requiresPlatformSigning } from "../lib/release-distribution.mjs";
+import { desktopDistributionFromEnvironment, devChannelBuildFromEnvironment, requiresMacDeveloperIdSigning, requiresPlatformSigning } from "../lib/release-distribution.mjs";
 import { resolveReleaseProduct } from "../scripts/release-product.mjs";
 import { desktopLicensesOutputDir, writeDesktopLicenses } from "../scripts/third-party-licenses.mjs";
 import { windowsSignOptionsFromEnvironment } from "../scripts/windows-signing.mjs";
@@ -211,7 +211,9 @@ const AD_HOC_SIGN_CONFIG = {
 
 export function macReleasePackagingConfig(env = process.env) {
   const distribution = desktopDistributionFromEnvironment(env);
-  if (!requiresMacDeveloperIdSigning(distribution)) return { osxSign: AD_HOC_SIGN_CONFIG };
+  if (!requiresMacDeveloperIdSigning(distribution, { devChannel: devChannelBuildFromEnvironment(env) })) {
+    return { osxSign: AD_HOC_SIGN_CONFIG };
+  }
 
   const identity = String(env.MOSA_MACOS_SIGN_IDENTITY || "").trim();
   const keychain = String(env.MOSA_MACOS_SIGN_KEYCHAIN || "").trim();

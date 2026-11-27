@@ -454,6 +454,7 @@ const updateScheduler = createUpdateScheduler({
         fetchImpl: systemNetworkFetch,
         artifact: release.macArtifact,
         version: release.latestVersion,
+        downloadBaseUrl: release.downloadBaseUrl,
         stagingRoot: MACOS_UPDATE_STAGING_ROOT,
         signal,
       })
@@ -791,8 +792,10 @@ function registerIPC() {
 function runAnonymousUsageReport() {
   const currentVersion = app.getVersion();
   // Development and QA launches must never pollute production usage metrics.
-  // A package obtained from any distribution channel still has isPackaged=true.
-  if (isolationContext.qaRun || !app.isPackaged) {
+  // A package obtained from any distribution channel still has isPackaged=true,
+  // so packaged development builds (the maintainer's development channel,
+  // task 479) are excluded by their build identity.
+  if (isolationContext.qaRun || !app.isPackaged || expectedServiceIdentity.distribution === "development") {
     return Promise.resolve({ status: "disabled", currentVersion });
   }
   if (usageReportPromise) return usageReportPromise;
@@ -831,7 +834,7 @@ function startAnonymousUsageLifecycle() {
   // Explicit local opt-out. The daily HEAD ping carries no identifiers beyond
   // a random install id, but the machine owner can still switch it off.
   if (isTelemetryDisabled()) return;
-  if (usageReportTimer || isolationContext.qaRun || !app.isPackaged) return;
+  if (usageReportTimer || isolationContext.qaRun || !app.isPackaged || expectedServiceIdentity.distribution === "development") return;
   void runAnonymousUsageReport();
   usageReportTimer = setInterval(() => {
     void runAnonymousUsageReport();

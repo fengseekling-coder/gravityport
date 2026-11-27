@@ -6,7 +6,7 @@ import { createReadStream } from "node:fs";
 import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { desktopDistributionFromEnvironment, normalizeDesktopDistribution, requiresMacDeveloperIdSigning } from "../lib/release-distribution.mjs";
+import { desktopDistributionFromEnvironment, devChannelBuildFromEnvironment, normalizeDesktopDistribution } from "../lib/release-distribution.mjs";
 import { releaseProductNames, resolveReleaseProduct } from "./release-product.mjs";
 import { verifyMacosReleaseApp } from "./verify-macos-release.mjs";
 
@@ -44,8 +44,9 @@ export async function makeMacosUpdateZip({
     throw new Error(`Packaged macOS app not found: ${appPath}. Run desktop:package first.`);
   });
   const normalizedDistribution = normalizeDesktopDistribution(distribution);
-  if (normalizedDistribution !== "development") {
-    await verifyMacosReleaseApp({ appPath, env, runner, staple: false, distribution: normalizedDistribution });
+  const devChannel = devChannelBuildFromEnvironment(env);
+  if (normalizedDistribution !== "development" || devChannel) {
+    await verifyMacosReleaseApp({ appPath, env, runner, staple: false, devChannel, distribution: normalizedDistribution });
   }
 
   const output = macosUpdateArtifactPath({ rootDir, outDir, version, arch, product });

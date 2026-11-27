@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // install name from --app-name,
-// any */downloads/<zip> URL is served from the local ZIP (gravityport domain).
+// the update ZIP is served from the local file under whichever first-party
+// base the from-version asks for (downloads/ for releases, the development
+// channel's releases/gravityport-dev/ for development builds, task 479).
 // Rehearses one in-app macOS update step with real packages, isolated from the
 // user's own install:
 //   1. the running "from" app (started with launch-isolated.sh) is the target;
@@ -83,22 +85,30 @@ log("from app", { pid: fromPid, version: before?.productVersion ?? before?.versi
 // --- 2. a feed signed with the real release key -------------------------------
 const { prepareDesktopReleaseManifest } = await import(join(resolve(args["writer-src"]), "scripts/prepare-desktop-release-manifest.mjs"));
 const { formatNotesText, notesForVersion, readReleaseNotes } = await import(join(resolve(args["writer-src"]), "lib/release-notes.mjs"));
+const toIdentity = JSON.parse(readFileSync(resolve(args.identity), "utf8"));
 const notes = notesForVersion(readReleaseNotes(join(resolve(args["writer-src"]), "release-notes.json")), args["to-version"]);
+// Development builds have no release-notes.json entry; their publisher writes
+// the notes from the commit log.
+if (!notes && toIdentity.distribution !== "development") throw new Error(`release-notes.json has no entry for ${args["to-version"]}`);
 const manifest = await prepareDesktopReleaseManifest({
   version: args["to-version"],
   macArtifactPath: resolve(args.zip),
   macAppName: args["app-name"],
   macTeamIdentifier: "B5ZJT8TRPN",
-  buildIdentity: JSON.parse(readFileSync(resolve(args.identity), "utf8")),
+  buildIdentity: toIdentity,
+  // A writer that predates task 479 ignores this and only takes release builds.
+  channel: toIdentity.distribution === "development" ? "development" : "release",
   signingPrivateKey: readFileSync(resolve(args["private-key"]), "utf8"),
   publishedAt: new Date().toISOString(),
-  notes: { zh: formatNotesText(notes.zh), en: formatNotesText(notes.en) },
+  notes: notes
+    ? { zh: formatNotesText(notes.zh), en: formatNotesText(notes.en) }
+    : { zh: `开发版 ${args["to-version"]}（演练）。`, en: `Development build ${args["to-version"]} (rehearsal).` },
 });
 const manifestPath = join(root, "server", `${args["to-version"]}-latest.json`);
 await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 log("signed feed", manifestPath, "keyId", manifest.signature.keyId.slice(0, 12));
 
-const downloadSuffix = `/downloads/${basename(args.zip)}`;
+const downloadSuffix = `/${basename(args.zip)}`;
 const requested = [];
 const fetchStub = async (url) => {
   const href = String(url);
@@ -106,7 +116,7 @@ const fetchStub = async (url) => {
   if (href.split("?")[0] === args["feed-url"]) {
     return new Response(readFileSync(manifestPath, "utf8"), { status: 200, headers: { "content-type": "application/json" } });
   }
-  if (href.split("?")[0].endsWith(downloadSuffix)) {
+  if (href.split("?")[0].startsWith("https://gravityport.azhuilab.com/") && href.split("?")[0].endsWith(downloadSuffix)) {
     return new Response(Readable.toWeb(createReadStream(resolve(args.zip))), {
       status: 200, headers: { "content-length": String(statSync(resolve(args.zip)).size), "content-type": "application/zip" },
     });
@@ -129,6 +139,9 @@ if (!release.updateAvailable || !release.macArtifact) throw new Error("the from-
 
 const download = await updater.downloadMacosUpdate({
   artifact: release.macArtifact, version: release.latestVersion, stagingRoot, fetchImpl: fetchStub,
+  // Same as desktop/main.mjs: the channel the feed was read from picks the
+  // download base (older from-versions ignore it and use downloads/).
+  downloadBaseUrl: release.downloadBaseUrl,
 });
 log("downloaded", download.zipPath);
 

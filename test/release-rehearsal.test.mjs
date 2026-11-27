@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkS
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MOSA_UPDATE_FEED_URL } from "../desktop/update-service.mjs";
+import { MOSA_DEVELOPMENT_UPDATE_FEED_URL, MOSA_UPDATE_FEED_URL } from "../desktop/update-service.mjs";
 import { buildRehearsalPlan, resolvePrivateKeyPath, RUNTIME_FROM_VERSION, stopRehearsalAppUntilQuiet } from "../scripts/release-rehearsal/rehearse.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -268,4 +268,22 @@ test("C8 after a failure, stopping keeps going until the rollback relaunch is go
     timeoutMs: 5000,
   });
   assert.equal(checks, 6, "bounded by the timeout");
+});
+
+test("479 a development-channel build rehearses against the development feed with its dev version", () => {
+  const build = mkdtempSync(join(tmpdir(), "gp-479-dev-build-"));
+  mkdirSync(join(build, "web", "gravityport", "dist"), { recursive: true });
+  writeFileSync(join(build, "package.json"), JSON.stringify({ name: "mosa", version: "0.3.19-dev.202611272130" }));
+  // Before the build exists the plan assumes a release feed.
+  assert.equal(buildRehearsalPlan({ build, privateKey: "k.pem" }).feedUrl, MOSA_UPDATE_FEED_URL);
+  writeFileSync(join(build, "web", "gravityport", "dist", "build-identity.json"), JSON.stringify({ distribution: "development" }));
+  const plan = buildRehearsalPlan({ build, privateKey: "k.pem" });
+  assert.equal(plan.toVersion, "0.3.19-dev.202611272130");
+  assert.equal(plan.feedUrl, MOSA_DEVELOPMENT_UPDATE_FEED_URL);
+  assert.equal(plan.zipPath, join(build, "out/make/update/darwin/arm64/GravityPort-darwin-arm64-0.3.19-dev.202611272130.zip"));
+  const rehearse = plan.steps.find((step) => step.id === "rehearse-update");
+  assert.equal(rehearse.args[rehearse.args.indexOf("--feed-url") + 1], MOSA_DEVELOPMENT_UPDATE_FEED_URL);
+  // Only the development stamp is accepted beyond x.y.z.
+  assert.throws(() => buildRehearsalPlan({ build, toVersion: "0.3.19-rc.1", privateKey: "k.pem" }), /x\.y\.z/);
+  assert.equal(buildRehearsalPlan({ build, toVersion: "0.3.19", privateKey: "k.pem", feedUrl: MOSA_UPDATE_FEED_URL }).feedUrl, MOSA_UPDATE_FEED_URL);
 });

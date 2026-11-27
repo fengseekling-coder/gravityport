@@ -305,10 +305,13 @@ Web UI 启动时同时读取 `/api/health` 与静态 `build-identity.json`，在
 校验签名，再按版本号和发行通道判断能否更新。`desktop/macos-updater.mjs` /
 `desktop/windows-updater.mjs` 从 `https://gravityport.azhuilab.com/downloads/` 下载对应平台的
 更新包，校验 SHA-256 与签名身份（macOS Team ID / Windows 签名证书指纹）后交给分离的
-helper 替换应用并重启。打包版在首次启动和每个统计日各发一次无请求体的 `HEAD` 请求，把
+helper 替换应用并重启。开发版（build identity 的 `distribution` 为 `development`）只读
+`releases/gravityport-dev/latest.json`，更新包也从同一目录下载；开发版不接受正式清单，正式版
+也不接受开发清单（见 `docs/releasing.md`「Development update channel」）。
+打包版在首次启动和每个统计日各发一次无请求体的 `HEAD` 请求，把
 随机安装 ID、平台、架构和版本附在同一清单地址上作为使用统计（假名化，不是完全匿名）
-（`desktop/anonymous-usage.mjs`）；设置 `GRAVITYPORT_DISABLE_TELEMETRY=1`、QA 运行或未打包的
-开发壳都不会发送。发布流程见 [docs/releasing.md](docs/releasing.md)。
+（`desktop/anonymous-usage.mjs`）；设置 `GRAVITYPORT_DISABLE_TELEMETRY=1`、QA 运行、未打包的
+开发壳和打包的开发版都不会发送。发布流程见 [docs/releasing.md](docs/releasing.md)。
 
 ## 5. 存储与媒体处理
 
