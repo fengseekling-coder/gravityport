@@ -637,3 +637,67 @@ for (const [name, createStore] of [
     );
   });
 }
+
+// Task 474: created_at has millisecond precision and event ids are hashes, so
+// an id tie-break returned same-millisecond events in hash order — about half
+// the time the reverse of how they were recorded.
+for (const [name, createStore] of [
+  ["JSON", (root) => createJsonAssetStore({ projectRoot: root, managerDir: join(root, "manager"), assetsRoot: join(root, "json-assets") })],
+  ["SQLite", (root) => createSqliteAssetStore({ projectRoot: root, managerDir: root, libraryDir: join(root, "sqlite-library"), initializeFreshLibrary: true })],
+]) {
+  test(`${name} store lists generation events that share a millisecond in the order they were recorded`, async (t) => {
+    const root = await mkdtemp(join(tmpdir(), `mosa-generation-order-${name.toLowerCase()}-`));
+    deferTestPathRemoval(root, { recursive: true, force: true });
+    let store;
+    t.after(async () => {
+      store?.close?.();
+    });
+    await mkdir(join(root, "input"), { recursive: true });
+    const imagePath = join(root, "input", "order.png");
+    await writeFile(imagePath, await pngBytes());
+    store = createStore(root);
+    await store.ensureProject("default");
+    const asset = await store.createAsset({ projectId: "default", assetId: "order-output", imagePath });
+
+    const sameInstant = "2026-11-25T12:00:00.000Z";
+    const record = (toolCallId, createdAt, extra = {}) => store.recordGenerationEvent({
+      project_id: "default",
+      output_asset_id: asset.id,
+      provider: "openai",
+      capture_context_id: "ctx-474",
+      provider_tool_call_id: toolCallId,
+      created_at: createdAt,
+      ...extra,
+    });
+    const list = async (filters = {}) => (await store.listGenerationEvents("default", {
+      assetId: asset.id,
+      captureContextId: "ctx-474",
+      ...filters,
+    })).map((event) => event.provider_tool_call_id);
+
+    const tied = Array.from({ length: 8 }, (_, index) => `call-474-${index + 1}`);
+    const recorded = [];
+    for (const toolCallId of tied) recorded.push(await record(toolCallId, sameInstant));
+    // The fixture must be able to tell the two tie-breaks apart: sorted by id,
+    // these eight events are not in recording order.
+    const recordedIds = recorded.map((event) => event.id);
+    assert.notDeepEqual([...recordedIds].sort(), recordedIds, "the ids happen to sort in recording order; pick other tool call ids");
+
+    assert.deepEqual(await list(), tied, "events of one millisecond come back as recorded");
+
+    // The timestamp still leads: recording order only decides ties.
+    await record("call-474-later", "2026-11-25T12:00:00.001Z");
+    await record("call-474-earlier", "2026-11-25T11:59:59.999Z");
+    const expected = ["call-474-earlier", ...tied, "call-474-later"];
+    assert.deepEqual(await list(), expected);
+
+    // Paging walks the same order without gaps or repeats.
+    const paged = [];
+    for (let offset = 0; offset < expected.length; offset += 3) paged.push(...await list({ limit: 3, offset }));
+    assert.deepEqual(paged, expected);
+
+    // Recording an event again (a replay of the same capture) keeps its place.
+    await record("call-474-2", sameInstant, { model: "gpt-image-1" });
+    assert.deepEqual(await list(), expected);
+  });
+}
