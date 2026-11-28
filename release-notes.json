@@ -1,8 +1,16 @@
 {
   "schema": 2,
   "unreleased": {
-    "zh": {},
-    "en": {}
+    "zh": {
+      "fixed": [
+        "固定侧栏与素材详情的标题行及侧栏底部的设置入口，内容较长时仅中间区域滚动。"
+      ]
+    },
+    "en": {
+      "fixed": [
+        "Kept the sidebar and asset details headers, and the settings entry at the bottom of the sidebar, in place so that only the content between them scrolls."
+      ]
+    }
   },
   "releases": [
     {

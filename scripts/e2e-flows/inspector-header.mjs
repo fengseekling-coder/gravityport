@@ -89,6 +89,10 @@ export async function run(ctx) {
     // header wrap in that Chinese UI.
     const wrap = await ctx.runInPage(server, wrapRoundSource(config));
     if (!(wrap?.narrowHeight > 0)) throw new Error(`inspector-header wrap round: no height ${JSON.stringify(wrap)}`);
+    const scroll = wrap.scroll || {};
+    if (scroll.panelScrollTop !== 0 || !(scroll.headingShift < 0.5) || scroll.closeButtonHit !== true || scroll.lastSectionVisible !== true) {
+      throw new Error(`inspector-header scroll round: the heading row must stay fixed while the details scroll ${JSON.stringify(scroll)}`);
+    }
     return { zhTagCount: zh.tagsA.length, enHeaderA: en.headerA, wrap };
   } finally {
     await server.stop();
@@ -236,8 +240,34 @@ ${PAGE_HELPERS}
     details.style.width = wideWidth;
     await sleep(100);
 
+    // The details scroll in their own region: with the panel squeezed short
+    // and scrolled to the end, the heading row (close button, window drag
+    // area) stays where it was and is still what the pointer hits.
+    const scroller = document.querySelector('.details > .details-scroll');
+    const heading = document.querySelector('.details > .detail-heading');
+    if (!scroller || !heading) throw new Error('details need a fixed .detail-heading and a .details-scroll region');
+    const closeButton = heading.querySelector('button');
+    const headingTopBefore = heading.getBoundingClientRect().top;
+    const fullHeight = details.style.height;
+    details.style.height = '240px';
+    await waitFor(() => scroller.scrollHeight > scroller.clientHeight + 40, 'details overflowing the squeezed panel');
+    scroller.scrollTop = scroller.scrollHeight;
+    await waitFor(() => scroller.scrollTop > 40, 'details scrolled to the end');
+    const buttonRect = closeButton.getBoundingClientRect();
+    const hit = document.elementFromPoint(buttonRect.left + buttonRect.width / 2, buttonRect.top + buttonRect.height / 2);
+    const last = scroller.lastElementChild.getBoundingClientRect();
+    const panel = details.getBoundingClientRect();
+    const scroll = {
+      scrolledBy: scroller.scrollTop,
+      panelScrollTop: details.scrollTop,
+      headingShift: Math.abs(heading.getBoundingClientRect().top - headingTopBefore),
+      closeButtonHit: closeButton.contains(hit),
+      lastSectionVisible: last.bottom <= panel.bottom + 0.5 && last.top >= heading.getBoundingClientRect().bottom - 0.5,
+    };
+    details.style.height = fullHeight;
+
     return { narrowHeight: narrowRect.height, narrowWidth: narrowRect.width, lineHeight,
-      wrapLines: Math.max(1, Math.round(narrowRect.height / lineHeight)) };
+      wrapLines: Math.max(1, Math.round(narrowRect.height / lineHeight)), scroll };
   })()
   `;
 }

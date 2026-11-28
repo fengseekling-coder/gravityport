@@ -5295,7 +5295,6 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
               notify={notify}
             />
           ) : asset ? (
-          <>
           <InspectorDetails
             asset={asset}
             language={language}
@@ -5343,7 +5342,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             recipeHistory={recipeHistory}
             assets={assets}
             inspectorFetchError={inspectorFetchError}
-          />
+          >
           <VersionSection
             asset={asset}
             selected={selected}
@@ -5383,7 +5382,7 @@ type LoadErrorState = { kind: "version-mismatch" } | { kind: "project-switch" } 
             <span title={asset.image_path || asset.image_url}>{assetPathTail ? `…/${assetPathTail}` : "—"}</span>
             <Icon name="external" size={12} />
           </button>
-          </>
+          </InspectorDetails>
           ) : null}
         </aside>
       )}
