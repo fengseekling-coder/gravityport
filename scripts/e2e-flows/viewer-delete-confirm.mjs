@@ -23,21 +23,19 @@ export const description = "real MCP process: asset_trash on the viewed asset ->
 
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
+import { copyFlowArtifact, writeFlowArtifact } from "./_artifacts.mjs";
 import { connectCdp, reloadCdpAndWaitForApp, waitForCdpExpression } from "./_cdp.mjs";
 import { PAGE_WAIT_SOURCE, pageWaitSource } from "./_shared.mjs";
 
 const DEVELOPMENT_ORIGIN = "chrome-extension://hjcildpmialbefmcdpdooenlojecjpli";
 const CAPTURE_TOKEN = "mosa_e2e_viewer_delete_capture_token";
-// Task 385: the two dialog screenshots land here (absolute, per the task
-// sheet); MOSA_E2E_SHOT_COPY_TO keeps a surviving copy when set.
-const SHOT_DIR = join(homedir(), "codex_aigc", "素材", "日志", "385-截图");
 
 // The MCP server runs with its own throwaway HOME and the flow's library —
 // the same isolation contract as test/helpers/mcp-server-harness.mjs.
@@ -347,11 +345,9 @@ async function captureDialogShot({ ctx, theme, cardId, mcp, serverEnv }) {
   let cdp = null;
   try {
     cdp = await connectCdp(cdpPort, "http://127.0.0.1").catch(async (error) => {
-      // Keep the shell's own log next to the screenshots: a failed CDP attach
+      // Keep the shell's own log with the screenshots: a failed CDP attach
       // without it is undiagnosable after the runner wipes the temp root.
-      const { copyFile } = await import("node:fs/promises");
-      await mkdir(SHOT_DIR, { recursive: true });
-      await copyFile(logFile, join(SHOT_DIR, `385-desktop-${theme}-main.log`)).catch(() => {});
+      await copyFlowArtifact(ctx, logFile, `385-desktop-${theme}-main.log`).catch(() => {});
       throw error;
     });
     await waitForCdpExpression(cdp, "Boolean(document.querySelector('.app'))", "app shell", 60000);
@@ -387,12 +383,9 @@ async function captureDialogShot({ ctx, theme, cardId, mcp, serverEnv }) {
     await sleep(500);
     const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
     if (!shot?.data) throw new Error(`Page.captureScreenshot returned no data for ${theme}`);
-    await mkdir(SHOT_DIR, { recursive: true });
     const fileName = theme === "dark" ? "385-授权确认框-深色.png" : "385-授权确认框-浅色.png";
     const data = Buffer.from(shot.data, "base64");
-    await writeFile(join(SHOT_DIR, fileName), data);
-    const copyTo = process.env.MOSA_E2E_SHOT_COPY_TO;
-    if (copyTo) await writeFile(join(copyTo, fileName), data).catch(() => {});
+    const file = await writeFlowArtifact(ctx, fileName, data);
     // Answer 不允许 so the MCP call resolves and the library stays untouched.
     await cdp.evaluate(`(() => {
       const deny = Array.from(document.querySelector('.authorization-modal').querySelectorAll('button'))
@@ -402,7 +395,7 @@ async function captureDialogShot({ ctx, theme, cardId, mcp, serverEnv }) {
     })()`);
     const answered = await call;
     if (answered.result?.isError !== true) throw new Error(`the screenshot round's deny did not answer: ${JSON.stringify(answered.result || answered.error).slice(0, 200)}`);
-    return { file: join(SHOT_DIR, fileName), bytes: data.length };
+    return { file, bytes: data.length };
   } finally {
     if (cdp) cdp.close();
     let pid = 0;

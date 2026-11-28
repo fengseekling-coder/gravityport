@@ -17,11 +17,12 @@
 // The renderer runs fully production code and cannot tell the doubles from
 // the real main process; a second reload makes the mount-time subscription
 // query the doubles.
-import { rm, readFile, writeFile } from "node:fs/promises";
+import { rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { writeFlowArtifact } from "./_artifacts.mjs";
 import { connectCdp, openCdpSession, prepareCdpReload, reloadCdpAndWaitForApp, waitFor } from "./_cdp.mjs";
 
 export const name = "sidebar-update-line";
@@ -145,8 +146,8 @@ export async function run(ctx) {
     await switchLanguage(cdp, "zh");
 
     // Screenshots for the task report (dark + light), row still idle.
-    screenshots.dark = await shotWithAppearance(cdp, ctx.fixturesDir, "253-dark.png", "深色");
-    screenshots.light = await shotWithAppearance(cdp, ctx.fixturesDir, "253-light.png", "浅色");
+    screenshots.dark = await shotWithAppearance(cdp, ctx, "253-dark.png", "深色");
+    screenshots.light = await shotWithAppearance(cdp, ctx, "253-light.png", "浅色");
 
     // Round 3 (click): install called exactly once, the row disables and reads
     // 正在更新…, and the cursor is no longer a pointer.
@@ -366,7 +367,7 @@ async function switchLanguage(cdp, target) {
 
 // Persist the wanted appearance, reload, and wait until the app picked it up
 // before capturing the window (the screenshots ride the flow's fixtures dir).
-async function shotWithAppearance(cdp, dir, fileName, appearance) {
+async function shotWithAppearance(cdp, ctx, fileName, appearance) {
   await setPreferences(cdp, { appearance });
   await reloadAndSettle(cdp);
   await waitFor(cdp, "Boolean(document.querySelector('.update-ready-line'))", `update-ready line (${appearance})`);
@@ -379,13 +380,7 @@ async function shotWithAppearance(cdp, dir, fileName, appearance) {
     `${appearance} theme applied`,
   );
   const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
-  const filePath = join(dir, fileName);
-  await writeFile(filePath, Buffer.from(shot.data, "base64"));
-  // The runner wipes its temp root (screenshots included) when it exits, so a
-  // report consumer can name a surviving copy directory for this run.
-  const copyTo = process.env.MOSA_E2E_SHOT_COPY_TO;
-  if (copyTo) await writeFile(join(copyTo, fileName), Buffer.from(shot.data, "base64")).catch(() => {});
-  return filePath;
+  return writeFlowArtifact(ctx, fileName, Buffer.from(shot.data, "base64"));
 }
 
 async function setPreferences(cdp, overrides) {

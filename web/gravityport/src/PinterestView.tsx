@@ -342,6 +342,7 @@ export function PinterestPinDetail({ language, pin, onOpen, onOpenViewer, viewer
           </button>
         ) : null}
       </div>
+      <div className="details-scroll">
       <div className="asset-summary">
         <button type="button" className="summary-image" aria-label={t("在查看器中打开")} onClick={onOpenViewer}>
           {thumbUrl ? (
@@ -387,6 +388,7 @@ export function PinterestPinDetail({ language, pin, onOpen, onOpenViewer, viewer
         ) : null}
         {openFailed ? <p className="pinterest-error-text">{t("无法打开链接")}</p> : null}
       </section>
+      </div>
     </>
   );
 }

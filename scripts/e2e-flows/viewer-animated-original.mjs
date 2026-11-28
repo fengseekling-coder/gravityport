@@ -8,17 +8,13 @@
 // The desktop shell is the only instance reachable over CDP (the web-driver
 // window has no debugging port); quiet QA mode renders it hidden with
 // background throttling off (task 325/346), so the GIF keeps animating.
-import { homedir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { runDesktopShell } from "./_animated-desktop.mjs";
-
-// The task's screenshot destination (素材/日志 inside the codex_aigc tree);
-// built from homedir() so no user name lands in the source.
-const FRAME_LOG_DIR = join(homedir(), "codex_aigc", "素材", "日志");
+import { flowArtifactDir } from "./_artifacts.mjs";
 
 export const name = "viewer-animated-original";
-export const description = "414x414 two-frame GIF: viewer shows the still preview, swaps to the /images/ original, and a later viewer-region screenshot (retried at uneven gaps over ~1.5s) differs from the first (log dir PNGs)";
+export const description = "414x414 two-frame GIF: viewer shows the still preview, swaps to the /images/ original, and a later viewer-region screenshot (retried at uneven gaps over ~1.5s) differs from the first (flow artifact PNGs)";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -48,14 +44,53 @@ export async function run(ctx) {
     await server.stop();
     serverRunning = false;
 
+    // captureRect writes flow artifacts by file name; the pixel comparison
+    // below reads them back from the run's artifact directory.
+    const shotNames = { first: "412-viewer-frame-1.png", second: "412-viewer-frame-2.png" };
     const shots = {
-      first: join(FRAME_LOG_DIR, "412-viewer-frame-1.png"),
-      second: join(FRAME_LOG_DIR, "412-viewer-frame-2.png"),
+      first: join(flowArtifactDir(ctx), shotNames.first),
+      second: join(flowArtifactDir(ctx), shotNames.second),
     };
     const result = await runDesktopShell(ctx, async ({ evaluate, waitForValue, sleep, doubleClick, pointOf, captureRect }) => {
       await waitForValue(`document.querySelectorAll('.asset-card').length >= 1`, "the seeded GIF card");
-      await doubleClick(await pointOf('.asset-card[data-asset-id]'));
-      await waitForValue(`Boolean(document.querySelector('.image-viewer img.viewer-image'))`, "the viewer image");
+      // The shell has only just started, and a double-click that lands while
+      // the first screen is still settling can be lost. Opening the viewer is
+      // the setup here, not the subject, so it gets a bounded retry — and a
+      // record of what the page saw, so a lost double-click is explained in
+      // the log instead of surfacing as a bare 30s timeout.
+      await evaluate(`(() => {
+        window.__e2eOpenEvents = [];
+        for (const type of ['mousedown', 'click', 'dblclick']) {
+          document.addEventListener(type, (event) => {
+            const target = event.target instanceof Element ? event.target : null;
+            const where = target?.closest('.asset-card') ? 'card' : (target?.className || target?.tagName || 'unknown');
+            window.__e2eOpenEvents.push(type + '@' + String(where).slice(0, 40));
+          }, true);
+        }
+        return true;
+      })()`);
+      const viewerOpen = `Boolean(document.querySelector('.image-viewer img.viewer-image'))`;
+      let opened = false;
+      for (let attempt = 1; attempt <= 4 && !opened; attempt += 1) {
+        await doubleClick(await pointOf('.asset-card[data-asset-id]'));
+        opened = Boolean(await waitForValue(viewerOpen, "the viewer image", 6000).catch(() => false));
+        if (opened) break;
+        const scene = await evaluate(`(() => {
+          const events = window.__e2eOpenEvents.splice(0);
+          const card = document.querySelector('.asset-card[data-asset-id]');
+          const rect = card?.getBoundingClientRect();
+          return JSON.stringify({
+            events,
+            card: rect ? [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)] : null,
+            selected: document.querySelectorAll('.asset-card.asset-selected').length,
+            details: Boolean(document.querySelector('.details')),
+            dialogs: Array.from(document.querySelectorAll('dialog[open], .modal-layer')).map((el) => el.className || el.tagName),
+            viewport: [innerWidth, innerHeight],
+          });
+        })()`).catch((error) => `scene unavailable: ${error.message}`);
+        console.log(`[e2e] viewer-animated-original double-click ${attempt} did not open the viewer: ${scene}`);
+      }
+      if (!opened) await waitForValue(viewerOpen, "the viewer image", 1000);
       await waitForValue(`(() => {
         const media = document.querySelector('.image-viewer img.viewer-image');
         return media.complete && media.naturalWidth > 0;
@@ -82,13 +117,13 @@ export async function run(ctx) {
       // 50ms of a frame (~40% of runs — CI hit it on PR #348). Keep capturing
       // the second shot at short, uneven gaps until it differs, for up to ~1.5s
       // (several full cycles); a GIF that is really frozen never differs.
-      await captureRect(rect, shots.first);
+      await captureRect(rect, shotNames.first);
       const firstRaw = await sharp(shots.first).raw().toBuffer();
       let attempts = 0;
       for (const gap of [90, 70, 110, 90, 130, 70, 110, 150, 90, 130, 170, 110]) {
         attempts += 1;
         await sleep(gap);
-        await captureRect(rect, shots.second);
+        await captureRect(rect, shotNames.second);
         const secondRaw = await sharp(shots.second).raw().toBuffer();
         if (secondRaw.length !== firstRaw.length || !secondRaw.equals(firstRaw)) break;
       }

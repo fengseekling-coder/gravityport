@@ -233,3 +233,149 @@ test("the same media id as /asb/ and as a redirect URL is captured once", async 
   assert.equal(messagesOf(harness, "mosa.ingest").length, 1, "the media is not captured twice");
   assert.deepEqual([...harness.state.seen], [`flow-media:${MEDIA_ID}`]);
 });
+
+// ---- Manual save (right-click) on the new grid: issue #363 ----
+// The context menu hands over the rendered src, which on the new grid is the
+// same-origin /asb/… address. Automatic capture keeps refusing that address
+// (thumbnail bytes); a manual save resolves it against the clicked element.
+
+const manualSave = (harness, imageUrl) => harness.dispatchRuntimeMessage({
+  type: "mosa.capture.saveImageWithPrompt",
+  imageUrl,
+});
+
+test("manual save of a grid tile archives the original through the redirect endpoint", async () => {
+  const harness = await createProviderSitesHarness({ autoCapture: false, ...FLOW });
+  const tile = newGridTileImage();
+  mountGridTile(harness, tile);
+  await harness.flush();
+
+  const response = await manualSave(harness, tile.src);
+  assert.equal(response?.ok, true, "the save is accepted");
+  const probe = messagesOf(harness, "mosa.probeFlowMedia")[0];
+  assert.equal(probe?.message?.url, flowFxRedirectUrl(MEDIA_ID), "the original is looked up by media id");
+  const payload = messagesOf(harness, "mosa.ingest")[0]?.message?.payload;
+  assert.ok(payload, "the tile is archived");
+  assert.equal(payload.captureMode, "manual");
+  assert.equal(payload.mediaKind, "image");
+  assert.equal(payload.imageUrl, flowFxRedirectUrl(MEDIA_ID), "the archived bytes are the original, not the thumbnail");
+  assert.equal(payload.localMediaIdentity, flowFxRedirectUrl(MEDIA_ID), "the identity matches automatic capture, so one image is stored once");
+});
+
+test("manual save of a grid tile keeps its visible Prompt card", async () => {
+  const harness = await createProviderSitesHarness({ autoCapture: false, ...FLOW });
+  const tile = newGridTileImage();
+  const grid = mountGridTile(harness, tile);
+  const card = harness.document.createElement("div");
+  card.appendChild(textNode("A cabin in the woods"));
+  grid.appendChild(card);
+  await harness.flush();
+
+  await manualSave(harness, tile.src);
+  const payload = messagesOf(harness, "mosa.ingest")[0]?.message?.payload;
+  assert.equal(payload?.prompt, "A cabin in the woods");
+  assert.equal(payload?.promptSource, "flow-visible-prompt");
+});
+
+test("manual save of a video tile archives the video the tile stands for", async () => {
+  const videoUrl = "https://flow-content.google/video/generated-1.mp4";
+  const harness = await createProviderSitesHarness({
+    autoCapture: false,
+    ...FLOW,
+    probeFlowMedia: { ok: true, result: { mediaKind: "video", mediaUrl: videoUrl, mimeType: "video/mp4" } },
+  });
+  const tile = newGridTileImage();
+  mountGridTile(harness, tile);
+  await harness.flush();
+
+  const response = await manualSave(harness, tile.src);
+  assert.equal(response?.ok, true);
+  const payload = messagesOf(harness, "mosa.ingest")[0]?.message?.payload;
+  assert.equal(payload?.mediaKind, "video");
+  assert.equal(payload?.mediaUrl, videoUrl);
+  assert.equal(payload?.captureMode, "manual");
+  assert.equal(payload?.imageUrl, undefined, "the poster thumbnail is not archived as an image");
+});
+
+test("manual save of a grid tile whose original cannot be reached saves nothing", async () => {
+  const harness = await createProviderSitesHarness({
+    autoCapture: false,
+    ...FLOW,
+    probeFlowMedia: { ok: false, error: "Flow media probe failed (503)" },
+  });
+  const tile = newGridTileImage();
+  mountGridTile(harness, tile);
+  await harness.flush();
+
+  const response = await manualSave(harness, tile.src);
+  assert.equal(response?.ok, false);
+  assert.equal(response?.error, "无法保存：未获取到原图，请稍后重试");
+  assert.equal(messagesOf(harness, "mosa.ingest").length, 0, "the thumbnail never stands in for the original");
+});
+
+test("manual save of an enlarged /asb/ preview without a media id archives the image on screen", async () => {
+  const harness = await createProviderSitesHarness({ autoCapture: false, ...FLOW });
+  const previewUrl = `${asbThumbnailUrl("ANqvLO-token-preview")}=s0`;
+  const preview = new FakeProviderImage({
+    src: previewUrl,
+    naturalWidth: 1478,
+    naturalHeight: 3200,
+    rect: visibleRect(370, 800),
+  });
+  harness.document.body.appendChild(preview);
+  harness.document.images.push(preview);
+  await harness.flush();
+
+  const response = await manualSave(harness, previewUrl);
+  assert.equal(response?.ok, true);
+  assert.equal(messagesOf(harness, "mosa.probeFlowMedia").length, 0, "there is no media id to look up");
+  const payload = messagesOf(harness, "mosa.ingest")[0]?.message?.payload;
+  assert.equal(payload?.imageUrl, previewUrl);
+  assert.equal(payload?.localMediaIdentity, previewUrl);
+  assert.equal(payload?.captureMode, "manual");
+  assert.equal(payload?.width, 1478);
+  assert.equal(payload?.height, 3200);
+});
+
+test("manual save refuses /asb/ addresses that are thumbnails, off-origin, or not on the page", async () => {
+  const rejection = "无法保存：请在支持的网站上选择生成的图片";
+  const harness = await createProviderSitesHarness({ autoCapture: false, ...FLOW });
+  // A thumbnail-sized /asb/ image with no usable media id.
+  const bare = newGridTileImage({ src: asbThumbnailUrl("token-bare"), attrs: { "data-media-id": "../x" } });
+  mountGridTile(harness, bare);
+  // A foreign host that merely copies the path shape.
+  const foreign = new FakeProviderImage({ src: "https://cdn.example.com/asb/token-foreign=s0", naturalWidth: 2048, naturalHeight: 2048, rect: visibleRect() });
+  harness.document.body.appendChild(foreign);
+  harness.document.images.push(foreign);
+  await harness.flush();
+
+  for (const imageUrl of [bare.src, foreign.src, `${asbThumbnailUrl("token-not-rendered")}=s0`, "https://flow.google.com/asb/"]) {
+    const response = await manualSave(harness, imageUrl);
+    assert.equal(response?.ok, false, imageUrl);
+    assert.equal(response?.error, rejection, imageUrl);
+  }
+  assert.equal(messagesOf(harness, "mosa.probeFlowMedia").length, 0);
+  assert.equal(messagesOf(harness, "mosa.ingest").length, 0);
+});
+
+test("automatic capture still ignores an enlarged /asb/ preview without a media id", async () => {
+  const harness = await createProviderSitesHarness({ autoCapture: true, ...FLOW });
+  const grid = mountGridTile(harness, newGridTileImage());
+  const preview = new FakeProviderImage({
+    src: `${asbThumbnailUrl("ANqvLO-token-preview")}=s0`,
+    naturalWidth: 1478,
+    naturalHeight: 3200,
+    rect: visibleRect(370, 800),
+  });
+  grid.appendChild(preview);
+  harness.document.images.push(preview);
+  const card = harness.document.createElement("div");
+  card.appendChild(textNode("A cabin in the woods"));
+  grid.appendChild(card);
+  await harness.flush();
+  await runScan(harness);
+
+  const ingests = messagesOf(harness, "mosa.ingest");
+  assert.equal(ingests.length, 1, "only the tile is captured; its preview would store the same image twice");
+  assert.equal(ingests[0].message.payload.imageUrl, flowFxRedirectUrl(MEDIA_ID));
+});

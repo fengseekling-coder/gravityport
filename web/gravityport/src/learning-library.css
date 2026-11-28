@@ -136,10 +136,6 @@
 }
 
 /* ── 「手册」页签整体：上方可滚动（手册 + 记录），底部固定操作区 ── */
-.app .details:has(> .learn-library-panel) {
-  overflow: hidden;
-  padding-bottom: 0;
-}
 .app .details > .learn-library-panel {
   flex: 1 1 0;
   min-height: 0;

@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import sharp from "sharp";
+import { writeFlowArtifact } from "./_artifacts.mjs";
 import { connectCdp, waitForCdpExpression } from "./_cdp.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { signalProcessTree } from "../process-tree.mjs";
@@ -33,7 +34,6 @@ export const name = "settings-bridge-status";
 export const description = "codex/grok bridges live on a temp root: grok missing dir -> 未找到生图记录, codex png import -> 正在收录 · 最近收到; chmod 000 -> 无法收录 + permission reason + 复制详细信息 carries EACCES (stubbed clipboard) + light/dark screenshots; chmod back -> 正在收录 again";
 
 const QA_FLAGS = process.platform === "win32" ? ["--disable-gpu"] : [];
-// Screenshots are flow artifacts and land in tasks/logs/bridge-status/ only.
 
 export async function run(ctx) {
   // The failure rounds inject EACCES with chmod 000 on the Codex images
@@ -51,12 +51,10 @@ export async function run(ctx) {
   const codexSessionsDir = join(root, "codex", "sessions");
   const grokSessionsDir = join(root, "grok", "sessions");
   const windowUserData = join(root, "window-user-data");
-  const shotsDir = join(ctx.rootDir, "tasks", "logs", "bridge-status");
   await mkdir(join(codexSessionsDir, "2026", "11", "20"), { recursive: true });
   // Codex is "installed": its images root exists before the bridge starts (the bridge no longer creates it).
   await mkdir(codexImagesDir, { recursive: true });
   await mkdir(windowUserData, { recursive: true });
-  await mkdir(shotsDir, { recursive: true });
   try {
     const server = await ctx.startServer({
       env: {
@@ -82,7 +80,7 @@ export async function run(ctx) {
       await waitForBridgeStatus(server.origin, ctx.api, (status) => Boolean(status.codex?.lastImportedAt),
         "codex imports the png");
 
-      const round = await runWindowRound(ctx, server, { codexSessionsDir, codexImagesDir, windowUserData, shotsDir });
+      const round = await runWindowRound(ctx, server, { codexSessionsDir, codexImagesDir, windowUserData });
       return { tempRoot: root, ...round };
     } finally {
       await server.stop();
@@ -95,7 +93,7 @@ export async function run(ctx) {
   }
 }
 
-async function runWindowRound(ctx, server, { codexSessionsDir, codexImagesDir, windowUserData, shotsDir }) {
+async function runWindowRound(ctx, server, { codexSessionsDir, codexImagesDir, windowUserData }) {
   const electronBinary = ensureElectronExecutablePath({ rootDir: ctx.rootDir });
   const cdpPort = await freePort();
   const windowUrl = `${server.origin}/#mosa-client-token=${encodeURIComponent(ctx.token)}`;
@@ -176,8 +174,7 @@ async function runWindowRound(ctx, server, { codexSessionsDir, codexImagesDir, w
     await cdp.evaluate(`document.querySelector('.bridge-status-card').scrollIntoView({ block: 'center' })`);
     await sleep(300);
     const lightShot = Buffer.from((await cdp.send("Page.captureScreenshot", { format: "png" })).data, "base64");
-    const lightPath = join(shotsDir, "452-card-error.png");
-    await writeFile(lightPath, lightShot);
+    const lightPath = await writeFlowArtifact(ctx, "452-card-error.png", lightShot);
 
     await switchAppearanceAndBack(cdp, "深色");
     await waitForCdpExpression(cdp, badgeOfRow("Codex"), "codex 无法收录 badge (dark)", {
@@ -186,8 +183,7 @@ async function runWindowRound(ctx, server, { codexSessionsDir, codexImagesDir, w
     await cdp.evaluate(`document.querySelector('.bridge-status-card').scrollIntoView({ block: 'center' })`);
     await sleep(300);
     const darkShot = Buffer.from((await cdp.send("Page.captureScreenshot", { format: "png" })).data, "base64");
-    const darkPath = join(shotsDir, "452-card-error-dark.png");
-    await writeFile(darkPath, darkShot);
+    const darkPath = await writeFlowArtifact(ctx, "452-card-error-dark.png", darkShot);
 
     // 恢复权限后卡片回到 正在收录。
     await chmodCodexImages(codexImagesDir, 0o755);

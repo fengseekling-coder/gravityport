@@ -58,6 +58,8 @@ export type InspectorDetailsProps = {
   recipeHistory: MosaRecipeHistory | null | undefined
   assets: MosaAsset[]
   inspectorFetchError: { versions: boolean; history: boolean; recipes: boolean }
+  /** Further sections of the same asset; they scroll with the rest of the details. */
+  children?: React.ReactNode
 }
 
 export function InspectorDetails(props: InspectorDetailsProps) {
@@ -102,6 +104,8 @@ export function InspectorDetails(props: InspectorDetailsProps) {
               <Icon name="inspector" size={16} />
             </button>
           </div>
+          {/* 标题行固定在上面，下面这一段自己滚动（DESIGN.md「详情栏」）。 */}
+          <div className="details-scroll">
           <div className="asset-summary">
             <button className="summary-image" aria-label={tr("在查看器中打开")} onClick={() => setPreview(true)}>{asset.thumbnail_url ? <ThumbMedia src={asset.thumbnail_url} motionSrc={asset.mediaKind === "video" || asset.animated ? asset.image_url : undefined} motionKind={asset.mediaKind === "video" ? "video" : asset.animated ? "image" : undefined} alt="" /> : null}{(asset.mediaKind === "video" || asset.animated) && <VideoMark />}<Icon name="expand" /></button>
             <div className="asset-meta">
@@ -348,6 +352,8 @@ export function InspectorDetails(props: InspectorDetailsProps) {
               </div>}
             </section>
           })()}
+          {props.children}
+          </div>
     </>
   )
 }

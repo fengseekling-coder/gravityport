@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
+import { writeFlowArtifact } from "./_artifacts.mjs";
 import { connectCdp, reloadCdpAndWaitForApp, waitForCdpExpression } from "./_cdp.mjs";
 
 export const name = "trash-reclaimable-size";
@@ -233,7 +234,6 @@ async function runDesktopPhase(ctx, ids) {
   });
 
   let cdp = null;
-  const shotsDir = await screenshotDir(ctx);
   const written = [];
   try {
     await waitForHealthFile(healthFile);
@@ -268,14 +268,7 @@ async function runDesktopPhase(ctx, ids) {
     const capture = async (filename) => {
       const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
       if (!shot?.data) throw new Error(`Page.captureScreenshot returned no data for ${filename}`);
-      const path = join(shotsDir, filename);
-      await writeFile(path, Buffer.from(shot.data, "base64"));
-      written.push(path);
-      const copyTo = process.env.MOSA_E2E_SHOT_COPY_TO;
-      if (copyTo) {
-        await mkdir(copyTo, { recursive: true });
-        await writeFile(join(copyTo, filename), Buffer.from(shot.data, "base64"));
-      }
+      written.push(await writeFlowArtifact(ctx, filename, Buffer.from(shot.data, "base64")));
     };
     const clickButton = (label, scope) => evaluate(`(() => {
       const root = ${JSON.stringify(scope)} ? document.querySelector(${JSON.stringify(scope)}) : document;
@@ -384,15 +377,6 @@ async function runDesktopPhase(ctx, ids) {
     }
     await rm(guiRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 }).catch(() => {});
   }
-}
-
-async function screenshotDir(ctx) {
-  // Screenshots are task-report artifacts, not repo files: write into the
-  // runner's temp fixtures and let MOSA_E2E_SHOT_COPY_TO name a surviving
-  // directory (the task run sets it to the report's log directory).
-  const fallback = join(ctx.fixturesDir, "screenshots");
-  await mkdir(fallback, { recursive: true });
-  return fallback;
 }
 
 async function waitForHealthFile(filePath, timeoutMs = 60000) {

@@ -1,7 +1,27 @@
 
 .app .details {
-  scrollbar-gutter: stable;
+  /* 详情栏分两段：顶部 56px 标题行（学习库视图再多一行页签）固定，下面的
+     .details-scroll 滚动。整栏一起滚的话，收起按钮和窗口拖动区域会被滚走。
+     左右内边距放在各段自己身上，滚动条才能贴着栏的右边缘。 */
+  --details-pad: var(--space-4);
+  padding: 0;
+  overflow: hidden;
 }.app .details > * {
+  flex-shrink: 0;
+}.app .details > :is(.detail-heading, .learn-library-tabs, .learn-library-panel, .details-scroll) {
+  /* overflow: hidden 的几段也按 stable 留滚动条槽：右边缘与滚动区对齐。 */
+  padding-inline: var(--details-pad);
+  scrollbar-gutter: stable;
+}.app .details > :is(.detail-heading, .learn-library-tabs) {
+  overflow: hidden;
+}.app .details > .details-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--details-pad);
+  overflow-y: auto;
+}.app .details-scroll > * {
   flex-shrink: 0;
 }.app .detail-heading {
   height: var(--space-14);

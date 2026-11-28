@@ -50,6 +50,8 @@
   const AI_STUDIO_REF_MAX_PER_BLOCK = 8;
   const AI_STUDIO_REF_BLOCKS_MAX = 64;
   const MIN_EDGE = 512;
+  // Flow grid tiles are admitted by media id, so their floor is the tile size.
+  const FLOW_TILE_MIN_EDGE = 128;
   const MIN_VISIBLE_AREA = 96 * 96;
   const CAPTURE_CONCURRENCY = 2;
   const MAX_LOCAL_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -272,11 +274,13 @@ function friendlyCaptureError(message) {
     return "";
   }
 
-  function isVisibleFlowMediaThumbnail(img) {
-    if (!(img instanceof HTMLImageElement) || !img.complete || !flowMediaIdFromImage(img)) return false;
+  // A loaded image of at least minEdge natural pixels on both sides that is
+  // actually on screen. The callers add their own source rule on top.
+  function isVisibleLoadedImage(img, minEdge) {
+    if (!(img instanceof HTMLImageElement) || !img.complete) return false;
     const width = Number(img.naturalWidth || img.width || 0);
     const height = Number(img.naturalHeight || img.height || 0);
-    if (width < 128 || height < 128) return false;
+    if (width < minEdge || height < minEdge) return false;
     const rect = img.getBoundingClientRect?.();
     if (!rect || rect.width < 1 || rect.height < 1) return false;
     if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) return false;
@@ -284,6 +288,10 @@ function friendlyCaptureError(message) {
       * Math.max(0, Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0)) < MIN_VISIBLE_AREA) return false;
     const style = getComputedStyle(img);
     return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0;
+  }
+
+  function isVisibleFlowMediaThumbnail(img) {
+    return isVisibleLoadedImage(img, FLOW_TILE_MIN_EDGE) && Boolean(flowMediaIdFromImage(img));
   }
 
   // Flow media tiles enter through the redirect-thumbnail channel with a
@@ -954,18 +962,7 @@ function friendlyCaptureError(message) {
   }
 
   function isVisibleGeneratedImage(img) {
-    if (!(img instanceof HTMLImageElement) || !img.complete) return false;
-    const width = Number(img.naturalWidth || img.width || 0);
-    const height = Number(img.naturalHeight || img.height || 0);
-    if (width < MIN_EDGE || height < MIN_EDGE) return false;
-    const rect = img.getBoundingClientRect?.();
-    if (!rect || rect.width < 1 || rect.height < 1) return false;
-    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) return false;
-    if (Math.max(0, Math.min(rect.right, innerWidth) - Math.max(rect.left, 0))
-      * Math.max(0, Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0)) < MIN_VISIBLE_AREA) return false;
-    const style = getComputedStyle(img);
-    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
-    return Boolean(imageSourceFor(img));
+    return isVisibleLoadedImage(img, MIN_EDGE) && Boolean(imageSourceFor(img));
   }
 
   function isVisibleGeneratedVideo(video) {
@@ -1261,6 +1258,62 @@ function friendlyCaptureError(message) {
     }
   }
 
+  // Right-click hands over the rendered src. On Flow's new grid that is the
+  // same-origin /asb/… address, which imageSource() rejects on purpose so
+  // that automatic capture never archives thumbnail bytes. A manual save is
+  // resolved here instead, against the one element the user pointed at.
+  function flowAsbImageHref(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      const url = new URL(raw, location.href);
+      return url.protocol === "https:" && url.origin === location.origin && url.pathname.length > "/asb/".length && url.pathname.startsWith("/asb/")
+        ? url.href
+        : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function flowAsbImageFor(value) {
+    if (currentProvider() !== "flow") return null;
+    const href = flowAsbImageHref(value);
+    if (!href) return null;
+    return Array.from(document.images || []).find((candidate) => (
+      flowAsbImageHref(candidate.currentSrc) === href || flowAsbImageHref(candidate.src) === href
+    )) || null;
+  }
+
+  // A tile with a media id is saved as its original through the redirect
+  // endpoint, exactly like automatic capture (a video tile saves the video).
+  // An /asb/ image without an id — the enlarged preview — has no original to
+  // ask for, so the image on screen is saved as it is; the generic 512px
+  // floor keeps bare thumbnails out.
+  async function saveFlowAsbImage(img) {
+    const rejection = "无法保存：请在支持的网站上选择生成的图片";
+    const mediaId = flowTileMediaId(img);
+    if (!mediaId) {
+      const href = flowAsbImageHref(img.currentSrc) || flowAsbImageHref(img.src);
+      if (!href || !isVisibleLoadedImage(img, MIN_EDGE)) return { ok: false, error: rejection };
+      const { response } = await sendCapture("flow", { kind: "local", url: href }, img, { captureMode: "manual" });
+      return response || { ok: true };
+    }
+    if (!isVisibleFlowMediaThumbnail(img)) return { ok: false, error: rejection };
+    const source = { kind: "local", url: flowMediaRedirectUrl(mediaId) };
+    const probeResponse = await chrome.runtime.sendMessage({ type: "mosa.probeFlowMedia", url: source.url });
+    const probe = probeResponse?.ok ? probeResponse.result : null;
+    if (probe?.mediaKind === "video" && probe.mediaUrl) {
+      const videoSource = { kind: "remote", url: probe.mediaUrl, mimeType: probe.mimeType || "video/mp4" };
+      const { response } = await sendCapture("flow", videoSource, img, { captureMode: "manual", mediaKind: "video", trustMediaMetrics: false });
+      return response || { ok: true };
+    }
+    if (probe?.mediaKind === "image") {
+      const { response } = await sendCapture("flow", source, img, { captureMode: "manual" });
+      return response || { ok: true };
+    }
+    return { ok: false, error: "无法保存：未获取到原图，请稍后重试" };
+  }
+
   function rememberAiStudioSentOutput(generationContextId, source, media, mediaKind, providerPrompt, referenceCountAtSend) {
     const video = mediaKind === "video";
     const entry = {
@@ -1535,6 +1588,20 @@ function friendlyCaptureError(message) {
     ].includes(message.type)) return false;
     const provider = currentProvider();
     const videoRequest = message.type === "mosa.capture.saveVideoWithPrompt";
+    const flowAsbImage = videoRequest ? null : flowAsbImageFor(message.imageUrl);
+    if (flowAsbImage) {
+      saveFlowAsbImage(flowAsbImage)
+        .then((finalResponse) => {
+          showToast(finalResponse.ok ? "已保存到 GravityPort" : friendlyCaptureError(finalResponse.error || "无法保存"), !finalResponse.ok);
+          sendResponse(finalResponse);
+        })
+        .catch((error) => {
+          const errorText = friendlyCaptureError(error instanceof Error ? error.message : String(error));
+          showToast(errorText, true);
+          sendResponse({ ok: false, error: errorText });
+        });
+      return true;
+    }
     const source = videoRequest ? videoSource(message.videoUrl) : imageSource(message.imageUrl);
     const media = source ? (videoRequest ? videoForSource(source.url) : imageForSource(source.url)) : null;
     const valid = videoRequest

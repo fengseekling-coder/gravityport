@@ -11,15 +11,16 @@
 // Desktop-shell round (task 310): the extension reports a nearly-full offline
 // queue (storageBytes ≥ 90%, evicted > 0, urlOnly > 0) and the card must show
 // the three storage hint lines; after a clean report none of them may remain.
-// A CDP screenshot of the hinted card is saved to tasks/logs/310-card.png.
+// A CDP screenshot of the hinted card is kept as the flow artifact 310-card.png.
 import { createServer } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import sharp from "sharp";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
 import { signalProcessTree } from "../process-tree.mjs";
+import { writeFlowArtifact } from "./_artifacts.mjs";
 import { connectCdp, waitForRendererReady } from "./_cdp.mjs";
 import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
 
@@ -107,7 +108,9 @@ async function runDesktopHintRound(ctx) {
   // One dir per round: a reused dir would serve stale health/pid files from a
   // previous crashed round and a leftover launcher process would keep Launch
   // Services from starting the new bundle instance.
-  const runDir = join(ctx.rootDir, "tasks", "logs", `extension-card-desktop-run-${process.pid}-${Date.now().toString(36)}`);
+  // It lives in the run's temp root, never in the repository. The directory
+  // name is what stopLeftoverDesktopLaunchers matches, so it stays distinctive.
+  const runDir = join(ctx.userDataDir, "..", `extension-card-desktop-run-${process.pid}-${Date.now().toString(36)}`);
   await stopLeftoverDesktopLaunchers();
   const userDataDir = join(runDir, "user-data");
   const libraryDir = join(runDir, "library");
@@ -116,7 +119,6 @@ async function runDesktopHintRound(ctx) {
     mkdir(userDataDir, { recursive: true }),
     mkdir(libraryDir, { recursive: true }),
     mkdir(codexDir, { recursive: true }),
-    mkdir(join(ctx.rootDir, "tasks", "logs"), { recursive: true }),
   ]);
   if (ciLikeConfig(process.env).enabled) writeCiLikeWindowBounds(userDataDir);
   const pidFile = join(runDir, "pid.txt");
@@ -174,12 +176,11 @@ async function runDesktopHintRound(ctx) {
     if (problems.length) throw new Error(`extension-status-card desktop hints: ${problems.join("; ")}`);
 
     const screenshot = await cdp.send("Page.captureScreenshot", { format: "png" });
-    const screenshotPath = join(ctx.rootDir, "tasks", "logs", "310-card.png");
-    await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
+    const screenshotPath = await writeFlowArtifact(ctx, "310-card.png", Buffer.from(screenshot.data, "base64"));
 
     const cleaned = await cdp.evaluate(desktopPageSource(CAPTURE_TOKEN, "clean"));
     if (cleaned?.hintsGone !== true) throw new Error("extension-status-card desktop: storage hints did not hide after the clean report");
-    return { hinted: true, hintsGone: true, screenshot: "tasks/logs/310-card.png" };
+    return { hinted: true, hintsGone: true, screenshot: screenshotPath };
   } finally {
     cdp?.close();
     if (pid) await stopPid(pid);
@@ -388,7 +389,7 @@ async function waitForHealthFile(filePath, timeoutMs = 60000) {
 }
 
 // Only this flow's own leftovers are matched: the launcher executable inside
-// this flow's tasks/logs marker directory. Started by earlier rounds of this
+// this flow's extension-card-desktop-run marker directory. Started by earlier rounds of this
 // same flow on this machine, so killing them stays within "only your own".
 async function stopLeftoverDesktopLaunchers() {
   const { execFile } = await import("node:child_process");

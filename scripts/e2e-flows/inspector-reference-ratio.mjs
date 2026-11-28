@@ -9,11 +9,12 @@
 //   object-fit: contain (whole image visible, never distorted).
 // - Hidden web-driver windows never paint, so the task-report screenshot runs
 //   against the real desktop shell via CDP (the viewer-video-controls way).
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { writeFlowArtifact } from "./_artifacts.mjs";
 import { clickCenter, connectCdp } from "./_cdp.mjs";
 import { PAGE_WAIT_SOURCE } from "./_shared.mjs";
 
@@ -166,23 +167,6 @@ ${PAGE_WAIT_SOURCE}
   `;
 }
 
-// The screenshot lands in ../../tasks/logs next to the worktree (never inside
-// the repo); if that path is unwritable the run root still gets a copy so the
-// failure report can name a file.
-async function screenshotDir(ctx) {
-  const preferred = join(ctx.rootDir, "..", "tasks", "logs");
-  try {
-    await mkdir(preferred, { recursive: true });
-    await writeFile(join(preferred, ".probe"), "");
-    await rm(join(preferred, ".probe"), { force: true });
-    return preferred;
-  } catch {
-    const fallback = join(ctx.fixturesDir, "screenshots");
-    await mkdir(fallback, { recursive: true });
-    return fallback;
-  }
-}
-
 async function runDesktopPhase(ctx) {
   const guiRoot = join(ctx.userDataDir, "..", "desktop-gui");
   await mkdir(join(guiRoot, "generated-images"), { recursive: true });
@@ -226,7 +210,6 @@ async function runDesktopPhase(ctx) {
   });
 
   let cdp = null;
-  const shotsDir = await screenshotDir(ctx);
   const written = [];
   try {
     await waitForHealthFile(healthFile);
@@ -245,9 +228,7 @@ async function runDesktopPhase(ctx) {
     const capture = async (filename) => {
       const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
       if (!shot?.data) throw new Error(`Page.captureScreenshot returned no data for ${filename}`);
-      const path = join(shotsDir, filename);
-      await writeFile(path, Buffer.from(shot.data, "base64"));
-      written.push(path);
+      written.push(await writeFlowArtifact(ctx, filename, Buffer.from(shot.data, "base64")));
     };
 
     await waitForValue(`document.querySelectorAll('.asset-card').length >= ${SEEDS.length + 1}`, "the four seeded cards");
