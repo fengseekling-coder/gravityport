@@ -11,7 +11,12 @@
 
 - Use `npm ci`, `npm test`, `npm run lint`, and `npm run check` before proposing a change.
 - Interface changes under `web/gravityport` follow `DESIGN.md`: use the existing `--ui-*`, `--space-*`, and `--radius-*` variables, and update `DESIGN.md` in the same change when a token or component rule changes.
-- Start the local service with `npm start`. Configure non-default locations through the documented environment variables.
+- `npm start` runs the local service on `127.0.0.1:43517` against your own default library (`~/GravityPort Library`, or an existing `~/MOSA Library`). Configure non-default locations through the documented environment variables.
+- To try a change or preview the interface without touching that library, use `npm run qa:web`. It starts an isolated instance on a free port with a temporary library and data directory, prints both, and removes them on exit; `npm run qa:web -- --keep` leaves them for inspection.
+- Run a single test file with `node --import ./test/clean-test-env.mjs --test test/<name>.test.mjs`. The preload clears runtime variables inherited from your shell, so the test cannot reach a library configured there.
+- `npm run test:e2e` runs the desktop and browser flows against temporary libraries. `MOSA_E2E_ONLY=<flow>[,<flow>]` selects flows by name.
+- On macOS, `MOSA_E2E_CI_LIKE=1 MOSA_E2E_REPEAT=3 MOSA_E2E_ONLY=<flow> npm run test:e2e` reproduces the CI window size with a throttled renderer and repeats the flow. `MOSA_E2E_REPEAT` requires `MOSA_E2E_ONLY` and accepts plugin flow names only, not the built-in `web`, `electron`, `stack`, or `trash`.
+- Flow screenshots and kept logs are written to the run's temporary directory and removed with it. Set `MOSA_E2E_SHOT_COPY_TO=<directory>` to keep a copy. A flow writes them with `writeFlowArtifact` or `copyFlowArtifact` from `scripts/e2e-flows/_artifacts.mjs`, never into the checkout or a path tied to one machine.
 - The Cowart integration is optional. When it is unavailable, preserve normal library behavior rather than creating plugin-specific files in the checkout.
 
 ## Licensing
