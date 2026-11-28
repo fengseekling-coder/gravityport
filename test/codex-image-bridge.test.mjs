@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { existsSync, watch } from "node:fs";
 import { appendFile, chmod, copyFile, mkdir, mkdtemp, symlink, utimes, writeFile } from "node:fs/promises";
 import { removeTestPath as rm, deferTestPathRemoval } from "./test-cleanup.mjs";
 import { tmpdir } from "node:os";
@@ -1015,6 +1016,81 @@ test("bridge start() does not create the Codex images root and reports sourceFou
   assert.equal(status.sourceFound, true);
   assert.equal(status.lastError, null);
   assert.equal(status.watching, true);
+});
+
+// Task 473: on Linux, the recursive fs.watch of some Node 24 releases (24.16.0
+// among them) does not throw for a missing root — it returns a watcher that
+// watches nothing. The bridge used to take any returned watcher as proof that
+// it was watching. watchImpl reproduces that platform behavior everywhere.
+test("bridge does not report a watcher when watch() returns an inert one for a missing root", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-inert-watch-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const watchedRoots = [];
+  const inertForMissingRoot = (watchRoot, options, listener) => {
+    watchedRoots.push(watchRoot);
+    if (existsSync(watchRoot)) return watch(watchRoot, options, listener);
+    return Object.assign(new EventEmitter(), { close() {} });
+  };
+  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000, watchImpl: inertForMissingRoot });
+  t.after(() => bridge.stop());
+
+  const started = await bridge.start();
+  assert.equal(started.sourceFound, false);
+  assert.equal(started.watching, false, "no directory, so nothing is being watched");
+  assert.equal(started.watchingImages, false);
+  assert.equal(started.watchingSessions, false);
+  assert.deepEqual(watchedRoots, [], "watch() is never asked to watch a root that does not exist");
+
+  // The directory appears: the next scan imports the image and arms a real watcher.
+  await mkdir(join(imagesDir, "task-late"), { recursive: true });
+  await writeFile(join(imagesDir, "task-late", "late.png"), await pngFixture(64, 64));
+  const result = await bridge.reconcile();
+  assert.equal(result.imported.length, 1);
+  const status = bridge.status();
+  assert.equal(status.sourceFound, true);
+  assert.equal(status.watchingImages, true);
+  assert.equal(status.watchingSessions, false, "the sessions root still does not exist");
+  assert.deepEqual(watchedRoots, [imagesDir]);
+});
+
+test("bridge drops its watcher when the Codex images root is removed and arms a new one when it returns", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "mosa-codex-root-lifecycle-"));
+  deferTestPathRemoval(root, { recursive: true, force: true });
+  const imagesDir = join(root, "generated_images");
+  const sessionsDir = join(root, "sessions");
+  const store = createAssetStore({ projectRoot: join(root, "project"), managerDir: join(root, "manager"), codexImagesDir: imagesDir });
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const bridge = createCodexImageBridge({ store, imagesDir, sessionsDir, stableWindowMs: 0, debounceMs: 10, pollIntervalMs: 60_000 });
+  t.after(() => bridge.stop());
+  assert.equal((await bridge.start()).watchingImages, false);
+
+  await mkdir(join(imagesDir, "task-first"), { recursive: true });
+  await writeFile(join(imagesDir, "task-first", "first.png"), await pngFixture(64, 64));
+  assert.equal((await bridge.reconcile()).imported.length, 1);
+  assert.equal(bridge.status().watchingImages, true);
+
+  // Codex's data is removed while the bridge runs.
+  await rm(imagesDir, { recursive: true, force: true });
+  await bridge.reconcile();
+  const removed = bridge.status();
+  assert.equal(removed.sourceFound, false);
+  assert.equal(removed.lastError, null);
+  assert.equal(removed.watchingImages, false, "a removed root is not being watched");
+  assert.equal(removed.watching, false);
+
+  // It comes back with a new image: imported, and watched again.
+  await mkdir(join(imagesDir, "task-second"), { recursive: true });
+  await writeFile(join(imagesDir, "task-second", "second.png"), await pngFixture(96, 80));
+  assert.equal((await bridge.reconcile()).imported.length, 1);
+  const returned = bridge.status();
+  assert.equal(returned.sourceFound, true);
+  assert.equal(returned.watchingImages, true);
 });
 
 test("pairs a Codex image with its own generation event when the images dir is reached through a symlink", async (t) => {

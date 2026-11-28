@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { watch, type FSWatcher } from "node:fs";
+import { statSync, watch, type FSWatcher } from "node:fs";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -53,7 +53,7 @@ interface BridgeStatus { imagesDir: string; sessionsDir: string; threadHistoryPa
 interface ReconcileResult { imported: unknown[]; skipped: Array<{ path: string; reason: string; error?: string }>; updated?: string[]; candidates: number; sessionBytesRead?: number; queued?: boolean; deferred?: number; sourceFound?: boolean; }
 interface Bridge { start(): Promise<BridgeStatus>; stop(): Promise<void>; reconcile(): Promise<ReconcileResult>; scheduleReconcile(): void; status(): BridgeStatus; }
 
-export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; stableWindowMs?: number; nowMs?: () => number; signal?: AbortSignal; } = {}): Bridge {
+export function createCodexImageBridge(options: { store?: Store; imagesDir?: string; sessionsDir?: string; threadHistoryDir?: string; threadHistoryPath?: string; projectId?: string; debounceMs?: number; pollIntervalMs?: number; stableWindowMs?: number; nowMs?: () => number; signal?: AbortSignal; watchImpl?: typeof watch; } = {}): Bridge {
   const store = options.store;
   if (!store || typeof store.createAsset !== "function" || typeof store.listAssets !== "function") throw new Error("Codex image bridge requires a GravityPort store.");
   const imagesDir = resolve(options.imagesDir || store.codexImagesDir);
@@ -66,6 +66,7 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
   const pollIntervalMs = options.pollIntervalMs != null && Number.isFinite(options.pollIntervalMs) ? Math.max(250, options.pollIntervalMs) : 30000;
   const stableWindowMs = options.stableWindowMs != null && Number.isFinite(options.stableWindowMs) ? Math.max(0, options.stableWindowMs) : 2000;
   const nowMs = options.nowMs || Date.now;
+  const watchImpl = options.watchImpl || watch;
   const processedSignatures = new Map<string, string>();
   const deferredObservations = new Map<string, DeferredObservation>();
   const sessionIndex = createCodexSessionIndex({ sessionsDir, threadHistory });
@@ -202,8 +203,13 @@ export function createCodexImageBridge(options: { store?: Store; imagesDir?: str
   }
   function ensureWatchers(): void {
     if (!enabled) return;
-    if (!imageWatcher) imageWatcher = createWatcher(imagesDir, scheduleReconcile, () => { imageWatcher = null; });
-    if (!sessionWatcher) sessionWatcher = createWatcher(sessionsDir, scheduleReconcile, () => { sessionWatcher = null; });
+    // A watcher whose root has been removed is not watching anything, and it
+    // would not see the root come back. Drop it so the status tells the truth
+    // and the next scan that finds the directory arms a fresh one.
+    if (imageWatcher && !isExistingDirectory(imagesDir)) { imageWatcher.close(); imageWatcher = null; }
+    if (sessionWatcher && !isExistingDirectory(sessionsDir)) { sessionWatcher.close(); sessionWatcher = null; }
+    if (!imageWatcher) imageWatcher = createWatcher(watchImpl, imagesDir, scheduleReconcile, () => { imageWatcher = null; });
+    if (!sessionWatcher) sessionWatcher = createWatcher(watchImpl, sessionsDir, scheduleReconcile, () => { sessionWatcher = null; });
   }
   return { start, stop, reconcile, scheduleReconcile, status: apiStatus };
 }
@@ -902,13 +908,30 @@ function mimeTypeForExtension(ext: string): string { return ({ ".apng": "image/a
 async function walkFilesWithPresence(root: string): Promise<{ files: string[]; rootFound: boolean }> { let entries; try { entries = await readdir(root, { withFileTypes: true }); } catch (error: unknown) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { files: [], rootFound: false }; throw error; } const files: string[] = []; for (const entry of entries) { const entryPath = join(root, entry.name); if (entry.isDirectory()) files.push(...await walkFiles(entryPath)); else if (entry.isFile()) files.push(entryPath); } return { files, rootFound: true }; }
 async function walkFiles(root: string): Promise<string[]> { return (await walkFilesWithPresence(root)).files; }
 function lastErrorCodeOf(error: unknown): string | null { const code = (error as NodeJS.ErrnoException | undefined)?.code; return typeof code === "string" && code ? code : null; }
-function createWatcher(root: string, onChange: () => void, onUnavailable: () => void): FSWatcher | null {
+function isExistingDirectory(path: string): boolean {
+  try { return statSync(path).isDirectory(); } catch { return false; }
+}
+// Task 473: a watcher only counts once its root is known to be a directory.
+// Whether watch() throws for a missing root depends on the platform and the
+// Node release — Linux's recursive watcher in some Node 24 releases returns
+// an inert watcher instead — so the answer comes from the file system, both
+// before the call and after it (the root can vanish in between).
+function createWatcher(watchImpl: typeof watch, root: string, onChange: () => void, onUnavailable: () => void): FSWatcher | null {
+  if (!isExistingDirectory(root)) {
+    onUnavailable();
+    return null;
+  }
   try {
-    const watcher = watch(root, { recursive: true }, onChange);
+    const watcher = watchImpl(root, { recursive: true }, onChange);
     watcher.on("error", () => {
       watcher.close();
       onUnavailable();
     });
+    if (!isExistingDirectory(root)) {
+      watcher.close();
+      onUnavailable();
+      return null;
+    }
     return watcher;
   } catch {
     onUnavailable();
