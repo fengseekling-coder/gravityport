@@ -53,8 +53,44 @@ export async function run(ctx) {
     };
     const result = await runDesktopShell(ctx, async ({ evaluate, waitForValue, sleep, doubleClick, pointOf, captureRect }) => {
       await waitForValue(`document.querySelectorAll('.asset-card').length >= 1`, "the seeded GIF card");
-      await doubleClick(await pointOf('.asset-card[data-asset-id]'));
-      await waitForValue(`Boolean(document.querySelector('.image-viewer img.viewer-image'))`, "the viewer image");
+      // The shell has only just started, and a double-click that lands while
+      // the first screen is still settling can be lost. Opening the viewer is
+      // the setup here, not the subject, so it gets a bounded retry — and a
+      // record of what the page saw, so a lost double-click is explained in
+      // the log instead of surfacing as a bare 30s timeout.
+      await evaluate(`(() => {
+        window.__e2eOpenEvents = [];
+        for (const type of ['mousedown', 'click', 'dblclick']) {
+          document.addEventListener(type, (event) => {
+            const target = event.target instanceof Element ? event.target : null;
+            const where = target?.closest('.asset-card') ? 'card' : (target?.className || target?.tagName || 'unknown');
+            window.__e2eOpenEvents.push(type + '@' + String(where).slice(0, 40));
+          }, true);
+        }
+        return true;
+      })()`);
+      const viewerOpen = `Boolean(document.querySelector('.image-viewer img.viewer-image'))`;
+      let opened = false;
+      for (let attempt = 1; attempt <= 4 && !opened; attempt += 1) {
+        await doubleClick(await pointOf('.asset-card[data-asset-id]'));
+        opened = Boolean(await waitForValue(viewerOpen, "the viewer image", 6000).catch(() => false));
+        if (opened) break;
+        const scene = await evaluate(`(() => {
+          const events = window.__e2eOpenEvents.splice(0);
+          const card = document.querySelector('.asset-card[data-asset-id]');
+          const rect = card?.getBoundingClientRect();
+          return JSON.stringify({
+            events,
+            card: rect ? [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)] : null,
+            selected: document.querySelectorAll('.asset-card.asset-selected').length,
+            details: Boolean(document.querySelector('.details')),
+            dialogs: Array.from(document.querySelectorAll('dialog[open], .modal-layer')).map((el) => el.className || el.tagName),
+            viewport: [innerWidth, innerHeight],
+          });
+        })()`).catch((error) => `scene unavailable: ${error.message}`);
+        console.log(`[e2e] viewer-animated-original double-click ${attempt} did not open the viewer: ${scene}`);
+      }
+      if (!opened) await waitForValue(viewerOpen, "the viewer image", 1000);
       await waitForValue(`(() => {
         const media = document.querySelector('.image-viewer img.viewer-image');
         return media.complete && media.naturalWidth > 0;
