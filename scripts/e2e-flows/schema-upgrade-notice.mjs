@@ -11,7 +11,7 @@
 // - two desktop-shell screenshots (zh/en) of the dialog land in the
 //   350-dialog-*.png files the task names (kept with MOSA_E2E_SHOT_COPY_TO).
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import Database from "better-sqlite3";
@@ -19,20 +19,13 @@ import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
 import { ciLikeConfig, writeCiLikeWindowBounds } from "../e2e-ci-like.mjs";
 import { createSqliteAssetStore } from "../../lib/sqlite-asset-store.mjs";
+import { copyFlowArtifact, writeFlowArtifact } from "./_artifacts.mjs";
 import { connectCdp, reloadCdpAndWaitForApp, waitFor } from "./_cdp.mjs";
 
 export const name = "schema-upgrade-notice";
 export const description =
   "task 350 dialog: seeded failed verdict shows the dialog after the first screen (copy, reveal -> /api/open-folder intercepted, backdrop keeps it, 好 latches across restart) -> a live failed check opens it without a restart -> zh/en desktop screenshots";
 
-// Screenshots live in the run's temp root (wiped when the runner exits); a
-// report consumer names a surviving copy directory with MOSA_E2E_SHOT_COPY_TO,
-// the same convention as sidebar-update-line.
-const shotDirFor = (ctx) => join(ctx.libraryDir, "..", "350-shots");
-async function keepShotCopy(fileName, data) {
-  const copyTo = process.env.MOSA_E2E_SHOT_COPY_TO;
-  if (copyTo) await writeFile(join(copyTo, fileName), data).catch(() => {});
-}
 const VERIFY_KEY = "schema_upgrade_verify";
 
 function verifyRecordValue(libraryDir) {
@@ -117,7 +110,6 @@ async function seedLiveFailure(libraryDir, projectRoot, makePng) {
 
 export async function run(ctx) {
   await ctx.prepare();
-  await mkdir(shotDirFor(ctx), { recursive: true });
 
   // ---- Round 1: seeded failed record — dialog, reveal intercept, latch ----
   const server1 = await ctx.startServer();
@@ -369,20 +361,13 @@ async function captureDesktopDialog({ ctx, executable, libraryDir, userDataDir, 
     await waitFor(cdp, "document.querySelector('.app') && document.readyState === 'complete'", "window settled");
     const shot = await cdp.send("Page.captureScreenshot", { format: "png" });
     if (!shot?.data) throw new Error(`Page.captureScreenshot returned no data for ${language}`);
-    const filePath = join(shotDirFor(ctx), fileName);
-    const data = Buffer.from(shot.data, "base64");
-    await writeFile(filePath, data);
-    await keepShotCopy(fileName, data);
-    return filePath;
+    return await writeFlowArtifact(ctx, fileName, Buffer.from(shot.data, "base64"));
   } catch (error) {
     failed = true;
     // Keep the scene for diagnosis: copy the desktop main log next to the
     // screenshots instead of losing it with the run root.
     try {
-      const { copyFile } = await import("node:fs/promises");
-      const logName = `350-desktop-${language}-main.log`;
-      await copyFile(logFile, join(shotDirFor(ctx), logName));
-      if (process.env.MOSA_E2E_SHOT_COPY_TO) await copyFile(logFile, join(process.env.MOSA_E2E_SHOT_COPY_TO, logName));
+      await copyFlowArtifact(ctx, logFile, `350-desktop-${language}-main.log`);
     } catch { /* best effort */ }
     throw error;
   } finally {

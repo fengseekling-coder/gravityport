@@ -33,6 +33,11 @@
 //   `${PAGE_WAIT_SOURCE}` from `scripts/e2e-flows/_shared.mjs`. When you migrate
 //   a listed file off its custom `waitFor`, remove it from `pageWaitForOwners`
 //   in `test/e2e-flow-hygiene.baseline.json`.
+// - Rule 5 (artifact paths): screenshots and kept logs go through
+//   `writeFlowArtifact` / `copyFlowArtifact` from
+//   `scripts/e2e-flows/_artifacts.mjs`. A flow never writes into the repository
+//   or next to it (`tasks/logs`), never builds a path under one maintainer's
+//   home directory, and never reads `MOSA_E2E_SHOT_COPY_TO` itself.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -58,6 +63,15 @@ const SLEEP_CALL_RE = /\bsleep\s*\(\s*([\d_]+)\s*\)/g;
 const SET_TIMEOUT_CALL_RE = /\bsetTimeout\s*\(\s*[A-Za-z_$][\w$]*\s*,\s*([\d_]+)\s*\)/g;
 const E2E_SLEEP_REASON_RE = /\/\*\s*e2e-sleep:\s*([\s\S]*?)\*\//;
 const PAGE_WAITFOR_RE = /\basync\s+function\s+waitFor\s*\(\s*(?:check|predicate)\b/;
+// Rule 5 applies to every flow file except the module that owns the convention.
+const ARTIFACT_RULE_EXEMPT_FILES = new Set(["_artifacts.mjs"]);
+const ARTIFACT_PATH_PATTERNS = [
+  /process\.env\.MOSA_E2E_SHOT_COPY_TO\b/,
+  /process\.env\[\s*["']MOSA_E2E_SHOT_COPY_TO["']\s*\]/,
+  /["']tasks["']\s*,\s*["']logs["']/,
+  /tasks[\\/]logs/,
+  /\bhomedir\s*\(\s*\)\s*,\s*["'][^"']+["']/,
+];
 
 function hasValidSleepReason(line) {
   const match = E2E_SLEEP_REASON_RE.exec(line);
@@ -85,6 +99,7 @@ function analyzeHygiene({ files, baseline }) {
   const helperDefViolations = [];
   const fixedWaitViolations = [];
   const pageWaitViolations = [];
+  const artifactPathViolations = [];
 
   const baselineWaits = baseline?.fixedWaits || {};
   const baselineOwners = new Set(baseline?.pageWaitForOwners || []);
@@ -108,6 +123,10 @@ function analyzeHygiene({ files, baseline }) {
 
       if (FORBIDDEN_HELPER_PATTERNS.some((pattern) => pattern.test(line))) {
         helperDefViolations.push(`${file}:${lineNumber}: ${line}`);
+      }
+
+      if (!ARTIFACT_RULE_EXEMPT_FILES.has(file) && ARTIFACT_PATH_PATTERNS.some((pattern) => pattern.test(line))) {
+        artifactPathViolations.push(`${file}:${lineNumber}: ${line}`);
       }
 
       const waitHits = countUnjustifiedFixedWaitsOnLine(line);
@@ -158,6 +177,7 @@ function analyzeHygiene({ files, baseline }) {
     helperDefViolations,
     fixedWaitViolations,
     pageWaitViolations,
+    artifactPathViolations,
   };
 }
 
@@ -209,7 +229,16 @@ test("real e2e flows match pageWaitForOwners baseline exactly (ratchet only down
   );
 });
 
-// ---- Self-tests with string fixtures (rules 1-4 negative & positive cases) ----
+test("real e2e flows keep artifacts out of the repository and off maintainer paths", () => {
+  const result = analyzeHygiene({ files: loadRealFlows(), baseline: loadBaseline() });
+  assert.deepEqual(
+    result.artifactPathViolations,
+    [],
+    `write screenshots and kept logs with writeFlowArtifact / copyFlowArtifact from ./_artifacts.mjs:\n${result.artifactPathViolations.join("\n")}`,
+  );
+});
+
+// ---- Self-tests with string fixtures (rules 1-5 negative & positive cases) ----
 
 test("fixture: rule 1 catches raw Input.dispatchMouseEvent with file:line and allows dispatchMouse", () => {
   const bad = analyzeHygiene({
@@ -338,4 +367,38 @@ test("pageWaitSource keeps a flow's own default timeout and stays interpolation-
   }
   assert.throws(() => pageWaitSource(0), /positive integer/);
   assert.throws(() => pageWaitSource("30s"), /positive integer/);
+});
+
+test("fixture: rule 5 catches repo-adjacent, home-directory and hand-rolled copy paths and allows the shared module", () => {
+  const empty = { fixedWaits: {}, pageWaitForOwners: [] };
+  const bad = analyzeHygiene({
+    files: new Map([
+      ["sample.mjs", [
+        'const a = join(ctx.rootDir, "tasks", "logs", "card.png");',
+        'const b = join(ctx.rootDir, "..", "tasks", "logs");',
+        "// screenshots land in ../tasks/logs",
+        'const c = join(homedir(), "somewhere", "logs");',
+        "const d = process.env.MOSA_E2E_SHOT_COPY_TO;",
+        'const e = process.env["MOSA_E2E_SHOT_COPY_TO"];',
+      ].join("\n")],
+    ]),
+    baseline: empty,
+  });
+  assert.deepEqual(bad.artifactPathViolations.map((entry) => entry.split(":").slice(0, 2).join(":")), [
+    "sample.mjs:1", "sample.mjs:2", "sample.mjs:3", "sample.mjs:4", "sample.mjs:5", "sample.mjs:6",
+  ]);
+
+  const good = analyzeHygiene({
+    files: new Map([
+      ["sample.mjs", [
+        'import { writeFlowArtifact } from "./_artifacts.mjs";',
+        "// kept with MOSA_E2E_SHOT_COPY_TO",
+        'const home = await mkdtemp(join(tmpdir(), "mosa-e2e-home-"));',
+        'const saved = await writeFlowArtifact(ctx, "card.png", data);',
+      ].join("\n")],
+      ["_artifacts.mjs", "const copyTo = process.env.MOSA_E2E_SHOT_COPY_TO;\n"],
+    ]),
+    baseline: empty,
+  });
+  assert.deepEqual(good.artifactPathViolations, []);
 });

@@ -8,17 +8,13 @@
 // The desktop shell is the only instance reachable over CDP (the web-driver
 // window has no debugging port); quiet QA mode renders it hidden with
 // background throttling off (task 325/346), so the GIF keeps animating.
-import { homedir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { runDesktopShell } from "./_animated-desktop.mjs";
-
-// The task's screenshot destination (素材/日志 inside the codex_aigc tree);
-// built from homedir() so no user name lands in the source.
-const FRAME_LOG_DIR = join(homedir(), "codex_aigc", "素材", "日志");
+import { flowArtifactDir } from "./_artifacts.mjs";
 
 export const name = "viewer-animated-original";
-export const description = "414x414 two-frame GIF: viewer shows the still preview, swaps to the /images/ original, and a later viewer-region screenshot (retried at uneven gaps over ~1.5s) differs from the first (log dir PNGs)";
+export const description = "414x414 two-frame GIF: viewer shows the still preview, swaps to the /images/ original, and a later viewer-region screenshot (retried at uneven gaps over ~1.5s) differs from the first (flow artifact PNGs)";
 
 export async function run(ctx) {
   await ctx.prepare();
@@ -48,9 +44,12 @@ export async function run(ctx) {
     await server.stop();
     serverRunning = false;
 
+    // captureRect writes flow artifacts by file name; the pixel comparison
+    // below reads them back from the run's artifact directory.
+    const shotNames = { first: "412-viewer-frame-1.png", second: "412-viewer-frame-2.png" };
     const shots = {
-      first: join(FRAME_LOG_DIR, "412-viewer-frame-1.png"),
-      second: join(FRAME_LOG_DIR, "412-viewer-frame-2.png"),
+      first: join(flowArtifactDir(ctx), shotNames.first),
+      second: join(flowArtifactDir(ctx), shotNames.second),
     };
     const result = await runDesktopShell(ctx, async ({ evaluate, waitForValue, sleep, doubleClick, pointOf, captureRect }) => {
       await waitForValue(`document.querySelectorAll('.asset-card').length >= 1`, "the seeded GIF card");
@@ -82,13 +81,13 @@ export async function run(ctx) {
       // 50ms of a frame (~40% of runs — CI hit it on PR #348). Keep capturing
       // the second shot at short, uneven gaps until it differs, for up to ~1.5s
       // (several full cycles); a GIF that is really frozen never differs.
-      await captureRect(rect, shots.first);
+      await captureRect(rect, shotNames.first);
       const firstRaw = await sharp(shots.first).raw().toBuffer();
       let attempts = 0;
       for (const gap of [90, 70, 110, 90, 130, 70, 110, 150, 90, 130, 170, 110]) {
         attempts += 1;
         await sleep(gap);
-        await captureRect(rect, shots.second);
+        await captureRect(rect, shotNames.second);
         const secondRaw = await sharp(shots.second).raw().toBuffer();
         if (secondRaw.length !== firstRaw.length || !secondRaw.equals(firstRaw)) break;
       }

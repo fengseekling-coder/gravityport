@@ -108,6 +108,8 @@ jobs:
       - name: Run e2e shard ${{ matrix.shard }}
         env:
           MOSA_E2E_RESULT_FILE: ${{ github.workspace }}/e2e-verdict.json
+          # Flow screenshots and kept logs are copied here; uploaded when the shard fails.
+          MOSA_E2E_SHOT_COPY_TO: ${{ github.workspace }}/ci-artifacts/screenshots
           # 任务 461：CI 机器没人用剪贴板，占用系统剪贴板的流程只在这里跑
           MOSA_E2E_SYSTEM_CLIPBOARD: "1"
         run: |
@@ -119,7 +121,6 @@ jobs:
           mkdir -p ci-artifacts/screenshots
           cp e2e-output.log ci-artifacts/ 2>/dev/null || true
           cp e2e-verdict.json ci-artifacts/ 2>/dev/null || true
-          if [ -d ../tasks/logs ]; then cp -R ../tasks/logs/. ci-artifacts/screenshots/ 2>/dev/null || true; fi
       - name: Upload e2e failure artifacts
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -206,6 +207,8 @@ jobs:
       - name: Run e2e shard ${{ matrix.shard }}
         env:
           MOSA_E2E_RESULT_FILE: ${{ github.workspace }}/e2e-verdict.json
+          # Flow screenshots and kept logs are copied here; uploaded when the shard fails.
+          MOSA_E2E_SHOT_COPY_TO: ${{ github.workspace }}/ci-artifacts/screenshots
           # 任务 461：CI 机器没人用剪贴板，占用系统剪贴板的流程只在这里跑
           MOSA_E2E_SYSTEM_CLIPBOARD: "1"
         shell: pwsh
@@ -219,9 +222,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path ci-artifacts/screenshots | Out-Null
           foreach ($name in 'e2e-output.log', 'e2e-verdict.json') {
             if (Test-Path $name) { Copy-Item $name ci-artifacts/ }
-          }
-          if (Test-Path '../tasks/logs') {
-            Copy-Item '../tasks/logs/*' ci-artifacts/screenshots/ -Recurse -ErrorAction SilentlyContinue
           }
       - name: Upload e2e failure artifacts
         if: failure()

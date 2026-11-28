@@ -5,11 +5,12 @@
 // keep playing while the flow screenshots them. Everything here follows the
 // viewer-video-controls desktop phase: launch by pid, stop by pid, no
 // pkill/killall.
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { launchDesktopGui } from "../desktop-gui-launcher.mjs";
 import { ensureElectronExecutablePath } from "../desktop-runtime-paths.mjs";
+import { writeFlowArtifact } from "./_artifacts.mjs";
 import { connectCdp, dispatchMouse, pointOf as cdpPointOf } from "./_cdp.mjs";
 
 export async function runDesktopShell(ctx, work) {
@@ -97,15 +98,13 @@ export async function runDesktopShell(ctx, work) {
       await sleep(250);
     };
     // Screenshot of a page-region only, always inside the isolated instance.
-    const captureRect = async (rect, filePath) => {
+    const captureRect = async (rect, fileName) => {
       const shot = await cdp.send("Page.captureScreenshot", {
         format: "png",
         clip: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scale: 1 },
       });
-      if (!shot?.data) throw new Error(`Page.captureScreenshot returned no data for ${filePath}`);
-      await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, Buffer.from(shot.data, "base64"));
-      return filePath;
+      if (!shot?.data) throw new Error(`Page.captureScreenshot returned no data for ${fileName}`);
+      return writeFlowArtifact(ctx, fileName, Buffer.from(shot.data, "base64"));
     };
     const result = await work({ origin, evaluate, waitForValue, sleep, mouseMove, pointOf: elementPoint, doubleClick: doubleClickPoint, captureRect, cdp });
     return result;
